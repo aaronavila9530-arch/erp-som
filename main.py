@@ -6,6 +6,9 @@
 import tkinter as tk
 from tkinter import messagebox
 import sys
+import os
+import ctypes
+
 
 from splash_screen import SplashScreen
 from backend_api.rbac_service import has_permission
@@ -32,6 +35,24 @@ try:
 except ModuleNotFoundError:
     VERSION_CHECK_AVAILABLE = False
     print("⚠ version_utils no disponible — chequeo de versión desactivado")
+
+# ============================================================
+# Windows App ID (Taskbar / Alt+Tab)
+# ============================================================
+ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+    "MSLTECH.ERPSOM.Desktop"
+)
+
+# ============================================================
+# Helper para rutas (PyInstaller compatible)
+# ============================================================
+def resource_path(relative_path):
+    try:
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+
+    return os.path.join(base_path, relative_path)
 
 
 # ============================================================
@@ -258,6 +279,7 @@ class MainApp(tk.Frame):
 # ============================================================
 if __name__ == "__main__":
     root = tk.Tk()
+    root.iconbitmap(resource_path("assets/logo_menu_tareas.ico"))
     root.withdraw()
 
     def iniciar_login():

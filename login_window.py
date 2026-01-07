@@ -3,13 +3,19 @@ from tkinter import ttk, messagebox
 
 from auth_api import login_usuario
 from api_client import set_user_role   # ✅ IMPORT CLAVE PARA RBAC
-
+from resource_utils import resource_path
 
 class LoginWindow(tk.Toplevel):
 
     def __init__(self, parent):
         super().__init__(parent)
         self.parent = parent
+
+        # ICONO VENTANA (Login)
+        try:
+            self.iconbitmap(resource_path("assets/logo_menu_tareas.ico"))
+        except Exception:
+            pass
 
         self.title("ERP-SOM | Login")
         self.geometry("1000x600")

@@ -4,12 +4,19 @@ from threading import Thread
 import time
 from PIL import Image, ImageTk
 import tkinter as tk
+from resource_utils import resource_path
 
 
 class SplashScreen(tk.Toplevel):
 
     def __init__(self, parent, callback):
         super().__init__(parent)
+
+        # ICONO SPLASH (barra de tareas)
+        try:
+            self.iconbitmap(resource_path("assets/logo_menu_tareas.ico"))
+        except Exception:
+            pass
 
         self.callback = callback
 
