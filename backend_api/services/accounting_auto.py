@@ -429,6 +429,10 @@ def sync_itp_to_accounting(conn):
         total_raw = float(ob.get("total") or 0)
         balance_raw = float(ob.get("balance") or 0)
 
+        # 🔒 Omitir documentos sin monto
+        if total_raw == 0:
+            continue
+
         # -------------------------------
         # Conversión por moneda
         # -------------------------------
@@ -439,9 +443,6 @@ def sync_itp_to_accounting(conn):
             total_crc = total_raw
             balance_crc = balance_raw
 
-        # ============================================================
-        # 🔒 BLINDAJE CRÍTICO — SUPPLIER CREDIT NOTE
-        # ============================================================
         is_credit_note = obligation_type == "SUPPLIER_CREDIT_NOTE"
 
         calc_total = abs(total_crc)
@@ -494,9 +495,9 @@ def sync_itp_to_accounting(conn):
         row_itp = cur.fetchone()
         itp_entry_id = row_itp["id"] if row_itp else None
 
-        # ------------------------------------------------------------
-        # SIGNOS CONTABLES SEGÚN NATURALEZA
-        # ------------------------------------------------------------
+        # -------------------------------
+        # Signos contables
+        # -------------------------------
         expense_debit = 0 if is_credit_note else subtotal
         expense_credit = subtotal if is_credit_note else 0
 
@@ -592,9 +593,10 @@ def sync_itp_to_accounting(conn):
                     """, (itp_entry_id, iva_account, iva_name, iva_debit, iva_credit, detail_text))
 
         # ============================================================
-        # B) ASIENTO DE PAGO (SIN CAMBIOS)
+        # B) ASIENTO DE PAGO (origin='ITP_PAYMENT')
+        # 🔒 NO aplica para CREDIT NOTES
         # ============================================================
-        if status == "PAID" and balance_crc == 0:
+        if status == "PAID" and balance_crc == 0 and not is_credit_note:
             payment_date = ob.get("last_payment_date") or issue_date
             payment_period = payment_date.strftime("%Y-%m")
             payment_detail = f"From ITP Payment done to {payee_name}"
