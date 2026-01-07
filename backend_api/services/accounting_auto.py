@@ -368,17 +368,6 @@ def sync_cash_app_to_accounting(conn):
 def sync_itp_to_accounting(conn):
     """
     Sincroniza payment_obligations → accounting
-
-    Reglas:
-    - Si currency = 'USD' => multiplica por TC del día
-    - Si currency = 'CRC' => NO convierte
-    - Si payee_type = 'SUPPLIER' => el total incluye IVA (13%)
-      → divide entre 1.13 para gasto (subtotal)
-      → diferencia es IVA crédito fiscal
-    - Genera asiento Gasto vs CxP (origin='ITP')
-      - Si no existe: lo crea
-      - Si ya existe: lo corrige (incluye/actualiza línea IVA)
-    - Si status='PAID' y balance=0 => genera asiento CxP vs Bancos (origin='ITP_PAYMENT')
     """
 
     from psycopg2.extras import RealDictCursor
@@ -434,6 +423,7 @@ def sync_itp_to_accounting(conn):
         obligation_id = ob["id"]
         payee_name = (ob.get("payee_name") or "").strip() or "N/A"
         payee_type = (ob.get("payee_type") or "").upper()
+        obligation_type = (ob.get("obligation_type") or "").upper()
         currency = (ob.get("currency") or "").upper()
 
         total_raw = float(ob.get("total") or 0)
@@ -449,14 +439,21 @@ def sync_itp_to_accounting(conn):
             total_crc = total_raw
             balance_crc = balance_raw
 
+        # ============================================================
+        # 🔒 BLINDAJE CRÍTICO — SUPPLIER CREDIT NOTE
+        # ============================================================
+        is_credit_note = obligation_type == "SUPPLIER_CREDIT_NOTE"
+
+        calc_total = abs(total_crc)
+
         # -------------------------------
         # IVA SOLO PARA SUPPLIER
         # -------------------------------
         if payee_type == "SUPPLIER":
-            subtotal = round(total_crc / 1.13, 2)
-            iva = round(total_crc - subtotal, 2)
+            subtotal = round(calc_total / 1.13, 2)
+            iva = round(calc_total - subtotal, 2)
         else:
-            subtotal = total_crc
+            subtotal = calc_total
             iva = 0.0
 
         status = (ob.get("status") or "").upper()
@@ -469,7 +466,7 @@ def sync_itp_to_accounting(conn):
         # ------------------------------------------------------------
         expense_account = "5101"
         expense_name = "Gastos de servicios"
-        if ob.get("obligation_type") == "SURVEYOR_FEE":
+        if obligation_type == "SURVEYOR_FEE":
             expense_account = "5102"
             expense_name = "Honorarios surveyor"
 
@@ -497,18 +494,27 @@ def sync_itp_to_accounting(conn):
         row_itp = cur.fetchone()
         itp_entry_id = row_itp["id"] if row_itp else None
 
+        # ------------------------------------------------------------
+        # SIGNOS CONTABLES SEGÚN NATURALEZA
+        # ------------------------------------------------------------
+        expense_debit = 0 if is_credit_note else subtotal
+        expense_credit = subtotal if is_credit_note else 0
+
+        iva_debit = 0 if is_credit_note else iva
+        iva_credit = iva if is_credit_note else 0
+
+        ap_debit = calc_total if is_credit_note else 0
+        ap_credit = 0 if is_credit_note else calc_total
+
         if not itp_entry_id:
-            # --------------------------
-            # Crear asiento
-            # --------------------------
             from services.accounting_auto import create_accounting_entry
 
             lines = [
                 {
                     "account_code": expense_account,
                     "account_name": expense_name,
-                    "debit": subtotal,
-                    "credit": 0,
+                    "debit": expense_debit,
+                    "credit": expense_credit,
                     "line_description": detail_text
                 }
             ]
@@ -517,16 +523,16 @@ def sync_itp_to_accounting(conn):
                 lines.append({
                     "account_code": iva_account,
                     "account_name": iva_name,
-                    "debit": iva,
-                    "credit": 0,
+                    "debit": iva_debit,
+                    "credit": iva_credit,
                     "line_description": detail_text
                 })
 
             lines.append({
                 "account_code": ap_account,
                 "account_name": ap_name,
-                "debit": 0,
-                "credit": total_crc,
+                "debit": ap_debit,
+                "credit": ap_credit,
                 "line_description": detail_text
             })
 
@@ -541,12 +547,6 @@ def sync_itp_to_accounting(conn):
             )
 
         else:
-            # --------------------------
-            # Corregir asiento existente
-            # (aquí estaba el fallo: no se agregaba IVA)
-            # --------------------------
-
-            # 1) Asegurar detalle si está vacío
             cur.execute("""
                 UPDATE accounting_lines
                 SET line_description = %s
@@ -554,22 +554,20 @@ def sync_itp_to_accounting(conn):
                   AND (line_description IS NULL OR BTRIM(line_description) = '')
             """, (detail_text, itp_entry_id))
 
-            # 2) Asegurar valores correctos en Gasto y CxP
             cur.execute("""
                 UPDATE accounting_lines
-                SET debit = %s, credit = 0
+                SET debit = %s, credit = %s
                 WHERE entry_id = %s
                   AND account_code = %s
-            """, (subtotal, itp_entry_id, expense_account))
+            """, (expense_debit, expense_credit, itp_entry_id, expense_account))
 
             cur.execute("""
                 UPDATE accounting_lines
-                SET debit = 0, credit = %s
+                SET debit = %s, credit = %s
                 WHERE entry_id = %s
                   AND account_code = %s
-            """, (total_crc, itp_entry_id, ap_account))
+            """, (ap_debit, ap_credit, itp_entry_id, ap_account))
 
-            # 3) IVA: si es SUPPLIER debe existir línea 1131
             if iva > 0:
                 cur.execute("""
                     SELECT id
@@ -583,26 +581,18 @@ def sync_itp_to_accounting(conn):
                 if iva_line:
                     cur.execute("""
                         UPDATE accounting_lines
-                        SET debit = %s, credit = 0, account_name = %s
+                        SET debit = %s, credit = %s, account_name = %s
                         WHERE id = %s
-                    """, (iva, iva_name, iva_line["id"]))
+                    """, (iva_debit, iva_credit, iva_name, iva_line["id"]))
                 else:
                     cur.execute("""
                         INSERT INTO accounting_lines
                         (entry_id, account_code, account_name, debit, credit, line_description)
                         VALUES (%s, %s, %s, %s, %s, %s)
-                    """, (itp_entry_id, iva_account, iva_name, iva, 0, detail_text))
-
-            else:
-                # Si NO es supplier, eliminar IVA si existiera (evita basura histórica)
-                cur.execute("""
-                    DELETE FROM accounting_lines
-                    WHERE entry_id = %s
-                      AND account_code = %s
-                """, (itp_entry_id, iva_account))
+                    """, (itp_entry_id, iva_account, iva_name, iva_debit, iva_credit, detail_text))
 
         # ============================================================
-        # B) ASIENTO DE PAGO (origin='ITP_PAYMENT')
+        # B) ASIENTO DE PAGO (SIN CAMBIOS)
         # ============================================================
         if status == "PAID" and balance_crc == 0:
             payment_date = ob.get("last_payment_date") or issue_date
@@ -626,7 +616,7 @@ def sync_itp_to_accounting(conn):
                     {
                         "account_code": ap_account,
                         "account_name": ap_name,
-                        "debit": total_crc,
+                        "debit": calc_total,
                         "credit": 0,
                         "line_description": payment_detail
                     },
@@ -634,7 +624,7 @@ def sync_itp_to_accounting(conn):
                         "account_code": bank_account,
                         "account_name": bank_name,
                         "debit": 0,
-                        "credit": total_crc,
+                        "credit": calc_total,
                         "line_description": payment_detail
                     }
                 ]
@@ -648,28 +638,5 @@ def sync_itp_to_accounting(conn):
                     origin_id=obligation_id,
                     lines=pay_lines
                 )
-
-            else:
-                # Corrige detalle y monto si existiera (se deja como en tu lógica original)
-                cur.execute("""
-                    UPDATE accounting_lines
-                    SET line_description = %s
-                    WHERE entry_id = %s
-                      AND (line_description IS NULL OR BTRIM(line_description) = '')
-                """, (payment_detail, pay_entry_id))
-
-                cur.execute("""
-                    UPDATE accounting_lines
-                    SET debit = %s, credit = 0
-                    WHERE entry_id = %s
-                      AND account_code = %s
-                """, (total_crc, pay_entry_id, ap_account))
-
-                cur.execute("""
-                    UPDATE accounting_lines
-                    SET debit = 0, credit = %s
-                    WHERE entry_id = %s
-                      AND account_code = %s
-                """, (total_crc, pay_entry_id, bank_account))
 
     conn.commit()
