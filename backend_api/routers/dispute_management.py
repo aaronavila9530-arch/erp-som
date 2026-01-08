@@ -103,8 +103,8 @@ def list_dispute_management(
                 LIMIT 1
             ) AS ultimo_comentario
 
-        FROM dispute_management dm
-        JOIN disputa d ON d.id = dm.dispute_id
+        FROM disputa d
+        LEFT JOIN dispute_management dm ON d.id = dm.dispute_id
         {where}
         ORDER BY d.created_at DESC
         LIMIT %s OFFSET %s
