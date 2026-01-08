@@ -5,6 +5,8 @@ import psycopg2
 
 from rbac_service import has_permission
 
+DB_URL = os.getenv("DATABASE_URL")  # ← NUEVO
+
 router = APIRouter(prefix="/empleados", tags=["Empleados"])
 
 
