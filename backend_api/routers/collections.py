@@ -80,6 +80,8 @@ def sync_collections_from_invoicing(conn=Depends(get_db)):
                   FROM collections c
                   WHERE c.numero_documento = i.numero_documento
                     AND c.codigo_cliente = i.codigo_cliente
+                    AND c.tipo_factura = i.tipo_factura
+                    AND c.tipo_documento = i.tipo_documento
               )
         """)
 
@@ -89,10 +91,17 @@ def sync_collections_from_invoicing(conn=Depends(get_db)):
 
         for f in facturas:
 
-            key = (f.get("numero_documento"), f.get("codigo_cliente"))
+            key = (
+                f.get("numero_documento"),
+                f.get("codigo_cliente"),
+                f.get("tipo_factura"),
+                f.get("tipo_documento")
+            )
+
             if key in procesadas:
                 skipped += 1
                 continue
+
             procesadas.add(key)
 
             try:
