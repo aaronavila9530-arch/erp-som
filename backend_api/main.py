@@ -42,6 +42,8 @@ from routers.accounting_lines import router as accounting_lines_router
 
 from routers.exchange_rate import router as exchange_rate_router
 
+from routers.password_reset import router as password_reset_router
+
 
 # ============================================================
 # CONFIGURACIÓN FASTAPI
@@ -172,6 +174,8 @@ app.include_router(closing_status_router)
 app.include_router(accounting_lines_router)
 
 app.include_router(exchange_rate_router)
+
+app.include_router(password_reset_router)
 
 # ============================================================
 # EJECUCIÓN LOCAL
