@@ -58,6 +58,9 @@ class Empleado(BaseModel):
 
 @router.post("/add")
 def agregar_empleado(emp: Empleado):
+    conn = None
+    cursor = None
+
     try:
         conn = psycopg2.connect(DB_URL)
         cursor = conn.cursor()
@@ -92,8 +95,10 @@ def agregar_empleado(emp: Empleado):
         raise HTTPException(status_code=500, detail=str(e))
 
     finally:
-        cursor.close()
-        conn.close()
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
 
 
 # ============================================================
@@ -190,7 +195,6 @@ def update_empleado(data: dict):
             apellidos = %(apellidos)s,
             estado_civil = %(estado_civil)s,
             genero = %(genero)s,
-            -- nacionalidad se mantiene igual porque el front no la envía
             prefijo = %(prefijo)s,
             telefono = %(telefono)s,
             provincia = %(provincia)s,
@@ -215,7 +219,6 @@ def update_empleado(data: dict):
             activo3 = %(activo3)s,
             marca3 = %(marca3)s,
             serial3 = %(serial3)s
-            -- fecharegistro también se deja intacto
         WHERE codigo = %(codigo)s
     """
     database.sql(sql, data)
