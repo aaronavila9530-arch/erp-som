@@ -727,7 +727,7 @@ def aplicar_nota_credito(payload: dict, conn=Depends(get_db)):
 
 # ============================================================
 # POST /collections/disputa
-# Crear una disputa de factura
+# Crear una disputa de factura (BLINDADO)
 # ============================================================
 @router.post("/disputa")
 def crear_disputa(payload: dict, conn=Depends(get_db)):
@@ -747,6 +747,8 @@ def crear_disputa(payload: dict, conn=Depends(get_db)):
 
         if not numero_documento:
             raise HTTPException(400, "numero_documento es requerido")
+        if not codigo_cliente:
+            raise HTTPException(400, "codigo_cliente es requerido")
         if not motivo:
             raise HTTPException(400, "motivo es requerido")
         if not comentario:
@@ -767,7 +769,7 @@ def crear_disputa(payload: dict, conn=Depends(get_db)):
         dispute_case = f"DISP-{cur.fetchone()['last_num'] + 1:04d}"
 
         # ================================
-        # 2️⃣ Fuente de verdad: collections
+        # 2️⃣ FUENTE DE VERDAD: COLLECTIONS
         # ================================
         cur.execute("""
             SELECT
@@ -777,18 +779,37 @@ def crear_disputa(payload: dict, conn=Depends(get_db)):
                 buque_contenedor,
                 operacion,
                 periodo_operacion,
-                descripcion_servicio
+                descripcion_servicio,
+                tipo_documento,
+                disputada
             FROM collections
             WHERE numero_documento = %s
+              AND codigo_cliente = %s
             LIMIT 1
-        """, (numero_documento,))
+        """, (numero_documento, codigo_cliente))
+
         base = cur.fetchone()
 
         if not base:
-            raise HTTPException(404, "Factura no encontrada en Collections")
+            raise HTTPException(
+                404,
+                "Factura no encontrada en Collections"
+            )
+
+        if base["tipo_documento"] != "FACTURA":
+            raise HTTPException(
+                400,
+                "Solo se pueden disputar Facturas"
+            )
+
+        if base["disputada"] is True:
+            raise HTTPException(
+                409,
+                "La factura ya se encuentra disputada"
+            )
 
         # ================================
-        # 3️⃣ INSERT limpio (SIN payload basura)
+        # 3️⃣ INSERT EN DISPUTA
         # ================================
         cur.execute("""
             INSERT INTO disputa (
@@ -827,18 +848,22 @@ def crear_disputa(payload: dict, conn=Depends(get_db)):
         ))
 
         # ================================
-        # 4️⃣ Marcar disputada
+        # 4️⃣ MARCAR FACTURA COMO DISPUTADA
         # ================================
         cur.execute("""
             UPDATE collections
             SET disputada = TRUE,
                 estado_factura = 'DISPUTADA'
             WHERE numero_documento = %s
-        """, (numero_documento,))
+              AND codigo_cliente = %s
+        """, (numero_documento, codigo_cliente))
 
         conn.commit()
 
-        return {"status": "ok", "dispute_case": dispute_case}
+        return {
+            "status": "ok",
+            "dispute_case": dispute_case
+        }
 
     except HTTPException:
         if conn:
@@ -848,7 +873,10 @@ def crear_disputa(payload: dict, conn=Depends(get_db)):
     except Exception as e:
         if conn:
             conn.rollback()
-        raise HTTPException(500, f"Error creando disputa: {repr(e)}")
+        raise HTTPException(
+            500,
+            f"Error creando disputa: {repr(e)}"
+        )
 
     finally:
         if cur:
