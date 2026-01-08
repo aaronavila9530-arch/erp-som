@@ -69,6 +69,47 @@ def agregar_empleado(emp: Empleado):
         conn = psycopg2.connect(DB_URL)
         cursor = conn.cursor()
 
+        # ============================================================
+        # OBTENER ÚLTIMO CÓDIGO DE EMPLEADO
+        # FORMATO: MSL-0001-E
+        # ============================================================
+        cursor.execute("""
+            SELECT codigo
+            FROM empleados
+            WHERE codigo LIKE 'MSL-%-E'
+            ORDER BY
+                CAST(SUBSTRING(codigo FROM 5 FOR 4) AS INTEGER) DESC
+            LIMIT 1
+        """)
+        row = cursor.fetchone()
+
+        if row:
+            last_code = row[0]          # ej: MSL-0007-E
+            last_number = int(last_code[4:8])
+            next_number = last_number + 1
+        else:
+            next_number = 1
+
+        nuevo_codigo = f"MSL-{next_number:04d}-E"
+
+        # ============================================================
+        # PREPARAR DATA (SOBRESCRIBE CÓDIGO)
+        # ============================================================
+        data = emp.dict()
+        data["codigo"] = nuevo_codigo
+
+        # Blindaje salario (NUMERIC)
+        if data.get("salario"):
+            try:
+                data["salario"] = float(data["salario"])
+            except ValueError:
+                data["salario"] = None
+        else:
+            data["salario"] = None
+
+        # ============================================================
+        # INSERT
+        # ============================================================
         cursor.execute("""
             INSERT INTO empleados (
                 codigo, nombre, apellidos, estado_civil, genero, nacionalidad,
@@ -88,11 +129,15 @@ def agregar_empleado(emp: Empleado):
                 %(activo2)s, %(marca2)s, %(serial2)s,
                 %(activo3)s, %(marca3)s, %(serial3)s
             );
-        """, emp.dict())
+        """, data)
 
         conn.commit()
 
-        return {"status": "OK", "msg": "Empleado registrado 💾✔"}
+        return {
+            "status": "OK",
+            "msg": "Empleado registrado 💾✔",
+            "codigo": nuevo_codigo
+        }
 
     except Exception as e:
         print("❌ Error API empleados:", str(e))
