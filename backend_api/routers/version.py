@@ -11,7 +11,7 @@ CURRENT_VERSION = "1.0.0"
 
 @router.get("")
 def check_version():
-    url = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+    url = f"https://api.github.com/repos/aaronavila9530-arch/erp-som/releases/latest"
 
     try:
         r = requests.get(url, timeout=5)
