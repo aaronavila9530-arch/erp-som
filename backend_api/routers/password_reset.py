@@ -3,7 +3,8 @@ from psycopg2.extras import RealDictCursor
 import bcrypt
 
 from database import get_db
-from totp_service import validate_totp
+from .totp_service import validate_totp
+
 
 router = APIRouter(
     prefix="/auth/reset",
