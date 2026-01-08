@@ -6,3 +6,5 @@ reportlab
 python-multipart
 bcrypt
 pyotp
+qrcode[pil]
+Pillow
