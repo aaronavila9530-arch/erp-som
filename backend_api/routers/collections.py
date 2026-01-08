@@ -57,7 +57,8 @@ def _safe_int(v, default=0) -> int:
 
 # ============================================================
 # POST /collections/sync-from-invoicing
-# Sincroniza FACTURA + NOTA_CREDITO EMITIDAS → Collections
+# Sincroniza TODO invoicing → collections
+# Inserta SOLO documentos que NO existan en collections
 # ============================================================
 @router.post("/sync-from-invoicing")
 def sync_collections_from_invoicing(conn=Depends(get_db)):
@@ -69,20 +70,12 @@ def sync_collections_from_invoicing(conn=Depends(get_db)):
     errors = []
 
     try:
+        # 1️⃣ Traer TODO invoicing emitido y con total válido
         cur.execute("""
             SELECT *
-            FROM invoicing i
-            WHERE i.tipo_documento IN ('FACTURA', 'NOTA_CREDITO')
-              AND i.estado = 'EMITIDA'
-              AND i.total > 0
-              AND NOT EXISTS (
-                  SELECT 1
-                  FROM collections c
-                  WHERE c.numero_documento = i.numero_documento
-                    AND c.codigo_cliente = i.codigo_cliente
-                    AND c.tipo_factura = i.tipo_factura
-                    AND c.tipo_documento = i.tipo_documento
-              )
+            FROM invoicing
+            WHERE estado = 'EMITIDA'
+              AND total > 0
         """)
 
         facturas = cur.fetchall()
@@ -91,11 +84,12 @@ def sync_collections_from_invoicing(conn=Depends(get_db)):
 
         for f in facturas:
 
+            # 🔐 Clave única REAL del documento
             key = (
-                f.get("numero_documento"),
-                f.get("codigo_cliente"),
-                f.get("tipo_factura"),
-                f.get("tipo_documento")
+                str(f.get("numero_documento")),
+                str(f.get("codigo_cliente")),
+                str(f.get("tipo_factura")),
+                str(f.get("tipo_documento"))
             )
 
             if key in procesadas:
@@ -105,10 +99,25 @@ def sync_collections_from_invoicing(conn=Depends(get_db)):
             procesadas.add(key)
 
             try:
-                # SAVEPOINT POR REGISTRO
-                cur.execute("SAVEPOINT sp_factura")
+                cur.execute("SAVEPOINT sp_sync")
 
-                # ---------- fecha_emision ----------
+                # 2️⃣ Verificar si YA existe en collections
+                cur.execute("""
+                    SELECT 1
+                    FROM collections
+                    WHERE numero_documento = %s
+                      AND codigo_cliente = %s
+                      AND tipo_factura = %s
+                      AND tipo_documento = %s
+                    LIMIT 1
+                """, key)
+
+                if cur.fetchone():
+                    skipped += 1
+                    cur.execute("RELEASE SAVEPOINT sp_sync")
+                    continue
+
+                # 3️⃣ Fecha emisión
                 fe = f.get("fecha_emision")
                 if isinstance(fe, datetime):
                     fe = fe.date()
@@ -119,9 +128,9 @@ def sync_collections_from_invoicing(conn=Depends(get_db)):
                 else:
                     raise ValueError("fecha_emision inválida")
 
-                # ---------- dias_credito ----------
+                # 4️⃣ Días crédito
                 try:
-                    dias_credito = int(f.get("termino_pago"))
+                    dias_credito = int(f.get("termino_pago") or 0)
                 except Exception:
                     dias_credito = 0
 
@@ -141,6 +150,7 @@ def sync_collections_from_invoicing(conn=Depends(get_db)):
 
                 total = float(f.get("total") or 0)
 
+                # 5️⃣ Insert seguro en collections
                 cur.execute("""
                     INSERT INTO collections (
                         numero_documento,
@@ -208,15 +218,17 @@ def sync_collections_from_invoicing(conn=Depends(get_db)):
                     "saldo": total
                 })
 
-                cur.execute("RELEASE SAVEPOINT sp_factura")
+                cur.execute("RELEASE SAVEPOINT sp_sync")
                 inserted += 1
 
             except Exception as e:
-                cur.execute("ROLLBACK TO SAVEPOINT sp_factura")
+                cur.execute("ROLLBACK TO SAVEPOINT sp_sync")
                 skipped += 1
                 errors.append({
                     "numero_documento": f.get("numero_documento"),
                     "codigo_cliente": f.get("codigo_cliente"),
+                    "tipo_factura": f.get("tipo_factura"),
+                    "tipo_documento": f.get("tipo_documento"),
                     "error": str(e)
                 })
 
@@ -226,7 +238,7 @@ def sync_collections_from_invoicing(conn=Depends(get_db)):
             "status": "ok",
             "inserted": inserted,
             "skipped": skipped,
-            "errors": errors[:5]
+            "errors": errors[:10]
         }
 
     finally:
