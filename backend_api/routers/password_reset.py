@@ -12,6 +12,9 @@ router = APIRouter(
 )
 
 
+# ============================================================
+# PASO 1 — VERIFICAR IDENTIDAD
+# ============================================================
 @router.post("/verify-identity")
 def verify_identity(payload: dict, conn=Depends(get_db)):
 
@@ -28,11 +31,11 @@ def verify_identity(payload: dict, conn=Depends(get_db)):
     cur.execute("""
         SELECT id
         FROM usuarios
-        WHERE usuario=%s
-          AND LOWER(nombre)=LOWER(%s)
-          AND LOWER(apellido)=LOWER(%s)
-          AND LOWER(email)=LOWER(%s)
-          AND activo=TRUE
+        WHERE LOWER(usuario)  = LOWER(TRIM(%s))
+          AND LOWER(nombre)   = LOWER(TRIM(%s))
+          AND LOWER(apellido) = LOWER(TRIM(%s))
+          AND LOWER(email)    = LOWER(TRIM(%s))
+          AND activo = TRUE
     """, (usuario, nombre, apellido, email))
 
     if not cur.fetchone():
@@ -41,21 +44,30 @@ def verify_identity(payload: dict, conn=Depends(get_db)):
     cur.execute("""
         UPDATE usuarios
         SET reset_step='IDENTITY_OK'
-        WHERE usuario=%s
+        WHERE LOWER(usuario)=LOWER(TRIM(%s))
     """, (usuario,))
 
     conn.commit()
-    return {"step": "TOTP_REQUIRED"}
+
+    return {
+        "ok": True,
+        "step": "TOTP_REQUIRED"
+    }
 
 
-
+# ============================================================
+# PASO 2 — VERIFICAR TOTP
+# ============================================================
 @router.post("/verify-totp")
 def verify_totp(payload: dict, conn=Depends(get_db)):
 
     usuario = payload.get("usuario")
     codigo = payload.get("codigo")
 
-    if not validate_totp(usuario, codigo):
+    if not usuario or not codigo:
+        raise HTTPException(400, "Datos incompletos")
+
+    if not validate_totp(usuario.strip(), codigo.strip()):
         raise HTTPException(401, "Código inválido")
 
     cur = conn.cursor()
@@ -63,7 +75,7 @@ def verify_totp(payload: dict, conn=Depends(get_db)):
     cur.execute("""
         SELECT reset_step
         FROM usuarios
-        WHERE usuario=%s
+        WHERE LOWER(usuario)=LOWER(TRIM(%s))
     """, (usuario,))
 
     row = cur.fetchone()
@@ -73,20 +85,27 @@ def verify_totp(payload: dict, conn=Depends(get_db)):
     cur.execute("""
         UPDATE usuarios
         SET reset_step='TOTP_OK'
-        WHERE usuario=%s
+        WHERE LOWER(usuario)=LOWER(TRIM(%s))
     """, (usuario,))
 
     conn.commit()
-    return {"step": "RESET_ALLOWED"}
+
+    return {
+        "ok": True,
+        "step": "RESET_ALLOWED"
+    }
 
 
+# ============================================================
+# PASO 3 — CAMBIAR CONTRASEÑA
+# ============================================================
 @router.post("/set-password")
 def set_password(payload: dict, conn=Depends(get_db)):
 
     usuario = payload.get("usuario")
     password = payload.get("password")
 
-    if not password or len(password) < 8:
+    if not usuario or not password or len(password) < 8:
         raise HTTPException(400, "Contraseña inválida")
 
     hashed = bcrypt.hashpw(
@@ -99,7 +118,7 @@ def set_password(payload: dict, conn=Depends(get_db)):
     cur.execute("""
         SELECT reset_step
         FROM usuarios
-        WHERE usuario=%s
+        WHERE LOWER(usuario)=LOWER(TRIM(%s))
     """, (usuario,))
 
     row = cur.fetchone()
@@ -111,8 +130,12 @@ def set_password(payload: dict, conn=Depends(get_db)):
         SET pass_hash=%s,
             pass_temp=FALSE,
             reset_step=NULL
-        WHERE usuario=%s
+        WHERE LOWER(usuario)=LOWER(TRIM(%s))
     """, (hashed, usuario))
 
     conn.commit()
-    return {"message": "Contraseña actualizada"}
+
+    return {
+        "ok": True,
+        "message": "Contraseña actualizada"
+    }
