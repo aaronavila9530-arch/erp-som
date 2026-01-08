@@ -242,7 +242,7 @@ def crear_factura_manual(payload: dict, conn=Depends(get_db)):
         """, (pdf_path, factura_id))
 
         # ====================================================
-        # INSERTAR EN TABLA INVOICING (MANUAL)
+        # INSERTAR EN TABLA INVOICING (MANUAL)  ✅ COMPLETO
         # ====================================================
         cur.execute("""
             INSERT INTO invoicing (
@@ -257,7 +257,13 @@ def crear_factura_manual(payload: dict, conn=Depends(get_db)):
                 total,
                 estado,
                 pdf_path,
-                created_at
+                created_at,
+                num_informe,
+                termino_pago,
+                buque_contenedor,
+                operacion,
+                periodo_operacion,
+                descripcion_servicio
             )
             VALUES (
                 %s,
@@ -271,7 +277,13 @@ def crear_factura_manual(payload: dict, conn=Depends(get_db)):
                 %s,
                 'EMITIDA',
                 %s,
-                NOW()
+                NOW(),
+                %s,
+                %s,
+                %s,
+                %s,
+                %s,
+                %s
             )
         """, (
             factura_id,
@@ -281,7 +293,13 @@ def crear_factura_manual(payload: dict, conn=Depends(get_db)):
             fecha_factura,
             payload.get("moneda", "USD"),
             total,
-            pdf_path
+            pdf_path,
+            servicio.get("num_informe"),
+            termino_pago,
+            servicio.get("buque_contenedor"),
+            servicio.get("operacion"),
+            f"{servicio.get('fecha_inicio')} a {servicio.get('fecha_fin')}",
+            payload.get("descripcion")
         ))
 
 
