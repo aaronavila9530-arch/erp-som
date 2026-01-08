@@ -25,13 +25,17 @@ def require_permission(module: str, action: str):
             )
     return checker
 
+from typing import Optional
+from fastapi import Query, Depends
+from psycopg2.extras import RealDictCursor
+
 # ============================================================
 # GET /disputas
 # Listado base de disputas (TABLA PRINCIPAL)
 # ============================================================
 @router.get("")
 def listar_disputas(
-    codigo_cliente: Optional[str] = Query(None),
+    codigo_cliente: Optional[str] = Query(None, alias="cliente"),
     page: int = 1,
     page_size: int = 50,
     conn=Depends(get_db)

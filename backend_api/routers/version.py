@@ -9,7 +9,7 @@ router = APIRouter(
 GITHUB_REPO = "aaronavila9530-arch/erp-som"
 CURRENT_VERSION = "1.0.0"
 
-@router.get("")
+@router.get("/")
 def check_version():
     url = f"https://api.github.com/repos/aaronavila9530-arch/erp-som/releases/latest"
 
