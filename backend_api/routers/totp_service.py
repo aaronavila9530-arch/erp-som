@@ -6,7 +6,7 @@
 import io
 import pyotp
 import qrcode
-from backend_api.database import get_conn
+from database import get_conn
 
 
 # ============================================================
