@@ -26,16 +26,12 @@ def check_version():
         )
 
         return {
-            "current_version": CURRENT_VERSION,
-            "latest_version": latest,
-            "force_update": False,
-            "message": "Nueva versión disponible.",
+            "latest": latest,  # 🔴 CLAVE CORRECTA
             "download_url": asset["browser_download_url"] if asset else None
         }
 
     except Exception:
         return {
-            "current_version": CURRENT_VERSION,
-            "latest_version": CURRENT_VERSION,
-            "force_update": False
+            "latest": CURRENT_VERSION,
+            "download_url": None
         }
