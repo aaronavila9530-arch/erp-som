@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends, Header
 from pydantic import BaseModel
 import database
+import psycopg2
 
 from rbac_service import has_permission
 
