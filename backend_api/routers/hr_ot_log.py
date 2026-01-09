@@ -3,7 +3,7 @@ from psycopg2.extras import RealDictCursor
 from datetime import datetime
 
 from database import get_db
-from backend_api.security.rbac import require_permission
+from security.rbac import require_permission
 
 router = APIRouter(
     prefix="/hr/ot-log",
