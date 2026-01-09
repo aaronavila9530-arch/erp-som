@@ -4,6 +4,7 @@ from datetime import datetime
 
 from database import get_db
 from security.rbac import require_permission
+from security.auth import get_current_user
 
 router = APIRouter(
     prefix="/hr/ot-log",
@@ -16,12 +17,14 @@ router = APIRouter(
 # ============================================================
 @router.post(
     "/",
-    dependencies=[Depends(require_permission("hhrre", "ot_log"))]
+    dependencies=[Depends(require_permission("hhrr", "ot_log"))]
 )
-def create_ot_log(data: dict, conn=Depends(get_db)):
-
+def create_ot_log(
+    data: dict,
+    user=Depends(get_current_user),
+    conn=Depends(get_db)
+):
     required = [
-        "usuario",
         "tipo",
         "fecha_inicio",
         "fecha_fin",
@@ -29,10 +32,19 @@ def create_ot_log(data: dict, conn=Depends(get_db)):
     ]
 
     if not all(k in data for k in required):
-        raise HTTPException(400, "Datos incompletos para OT LOG")
+        raise HTTPException(status_code=400, detail="Datos incompletos para OT LOG")
 
     if data["tipo"] not in ("OPERACION", "INFORME"):
-        raise HTTPException(400, "Tipo inválido (OPERACION / INFORME)")
+        raise HTTPException(status_code=400, detail="Tipo inválido")
+
+    try:
+        fecha_inicio = datetime.fromisoformat(data["fecha_inicio"])
+        fecha_fin = datetime.fromisoformat(data["fecha_fin"])
+    except Exception:
+        raise HTTPException(status_code=400, detail="Formato de fecha inválido")
+
+    if fecha_fin <= fecha_inicio:
+        raise HTTPException(status_code=400, detail="La fecha_fin debe ser mayor a fecha_inicio")
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
@@ -44,15 +56,16 @@ def create_ot_log(data: dict, conn=Depends(get_db)):
             fecha_fin,
             duracion_horas,
             buque,
-            comentario
+            comentario,
+            created_at
         )
-        VALUES (%s,%s,%s,%s,%s,%s,%s)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,now())
         RETURNING *
     """, (
-        data["usuario"],
+        user["usuario"],          -- 🔒 identidad real
         data["tipo"],
-        data["fecha_inicio"],
-        data["fecha_fin"],
+        fecha_inicio,
+        fecha_fin,
         data["duracion_horas"],
         data.get("buque"),
         data.get("comentario")
@@ -60,17 +73,16 @@ def create_ot_log(data: dict, conn=Depends(get_db)):
 
     row = cur.fetchone()
     conn.commit()
-
     return row
 
 
 # ============================================================
-# LIST OT LOGS (filters)
+# LIST OT LOGS
 # ACTION: ot_log
 # ============================================================
 @router.get(
     "/",
-    dependencies=[Depends(require_permission("hhrre", "ot_log"))]
+    dependencies=[Depends(require_permission("hhrr", "ot_log"))]
 )
 def list_ot_logs(
     usuario: str | None = None,
@@ -79,7 +91,6 @@ def list_ot_logs(
     fecha_hasta: str | None = None,
     conn=Depends(get_db)
 ):
-
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     query = "SELECT * FROM hr_ot_log WHERE 1=1"
@@ -113,12 +124,16 @@ def list_ot_logs(
 # ============================================================
 @router.delete(
     "/{log_id}",
-    dependencies=[Depends(require_permission("hhrre", "delete"))]
+    dependencies=[Depends(require_permission("hhrr", "delete"))]
 )
-def delete_ot_log(log_id: int, conn=Depends(get_db)):
-
+def delete_ot_log(
+    log_id: int,
+    user=Depends(get_current_user),
+    conn=Depends(get_db)
+):
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
+    # 🔒 Opcional: solo el dueño o admin puede borrar
     cur.execute("""
         DELETE FROM hr_ot_log
         WHERE id = %s
@@ -129,6 +144,6 @@ def delete_ot_log(log_id: int, conn=Depends(get_db)):
     conn.commit()
 
     if not row:
-        raise HTTPException(404, "Registro OT no encontrado")
+        raise HTTPException(status_code=404, detail="Registro OT no encontrado")
 
     return {"deleted_id": row["id"]}

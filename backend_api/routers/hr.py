@@ -4,6 +4,7 @@ from datetime import date
 
 from database import get_db
 from security.rbac import require_permission
+from security.auth import get_current_user
 
 router = APIRouter(
     prefix="/hr",
@@ -16,13 +17,16 @@ router = APIRouter(
 # ============================================================
 @router.post(
     "/events",
-    dependencies=[Depends(require_permission("hhrre", "create"))]
+    dependencies=[Depends(require_permission("hhrr", "create"))]
 )
-def create_hr_event(payload: dict, conn=Depends(get_db)):
-
+def create_hr_event(
+    payload: dict,
+    user=Depends(get_current_user),
+    conn=Depends(get_db)
+):
     required = ["empleado_id", "event_type", "event_date", "payload"]
     if not all(k in payload for k in required):
-        raise HTTPException(400, "Datos incompletos")
+        raise HTTPException(status_code=400, detail="Datos incompletos")
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
@@ -47,12 +51,11 @@ def create_hr_event(payload: dict, conn=Depends(get_db)):
         payload.get("period_month"),
         payload.get("status", "PENDING"),
         payload["payload"],
-        payload.get("created_by")
+        user["usuario"]          -- 🔒 nunca confiar en frontend
     ))
 
     row = cur.fetchone()
     conn.commit()
-
     return row
 
 
@@ -62,7 +65,7 @@ def create_hr_event(payload: dict, conn=Depends(get_db)):
 # ============================================================
 @router.get(
     "/events",
-    dependencies=[Depends(require_permission("hhrre", "view"))]
+    dependencies=[Depends(require_permission("hhrr", "view"))]
 )
 def list_hr_events(
     event_type: str | None = None,
@@ -70,7 +73,6 @@ def list_hr_events(
     empleado_id: int | None = None,
     conn=Depends(get_db)
 ):
-
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     query = "SELECT * FROM hr_events WHERE 1=1"
@@ -95,24 +97,24 @@ def list_hr_events(
 
 
 # ============================================================
-# APPROVE / REJECT / PAY / CLOSE EVENT
+# UPDATE EVENT STATUS
 # ACTION: approve
 # ============================================================
 @router.post(
     "/events/{event_id}/status",
-    dependencies=[Depends(require_permission("hhrre", "approve"))]
+    dependencies=[Depends(require_permission("hhrr", "approve"))]
 )
 def update_event_status(
     event_id: int,
     payload: dict,
+    user=Depends(get_current_user),
     conn=Depends(get_db)
 ):
-
     status = payload.get("status")
-    approved_by = payload.get("approved_by")
 
-    if status not in ("APPROVED", "REJECTED", "PAID", "CLOSED"):
-        raise HTTPException(400, "Estado inválido")
+    VALID_STATUSES = {"APPROVED", "REJECTED", "PAID", "CLOSED"}
+    if status not in VALID_STATUSES:
+        raise HTTPException(status_code=400, detail="Estado inválido")
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
@@ -123,12 +125,16 @@ def update_event_status(
             approved_at = now()
         WHERE id = %s
         RETURNING *
-    """, (status, approved_by, event_id))
+    """, (
+        status,
+        user["usuario"],     -- 🔒 RBAC + identidad real
+        event_id
+    ))
 
     row = cur.fetchone()
     conn.commit()
 
     if not row:
-        raise HTTPException(404, "Evento no encontrado")
+        raise HTTPException(status_code=404, detail="Evento no encontrado")
 
     return row
