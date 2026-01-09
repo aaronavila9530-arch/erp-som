@@ -11,51 +11,51 @@ PERMISSIONS = [
     # =====================================================
     # MASTER — ACCESO TOTAL
     # =====================================================
-    ("master", "hhrre", "*", True),
+    ("master", "hhrr", "*", True),
 
     # =====================================================
     # ADMIN / GERENCIA — OPERACIÓN COMPLETA
     # =====================================================
-    ("admin", "hhrre", "view", True),
-    ("admin", "hhrre", "create", True),
-    ("admin", "hhrre", "edit", True),
-    ("admin", "hhrre", "approve", True),
-    ("admin", "hhrre", "payroll", True),
-    ("admin", "hhrre", "generate", True),
-    ("admin", "hhrre", "reports", True),
-    ("admin", "hhrre", "ot_log", True),
-    ("admin", "hhrre", "delete", True),
-    ("admin", "hhrre", "close_hr_module", False),
+    ("admin", "hhrr", "view", True),
+    ("admin", "hhrr", "create", True),
+    ("admin", "hhrr", "edit", True),
+    ("admin", "hhrr", "approve", True),
+    ("admin", "hhrr", "payroll", True),
+    ("admin", "hhrr", "generate", True),
+    ("admin", "hhrr", "reports", True),
+    ("admin", "hhrr", "ot_log", True),
+    ("admin", "hhrr", "delete", True),
+    ("admin", "hhrr", "close_hr_module", False),
 
     # =====================================================
     # USER / EMPLOYEE — AUTOGESTIÓN
     # =====================================================
-    ("user", "hhrre", "view", True),
-    ("user", "hhrre", "create", True),      # solicitudes / OT
-    ("user", "hhrre", "edit", True),        # antes de aprobar
-    ("user", "hhrre", "ot_log", True),
+    ("user", "hhrr", "view", True),
+    ("user", "hhrr", "create", True),      # solicitudes / OT
+    ("user", "hhrr", "edit", True),        # antes de aprobar
+    ("user", "hhrr", "ot_log", True),
 
-    ("user", "hhrre", "approve", False),
-    ("user", "hhrre", "payroll", False),
-    ("user", "hhrre", "generate", False),
-    ("user", "hhrre", "reports", False),
-    ("user", "hhrre", "delete", False),
-    ("user", "hhrre", "close_hr_module", False),
+    ("user", "hhrr", "approve", False),
+    ("user", "hhrr", "payroll", False),
+    ("user", "hhrr", "generate", False),
+    ("user", "hhrr", "reports", False),
+    ("user", "hhrr", "delete", False),
+    ("user", "hhrr", "close_hr_module", False),
 
     # =====================================================
     # CONSULTOR — LECTURA + AUDITORÍA
     # =====================================================
-    ("consultor", "hhrre", "view", True),
-    ("consultor", "hhrre", "reports", True),
-    ("consultor", "hhrre", "payroll", True),     # revisión
-    ("consultor", "hhrre", "generate", True),    # colillas auditadas
+    ("consultor", "hhrr", "view", True),
+    ("consultor", "hhrr", "reports", True),
+    ("consultor", "hhrr", "payroll", True),     # revisión
+    ("consultor", "hhrr", "generate", True),    # colillas auditadas
 
-    ("consultor", "hhrre", "create", False),
-    ("consultor", "hhrre", "edit", False),
-    ("consultor", "hhrre", "approve", False),
-    ("consultor", "hhrre", "ot_log", False),
-    ("consultor", "hhrre", "delete", False),
-    ("consultor", "hhrre", "close_hr_module", False),
+    ("consultor", "hhrr", "create", False),
+    ("consultor", "hhrr", "edit", False),
+    ("consultor", "hhrr", "approve", False),
+    ("consultor", "hhrr", "ot_log", False),
+    ("consultor", "hhrr", "delete", False),
+    ("consultor", "hhrr", "close_hr_module", False),
 ]
 
 
