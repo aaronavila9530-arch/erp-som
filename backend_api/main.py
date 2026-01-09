@@ -44,6 +44,10 @@ from routers.exchange_rate import router as exchange_rate_router
 
 from routers.password_reset import router as password_reset_router
 
+# HHRR
+from routers import hr
+from routers import hr_ot_log
+
 
 # ============================================================
 # CONFIGURACIÓN FASTAPI
@@ -176,6 +180,9 @@ app.include_router(accounting_lines_router)
 app.include_router(exchange_rate_router)
 
 app.include_router(password_reset_router)
+
+app.include_router(hr.router)
+app.include_router(hr_ot_log.router)
 
 # ============================================================
 # EJECUCIÓN LOCAL

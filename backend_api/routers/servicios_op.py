@@ -397,7 +397,7 @@ def generar_informe(consec: int):
 
         # --------------------------------------------------
         # 2. Obtener último consecutivo
-        #    BASE = 2128 si no hay informes aún
+        #    BASE = 2139 si no hay informes aún
         # --------------------------------------------------
         max_row = database.sql(
             """
@@ -405,7 +405,7 @@ def generar_informe(consec: int):
                 MAX(
                     NULLIF(split_part(num_informe, '-', 1), '')::int
                 ),
-                2128
+                2139
             )
             FROM servicios
             WHERE num_informe IS NOT NULL
