@@ -6,6 +6,7 @@ from database import get_db
 from security.rbac import require_permission
 from security.auth import get_current_user
 
+
 router = APIRouter(
     prefix="/hr/ot-log",
     tags=["HHRR - OT LOG"]
@@ -32,19 +33,31 @@ def create_ot_log(
     ]
 
     if not all(k in data for k in required):
-        raise HTTPException(status_code=400, detail="Datos incompletos para OT LOG")
+        raise HTTPException(
+            status_code=400,
+            detail="Datos incompletos para OT LOG"
+        )
 
     if data["tipo"] not in ("OPERACION", "INFORME"):
-        raise HTTPException(status_code=400, detail="Tipo inválido")
+        raise HTTPException(
+            status_code=400,
+            detail="Tipo inválido"
+        )
 
     try:
         fecha_inicio = datetime.fromisoformat(data["fecha_inicio"])
         fecha_fin = datetime.fromisoformat(data["fecha_fin"])
     except Exception:
-        raise HTTPException(status_code=400, detail="Formato de fecha inválido")
+        raise HTTPException(
+            status_code=400,
+            detail="Formato de fecha inválido"
+        )
 
     if fecha_fin <= fecha_inicio:
-        raise HTTPException(status_code=400, detail="La fecha_fin debe ser mayor a fecha_inicio")
+        raise HTTPException(
+            status_code=400,
+            detail="La fecha_fin debe ser mayor a fecha_inicio"
+        )
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
@@ -62,7 +75,7 @@ def create_ot_log(
         VALUES (%s,%s,%s,%s,%s,%s,%s,now())
         RETURNING *
     """, (
-        user["usuario"],          -- 🔒 identidad real
+        user["usuario"],
         data["tipo"],
         fecha_inicio,
         fecha_fin,
@@ -133,7 +146,6 @@ def delete_ot_log(
 ):
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
-    # 🔒 Opcional: solo el dueño o admin puede borrar
     cur.execute("""
         DELETE FROM hr_ot_log
         WHERE id = %s
@@ -144,6 +156,9 @@ def delete_ot_log(
     conn.commit()
 
     if not row:
-        raise HTTPException(status_code=404, detail="Registro OT no encontrado")
+        raise HTTPException(
+            status_code=404,
+            detail="Registro OT no encontrado"
+        )
 
     return {"deleted_id": row["id"]}

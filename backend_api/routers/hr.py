@@ -6,6 +6,7 @@ from database import get_db
 from security.rbac import require_permission
 from security.auth import get_current_user
 
+
 router = APIRouter(
     prefix="/hr",
     tags=["HHRR"]
@@ -51,7 +52,7 @@ def create_hr_event(
         payload.get("period_month"),
         payload.get("status", "PENDING"),
         payload["payload"],
-        user["usuario"]          -- 🔒 nunca confiar en frontend
+        user["usuario"]
     ))
 
     row = cur.fetchone()
@@ -127,7 +128,7 @@ def update_event_status(
         RETURNING *
     """, (
         status,
-        user["usuario"],     -- 🔒 RBAC + identidad real
+        user["usuario"],
         event_id
     ))
 
