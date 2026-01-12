@@ -21,13 +21,15 @@ def require_permission(module: str, action: str):
         if not rol:
             raise HTTPException(401, "Rol no disponible para RBAC")
 
-        rol = rol.strip().upper()      # 🔑 NORMALIZAR AQUÍ
-        module = module.strip().lower()
+        # 🔑 NORMALIZAR SIN PISAR VARIABLES EXTERNAS
+        role_code = rol.strip().upper()
+        module_code = module.strip().lower()
+        action_code = action.strip()
 
         # =========================================
-        # MASTER BYPASS TOTAL
+        # MASTER → ACCESO TOTAL
         # =========================================
-        if rol == "MASTER":
+        if role_code == "MASTER":
             return True
 
         cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -42,10 +44,10 @@ def require_permission(module: str, action: str):
               CASE WHEN action = %s THEN 1 ELSE 2 END
             LIMIT 1
         """, (
-            rol,
-            module,
-            action,
-            action
+            role_code,
+            module_code,
+            action_code,
+            action_code
         ))
 
         perm = cur.fetchone()
