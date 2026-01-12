@@ -19,21 +19,36 @@ PERMISSIONS = [
     ("admin", "hhrr", "view", True),
     ("admin", "hhrr", "create", True),
     ("admin", "hhrr", "edit", True),
-    ("admin", "hhrr", "approve", True),
+    ("admin", "hhrr", "delete", True),
+
+    # --- Payroll / RRHH ---
     ("admin", "hhrr", "payroll", True),
     ("admin", "hhrr", "generate", True),
     ("admin", "hhrr", "reports", True),
-    ("admin", "hhrr", "ot_log", True),
-    ("admin", "hhrr", "delete", True),
+
+    # --- Registro de Horas ---
+    ("admin", "hhrr", "ot_log", True),           # acceso general
+    ("admin", "hhrr", "ot_log_view_all", True),  # ver horas de todos
+    ("admin", "hhrr", "ot_log_status", True),    # aprobar / rechazar
+    ("admin", "hhrr", "ot_log_export", True),    # exportar Excel / CSV
+
+    # --- Aprobaciones ---
+    ("admin", "hhrr", "approve", True),
+
     ("admin", "hhrr", "close_hr_module", False),
+
 
     # =====================================================
     # USER / EMPLOYEE — AUTOGESTIÓN
     # =====================================================
     ("user", "hhrr", "view", True),
-    ("user", "hhrr", "create", True),      # solicitudes / OT
+    ("user", "hhrr", "create", True),      # solicitudes / registro de horas
     ("user", "hhrr", "edit", True),        # antes de aprobar
-    ("user", "hhrr", "ot_log", True),
+    ("user", "hhrr", "ot_log", True),      # solo lo propio
+
+    ("user", "hhrr", "ot_log_view_all", False),
+    ("user", "hhrr", "ot_log_status", False),
+    ("user", "hhrr", "ot_log_export", False),
 
     ("user", "hhrr", "approve", False),
     ("user", "hhrr", "payroll", False),
@@ -42,18 +57,23 @@ PERMISSIONS = [
     ("user", "hhrr", "delete", False),
     ("user", "hhrr", "close_hr_module", False),
 
+
     # =====================================================
-    # CONSULTOR — LECTURA + AUDITORÍA
+    # CONSULTOR — LECTURA / AUDITORÍA
     # =====================================================
     ("consultor", "hhrr", "view", True),
     ("consultor", "hhrr", "reports", True),
-    ("consultor", "hhrr", "payroll", True),     # revisión
-    ("consultor", "hhrr", "generate", True),    # colillas auditadas
+    ("consultor", "hhrr", "payroll", True),
+    ("consultor", "hhrr", "generate", True),
+
+    ("consultor", "hhrr", "ot_log", True),          # lectura
+    ("consultor", "hhrr", "ot_log_view_all", True), # ver todos
+    ("consultor", "hhrr", "ot_log_export", True),   # exportar
 
     ("consultor", "hhrr", "create", False),
     ("consultor", "hhrr", "edit", False),
     ("consultor", "hhrr", "approve", False),
-    ("consultor", "hhrr", "ot_log", False),
+    ("consultor", "hhrr", "ot_log_status", False),
     ("consultor", "hhrr", "delete", False),
     ("consultor", "hhrr", "close_hr_module", False),
 ]
@@ -77,7 +97,7 @@ def main():
     cur.close()
     conn.close()
 
-    print("✅ Permisos HHRR insertados correctamente.")
+    print("✅ Permisos HHRR insertados / actualizados correctamente.")
 
 
 if __name__ == "__main__":
