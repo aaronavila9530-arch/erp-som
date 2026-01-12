@@ -17,17 +17,25 @@ router = APIRouter(
 # ============================================================
 
 def _normalize_rol(user: dict, conn) -> str:
+    """
+    NORMALIZA el rol SIEMPRE antes de usarlo.
+    Esto garantiza que ADMIN / MASTER no tengan bloqueos por RBAC.
+    """
     rol = (user.get("rol") or "").strip().lower()
     if rol:
+        user["rol"] = rol   # 🔑 CLAVE: corregimos el user EN SITIO
         return rol
 
+    # Fallback extremo (no debería pasar)
     cur = conn.cursor(cursor_factory=RealDictCursor)
     cur.execute(
         "SELECT rol FROM usuarios WHERE usuario = %s LIMIT 1",
         (user["usuario"],)
     )
     row = cur.fetchone()
-    return (row["rol"] or "").lower() if row else ""
+    rol_db = (row["rol"] or "").lower() if row else ""
+    user["rol"] = rol_db
+    return rol_db
 
 
 def _get_usuario_nombre_apellido(user: dict, conn) -> tuple[str, str]:
@@ -143,6 +151,8 @@ def create_ot_log(
     user=Depends(get_current_user),
     conn=Depends(get_db)
 ):
+    _normalize_rol(user, conn)
+
     for k in ("tipo", "fecha_inicio", "fecha_fin"):
         if k not in data:
             raise HTTPException(400, "Datos incompletos")
@@ -212,11 +222,11 @@ def list_ot_logs(
     user=Depends(get_current_user),
     conn=Depends(get_db)
 ):
-    page_size = min(max(page_size, 1), 200)
-    offset = (page - 1) * page_size
-
     rol = _normalize_rol(user, conn)
     is_admin = rol in ("admin", "master")
+
+    page_size = min(max(page_size, 1), 200)
+    offset = (page - 1) * page_size
 
     where = ["1=1"]
     params = []
@@ -307,8 +317,6 @@ def delete_ot_log(
 
 # ============================================================
 # UPDATE OT LOG STATUS (APROBAR / RECHAZAR)
-# ACTION: approve_reject
-# - SOLO admin / master
 # ============================================================
 @router.put(
     "/{log_id}/estado",
@@ -320,6 +328,8 @@ def update_ot_log_estado(
     user=Depends(get_current_user),
     conn=Depends(get_db)
 ):
+    _normalize_rol(user, conn)
+
     estado = (payload.get("estado") or "").strip().upper()
 
     if estado not in ("PENDIENTE", "APROBADO", "RECHAZADO"):
@@ -330,22 +340,16 @@ def update_ot_log_estado(
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
-    # Verificar que existe
     cur.execute("""
-        SELECT id, estado
+        SELECT id
         FROM hr_ot_log
         WHERE id = %s
         LIMIT 1
     """, (log_id,))
 
-    row = cur.fetchone()
-    if not row:
-        raise HTTPException(
-            status_code=404,
-            detail="Registro de horas no encontrado"
-        )
+    if not cur.fetchone():
+        raise HTTPException(404, "Registro de horas no encontrado")
 
-    # Actualizar estado
     cur.execute("""
         UPDATE hr_ot_log
         SET estado = %s
@@ -357,4 +361,3 @@ def update_ot_log_estado(
     conn.commit()
 
     return updated
-
