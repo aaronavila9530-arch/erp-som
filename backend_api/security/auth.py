@@ -6,17 +6,26 @@ from database import get_db
 
 def get_current_user(
     x_user: str = Header(None, alias="X-User"),
+    x_role: str = Header(None, alias="X-Role"),
     conn=Depends(get_db)
 ):
     """
-    Obtiene el usuario autenticado desde el header X-User
-    y lo valida contra la tabla usuarios.
+    Obtiene el usuario autenticado desde headers:
+    - X-User
+    - X-Role
+    y valida el usuario contra la tabla usuarios.
     """
 
     if not x_user:
         raise HTTPException(
             status_code=401,
             detail="Usuario no autenticado (X-User requerido)"
+        )
+
+    if not x_role:
+        raise HTTPException(
+            status_code=401,
+            detail="Rol no especificado (X-Role requerido)"
         )
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -41,5 +50,8 @@ def get_current_user(
             status_code=403,
             detail="Usuario inactivo"
         )
+
+    # 🔑 CLAVE: agregar el rol para RBAC
+    user["rol"] = x_role.upper()
 
     return user
