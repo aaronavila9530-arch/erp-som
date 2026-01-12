@@ -185,9 +185,10 @@ def create_ot_log(
             duracion_horas,
             buque,
             comentario,
+            estado,
             created_at
         )
-        VALUES (%s,%s,%s,%s,%s,%s,%s,now())
+        VALUES (%s,%s,%s,%s,%s,%s,%s,'PENDIENTE',now())
         RETURNING *
         """,
         (
@@ -200,6 +201,7 @@ def create_ot_log(
             data.get("comentario")
         )
     )
+
     row = cur.fetchone()
     conn.commit()
     return row
