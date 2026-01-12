@@ -1,83 +1,103 @@
-import psycopg2
+"""
+RBAC — CLIENT SIDE (ERP-SOM)
+Módulo: FINANZAS
 
-DATABASE_URL = (
-    "postgresql://postgres:"
-    "LjjyuIUsTSCdiwPVHSSwtIYPOsRQytGX"
-    "@shortline.proxy.rlwy.net:50018/railway"
-)
+⚠️ IMPORTANTE:
+Este archivo NO consulta PostgreSQL.
+La validación REAL de permisos se hace en el BACKEND (FastAPI).
 
-PERMISSIONS = [
-
-    # =====================================================
-    # MASTER — ACCESO TOTAL
-    # =====================================================
-    ("master", "finanzas", "*", True),
-
-    # =====================================================
-    # ADMIN / USER — OPERACIÓN COMPLETA (SIN CIERRES)
-    # =====================================================
-    ("admin", "finanzas", "view", True),
-    ("admin", "finanzas", "create", True),
-    ("admin", "finanzas", "edit", True),
-    ("admin", "finanzas", "apply", True),
-    ("admin", "finanzas", "reverse", True),
-    ("admin", "finanzas", "sync", True),
-    ("admin", "finanzas", "generate", True),
-    ("admin", "finanzas", "reports", True),
-    ("admin", "finanzas", "delete", False),
-    ("admin", "finanzas", "close_period", False),
-    ("admin", "finanzas", "close_financial_module", False),
-
-    ("user", "finanzas", "view", True),
-    ("user", "finanzas", "create", True),
-    ("user", "finanzas", "edit", True),
-    ("user", "finanzas", "apply", True),
-    ("user", "finanzas", "reverse", True),
-    ("user", "finanzas", "sync", True),
-    ("user", "finanzas", "generate", True),
-    ("user", "finanzas", "reports", True),
-    ("user", "finanzas", "delete", False),
-    ("user", "finanzas", "close_period", False),
-    ("user", "finanzas", "close_financial_module", False),
-
-    # =====================================================
-    # CONSULTOR — LECTURA + REPORTES + ACCOUNTING
-    # =====================================================
-    ("consultor", "finanzas", "view", True),
-    ("consultor", "finanzas", "create", True),       # accounting
-    ("consultor", "finanzas", "edit", True),         # accounting
-    ("consultor", "finanzas", "reverse", True),      # accounting
-    ("consultor", "finanzas", "generate", True),     # informes
-    ("consultor", "finanzas", "reports", True),      # reportes
-
-    ("consultor", "finanzas", "apply", False),
-    ("consultor", "finanzas", "sync", False),
-    ("consultor", "finanzas", "delete", False),
-    ("consultor", "finanzas", "close_period", False),
-    ("consultor", "finanzas", "close_financial_module", False),
-]
+Aquí se usa SOLO para:
+• Mostrar / ocultar opciones de UI
+• Evitar errores de conexión
+• UX consistente
+"""
 
 
-def main():
-    conn = psycopg2.connect(DATABASE_URL)
-    cur = conn.cursor()
+def has_permission(role_code: str, module: str, action: str) -> bool:
+    """
+    Control visual de permisos para FINANZAS (cliente Tkinter).
 
-    print("🔐 Insertando permisos RBAC — FINANZAS")
+    El backend sigue siendo la autoridad final.
+    """
 
-    for role, module, action, allowed in PERMISSIONS:
-        cur.execute("""
-            INSERT INTO rbac_permissions (role_code, module, action, allowed)
-            VALUES (%s, %s, %s, %s)
-            ON CONFLICT (role_code, module, action)
-            DO UPDATE SET allowed = EXCLUDED.allowed
-        """, (role, module, action, allowed))
+    role = (role_code or "").lower()
+    module = (module or "").lower()
+    action = (action or "").lower()
 
-    conn.commit()
-    cur.close()
-    conn.close()
+    # ==============================
+    # MASTER — TODO
+    # ==============================
+    if role == "master":
+        return True
 
-    print("✅ Permisos de Finanzas insertados correctamente.")
+    # ==============================
+    # ADMIN — OPERACIÓN COMPLETA
+    # ==============================
+    if role == "admin":
+        if action in (
+            "view",
+            "create",
+            "edit",
+            "apply",
+            "reverse",
+            "sync",
+            "generate",
+            "reports",
+        ):
+            return True
 
+        # Bloqueos explícitos
+        if action in (
+            "delete",
+            "close_period",
+            "close_financial_module",
+        ):
+            return False
 
-if __name__ == "__main__":
-    main()
+        return False
+
+    # ==============================
+    # USER — OPERACIÓN NORMAL
+    # ==============================
+    if role == "user":
+        if action in (
+            "view",
+            "create",
+            "edit",
+            "apply",
+            "reverse",
+            "sync",
+            "generate",
+            "reports",
+        ):
+            return True
+
+        if action in (
+            "delete",
+            "close_period",
+            "close_financial_module",
+        ):
+            return False
+
+        return False
+
+    # ==============================
+    # CONSULTOR — CONTABLE / REPORTES
+    # ==============================
+    if role == "consultor":
+        if action in (
+            "view",
+            "create",
+            "edit",
+            "reverse",
+            "generate",
+            "reports",
+        ):
+            return True
+
+        return False
+
+    # ==============================
+    # ROL DESCONOCIDO
+    # ==============================
+    return False

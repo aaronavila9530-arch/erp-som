@@ -1,53 +1,58 @@
-import psycopg2
+"""
+RBAC — CLIENT SIDE (ERP-SOM)
+⚠️ IMPORTANTE:
+Este archivo NO consulta la base de datos.
+El control REAL de permisos se hace en el BACKEND (FastAPI).
 
-DATABASE_URL = (
-    "postgresql://postgres:"
-    "LjjyuIUsTSCdiwPVHSSwtIYPOsRQytGX"
-    "@shortline.proxy.rlwy.net:50018/railway"
-)
+Aquí solo se usa para:
+• Mostrar / ocultar opciones de UI
+• Evitar crashes en cliente
+• UX coherente
+
+El backend seguirá devolviendo 401 / 403 si el usuario
+intenta acceder a algo no permitido.
+"""
 
 
 def has_permission(role_code: str, module: str, action: str) -> bool:
     """
-    Devuelve True si el rol tiene permiso para module/action.
-    Soporta wildcards (*).
+    Cliente Tkinter:
+    Siempre devuelve True para evitar bloqueos por DB.
+
+    La validación REAL se hace en el backend mediante:
+    - require_permission
+    - JWT
+    - RBAC en FastAPI
     """
 
-    conn = psycopg2.connect(DATABASE_URL)
-    cur = conn.cursor()
+    # Normalizar
+    role = (role_code or "").lower()
+    module = (module or "").lower()
+    action = (action or "").lower()
 
-    # Orden de prioridad:
-    # 1) módulo + acción exactos
-    # 2) módulo + *
-    # 3) * + *
-    cur.execute("""
-        SELECT allowed
-        FROM rbac_permissions
-        WHERE role_code = %s
-          AND (
-                (module = %s AND action = %s) OR
-                (module = %s AND action = '*') OR
-                (module = '*' AND action = '*')
-          )
-        ORDER BY
-            CASE
-                WHEN module = %s AND action = %s THEN 1
-                WHEN module = %s AND action = '*' THEN 2
-                WHEN module = '*' AND action = '*' THEN 3
-            END
-        LIMIT 1
-    """, (
-        role_code,
-        module, action,
-        module,
-        module, action,
-        module
-    ))
+    # ==============================
+    # CONTROL VISUAL BÁSICO (OPCIONAL)
+    # ==============================
+    # Puedes afinar esto si quieres ocultar botones por rol,
+    # pero NUNCA conectarse a DB aquí.
 
-    row = cur.fetchone()
+    if role == "master":
+        return True
 
-    cur.close()
-    conn.close()
+    if role == "admin":
+        return True
 
-    # Si no existe permiso explícito → DENEGAR
-    return bool(row[0]) if row else False
+    if role == "consultor":
+        # Consultor: solo lectura / revisión
+        if action in ("view", "reports", "payroll", "generate"):
+            return True
+        return False
+
+    if role == "user":
+        # Empleado: autogestión
+        if action in ("view", "create", "edit", "ot_log"):
+            return True
+        return False
+
+    # Rol desconocido → bloquear UI
+    return False

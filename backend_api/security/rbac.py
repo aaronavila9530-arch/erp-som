@@ -15,6 +15,22 @@ def require_permission(module: str, action: str):
         user=Depends(get_current_user),
         conn=Depends(get_db)
     ):
+        # -----------------------------------------
+        # VALIDACIÓN DEFENSIVA (EVITA 500)
+        # -----------------------------------------
+        if not user:
+            raise HTTPException(
+                status_code=401,
+                detail="Usuario no autenticado"
+            )
+
+        rol = user.get("rol")
+        if not rol:
+            raise HTTPException(
+                status_code=401,
+                detail="Rol no disponible para RBAC"
+            )
+
         cur = conn.cursor(cursor_factory=RealDictCursor)
 
         cur.execute("""
@@ -26,7 +42,7 @@ def require_permission(module: str, action: str):
             ORDER BY action DESC
             LIMIT 1
         """, (
-            user["rol"],
+            rol,       # ← YA VALIDADO
             module,
             action
         ))
