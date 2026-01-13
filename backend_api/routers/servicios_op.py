@@ -123,6 +123,8 @@ def listar_filtros_servicios():
     }
 
 
+from datetime import datetime
+
 # ============================================================
 # LISTAR — PAGINADO (CON FILTROS AÑO / STATUS / SURVEYOR)
 # GET /servicios
@@ -136,6 +138,15 @@ def listar_servicios(
     surveyor: str | None = None
 ):
     offset = (page - 1) * page_size
+
+    # --------------------------------------------------------
+    # NORMALIZAR INPUTS (blindaje contra strings vacíos)
+    # --------------------------------------------------------
+    if isinstance(status, str) and status.strip() == "":
+        status = None
+
+    if isinstance(surveyor, str) and surveyor.strip() == "":
+        surveyor = None
 
     # --------------------------------------------------------
     # DEFAULT: si NO hay filtros → año en curso
@@ -232,6 +243,7 @@ def listar_servicios(
         "total": total,
         "data": data
     }
+
 
 # ============================================================
 # GET POR CONSEC
