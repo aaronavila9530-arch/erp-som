@@ -279,50 +279,31 @@ def postear_planilla(
 ):
     cur = conn.cursor()
 
-    # --------------------------------------------------------
-    # CONSTRUIR PDF PATH EN LÍNEA (NO RUTA LOCAL)
-    # --------------------------------------------------------
     usuario = payload["usuario"]
     year = payload["year"]
     month = payload["month"]
 
     pdf_filename = f"COLILLA_{usuario}_{year}_{month}.pdf"
 
-    # Ruta lógica / URL servida por FastAPI
     pdf_path_online = f"/hr/payroll/files/{year}/{month}/{pdf_filename}"
 
     # ========================================================
-    # CREAR DIRECTORIO FÍSICO
+    # VALIDAR QUE EL PDF REAL YA EXISTA
     # ========================================================
-    dir_path = os.path.join(
+    file_path = os.path.join(
         BASE_DIR,
         "storage",
         "payroll",
         str(year),
-        f"{int(month):02d}"
+        f"{int(month):02d}",
+        pdf_filename
     )
 
-    os.makedirs(dir_path, exist_ok=True)
-
-    file_path = os.path.join(dir_path, pdf_filename)
-
-    # ========================================================
-    # GENERAR PDF FÍSICO (BÁSICO / FUNCIONAL)
-    # ========================================================
-    from reportlab.lib.pagesizes import LETTER
-    from reportlab.pdfgen import canvas
-
-    c = canvas.Canvas(file_path, pagesize=LETTER)
-    c.setFont("Helvetica-Bold", 12)
-    c.drawString(50, 750, "COLILLA DE PAGO")
-
-    c.setFont("Helvetica", 10)
-    c.drawString(50, 720, f"Usuario: {usuario}")
-    c.drawString(50, 700, f"Periodo: {month}/{year}")
-    c.drawString(50, 680, f"Salario neto: {payload['salario_neto']}")
-
-    c.showPage()
-    c.save()
+    if not os.path.isfile(file_path):
+        raise HTTPException(
+            status_code=400,
+            detail="La colilla PDF no existe. Debe generarse antes de postear la planilla."
+        )
 
     # --------------------------------------------------------
     # INSERT / UPDATE
