@@ -83,13 +83,43 @@ def add_servicio(data: ServicioCreate):
 
 
 # ============================================================
-# LISTAR — PAGINADO
+# LISTAR — PAGINADO (CON FILTROS AÑO / STATUS)
 # ============================================================
 @router.get("/")
-def listar_servicios(page: int = 1, page_size: int = 50):
+def listar_servicios(
+    page: int = 1,
+    page_size: int = 50,
+    year: int | None = None,
+    status: str | None = None
+):
     offset = (page - 1) * page_size
+    current_year = datetime.now().year
 
-    rows = database.sql(f"""
+    # --------------------------------------------------------
+    # CONDICIONES DINÁMICAS
+    # --------------------------------------------------------
+    conditions = []
+    params = {}
+
+    # AÑO (desde num_informe)
+    if year is None:
+        conditions.append("RIGHT(num_informe, 4) = %(current_year)s")
+        params["current_year"] = str(current_year)
+    else:
+        conditions.append("RIGHT(num_informe, 4) = %(year)s")
+        params["year"] = str(year)
+
+    # STATUS
+    if status and status.upper() != "TODOS":
+        conditions.append("estado = %(estado)s")
+        params["estado"] = status
+
+    where_sql = ""
+    if conditions:
+        where_sql = "WHERE " + " AND ".join(conditions)
+
+    rows = database.sql(
+        f"""
         SELECT
             consec, tipo, estado, num_informe,
             buque_contenedor, cliente, contacto, detalle,
@@ -101,11 +131,19 @@ def listar_servicios(page: int = 1, page_size: int = 50):
             terminos_pago, fecha_vencimiento, dias_vencido,
             razon_cancelacion, comentario_cancelacion
         FROM servicios
+        {where_sql}
         ORDER BY consec DESC
         LIMIT {page_size} OFFSET {offset}
-    """, fetch=True)
+        """,
+        params,
+        fetch=True
+    )
 
-    total = database.sql("SELECT COUNT(*) FROM servicios", fetch=True)[0][0]
+    total = database.sql(
+        f"SELECT COUNT(*) FROM servicios {where_sql}",
+        params,
+        fetch=True
+    )[0][0]
 
     columnas = [
         "consec", "tipo", "estado", "num_informe",
@@ -125,7 +163,6 @@ def listar_servicios(page: int = 1, page_size: int = 50):
         data.append(item)
 
     return {"total": total, "data": data}
-
 
 # ============================================================
 # GET POR CONSEC
