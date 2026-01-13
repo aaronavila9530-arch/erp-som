@@ -359,8 +359,7 @@ def get_payroll_pdf(
 
 
 # ============================================================
-# LISTAR COLILLAS DE PAGO (PAGINADO + FILTROS)
-# GET /hr/payroll/payslips
+# LISTAR COLILLAS DE PAGO
 # ============================================================
 @router.get("/payslips")
 def listar_payslips(
@@ -371,23 +370,11 @@ def listar_payslips(
     current_user=Depends(get_current_user),
     conn=Depends(get_db)
 ):
-    """
-    Reglas de acceso:
-    - employee → SOLO sus colillas
-    - admin / master → TODAS
-
-    Filtros opcionales:
-    - year  (desde creado_en)
-    - month (desde creado_en)
-    """
 
     offset = (page - 1) * page_size
     conditions = []
     params = {}
 
-    # =========================================================
-    # SEGURIDAD POR ROL
-    # =========================================================
     rol = (current_user.get("rol") or "").lower()
     usuario = current_user.get("usuario")
 
@@ -395,32 +382,20 @@ def listar_payslips(
         conditions.append("usuario = %(usuario)s")
         params["usuario"] = usuario
 
-    # =========================================================
-    # FILTRO AÑO
-    # =========================================================
     if year is not None:
-        conditions.append("EXTRACT(YEAR FROM creado_en) = %(year)s")
+        conditions.append("year = %(year)s")
         params["year"] = year
 
-    # =========================================================
-    # FILTRO MES
-    # =========================================================
     if month is not None:
-        conditions.append("EXTRACT(MONTH FROM creado_en) = %(month)s")
+        conditions.append("month = %(month)s")
         params["month"] = month
 
-    # =========================================================
-    # WHERE DINÁMICO
-    # =========================================================
     where_sql = ""
     if conditions:
         where_sql = "WHERE " + " AND ".join(conditions)
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
-    # =========================================================
-    # QUERY PRINCIPAL
-    # =========================================================
     cur.execute(
         f"""
         SELECT
@@ -434,27 +409,16 @@ def listar_payslips(
             creado_en
         FROM payroll_runs
         {where_sql}
-        ORDER BY creado_en DESC
+        ORDER BY year DESC, month DESC
         LIMIT %(limit)s OFFSET %(offset)s
         """,
-        {
-            **params,
-            "limit": page_size,
-            "offset": offset
-        }
+        {**params, "limit": page_size, "offset": offset}
     )
 
     rows = cur.fetchall()
 
-    # =========================================================
-    # TOTAL
-    # =========================================================
     cur.execute(
-        f"""
-        SELECT COUNT(*)
-        FROM payroll_runs
-        {where_sql}
-        """,
+        f"SELECT COUNT(*) FROM payroll_runs {where_sql}",
         params
     )
 
@@ -467,10 +431,8 @@ def listar_payslips(
         "data": rows
     }
 
-
 # ============================================================
-# DESCARGAR COLILLA PDF
-# GET /hr/payroll/files/{year}/{month}/{filename}
+# DESCARGAR COLILLA PDF (SEGURO)
 # ============================================================
 @router.get(
     "/files/{year}/{month}/{filename}",
@@ -479,24 +441,25 @@ def listar_payslips(
 def get_payroll_pdf(
     year: int,
     month: int,
-    filename: str
+    filename: str,
+    current_user=Depends(get_current_user)
 ):
-    """
-    Descarga segura de colilla de pago (PDF).
-    """
+
+    # Normalizar mes a 2 dígitos
+    month_str = f"{int(month):02d}"
 
     file_path = os.path.join(
         "storage",
         "payroll",
         str(year),
-        f"{int(month):02d}",
+        month_str,
         filename
     )
 
-    if not os.path.exists(file_path):
+    if not os.path.isfile(file_path):
         raise HTTPException(
             status_code=404,
-            detail="Archivo de colilla no encontrado"
+            detail="Archivo de colilla no encontrado en el servidor"
         )
 
     return FileResponse(
