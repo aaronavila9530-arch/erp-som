@@ -260,25 +260,89 @@ def postear_planilla(
 ):
     cur = conn.cursor()
 
+    # --------------------------------------------------------
+    # CONSTRUIR PDF PATH EN LÍNEA (NO RUTA LOCAL)
+    # --------------------------------------------------------
+    usuario = payload["usuario"]
+    year = payload["year"]
+    month = payload["month"]
+
+    pdf_filename = f"COLILLA_{usuario}_{year}_{month}.pdf"
+
+    # Ruta lógica / URL servida por FastAPI
+    pdf_path_online = f"/hr/payroll/files/{year}/{month}/{pdf_filename}"
+
+    # --------------------------------------------------------
+    # INSERT / UPDATE
+    # --------------------------------------------------------
     cur.execute("""
         INSERT INTO payroll_runs (
             usuario,
             year,
             month,
             salario_neto,
+            pdf_path,
             generado_por
         )
-        VALUES (%s,%s,%s,%s,%s)
+        VALUES (%s, %s, %s, %s, %s, %s)
         ON CONFLICT (usuario, year, month)
-        DO NOTHING
+        DO UPDATE SET
+            salario_neto = EXCLUDED.salario_neto,
+            pdf_path = EXCLUDED.pdf_path,
+            generado_por = EXCLUDED.generado_por
     """, (
-        payload["usuario"],
-        payload["year"],
-        payload["month"],
+        usuario,
+        year,
+        month,
         payload["salario_neto"],
+        pdf_path_online,
         user["usuario"]
     ))
 
     conn.commit()
 
-    return {"status": "OK", "message": "Planilla confirmada"}
+    return {
+        "status": "OK",
+        "message": "Planilla registrada correctamente",
+        "pdf_path": pdf_path_online
+    }
+
+
+# ============================================================
+# DESCARGAR / VER COLILLA PDF
+# GET /hr/payroll/files/{year}/{month}/{filename}
+# ============================================================
+
+@router.get(
+    "/files/{year}/{month}/{filename}",
+    dependencies=[Depends(require_permission("hhrr", "payroll"))]
+)
+def get_payroll_pdf(
+    year: int,
+    month: int,
+    filename: str
+):
+    """
+    Retorna el PDF de la colilla de pago.
+    """
+
+    # Ruta física en el backend
+    file_path = os.path.join(
+        "storage",
+        "payroll",
+        str(year),
+        f"{int(month):02d}",
+        filename
+    )
+
+    if not os.path.exists(file_path):
+        raise HTTPException(
+            status_code=404,
+            detail="Archivo de colilla no encontrado"
+        )
+
+    return FileResponse(
+        file_path,
+        media_type="application/pdf",
+        filename=filename
+    )
