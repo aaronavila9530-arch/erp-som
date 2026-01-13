@@ -12,7 +12,7 @@ router = APIRouter(
 )
 
 # ============================================================
-# CONSTANTES COSTA RICA 2026
+# CONSTANTES COSTA RICA 2026 (NO TOCAR)
 # ============================================================
 
 TRAMOS_RENTA = [
@@ -62,126 +62,173 @@ def calcular_renta(monto: float) -> float:
     return round(impuesto, 2)
 
 # ============================================================
-# PAYROLL ENDPOINT (BLINDADO)
+# 1️⃣ LISTADO BASE PAYROLL (TABLA FIJA)
 # ============================================================
 
 @router.get(
-    "",
+    "/employees",
+    dependencies=[Depends(require_permission("hhrr", "payroll"))]
+)
+def listar_empleados_payroll(
+    user=Depends(get_current_user),
+    conn=Depends(get_db)
+):
+    if user["rol"] not in ("admin", "master"):
+        raise HTTPException(403, "Acceso restringido")
+
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+
+    cur.execute("""
+        SELECT
+            nombre,
+            apellidos,
+            jornada,
+            salario,
+            pago,
+            estado,
+            usuario
+        FROM empleados
+        WHERE estado = 'Activo'
+          AND usuario IS NOT NULL
+        ORDER BY nombre, apellidos
+    """)
+
+    return {
+        "total": cur.rowcount,
+        "data": cur.fetchall()
+    }
+
+# ============================================================
+# 2️⃣ PREVIEW / CÁLCULO PAYROLL (NO GUARDA)
+# ============================================================
+
+@router.get(
+    "/calculate",
     dependencies=[Depends(require_permission("hhrr", "payroll"))]
 )
 def calcular_payroll(
+    usuario: str,
     year: int,
     month: int,
     user=Depends(get_current_user),
     conn=Depends(get_db)
 ):
-    # 🔒 BLINDAJE DURO POR ROL
     if user["rol"] not in ("admin", "master"):
-        raise HTTPException(
-            status_code=403,
-            detail="Acceso restringido a ADMIN / MASTER"
-        )
+        raise HTTPException(403, "Acceso restringido")
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     # --------------------------------------------------------
-    # 1. EMPLEADOS ACTIVOS
+    # EMPLEADO
     # --------------------------------------------------------
     cur.execute("""
         SELECT
-            e.id,
-            e.nombre,
-            e.apellidos,
-            e.salario,
-            e.horas_contratadas
-        FROM empleados e
-        WHERE e.activo = true
-    """)
-    empleados = cur.fetchall()
+            nombre,
+            apellidos,
+            salario,
+            horas_contratadas
+        FROM empleados
+        WHERE usuario = %s
+          AND estado = 'Activo'
+        LIMIT 1
+    """, (usuario,))
 
-    payroll = []
+    emp = cur.fetchone()
+    if not emp:
+        raise HTTPException(404, "Empleado no encontrado")
 
-    for emp in empleados:
+    # --------------------------------------------------------
+    # HORAS APROBADAS DEL MES
+    # --------------------------------------------------------
+    cur.execute("""
+        SELECT COALESCE(SUM(duracion_horas), 0) AS total
+        FROM hr_ot_log
+        WHERE usuario = %s
+          AND estado = 'APROBADO'
+          AND EXTRACT(YEAR FROM fecha_inicio) = %s
+          AND EXTRACT(MONTH FROM fecha_inicio) = %s
+    """, (usuario, year, month))
 
-        # ----------------------------------------------------
-        # 2. MAPEAR EMPLEADO → USUARIO
-        # ----------------------------------------------------
-        cur.execute("""
-            SELECT usuario
-            FROM usuarios
-            WHERE lower(nombre) = lower(%s)
-              AND lower(apellido) = lower(%s)
-            LIMIT 1
-        """, (emp["nombre"], emp["apellidos"]))
+    horas_trabajadas = float(cur.fetchone()["total"] or 0)
 
-        u = cur.fetchone()
-        if not u:
-            continue
+    horas_normales = min(horas_trabajadas, emp["horas_contratadas"])
+    horas_ot = max(horas_trabajadas - emp["horas_contratadas"], 0)
 
-        usuario = u["usuario"]
+    salario_base = float(emp["salario"])
 
-        # ----------------------------------------------------
-        # 3. HORAS APROBADAS DEL MES
-        # ----------------------------------------------------
-        cur.execute("""
-            SELECT COALESCE(SUM(duracion_horas), 0) AS total
-            FROM hr_ot_log
-            WHERE usuario = %s
-              AND estado = 'APROBADO'
-              AND EXTRACT(YEAR FROM fecha_inicio) = %s
-              AND EXTRACT(MONTH FROM fecha_inicio) = %s
-        """, (usuario, year, month))
+    deducciones = sum(
+        salario_base * tasa
+        for tasa in DEDUCCIONES_TRABAJADOR.values()
+    )
 
-        horas_trabajadas = float(cur.fetchone()["total"] or 0)
+    renta = calcular_renta(salario_base)
 
-        horas_normales = min(horas_trabajadas, emp["horas_contratadas"])
-        horas_ot = max(horas_trabajadas - emp["horas_contratadas"], 0)
+    salario_neto = round(
+        salario_base - deducciones - renta, 2
+    )
 
-        salario_base = float(emp["salario"])
-
-        # ----------------------------------------------------
-        # 4. DEDUCCIONES TRABAJADOR
-        # ----------------------------------------------------
-        deducciones = sum(
-            salario_base * tasa
-            for tasa in DEDUCCIONES_TRABAJADOR.values()
-        )
-
-        # ----------------------------------------------------
-        # 5. IMPUESTO RENTA
-        # ----------------------------------------------------
-        renta = calcular_renta(salario_base)
-
-        salario_neto = round(
-            salario_base - deducciones - renta, 2
-        )
-
-        # ----------------------------------------------------
-        # 6. CARGAS PATRONALES
-        # ----------------------------------------------------
-        cargas = sum(
-            salario_base * tasa
-            for tasa in CARGAS_PATRONALES.values()
-        )
-
-        payroll.append({
-            "usuario": usuario,
-            "nombre": emp["nombre"],
-            "apellidos": emp["apellidos"],
-            "horas_contratadas": emp["horas_contratadas"],
-            "horas_trabajadas": round(horas_trabajadas, 2),
-            "horas_ot": round(horas_ot, 2),
-            "salario_base": round(salario_base, 2),
-            "deducciones_trabajador": round(deducciones, 2),
-            "impuesto_renta": renta,
-            "salario_neto": salario_neto,
-            "cargas_patronales": round(cargas, 2),
-            "costo_total_empresa": round(salario_base + cargas, 2)
-        })
+    cargas = sum(
+        salario_base * tasa
+        for tasa in CARGAS_PATRONALES.values()
+    )
 
     return {
+        "usuario": usuario,
+        "nombre": emp["nombre"],
+        "apellidos": emp["apellidos"],
         "year": year,
         "month": month,
-        "total_empleados": len(payroll),
-        "data": payroll
+        "horas_contratadas": emp["horas_contratadas"],
+        "horas_trabajadas": round(horas_trabajadas, 2),
+        "horas_ot": round(horas_ot, 2),
+        "salario_base": round(salario_base, 2),
+        "deducciones_trabajador": round(deducciones, 2),
+        "impuesto_renta": renta,
+        "salario_neto": salario_neto,
+        "cargas_patronales": round(cargas, 2),
+        "costo_total_empresa": round(salario_base + cargas, 2)
     }
+
+# ============================================================
+# 3️⃣ POSTEAR PLANILLA (CONFIRMACIÓN)
+# ============================================================
+
+@router.put(
+    "/post",
+    dependencies=[Depends(require_permission("hhrr", "payroll"))]
+)
+def postear_planilla(
+    payload: dict,
+    user=Depends(get_current_user),
+    conn=Depends(get_db)
+):
+    if user["rol"] not in ("admin", "master"):
+        raise HTTPException(403, "Acceso restringido")
+
+    # ⚠️ Aquí NO recalculamos
+    # Se asume que viene validado desde el preview
+
+    cur = conn.cursor()
+
+    cur.execute("""
+        INSERT INTO payroll_runs (
+            usuario,
+            year,
+            month,
+            salario_neto,
+            generado_por
+        )
+        VALUES (%s,%s,%s,%s,%s)
+        ON CONFLICT (usuario, year, month)
+        DO NOTHING
+    """, (
+        payload["usuario"],
+        payload["year"],
+        payload["month"],
+        payload["salario_neto"],
+        user["usuario"]
+    ))
+
+    conn.commit()
+
+    return {"status": "OK", "message": "Planilla confirmada"}
