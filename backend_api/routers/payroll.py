@@ -93,6 +93,10 @@ def listar_empleados_payroll(conn=Depends(get_db)):
         "data": cur.fetchall()
     }
 
+from fastapi import Query, Depends, HTTPException
+from psycopg2.extras import RealDictCursor
+from datetime import date
+
 # ============================================================
 # 2️⃣ PREVIEW / CÁLCULO PAYROLL (NO GUARDA)
 # ============================================================
@@ -102,9 +106,9 @@ def listar_empleados_payroll(conn=Depends(get_db)):
     dependencies=[Depends(require_permission("hhrr", "payroll"))]
 )
 def calcular_payroll(
-    usuario: str,
-    year: int,
-    month: int,
+    usuario: str = Query(...),
+    year: int = Query(..., ge=2000),
+    month: int = Query(..., ge=1, le=12),
     conn=Depends(get_db)
 ):
     cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -157,6 +161,8 @@ def calcular_payroll(
     emp = cur.fetchone()
     if not emp:
         raise HTTPException(404, "Empleado no encontrado")
+
+    # ⬇️ A PARTIR DE AQUÍ TU LÓGICA SIGUE EXACTAMENTE IGUAL
 
     # --------------------------------------------------------
     # HORAS APROBADAS (OT LOG)
