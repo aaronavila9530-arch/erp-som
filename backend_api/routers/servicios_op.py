@@ -82,6 +82,8 @@ def add_servicio(data: ServicioCreate):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+from datetime import datetime
+
 # ============================================================
 # META — FILTROS DINÁMICOS (A PRUEBA DE COLISIONES)
 # GET /servicios/_meta/filtros
@@ -120,6 +122,7 @@ def listar_filtros_servicios():
         "year": sorted(anios)
     }
 
+
 # ============================================================
 # LISTAR — PAGINADO (CON FILTROS AÑO / STATUS / SURVEYOR)
 # GET /servicios
@@ -133,6 +136,12 @@ def listar_servicios(
     surveyor: str | None = None
 ):
     offset = (page - 1) * page_size
+
+    # --------------------------------------------------------
+    # DEFAULT: si NO hay filtros → año en curso
+    # --------------------------------------------------------
+    if year is None and status is None and surveyor is None:
+        year = datetime.now().year
 
     conditions = []
     params = {}
