@@ -8,6 +8,15 @@ from database import get_db
 from security.auth import get_current_user
 from security.rbac import require_permission
 
+BASE_DIR = os.path.dirname(
+    os.path.dirname(
+        os.path.dirname(
+            os.path.abspath(__file__)
+        )
+    )
+)
+
+
 
 
 router = APIRouter(
@@ -318,44 +327,6 @@ def postear_planilla(
     }
 
 
-# ============================================================
-# DESCARGAR / VER COLILLA PDF
-# GET /hr/payroll/files/{year}/{month}/{filename}
-# ============================================================
-
-@router.get(
-    "/files/{year}/{month}/{filename}",
-    dependencies=[Depends(require_permission("hhrr", "payroll"))]
-)
-def get_payroll_pdf(
-    year: int,
-    month: int,
-    filename: str
-):
-    """
-    Retorna el PDF de la colilla de pago.
-    """
-
-    # Ruta física en el backend
-    file_path = os.path.join(
-        "storage",
-        "payroll",
-        str(year),
-        f"{int(month):02d}",
-        filename
-    )
-
-    if not os.path.exists(file_path):
-        raise HTTPException(
-            status_code=404,
-            detail="Archivo de colilla no encontrado"
-        )
-
-    return FileResponse(
-        file_path,
-        media_type="application/pdf",
-        filename=filename
-    )
 
 
 # ============================================================
@@ -432,8 +403,10 @@ def listar_payslips(
     }
 
 # ============================================================
-# DESCARGAR COLILLA PDF (SEGURO)
+# DESCARGAR COLILLA PDF (ÚNICO Y CORRECTO)
+# GET /hr/payroll/files/{year}/{month}/{filename}
 # ============================================================
+
 @router.get(
     "/files/{year}/{month}/{filename}",
     dependencies=[Depends(require_permission("hhrr", "payroll"))]
@@ -444,11 +417,10 @@ def get_payroll_pdf(
     filename: str,
     current_user=Depends(get_current_user)
 ):
-
-    # Normalizar mes a 2 dígitos
     month_str = f"{int(month):02d}"
 
     file_path = os.path.join(
+        BASE_DIR,
         "storage",
         "payroll",
         str(year),
@@ -459,7 +431,7 @@ def get_payroll_pdf(
     if not os.path.isfile(file_path):
         raise HTTPException(
             status_code=404,
-            detail="Archivo de colilla no encontrado en el servidor"
+            detail=f"Archivo de colilla no encontrado: {filename}"
         )
 
     return FileResponse(
