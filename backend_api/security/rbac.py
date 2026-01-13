@@ -8,7 +8,7 @@ from security.auth import get_current_user
 def require_permission(module: str, action: str):
     """
     Middleware RBAC genérico.
-    ALINEADO con rbac_permissions en minúsculas.
+    ALINEADO con rbac_permissions (minúsculas).
     """
 
     def checker(
@@ -22,14 +22,12 @@ def require_permission(module: str, action: str):
         if not rol:
             raise HTTPException(401, "Rol no disponible para RBAC")
 
-        # 🔑 NORMALIZAR SEGÚN LA BASE DE DATOS REAL
+        # 🔑 NORMALIZACIÓN REAL (SEGÚN DB)
         role_code = rol.strip().lower()
         module_code = module.strip().lower()
         action_code = action.strip()
 
-        # =========================================
-        # MASTER → ACCESO TOTAL
-        # =========================================
+        # MASTER → acceso total
         if role_code == "master":
             return True
 

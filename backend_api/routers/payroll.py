@@ -1,6 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
 from psycopg2.extras import RealDictCursor
-from datetime import date
 
 from database import get_db
 from security.auth import get_current_user
@@ -67,7 +66,7 @@ def calcular_renta(monto: float) -> float:
 
 @router.get(
     "/employees",
-    dependencies=[Depends(require_permission("hhrr", "payroll"))]
+    dependencies=[Depends(require_permission("hhrr", "employees"))]
 )
 def listar_empleados_payroll(
     user=Depends(get_current_user),
@@ -195,7 +194,7 @@ def calcular_payroll(
 
 @router.put(
     "/post",
-    dependencies=[Depends(require_permission("hhrr", "payroll"))]
+    dependencies=[Depends(require_permission("hhrr", "generate"))]
 )
 def postear_planilla(
     payload: dict,
@@ -204,9 +203,6 @@ def postear_planilla(
 ):
     if user["rol"] not in ("admin", "master"):
         raise HTTPException(403, "Acceso restringido")
-
-    # ⚠️ Aquí NO recalculamos
-    # Se asume que viene validado desde el preview
 
     cur = conn.cursor()
 
