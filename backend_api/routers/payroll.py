@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from psycopg2.extras import RealDictCursor
+from datetime import date
 
 from database import get_db
 from security.auth import get_current_user
@@ -68,9 +69,8 @@ def calcular_renta(monto: float) -> float:
     "/employees",
     dependencies=[Depends(require_permission("hhrr", "employees"))]
 )
-def listar_empleados_payroll(
-    conn=Depends(get_db)
-):
+def listar_empleados_payroll(conn=Depends(get_db)):
+
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     cur.execute("""
@@ -109,11 +109,44 @@ def calcular_payroll(
 ):
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
+    # --------------------------------------------------------
+    # VALIDAR PERÍODO (SOLO MES EN CURSO)
+    # --------------------------------------------------------
+    hoy = date.today()
+    if year != hoy.year or month != hoy.month:
+        raise HTTPException(
+            400,
+            "Solo se permite generar la planilla del mes en curso"
+        )
+
+    # --------------------------------------------------------
+    # BLOQUEAR SI YA ESTÁ CERRADA
+    # --------------------------------------------------------
+    cur.execute("""
+        SELECT 1
+        FROM payroll_runs
+        WHERE usuario = %s
+          AND year = %s
+          AND month = %s
+        LIMIT 1
+    """, (usuario, year, month))
+
+    if cur.fetchone():
+        raise HTTPException(
+            400,
+            "La planilla de este período ya fue cerrada"
+        )
+
+    # --------------------------------------------------------
+    # DATOS DEL EMPLEADO
+    # --------------------------------------------------------
     cur.execute("""
         SELECT
             nombre,
             apellidos,
+            jornada,
             salario,
+            pago,
             horas_contratadas
         FROM empleados
         WHERE usuario = %s
@@ -125,6 +158,9 @@ def calcular_payroll(
     if not emp:
         raise HTTPException(404, "Empleado no encontrado")
 
+    # --------------------------------------------------------
+    # HORAS APROBADAS (OT LOG)
+    # --------------------------------------------------------
     cur.execute("""
         SELECT COALESCE(SUM(duracion_horas), 0) AS total
         FROM hr_ot_log
@@ -134,44 +170,79 @@ def calcular_payroll(
           AND EXTRACT(MONTH FROM fecha_inicio) = %s
     """, (usuario, year, month))
 
-    horas_trabajadas = float(cur.fetchone()["total"] or 0)
-
-    horas_normales = min(horas_trabajadas, emp["horas_contratadas"])
-    horas_ot = max(horas_trabajadas - emp["horas_contratadas"], 0)
+    horas_registradas = float(cur.fetchone()["total"] or 0)
 
     salario_base = float(emp["salario"])
+    jornada = emp["jornada"].upper()
 
-    deducciones = sum(
-        salario_base * tasa
-        for tasa in DEDUCCIONES_TRABAJADOR.values()
+    horas_ot = 0.0
+    pago_horas_extra = 0.0
+    salario_bruto = salario_base
+
+    # --------------------------------------------------------
+    # LÓGICA POR JORNADA
+    # --------------------------------------------------------
+    if jornada == "COMPLETA" and horas_registradas > 0:
+
+        salario_diario = salario_base / 30
+        salario_hora = salario_diario / 8
+        base_fraccionada = salario_hora / 12
+        valor_hora_extra = (base_fraccionada * 8) * 1.5
+
+        horas_ot = horas_registradas
+        pago_horas_extra = round(valor_hora_extra * horas_ot, 2)
+        salario_bruto += pago_horas_extra
+
+    elif jornada == "HORAS":
+
+        horas_contratadas = emp["horas_contratadas"] or 0
+
+        if horas_registradas > horas_contratadas:
+            horas_ot = round(horas_registradas - horas_contratadas, 2)
+        else:
+            horas_ot = 0.0
+
+    # --------------------------------------------------------
+    # DEDUCCIONES Y RENTA (SOBRE SALARIO BRUTO)
+    # --------------------------------------------------------
+    deducciones_trabajador = round(
+        sum(salario_bruto * tasa for tasa in DEDUCCIONES_TRABAJADOR.values()),
+        2
     )
 
-    renta = calcular_renta(salario_base)
+    impuesto_renta = calcular_renta(salario_bruto)
 
     salario_neto = round(
-        salario_base - deducciones - renta, 2
+        salario_bruto - deducciones_trabajador - impuesto_renta,
+        2
     )
 
-    cargas = sum(
-        salario_base * tasa
-        for tasa in CARGAS_PATRONALES.values()
+    cargas_patronales = round(
+        sum(salario_bruto * tasa for tasa in CARGAS_PATRONALES.values()),
+        2
     )
 
+    # --------------------------------------------------------
+    # RESPONSE
+    # --------------------------------------------------------
     return {
         "usuario": usuario,
         "nombre": emp["nombre"],
         "apellidos": emp["apellidos"],
+        "jornada": jornada,
+        "pago": emp["pago"],
         "year": year,
         "month": month,
-        "horas_contratadas": emp["horas_contratadas"],
-        "horas_trabajadas": round(horas_trabajadas, 2),
-        "horas_ot": round(horas_ot, 2),
         "salario_base": round(salario_base, 2),
-        "deducciones_trabajador": round(deducciones, 2),
-        "impuesto_renta": renta,
+        "horas_registradas": round(horas_registradas, 2),
+        "horas_ot": round(horas_ot, 2),
+        "pago_horas_extra": pago_horas_extra,
+        "salario_bruto": round(salario_bruto, 2),
+        "deducciones_trabajador": deducciones_trabajador,
+        "impuesto_renta": impuesto_renta,
         "salario_neto": salario_neto,
-        "cargas_patronales": round(cargas, 2),
-        "costo_total_empresa": round(salario_base + cargas, 2)
+        "cargas_patronales": cargas_patronales,
+        "costo_total_empresa": round(salario_bruto + cargas_patronales, 2)
     }
 
 # ============================================================
