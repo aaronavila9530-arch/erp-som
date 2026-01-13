@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from psycopg2.extras import RealDictCursor
 from datetime import date
 
@@ -381,13 +381,13 @@ def listar_payslips(
     conn=Depends(get_db)
 ):
     """
-    Reglas:
-    - employee → solo ve sus propias colillas
-    - admin / master → ve todas
+    Reglas de acceso:
+    - employee → SOLO sus colillas
+    - admin / master → TODAS
 
     Filtros opcionales:
-    - year (creado_en)
-    - month (creado_en)
+    - year  (desde creado_en)
+    - month (desde creado_en)
     """
 
     offset = (page - 1) * page_size
@@ -395,10 +395,10 @@ def listar_payslips(
     params = {}
 
     # =========================================================
-    # SEGURIDAD POR ROL
+    # SEGURIDAD POR ROL (RBAC)
     # =========================================================
-    rol = current_user["rol"]
-    usuario = current_user["usuario"]
+    rol = (current_user.get("rol") or "").lower()
+    usuario = current_user.get("usuario")
 
     if rol not in ("admin", "master"):
         conditions.append("usuario = %(usuario)s")
