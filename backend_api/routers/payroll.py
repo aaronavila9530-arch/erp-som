@@ -352,3 +352,126 @@ def get_payroll_pdf(
         media_type="application/pdf",
         filename=filename
     )
+
+
+
+from fastapi import APIRouter, Depends, Query
+from psycopg2.extras import RealDictCursor
+from datetime import datetime
+
+from database import get_db
+from auth.dependencies import get_current_user
+
+router = APIRouter(
+    prefix="/hr/payroll",
+    tags=["HHRR - Payroll"]
+)
+
+# ============================================================
+# LISTAR COLILLAS DE PAGO (PAGINADO + FILTROS)
+# GET /hr/payroll/payslips
+# ============================================================
+@router.get("/payslips")
+def listar_payslips(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    year: int | None = None,
+    month: int | None = None,
+    current_user=Depends(get_current_user),
+    conn=Depends(get_db)
+):
+    """
+    Reglas:
+    - employee → solo ve sus propias colillas
+    - admin / master → ve todas
+
+    Filtros opcionales:
+    - year (creado_en)
+    - month (creado_en)
+    """
+
+    offset = (page - 1) * page_size
+    conditions = []
+    params = {}
+
+    # =========================================================
+    # SEGURIDAD POR ROL
+    # =========================================================
+    rol = current_user["rol"]
+    usuario = current_user["usuario"]
+
+    if rol not in ("admin", "master"):
+        conditions.append("usuario = %(usuario)s")
+        params["usuario"] = usuario
+
+    # =========================================================
+    # FILTRO AÑO
+    # =========================================================
+    if year is not None:
+        conditions.append("EXTRACT(YEAR FROM creado_en) = %(year)s")
+        params["year"] = year
+
+    # =========================================================
+    # FILTRO MES
+    # =========================================================
+    if month is not None:
+        conditions.append("EXTRACT(MONTH FROM creado_en) = %(month)s")
+        params["month"] = month
+
+    # =========================================================
+    # WHERE DINÁMICO
+    # =========================================================
+    where_sql = ""
+    if conditions:
+        where_sql = "WHERE " + " AND ".join(conditions)
+
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+
+    # =========================================================
+    # QUERY PRINCIPAL
+    # =========================================================
+    cur.execute(
+        f"""
+        SELECT
+            id,
+            usuario,
+            year,
+            month,
+            salario_neto,
+            pdf_path,
+            generado_por,
+            creado_en
+        FROM payroll_runs
+        {where_sql}
+        ORDER BY creado_en DESC
+        LIMIT %(limit)s OFFSET %(offset)s
+        """,
+        {
+            **params,
+            "limit": page_size,
+            "offset": offset
+        }
+    )
+
+    rows = cur.fetchall()
+
+    # =========================================================
+    # TOTAL
+    # =========================================================
+    cur.execute(
+        f"""
+        SELECT COUNT(*)
+        FROM payroll_runs
+        {where_sql}
+        """,
+        params
+    )
+
+    total = cur.fetchone()["count"]
+
+    return {
+        "page": page,
+        "page_size": page_size,
+        "total": total,
+        "data": rows
+    }
