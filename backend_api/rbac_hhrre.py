@@ -9,9 +9,9 @@ DATABASE_URL = (
 PERMISSIONS = [
 
     # =====================================================
-    # MASTER — ACCESO TOTAL (CONTROLADO EN CÓDIGO)
+    # MASTER — ACCESO TOTAL REAL (GLOBAL)
     # =====================================================
-    ("master", "hhrr", "*", True),
+    ("master", "*", "*", True),
 
     # =====================================================
     # ADMIN — OPERACIÓN COMPLETA HHRR
@@ -35,7 +35,6 @@ PERMISSIONS = [
 
     # --- Aprobaciones ---
     ("admin", "hhrr", "approve", True),
-
     ("admin", "hhrr", "close_hr_module", False),
 
     # =====================================================
@@ -84,9 +83,13 @@ def main():
     conn = psycopg2.connect(DATABASE_URL)
     cur = conn.cursor()
 
-    print("🔐 Insertando permisos RBAC — HHRR")
+    print("🔐 Normalizando e insertando permisos RBAC — HHRR")
 
     for role, module, action, allowed in PERMISSIONS:
+        role_norm = role.strip().lower()
+        module_norm = module.strip().lower()
+        action_norm = action.strip().lower()
+
         cur.execute(
             """
             INSERT INTO rbac_permissions (role_code, module, action, allowed)
@@ -94,14 +97,14 @@ def main():
             ON CONFLICT (role_code, module, action)
             DO UPDATE SET allowed = EXCLUDED.allowed
             """,
-            (role, module, action, allowed)
+            (role_norm, module_norm, action_norm, allowed)
         )
 
     conn.commit()
     cur.close()
     conn.close()
 
-    print("✅ Permisos HHRR insertados / actualizados correctamente.")
+    print("✅ Permisos HHRR normalizados y actualizados correctamente.")
 
 
 if __name__ == "__main__":

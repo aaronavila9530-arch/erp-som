@@ -69,12 +69,8 @@ def calcular_renta(monto: float) -> float:
     dependencies=[Depends(require_permission("hhrr", "employees"))]
 )
 def listar_empleados_payroll(
-    user=Depends(get_current_user),
     conn=Depends(get_db)
 ):
-    if user["rol"] not in ("admin", "master"):
-        raise HTTPException(403, "Acceso restringido")
-
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     cur.execute("""
@@ -109,17 +105,10 @@ def calcular_payroll(
     usuario: str,
     year: int,
     month: int,
-    user=Depends(get_current_user),
     conn=Depends(get_db)
 ):
-    if user["rol"] not in ("admin", "master"):
-        raise HTTPException(403, "Acceso restringido")
-
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
-    # --------------------------------------------------------
-    # EMPLEADO
-    # --------------------------------------------------------
     cur.execute("""
         SELECT
             nombre,
@@ -136,9 +125,6 @@ def calcular_payroll(
     if not emp:
         raise HTTPException(404, "Empleado no encontrado")
 
-    # --------------------------------------------------------
-    # HORAS APROBADAS DEL MES
-    # --------------------------------------------------------
     cur.execute("""
         SELECT COALESCE(SUM(duracion_horas), 0) AS total
         FROM hr_ot_log
@@ -201,9 +187,6 @@ def postear_planilla(
     user=Depends(get_current_user),
     conn=Depends(get_db)
 ):
-    if user["rol"] not in ("admin", "master"):
-        raise HTTPException(403, "Acceso restringido")
-
     cur = conn.cursor()
 
     cur.execute("""
