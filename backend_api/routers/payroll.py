@@ -6,6 +6,7 @@ from database import get_db
 from security.auth import get_current_user
 from security.rbac import require_permission
 
+
 router = APIRouter(
     prefix="/hr/payroll",
     tags=["HHRR - PAYROLL"]
@@ -353,19 +354,6 @@ def get_payroll_pdf(
         filename=filename
     )
 
-
-
-from fastapi import APIRouter, Depends, Query
-from psycopg2.extras import RealDictCursor
-from datetime import datetime
-
-from database import get_db
-from auth.dependencies import get_current_user
-
-router = APIRouter(
-    prefix="/hr/payroll",
-    tags=["HHRR - Payroll"]
-)
 
 # ============================================================
 # LISTAR COLILLAS DE PAGO (PAGINADO + FILTROS)
