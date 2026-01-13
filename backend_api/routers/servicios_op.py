@@ -83,6 +83,43 @@ def add_servicio(data: ServicioCreate):
 
 
 # ============================================================
+# FILTROS DINÁMICOS — SERVICIOS
+# ============================================================
+@router.get("/filtros/valores")
+def listar_filtros_servicios():
+
+    rows = database.sql(
+        """
+        SELECT
+            estado,
+            surveyor,
+            RIGHT(num_informe, 4) AS anio
+        FROM servicios
+        WHERE num_informe IS NOT NULL
+          AND LENGTH(num_informe) >= 4
+        """,
+        fetch=True
+    )
+
+    statuses = set()
+    surveyores = set()
+    anios = set()
+
+    for estado, surveyor, anio in rows:
+        if estado:
+            statuses.add(estado)
+        if surveyor:
+            surveyores.add(surveyor)
+        if anio and anio.isdigit():
+            anios.add(int(anio))
+
+    return {
+        "status": sorted(statuses),
+        "surveyor": sorted(surveyores),
+        "year": sorted(anios)
+    }
+
+# ============================================================
 # LISTAR — PAGINADO (CON FILTROS AÑO / STATUS / SURVEYOR)
 # ============================================================
 @router.get("/")
@@ -103,7 +140,6 @@ def listar_servicios(
 
     # --------------------------------------------------------
     # AÑO (desde num_informe → últimos 4 dígitos)
-    # - SOLO filtra si year viene explícito
     # --------------------------------------------------------
     if year is not None:
         conditions.append(
@@ -112,8 +148,7 @@ def listar_servicios(
         params["year"] = str(year)
 
     # --------------------------------------------------------
-    # STATUS (desde servicios.estado)
-    # - Ignorar None / vacío / TODOS
+    # STATUS
     # --------------------------------------------------------
     if status is not None:
         status_clean = status.strip()
@@ -122,8 +157,7 @@ def listar_servicios(
             params["estado"] = status_clean
 
     # --------------------------------------------------------
-    # SURVEYOR (desde servicios.surveyor)
-    # - Ignorar None / vacío
+    # SURVEYOR
     # --------------------------------------------------------
     if surveyor is not None:
         surveyor_clean = surveyor.strip()
