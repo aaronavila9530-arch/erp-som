@@ -83,17 +83,17 @@ def add_servicio(data: ServicioCreate):
 
 
 # ============================================================
-# LISTAR — PAGINADO (CON FILTROS AÑO / STATUS)
+# LISTAR — PAGINADO (CON FILTROS AÑO / STATUS / SURVEYOR)
 # ============================================================
 @router.get("/")
 def listar_servicios(
     page: int = 1,
     page_size: int = 50,
     year: int | None = None,
-    status: str | None = None
+    status: str | None = None,
+    surveyor: str | None = None
 ):
     offset = (page - 1) * page_size
-    current_year = datetime.now().year
 
     # --------------------------------------------------------
     # CONDICIONES DINÁMICAS
@@ -101,29 +101,46 @@ def listar_servicios(
     conditions = []
     params = {}
 
-    # AÑO (desde num_informe)
-    # - Si year es None => año en curso por defecto
-    # - Si num_informe es NULL/vacío: no matchea (correcto)
-    if year is None:
-        conditions.append("RIGHT(COALESCE(num_informe, ''), 4) = %(current_year)s")
-        params["current_year"] = str(current_year)
-    else:
-        conditions.append("RIGHT(COALESCE(num_informe, ''), 4) = %(year)s")
+    # --------------------------------------------------------
+    # AÑO (desde num_informe → últimos 4 dígitos)
+    # - SOLO filtra si year viene explícito
+    # --------------------------------------------------------
+    if year is not None:
+        conditions.append(
+            "RIGHT(COALESCE(num_informe, ''), 4) = %(year)s"
+        )
         params["year"] = str(year)
 
-    # STATUS
-    # - Ignorar TOD@S / vacío / None
-    # - Normalizar espacios (strip) para evitar falsos negativos
+    # --------------------------------------------------------
+    # STATUS (desde servicios.estado)
+    # - Ignorar None / vacío / TODOS
+    # --------------------------------------------------------
     if status is not None:
         status_clean = status.strip()
         if status_clean and status_clean.upper() != "TODOS":
             conditions.append("estado = %(estado)s")
             params["estado"] = status_clean
 
+    # --------------------------------------------------------
+    # SURVEYOR (desde servicios.surveyor)
+    # - Ignorar None / vacío
+    # --------------------------------------------------------
+    if surveyor is not None:
+        surveyor_clean = surveyor.strip()
+        if surveyor_clean:
+            conditions.append("surveyor = %(surveyor)s")
+            params["surveyor"] = surveyor_clean
+
+    # --------------------------------------------------------
+    # WHERE dinámico
+    # --------------------------------------------------------
     where_sql = ""
     if conditions:
         where_sql = "WHERE " + " AND ".join(conditions)
 
+    # --------------------------------------------------------
+    # QUERY PRINCIPAL
+    # --------------------------------------------------------
     rows = database.sql(
         f"""
         SELECT
@@ -145,12 +162,22 @@ def listar_servicios(
         fetch=True
     )
 
+    # --------------------------------------------------------
+    # TOTAL
+    # --------------------------------------------------------
     total = database.sql(
-        f"SELECT COUNT(*) FROM servicios {where_sql}",
+        f"""
+        SELECT COUNT(*)
+        FROM servicios
+        {where_sql}
+        """,
         params,
         fetch=True
     )[0][0]
 
+    # --------------------------------------------------------
+    # SERIALIZACIÓN
+    # --------------------------------------------------------
     columnas = [
         "consec", "tipo", "estado", "num_informe",
         "buque_contenedor", "cliente", "contacto", "detalle",
@@ -165,10 +192,17 @@ def listar_servicios(
 
     data = []
     for r in rows:
-        item = {c: ("" if r[i] is None else str(r[i])) for i, c in enumerate(columnas)}
+        item = {
+            col: ("" if r[idx] is None else str(r[idx]))
+            for idx, col in enumerate(columnas)
+        }
         data.append(item)
 
-    return {"total": total, "data": data}
+    return {
+        "total": total,
+        "data": data
+    }
+
 
 # ============================================================
 # GET POR CONSEC
