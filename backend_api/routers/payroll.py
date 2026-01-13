@@ -1,10 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from psycopg2.extras import RealDictCursor
 from datetime import date
+import os
+from fastapi.responses import FileResponse
 
 from database import get_db
 from security.auth import get_current_user
 from security.rbac import require_permission
+
 
 
 router = APIRouter(
@@ -383,7 +386,7 @@ def listar_payslips(
     params = {}
 
     # =========================================================
-    # SEGURIDAD POR ROL (RBAC)
+    # SEGURIDAD POR ROL
     # =========================================================
     rol = (current_user.get("rol") or "").lower()
     usuario = current_user.get("usuario")
@@ -463,3 +466,41 @@ def listar_payslips(
         "total": total,
         "data": rows
     }
+
+
+# ============================================================
+# DESCARGAR COLILLA PDF
+# GET /hr/payroll/files/{year}/{month}/{filename}
+# ============================================================
+@router.get(
+    "/files/{year}/{month}/{filename}",
+    dependencies=[Depends(require_permission("hhrr", "payroll"))]
+)
+def get_payroll_pdf(
+    year: int,
+    month: int,
+    filename: str
+):
+    """
+    Descarga segura de colilla de pago (PDF).
+    """
+
+    file_path = os.path.join(
+        "storage",
+        "payroll",
+        str(year),
+        f"{int(month):02d}",
+        filename
+    )
+
+    if not os.path.exists(file_path):
+        raise HTTPException(
+            status_code=404,
+            detail="Archivo de colilla no encontrado"
+        )
+
+    return FileResponse(
+        path=file_path,
+        media_type="application/pdf",
+        filename=filename
+    )
