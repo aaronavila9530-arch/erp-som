@@ -23,14 +23,15 @@ PERMISSIONS = [
 
     # --- Payroll / RRHH ---
     ("ADMIN", "hhrr", "payroll", True),
+    ("ADMIN", "hhrr", "employees", True),   # 🔑 CLAVE (FIX)
     ("ADMIN", "hhrr", "generate", True),
     ("ADMIN", "hhrr", "reports", True),
 
     # --- Registro de Horas ---
-    ("ADMIN", "hhrr", "ot_log", True),           # acceso general
-    ("ADMIN", "hhrr", "ot_log_view_all", True),  # ver horas de todos
-    ("ADMIN", "hhrr", "ot_log_status", True),    # aprobar / rechazar
-    ("ADMIN", "hhrr", "ot_log_export", True),    # exportar Excel / CSV
+    ("ADMIN", "hhrr", "ot_log", True),
+    ("ADMIN", "hhrr", "ot_log_view_all", True),
+    ("ADMIN", "hhrr", "ot_log_status", True),
+    ("ADMIN", "hhrr", "ot_log_export", True),
 
     # --- Aprobaciones ---
     ("ADMIN", "hhrr", "approve", True),
@@ -41,9 +42,9 @@ PERMISSIONS = [
     # USER / EMPLOYEE — AUTOGESTIÓN
     # =====================================================
     ("USER", "hhrr", "view", True),
-    ("USER", "hhrr", "create", True),      # solicitudes / registro de horas
-    ("USER", "hhrr", "edit", True),        # antes de aprobar
-    ("USER", "hhrr", "ot_log", True),      # solo lo propio
+    ("USER", "hhrr", "create", True),
+    ("USER", "hhrr", "edit", True),
+    ("USER", "hhrr", "ot_log", True),
 
     ("USER", "hhrr", "ot_log_view_all", False),
     ("USER", "hhrr", "ot_log_status", False),
@@ -51,6 +52,7 @@ PERMISSIONS = [
 
     ("USER", "hhrr", "approve", False),
     ("USER", "hhrr", "payroll", False),
+    ("USER", "hhrr", "employees", False),   # 🔒 explícito
     ("USER", "hhrr", "generate", False),
     ("USER", "hhrr", "reports", False),
     ("USER", "hhrr", "delete", False),
@@ -60,13 +62,14 @@ PERMISSIONS = [
     # CONSULTOR — LECTURA / AUDITORÍA
     # =====================================================
     ("CONSULTOR", "hhrr", "view", True),
-    ("CONSULTOR", "hhrr", "reports", True),
     ("CONSULTOR", "hhrr", "payroll", True),
+    ("CONSULTOR", "hhrr", "employees", True),  # 🔑 CLAVE (FIX)
+    ("CONSULTOR", "hhrr", "reports", True),
     ("CONSULTOR", "hhrr", "generate", True),
 
-    ("CONSULTOR", "hhrr", "ot_log", True),          # lectura
-    ("CONSULTOR", "hhrr", "ot_log_view_all", True), # ver todos
-    ("CONSULTOR", "hhrr", "ot_log_export", True),   # exportar
+    ("CONSULTOR", "hhrr", "ot_log", True),
+    ("CONSULTOR", "hhrr", "ot_log_view_all", True),
+    ("CONSULTOR", "hhrr", "ot_log_export", True),
 
     ("CONSULTOR", "hhrr", "create", False),
     ("CONSULTOR", "hhrr", "edit", False),
@@ -84,7 +87,6 @@ def main():
     print("🔐 Insertando permisos RBAC — HHRR")
 
     for role, module, action, allowed in PERMISSIONS:
-        # Normalizar por si alguien mete minúsculas accidentalmente
         role_norm = str(role).strip().upper()
         module_norm = str(module).strip().lower()
         action_norm = str(action).strip()
