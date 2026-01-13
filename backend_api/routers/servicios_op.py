@@ -102,17 +102,23 @@ def listar_servicios(
     params = {}
 
     # AÑO (desde num_informe)
+    # - Si year es None => año en curso por defecto
+    # - Si num_informe es NULL/vacío: no matchea (correcto)
     if year is None:
-        conditions.append("RIGHT(num_informe, 4) = %(current_year)s")
+        conditions.append("RIGHT(COALESCE(num_informe, ''), 4) = %(current_year)s")
         params["current_year"] = str(current_year)
     else:
-        conditions.append("RIGHT(num_informe, 4) = %(year)s")
+        conditions.append("RIGHT(COALESCE(num_informe, ''), 4) = %(year)s")
         params["year"] = str(year)
 
     # STATUS
-    if status and status.upper() != "TODOS":
-        conditions.append("estado = %(estado)s")
-        params["estado"] = status
+    # - Ignorar TOD@S / vacío / None
+    # - Normalizar espacios (strip) para evitar falsos negativos
+    if status is not None:
+        status_clean = status.strip()
+        if status_clean and status_clean.upper() != "TODOS":
+            conditions.append("estado = %(estado)s")
+            params["estado"] = status_clean
 
     where_sql = ""
     if conditions:
