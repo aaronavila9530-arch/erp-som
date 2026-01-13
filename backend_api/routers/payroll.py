@@ -291,6 +291,39 @@ def postear_planilla(
     # Ruta lógica / URL servida por FastAPI
     pdf_path_online = f"/hr/payroll/files/{year}/{month}/{pdf_filename}"
 
+    # ========================================================
+    # CREAR DIRECTORIO FÍSICO
+    # ========================================================
+    dir_path = os.path.join(
+        BASE_DIR,
+        "storage",
+        "payroll",
+        str(year),
+        f"{int(month):02d}"
+    )
+
+    os.makedirs(dir_path, exist_ok=True)
+
+    file_path = os.path.join(dir_path, pdf_filename)
+
+    # ========================================================
+    # GENERAR PDF FÍSICO (BÁSICO / FUNCIONAL)
+    # ========================================================
+    from reportlab.lib.pagesizes import LETTER
+    from reportlab.pdfgen import canvas
+
+    c = canvas.Canvas(file_path, pagesize=LETTER)
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(50, 750, "COLILLA DE PAGO")
+
+    c.setFont("Helvetica", 10)
+    c.drawString(50, 720, f"Usuario: {usuario}")
+    c.drawString(50, 700, f"Periodo: {month}/{year}")
+    c.drawString(50, 680, f"Salario neto: {payload['salario_neto']}")
+
+    c.showPage()
+    c.save()
+
     # --------------------------------------------------------
     # INSERT / UPDATE
     # --------------------------------------------------------
