@@ -83,9 +83,10 @@ def add_servicio(data: ServicioCreate):
 
 
 # ============================================================
-# FILTROS DINÁMICOS — SERVICIOS
+# META — FILTROS DINÁMICOS (A PRUEBA DE COLISIONES)
+# GET /servicios/_meta/filtros
 # ============================================================
-@router.get("/filtros/valores")
+@router.get("/_meta/filtros")
 def listar_filtros_servicios():
 
     rows = database.sql(
@@ -121,6 +122,7 @@ def listar_filtros_servicios():
 
 # ============================================================
 # LISTAR — PAGINADO (CON FILTROS AÑO / STATUS / SURVEYOR)
+# GET /servicios
 # ============================================================
 @router.get("/")
 def listar_servicios(
@@ -132,49 +134,40 @@ def listar_servicios(
 ):
     offset = (page - 1) * page_size
 
-    # --------------------------------------------------------
-    # CONDICIONES DINÁMICAS
-    # --------------------------------------------------------
     conditions = []
     params = {}
 
-    # --------------------------------------------------------
-    # AÑO (desde num_informe → últimos 4 dígitos)
-    # --------------------------------------------------------
+    # -------------------------
+    # AÑO (desde num_informe)
+    # -------------------------
     if year is not None:
         conditions.append(
             "RIGHT(COALESCE(num_informe, ''), 4) = %(year)s"
         )
         params["year"] = str(year)
 
-    # --------------------------------------------------------
+    # -------------------------
     # STATUS
-    # --------------------------------------------------------
-    if status is not None:
+    # -------------------------
+    if status:
         status_clean = status.strip()
-        if status_clean and status_clean.upper() != "TODOS":
+        if status_clean.upper() != "TODOS":
             conditions.append("estado = %(estado)s")
             params["estado"] = status_clean
 
-    # --------------------------------------------------------
+    # -------------------------
     # SURVEYOR
-    # --------------------------------------------------------
-    if surveyor is not None:
+    # -------------------------
+    if surveyor:
         surveyor_clean = surveyor.strip()
         if surveyor_clean:
             conditions.append("surveyor = %(surveyor)s")
             params["surveyor"] = surveyor_clean
 
-    # --------------------------------------------------------
-    # WHERE dinámico
-    # --------------------------------------------------------
     where_sql = ""
     if conditions:
         where_sql = "WHERE " + " AND ".join(conditions)
 
-    # --------------------------------------------------------
-    # QUERY PRINCIPAL
-    # --------------------------------------------------------
     rows = database.sql(
         f"""
         SELECT
@@ -196,9 +189,6 @@ def listar_servicios(
         fetch=True
     )
 
-    # --------------------------------------------------------
-    # TOTAL
-    # --------------------------------------------------------
     total = database.sql(
         f"""
         SELECT COUNT(*)
@@ -209,9 +199,6 @@ def listar_servicios(
         fetch=True
     )[0][0]
 
-    # --------------------------------------------------------
-    # SERIALIZACIÓN
-    # --------------------------------------------------------
     columnas = [
         "consec", "tipo", "estado", "num_informe",
         "buque_contenedor", "cliente", "contacto", "detalle",
@@ -236,7 +223,6 @@ def listar_servicios(
         "total": total,
         "data": data
     }
-
 
 # ============================================================
 # GET POR CONSEC
