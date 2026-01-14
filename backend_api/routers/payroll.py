@@ -408,40 +408,150 @@ def listar_payslips(
         "data": rows
     }
 
+
+
 # ============================================================
-# DESCARGAR COLILLA PDF (ÚNICO Y CORRECTO)
-# GET /hr/payroll/files/{year}/{month}/{filename}
+# 4️⃣ DESCARGAR COLILLA (RECONSTRUCCIÓN ON-DEMAND)
 # ============================================================
+
+from io import BytesIO
+from fastapi.responses import StreamingResponse
+from Modulos.HHRR.reports.payroll_pdf import generar_colilla_pdf
+
 
 @router.get(
-    "/files/{year}/{month}/{filename}",
-    dependencies=[Depends(require_permission("hhrr", "payroll"))]
+    "/payslips/{year}/{month}/pdf",
+    dependencies=[Depends(require_permission("hhrr", "payslips"))]
 )
-def get_payroll_pdf(
+def descargar_colilla_pdf(
     year: int,
     month: int,
-    filename: str,
-    current_user=Depends(get_current_user)
+    usuario: str | None = None,
+    current_user=Depends(get_current_user),
+    conn=Depends(get_db)
 ):
-    month_str = f"{int(month):02d}"
+    """
+    Reconstruye la colilla PDF en tiempo real a partir de:
+    - payroll_runs (datos cerrados)
+    - empleados (datos maestros)
+    """
 
-    file_path = os.path.join(
-        BASE_DIR,
-        "storage",
-        "payroll",
-        str(year),
-        month_str,
-        filename
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+
+    rol = (current_user.get("rol") or "").lower()
+    usuario_solicitado = usuario or current_user.get("usuario")
+
+    # --------------------------------------------------------
+    # RBAC: EMPLEADO SOLO SU PROPIA COLILLA
+    # --------------------------------------------------------
+    if rol not in ("admin", "master"):
+        if usuario_solicitado != current_user.get("usuario"):
+            raise HTTPException(403, "No autorizado")
+
+    # --------------------------------------------------------
+    # PAYROLL RUN (FUENTE DE VERDAD)
+    # --------------------------------------------------------
+    cur.execute("""
+        SELECT
+            usuario,
+            year,
+            month,
+            salario_neto,
+            salario_bruto,
+            horas_extra,
+            monto_horas_extra
+        FROM payroll_runs
+        WHERE usuario = %s
+          AND year = %s
+          AND month = %s
+        LIMIT 1
+    """, (usuario_solicitado, year, month))
+
+    run = cur.fetchone()
+    if not run:
+        raise HTTPException(404, "Colilla no encontrada")
+
+    # --------------------------------------------------------
+    # DATOS DEL EMPLEADO
+    # --------------------------------------------------------
+    cur.execute("""
+        SELECT
+            nombre,
+            apellidos,
+            cedula_id,
+            jornada,
+            salario,
+            pago
+        FROM empleados
+        WHERE usuario = %s
+        LIMIT 1
+    """, (usuario_solicitado,))
+
+    emp = cur.fetchone()
+    if not emp:
+        raise HTTPException(404, "Empleado no encontrado")
+
+    # --------------------------------------------------------
+    # RECONSTRUCCIÓN DETERMINÍSTICA
+    # --------------------------------------------------------
+    salario_bruto = float(run["salario_bruto"])
+    salario_base = salario_bruto - float(run["monto_horas_extra"] or 0)
+
+    deducciones_trabajador = round(
+        sum(salario_bruto * tasa for tasa in DEDUCCIONES_TRABAJADOR.values()),
+        2
     )
 
-    if not os.path.isfile(file_path):
-        raise HTTPException(
-            status_code=404,
-            detail=f"Archivo de colilla no encontrado: {filename}"
-        )
+    impuesto_renta = calcular_renta(salario_bruto)
 
-    return FileResponse(
-        path=file_path,
+    cargas_patronales = round(
+        sum(salario_bruto * tasa for tasa in CARGAS_PATRONALES.values()),
+        2
+    )
+
+    data = {
+        "usuario": run["usuario"],
+        "nombre": emp["nombre"],
+        "apellidos": emp["apellidos"],
+        "cedula_id": emp["cedula_id"],
+        "jornada": emp["jornada"],
+        "pago": emp["pago"],
+
+        "year": run["year"],
+        "month": run["month"],
+
+        "salario_base": round(salario_base, 2),
+        "horas_ot": float(run["horas_extra"] or 0),
+        "pago_horas_extra": float(run["monto_horas_extra"] or 0),
+        "salario_bruto": salario_bruto,
+
+        "deducciones_trabajador": deducciones_trabajador,
+        "impuesto_renta": impuesto_renta,
+        "salario_neto": float(run["salario_neto"]),
+        "cargas_patronales": cargas_patronales,
+        "costo_total_empresa": round(salario_bruto + cargas_patronales, 2)
+    }
+
+    # --------------------------------------------------------
+    # GENERAR PDF EN MEMORIA
+    # --------------------------------------------------------
+    buffer = BytesIO()
+
+    generar_colilla_pdf(
+        path=buffer,
+        data=data,
+        year=year,
+        month=month
+    )
+
+    buffer.seek(0)
+
+    filename = f"COLILLA_{run['usuario']}_{year}_{month}.pdf"
+
+    return StreamingResponse(
+        buffer,
         media_type="application/pdf",
-        filename=filename
+        headers={
+            "Content-Disposition": f"attachment; filename={filename}"
+        }
     )
