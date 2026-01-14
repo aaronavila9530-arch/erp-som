@@ -59,23 +59,32 @@ def listar_eventos(
     return cur.fetchall()
 
 
+
 # ============================================================
-# CREAR SOLICITUD
+# CREAR SOLICITUD (BLINDADO)
 # ============================================================
 @router.post("")
 def crear_evento(
-    body: dict = Body(...),
+    raw_body: Any = Body(None),
     current_user=Depends(get_current_user),
     conn=Depends(get_db)
 ):
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
-    event_type = body.get("event_type")
-    event_date = body.get("event_date")
-    event_payload = body.get("payload", {})
+    # --------------------------------------------------------
+    # NORMALIZAR BODY (a prueba de todo)
+    # --------------------------------------------------------
+    body = raw_body if isinstance(raw_body, dict) else {}
 
-    if not event_type:
-        raise HTTPException(400, "event_type requerido")
+    event_type = body.get("event_type") or "UNKNOWN"
+    event_date = body.get("event_date")
+    event_payload = body.get("payload")
+
+    if not isinstance(event_payload, dict):
+        event_payload = {
+            "_raw_payload": body.get("payload"),
+            "_note": "Payload no estructurado"
+        }
 
     # --------------------------------------------------------
     # OBTENER EMPLEADO
@@ -91,7 +100,7 @@ def crear_evento(
         raise HTTPException(404, "Empleado no encontrado")
 
     # --------------------------------------------------------
-    # INSERT (SIN VALIDACIONES BLOQUEANTES)
+    # INSERT (NUNCA BLOQUEA)
     # --------------------------------------------------------
     cur.execute("""
         INSERT INTO hr_events (
@@ -128,7 +137,8 @@ def crear_evento(
 
     return {
         "status": "OK",
-        "id": row["id"]
+        "id": row["id"],
+        "event_type": event_type
     }
 # ============================================================
 # APROBAR SOLICITUD
