@@ -94,7 +94,8 @@ def listar_empleados_payroll(conn=Depends(get_db)):
             salario,
             pago,
             estado,
-            usuario
+            usuario,
+            cedula_id
         FROM empleados
         WHERE estado = 'Activo'
           AND usuario IS NOT NULL
@@ -105,10 +106,6 @@ def listar_empleados_payroll(conn=Depends(get_db)):
         "total": cur.rowcount,
         "data": cur.fetchall()
     }
-
-from fastapi import Query, Depends, HTTPException
-from psycopg2.extras import RealDictCursor
-from datetime import date
 
 # ============================================================
 # 2️⃣ PREVIEW / CÁLCULO PAYROLL (NO GUARDA)
@@ -164,7 +161,8 @@ def calcular_payroll(
             jornada,
             salario,
             pago,
-            horas_contratadas
+            horas_contratadas,
+            cedula_id
         FROM empleados
         WHERE usuario = %s
           AND estado = 'Activo'
@@ -174,8 +172,6 @@ def calcular_payroll(
     emp = cur.fetchone()
     if not emp:
         raise HTTPException(404, "Empleado no encontrado")
-
-    # ⬇️ A PARTIR DE AQUÍ TU LÓGICA SIGUE EXACTAMENTE IGUAL
 
     # --------------------------------------------------------
     # HORAS APROBADAS (OT LOG)
@@ -246,6 +242,7 @@ def calcular_payroll(
     # --------------------------------------------------------
     return {
         "usuario": usuario,
+        "cedula_id": emp["cedula_id"],
         "nombre": emp["nombre"],
         "apellidos": emp["apellidos"],
         "jornada": jornada,
@@ -306,7 +303,7 @@ def postear_planilla(
         )
 
     # --------------------------------------------------------
-    # INSERT / UPDATE
+    # INSERT / UPDATE COMPLETO (PAYROLL_RUNS)
     # --------------------------------------------------------
     cur.execute("""
         INSERT INTO payroll_runs (
@@ -314,20 +311,29 @@ def postear_planilla(
             year,
             month,
             salario_neto,
+            salario_bruto,
+            horas_extra,
+            monto_horas_extra,
             pdf_path,
             generado_por
         )
-        VALUES (%s, %s, %s, %s, %s, %s)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (usuario, year, month)
         DO UPDATE SET
-            salario_neto = EXCLUDED.salario_neto,
-            pdf_path = EXCLUDED.pdf_path,
-            generado_por = EXCLUDED.generado_por
+            salario_neto       = EXCLUDED.salario_neto,
+            salario_bruto      = EXCLUDED.salario_bruto,
+            horas_extra        = EXCLUDED.horas_extra,
+            monto_horas_extra  = EXCLUDED.monto_horas_extra,
+            pdf_path           = EXCLUDED.pdf_path,
+            generado_por       = EXCLUDED.generado_por
     """, (
         usuario,
         year,
         month,
         payload["salario_neto"],
+        payload["salario_bruto"],
+        payload["horas_ot"],            # horas_extra
+        payload["pago_horas_extra"],    # monto_horas_extra
         pdf_path_online,
         user["usuario"]
     ))
@@ -389,6 +395,9 @@ def listar_payslips(
             year,
             month,
             salario_neto,
+            salario_bruto,
+            horas_extra,
+            monto_horas_extra,
             pdf_path,
             generado_por,
             creado_en
