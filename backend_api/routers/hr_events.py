@@ -72,10 +72,10 @@ def crear_evento(
 
     event_type = body.get("event_type")
     event_date = body.get("event_date")
-    event_payload = body.get("payload")
+    event_payload = body.get("payload", {})
 
-    if not event_type or not isinstance(event_payload, dict):
-        raise HTTPException(400, "Datos incompletos")
+    if not event_type:
+        raise HTTPException(400, "event_type requerido")
 
     # --------------------------------------------------------
     # OBTENER EMPLEADO
@@ -85,13 +85,13 @@ def crear_evento(
         FROM empleados
         WHERE usuario = %s
     """, (current_user["usuario"],))
-    empleado = cur.fetchone()
+    emp = cur.fetchone()
 
-    if not empleado:
+    if not emp:
         raise HTTPException(404, "Empleado no encontrado")
 
     # --------------------------------------------------------
-    # INSERT
+    # INSERT (SIN VALIDACIONES BLOQUEANTES)
     # --------------------------------------------------------
     cur.execute("""
         INSERT INTO hr_events (
@@ -114,7 +114,7 @@ def crear_evento(
         )
         RETURNING id
     """, (
-        empleado["id"],
+        emp["id"],
         event_type,
         event_date or date.today(),
         date.today().year,
@@ -130,7 +130,6 @@ def crear_evento(
         "status": "OK",
         "id": row["id"]
     }
-
 # ============================================================
 # APROBAR SOLICITUD
 # ============================================================
