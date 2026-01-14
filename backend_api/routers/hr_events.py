@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from psycopg2.extras import RealDictCursor
 from datetime import date, datetime
-
+from fastapi import Body
 
 from database import get_db
 from security.auth import get_current_user
@@ -64,15 +64,15 @@ def listar_eventos(
 # ============================================================
 @router.post("")
 def crear_evento(
-    payload: dict,
+    body: dict = Body(...),
     current_user=Depends(get_current_user),
     conn=Depends(get_db)
 ):
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
-    event_type = payload.get("event_type")
-    event_date = payload.get("event_date")
-    event_payload = payload.get("payload")
+    event_type = body.get("event_type")
+    event_date = body.get("event_date")
+    event_payload = body.get("payload")
 
     if not event_type or not isinstance(event_payload, dict):
         raise HTTPException(400, "Datos incompletos")
@@ -90,10 +90,8 @@ def crear_evento(
     if not empleado:
         raise HTTPException(404, "Empleado no encontrado")
 
-    empleado_id = empleado["id"]
-
     # --------------------------------------------------------
-    # INSERT (SIN VALIDACIONES DE NEGOCIO)
+    # INSERT
     # --------------------------------------------------------
     cur.execute("""
         INSERT INTO hr_events (
@@ -114,9 +112,9 @@ def crear_evento(
             %s,
             NOW()
         )
-        RETURNING *
+        RETURNING id
     """, (
-        empleado_id,
+        empleado["id"],
         event_type,
         event_date or date.today(),
         date.today().year,
@@ -125,9 +123,13 @@ def crear_evento(
         current_user["usuario"]
     ))
 
+    row = cur.fetchone()
     conn.commit()
-    return cur.fetchone()
 
+    return {
+        "status": "OK",
+        "id": row["id"]
+    }
 
 # ============================================================
 # APROBAR SOLICITUD
