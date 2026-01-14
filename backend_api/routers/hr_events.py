@@ -226,30 +226,41 @@ def vacaciones_disponibles(
 ):
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
-    # Obtener empleado
+    usuario = current_user.get("usuario")
+
+    if not usuario:
+        raise HTTPException(401, "Usuario no autenticado")
+
+    # 🔎 Buscar empleado REAL
     cur.execute("""
-        SELECT id, fecha_ingreso
+        SELECT id, fecha_ingreso, vacaciones
         FROM empleados
         WHERE usuario = %s
-    """, (current_user["usuario"],))
+    """, (usuario,))
 
     emp = cur.fetchone()
-    if not emp or not emp["fecha_ingreso"]:
-        raise HTTPException(404, "Fecha de ingreso no encontrada")
 
-    # Calcular vacaciones acumuladas
-    dias = calcular_vacaciones(emp["fecha_ingreso"])
+    if not emp:
+        raise HTTPException(
+            404,
+            f"Empleado no encontrado para usuario '{usuario}'"
+        )
 
-    # 🔁 INYECTAR EN TABLA EMPLEADOS
-    cur.execute("""
-        UPDATE empleados
-        SET vacaciones = %s
-        WHERE id = %s
-    """, (dias, emp["id"]))
+    if not emp["fecha_ingreso"]:
+        raise HTTPException(400, "Empleado sin fecha de ingreso")
 
-    conn.commit()
+    # 🧮 Calcular vacaciones
+    dias_calculados = calcular_vacaciones(emp["fecha_ingreso"])
+
+    # 🔁 Solo actualizar si cambió
+    if emp["vacaciones"] != dias_calculados:
+        cur.execute("""
+            UPDATE empleados
+            SET vacaciones = %s
+            WHERE id = %s
+        """, (dias_calculados, emp["id"]))
+        conn.commit()
 
     return {
-        "dias_disponibles": dias
+        "dias_disponibles": dias_calculados
     }
-
