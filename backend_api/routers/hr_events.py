@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from psycopg2.extras import RealDictCursor
 from datetime import date, datetime
-from dateutil.relativedelta import relativedelta
+
 
 from database import get_db
 from security.auth import get_current_user
@@ -77,7 +77,9 @@ def crear_evento(
     if not event_type or not event_payload:
         raise HTTPException(400, "Datos incompletos")
 
-    # Obtener empleado
+    # --------------------------------------------------------
+    # OBTENER EMPLEADO
+    # --------------------------------------------------------
     cur.execute("""
         SELECT id, fecha_ingreso
         FROM empleados
@@ -89,18 +91,24 @@ def crear_evento(
         raise HTTPException(404, "Empleado no encontrado")
 
     empleado_id = empleado["id"]
+    fecha_ingreso = empleado["fecha_ingreso"]
 
     # --------------------------------------------------------
     # VALIDACIÓN VACACIONES
     # --------------------------------------------------------
     if event_type == "VACACIONES":
-        fecha_ingreso = empleado["fecha_ingreso"]
 
+        if not fecha_ingreso:
+            raise HTTPException(400, "Empleado sin fecha de ingreso")
+
+        # Vacaciones acumuladas (fuente única de verdad)
         dias_acumulados = calcular_vacaciones(fecha_ingreso)
 
-        # meses trabajados
-        meses = relativedelta(date.today(), fecha_ingreso).years * 12 + \
-                relativedelta(date.today(), fecha_ingreso).months
+        # Meses trabajados (sin dateutil)
+        hoy = date.today()
+        meses = (hoy.year - fecha_ingreso.year) * 12 + (hoy.month - fecha_ingreso.month)
+        if hoy.day < fecha_ingreso.day:
+            meses -= 1
 
         if meses < 3:
             raise HTTPException(
@@ -119,7 +127,7 @@ def crear_evento(
                 f"Días solicitados exceden lo acumulado ({dias_acumulados})"
             )
 
-        # Guardar cálculo en payload
+        # Guardar cálculo en payload (auditoría)
         event_payload["dias_acumulados"] = dias_acumulados
 
     # --------------------------------------------------------
