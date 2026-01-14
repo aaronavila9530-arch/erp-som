@@ -8,3 +8,4 @@ bcrypt
 pyotp
 qrcode[pil]
 Pillow
+python-dateutil
