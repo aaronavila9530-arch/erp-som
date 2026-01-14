@@ -3,8 +3,9 @@ from psycopg2.extras import RealDictCursor
 from datetime import date, datetime
 from dateutil.relativedelta import relativedelta
 
-from database import get_db
-from auth import get_current_user
+from ..database import get_db
+from ..security.auth import get_current_user
+
 
 router = APIRouter(
     prefix="/hr/events",
