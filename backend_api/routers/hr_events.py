@@ -65,8 +65,8 @@ def listar_eventos(
 # POST /hr/events
 # ============================================================
 @router.post("")
-def crear_evento(
-    body: dict = Body(...),
+async def crear_evento(
+    body: dict = Body(default_factory=dict),
     current_user=Depends(get_current_user),
     conn=Depends(get_db)
 ):
