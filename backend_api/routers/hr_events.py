@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Body
+from fastapi import APIRouter, Depends, HTTPException
 from psycopg2.extras import RealDictCursor
 from datetime import date, datetime
 
@@ -60,21 +60,19 @@ def listar_eventos(
 
 
 
-# ============================================================
-# CREAR SOLICITUD HHRR (ULTRA ESTABLE)
-# POST /hr/events
-# ============================================================
 @router.post("")
 async def crear_evento(
-    body: dict = Body(default_factory=dict),
+    request: Request,
     current_user=Depends(get_current_user),
     conn=Depends(get_db)
 ):
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
-    # --------------------------------------------------------
-    # VALIDAR BODY
-    # --------------------------------------------------------
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(400, "Body inválido o no JSON")
+
     if not isinstance(body, dict):
         raise HTTPException(400, "Body inválido")
 
