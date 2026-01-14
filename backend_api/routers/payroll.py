@@ -416,7 +416,12 @@ def listar_payslips(
 # ============================================================
 
 from io import BytesIO
+from datetime import date
+import os
+
+from fastapi import Depends, HTTPException
 from fastapi.responses import StreamingResponse
+from psycopg2.extras import RealDictCursor
 
 # ReportLab (backend-only)
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
@@ -434,10 +439,40 @@ def _fmt(valor: float) -> str:
         return str(valor)
 
 
+def _resolve_header_path() -> str | None:
+    """
+    Encuentra backend_api/assets/header.png de forma robusta.
+
+    payroll.py vive en: backend_api/routers/payroll.py
+    assets vive en:     backend_api/assets/header.png
+    """
+    # 1) Relativo a routers/payroll.py -> ../assets/header.png
+    p1 = os.path.abspath(
+        os.path.join(
+            os.path.dirname(__file__),  # .../backend_api/routers
+            "..",                       # .../backend_api
+            "assets",
+            "header.png"
+        )
+    )
+    if os.path.exists(p1):
+        return p1
+
+    # 2) Fallback usando BASE_DIR si existe en el módulo
+    try:
+        p2 = os.path.abspath(os.path.join(BASE_DIR, "assets", "header.png"))
+        if os.path.exists(p2):
+            return p2
+    except Exception:
+        pass
+
+    return None
+
+
 def _generar_colilla_pdf_bytes(data: dict, year: int, month: int) -> bytes:
     """
     Genera el PDF en memoria (bytes) con el mismo formato que tu payroll_pdf.
-    No usa filesystem. No depende de Modulos/.
+    No usa Modulos/. No depende de filesystem del usuario.
     """
     buffer = BytesIO()
 
@@ -454,26 +489,11 @@ def _generar_colilla_pdf_bytes(data: dict, year: int, month: int) -> bytes:
     elements = []
 
     # ---------------------------------------------------------
-    # HEADER (si existe en backend)
-    # Busca backend_api/assets/header.png desde Modulos/HHRR/reports/
+    # HEADER (backend_api/assets/header.png)
     # ---------------------------------------------------------
-    assets_path = os.path.abspath(
-        os.path.join(
-            os.path.dirname(__file__),
-            "..",   # reports -> HHRR
-            "..",   # HHRR -> Modulos
-            "..",   # Modulos -> raíz del proyecto
-            "..",   # raíz -> backend_api
-            "assets",
-            "header.png"
-        )
-    )
+    assets_path = _resolve_header_path()
 
-    if os.path.exists(assets_path):
-
-        # 👉 RESPETA TOP MARGIN DEL DOCUMENTO
-        elements.append(Spacer(1, 12))
-
+    if assets_path:
         header = Image(
             assets_path,
             width=8 * cm,
@@ -790,7 +810,6 @@ def descargar_colilla_pdf(
     # GENERAR PDF (BYTES) Y RESPONDER
     # --------------------------------------------------------
     pdf_bytes = _generar_colilla_pdf_bytes(data=data, year=year, month=month)
-
     filename = f"COLILLA_{run['usuario']}_{year}_{month}.pdf"
 
     return StreamingResponse(
