@@ -48,6 +48,7 @@ from routers.password_reset import router as password_reset_router
 from routers import hr
 from routers import hr_ot_log
 from routers.payroll import router as payroll_router
+from routers.hr_events import router as hr_events_router
 
 
 # ============================================================
@@ -185,6 +186,7 @@ app.include_router(password_reset_router)
 app.include_router(hr.router)
 app.include_router(hr_ot_log.router)
 app.include_router(payroll_router)
+app.include_router(hr_events_router)
 
 # ============================================================
 # EJECUCIÓN LOCAL
