@@ -214,3 +214,31 @@ def rechazar_evento(
 
     conn.commit()
     return cur.fetchone()
+
+# ============================================================
+# CONSULTAR VACACIONES DISPONIBLES
+# GET /hr/events/vacaciones/disponibles
+# ============================================================
+@router.get("/vacaciones/disponibles")
+def vacaciones_disponibles(
+    current_user=Depends(get_current_user),
+    conn=Depends(get_db)
+):
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+
+    cur.execute("""
+        SELECT fecha_ingreso
+        FROM empleados
+        WHERE usuario = %s
+    """, (current_user["usuario"],))
+
+    emp = cur.fetchone()
+    if not emp or not emp["fecha_ingreso"]:
+        raise HTTPException(404, "Fecha de ingreso no encontrada")
+
+    dias = calcular_vacaciones(emp["fecha_ingreso"])
+
+    return {
+        "dias_disponibles": dias
+    }
+
