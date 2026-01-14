@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Body
 from psycopg2.extras import RealDictCursor
 from datetime import date, datetime
 
