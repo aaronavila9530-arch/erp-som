@@ -455,18 +455,25 @@ def _generar_colilla_pdf_bytes(data: dict, year: int, month: int) -> bytes:
 
     # ---------------------------------------------------------
     # HEADER (si existe en backend)
-    # Intento de buscar assets/header.png relativo al backend
+    # Busca backend_api/assets/header.png desde Modulos/HHRR/reports/
     # ---------------------------------------------------------
     assets_path = os.path.abspath(
         os.path.join(
             os.path.dirname(__file__),
-            "..",
+            "..",   # reports -> HHRR
+            "..",   # HHRR -> Modulos
+            "..",   # Modulos -> raíz del proyecto
+            "..",   # raíz -> backend_api
             "assets",
             "header.png"
         )
     )
 
     if os.path.exists(assets_path):
+
+        # 👉 RESPETA TOP MARGIN DEL DOCUMENTO
+        elements.append(Spacer(1, 12))
+
         header = Image(
             assets_path,
             width=8 * cm,
