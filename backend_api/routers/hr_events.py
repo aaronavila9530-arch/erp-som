@@ -74,14 +74,14 @@ def crear_evento(
     event_date = payload.get("event_date")
     event_payload = payload.get("payload")
 
-    if not event_type or not event_payload:
+    if not event_type or not isinstance(event_payload, dict):
         raise HTTPException(400, "Datos incompletos")
 
     # --------------------------------------------------------
     # OBTENER EMPLEADO
     # --------------------------------------------------------
     cur.execute("""
-        SELECT id, fecha_ingreso
+        SELECT id
         FROM empleados
         WHERE usuario = %s
     """, (current_user["usuario"],))
@@ -91,47 +91,9 @@ def crear_evento(
         raise HTTPException(404, "Empleado no encontrado")
 
     empleado_id = empleado["id"]
-    fecha_ingreso = empleado["fecha_ingreso"]
 
     # --------------------------------------------------------
-    # VALIDACIÓN VACACIONES
-    # --------------------------------------------------------
-    if event_type == "VACACIONES":
-
-        if not fecha_ingreso:
-            raise HTTPException(400, "Empleado sin fecha de ingreso")
-
-        # Vacaciones acumuladas (fuente única de verdad)
-        dias_acumulados = calcular_vacaciones(fecha_ingreso)
-
-        # Meses trabajados (sin dateutil)
-        hoy = date.today()
-        meses = (hoy.year - fecha_ingreso.year) * 12 + (hoy.month - fecha_ingreso.month)
-        if hoy.day < fecha_ingreso.day:
-            meses -= 1
-
-        if meses < 3:
-            raise HTTPException(
-                400,
-                "Vacaciones disponibles solo después de 3 meses de ingreso"
-            )
-
-        dias_solicitados = float(event_payload.get("dias_solicitados", 0))
-
-        if dias_solicitados <= 0:
-            raise HTTPException(400, "Días solicitados inválidos")
-
-        if dias_solicitados > dias_acumulados:
-            raise HTTPException(
-                400,
-                f"Días solicitados exceden lo acumulado ({dias_acumulados})"
-            )
-
-        # Guardar cálculo en payload (auditoría)
-        event_payload["dias_acumulados"] = dias_acumulados
-
-    # --------------------------------------------------------
-    # INSERT
+    # INSERT (SIN VALIDACIONES DE NEGOCIO)
     # --------------------------------------------------------
     cur.execute("""
         INSERT INTO hr_events (
