@@ -262,7 +262,7 @@ def calcular_payroll(
     }
 
 # ============================================================
-# 3️⃣ POSTEAR PLANILLA (CONFIRMACIÓN)
+# 3️⃣ POSTEAR PLANILLA (CONFIRMACIÓN) — BLINDADO
 # ============================================================
 
 @router.put(
@@ -280,27 +280,11 @@ def postear_planilla(
     year = payload["year"]
     month = payload["month"]
 
+    # --------------------------------------------------------
+    # PDF PATH LÓGICO (NO ARCHIVO REAL EN BACKEND)
+    # --------------------------------------------------------
     pdf_filename = f"COLILLA_{usuario}_{year}_{month}.pdf"
-
-    pdf_path_online = f"/hr/payroll/files/{year}/{month}/{pdf_filename}"
-
-    # ========================================================
-    # VALIDAR QUE EL PDF REAL YA EXISTA
-    # ========================================================
-    file_path = os.path.join(
-        BASE_DIR,
-        "storage",
-        "payroll",
-        str(year),
-        f"{int(month):02d}",
-        pdf_filename
-    )
-
-    if not os.path.isfile(file_path):
-        raise HTTPException(
-            status_code=400,
-            detail="La colilla PDF no existe. Debe generarse antes de postear la planilla."
-        )
+    pdf_path_online = f"/LOCAL_USER_FILE/{pdf_filename}"
 
     # --------------------------------------------------------
     # INSERT / UPDATE COMPLETO (PAYROLL_RUNS)
@@ -332,9 +316,9 @@ def postear_planilla(
         month,
         payload["salario_neto"],
         payload["salario_bruto"],
-        payload["horas_ot"],            # horas_extra
-        payload["pago_horas_extra"],    # monto_horas_extra
-        pdf_path_online,
+        payload["horas_ot"],             # horas_extra
+        payload["pago_horas_extra"],     # monto_horas_extra
+        pdf_path_online,                 # referencia lógica
         user["usuario"]
     ))
 
@@ -342,8 +326,7 @@ def postear_planilla(
 
     return {
         "status": "OK",
-        "message": "Planilla registrada correctamente",
-        "pdf_path": pdf_path_online
+        "message": "Planilla registrada correctamente"
     }
 
 
