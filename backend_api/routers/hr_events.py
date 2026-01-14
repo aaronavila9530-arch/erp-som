@@ -61,47 +61,58 @@ def listar_eventos(
 
 
 # ============================================================
-# CREAR SOLICITUD (BLINDADO)
+# CREAR SOLICITUD HHRR (BLINDADO)
+# POST /hr/events
 # ============================================================
 @router.post("")
 def crear_evento(
-    raw_body: Any = Body(None),
+    body: Dict = Body(...),
     current_user=Depends(get_current_user),
     conn=Depends(get_db)
 ):
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
-    # --------------------------------------------------------
-    # NORMALIZAR BODY (a prueba de todo)
-    # --------------------------------------------------------
-    body = raw_body if isinstance(raw_body, dict) else {}
+    # -----------------------------
+    # VALIDAR BODY
+    # -----------------------------
+    if not isinstance(body, dict):
+        raise HTTPException(400, "Body inválido")
 
-    event_type = body.get("event_type") or "UNKNOWN"
+    event_type = body.get("event_type")
     event_date = body.get("event_date")
     event_payload = body.get("payload")
 
-    if not isinstance(event_payload, dict):
-        event_payload = {
-            "_raw_payload": body.get("payload"),
-            "_note": "Payload no estructurado"
-        }
+    if not event_type:
+        raise HTTPException(400, "event_type requerido")
 
-    # --------------------------------------------------------
+    if event_payload is None:
+        event_payload = {}
+
+    if not isinstance(event_payload, dict):
+        raise HTTPException(400, "payload debe ser un objeto JSON")
+
+    # -----------------------------
     # OBTENER EMPLEADO
-    # --------------------------------------------------------
+    # -----------------------------
     cur.execute("""
         SELECT id
         FROM empleados
         WHERE usuario = %s
     """, (current_user["usuario"],))
+
     emp = cur.fetchone()
 
     if not emp:
-        raise HTTPException(404, "Empleado no encontrado")
+        raise HTTPException(
+            404,
+            f"Empleado no encontrado para usuario '{current_user['usuario']}'"
+        )
 
-    # --------------------------------------------------------
-    # INSERT (NUNCA BLOQUEA)
-    # --------------------------------------------------------
+    empleado_id = emp["id"]
+
+    # -----------------------------
+    # INSERT DEFINITIVO
+    # -----------------------------
     cur.execute("""
         INSERT INTO hr_events (
             empleado_id,
@@ -123,7 +134,7 @@ def crear_evento(
         )
         RETURNING id
     """, (
-        emp["id"],
+        empleado_id,
         event_type,
         event_date or date.today(),
         date.today().year,
@@ -137,9 +148,9 @@ def crear_evento(
 
     return {
         "status": "OK",
-        "id": row["id"],
-        "event_type": event_type
+        "id": row["id"]
     }
+
 # ============================================================
 # APROBAR SOLICITUD
 # ============================================================
