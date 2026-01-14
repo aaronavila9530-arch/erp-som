@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from psycopg2.extras import RealDictCursor
 from datetime import date, datetime
-from fastapi import Body
+
 
 from database import get_db
 from security.auth import get_current_user
@@ -61,39 +61,39 @@ def listar_eventos(
 
 
 # ============================================================
-# CREAR SOLICITUD HHRR (BLINDADO)
+# CREAR SOLICITUD HHRR (ULTRA ESTABLE)
 # POST /hr/events
 # ============================================================
 @router.post("")
 def crear_evento(
-    body: Dict = Body(...),
+    body: dict = Body(...),
     current_user=Depends(get_current_user),
     conn=Depends(get_db)
 ):
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
-    # -----------------------------
+    # --------------------------------------------------------
     # VALIDAR BODY
-    # -----------------------------
+    # --------------------------------------------------------
     if not isinstance(body, dict):
         raise HTTPException(400, "Body inválido")
 
     event_type = body.get("event_type")
     event_date = body.get("event_date")
-    event_payload = body.get("payload")
+    payload = body.get("payload")
 
     if not event_type:
         raise HTTPException(400, "event_type requerido")
 
-    if event_payload is None:
-        event_payload = {}
+    if payload is None:
+        payload = {}
 
-    if not isinstance(event_payload, dict):
+    if not isinstance(payload, dict):
         raise HTTPException(400, "payload debe ser un objeto JSON")
 
-    # -----------------------------
+    # --------------------------------------------------------
     # OBTENER EMPLEADO
-    # -----------------------------
+    # --------------------------------------------------------
     cur.execute("""
         SELECT id
         FROM empleados
@@ -108,11 +108,9 @@ def crear_evento(
             f"Empleado no encontrado para usuario '{current_user['usuario']}'"
         )
 
-    empleado_id = emp["id"]
-
-    # -----------------------------
-    # INSERT DEFINITIVO
-    # -----------------------------
+    # --------------------------------------------------------
+    # INSERT REAL
+    # --------------------------------------------------------
     cur.execute("""
         INSERT INTO hr_events (
             empleado_id,
@@ -134,12 +132,12 @@ def crear_evento(
         )
         RETURNING id
     """, (
-        empleado_id,
+        emp["id"],
         event_type,
         event_date or date.today(),
         date.today().year,
         date.today().month,
-        event_payload,
+        payload,
         current_user["usuario"]
     ))
 
