@@ -412,11 +412,258 @@ def listar_payslips(
 
 # ============================================================
 # 4️⃣ DESCARGAR COLILLA (RECONSTRUCCIÓN ON-DEMAND)
+# (NO DEPENDE DE Modulos/  |  GENERA PDF EN MEMORIA)
 # ============================================================
 
 from io import BytesIO
 from fastapi.responses import StreamingResponse
-from Modulos.HHRR.reports.payroll_pdf import generar_colilla_pdf
+
+# ReportLab (backend-only)
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.pagesizes import LETTER, landscape
+from reportlab.lib.enums import TA_LEFT, TA_RIGHT
+from reportlab.lib import colors
+from reportlab.lib.units import cm
+
+
+def _fmt(valor: float) -> str:
+    try:
+        return f"{float(valor):,.2f}"
+    except Exception:
+        return str(valor)
+
+
+def _generar_colilla_pdf_bytes(data: dict, year: int, month: int) -> bytes:
+    """
+    Genera el PDF en memoria (bytes) con el mismo formato que tu payroll_pdf.
+    No usa filesystem. No depende de Modulos/.
+    """
+    buffer = BytesIO()
+
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=landscape(LETTER),
+        rightMargin=36,
+        leftMargin=36,
+        topMargin=36,
+        bottomMargin=36
+    )
+
+    styles = getSampleStyleSheet()
+    elements = []
+
+    # ---------------------------------------------------------
+    # HEADER (si existe en backend)
+    # Intento de buscar assets/header.png relativo al backend
+    # ---------------------------------------------------------
+    assets_path = os.path.abspath(
+        os.path.join(
+            os.path.dirname(__file__),
+            "..",
+            "assets",
+            "header.png"
+        )
+    )
+
+    if os.path.exists(assets_path):
+        header = Image(
+            assets_path,
+            width=8 * cm,
+            height=2.2 * cm,
+            hAlign="LEFT"
+        )
+        elements.append(header)
+        elements.append(Spacer(1, 8))
+
+    # ---------------------------------------------------------
+    # TÍTULO
+    # ---------------------------------------------------------
+    title_style = ParagraphStyle(
+        "TitleStyle",
+        fontSize=13,
+        leading=15,
+        alignment=TA_LEFT,
+        spaceAfter=10
+    )
+
+    elements.append(
+        Paragraph(
+            f"<b>Comprobante de Pago</b><br/>"
+            f"Periodo: {month}/{year}<br/>"
+            f"Empresa: MSL Marine Surveyors and Logistics Group SRL",
+            title_style
+        )
+    )
+
+    elements.append(Spacer(1, 10))
+
+    # ---------------------------------------------------------
+    # DATOS DEL EMPLEADO
+    # ---------------------------------------------------------
+    info_table = Table(
+        [
+            ["Empleado:", f"{data['nombre']} {data['apellidos']}"],
+            ["Cédula:", data.get("cedula_id", "N/D")],
+            ["Usuario:", data["usuario"]],
+            ["Jornada:", data["jornada"]],
+            ["Tipo de pago:", data["pago"]],
+            ["Fecha emisión:", date.today().strftime("%d/%m/%Y")]
+        ],
+        colWidths=[6 * cm, 16 * cm]
+    )
+
+    info_table.setStyle(
+        TableStyle([
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+            ("BACKGROUND", (0, 0), (0, -1), colors.whitesmoke),
+            ("FONT", (0, 0), (-1, -1), "Helvetica", 9),
+            ("LEFTPADDING", (0, 0), (-1, -1), 6),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ])
+    )
+
+    elements.append(info_table)
+    elements.append(Spacer(1, 12))
+
+    # =========================================================
+    # RESUMEN DE DEVENGOS
+    # =========================================================
+    devengos_rows = [
+        ["Resumen de Devengos", "Detalle", "Monto"],
+        ["Salario Base", "", _fmt(data["salario_base"])],
+        ["Horas Extra", f"{data.get('horas_ot', 0)} horas", _fmt(data.get("pago_horas_extra", 0.0))],
+        ["Total Devengado", "", _fmt(data["salario_bruto"])]
+    ]
+
+    devengos_table = Table(devengos_rows, colWidths=[8 * cm, 4 * cm, 6 * cm])
+    devengos_table.setStyle(
+        TableStyle([
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+            ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
+            ("FONT", (0, 0), (-1, 0), "Helvetica-Bold", 9),
+            ("ALIGN", (2, 1), (-1, -1), "RIGHT"),
+            ("FONT", (0, -1), (-1, -1), "Helvetica-Bold", 9),
+        ])
+    )
+
+    elements.append(devengos_table)
+    elements.append(Spacer(1, 12))
+
+    salario_bruto = float(data["salario_bruto"])
+
+    # ---------------------------------------------------------
+    # DEDUCCIONES TRABAJADOR
+    # ---------------------------------------------------------
+    ded_rows = [["Deducción Trabajador", "%", "Monto"]]
+
+    for k, tasa in DEDUCCIONES_TRABAJADOR.items():
+        ded_rows.append([
+            k,
+            f"{tasa * 100:.2f} %",
+            _fmt(salario_bruto * tasa)
+        ])
+
+    ded_rows.append([
+        "Total Deducciones",
+        "",
+        _fmt(data["deducciones_trabajador"])
+    ])
+
+    ded_table = Table(ded_rows, colWidths=[8 * cm, 4 * cm, 6 * cm])
+    ded_table.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
+        ("FONT", (0, 0), (-1, 0), "Helvetica-Bold", 9),
+        ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
+        ("FONT", (0, -1), (-1, -1), "Helvetica-Bold", 9),
+    ]))
+
+    elements.append(ded_table)
+    elements.append(Spacer(1, 10))
+
+    # ---------------------------------------------------------
+    # RENTA
+    # ---------------------------------------------------------
+    renta_tramo = 0.0
+    for limite, tasa in TRAMOS_RENTA:
+        if salario_bruto <= limite:
+            renta_tramo = tasa
+            break
+
+    renta_table = Table(
+        [
+            ["Impuesto Renta", "% Aplicado", "Monto"],
+            ["Renta", f"{renta_tramo * 100:.2f} %", _fmt(data["impuesto_renta"])]
+        ],
+        colWidths=[8 * cm, 4 * cm, 6 * cm]
+    )
+
+    renta_table.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
+        ("FONT", (0, 0), (-1, 0), "Helvetica-Bold", 9),
+        ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
+    ]))
+
+    elements.append(renta_table)
+    elements.append(Spacer(1, 10))
+
+    # ---------------------------------------------------------
+    # CARGAS PATRONALES (INFORMATIVO)
+    # ---------------------------------------------------------
+    patronal_rows = [["Carga Patronal", "%", "Monto"]]
+
+    total_patronal = 0.0
+    for k, tasa in CARGAS_PATRONALES.items():
+        monto = salario_bruto * tasa
+        total_patronal += monto
+        patronal_rows.append([
+            k,
+            f"{tasa * 100:.2f} %",
+            _fmt(monto)
+        ])
+
+    patronal_rows.append([
+        "Total Cargas Patronales",
+        "",
+        _fmt(total_patronal)
+    ])
+
+    patronal_table = Table(patronal_rows, colWidths=[8 * cm, 4 * cm, 6 * cm])
+    patronal_table.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.whitesmoke),
+        ("FONT", (0, 0), (-1, 0), "Helvetica-Bold", 9),
+        ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
+        ("FONT", (0, -1), (-1, -1), "Helvetica-Bold", 9),
+    ]))
+
+    elements.append(patronal_table)
+    elements.append(Spacer(1, 12))
+
+    # ---------------------------------------------------------
+    # NETO A PAGAR
+    # ---------------------------------------------------------
+    neto_style = ParagraphStyle(
+        "NetoStyle",
+        fontSize=12,
+        leading=14,
+        alignment=TA_RIGHT
+    )
+
+    elements.append(
+        Paragraph(
+            f"<b>Neto a pagar: {_fmt(data['salario_neto'])}</b>",
+            neto_style
+        )
+    )
+
+    doc.build(elements)
+    buffer.seek(0)
+    return buffer.read()
 
 
 @router.get(
@@ -435,7 +682,6 @@ def descargar_colilla_pdf(
     - payroll_runs (datos cerrados)
     - empleados (datos maestros)
     """
-
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     rol = (current_user.get("rol") or "").lower()
@@ -494,8 +740,9 @@ def descargar_colilla_pdf(
     # --------------------------------------------------------
     # RECONSTRUCCIÓN DETERMINÍSTICA
     # --------------------------------------------------------
-    salario_bruto = float(run["salario_bruto"])
-    salario_base = salario_bruto - float(run["monto_horas_extra"] or 0)
+    salario_bruto = float(run["salario_bruto"] or 0)
+    monto_horas_extra = float(run["monto_horas_extra"] or 0)
+    salario_base = salario_bruto - monto_horas_extra
 
     deducciones_trabajador = round(
         sum(salario_bruto * tasa for tasa in DEDUCCIONES_TRABAJADOR.values()),
@@ -522,36 +769,25 @@ def descargar_colilla_pdf(
 
         "salario_base": round(salario_base, 2),
         "horas_ot": float(run["horas_extra"] or 0),
-        "pago_horas_extra": float(run["monto_horas_extra"] or 0),
-        "salario_bruto": salario_bruto,
+        "pago_horas_extra": round(monto_horas_extra, 2),
+        "salario_bruto": round(salario_bruto, 2),
 
         "deducciones_trabajador": deducciones_trabajador,
         "impuesto_renta": impuesto_renta,
-        "salario_neto": float(run["salario_neto"]),
+        "salario_neto": float(run["salario_neto"] or 0),
         "cargas_patronales": cargas_patronales,
         "costo_total_empresa": round(salario_bruto + cargas_patronales, 2)
     }
 
     # --------------------------------------------------------
-    # GENERAR PDF EN MEMORIA
+    # GENERAR PDF (BYTES) Y RESPONDER
     # --------------------------------------------------------
-    buffer = BytesIO()
-
-    generar_colilla_pdf(
-        path=buffer,
-        data=data,
-        year=year,
-        month=month
-    )
-
-    buffer.seek(0)
+    pdf_bytes = _generar_colilla_pdf_bytes(data=data, year=year, month=month)
 
     filename = f"COLILLA_{run['usuario']}_{year}_{month}.pdf"
 
     return StreamingResponse(
-        buffer,
+        BytesIO(pdf_bytes),
         media_type="application/pdf",
-        headers={
-            "Content-Disposition": f"attachment; filename={filename}"
-        }
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
     )
