@@ -6,13 +6,8 @@ from database import get_db
 
 # =========================================================
 # BLINDAJE — IMPORT get_current_user
-# Evita crash si el módulo/ruta no existe en tu proyecto.
 # =========================================================
 def _get_current_user_fallback():
-    """
-    Fallback seguro: si no se encuentra get_current_user real,
-    el backend NO debe crashear. Responde 503 indicando configuración.
-    """
     raise HTTPException(
         status_code=503,
         detail="Auth no configurado: get_current_user no disponible."
@@ -20,14 +15,11 @@ def _get_current_user_fallback():
 
 
 try:
-    # Opción 1: la que yo propuse (si existiera)
     from auth.dependencies import get_current_user  # type: ignore
 except Exception:
     try:
-        # Opción 2: patrón muy común en tu proyecto (ajustable si existe)
         from dependencies import get_current_user  # type: ignore
     except Exception:
-        # Opción 3: fallback que NO crashea
         get_current_user = _get_current_user_fallback  # type: ignore
 
 
@@ -60,10 +52,10 @@ def listar_empleados(
     codigo: str | None = None,
     estado: str | None = None,
     usuario: str | None = None,
-    current_user=Depends(get_current_user),
+    current_user=Depends(get_current_user),   # ✅ AGREGADO
     conn=Depends(get_db)
 ):
-    _check_admin_role(current_user)
+    _check_admin_role(current_user)            # ✅ AGREGADO
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
@@ -97,8 +89,8 @@ def listar_empleados(
         """,
         params
     )
-    row_total = cur.fetchone()
-    total = int(row_total["total"]) if row_total and row_total.get("total") is not None else 0
+
+    total = cur.fetchone()["total"]
 
     offset = (page - 1) * page_size
 
@@ -110,42 +102,19 @@ def listar_empleados(
             codigo,
             nombre,
             apellidos,
-            estado_civil,
-            genero,
-            nacionalidad,
-            prefijo,
-            telefono,
-            provincia,
-            canton,
-            distrito,
-            direccion,
+            cedula_id,
+            usuario,
+            estado,
             jornada,
             salario,
             pago,
             banco,
-            cuenta_iban,
             moneda,
-            enfermedades,
-            contacto_emergencia,
-            telefono_emergencia,
-            activo1,
-            marca1,
-            serial1,
-            activo2,
-            marca2,
-            serial2,
-            activo3,
-            marca3,
-            serial3,
-            fecharegistro,
             fecha_ingreso,
-            vacaciones,
-            estado,
             horas_contratadas,
-            usuario,
-            cedula_id,
-            fecha_nacimiento,
-            edad
+            activo1,
+            activo2,
+            activo3
         FROM empleados
         {where_sql}
         ORDER BY id
