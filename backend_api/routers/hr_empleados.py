@@ -272,12 +272,19 @@ def crear_empleado(
     try:
         cur.execute(sql, params)
         conn.commit()
-    except Exception as e:
-        conn.rollback()
-        raise HTTPException(
-            status_code=400,
-            detail=f"Error creando empleado: {str(e)}"
-        )
+    detalle = {
+        "error": str(e),
+        "pgerror": getattr(e, "pgerror", None),
+        "detail": getattr(getattr(e, "diag", None), "message_detail", None),
+        "column": getattr(getattr(e, "diag", None), "column_name", None),
+        "constraint": getattr(getattr(e, "diag", None), "constraint_name", None),
+        "type": e.__class__.__name__,
+    }
+
+    raise HTTPException(
+        status_code=500,
+        detail=detalle
+    )
 
     return {
         "status": "ok",
