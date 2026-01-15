@@ -131,24 +131,29 @@ def crear_empleado(
     # -----------------------------------------------------
     # 1️⃣ OBTENER ÚLTIMO CONSECUTIVO DE CÓDIGO
     # Formato: MSL-000X-E
+    # ❌ NO se usa MAX() + FOR UPDATE (PostgreSQL no lo permite)
+    # ✅ Se bloquea la última fila real
     # -----------------------------------------------------
     cur.execute("""
-        SELECT
-            MAX(
-                CAST(
-                    regexp_replace(codigo, '[^0-9]', '', 'g')
-                    AS INTEGER
-                )
-            ) AS ultimo
+        SELECT codigo
         FROM empleados
         WHERE codigo LIKE 'MSL-%-E'
+        ORDER BY id DESC
+        LIMIT 1
         FOR UPDATE
     """)
 
     row = cur.fetchone()
-    ultimo = row["ultimo"] or 0
-    siguiente = ultimo + 1
 
+    if row and row.get("codigo"):
+        try:
+            ultimo = int(row["codigo"].split("-")[1])
+        except Exception:
+            ultimo = 0
+    else:
+        ultimo = 0
+
+    siguiente = ultimo + 1
     codigo_generado = f"MSL-{str(siguiente).zfill(4)}-E"
 
     # -----------------------------------------------------
@@ -252,7 +257,6 @@ def crear_empleado(
         "status": "ok",
         "codigo_generado": codigo_generado
     }
-
 
 # =========================================================
 # PUT — ACTUALIZAR EMPLEADO
