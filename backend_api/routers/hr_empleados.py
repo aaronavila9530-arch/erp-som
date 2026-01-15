@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException
 from psycopg2.extras import RealDictCursor
 
 from database import get_db
-from routers.auth import get_current_user   # ✅ IMPORT CORRECTO
+from security.auth import get_current_user   # ✅ MISMO IMPORT QUE hr_events.py
 
 
 router = APIRouter(
@@ -12,15 +12,12 @@ router = APIRouter(
 
 
 # =========================================================
-# UTIL — RBAC
+# UTIL — RBAC (MISMO CRITERIO QUE OTROS HHRR)
 # =========================================================
 def _check_admin_role(current_user):
-    if not isinstance(current_user, dict):
-        raise HTTPException(status_code=401, detail="No autenticado")
-
     rol = (current_user.get("rol") or "").lower()
     if rol not in ("admin", "master"):
-        raise HTTPException(status_code=403, detail="Acceso denegado")
+        raise HTTPException(403, "Acceso denegado")
 
 
 # =========================================================
@@ -34,7 +31,7 @@ def listar_empleados(
     codigo: str | None = None,
     estado: str | None = None,
     usuario: str | None = None,
-    current_user=Depends(get_current_user),   # ✅ AHORA SÍ EXISTE
+    current_user=Depends(get_current_user),
     conn=Depends(get_db)
 ):
     _check_admin_role(current_user)
@@ -71,12 +68,11 @@ def listar_empleados(
         """,
         params
     )
-
     total = cur.fetchone()["total"]
 
     offset = (page - 1) * page_size
 
-    # DATA
+    # DATA (COLUMNAS USADAS POR LA UI)
     cur.execute(
         f"""
         SELECT
@@ -118,6 +114,7 @@ def listar_empleados(
         "data": data
     }
 
+
 # =========================================================
 # POST — CREAR EMPLEADO
 # =========================================================
@@ -128,48 +125,6 @@ def crear_empleado(
     conn=Depends(get_db)
 ):
     _check_admin_role(current_user)
-
-    # Normalización segura (evita KeyError por campos faltantes)
-    params = {
-        "codigo": payload.get("codigo"),
-        "nombre": payload.get("nombre"),
-        "apellidos": payload.get("apellidos"),
-        "estado_civil": payload.get("estado_civil"),
-        "genero": payload.get("genero"),
-        "nacionalidad": payload.get("nacionalidad"),
-        "prefijo": payload.get("prefijo"),
-        "telefono": payload.get("telefono"),
-        "provincia": payload.get("provincia"),
-        "canton": payload.get("canton"),
-        "distrito": payload.get("distrito"),
-        "direccion": payload.get("direccion"),
-        "jornada": payload.get("jornada"),
-        "salario": payload.get("salario"),
-        "pago": payload.get("pago"),
-        "banco": payload.get("banco"),
-        "cuenta_iban": payload.get("cuenta_iban"),
-        "moneda": payload.get("moneda"),
-        "enfermedades": payload.get("enfermedades"),
-        "contacto_emergencia": payload.get("contacto_emergencia"),
-        "telefono_emergencia": payload.get("telefono_emergencia"),
-        "activo1": payload.get("activo1"),
-        "marca1": payload.get("marca1"),
-        "serial1": payload.get("serial1"),
-        "activo2": payload.get("activo2"),
-        "marca2": payload.get("marca2"),
-        "serial2": payload.get("serial2"),
-        "activo3": payload.get("activo3"),
-        "marca3": payload.get("marca3"),
-        "serial3": payload.get("serial3"),
-        "fecha_ingreso": payload.get("fecha_ingreso"),
-        "vacaciones": payload.get("vacaciones"),
-        "estado": payload.get("estado"),
-        "horas_contratadas": payload.get("horas_contratadas"),
-        "usuario": payload.get("usuario"),
-        "cedula_id": payload.get("cedula_id"),
-        "fecha_nacimiento": payload.get("fecha_nacimiento"),
-        "edad": payload.get("edad"),
-    }
 
     cur = conn.cursor()
 
@@ -201,13 +156,13 @@ def crear_empleado(
     """
 
     try:
-        cur.execute(sql, params)
+        cur.execute(sql, payload)
         conn.commit()
     except Exception as e:
         conn.rollback()
-        raise HTTPException(status_code=400, detail=f"Error creando empleado: {str(e)}")
+        raise HTTPException(400, f"Error creando empleado: {str(e)}")
 
-    return {"status": "ok", "message": "Empleado creado correctamente"}
+    return {"status": "ok"}
 
 
 # =========================================================
@@ -222,10 +177,9 @@ def actualizar_empleado(
 ):
     _check_admin_role(current_user)
 
-    if not isinstance(payload, dict) or not payload:
-        raise HTTPException(status_code=400, detail="No hay datos para actualizar")
+    if not payload:
+        raise HTTPException(400, "No hay datos para actualizar")
 
-    # Whitelist de campos permitidos para evitar updates peligrosos
     allowed_fields = {
         "codigo", "nombre", "apellidos", "estado_civil", "genero", "nacionalidad",
         "prefijo", "telefono", "provincia", "canton", "distrito", "direccion",
@@ -242,14 +196,13 @@ def actualizar_empleado(
     sets = []
     params = {"id": empleado_id}
 
-    for campo, valor in payload.items():
-        if campo not in allowed_fields:
-            continue
-        sets.append(f"{campo} = %({campo})s")
-        params[campo] = valor
+    for k, v in payload.items():
+        if k in allowed_fields:
+            sets.append(f"{k} = %({k})s")
+            params[k] = v
 
     if not sets:
-        raise HTTPException(status_code=400, detail="No hay campos válidos para actualizar")
+        raise HTTPException(400, "No hay campos válidos para actualizar")
 
     sql = f"""
     UPDATE empleados
@@ -257,13 +210,12 @@ def actualizar_empleado(
     WHERE id = %(id)s
     """
 
-    cur = conn.cursor()
-
     try:
+        cur = conn.cursor()
         cur.execute(sql, params)
         conn.commit()
     except Exception as e:
         conn.rollback()
-        raise HTTPException(status_code=400, detail=f"Error actualizando empleado: {str(e)}")
+        raise HTTPException(400, f"Error actualizando empleado: {str(e)}")
 
-    return {"status": "ok", "message": "Empleado actualizado correctamente"}
+    return {"status": "ok"}
