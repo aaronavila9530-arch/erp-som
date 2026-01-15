@@ -161,22 +161,51 @@ async def crear_evento(
         raise HTTPException(400, "event_date inválida (YYYY-MM-DD)")
 
     # --------------------------------------------------------
-    # LÓGICA ESPECÍFICA VACACIONES
+    # LÓGICA ESPECÍFICA VACACIONES (BLINDADA)
     # --------------------------------------------------------
     dias_vacaciones = None
 
     if event_type.upper() == "VACACIONES":
+
         dias_vacaciones = payload.get("dias")
 
+        # Si no viene "dias", calcular por fechas
         if dias_vacaciones is None:
-            raise HTTPException(400, "Para VACACIONES se requiere payload.dias")
 
+            fecha_inicio = payload.get("fecha_inicio")
+            fecha_fin = payload.get("fecha_fin")
+
+            if not fecha_inicio or not fecha_fin:
+                raise HTTPException(
+                    400,
+                    "VACACIONES requiere payload.dias o payload.fecha_inicio y payload.fecha_fin"
+                )
+
+            try:
+                fi = datetime.strptime(fecha_inicio, "%Y-%m-%d").date()
+                ff = datetime.strptime(fecha_fin, "%Y-%m-%d").date()
+
+                if ff < fi:
+                    raise ValueError
+
+                dias_vacaciones = (ff - fi).days + 1
+
+            except Exception:
+                raise HTTPException(
+                    400,
+                    "Fechas de vacaciones inválidas (YYYY-MM-DD)"
+                )
+
+        # Validación final
         try:
             dias_vacaciones = float(dias_vacaciones)
             if dias_vacaciones <= 0:
                 raise ValueError
         except Exception:
-            raise HTTPException(400, "payload.dias debe ser un número mayor a 0")
+            raise HTTPException(
+                400,
+                "Días de vacaciones inválidos"
+            )
 
     # --------------------------------------------------------
     # OBTENER EMPLEADO
