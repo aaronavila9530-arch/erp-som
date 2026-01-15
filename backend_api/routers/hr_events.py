@@ -46,49 +46,59 @@ def listar_eventos(
     if not usuario:
         raise HTTPException(401, "Usuario no autenticado")
 
-    # --------------------------------------------------------
-    # USER → solo sus solicitudes
-    # ADMIN / MASTER → todas
-    # --------------------------------------------------------
+    base_sql = """
+        SELECT
+            e.id,
+
+            -- =================================================
+            -- EMPLEADO: BLINDADO (nunca vacío)
+            -- Prioridad:
+            -- 1) nombre + apellidos
+            -- 2) codigo empleado
+            -- 3) texto seguro
+            -- =================================================
+            COALESCE(
+                NULLIF(
+                    TRIM(
+                        COALESCE(emp.nombre, '') || ' ' || COALESCE(emp.apellidos, '')
+                    ),
+                    ''
+                ),
+                emp.codigo,
+                'SIN EMPLEADO'
+            ) AS empleado,
+
+            e.event_type,
+            e.event_date,
+
+            -- =================================================
+            -- PERIODO: BLINDADO (no None-None)
+            -- =================================================
+            CASE
+                WHEN e.period_year IS NOT NULL
+                 AND e.period_month IS NOT NULL
+                THEN e.period_year::text || '-' || e.period_month::text
+                ELSE ''
+            END AS period,
+
+            e.status,
+            e.created_at
+
+        FROM hr_events e
+        LEFT JOIN empleados emp ON emp.id = e.empleado_id
+    """
+
     if rol == "user":
-        cur.execute("""
-            SELECT
-                e.id,
-                TRIM(
-                    COALESCE(emp.nombre, '') || ' ' || COALESCE(emp.apellidos, '')
-                ) AS empleado,
-                e.event_type,
-                e.event_date,
-                (
-                    COALESCE(e.period_year::text, '') || '-' ||
-                    COALESCE(e.period_month::text, '')
-                ) AS period,
-                e.status,
-                e.created_at
-            FROM hr_events e
-            JOIN empleados emp ON emp.id = e.empleado_id
+        base_sql += """
             WHERE emp.usuario = %s
             ORDER BY e.created_at DESC
-        """, (usuario,))
+        """
+        cur.execute(base_sql, (usuario,))
     else:
-        cur.execute("""
-            SELECT
-                e.id,
-                TRIM(
-                    COALESCE(emp.nombre, '') || ' ' || COALESCE(emp.apellidos, '')
-                ) AS empleado,
-                e.event_type,
-                e.event_date,
-                (
-                    COALESCE(e.period_year::text, '') || '-' ||
-                    COALESCE(e.period_month::text, '')
-                ) AS period,
-                e.status,
-                e.created_at
-            FROM hr_events e
-            JOIN empleados emp ON emp.id = e.empleado_id
+        base_sql += """
             ORDER BY e.created_at DESC
-        """)
+        """
+        cur.execute(base_sql)
 
     return cur.fetchall()
 
