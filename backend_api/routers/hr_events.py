@@ -51,7 +51,7 @@ def listar_eventos(
             e.id,
 
             -- =============================================
-            -- EMPLEADO: YA MATERIALIZADO EN hr_events
+            -- EMPLEADO (YA MATERIALIZADO)
             -- =============================================
             COALESCE(
                 NULLIF(TRIM(e.empleado), ''),
@@ -62,17 +62,21 @@ def listar_eventos(
             e.event_date,
 
             -- =============================================
-            -- PERIODO (blindado)
+            -- PERIODO (DESGLOSADO PARA UI)
             -- =============================================
-            CASE
-                WHEN e.period_year IS NOT NULL
-                 AND e.period_month IS NOT NULL
-                THEN e.period_year::text || '-' || e.period_month::text
-                ELSE ''
-            END AS period,
+            e.period_year,
+            e.period_month,
 
             e.status,
-            e.created_at
+
+            -- =============================================
+            -- CAMPOS CLAVE PARA LA TABLA
+            -- =============================================
+            e.comentario_solicitud,
+            e.created_by,
+            e.approved_by,
+            e.created_at,
+            e.approved_at
 
         FROM hr_events e
     """
