@@ -203,25 +203,22 @@ def crear_empleado(
             return None
 
     # =====================================================
-    # 1️⃣ GENERAR CÓDIGO EMPLEADO (LOCK REAL)
+    # 1️⃣ GENERAR CÓDIGO EMPLEADO (ROBUSTO REAL)
     # =====================================================
     cur.execute("""
-        SELECT codigo
+        SELECT
+            MAX(
+                CAST(
+                    regexp_replace(codigo, '[^0-9]', '', 'g'
+                ) AS INTEGER)
+            ) AS max_num
         FROM empleados
-        WHERE codigo LIKE 'MSL-%-E'
-        ORDER BY id DESC
-        LIMIT 1
+        WHERE codigo ~ '^MSL-[0-9]+-E$'
         FOR UPDATE
     """)
 
     row = cur.fetchone()
-    if row and row.get("codigo"):
-        try:
-            ultimo = int(str(row["codigo"]).split("-")[1])
-        except Exception:
-            ultimo = 0
-    else:
-        ultimo = 0
+    ultimo = row["max_num"] or 0
 
     codigo_generado = f"MSL-{str(ultimo + 1).zfill(4)}-E"
 
