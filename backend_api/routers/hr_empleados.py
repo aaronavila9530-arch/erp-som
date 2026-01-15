@@ -114,7 +114,6 @@ def listar_empleados(
         "data": data
     }
 
-
 # =========================================================
 # POST — CREAR EMPLEADO
 # =========================================================
@@ -129,16 +128,34 @@ def crear_empleado(
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     # =====================================================
-    # HELPERS DE NORMALIZACIÓN (CLAVE)
+    # HELPERS DE NORMALIZACIÓN (BLINDADOS)
     # =====================================================
     def _int(v):
+        """
+        Acepta:
+        - int
+        - "506"
+        - "+506"
+        - " tel:+506 "
+        Retorna int o None
+        """
+        if v is None:
+            return None
+
+        if isinstance(v, int):
+            return v
+
         try:
-            return int(v)
+            s = str(v)
+            digits = "".join(c for c in s if c.isdigit())
+            return int(digits) if digits else None
         except Exception:
             return None
 
     def _num(v):
         try:
+            if v in ("", None, "None"):
+                return None
             return float(v)
         except Exception:
             return None
@@ -146,15 +163,15 @@ def crear_empleado(
     def _text(v):
         if v in ("", "None", None):
             return None
-        return v
+        return str(v).strip()
 
     def _date(v):
         if not v:
             return None
-        return v  # YYYY-MM-DD
+        return v  # YYYY-MM-DD (DB valida)
 
     # =====================================================
-    # 1️⃣ GENERAR CÓDIGO EMPLEADO
+    # 1️⃣ GENERAR CÓDIGO EMPLEADO (LOCKED)
     # =====================================================
     cur.execute("""
         SELECT codigo
@@ -178,8 +195,10 @@ def crear_empleado(
     codigo_generado = f"MSL-{str(ultimo + 1).zfill(4)}-E"
 
     # =====================================================
-    # 2️⃣ PARAMS 1:1 CON TABLA (TIPOS REALES)
+    # 2️⃣ PARAMS (COHERENTES CON DB)
     # =====================================================
+    prefijo = _int(payload.get("prefijo")) or 506
+
     params = {
         "codigo": codigo_generado,
 
@@ -189,19 +208,19 @@ def crear_empleado(
         "genero": _text(payload.get("genero")),
         "nacionalidad": _text(payload.get("nacionalidad")),
 
-        "prefijo": _int(payload.get("prefijo")),
+        "prefijo": prefijo,
         "telefono": _int(payload.get("telefono")),
         "provincia": _text(payload.get("provincia")),
         "canton": _text(payload.get("canton")),
         "distrito": _text(payload.get("distrito")),
         "direccion": _text(payload.get("direccion")),
 
-        "jornada": payload.get("jornada") or "Completa",
+        "jornada": _text(payload.get("jornada")) or "Completa",
         "salario": _num(payload.get("salario")),
-        "pago": payload.get("pago") or "Mensual",
-        "banco": payload.get("banco") or "Sin definir",
+        "pago": _text(payload.get("pago")) or "Mensual",
+        "banco": _text(payload.get("banco")) or "Sin definir",
         "cuenta_iban": _text(payload.get("cuenta_iban")),
-        "moneda": payload.get("moneda") or "CRC",
+        "moneda": _text(payload.get("moneda")) or "CRC",
 
         "enfermedades": _text(payload.get("enfermedades")),
         "contacto_emergencia": _text(payload.get("contacto_emergencia")),
@@ -221,7 +240,7 @@ def crear_empleado(
 
         "fecha_ingreso": _date(payload.get("fecha_ingreso")),
         "vacaciones": _num(payload.get("vacaciones")) or 0,
-        "estado": payload.get("estado") or "Activo",
+        "estado": _text(payload.get("estado")) or "Activo",
 
         "horas_contratadas": _num(payload.get("horas_contratadas")),
         "usuario": _text(payload.get("usuario")),
