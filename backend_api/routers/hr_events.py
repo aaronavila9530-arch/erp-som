@@ -161,12 +161,28 @@ async def crear_evento(
         raise HTTPException(400, "event_date inválida (YYYY-MM-DD)")
 
     # --------------------------------------------------------
-    # OBTENER EMPLEADO DESDE TABLA empleados
+    # LÓGICA ESPECÍFICA VACACIONES
+    # --------------------------------------------------------
+    dias_vacaciones = None
+
+    if event_type.upper() == "VACACIONES":
+        dias_vacaciones = payload.get("dias")
+
+        if dias_vacaciones is None:
+            raise HTTPException(400, "Para VACACIONES se requiere payload.dias")
+
+        try:
+            dias_vacaciones = float(dias_vacaciones)
+            if dias_vacaciones <= 0:
+                raise ValueError
+        except Exception:
+            raise HTTPException(400, "payload.dias debe ser un número mayor a 0")
+
+    # --------------------------------------------------------
+    # OBTENER EMPLEADO
     # --------------------------------------------------------
     cur.execute("""
-        SELECT
-            nombre,
-            apellidos
+        SELECT nombre, apellidos
         FROM empleados
         WHERE usuario = %s
     """, (usuario,))
@@ -179,12 +195,11 @@ async def crear_evento(
         )
 
     empleado_nombre = f"{emp['nombre']} {emp['apellidos']}".strip()
-
     if not empleado_nombre:
         raise HTTPException(400, "Nombre del empleado inválido")
 
     # --------------------------------------------------------
-    # INSERT EN hr_events (YA SIN empleado_id)
+    # INSERT EN hr_events
     # --------------------------------------------------------
     try:
         cur.execute("""
@@ -197,6 +212,7 @@ async def crear_evento(
                 status,
                 payload,
                 comentario_solicitud,
+                vacaciones,
                 created_by,
                 created_at
             ) VALUES (
@@ -206,6 +222,7 @@ async def crear_evento(
                 %s,
                 %s,
                 'PENDING',
+                %s,
                 %s,
                 %s,
                 %s,
@@ -219,7 +236,8 @@ async def crear_evento(
             event_date.year,
             event_date.month,
             json.dumps(payload),
-            payload.get("motivo"),  # opcional, si aplica
+            payload.get("motivo"),
+            dias_vacaciones,
             usuario
         ))
 
@@ -324,8 +342,14 @@ def vacaciones_disponibles(
     if not usuario:
         raise HTTPException(401, "Usuario no autenticado")
 
+    # ---------------------------------------------------------
+    # DATOS DEL EMPLEADO
+    # ---------------------------------------------------------
     cur.execute("""
-        SELECT id, fecha_ingreso, vacaciones
+        SELECT
+            id,
+            fecha_ingreso,
+            vacaciones
         FROM empleados
         WHERE usuario = %s
     """, (usuario,))
@@ -337,16 +361,46 @@ def vacaciones_disponibles(
     if not emp["fecha_ingreso"]:
         raise HTTPException(400, "Empleado sin fecha de ingreso")
 
-    dias_calculados = calcular_vacaciones(emp["fecha_ingreso"])
+    # ---------------------------------------------------------
+    # VACACIONES GENERADAS
+    # ---------------------------------------------------------
+    dias_generados = calcular_vacaciones(emp["fecha_ingreso"])
 
-    if emp["vacaciones"] != dias_calculados:
+    # ---------------------------------------------------------
+    # VACACIONES YA SOLICITADAS (PENDING + APPROVED)
+    # ---------------------------------------------------------
+    cur.execute("""
+        SELECT
+            COALESCE(SUM(vacaciones), 0) AS dias_solicitados
+        FROM hr_events
+        WHERE created_by = %s
+          AND event_type = 'VACACIONES'
+          AND status IN ('PENDING', 'APPROVED')
+    """, (usuario,))
+
+    row = cur.fetchone()
+    dias_solicitados = float(row["dias_solicitados"] or 0)
+
+    # ---------------------------------------------------------
+    # VACACIONES DISPONIBLES REALES
+    # ---------------------------------------------------------
+    dias_disponibles = dias_generados - dias_solicitados
+    if dias_disponibles < 0:
+        dias_disponibles = 0.0
+
+    # ---------------------------------------------------------
+    # SINCRONIZAR EMPLEADOS (OPCIONAL, COMO YA LO TENÍAS)
+    # ---------------------------------------------------------
+    if emp["vacaciones"] != dias_disponibles:
         cur.execute("""
             UPDATE empleados
             SET vacaciones = %s
             WHERE id = %s
-        """, (dias_calculados, emp["id"]))
+        """, (dias_disponibles, emp["id"]))
         conn.commit()
 
     return {
-        "dias_disponibles": dias_calculados
+        "dias_generados": round(dias_generados, 2),
+        "dias_solicitados": round(dias_solicitados, 2),
+        "dias_disponibles": round(dias_disponibles, 2)
     }
