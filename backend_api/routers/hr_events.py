@@ -291,11 +291,12 @@ async def crear_evento(
 @router.patch("/{event_id}/approve")
 def aprobar_evento(
     event_id: int,
-    motivo: dict,
+    motivo: dict | None = None,
     current_user=Depends(get_current_user),
     conn=Depends(get_db)
 ):
-    if current_user.get("rol") not in ("admin", "master"):
+    rol = (current_user.get("rol") or "").lower()
+    if rol not in ("admin", "master"):
         raise HTTPException(403, "No autorizado")
 
     comentario = motivo.get("comentario") if isinstance(motivo, dict) else None
@@ -335,7 +336,8 @@ def rechazar_evento(
     current_user=Depends(get_current_user),
     conn=Depends(get_db)
 ):
-    if current_user.get("rol") not in ("admin", "master"):
+    rol = (current_user.get("rol") or "").lower()
+    if rol not in ("admin", "master"):
         raise HTTPException(403, "No autorizado")
 
     comentario = motivo.get("comentario") if isinstance(motivo, dict) else None
