@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 from psycopg2.extras import RealDictCursor
 from datetime import date, datetime
+import json
 
 
 from database import get_db
@@ -68,10 +69,18 @@ async def crear_evento(
 ):
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
+    # --------------------------------------------------------
+    # LEER BODY CRUDO (SIN CONFIAR EN request.json)
+    # --------------------------------------------------------
+    raw_body = await request.body()
+
+    if not raw_body:
+        raise HTTPException(400, "Body vacío")
+
     try:
-        body = await request.json()
+        body = json.loads(raw_body.decode("utf-8"))
     except Exception:
-        raise HTTPException(400, "Body inválido o no JSON")
+        raise HTTPException(400, "Body no es JSON válido")
 
     if not isinstance(body, dict):
         raise HTTPException(400, "Body inválido")
