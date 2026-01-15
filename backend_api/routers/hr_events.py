@@ -46,9 +46,20 @@ def listar_eventos(
     if not usuario:
         raise HTTPException(401, "Usuario no autenticado")
 
+    # --------------------------------------------------------
+    # USER → solo sus solicitudes
+    # ADMIN / MASTER → todas
+    # --------------------------------------------------------
     if rol == "user":
         cur.execute("""
-            SELECT e.*
+            SELECT
+                e.id,
+                emp.nombre || ' ' || emp.apellidos AS empleado,
+                e.event_type,
+                e.event_date,
+                (e.period_year || '-' || e.period_month) AS period,
+                e.status,
+                e.created_at
             FROM hr_events e
             JOIN empleados emp ON emp.id = e.empleado_id
             WHERE emp.usuario = %s
@@ -56,9 +67,17 @@ def listar_eventos(
         """, (usuario,))
     else:
         cur.execute("""
-            SELECT *
-            FROM hr_events
-            ORDER BY created_at DESC
+            SELECT
+                e.id,
+                emp.nombre || ' ' || emp.apellidos AS empleado,
+                e.event_type,
+                e.event_date,
+                (e.period_year || '-' || e.period_month) AS period,
+                e.status,
+                e.created_at
+            FROM hr_events e
+            JOIN empleados emp ON emp.id = e.empleado_id
+            ORDER BY e.created_at DESC
         """)
 
     return cur.fetchall()
