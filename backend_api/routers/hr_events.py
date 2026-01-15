@@ -54,10 +54,15 @@ def listar_eventos(
         cur.execute("""
             SELECT
                 e.id,
-                emp.nombre || ' ' || emp.apellidos AS empleado,
+                TRIM(
+                    COALESCE(emp.nombre, '') || ' ' || COALESCE(emp.apellidos, '')
+                ) AS empleado,
                 e.event_type,
                 e.event_date,
-                (e.period_year || '-' || e.period_month) AS period,
+                (
+                    COALESCE(e.period_year::text, '') || '-' ||
+                    COALESCE(e.period_month::text, '')
+                ) AS period,
                 e.status,
                 e.created_at
             FROM hr_events e
@@ -69,10 +74,15 @@ def listar_eventos(
         cur.execute("""
             SELECT
                 e.id,
-                emp.nombre || ' ' || emp.apellidos AS empleado,
+                TRIM(
+                    COALESCE(emp.nombre, '') || ' ' || COALESCE(emp.apellidos, '')
+                ) AS empleado,
                 e.event_type,
                 e.event_date,
-                (e.period_year || '-' || e.period_month) AS period,
+                (
+                    COALESCE(e.period_year::text, '') || '-' ||
+                    COALESCE(e.period_month::text, '')
+                ) AS period,
                 e.status,
                 e.created_at
             FROM hr_events e
@@ -83,126 +93,7 @@ def listar_eventos(
     return cur.fetchall()
 
 
-# ============================================================
-# CREAR SOLICITUD
-# POST /hr/events/
-# ============================================================
-@router.post("/")
-async def crear_evento(
-    request: Request,
-    current_user=Depends(get_current_user),
-    conn=Depends(get_db)
-):
-    cur = conn.cursor(cursor_factory=RealDictCursor)
-
-    # --------------------------------------------------------
-    # VALIDAR USUARIO
-    # --------------------------------------------------------
-    usuario = current_user.get("usuario")
-    if not usuario:
-        raise HTTPException(401, "Usuario no autenticado")
-
-    # --------------------------------------------------------
-    # LEER BODY CRUDO (100% CONTROLADO)
-    # --------------------------------------------------------
-    try:
-        raw_body = await request.body()
-        if not raw_body:
-            raise HTTPException(400, "Body vacío")
-
-        body = json.loads(raw_body.decode("utf-8"))
-        if not isinstance(body, dict):
-            raise HTTPException(400, "Body debe ser un objeto JSON")
-    except HTTPException:
-        raise
-    except Exception:
-        raise HTTPException(400, "Body no es JSON válido")
-
-    # --------------------------------------------------------
-    # VALIDAR CAMPOS BASE
-    # --------------------------------------------------------
-    event_type = body.get("event_type")
-    payload = body.get("payload", {})
-    event_date = body.get("event_date")
-
-    if not event_type or not isinstance(event_type, str):
-        raise HTTPException(400, "event_type requerido y debe ser string")
-
-    if payload is not None and not isinstance(payload, dict):
-        raise HTTPException(400, "payload debe ser un objeto JSON")
-
-    # --------------------------------------------------------
-    # NORMALIZAR FECHA
-    # --------------------------------------------------------
-    try:
-        if event_date:
-            event_date = datetime.strptime(event_date, "%Y-%m-%d").date()
-        else:
-            event_date = date.today()
-    except Exception:
-        raise HTTPException(400, "event_date inválida (YYYY-MM-DD)")
-
-    # --------------------------------------------------------
-    # OBTENER EMPLEADO
-    # --------------------------------------------------------
-    cur.execute("""
-        SELECT id
-        FROM empleados
-        WHERE usuario = %s
-    """, (usuario,))
-
-    emp = cur.fetchone()
-    if not emp:
-        raise HTTPException(
-            404,
-            f"Empleado no encontrado para usuario '{usuario}'"
-        )
-
-    # --------------------------------------------------------
-    # INSERT TRANSACCIONAL
-    # --------------------------------------------------------
-    try:
-        cur.execute("""
-            INSERT INTO hr_events (
-                empleado_id,
-                event_type,
-                event_date,
-                period_year,
-                period_month,
-                status,
-                payload,
-                created_by,
-                created_at
-            ) VALUES (
-                %s, %s, %s,
-                %s, %s,
-                'PENDING',
-                %s,
-                %s,
-                NOW()
-            )
-            RETURNING id
-        """, (
-            emp["id"],
-            event_type.strip(),
-            event_date,
-            event_date.year,
-            event_date.month,
-            json.dumps(payload),
-            usuario
-        ))
-
-        row = cur.fetchone()
-        conn.commit()
-
-    except Exception as e:
-        conn.rollback()
-        raise HTTPException(500, f"Error creando solicitud: {str(e)}")
-
-    return {
-        "status": "OK",
-        "id": row["id"]
-    }
+ 	
 
 
 # ============================================================
