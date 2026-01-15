@@ -50,30 +50,20 @@ def listar_eventos(
         SELECT
             e.id,
 
-            -- =================================================
-            -- EMPLEADO: BLINDADO (nunca vacío)
-            -- Prioridad:
-            -- 1) nombre + apellidos
-            -- 2) codigo empleado
-            -- 3) texto seguro
-            -- =================================================
+            -- =============================================
+            -- EMPLEADO: YA MATERIALIZADO EN hr_events
+            -- =============================================
             COALESCE(
-                NULLIF(
-                    TRIM(
-                        COALESCE(emp.nombre, '') || ' ' || COALESCE(emp.apellidos, '')
-                    ),
-                    ''
-                ),
-                emp.codigo,
+                NULLIF(TRIM(e.empleado), ''),
                 'SIN EMPLEADO'
             ) AS empleado,
 
             e.event_type,
             e.event_date,
 
-            -- =================================================
-            -- PERIODO: BLINDADO (no None-None)
-            -- =================================================
+            -- =============================================
+            -- PERIODO (blindado)
+            -- =============================================
             CASE
                 WHEN e.period_year IS NOT NULL
                  AND e.period_month IS NOT NULL
@@ -85,12 +75,15 @@ def listar_eventos(
             e.created_at
 
         FROM hr_events e
-        LEFT JOIN empleados emp ON emp.id = e.empleado_id
     """
 
+    # ---------------------------------------------------------
+    # USER → solo sus solicitudes
+    # ADMIN / MASTER → todas
+    # ---------------------------------------------------------
     if rol == "user":
         base_sql += """
-            WHERE emp.usuario = %s
+            WHERE e.created_by = %s
             ORDER BY e.created_at DESC
         """
         cur.execute(base_sql, (usuario,))
