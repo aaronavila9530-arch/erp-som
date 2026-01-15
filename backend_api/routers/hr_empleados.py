@@ -129,10 +129,7 @@ def crear_empleado(
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     # -----------------------------------------------------
-    # 1️⃣ OBTENER ÚLTIMO CONSECUTIVO DE CÓDIGO
-    # Formato: MSL-000X-E
-    # ❌ NO se usa MAX() + FOR UPDATE (PostgreSQL no lo permite)
-    # ✅ Se bloquea la última fila real
+    # 1️⃣ OBTENER ÚLTIMO CONSECUTIVO
     # -----------------------------------------------------
     cur.execute("""
         SELECT codigo
@@ -153,13 +150,16 @@ def crear_empleado(
     else:
         ultimo = 0
 
-    siguiente = ultimo + 1
-    codigo_generado = f"MSL-{str(siguiente).zfill(4)}-E"
+    codigo_generado = f"MSL-{str(ultimo + 1).zfill(4)}-E"
 
     # -----------------------------------------------------
-    # 2️⃣ PAYLOAD 1:1 CON TABLA EMPLEADOS
-    # (codigo lo inyecta el backend)
+    # 2️⃣ NORMALIZACIÓN SEGURA (CLAVE)
     # -----------------------------------------------------
+    def _num(v, default=0):
+        if v in (None, "", "None"):
+            return default
+        return v
+
     params = {
         "codigo": codigo_generado,
 
@@ -176,12 +176,13 @@ def crear_empleado(
         "distrito": payload.get("distrito"),
         "direccion": payload.get("direccion"),
 
-        "jornada": payload.get("jornada"),
-        "salario": payload.get("salario"),
-        "pago": payload.get("pago"),
-        "banco": payload.get("banco"),
+        # ⚠️ NOT NULL
+        "jornada": payload.get("jornada") or "Completa",
+        "salario": _num(payload.get("salario")),
+        "pago": payload.get("pago") or "Mensual",
+        "banco": payload.get("banco") or "Sin definir",
         "cuenta_iban": payload.get("cuenta_iban"),
-        "moneda": payload.get("moneda"),
+        "moneda": payload.get("moneda") or "CRC",
 
         "enfermedades": payload.get("enfermedades"),
         "contacto_emergencia": payload.get("contacto_emergencia"),
@@ -200,15 +201,15 @@ def crear_empleado(
         "serial3": payload.get("serial3"),
 
         "fecha_ingreso": payload.get("fecha_ingreso"),
-        "vacaciones": payload.get("vacaciones", 0),
-        "estado": payload.get("estado", "Activo"),
+        "vacaciones": _num(payload.get("vacaciones")),
+        "estado": payload.get("estado") or "Activo",
 
-        "horas_contratadas": payload.get("horas_contratadas"),
+        "horas_contratadas": _num(payload.get("horas_contratadas")),
         "usuario": payload.get("usuario"),
         "cedula_id": payload.get("cedula_id"),
 
         "fecha_nacimiento": payload.get("fecha_nacimiento"),
-        "edad": payload.get("edad"),
+        "edad": _num(payload.get("edad")),
     }
 
     # -----------------------------------------------------
@@ -257,6 +258,7 @@ def crear_empleado(
         "status": "ok",
         "codigo_generado": codigo_generado
     }
+
 
 # =========================================================
 # PUT — ACTUALIZAR EMPLEADO
