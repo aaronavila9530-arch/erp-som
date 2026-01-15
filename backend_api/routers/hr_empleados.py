@@ -126,11 +126,93 @@ def crear_empleado(
 ):
     _check_admin_role(current_user)
 
-    cur = conn.cursor()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
 
+    # -----------------------------------------------------
+    # 1️⃣ OBTENER ÚLTIMO CONSECUTIVO DE CÓDIGO
+    # Formato: MSL-000X-E
+    # -----------------------------------------------------
+    cur.execute("""
+        SELECT
+            MAX(
+                CAST(
+                    regexp_replace(codigo, '[^0-9]', '', 'g')
+                    AS INTEGER
+                )
+            ) AS ultimo
+        FROM empleados
+        WHERE codigo LIKE 'MSL-%-E'
+        FOR UPDATE
+    """)
+
+    row = cur.fetchone()
+    ultimo = row["ultimo"] or 0
+    siguiente = ultimo + 1
+
+    codigo_generado = f"MSL-{str(siguiente).zfill(4)}-E"
+
+    # -----------------------------------------------------
+    # 2️⃣ PAYLOAD 1:1 CON TABLA EMPLEADOS
+    # (codigo lo inyecta el backend)
+    # -----------------------------------------------------
+    params = {
+        "codigo": codigo_generado,
+
+        "nombre": payload.get("nombre"),
+        "apellidos": payload.get("apellidos"),
+        "estado_civil": payload.get("estado_civil"),
+        "genero": payload.get("genero"),
+        "nacionalidad": payload.get("nacionalidad"),
+
+        "prefijo": payload.get("prefijo"),
+        "telefono": payload.get("telefono"),
+        "provincia": payload.get("provincia"),
+        "canton": payload.get("canton"),
+        "distrito": payload.get("distrito"),
+        "direccion": payload.get("direccion"),
+
+        "jornada": payload.get("jornada"),
+        "salario": payload.get("salario"),
+        "pago": payload.get("pago"),
+        "banco": payload.get("banco"),
+        "cuenta_iban": payload.get("cuenta_iban"),
+        "moneda": payload.get("moneda"),
+
+        "enfermedades": payload.get("enfermedades"),
+        "contacto_emergencia": payload.get("contacto_emergencia"),
+        "telefono_emergencia": payload.get("telefono_emergencia"),
+
+        "activo1": payload.get("activo1"),
+        "marca1": payload.get("marca1"),
+        "serial1": payload.get("serial1"),
+
+        "activo2": payload.get("activo2"),
+        "marca2": payload.get("marca2"),
+        "serial2": payload.get("serial2"),
+
+        "activo3": payload.get("activo3"),
+        "marca3": payload.get("marca3"),
+        "serial3": payload.get("serial3"),
+
+        "fecha_ingreso": payload.get("fecha_ingreso"),
+        "vacaciones": payload.get("vacaciones", 0),
+        "estado": payload.get("estado", "Activo"),
+
+        "horas_contratadas": payload.get("horas_contratadas"),
+        "usuario": payload.get("usuario"),
+        "cedula_id": payload.get("cedula_id"),
+
+        "fecha_nacimiento": payload.get("fecha_nacimiento"),
+        "edad": payload.get("edad"),
+    }
+
+    # -----------------------------------------------------
+    # 3️⃣ INSERT
+    # -----------------------------------------------------
     sql = """
     INSERT INTO empleados (
-        codigo, nombre, apellidos, estado_civil, genero, nacionalidad,
+        codigo,
+        nombre, apellidos, estado_civil, genero, nacionalidad,
         prefijo, telefono, provincia, canton, distrito, direccion,
         jornada, salario, pago, banco, cuenta_iban, moneda,
         enfermedades, contacto_emergencia, telefono_emergencia,
@@ -142,7 +224,8 @@ def crear_empleado(
         fecha_nacimiento, edad
     )
     VALUES (
-        %(codigo)s, %(nombre)s, %(apellidos)s, %(estado_civil)s, %(genero)s, %(nacionalidad)s,
+        %(codigo)s,
+        %(nombre)s, %(apellidos)s, %(estado_civil)s, %(genero)s, %(nacionalidad)s,
         %(prefijo)s, %(telefono)s, %(provincia)s, %(canton)s, %(distrito)s, %(direccion)s,
         %(jornada)s, %(salario)s, %(pago)s, %(banco)s, %(cuenta_iban)s, %(moneda)s,
         %(enfermedades)s, %(contacto_emergencia)s, %(telefono_emergencia)s,
@@ -156,13 +239,19 @@ def crear_empleado(
     """
 
     try:
-        cur.execute(sql, payload)
+        cur.execute(sql, params)
         conn.commit()
     except Exception as e:
         conn.rollback()
-        raise HTTPException(400, f"Error creando empleado: {str(e)}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Error creando empleado: {str(e)}"
+        )
 
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "codigo_generado": codigo_generado
+    }
 
 
 # =========================================================
