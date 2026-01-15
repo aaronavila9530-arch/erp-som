@@ -129,35 +129,32 @@ def crear_empleado(
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     # =====================================================
-    # HELPERS DE NORMALIZACIÓN
+    # HELPERS DE NORMALIZACIÓN (CLAVE)
     # =====================================================
-    def _to_int(v):
+    def _int(v):
         try:
             return int(v)
         except Exception:
             return None
 
-    def _to_float(v):
+    def _num(v):
         try:
             return float(v)
         except Exception:
             return None
 
-    def _to_date(v):
-        if not v:
-            return None
-        try:
-            return v  # YYYY-MM-DD válido
-        except Exception:
-            return None
-
-    def _clean(v):
+    def _text(v):
         if v in ("", "None", None):
             return None
         return v
 
+    def _date(v):
+        if not v:
+            return None
+        return v  # YYYY-MM-DD
+
     # =====================================================
-    # 1️⃣ GENERAR CÓDIGO EMPLEADO (MSL-000X-E)
+    # 1️⃣ GENERAR CÓDIGO EMPLEADO
     # =====================================================
     cur.execute("""
         SELECT codigo
@@ -181,57 +178,57 @@ def crear_empleado(
     codigo_generado = f"MSL-{str(ultimo + 1).zfill(4)}-E"
 
     # =====================================================
-    # 2️⃣ PARAMS 1:1 CON TABLA (TIPOS CORRECTOS)
+    # 2️⃣ PARAMS 1:1 CON TABLA (TIPOS REALES)
     # =====================================================
     params = {
         "codigo": codigo_generado,
 
-        "nombre": _clean(payload.get("nombre")),
-        "apellidos": _clean(payload.get("apellidos")),
-        "estado_civil": _clean(payload.get("estado_civil")),
-        "genero": _clean(payload.get("genero")),
-        "nacionalidad": _clean(payload.get("nacionalidad")),
+        "nombre": _text(payload.get("nombre")),
+        "apellidos": _text(payload.get("apellidos")),
+        "estado_civil": _text(payload.get("estado_civil")),
+        "genero": _text(payload.get("genero")),
+        "nacionalidad": _text(payload.get("nacionalidad")),
 
-        "prefijo": _clean(payload.get("prefijo")),
-        "telefono": _clean(payload.get("telefono")),
-        "provincia": _clean(payload.get("provincia")),
-        "canton": _clean(payload.get("canton")),
-        "distrito": _clean(payload.get("distrito")),
-        "direccion": _clean(payload.get("direccion")),
+        "prefijo": _int(payload.get("prefijo")),
+        "telefono": _int(payload.get("telefono")),
+        "provincia": _text(payload.get("provincia")),
+        "canton": _text(payload.get("canton")),
+        "distrito": _text(payload.get("distrito")),
+        "direccion": _text(payload.get("direccion")),
 
         "jornada": payload.get("jornada") or "Completa",
-        "salario": _to_float(payload.get("salario")),
+        "salario": _num(payload.get("salario")),
         "pago": payload.get("pago") or "Mensual",
         "banco": payload.get("banco") or "Sin definir",
-        "cuenta_iban": _clean(payload.get("cuenta_iban")),
+        "cuenta_iban": _text(payload.get("cuenta_iban")),
         "moneda": payload.get("moneda") or "CRC",
 
-        "enfermedades": _clean(payload.get("enfermedades")),
-        "contacto_emergencia": _clean(payload.get("contacto_emergencia")),
-        "telefono_emergencia": _clean(payload.get("telefono_emergencia")),
+        "enfermedades": _text(payload.get("enfermedades")),
+        "contacto_emergencia": _text(payload.get("contacto_emergencia")),
+        "telefono_emergencia": _int(payload.get("telefono_emergencia")),
 
-        "activo1": _clean(payload.get("activo1")),
-        "marca1": _clean(payload.get("marca1")),
-        "serial1": _clean(payload.get("serial1")),
+        "activo1": _text(payload.get("activo1")),
+        "marca1": _text(payload.get("marca1")),
+        "serial1": _text(payload.get("serial1")),
 
-        "activo2": _clean(payload.get("activo2")),
-        "marca2": _clean(payload.get("marca2")),
-        "serial2": _clean(payload.get("serial2")),
+        "activo2": _text(payload.get("activo2")),
+        "marca2": _text(payload.get("marca2")),
+        "serial2": _text(payload.get("serial2")),
 
-        "activo3": _clean(payload.get("activo3")),
-        "marca3": _clean(payload.get("marca3")),
-        "serial3": _clean(payload.get("serial3")),
+        "activo3": _text(payload.get("activo3")),
+        "marca3": _text(payload.get("marca3")),
+        "serial3": _text(payload.get("serial3")),
 
-        "fecha_ingreso": _to_date(payload.get("fecha_ingreso")),
-        "vacaciones": _to_float(payload.get("vacaciones")) or 0,
+        "fecha_ingreso": _date(payload.get("fecha_ingreso")),
+        "vacaciones": _num(payload.get("vacaciones")) or 0,
         "estado": payload.get("estado") or "Activo",
 
-        "horas_contratadas": _to_float(payload.get("horas_contratadas")),
-        "usuario": _clean(payload.get("usuario")),
-        "cedula_id": _clean(payload.get("cedula_id")),
+        "horas_contratadas": _num(payload.get("horas_contratadas")),
+        "usuario": _text(payload.get("usuario")),
+        "cedula_id": _int(payload.get("cedula_id")),
 
-        "fecha_nacimiento": _to_date(payload.get("fecha_nacimiento")),
-        "edad": _to_int(payload.get("edad")),
+        "fecha_nacimiento": _date(payload.get("fecha_nacimiento")),
+        "edad": _int(payload.get("edad")),
     }
 
     # =====================================================
@@ -280,7 +277,6 @@ def crear_empleado(
         "status": "ok",
         "codigo_generado": codigo_generado
     }
-
 
 # =========================================================
 # PUT — ACTUALIZAR EMPLEADO
