@@ -115,7 +115,7 @@ def listar_empleados(
     }
 
 # =========================================================
-# POST — CREAR EMPLEADO
+# POST — CREAR EMPLEADO (BLINDADO)
 # =========================================================
 @router.post("")
 def crear_empleado(
@@ -128,50 +128,40 @@ def crear_empleado(
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     # =====================================================
-    # HELPERS DE NORMALIZACIÓN (BLINDADOS)
+    # HELPERS DE NORMALIZACIÓN (A PRUEBA DE BASURA)
     # =====================================================
-    def _int(v):
-        """
-        Acepta:
-        - int
-        - "506"
-        - "+506"
-        - " tel:+506 "
-        Retorna int o None
-        """
+    def _int(v, default=None):
         if v is None:
-            return None
-
+            return default
         if isinstance(v, int):
             return v
-
         try:
             s = str(v)
             digits = "".join(c for c in s if c.isdigit())
-            return int(digits) if digits else None
+            return int(digits) if digits else default
         except Exception:
-            return None
+            return default
 
-    def _num(v):
+    def _num(v, default=None):
         try:
             if v in ("", None, "None"):
-                return None
+                return default
             return float(v)
         except Exception:
-            return None
+            return default
 
-    def _text(v):
+    def _text(v, default=None):
         if v in ("", "None", None):
-            return None
+            return default
         return str(v).strip()
 
     def _date(v):
         if not v:
             return None
-        return v  # YYYY-MM-DD (DB valida)
+        return v  # YYYY-MM-DD
 
     # =====================================================
-    # 1️⃣ GENERAR CÓDIGO EMPLEADO (LOCKED)
+    # 1️⃣ GENERAR CÓDIGO EMPLEADO (LOCK REAL)
     # =====================================================
     cur.execute("""
         SELECT codigo
@@ -183,7 +173,6 @@ def crear_empleado(
     """)
 
     row = cur.fetchone()
-
     if row and row.get("codigo"):
         try:
             ultimo = int(row["codigo"].split("-")[1])
@@ -195,32 +184,30 @@ def crear_empleado(
     codigo_generado = f"MSL-{str(ultimo + 1).zfill(4)}-E"
 
     # =====================================================
-    # 2️⃣ PARAMS (COHERENTES CON DB)
+    # 2️⃣ PARAMS CON DEFAULTS (NOT NULL SAFE)
     # =====================================================
-    prefijo = _int(payload.get("prefijo")) or 506
-
     params = {
         "codigo": codigo_generado,
 
-        "nombre": _text(payload.get("nombre")),
-        "apellidos": _text(payload.get("apellidos")),
+        "nombre": _text(payload.get("nombre"), ""),
+        "apellidos": _text(payload.get("apellidos"), ""),
         "estado_civil": _text(payload.get("estado_civil")),
         "genero": _text(payload.get("genero")),
         "nacionalidad": _text(payload.get("nacionalidad")),
 
-        "prefijo": prefijo,
-        "telefono": _int(payload.get("telefono")),
-        "provincia": _text(payload.get("provincia")),
-        "canton": _text(payload.get("canton")),
-        "distrito": _text(payload.get("distrito")),
-        "direccion": _text(payload.get("direccion")),
+        "prefijo": _int(payload.get("prefijo"), 506),
+        "telefono": _int(payload.get("telefono"), 0),
+        "provincia": _text(payload.get("provincia"), ""),
+        "canton": _text(payload.get("canton"), ""),
+        "distrito": _text(payload.get("distrito"), ""),
+        "direccion": _text(payload.get("direccion"), ""),
 
-        "jornada": _text(payload.get("jornada")) or "Completa",
-        "salario": _num(payload.get("salario")),
-        "pago": _text(payload.get("pago")) or "Mensual",
-        "banco": _text(payload.get("banco")) or "Sin definir",
-        "cuenta_iban": _text(payload.get("cuenta_iban")),
-        "moneda": _text(payload.get("moneda")) or "CRC",
+        "jornada": _text(payload.get("jornada"), "Completa"),
+        "salario": _num(payload.get("salario"), 0),
+        "pago": _text(payload.get("pago"), "Mensual"),
+        "banco": _text(payload.get("banco"), "Sin definir"),
+        "cuenta_iban": _text(payload.get("cuenta_iban"), "Sin definir"),
+        "moneda": _text(payload.get("moneda"), "CRC"),
 
         "enfermedades": _text(payload.get("enfermedades")),
         "contacto_emergencia": _text(payload.get("contacto_emergencia")),
@@ -239,10 +226,10 @@ def crear_empleado(
         "serial3": _text(payload.get("serial3")),
 
         "fecha_ingreso": _date(payload.get("fecha_ingreso")),
-        "vacaciones": _num(payload.get("vacaciones")) or 0,
-        "estado": _text(payload.get("estado")) or "Activo",
+        "vacaciones": _num(payload.get("vacaciones"), 0),
+        "estado": _text(payload.get("estado"), "Activo"),
 
-        "horas_contratadas": _num(payload.get("horas_contratadas")),
+        "horas_contratadas": _num(payload.get("horas_contratadas"), 0),
         "usuario": _text(payload.get("usuario")),
         "cedula_id": _int(payload.get("cedula_id")),
 
@@ -296,6 +283,7 @@ def crear_empleado(
         "status": "ok",
         "codigo_generado": codigo_generado
     }
+
 
 # =========================================================
 # PUT — ACTUALIZAR EMPLEADO
