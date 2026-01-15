@@ -108,6 +108,7 @@ def listar_eventos(
 # POST /hr/events/
 # ============================================================
 @router.post("/")
+@router.post("")
 async def crear_evento(
     request: Request,
     current_user=Depends(get_current_user),
@@ -116,14 +117,14 @@ async def crear_evento(
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     # --------------------------------------------------------
-    # VALIDAR USUARIO
+    # VALIDAR USUARIO LOGEADO
     # --------------------------------------------------------
     usuario = current_user.get("usuario")
     if not usuario:
         raise HTTPException(401, "Usuario no autenticado")
 
     # --------------------------------------------------------
-    # LEER BODY CRUDO (100% CONTROLADO)
+    # LEER BODY
     # --------------------------------------------------------
     try:
         raw_body = await request.body()
@@ -139,16 +140,16 @@ async def crear_evento(
         raise HTTPException(400, "Body no es JSON válido")
 
     # --------------------------------------------------------
-    # VALIDAR CAMPOS BASE
+    # CAMPOS BASE
     # --------------------------------------------------------
     event_type = body.get("event_type")
-    payload = body.get("payload", {})
+    payload = body.get("payload") or {}
     event_date = body.get("event_date")
 
     if not event_type or not isinstance(event_type, str):
-        raise HTTPException(400, "event_type requerido y debe ser string")
+        raise HTTPException(400, "event_type requerido")
 
-    if payload is not None and not isinstance(payload, dict):
+    if not isinstance(payload, dict):
         raise HTTPException(400, "payload debe ser un objeto JSON")
 
     # --------------------------------------------------------
@@ -163,10 +164,12 @@ async def crear_evento(
         raise HTTPException(400, "event_date inválida (YYYY-MM-DD)")
 
     # --------------------------------------------------------
-    # OBTENER EMPLEADO
+    # OBTENER EMPLEADO DESDE TABLA empleados
     # --------------------------------------------------------
     cur.execute("""
-        SELECT id
+        SELECT
+            nombre,
+            apellidos
         FROM empleados
         WHERE usuario = %s
     """, (usuario,))
@@ -178,37 +181,48 @@ async def crear_evento(
             f"Empleado no encontrado para usuario '{usuario}'"
         )
 
+    empleado_nombre = f"{emp['nombre']} {emp['apellidos']}".strip()
+
+    if not empleado_nombre:
+        raise HTTPException(400, "Nombre del empleado inválido")
+
     # --------------------------------------------------------
-    # INSERT TRANSACCIONAL
+    # INSERT EN hr_events (YA SIN empleado_id)
     # --------------------------------------------------------
     try:
         cur.execute("""
             INSERT INTO hr_events (
-                empleado_id,
+                empleado,
                 event_type,
                 event_date,
                 period_year,
                 period_month,
                 status,
                 payload,
+                comentario_solicitud,
                 created_by,
                 created_at
             ) VALUES (
-                %s, %s, %s,
-                %s, %s,
+                %s,
+                %s,
+                %s,
+                %s,
+                %s,
                 'PENDING',
+                %s,
                 %s,
                 %s,
                 NOW()
             )
             RETURNING id
         """, (
-            emp["id"],
+            empleado_nombre,
             event_type.strip(),
             event_date,
             event_date.year,
             event_date.month,
             json.dumps(payload),
+            payload.get("motivo"),  # opcional, si aplica
             usuario
         ))
 
@@ -221,7 +235,8 @@ async def crear_evento(
 
     return {
         "status": "OK",
-        "id": row["id"]
+        "id": row["id"],
+        "empleado": empleado_nombre
     }
 
 
