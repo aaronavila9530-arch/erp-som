@@ -333,24 +333,24 @@ def crear_empleado(
         conn.rollback()
 
         diag = getattr(e, "diag", None)
+
         detalle = {
             "error": str(e),
             "type": e.__class__.__name__,
             "pgerror": getattr(e, "pgerror", None),
-            "message_detail": getattr(diag, "message_detail", None) if diag else None,
             "message_primary": getattr(diag, "message_primary", None) if diag else None,
+            "message_detail": getattr(diag, "message_detail", None) if diag else None,
             "constraint": getattr(diag, "constraint_name", None) if diag else None,
             "column": getattr(diag, "column_name", None) if diag else None,
             "table": getattr(diag, "table_name", None) if diag else None,
-            "schema": getattr(diag, "schema_name", None) if diag else None,
         }
+
+        # 🔥 ESTO ES LO QUE FALTABA
+        print("❌ ERROR CREANDO EMPLEADO:", detalle)
 
         raise HTTPException(
             status_code=400,
-            detail={
-                "msg": "Error creando empleado",
-                "db": detalle
-            }
+            detail="Error creando empleado. Ver logs del servidor."
         )
 
 
