@@ -115,7 +115,7 @@ def listar_empleados(
     }
 
 # =========================================================
-# POST — CREAR EMPLEADO (BLINDADO)
+# POST — CREAR EMPLEADO (BLINDADO + DEBUG REAL)
 # =========================================================
 @router.post("")
 def crear_empleado(
@@ -131,34 +131,76 @@ def crear_empleado(
     # HELPERS DE NORMALIZACIÓN (A PRUEBA DE BASURA)
     # =====================================================
     def _int(v, default=None):
+        """
+        Acepta:
+        - int
+        - "506"
+        - "+506"
+        - " tel:+506 "
+        - "506-8888-7777"
+        Retorna int o default
+        """
         if v is None:
+            return default
+        if isinstance(v, bool):
             return default
         if isinstance(v, int):
             return v
         try:
-            s = str(v)
+            s = str(v).strip()
             digits = "".join(c for c in s if c.isdigit())
             return int(digits) if digits else default
         except Exception:
             return default
 
     def _num(v, default=None):
+        """
+        Acepta:
+        - "100"
+        - "100.50"
+        - "1,200.75" (comas)
+        - "" / None / "None"
+        Retorna float o default
+        """
+        if v in ("", None, "None"):
+            return default
         try:
-            if v in ("", None, "None"):
-                return default
-            return float(v)
+            s = str(v).strip().replace(",", "")
+            return float(s)
         except Exception:
             return default
 
     def _text(v, default=None):
         if v in ("", "None", None):
             return default
-        return str(v).strip()
+        try:
+            s = str(v).strip()
+            return s if s else default
+        except Exception:
+            return default
 
     def _date(v):
-        if not v:
+        """
+        Acepta:
+        - "YYYY-MM-DD"
+        - "YYYY-MM-DD HH:MM:SS"
+        - "YYYY-MM-DDTHH:MM:SS"
+        Retorna "YYYY-MM-DD" o None
+        """
+        if v in ("", None, "None"):
             return None
-        return v  # YYYY-MM-DD
+        try:
+            s = str(v).strip()
+            if not s:
+                return None
+            # Si viene con hora, recortamos
+            if "T" in s:
+                s = s.split("T")[0].strip()
+            if " " in s:
+                s = s.split(" ")[0].strip()
+            return s or None
+        except Exception:
+            return None
 
     # =====================================================
     # 1️⃣ GENERAR CÓDIGO EMPLEADO (LOCK REAL)
@@ -175,7 +217,7 @@ def crear_empleado(
     row = cur.fetchone()
     if row and row.get("codigo"):
         try:
-            ultimo = int(row["codigo"].split("-")[1])
+            ultimo = int(str(row["codigo"]).split("-")[1])
         except Exception:
             ultimo = 0
     else:
@@ -237,6 +279,12 @@ def crear_empleado(
         "edad": _int(payload.get("edad")),
     }
 
+    # Campos mínimos (extra safety)
+    if not params["nombre"]:
+        params["nombre"] = ""
+    if not params["apellidos"]:
+        params["apellidos"] = ""
+
     # =====================================================
     # 3️⃣ INSERT
     # =====================================================
@@ -267,29 +315,43 @@ def crear_empleado(
         %(horas_contratadas)s, %(usuario)s, %(cedula_id)s,
         %(fecha_nacimiento)s, %(edad)s
     )
+    RETURNING id, codigo
     """
 
     try:
         cur.execute(sql, params)
+        row_new = cur.fetchone()
         conn.commit()
-    detalle = {
-        "error": str(e),
-        "pgerror": getattr(e, "pgerror", None),
-        "detail": getattr(getattr(e, "diag", None), "message_detail", None),
-        "column": getattr(getattr(e, "diag", None), "column_name", None),
-        "constraint": getattr(getattr(e, "diag", None), "constraint_name", None),
-        "type": e.__class__.__name__,
-    }
 
-    raise HTTPException(
-        status_code=500,
-        detail=detalle
-    )
+        return {
+            "status": "ok",
+            "id": row_new["id"] if row_new else None,
+            "codigo_generado": row_new["codigo"] if row_new else codigo_generado
+        }
 
-    return {
-        "status": "ok",
-        "codigo_generado": codigo_generado
-    }
+    except Exception as e:
+        conn.rollback()
+
+        diag = getattr(e, "diag", None)
+        detalle = {
+            "error": str(e),
+            "type": e.__class__.__name__,
+            "pgerror": getattr(e, "pgerror", None),
+            "message_detail": getattr(diag, "message_detail", None) if diag else None,
+            "message_primary": getattr(diag, "message_primary", None) if diag else None,
+            "constraint": getattr(diag, "constraint_name", None) if diag else None,
+            "column": getattr(diag, "column_name", None) if diag else None,
+            "table": getattr(diag, "table_name", None) if diag else None,
+            "schema": getattr(diag, "schema_name", None) if diag else None,
+        }
+
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "msg": "Error creando empleado",
+                "db": detalle
+            }
+        )
 
 
 # =========================================================
