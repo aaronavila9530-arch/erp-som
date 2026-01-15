@@ -2,25 +2,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException
 from psycopg2.extras import RealDictCursor
 
 from database import get_db
-
-
-# =========================================================
-# BLINDAJE — IMPORT get_current_user
-# =========================================================
-def _get_current_user_fallback():
-    raise HTTPException(
-        status_code=503,
-        detail="Auth no configurado: get_current_user no disponible."
-    )
-
-
-try:
-    from auth.dependencies import get_current_user  # type: ignore
-except Exception:
-    try:
-        from dependencies import get_current_user  # type: ignore
-    except Exception:
-        get_current_user = _get_current_user_fallback  # type: ignore
+from routers.auth import get_current_user   # ✅ IMPORT CORRECTO
 
 
 router = APIRouter(
@@ -52,10 +34,10 @@ def listar_empleados(
     codigo: str | None = None,
     estado: str | None = None,
     usuario: str | None = None,
-    current_user=Depends(get_current_user),   # ✅ AGREGADO
+    current_user=Depends(get_current_user),   # ✅ AHORA SÍ EXISTE
     conn=Depends(get_db)
 ):
-    _check_admin_role(current_user)            # ✅ AGREGADO
+    _check_admin_role(current_user)
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
@@ -135,7 +117,6 @@ def listar_empleados(
         "total": total,
         "data": data
     }
-
 
 # =========================================================
 # POST — CREAR EMPLEADO
