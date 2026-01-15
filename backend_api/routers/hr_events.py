@@ -291,27 +291,37 @@ async def crear_evento(
 @router.patch("/{event_id}/approve")
 def aprobar_evento(
     event_id: int,
+    motivo: dict,
     current_user=Depends(get_current_user),
     conn=Depends(get_db)
 ):
     if current_user.get("rol") not in ("admin", "master"):
         raise HTTPException(403, "No autorizado")
 
-    cur = conn.cursor()
+    comentario = motivo.get("comentario") if isinstance(motivo, dict) else None
+
+    cur = conn.cursor(cursor_factory=RealDictCursor)
 
     cur.execute("""
         UPDATE hr_events
         SET status = 'APPROVED',
             approved_by = %s,
-            approved_at = NOW()
+            approved_at = NOW(),
+            comentario_apro_rech = %s
         WHERE id = %s
-    """, (current_user["usuario"], event_id))
+        RETURNING *
+    """, (
+        current_user["usuario"],
+        comentario,
+        event_id
+    ))
 
-    if cur.rowcount == 0:
+    row = cur.fetchone()
+    if not row:
         raise HTTPException(404, "Solicitud no encontrada")
 
     conn.commit()
-    return {"status": "OK"}
+    return row
 
 
 # ============================================================
@@ -338,13 +348,12 @@ def rechazar_evento(
         UPDATE hr_events
         SET status = 'REJECTED',
             approved_by = %s,
-            approved_at = NOW(),
-            payload = payload || %s::jsonb
+            comentario_apro_rech = %s
         WHERE id = %s
         RETURNING *
     """, (
         current_user["usuario"],
-        json.dumps({"motivo_rechazo": comentario}),
+        comentario,
         event_id
     ))
 
