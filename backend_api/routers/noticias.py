@@ -12,7 +12,7 @@ router = APIRouter(
 
 
 # =========================================================
-# UTIL — RBAC (MISMO CRITERIO QUE HHRR)
+# UTIL — RBAC
 # =========================================================
 def _check_admin_role(current_user):
     rol = (current_user.get("rol") or "").lower()
@@ -22,9 +22,8 @@ def _check_admin_role(current_user):
 
 # =========================================================
 # POST — PUBLICAR NOTICIAS
-# SOLO admin / master
 # =========================================================
-@router.post("")
+@router.post("/")
 def publicar_noticias(
     payload: dict,
     current_user=Depends(get_current_user),
@@ -98,8 +97,7 @@ def publicar_noticias(
 
 
 # =========================================================
-# GET — OBTENER ÚLTIMA PUBLICACIÓN
-# TODOS LOS USUARIOS AUTENTICADOS
+# GET — ÚLTIMA PUBLICACIÓN
 # =========================================================
 @router.get("/latest")
 def obtener_ultima_noticia(
@@ -125,5 +123,4 @@ def obtener_ultima_noticia(
         """
     )
 
-    noticia = cur.fetchone()
-    return noticia or {}
+    return cur.fetchone() or {}
