@@ -1,18 +1,29 @@
 from fastapi import APIRouter, Depends, HTTPException
 from psycopg2.extras import RealDictCursor
 
-from dependencies import get_db, get_current_user
-from security import _check_admin_role
+from database import get_db
+from security.auth import get_current_user
+
 
 router = APIRouter(
     prefix="/noticias",
-    tags=["Noticias HHRR"]
+    tags=["HHRR - Noticias"]
 )
 
-# ============================================================
+
+# =========================================================
+# UTIL — RBAC (MISMO CRITERIO QUE HHRR)
+# =========================================================
+def _check_admin_role(current_user):
+    rol = (current_user.get("rol") or "").lower()
+    if rol not in ("admin", "master"):
+        raise HTTPException(status_code=403, detail="Acceso denegado")
+
+
+# =========================================================
 # POST — PUBLICAR NOTICIAS
 # SOLO admin / master
-# ============================================================
+# =========================================================
 @router.post("")
 def publicar_noticias(
     payload: dict,
@@ -54,10 +65,18 @@ def publicar_noticias(
                 %(noticia_4)s,
                 %(noticia_5)s
             )
-            RETURNING *
+            RETURNING
+                id,
+                created_at,
+                created_by,
+                noticia_1,
+                noticia_2,
+                noticia_3,
+                noticia_4,
+                noticia_5
             """,
             {
-                "created_by": current_user["usuario"],
+                "created_by": current_user.get("usuario"),
                 "noticia_1": noticia_1,
                 "noticia_2": noticia_2,
                 "noticia_3": noticia_3,
@@ -72,13 +91,16 @@ def publicar_noticias(
 
     except Exception as e:
         conn.rollback()
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(
+            status_code=400,
+            detail=f"Error publicando noticia: {str(e)}"
+        )
 
 
-# ============================================================
+# =========================================================
 # GET — OBTENER ÚLTIMA PUBLICACIÓN
 # TODOS LOS USUARIOS AUTENTICADOS
-# ============================================================
+# =========================================================
 @router.get("/latest")
 def obtener_ultima_noticia(
     current_user=Depends(get_current_user),
@@ -104,5 +126,4 @@ def obtener_ultima_noticia(
     )
 
     noticia = cur.fetchone()
-
     return noticia or {}

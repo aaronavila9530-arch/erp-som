@@ -52,7 +52,6 @@ from routers.hr_events import router as hr_events_router
 from routers.hr_empleados import router as hr_empleados_router
 from routers import noticias
 
-
 # ============================================================
 # CONFIGURACIÓN FASTAPI
 # ============================================================
