@@ -2,8 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from psycopg2.extras import RealDictCursor
 from typing import Optional
 
-from dependencies import get_db, get_current_user
-from security import _check_admin_role
+from database import get_db
+from security.auth import get_current_user
 
 
 router = APIRouter(
@@ -12,19 +12,28 @@ router = APIRouter(
 )
 
 
-# ============================================================
-# HELPERS
-# ============================================================
+# =========================================================
+# UTIL — RBAC
+# =========================================================
+def _check_admin_role(current_user):
+    rol = (current_user.get("rol") or "").lower()
+    if rol not in ("admin", "master"):
+        raise HTTPException(status_code=403, detail="Acceso denegado")
 
+
+# =========================================================
+# HELPERS
+# =========================================================
 def _clean(v):
     if v in ("", None, "None"):
         return None
     return v
 
 
-# ============================================================
+# =========================================================
 # GET — LISTAR POLÍTICAS (PÚBLICO / EMPLEADOS)
-# ============================================================
+# GET /hr/policies
+# =========================================================
 @router.get("")
 def listar_politicas(
     categoria: Optional[str] = Query(None),
@@ -32,14 +41,6 @@ def listar_politicas(
     current_user=Depends(get_current_user),
     conn=Depends(get_db)
 ):
-    """
-    Acceso:
-    - employee / admin / master
-
-    Por defecto:
-    - Solo políticas activas
-    """
-
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     conditions = []
@@ -78,9 +79,10 @@ def listar_politicas(
     }
 
 
-# ============================================================
+# =========================================================
 # POST — CREAR POLÍTICA (ADMIN / MASTER)
-# ============================================================
+# POST /hr/policies
+# =========================================================
 @router.post("")
 def crear_politica(
     payload: dict,
@@ -109,7 +111,8 @@ def crear_politica(
             contenido,
             articulo_ref,
             creado_por
-        ) VALUES (
+        )
+        VALUES (
             %(categoria)s,
             %(titulo)s,
             %(contenido)s,
@@ -122,7 +125,7 @@ def crear_politica(
         "titulo": titulo,
         "contenido": contenido,
         "articulo_ref": articulo_ref,
-        "creado_por": current_user["usuario"]
+        "creado_por": current_user.get("usuario")
     })
 
     new_id = cur.fetchone()["id"]
@@ -135,9 +138,10 @@ def crear_politica(
     }
 
 
-# ============================================================
+# =========================================================
 # PUT — ACTUALIZAR POLÍTICA (ADMIN / MASTER)
-# ============================================================
+# PUT /hr/policies/{policy_id}
+# =========================================================
 @router.put("/{policy_id}")
 def actualizar_politica(
     policy_id: int,
@@ -150,9 +154,7 @@ def actualizar_politica(
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     fields = []
-    params = {
-        "id": policy_id
-    }
+    params = {"id": policy_id}
 
     for key in ("categoria", "titulo", "contenido", "articulo_ref", "activo"):
         if key in payload:
@@ -190,9 +192,10 @@ def actualizar_politica(
     }
 
 
-# ============================================================
+# =========================================================
 # DELETE — ELIMINAR POLÍTICA (SOFT DELETE) (ADMIN / MASTER)
-# ============================================================
+# DELETE /hr/policies/{policy_id}
+# =========================================================
 @router.delete("/{policy_id}")
 def eliminar_politica(
     policy_id: int,
@@ -209,9 +212,7 @@ def eliminar_politica(
             actualizado_en = NOW()
         WHERE id = %(id)s
         RETURNING id
-    """, {
-        "id": policy_id
-    })
+    """, {"id": policy_id})
 
     row = cur.fetchone()
     if not row:
