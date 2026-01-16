@@ -647,55 +647,41 @@ def sync_itp_to_accounting(conn):
 def sync_payroll_to_accounting(conn):
     """
     Sincroniza payroll_runs → accounting_entries / accounting_lines
-    Usa salario_bruto como gasto total de salarios.
+    Usa salario_bruto como gasto total de salarios
     """
 
     from psycopg2.extras import RealDictCursor
-    from datetime import date, datetime
+    from datetime import date
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
-    # ============================================================
-    # 1️⃣ TRAER PAYROLL RUNS
-    # ============================================================
     cur.execute("""
         SELECT
-            p.id,
-            p.period_year,
-            p.period_month,
-            p.run_date,
-            p.salario_bruto,
-            p.status
-        FROM payroll_runs p
-        ORDER BY p.id ASC
+            id,
+            usuario,
+            year,
+            month,
+            salario_bruto,
+            creado_en
+        FROM payroll_runs
+        ORDER BY id
     """)
     runs = cur.fetchall()
 
-    for r in runs:
+    for p in runs:
 
-        payroll_id = r["id"]
-        salario_bruto = float(r.get("salario_bruto") or 0)
+        payroll_id = p["id"]
+        salario = float(p.get("salario_bruto") or 0)
 
-        # 🔒 Omitir corridas sin monto
-        if salario_bruto <= 0:
+        if salario <= 0:
             continue
 
-        # --------------------------------------------------------
-        # FECHA CONTABLE
-        # --------------------------------------------------------
-        run_date = r.get("run_date") or date.today()
-        if isinstance(run_date, datetime):
-            entry_date = run_date.date()
-        else:
-            entry_date = run_date
+        fecha = p.get("creado_en") or date.today()
+        period = f"{p['year']}-{int(p['month']):02d}"
 
-        period = f"{r['period_year']}-{str(r['period_month']).zfill(2)}"
+        detail = f"Payroll {p['usuario']} {period}"
 
-        detail_text = f"Payroll run {period}"
-
-        # ========================================================
-        # 2️⃣ VALIDAR EXISTENCIA DEL ASIENTO
-        # ========================================================
+        # 🔒 Evitar duplicados
         cur.execute("""
             SELECT id
             FROM accounting_entries
@@ -704,66 +690,35 @@ def sync_payroll_to_accounting(conn):
               AND period = %s
             LIMIT 1
         """, (payroll_id, period))
-        row_entry = cur.fetchone()
-        entry_id = row_entry["id"] if row_entry else None
 
-        # ========================================================
-        # 3️⃣ CREAR ASIENTO SI NO EXISTE
-        # ========================================================
-        if not entry_id:
+        if cur.fetchone():
+            continue
 
-            from services.accounting_auto import create_accounting_entry
+        from services.accounting_auto import create_accounting_entry
 
-            lines = [
-                {
-                    "account_code": "5101",
-                    "account_name": "Gastos por salarios",
-                    "debit": salario_bruto,
-                    "credit": 0,
-                    "description": detail_text
-                },
-                {
-                    "account_code": "210207",
-                    "account_name": "Salarios por pagar",
-                    "debit": 0,
-                    "credit": salario_bruto,
-                    "description": detail_text
-                }
-            ]
+        lines = [
+            {
+                "account_code": "5105",
+                "account_name": "Gastos de salarios",
+                "debit": salario,
+                "credit": 0,
+                "line_description": detail
+            },
+            {
+                "account_code": "2105",
+                "account_name": "Salarios por pagar",
+                "debit": 0,
+                "credit": salario,
+                "line_description": detail
+            }
+        ]
 
-            create_accounting_entry(
-                conn=conn,
-                entry_date=entry_date,
-                period=period,
-                description=detail_text,
-                origin="PAYROLL",
-                origin_id=payroll_id,
-                lines=lines
-            )
-
-        else:
-            # ====================================================
-            # 4️⃣ SI EXISTE → ACTUALIZAR LÍNEAS (BLINDADO)
-            # ====================================================
-            cur.execute("""
-                UPDATE accounting_entries
-                SET entry_date = %s,
-                    description = %s
-                WHERE id = %s
-            """, (entry_date, detail_text, entry_id))
-
-            cur.execute("""
-                UPDATE accounting_lines
-                SET debit = %s, credit = 0, line_description = %s
-                WHERE entry_id = %s
-                  AND account_code = '5101'
-            """, (salario_bruto, detail_text, entry_id))
-
-            cur.execute("""
-                UPDATE accounting_lines
-                SET debit = 0, credit = %s, line_description = %s
-                WHERE entry_id = %s
-                  AND account_code = '210207'
-            """, (salario_bruto, detail_text, entry_id))
-
-    conn.commit()
+        create_accounting_entry(
+            conn=conn,
+            entry_date=fecha.date() if hasattr(fecha, "date") else fecha,
+            period=period,
+            description=detail,
+            origin="PAYROLL",
+            origin_id=payroll_id,
+            lines=lines
+        )

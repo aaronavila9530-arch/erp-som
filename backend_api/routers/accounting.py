@@ -457,7 +457,6 @@ def sync_itp(conn=Depends(get_db)):
 def sync_payroll(conn=Depends(get_db)):
     try:
         from services.accounting_auto import sync_payroll_to_accounting
-
         sync_payroll_to_accounting(conn)
 
         return {
@@ -467,10 +466,7 @@ def sync_payroll(conn=Depends(get_db)):
 
     except Exception as e:
         conn.rollback()
-        raise HTTPException(
-            status_code=500,
-            detail=repr(e)
-        )
+        raise HTTPException(500, repr(e))
 
 
 
