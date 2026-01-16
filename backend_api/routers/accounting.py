@@ -453,6 +453,26 @@ def sync_itp(conn=Depends(get_db)):
         raise HTTPException(500, repr(e))
 
 
+@router.post("/sync/payroll")
+def sync_payroll(conn=Depends(get_db)):
+    try:
+        from services.accounting_auto import sync_payroll_to_accounting
+
+        sync_payroll_to_accounting(conn)
+
+        return {
+            "status": "ok",
+            "message": "Payroll sincronizado a Accounting"
+        }
+
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=repr(e)
+        )
+
+
 
 @router.get("/ledger")
 def get_accounting_ledger(
