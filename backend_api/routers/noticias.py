@@ -22,8 +22,9 @@ def _check_admin_role(current_user):
 
 # =========================================================
 # POST — PUBLICAR NOTICIAS
+# URL: POST /noticias
 # =========================================================
-@router.post("/")
+@router.post("")
 def publicar_noticias(
     payload: dict,
     current_user=Depends(get_current_user),
@@ -98,6 +99,7 @@ def publicar_noticias(
 
 # =========================================================
 # GET — ÚLTIMA PUBLICACIÓN
+# URL: GET /noticias/latest
 # =========================================================
 @router.get("/latest")
 def obtener_ultima_noticia(
