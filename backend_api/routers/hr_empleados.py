@@ -207,18 +207,20 @@ def crear_empleado(
     # =====================================================
     cur.execute("""
         SELECT
-            MAX(
-                CAST(
-                    regexp_replace(codigo, '[^0-9]', '', 'g'
-                ) AS INTEGER)
+            COALESCE(
+                MAX(
+                    CAST(
+                        regexp_replace(codigo, '[^0-9]', '', 'g')
+                        AS INTEGER
+                    )
+                ), 0
             ) AS max_num
         FROM empleados
         WHERE codigo ~ '^MSL-[0-9]+-E$'
-        FOR UPDATE
     """)
 
     row = cur.fetchone()
-    ultimo = row["max_num"] or 0
+    ultimo = row["max_num"]
 
     codigo_generado = f"MSL-{str(ultimo + 1).zfill(4)}-E"
 
