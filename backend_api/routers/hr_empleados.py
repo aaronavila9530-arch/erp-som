@@ -21,7 +21,7 @@ def _check_admin_role(current_user):
 
 
 # =========================================================
-# GET — LISTAR EMPLEADOS (LAZY + FILTROS)
+# GET — LISTAR EMPLEADOS (LAZY + FILTROS | ALINEADO AL POPUP)
 # =========================================================
 @router.get("")
 def listar_empleados(
@@ -38,6 +38,9 @@ def listar_empleados(
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
+    # -----------------------------------------------------
+    # FILTROS
+    # -----------------------------------------------------
     where = []
     params = {}
 
@@ -59,7 +62,9 @@ def listar_empleados(
 
     where_sql = f"WHERE {' AND '.join(where)}" if where else ""
 
+    # -----------------------------------------------------
     # TOTAL
+    # -----------------------------------------------------
     cur.execute(
         f"""
         SELECT COUNT(*) AS total
@@ -72,27 +77,52 @@ def listar_empleados(
 
     offset = (page - 1) * page_size
 
-    # DATA (COLUMNAS USADAS POR LA UI)
+    # -----------------------------------------------------
+    # DATA (TODAS LAS COLUMNAS USADAS POR EL POPUP)
+    # -----------------------------------------------------
     cur.execute(
         f"""
         SELECT
             id,
             codigo,
-            nombre,
-            apellidos,
             cedula_id,
             usuario,
-            estado,
+
+            nombre,
+            apellidos,
+            estado_civil,
+            genero,
+            nacionalidad,
+            fecha_nacimiento,
+            edad,
+
+            prefijo,
+            telefono,
+            provincia,
+            canton,
+            distrito,
+            direccion,
+
             jornada,
             salario,
             pago,
             banco,
+            cuenta_iban,
             moneda,
             fecha_ingreso,
             horas_contratadas,
-            activo1,
-            activo2,
-            activo3
+            vacaciones,
+            estado,
+
+            enfermedades,
+            contacto_emergencia,
+            telefono_emergencia,
+
+            activo1, marca1, serial1,
+            activo2, marca2, serial2,
+            activo3, marca3, serial3,
+
+            fecharegistro
         FROM empleados
         {where_sql}
         ORDER BY id
