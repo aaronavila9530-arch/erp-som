@@ -51,6 +51,7 @@ from routers.payroll import router as payroll_router
 from routers.hr_events import router as hr_events_router
 from routers.hr_empleados import router as hr_empleados_router
 from routers import noticias
+from routers.hr_policies import router as hr_policies_router
 
 # ============================================================
 # CONFIGURACIÓN FASTAPI
@@ -190,6 +191,7 @@ app.include_router(payroll_router)
 app.include_router(hr_events_router)    
 app.include_router(hr_empleados_router)
 app.include_router(noticias.router)
+app.include_router(hr_policies_router)
 
 # ============================================================
 # EJECUCIÓN LOCAL
