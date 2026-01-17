@@ -14,20 +14,21 @@ CURRENT_VERSION = "1.0.1"
 def check_version():
     """
     Control de versión ERP-SOM.
-    Reglas:
-    - Si GitHub responde y hay versión mayor → update forzado
-    - Si falta el EXE → bloquear update
-    - Si GitHub falla → fallback seguro (no romper ERP)
+    GitHub API REQUIERE User-Agent.
     """
 
+    headers = {
+        "User-Agent": "ERP-SOM-Updater/1.0",
+        "Accept": "application/vnd.github+json"
+    }
+
     try:
-        r = requests.get(GITHUB_API, timeout=6)
+        r = requests.get(GITHUB_API, headers=headers, timeout=6)
         r.raise_for_status()
         data = r.json()
 
         latest_version = data.get("tag_name", "").lstrip("v")
 
-        # Buscar instalador
         asset = next(
             (
                 a for a in data.get("assets", [])
@@ -36,17 +37,8 @@ def check_version():
             None
         )
 
-        # Si GitHub respondió pero no hay versión válida
-        if not latest_version:
-            return {
-                "latest_version": CURRENT_VERSION,
-                "download_url": None,
-                "force_update": False,
-                "message": ""
-            }
-
-        # Si hay versión nueva pero NO hay EXE → bloquear
-        if latest_version != CURRENT_VERSION and not asset:
+        # Si hay versión nueva pero no EXE → bloquear
+        if latest_version and latest_version != CURRENT_VERSION and not asset:
             return {
                 "latest_version": latest_version,
                 "download_url": None,
@@ -57,20 +49,18 @@ def check_version():
                 )
             }
 
-        # Flujo normal
         return {
-            "latest_version": latest_version,
+            "latest_version": latest_version or CURRENT_VERSION,
             "download_url": asset.get("browser_download_url") if asset else None,
-            "force_update": latest_version != CURRENT_VERSION,
+            "force_update": bool(latest_version and latest_version != CURRENT_VERSION),
             "message": data.get("body", "") or "Hay una nueva versión disponible."
         }
 
-    except Exception:
-        # 🔒 Fallback ABSOLUTO
-        # No sabemos si hay update → NO forzar
+    except Exception as e:
+        # ⚠️ Si entra aquí, GitHub NO respondió correctamente
         return {
             "latest_version": CURRENT_VERSION,
             "download_url": None,
             "force_update": False,
-            "message": ""
+            "message": f"Updater fallback: {str(e)}"
         }
