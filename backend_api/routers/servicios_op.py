@@ -148,19 +148,39 @@ def listar_servicios(
     if isinstance(surveyor, str) and surveyor.strip() == "":
         surveyor = None
 
-    # --------------------------------------------------------
-    # DEFAULT: si NO hay filtros → año en curso
-    # --------------------------------------------------------
-    if year is None and status is None and surveyor is None:
-        year = datetime.now().year
-
     conditions = []
     params = {}
 
-    # -------------------------
-    # AÑO (desde num_informe)
-    # -------------------------
-    if year is not None:
+    # --------------------------------------------------------
+    # AÑO — LÓGICA ERP-SOM (CORREGIDA Y BLINDADA)
+    #
+    # • SIN filtros explícitos:
+    #     - Con informe → num_informe (año actual)
+    #     - Sin informe → fecha_inicio (año actual)
+    #
+    # • CON filtro year explícito:
+    #     - Usar num_informe (respeta UI)
+    # --------------------------------------------------------
+    if year is None and status is None and surveyor is None:
+        year_actual = datetime.now().year
+
+        conditions.append("""
+            (
+                (
+                    num_informe IS NOT NULL
+                    AND num_informe <> ''
+                    AND RIGHT(num_informe, 4) = %(year)s
+                )
+                OR
+                (
+                    (num_informe IS NULL OR num_informe = '')
+                    AND EXTRACT(YEAR FROM fecha_inicio) = %(year)s
+                )
+            )
+        """)
+        params["year"] = str(year_actual)
+
+    elif year is not None:
         conditions.append(
             "RIGHT(COALESCE(num_informe, ''), 4) = %(year)s"
         )
@@ -243,7 +263,6 @@ def listar_servicios(
         "total": total,
         "data": data
     }
-
 
 # ============================================================
 # GET POR CONSEC
