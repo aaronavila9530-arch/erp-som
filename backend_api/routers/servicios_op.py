@@ -534,15 +534,15 @@ def generar_informe(consec: int):
 
         # --------------------------------------------------
         # 2. Obtener último consecutivo
-        #    BASE = 2139 si no hay informes válidos
-        #    IGNORA valores no numéricos (ej: 'SIN DEFINIR')
+        #    BASE = 2139 si no hay informes válidos (4 dígitos)
+        #    IGNORA valores no numéricos y prefijos con longitud distinta a 4
         # --------------------------------------------------
         max_row = database.sql(
             """
             SELECT COALESCE(
                 MAX(
                     CASE
-                        WHEN split_part(num_informe, '-', 1) ~ '^[0-9]+$'
+                        WHEN split_part(num_informe, '-', 1) ~ '^[0-9]{4}$'
                         THEN split_part(num_informe, '-', 1)::int
                         ELSE NULL
                     END
@@ -583,3 +583,4 @@ def generar_informe(consec: int):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
