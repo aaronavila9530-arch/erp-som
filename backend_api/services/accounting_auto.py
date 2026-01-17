@@ -696,6 +696,9 @@ def sync_payroll_to_accounting(conn):
 
         from services.accounting_auto import create_accounting_entry
 
+        # ---------------------------------------------------------
+        # ASIENTO 1: GASTO DE SALARIOS VS SALARIOS POR PAGAR
+        # ---------------------------------------------------------
         lines = [
             {
                 "account_code": "5105",
@@ -722,3 +725,34 @@ def sync_payroll_to_accounting(conn):
             origin_id=payroll_id,
             lines=lines
         )
+
+        # ---------------------------------------------------------
+        # ASIENTO 2: PAGO DE SALARIOS (SALARIOS POR PAGAR VS BANCOS)
+        # ---------------------------------------------------------
+        pago_lines = [
+            {
+                "account_code": "2105",
+                "account_name": "Salarios por pagar",
+                "debit": salario,
+                "credit": 0,
+                "line_description": f"Pago salarios {detail}"
+            },
+            {
+                "account_code": "1105",
+                "account_name": "Bancos",
+                "debit": 0,
+                "credit": salario,
+                "line_description": f"Pago salarios {detail}"
+            }
+        ]
+
+        create_accounting_entry(
+            conn=conn,
+            entry_date=fecha.date() if hasattr(fecha, "date") else fecha,
+            period=period,
+            description=f"Pago salarios {detail}",
+            origin="PAYROLL_PAYMENT",
+            origin_id=payroll_id,
+            lines=pago_lines
+        )
+
