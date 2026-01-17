@@ -1,66 +1,64 @@
 from fastapi import APIRouter
 import requests
+import os
 
 router = APIRouter(
     prefix="/version",
     tags=["Version"]
 )
 
-GITHUB_API = "https://api.github.com/repos/aaronavila9530-arch/erp-som/releases/latest"
+GITHUB_REPO = "aaronavila9530-arch/erp-som"
 CURRENT_VERSION = "1.0.1"
 
 
 @router.get("/")
 def check_version():
-    """
-    Control de versión ERP-SOM.
-    GitHub API REQUIERE User-Agent.
-    """
+
+    token = os.getenv("GITHUB_TOKEN")
 
     headers = {
-        "User-Agent": "ERP-SOM-Updater/1.0",
-        "Accept": "application/vnd.github+json"
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "ERP-SOM-Updater"
     }
 
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    url = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+
     try:
-        r = requests.get(GITHUB_API, headers=headers, timeout=6)
+        r = requests.get(url, headers=headers, timeout=10)
         r.raise_for_status()
         data = r.json()
 
-        latest_version = data.get("tag_name", "").lstrip("v")
+        latest_version = data["tag_name"].lstrip("v")
 
         asset = next(
-            (
-                a for a in data.get("assets", [])
-                if a.get("name", "").lower().endswith(".exe")
-            ),
+            (a for a in data.get("assets", []) if a["name"].lower().endswith(".exe")),
             None
         )
 
-        # Si hay versión nueva pero no EXE → bloquear
-        if latest_version and latest_version != CURRENT_VERSION and not asset:
+        if not asset:
             return {
                 "latest_version": latest_version,
                 "download_url": None,
-                "force_update": True,
-                "message": (
-                    "Hay una nueva versión del ERP, pero no se encontró el instalador.\n"
-                    "Contacte al administrador del sistema."
-                )
+                "force_update": False,
+                "message": "No installer asset found"
             }
 
+        force_update = latest_version != CURRENT_VERSION
+
         return {
-            "latest_version": latest_version or CURRENT_VERSION,
-            "download_url": asset.get("browser_download_url") if asset else None,
-            "force_update": bool(latest_version and latest_version != CURRENT_VERSION),
-            "message": data.get("body", "") or "Hay una nueva versión disponible."
+            "latest_version": latest_version,
+            "download_url": asset["browser_download_url"],
+            "force_update": force_update,
+            "message": "Update available" if force_update else ""
         }
 
     except Exception as e:
-        # ⚠️ Si entra aquí, GitHub NO respondió correctamente
         return {
             "latest_version": CURRENT_VERSION,
             "download_url": None,
             "force_update": False,
-            "message": f"Updater fallback: {str(e)}"
+            "message": f"Updater error: {str(e)}"
         }
