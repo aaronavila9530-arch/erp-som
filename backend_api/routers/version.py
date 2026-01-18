@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 import requests
 import os
 
@@ -21,36 +21,32 @@ CURRENT_VERSION = "1.0.1"
 def check_version():
 
     token = os.getenv("GITHUB_TOKEN")
-    if not token:
-        raise HTTPException(
-            status_code=500,
-            detail="GITHUB_TOKEN not configured in environment"
-        )
 
     headers = {
         "Accept": "application/vnd.github+json",
-        "User-Agent": "ERP-SOM-Updater",
-        "Authorization": f"Bearer {token}"
+        "User-Agent": "ERP-SOM-Updater"
     }
+
+    # 🔒 Token es OPCIONAL (repos públicos)
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
 
     url = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 
     try:
-        resp = requests.get(url, headers=headers, timeout=10)
+        resp = requests.get(url, headers=headers, timeout=15)
         resp.raise_for_status()
         data = resp.json()
 
         # ----------------------------------------------------
-        # 1️⃣ Versión latest desde GitHub
+        # 1️⃣ Versión latest EXACTA desde GitHub
         # ----------------------------------------------------
         tag = data.get("tag_name")
         if not tag:
-            raise HTTPException(
-                status_code=500,
-                detail="Invalid GitHub release: missing tag_name"
-            )
+            raise RuntimeError("Invalid GitHub release: missing tag_name")
 
-        latest_version = tag.lstrip("v").strip()
+        # ⚠️ NO normalizar, NO convertir, NO formatear
+        latest_version = tag.lstrip("v")
 
         # ----------------------------------------------------
         # 2️⃣ Buscar instalador EXE
@@ -62,20 +58,27 @@ def check_version():
         )
 
         if not installer:
-            raise HTTPException(
-                status_code=500,
-                detail="Release found but no installer (.exe) attached"
-            )
+            return {
+                "current_version": CURRENT_VERSION,
+                "latest_version": latest_version,
+                "download_url": None,
+                "force_update": False,
+                "message": "Release found but no installer attached"
+            }
 
         download_url = installer.get("browser_download_url")
+
         if not download_url:
-            raise HTTPException(
-                status_code=500,
-                detail="Installer asset missing download URL"
-            )
+            return {
+                "current_version": CURRENT_VERSION,
+                "latest_version": latest_version,
+                "download_url": None,
+                "force_update": False,
+                "message": "Installer asset missing download URL"
+            }
 
         # ----------------------------------------------------
-        # 3️⃣ Comparación ESTRICTA (forzar update)
+        # 3️⃣ Comparación estricta → update obligatorio
         # ----------------------------------------------------
         force_update = latest_version != CURRENT_VERSION
 
@@ -91,11 +94,8 @@ def check_version():
             )
         }
 
-    except HTTPException:
-        raise
-
     except Exception as e:
-        # 🔴 SI FALLA GITHUB → NO SE ACTUALIZA, PERO SE REPORTA
+        # 🔒 FAIL SAFE: nunca romper el ERP
         return {
             "current_version": CURRENT_VERSION,
             "latest_version": CURRENT_VERSION,
