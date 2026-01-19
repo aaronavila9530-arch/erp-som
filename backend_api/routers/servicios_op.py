@@ -576,7 +576,8 @@ def generar_informe(consec: int):
 
         return {
             "status": "ok",
-            "num_informe": num_informe
+            "num_informe": num_informe,
+            "estado": "Finalizado"
         }
 
     except HTTPException:
