@@ -504,32 +504,42 @@ def cerrar_operacion(consec: int, data: dict):
 # ============================================================
 # Asginar conseutivo al informe
 # ============================================================
+from fastapi import HTTPException
+from datetime import datetime
+import psycopg2
+
 @router.put("/generar_informe/{consec}")
 def generar_informe(consec: int):
+    conn = None
     try:
         # --------------------------------------------------
-        # 1. BLOQUEAR EL SERVICIO
+        # 1. Abrir conexión MANUAL (SIN AUTOCOMMIT)
         # --------------------------------------------------
-        row = database.sql(
+        conn = database.get_conn()   # <- tu helper real
+        conn.autocommit = False
+        cur = conn.cursor()
+
+        # --------------------------------------------------
+        # 2. BLOQUEAR FILA
+        # --------------------------------------------------
+        cur.execute(
             """
             SELECT num_informe, fecha_inicio
             FROM servicios
             WHERE consec = %s
             FOR UPDATE
             """,
-            (consec,),
-            fetch=True
+            (consec,)
         )
+        row = cur.fetchone()
 
         if not row:
             raise HTTPException(404, "Servicio no encontrado")
 
-        num_existente, fecha_inicio = row[0]
+        num_existente, fecha_inicio = row
 
-        # --------------------------------------------------
-        # 2. Si ya existe → devolverlo
-        # --------------------------------------------------
         if num_existente:
+            conn.commit()
             return {
                 "status": "ok",
                 "num_informe": num_existente,
@@ -539,19 +549,16 @@ def generar_informe(consec: int):
         if not fecha_inicio:
             raise HTTPException(400, "Servicio sin fecha de inicio")
 
-        fecha_dt = (
-            datetime.strptime(fecha_inicio[:10], "%Y-%m-%d")
-            if isinstance(fecha_inicio, str)
-            else fecha_inicio
-        )
+        fecha_dt = fecha_inicio if not isinstance(fecha_inicio, str) \
+            else datetime.strptime(fecha_inicio[:10], "%Y-%m-%d")
 
         ddmm = fecha_dt.strftime("%d%m")
         year = fecha_dt.strftime("%Y")
 
         # --------------------------------------------------
-        # 3. UPDATE ATÓMICO (YA BLOQUEADO)
+        # 3. UPDATE + nextval ATÓMICO
         # --------------------------------------------------
-        row = database.sql(
+        cur.execute(
             """
             UPDATE servicios
             SET
@@ -561,17 +568,27 @@ def generar_informe(consec: int):
             WHERE consec = %s
             RETURNING num_informe
             """,
-            (ddmm, year, consec),
-            fetch=True
+            (ddmm, year, consec)
         )
+
+        num_informe = cur.fetchone()[0]
+
+        conn.commit()
 
         return {
             "status": "ok",
-            "num_informe": row[0][0],
+            "num_informe": num_informe,
             "already_generated": False
         }
 
     except HTTPException:
+        if conn:
+            conn.rollback()
         raise
     except Exception as e:
+        if conn:
+            conn.rollback()
         raise HTTPException(500, str(e))
+    finally:
+        if conn:
+            conn.close()
