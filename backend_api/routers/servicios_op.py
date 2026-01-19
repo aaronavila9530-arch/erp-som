@@ -505,6 +505,27 @@ def cerrar_operacion(consec: int, data: dict):
 def generar_informe(consec: int):
     try:
         # --------------------------------------------------
+        # 0. Validar si ya tiene informe
+        # --------------------------------------------------
+        row_inf = database.sql(
+            "SELECT num_informe FROM servicios WHERE consec = %s",
+            (consec,),
+            fetch=True
+        )
+
+        if not row_inf:
+            raise HTTPException(
+                status_code=404,
+                detail="Servicio no encontrado"
+            )
+
+        if row_inf[0][0]:
+            raise HTTPException(
+                status_code=409,
+                detail="El servicio ya tiene un informe generado"
+            )
+
+        # --------------------------------------------------
         # 1. Obtener fecha de inicio
         # --------------------------------------------------
         row = database.sql(
@@ -530,7 +551,7 @@ def generar_informe(consec: int):
         year = fecha_dt.strftime("%Y")
 
         # --------------------------------------------------
-        # 2. Obtener consecutivo ATÓMICO
+        # 2. Consecutivo ATÓMICO
         # --------------------------------------------------
         seq_row = database.sql(
             "SELECT nextval('servicios_num_informe_seq')",
