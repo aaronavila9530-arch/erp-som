@@ -504,25 +504,25 @@ def cerrar_operacion(consec: int, data: dict):
 # ============================================================
 # Asginar conseutivo al informe
 # ============================================================
-
 @router.put("/generar_informe/{consec}")
 def generar_informe(consec: int):
     try:
         # --------------------------------------------------
-        # 1. Obtener datos del servicio
+        # 1. BLOQUEAR EL SERVICIO
         # --------------------------------------------------
         row = database.sql(
             """
             SELECT num_informe, fecha_inicio
             FROM servicios
             WHERE consec = %s
+            FOR UPDATE
             """,
             (consec,),
             fetch=True
         )
 
         if not row:
-            raise HTTPException(status_code=404, detail="Servicio no encontrado")
+            raise HTTPException(404, "Servicio no encontrado")
 
         num_existente, fecha_inicio = row[0]
 
@@ -537,7 +537,7 @@ def generar_informe(consec: int):
             }
 
         if not fecha_inicio:
-            raise HTTPException(status_code=400, detail="Servicio sin fecha de inicio")
+            raise HTTPException(400, "Servicio sin fecha de inicio")
 
         fecha_dt = (
             datetime.strptime(fecha_inicio[:10], "%Y-%m-%d")
@@ -549,7 +549,7 @@ def generar_informe(consec: int):
         year = fecha_dt.strftime("%Y")
 
         # --------------------------------------------------
-        # 3. UPDATE ATÓMICO (UNA SOLA VEZ)
+        # 3. UPDATE ATÓMICO (YA BLOQUEADO)
         # --------------------------------------------------
         row = database.sql(
             """
@@ -559,25 +559,11 @@ def generar_informe(consec: int):
                               || '-' || %s || '-' || %s,
                 estado = 'Finalizado'
             WHERE consec = %s
-              AND num_informe IS NULL
             RETURNING num_informe
             """,
             (ddmm, year, consec),
             fetch=True
         )
-
-        if not row:
-            # alguien más lo generó entre medias
-            row = database.sql(
-                "SELECT num_informe FROM servicios WHERE consec = %s",
-                (consec,),
-                fetch=True
-            )
-            return {
-                "status": "ok",
-                "num_informe": row[0][0],
-                "already_generated": True
-            }
 
         return {
             "status": "ok",
@@ -588,4 +574,4 @@ def generar_informe(consec: int):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(500, str(e))
