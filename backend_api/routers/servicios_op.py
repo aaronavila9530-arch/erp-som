@@ -501,11 +501,15 @@ def cerrar_operacion(consec: int, data: dict):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ============================================================
+# Asginar conseutivo al informe
+# ============================================================
+
 @router.put("/generar_informe/{consec}")
 def generar_informe(consec: int):
     try:
         # --------------------------------------------------
-        # 1. Buscar servicio
+        # 1. Obtener datos del servicio
         # --------------------------------------------------
         row = database.sql(
             """
@@ -518,29 +522,22 @@ def generar_informe(consec: int):
         )
 
         if not row:
-            raise HTTPException(
-                status_code=404,
-                detail="Servicio no encontrado"
-            )
+            raise HTTPException(status_code=404, detail="Servicio no encontrado")
 
         num_existente, fecha_inicio = row[0]
 
         # --------------------------------------------------
-        # 2. SI YA EXISTE → DEVOLVER OK
+        # 2. Si ya existe → devolverlo
         # --------------------------------------------------
         if num_existente:
             return {
                 "status": "ok",
                 "num_informe": num_existente,
-                "estado": "Finalizado",
                 "already_generated": True
             }
 
         if not fecha_inicio:
-            raise HTTPException(
-                status_code=400,
-                detail="Servicio sin fecha de inicio"
-            )
+            raise HTTPException(status_code=400, detail="Servicio sin fecha de inicio")
 
         fecha_dt = (
             datetime.strptime(fecha_inicio[:10], "%Y-%m-%d")
@@ -552,33 +549,39 @@ def generar_informe(consec: int):
         year = fecha_dt.strftime("%Y")
 
         # --------------------------------------------------
-        # 3. Generar consecutivo ATÓMICO
+        # 3. UPDATE ATÓMICO (UNA SOLA VEZ)
         # --------------------------------------------------
-        seq_row = database.sql(
-            "SELECT nextval('servicios_num_informe_seq')",
+        row = database.sql(
+            """
+            UPDATE servicios
+            SET
+                num_informe = nextval('servicios_num_informe_seq')::text
+                              || '-' || %s || '-' || %s,
+                estado = 'Finalizado'
+            WHERE consec = %s
+              AND num_informe IS NULL
+            RETURNING num_informe
+            """,
+            (ddmm, year, consec),
             fetch=True
         )
 
-        nuevo = int(seq_row[0][0])
-        num_informe = f"{nuevo}-{ddmm}-{year}"
-
-        # --------------------------------------------------
-        # 4. Actualizar servicio
-        # --------------------------------------------------
-        database.sql(
-            """
-            UPDATE servicios
-            SET num_informe = %s,
-                estado = 'Finalizado'
-            WHERE consec = %s
-            """,
-            (num_informe, consec)
-        )
+        if not row:
+            # alguien más lo generó entre medias
+            row = database.sql(
+                "SELECT num_informe FROM servicios WHERE consec = %s",
+                (consec,),
+                fetch=True
+            )
+            return {
+                "status": "ok",
+                "num_informe": row[0][0],
+                "already_generated": True
+            }
 
         return {
             "status": "ok",
-            "num_informe": num_informe,
-            "estado": "Finalizado",
+            "num_informe": row[0][0],
             "already_generated": False
         }
 
