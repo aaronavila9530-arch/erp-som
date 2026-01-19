@@ -504,91 +504,100 @@ def cerrar_operacion(consec: int, data: dict):
 # ============================================================
 # Asginar conseutivo al informe
 # ============================================================
-from fastapi import HTTPException
-from datetime import datetime
-import psycopg2
-
 @router.put("/generar_informe/{consec}")
 def generar_informe(consec: int):
-    conn = None
     try:
         # --------------------------------------------------
-        # 1. Abrir conexión MANUAL (SIN AUTOCOMMIT)
+        # 1. BLOQUEO GLOBAL POR SERVICIO (ANTI DOBLE CLICK)
         # --------------------------------------------------
-        conn = database.get_conn()   # <- tu helper real
-        conn.autocommit = False
-        cur = conn.cursor()
+        database.sql(
+            "SELECT pg_advisory_lock(%s)",
+            (consec,),
+            fetch=False
+        )
 
         # --------------------------------------------------
-        # 2. BLOQUEAR FILA
+        # 2. SI YA TIENE INFORME → DEVOLVERLO
         # --------------------------------------------------
-        cur.execute(
+        row = database.sql(
             """
             SELECT num_informe, fecha_inicio
             FROM servicios
             WHERE consec = %s
-            FOR UPDATE
             """,
-            (consec,)
+            (consec,),
+            fetch=True
         )
-        row = cur.fetchone()
 
         if not row:
             raise HTTPException(404, "Servicio no encontrado")
 
-        num_existente, fecha_inicio = row
+        num_existente, fecha_inicio = row[0]
 
         if num_existente:
-            conn.commit()
             return {
                 "status": "ok",
                 "num_informe": num_existente,
-                "already_generated": True
+                "generated_now": False
             }
 
         if not fecha_inicio:
             raise HTTPException(400, "Servicio sin fecha de inicio")
 
-        fecha_dt = fecha_inicio if not isinstance(fecha_inicio, str) \
+        # --------------------------------------------------
+        # 3. BUSCAR SIGUIENTE NUMERO DISPONIBLE (DESDE 2141)
+        # --------------------------------------------------
+        fecha_dt = (
+            fecha_inicio if not isinstance(fecha_inicio, str)
             else datetime.strptime(fecha_inicio[:10], "%Y-%m-%d")
+        )
 
         ddmm = fecha_dt.strftime("%d%m")
         year = fecha_dt.strftime("%Y")
 
+        base = 2141
+        intento = base + 1
+
+        while True:
+            candidato = f"{intento}-{ddmm}-{year}"
+
+            existe = database.sql(
+                "SELECT 1 FROM servicios WHERE num_informe = %s",
+                (candidato,),
+                fetch=True
+            )
+
+            if not existe:
+                break
+
+            intento += 1
+
         # --------------------------------------------------
-        # 3. UPDATE + nextval ATÓMICO
+        # 4. ASIGNAR INFORME
         # --------------------------------------------------
-        cur.execute(
+        database.sql(
             """
             UPDATE servicios
             SET
-                num_informe = nextval('servicios_num_informe_seq')::text
-                              || '-' || %s || '-' || %s,
+                num_informe = %s,
                 estado = 'Finalizado'
             WHERE consec = %s
-            RETURNING num_informe
             """,
-            (ddmm, year, consec)
+            (candidato, consec)
         )
-
-        num_informe = cur.fetchone()[0]
-
-        conn.commit()
 
         return {
             "status": "ok",
-            "num_informe": num_informe,
-            "already_generated": False
+            "num_informe": candidato,
+            "generated_now": True
         }
 
-    except HTTPException:
-        if conn:
-            conn.rollback()
-        raise
-    except Exception as e:
-        if conn:
-            conn.rollback()
-        raise HTTPException(500, str(e))
     finally:
-        if conn:
-            conn.close()
+        # --------------------------------------------------
+        # 5. LIBERAR BLOQUEO
+        # --------------------------------------------------
+        database.sql(
+            "SELECT pg_advisory_unlock(%s)",
+            (consec,),
+            fetch=False
+        )
