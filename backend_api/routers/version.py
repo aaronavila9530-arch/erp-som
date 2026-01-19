@@ -1,63 +1,47 @@
-import os
-import tempfile
-import subprocess
+from fastapi import APIRouter
 import requests
-import tkinter as tk
-from tkinter import ttk, messagebox
 
-class UpdateWindow(tk.Toplevel):
+router = APIRouter(
+    prefix="/version",
+    tags=["Version"]
+)
 
-    def __init__(self, parent, current_version, latest_version, message, download_url):
-        super().__init__(parent)
+GITHUB_REPO = "aaronavila9530-arch/erp-som"
+CURRENT_VERSION = "1.0.1"
 
-        self.download_url = download_url
 
-        self.title("Actualización obligatoria")
-        self.geometry("420x220")
-        self.resizable(False, False)
-        self.transient(parent)
-        self.grab_set()
+@router.get("/")
+def check_version():
+    url = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 
-        tk.Label(
-            self,
-            text=f"ERP-SOM {latest_version} disponible",
-            font=("Segoe UI", 12, "bold")
-        ).pack(pady=15)
+    try:
+        r = requests.get(url, timeout=15)
+        r.raise_for_status()
+        data = r.json()
 
-        tk.Label(
-            self,
-            text=message,
-            wraplength=360,
-            justify="center"
-        ).pack()
+        tag = data.get("tag_name", "")
+        latest_version = tag.lstrip("v")
 
-        self.progress = ttk.Progressbar(self, length=300)
-        self.progress.pack(pady=15)
+        assets = data.get("assets", [])
+        installer = next(
+            (a for a in assets if a.get("name", "").lower().endswith(".exe")),
+            None
+        )
 
-        ttk.Button(
-            self,
-            text="Actualizar ahora",
-            command=self._download
-        ).pack()
+        return {
+            "current_version": CURRENT_VERSION,
+            "latest_version": latest_version,
+            "download_url": installer["browser_download_url"] if installer else None,
+            "force_update": latest_version != CURRENT_VERSION,
+            "message": "UPDATE REQUIRED" if latest_version != CURRENT_VERSION else ""
+        }
 
-        self.after(300, self._download)
-
-    def _download(self):
-        try:
-            path = os.path.join(tempfile.gettempdir(), "ERP-SOM-Setup.exe")
-            r = requests.get(self.download_url, stream=True, timeout=60)
-            r.raise_for_status()
-
-            with open(path, "wb") as f:
-                for chunk in r.iter_content(8192):
-                    f.write(chunk)
-
-            subprocess.Popen([path], shell=True)
-            os._exit(0)
-
-        except Exception as e:
-            messagebox.showerror(
-                "Error de actualización",
-                str(e),
-                parent=self
-            )
+    except Exception:
+        # FAIL SAFE: jamás romper el ERP
+        return {
+            "current_version": CURRENT_VERSION,
+            "latest_version": CURRENT_VERSION,
+            "download_url": None,
+            "force_update": False,
+            "message": ""
+        }
