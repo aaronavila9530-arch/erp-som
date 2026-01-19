@@ -27,29 +27,31 @@ def check_version():
         "User-Agent": "ERP-SOM-Updater"
     }
 
-    # 🔒 Token es OPCIONAL (repos públicos)
+    # 🔒 Repo privado → token requerido
     if token:
         headers["Authorization"] = f"Bearer {token}"
 
     url = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 
     try:
+        # ----------------------------------------------------
+        # 1️⃣ OBTENER RELEASE LATEST
+        # ----------------------------------------------------
         resp = requests.get(url, headers=headers, timeout=15)
         resp.raise_for_status()
         data = resp.json()
 
         # ----------------------------------------------------
-        # 1️⃣ Versión latest EXACTA desde GitHub
+        # 2️⃣ VERSION DESDE TAG (SIN NORMALIZAR)
         # ----------------------------------------------------
         tag = data.get("tag_name")
         if not tag:
             raise RuntimeError("Invalid GitHub release: missing tag_name")
 
-        # ⚠️ NO normalizar, NO convertir, NO formatear
         latest_version = tag.lstrip("v")
 
         # ----------------------------------------------------
-        # 2️⃣ Buscar instalador EXE
+        # 3️⃣ BUSCAR ASSET .EXE
         # ----------------------------------------------------
         assets = data.get("assets", [])
         installer = next(
@@ -61,31 +63,30 @@ def check_version():
             return {
                 "current_version": CURRENT_VERSION,
                 "latest_version": latest_version,
-                "download_url": None,
+                "download_asset_id": None,
                 "force_update": False,
                 "message": "Release found but no installer attached"
             }
 
-        download_url = installer.get("browser_download_url")
-
-        if not download_url:
+        asset_id = installer.get("id")
+        if not asset_id:
             return {
                 "current_version": CURRENT_VERSION,
                 "latest_version": latest_version,
-                "download_url": None,
+                "download_asset_id": None,
                 "force_update": False,
-                "message": "Installer asset missing download URL"
+                "message": "Installer asset missing ID"
             }
 
         # ----------------------------------------------------
-        # 3️⃣ Comparación estricta → update obligatorio
+        # 4️⃣ COMPARACIÓN ESTRICTA
         # ----------------------------------------------------
         force_update = latest_version != CURRENT_VERSION
 
         return {
             "current_version": CURRENT_VERSION,
             "latest_version": latest_version,
-            "download_url": download_url,
+            "download_asset_id": asset_id,
             "force_update": force_update,
             "message": (
                 "UPDATE REQUIRED"
@@ -95,11 +96,13 @@ def check_version():
         }
 
     except Exception as e:
-        # 🔒 FAIL SAFE: nunca romper el ERP
+        # ----------------------------------------------------
+        # FAIL SAFE — JAMÁS ROMPER EL ERP
+        # ----------------------------------------------------
         return {
             "current_version": CURRENT_VERSION,
             "latest_version": CURRENT_VERSION,
-            "download_url": None,
+            "download_asset_id": None,
             "force_update": False,
             "message": f"Updater failure: {str(e)}"
         }
