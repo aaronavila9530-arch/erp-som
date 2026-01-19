@@ -508,7 +508,7 @@ def cerrar_operacion(consec: int, data: dict):
 def generar_informe(consec: int):
     try:
         # --------------------------------------------------
-        # 1. BLOQUEO GLOBAL POR SERVICIO (ANTI DOBLE CLICK)
+        # 1. Bloqueo para evitar doble ejecución
         # --------------------------------------------------
         database.sql(
             "SELECT pg_advisory_lock(%s)",
@@ -517,7 +517,7 @@ def generar_informe(consec: int):
         )
 
         # --------------------------------------------------
-        # 2. SI YA TIENE INFORME → DEVOLVERLO
+        # 2. Obtener servicio
         # --------------------------------------------------
         row = database.sql(
             """
@@ -534,6 +534,7 @@ def generar_informe(consec: int):
 
         num_existente, fecha_inicio = row[0]
 
+        # Si ya tiene informe, devolverlo
         if num_existente:
             return {
                 "status": "ok",
@@ -545,24 +546,18 @@ def generar_informe(consec: int):
             raise HTTPException(400, "Servicio sin fecha de inicio")
 
         # --------------------------------------------------
-        # 3. BUSCAR SIGUIENTE NUMERO DISPONIBLE (DESDE 2141)
+        # 3. Buscar siguiente consecutivo libre DESDE 2142
         # --------------------------------------------------
-        fecha_dt = (
-            fecha_inicio if not isinstance(fecha_inicio, str)
-            else datetime.strptime(fecha_inicio[:10], "%Y-%m-%d")
-        )
-
-        ddmm = fecha_dt.strftime("%d%m")
-        year = fecha_dt.strftime("%Y")
-
         base = 2141
-        intento = base + 1
+        candidato = base + 1
 
         while True:
-            candidato = f"{intento}-{ddmm}-{year}"
-
             existe = database.sql(
-                "SELECT 1 FROM servicios WHERE num_informe = %s",
+                """
+                SELECT 1
+                FROM servicios
+                WHERE split_part(num_informe, '-', 1)::int = %s
+                """,
                 (candidato,),
                 fetch=True
             )
@@ -570,10 +565,21 @@ def generar_informe(consec: int):
             if not existe:
                 break
 
-            intento += 1
+            candidato += 1
 
         # --------------------------------------------------
-        # 4. ASIGNAR INFORME
+        # 4. Construir num_informe
+        # --------------------------------------------------
+        fecha_dt = (
+            fecha_inicio
+            if not isinstance(fecha_inicio, str)
+            else datetime.strptime(fecha_inicio[:10], "%Y-%m-%d")
+        )
+
+        num_informe = f"{candidato}-{fecha_dt.strftime('%d%m')}-{fecha_dt.strftime('%Y')}"
+
+        # --------------------------------------------------
+        # 5. Guardar
         # --------------------------------------------------
         database.sql(
             """
@@ -583,19 +589,16 @@ def generar_informe(consec: int):
                 estado = 'Finalizado'
             WHERE consec = %s
             """,
-            (candidato, consec)
+            (num_informe, consec)
         )
 
         return {
             "status": "ok",
-            "num_informe": candidato,
+            "num_informe": num_informe,
             "generated_now": True
         }
 
     finally:
-        # --------------------------------------------------
-        # 5. LIBERAR BLOQUEO
-        # --------------------------------------------------
         database.sql(
             "SELECT pg_advisory_unlock(%s)",
             (consec,),
