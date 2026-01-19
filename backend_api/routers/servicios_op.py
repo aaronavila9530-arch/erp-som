@@ -501,9 +501,6 @@ def cerrar_operacion(consec: int, data: dict):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ============================================================
-# GENERAR INFORME (NUM_INFORME + FINALIZAR)
-# ============================================================
 @router.put("/generar_informe/{consec}")
 def generar_informe(consec: int):
     try:
@@ -523,42 +520,24 @@ def generar_informe(consec: int):
             )
 
         fecha_inicio = row[0][0]
-
-        if isinstance(fecha_inicio, str):
-            fecha_dt = datetime.strptime(fecha_inicio[:10], "%Y-%m-%d")
-        else:
-            fecha_dt = fecha_inicio
+        fecha_dt = (
+            datetime.strptime(fecha_inicio[:10], "%Y-%m-%d")
+            if isinstance(fecha_inicio, str)
+            else fecha_inicio
+        )
 
         ddmm = fecha_dt.strftime("%d%m")
         year = fecha_dt.strftime("%Y")
 
         # --------------------------------------------------
-        # 2. Obtener último consecutivo
-        #    BASE = 2139 si no hay informes válidos (4 dígitos)
-        #    IGNORA valores no numéricos y prefijos con longitud distinta a 4
+        # 2. Obtener consecutivo ATÓMICO
         # --------------------------------------------------
-        max_row = database.sql(
-            """
-            SELECT COALESCE(
-                MAX(
-                    CASE
-                        WHEN split_part(num_informe, '-', 1) ~ '^[0-9]{4}$'
-                        THEN split_part(num_informe, '-', 1)::int
-                        ELSE NULL
-                    END
-                ),
-                2139
-            )
-            FROM servicios
-            WHERE num_informe IS NOT NULL
-              AND num_informe <> ''
-            """,
+        seq_row = database.sql(
+            "SELECT nextval('servicios_num_informe_seq')",
             fetch=True
         )
 
-        ultimo = int(max_row[0][0])
-        nuevo = ultimo + 1
-
+        nuevo = int(seq_row[0][0])
         num_informe = f"{nuevo}-{ddmm}-{year}"
 
         # --------------------------------------------------
@@ -583,4 +562,3 @@ def generar_informe(consec: int):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
