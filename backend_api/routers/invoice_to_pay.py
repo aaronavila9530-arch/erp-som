@@ -113,21 +113,36 @@ def _sync_servicios_to_itp(cur):
     # ============================================================
     # 2️⃣ ACTUALIZAR HONORARIOS MODIFICADOS (BLINDADO)
     # ============================================================
+    # Regla robusta:
+    # - Si origin=SERVICIOS y NO está PAID/VOID, permitimos actualizar TOTAL.
+    # - Si hubo pagos parciales: mantenemos el "pagado" y recalculamos balance.
+    #   pagado = (po.total - po.balance)
+    #   nuevo_balance = max(nuevo_total - pagado, 0)
+    # - Si estaba PENDING sin pagos: balance = nuevo_total
     cur.execute("""
         UPDATE payment_obligations po
         SET
             total = s.honorarios,
-            balance = s.honorarios,
+            balance = GREATEST(
+                s.honorarios - (po.total - po.balance),
+                0
+            ),
+            payee_name = COALESCE(s.surveyor, po.payee_name),
+            vessel = COALESCE(s.buque_contenedor, po.vessel),
+            country = COALESCE(s.pais, po.country),
+            operation = COALESCE(s.operacion, po.operation),
+            issue_date = COALESCE(s.fecha_fin, po.issue_date),
+            due_date = COALESCE((s.fecha_fin + INTERVAL '15 days'), po.due_date),
+            notes = COALESCE(s.detalle, po.notes),
             updated_at = NOW()
         FROM servicios s
         WHERE
             po.service_id = s.consec
             AND po.origin = 'SERVICIOS'
-            AND po.status = 'PENDING'
-            AND po.balance = po.total
             AND s.honorarios IS NOT NULL
             AND s.honorarios > 0
-            AND po.total <> s.honorarios
+            AND po.status IN ('PENDING', 'PARTIAL')
+            AND po.total IS DISTINCT FROM s.honorarios
     """)
 
 @router.get("/search")
