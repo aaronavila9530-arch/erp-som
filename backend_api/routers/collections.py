@@ -110,12 +110,23 @@ def sync_collections_from_invoicing(conn=Depends(get_db)):
                 else:
                     raise ValueError("fecha_emision inválida")
 
-                # ---------- dias_credito ----------
+                # ---------- dias_credito (DESDE cliente_credito) ----------
+                cur.execute(
+                    """
+                    SELECT termino_pago
+                    FROM cliente_credito
+                    WHERE codigo_cliente = %s
+                    """,
+                    (f.get("codigo_cliente"),)
+                )
+                row_credito = cur.fetchone()
+
                 try:
-                    dias_credito = int(f.get("termino_pago"))
+                    dias_credito = int(row_credito["termino_pago"]) if row_credito else 0
                 except Exception:
                     dias_credito = 0
 
+                # ---------- fecha_vencimiento + aging ----------
                 fecha_vencimiento = fe + timedelta(days=dias_credito)
                 aging_dias = (hoy - fecha_vencimiento).days
 
@@ -250,6 +261,7 @@ def post_collections_to_accounting(conn=Depends(get_db)) -> dict:
         if conn:
             conn.rollback()
         raise HTTPException(500, repr(e))
+
 # ============================================================
 # GET /collections/search
 # Búsqueda de cuentas por cobrar (Collections)
@@ -331,6 +343,7 @@ def search_collections(
             tipo_documento,
             numero_documento,
             fecha_emision,
+            dias_credito,
             fecha_vencimiento,
             aging_dias,
             bucket_aging,
