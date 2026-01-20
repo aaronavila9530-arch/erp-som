@@ -58,7 +58,7 @@ def _safe_int(v, default=0) -> int:
 # ============================================================
 # POST /collections/sync-from-invoicing
 # Sincroniza FACTURA + NOTA_CREDITO EMITIDAS → Collections
-# (BLINDADO / NO REVIENTA)
+# ALINEADO con GET /search
 # ============================================================
 @router.post("/sync-from-invoicing")
 def sync_collections_from_invoicing(conn=Depends(get_db)):
@@ -99,18 +99,23 @@ def sync_collections_from_invoicing(conn=Depends(get_db)):
             try:
                 cur.execute("SAVEPOINT sp_factura")
 
-                # ---------- fecha_emision ----------
+                # ------------------------------------------------
+                # fecha_emision (BLINDADO)
+                # ------------------------------------------------
                 fe = f.get("fecha_emision")
+
                 if isinstance(fe, datetime):
                     fe = fe.date()
                 elif isinstance(fe, date):
                     pass
-                elif isinstance(fe, str):
+                elif isinstance(fe, str) and fe.strip():
                     fe = datetime.fromisoformat(fe).date()
                 else:
                     raise ValueError("fecha_emision inválida")
 
-                # ---------- dias_credito (placeholder seguro) ----------
+                # ------------------------------------------------
+                # dias_credito (FUENTE: cliente_credito)
+                # ------------------------------------------------
                 cur.execute("""
                     SELECT termino_pago
                     FROM cliente_credito
@@ -118,12 +123,25 @@ def sync_collections_from_invoicing(conn=Depends(get_db)):
                 """, (f.get("codigo_cliente"),))
 
                 row_credito = cur.fetchone()
-                dias_credito = int(row_credito["termino_pago"]) if row_credito else 0
 
-                # ---------- derivados mínimos ----------
+                try:
+                    dias_credito = int(row_credito["termino_pago"]) if row_credito and row_credito.get("termino_pago") is not None else 0
+                except Exception:
+                    dias_credito = 0
+
+                # ------------------------------------------------
+                # fecha_vencimiento (DATE + int)
+                # ------------------------------------------------
                 fecha_vencimiento = fe + timedelta(days=dias_credito)
+
+                # ------------------------------------------------
+                # aging_dias (DATE - DATE)
+                # ------------------------------------------------
                 aging_dias = (hoy - fecha_vencimiento).days
 
+                # ------------------------------------------------
+                # bucket_aging
+                # ------------------------------------------------
                 if aging_dias <= 0:
                     bucket = "CURRENT"
                 elif aging_dias <= 30:
@@ -137,7 +155,9 @@ def sync_collections_from_invoicing(conn=Depends(get_db)):
 
                 total = float(f.get("total") or 0)
 
-                # ---------- INSERT ----------
+                # ------------------------------------------------
+                # INSERT (ESQUEMA COMPLETO)
+                # ------------------------------------------------
                 cur.execute("""
                     INSERT INTO collections (
                         numero_documento,
@@ -229,6 +249,7 @@ def sync_collections_from_invoicing(conn=Depends(get_db)):
     finally:
         cur.close()
 
+
 # ============================================================
 # POST /collections/post-to-accounting
 # Genera asientos contables para facturas existentes (y futuras que caigan a collections)
@@ -263,34 +284,19 @@ def post_collections_to_accounting(conn=Depends(get_db)) -> dict:
 # ============================================================
 @router.get("/search")
 def search_collections(
-    cliente: Optional[str] = Query(
-        None,
-        description="ALL o código/nombre del cliente"
-    ),
-    bucket_aging: Optional[str] = Query(
-        None,
-        description="CURRENT | 1-30 | 31-60 | 61-90 | 90+"
-    ),
-    estado_factura: Optional[str] = Query(
-        None,
-        description="PENDIENTE_PAGO | PAGADA | DISPUTADA | WRITE_OFF"
-    ),
-    disputada: Optional[bool] = Query(
-        None,
-        description="True / False"
-    ),
+    cliente: Optional[str] = Query(None),
+    bucket_aging: Optional[str] = Query(None),
+    estado_factura: Optional[str] = Query(None),
+    disputada: Optional[bool] = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
     conn=Depends(get_db)
 ):
     """
-    Devuelve facturas en Collections con filtros y paginación.
-
-    ALINEADO:
-    - dias_credito SIEMPRE desde cliente_credito
+    ALINEADO Y BLINDADO:
+    - dias_credito desde cliente_credito
     - fecha_vencimiento = fecha_emision + dias_credito
-    - aging y bucket recalculados
-    - NO rompe esquema existente
+    - aging calculado con DATE - DATE (NO interval)
     """
 
     offset = (page - 1) * page_size
@@ -299,7 +305,6 @@ def search_collections(
     filtros = []
     params = {}
 
-    # ================= FILTROS =================
     if cliente and cliente.upper() != "ALL":
         filtros.append("""
             (x.codigo_cliente = %(cliente_exact)s
@@ -333,48 +338,25 @@ def search_collections(
                 c.estado_factura,
                 c.disputada,
 
-                -- 🔑 crédito real
                 COALESCE(cc.termino_pago::int, 0) AS dias_credito,
 
-                -- vencimiento real
-                c.fecha_emision
-                    + (COALESCE(cc.termino_pago::int, 0) * INTERVAL '1 day')
-                    AS fecha_vencimiento,
+                (c.fecha_emision
+                    + COALESCE(cc.termino_pago::int, 0)
+                )::date AS fecha_vencimiento,
 
-                -- aging real
                 (CURRENT_DATE
                     - (
-                        c.fecha_emision
-                        + (COALESCE(cc.termino_pago::int, 0) * INTERVAL '1 day')
+                        (c.fecha_emision
+                            + COALESCE(cc.termino_pago::int, 0)
+                        )::date
                     )
-                )::int AS aging_dias,
+                ) AS aging_dias,
 
-                -- bucket real
                 CASE
-                    WHEN (CURRENT_DATE
-                        - (
-                            c.fecha_emision
-                            + (COALESCE(cc.termino_pago::int, 0) * INTERVAL '1 day')
-                        )
-                    )::int <= 0 THEN 'CURRENT'
-                    WHEN (CURRENT_DATE
-                        - (
-                            c.fecha_emision
-                            + (COALESCE(cc.termino_pago::int, 0) * INTERVAL '1 day')
-                        )
-                    )::int BETWEEN 1 AND 30 THEN '1-30'
-                    WHEN (CURRENT_DATE
-                        - (
-                            c.fecha_emision
-                            + (COALESCE(cc.termino_pago::int, 0) * INTERVAL '1 day')
-                        )
-                    )::int BETWEEN 31 AND 60 THEN '31-60'
-                    WHEN (CURRENT_DATE
-                        - (
-                            c.fecha_emision
-                            + (COALESCE(cc.termino_pago::int, 0) * INTERVAL '1 day')
-                        )
-                    )::int BETWEEN 61 AND 90 THEN '61-90'
+                    WHEN (CURRENT_DATE - ((c.fecha_emision + COALESCE(cc.termino_pago::int, 0))::date)) <= 0 THEN 'CURRENT'
+                    WHEN (CURRENT_DATE - ((c.fecha_emision + COALESCE(cc.termino_pago::int, 0))::date)) BETWEEN 1 AND 30 THEN '1-30'
+                    WHEN (CURRENT_DATE - ((c.fecha_emision + COALESCE(cc.termino_pago::int, 0))::date)) BETWEEN 31 AND 60 THEN '31-60'
+                    WHEN (CURRENT_DATE - ((c.fecha_emision + COALESCE(cc.termino_pago::int, 0))::date)) BETWEEN 61 AND 90 THEN '61-90'
                     ELSE '90+'
                 END AS bucket_aging
 
@@ -404,42 +386,23 @@ def search_collections(
 
                 COALESCE(cc.termino_pago::int, 0) AS dias_credito,
 
-                c.fecha_emision
-                    + (COALESCE(cc.termino_pago::int, 0) * INTERVAL '1 day')
-                    AS fecha_vencimiento,
+                (c.fecha_emision
+                    + COALESCE(cc.termino_pago::int, 0)
+                )::date AS fecha_vencimiento,
 
                 (CURRENT_DATE
                     - (
-                        c.fecha_emision
-                        + (COALESCE(cc.termino_pago::int, 0) * INTERVAL '1 day')
+                        (c.fecha_emision
+                            + COALESCE(cc.termino_pago::int, 0)
+                        )::date
                     )
-                )::int AS aging_dias,
+                ) AS aging_dias,
 
                 CASE
-                    WHEN (CURRENT_DATE
-                        - (
-                            c.fecha_emision
-                            + (COALESCE(cc.termino_pago::int, 0) * INTERVAL '1 day')
-                        )
-                    )::int <= 0 THEN 'CURRENT'
-                    WHEN (CURRENT_DATE
-                        - (
-                            c.fecha_emision
-                            + (COALESCE(cc.termino_pago::int, 0) * INTERVAL '1 day')
-                        )
-                    )::int BETWEEN 1 AND 30 THEN '1-30'
-                    WHEN (CURRENT_DATE
-                        - (
-                            c.fecha_emision
-                            + (COALESCE(cc.termino_pago::int, 0) * INTERVAL '1 day')
-                        )
-                    )::int BETWEEN 31 AND 60 THEN '31-60'
-                    WHEN (CURRENT_DATE
-                        - (
-                            c.fecha_emision
-                            + (COALESCE(cc.termino_pago::int, 0) * INTERVAL '1 day')
-                        )
-                    )::int BETWEEN 61 AND 90 THEN '61-90'
+                    WHEN (CURRENT_DATE - ((c.fecha_emision + COALESCE(cc.termino_pago::int, 0))::date)) <= 0 THEN 'CURRENT'
+                    WHEN (CURRENT_DATE - ((c.fecha_emision + COALESCE(cc.termino_pago::int, 0))::date)) BETWEEN 1 AND 30 THEN '1-30'
+                    WHEN (CURRENT_DATE - ((c.fecha_emision + COALESCE(cc.termino_pago::int, 0))::date)) BETWEEN 31 AND 60 THEN '31-60'
+                    WHEN (CURRENT_DATE - ((c.fecha_emision + COALESCE(cc.termino_pago::int, 0))::date)) BETWEEN 61 AND 90 THEN '61-90'
                     ELSE '90+'
                 END AS bucket_aging,
 
