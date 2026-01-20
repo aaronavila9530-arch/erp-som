@@ -7,7 +7,7 @@ router = APIRouter(
 )
 
 GITHUB_REPO = "aaronavila9530-arch/erp-som"
-CURRENT_VERSION = "1.0.1"
+CURRENT_VERSION = "1.0.2"
 
 
 @router.get("/")
