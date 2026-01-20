@@ -275,9 +275,9 @@ def invoice_to_pay_kpis(conn=Depends(get_db)):
 
     cur.execute("""
         SELECT
-            -- =========================
-            -- PENDING (USD normalizado)
-            -- =========================
+            -- =====================================
+            -- PENDING (TOTAL ACTUAL, NO HISTÓRICO)
+            -- =====================================
             COALESCE(
                 SUM(
                     CASE
@@ -290,13 +290,16 @@ def invoice_to_pay_kpis(conn=Depends(get_db)):
                 ), 0
             ) AS pending_usd,
 
-            -- =========================
-            -- PAID (USD normalizado)
-            -- =========================
+            -- =====================================
+            -- PAID (SOLO PAGOS DEL MES EN CURSO)
+            -- =====================================
             COALESCE(
                 SUM(
                     CASE
-                        WHEN status IN ('PARTIAL','PAID') THEN
+                        WHEN status IN ('PAID','PARTIAL')
+                         AND last_payment_date IS NOT NULL
+                         AND DATE_TRUNC('month', last_payment_date) = DATE_TRUNC('month', CURRENT_DATE)
+                        THEN
                             CASE
                                 WHEN currency = 'CRC' THEN (total - balance) / 500.0
                                 ELSE (total - balance)
@@ -305,41 +308,42 @@ def invoice_to_pay_kpis(conn=Depends(get_db)):
                 ), 0
             ) AS paid_usd,
 
-            -- =========================
-            -- DPO (NO requiere moneda)
-            -- =========================
+            -- =====================================
+            -- DPO (SOLO FACTURAS PAGADAS ESTE MES)
+            -- =====================================
             ROUND(
                 AVG(
                     CASE
                         WHEN status = 'PAID'
-                        AND last_payment_date IS NOT NULL
-                        AND issue_date IS NOT NULL
+                         AND last_payment_date IS NOT NULL
+                         AND DATE_TRUNC('month', last_payment_date) = DATE_TRUNC('month', CURRENT_DATE)
+                         AND issue_date IS NOT NULL
                         THEN (last_payment_date - issue_date)
                     END
                 ), 2
             ) AS dpo,
 
-            -- =========================
-            -- OVERDUE COUNT
-            -- =========================
+            -- =====================================
+            -- OVERDUE COUNT (ACTUAL)
+            -- =====================================
             COUNT(
                 CASE
                     WHEN balance > 0
-                    AND due_date IS NOT NULL
-                    AND due_date < CURRENT_DATE
+                     AND due_date IS NOT NULL
+                     AND due_date < CURRENT_DATE
                     THEN 1
                 END
             ) AS overdue,
 
-            -- =========================
+            -- =====================================
             -- OVERDUE AMOUNT (USD)
-            -- =========================
+            -- =====================================
             COALESCE(
                 SUM(
                     CASE
                         WHEN balance > 0
-                        AND due_date IS NOT NULL
-                        AND due_date < CURRENT_DATE
+                         AND due_date IS NOT NULL
+                         AND due_date < CURRENT_DATE
                         THEN
                             CASE
                                 WHEN currency = 'CRC' THEN balance / 500.0
@@ -362,7 +366,8 @@ def invoice_to_pay_kpis(conn=Depends(get_db)):
         "overdue": overdue,
         "overdue_amount": round(overdue_amount, 2),
         "currency": "USD",
-        "exchange_rate": 500
+        "exchange_rate": 500,
+        "scope": "CURRENT_MONTH"
     }
 
 # ============================================================
