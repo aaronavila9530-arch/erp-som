@@ -42,12 +42,20 @@ def require_permission(module: str, action: str):
 # ============================================================
 def _sync_servicios_to_itp(cur):
     """
-    Inserta honorarios de surveyores desde servicios
-    usando SOLO columnas válidas del modelo ITP.
-    Se asignan también issue_date y due_date:
-      - issue_date = fecha_fin
-      - due_date = fecha_fin + 15 días
+    Sincroniza honorarios desde servicios hacia Invoice To Pay.
+
+    Reglas:
+    - INSERTA si no existe
+    - ACTUALIZA solo si:
+        • origin = 'SERVICIOS'
+        • status = 'PENDING'
+        • balance = total
+        • honorarios cambiaron
     """
+
+    # ============================================================
+    # 1️⃣ INSERTAR NUEVAS OBLIGACIONES
+    # ============================================================
     cur.execute("""
         INSERT INTO payment_obligations (
             record_type,
@@ -79,8 +87,8 @@ def _sync_servicios_to_itp(cur):
             s.pais,
             s.operacion,
             s.consec,
-            s.fecha_fin AS issue_date,
-            (s.fecha_fin + INTERVAL '15 days') AS due_date,
+            s.fecha_fin,
+            (s.fecha_fin + INTERVAL '15 days'),
             'USD',
             s.honorarios,
             s.honorarios,
@@ -100,6 +108,26 @@ def _sync_servicios_to_itp(cur):
                 WHERE po.service_id = s.consec
                   AND po.origin = 'SERVICIOS'
             )
+    """)
+
+    # ============================================================
+    # 2️⃣ ACTUALIZAR HONORARIOS MODIFICADOS (BLINDADO)
+    # ============================================================
+    cur.execute("""
+        UPDATE payment_obligations po
+        SET
+            total = s.honorarios,
+            balance = s.honorarios,
+            updated_at = NOW()
+        FROM servicios s
+        WHERE
+            po.service_id = s.consec
+            AND po.origin = 'SERVICIOS'
+            AND po.status = 'PENDING'
+            AND po.balance = po.total
+            AND s.honorarios IS NOT NULL
+            AND s.honorarios > 0
+            AND po.total <> s.honorarios
     """)
 
 @router.get("/search")
