@@ -8,6 +8,7 @@ router = APIRouter(
 
 GITHUB_REPO = "aaronavila9530-arch/erp-som"
 CURRENT_VERSION = "1.0.2"
+APP_VERSION = CURRENT_VERSION  # 👈 alias para frontend
 
 
 @router.get("/")
