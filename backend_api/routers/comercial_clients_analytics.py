@@ -5,7 +5,7 @@ from fastapi import (
     HTTPException,
     Depends
 )
-from typing import Optional, List
+from typing import Optional
 from psycopg2.extras import RealDictCursor
 from datetime import date
 
@@ -35,7 +35,7 @@ def require_permission(module: str, action: str):
 
 # ============================================================
 # GET /comercial/client-view
-# ANALÍTICA COMERCIAL POR CLIENTE
+# ANALÍTICA COMERCIAL POR CLIENTE / SERVICIO
 # ============================================================
 @router.get(
     "/client-view",
@@ -46,17 +46,17 @@ def comercial_client_view(
     conn=Depends(get_db)
 ):
     """
-    KPIs por cliente basados en servicios.
+    Analítica comercial basada en tabla servicios.
 
     Reglas:
-    - Por defecto: año en curso (fecha_inicio)
-    - Si year viene → usa ese año
+    - Año por defecto: año actual (fecha_inicio)
     - IVA:
-        • Costa Rica → valor_factura / 1.13
-        • Otros países → valor_factura completo
+        • Costa Rica  → valor_factura / 1.13
+        • Otros       → valor_factura completo
     - Comisión bancaria:
-        • Desde cash_app.comision
-        • Match por numero_documento = servicios.factura
+        • cash_app.comision
+        • Match: numero_documento = servicios.factura
+    - KPIs calculados en backend
     """
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -73,33 +73,32 @@ def comercial_client_view(
         y_end = date(current_year + 1, 1, 1)
 
     # --------------------------------------------------------
-    # QUERY PRINCIPAL
+    # DATA BASE (SERVICIOS)
     # --------------------------------------------------------
     sql = """
-        WITH servicios_base AS (
+        WITH base AS (
             SELECT
                 s.cliente,
-                COUNT(*)                           AS total_servicios,
-                SUM(s.valor_factura)               AS total_facturado,
-                SUM(s.honorarios)                  AS total_honorarios,
-                SUM(s.costo_operativo)             AS total_costo_operativo,
-                SUM(
-                    COALESCE(ca.comision, 0)
-                )                                  AS total_comision_bancaria,
-                SUM(
-                    CASE
-                        WHEN cli.pais = 'Costa Rica'
-                        THEN s.valor_factura / 1.13
-                        ELSE s.valor_factura
-                    END
-                )                                  AS subtotal,
-                SUM(
-                    CASE
-                        WHEN cli.pais = 'Costa Rica'
-                        THEN s.valor_factura - (s.valor_factura / 1.13)
-                        ELSE 0
-                    END
-                )                                  AS iva
+                s.operacion                            AS servicios,
+                s.operacion                            AS tipo_mas_frecuente,
+                s.fecha_inicio,
+                s.fecha_fin,
+                s.factura,
+                s.valor_factura,
+                s.costo_operativo,
+                s.honorarios,
+                cli.pais,
+                COALESCE(ca.comision, 0)              AS comision_bancaria,
+                CASE
+                    WHEN cli.pais = 'Costa Rica'
+                    THEN s.valor_factura - (s.valor_factura / 1.13)
+                    ELSE 0
+                END                                    AS iva,
+                CASE
+                    WHEN cli.pais = 'Costa Rica'
+                    THEN s.valor_factura / 1.13
+                    ELSE s.valor_factura
+                END                                    AS subtotal
             FROM servicios s
             LEFT JOIN clientes cli
                 ON cli.nombrejuridico = s.cliente
@@ -108,32 +107,39 @@ def comercial_client_view(
             WHERE
                 s.fecha_inicio >= %(y_start)s
                 AND s.fecha_inicio < %(y_end)s
-            GROUP BY
-                s.cliente
         )
         SELECT
             cliente,
-            total_servicios,
-            total_facturado,
-            subtotal,
-            iva,
-            total_honorarios,
-            total_costo_operativo,
-            total_comision_bancaria,
+            servicios,
+            COUNT(*)                                 AS frecuencia,
+            tipo_mas_frecuente,
+            MIN(fecha_inicio)                        AS fecha_inicio,
+            MAX(fecha_fin)                           AS fecha_fin,
+            factura,
+            SUM(valor_factura)                       AS valor_facturado,
+            SUM(costo_operativo)                     AS costo_operativo,
+            SUM(honorarios)                          AS honorarios,
+            SUM(iva)                                 AS iva,
+            SUM(comision_bancaria)                   AS comision_bancaria,
             (
-                total_facturado
-                - total_costo_operativo
-                - total_honorarios
-            ) AS margen_bruto,
+                SUM(valor_factura)
+                - SUM(costo_operativo)
+                - SUM(honorarios)
+            )                                        AS margen_bruto,
             (
-                total_facturado
-                - total_costo_operativo
-                - total_honorarios
-                - total_comision_bancaria
-                - iva
-            ) AS margen_neto
-        FROM servicios_base
-        ORDER BY total_facturado DESC;
+                SUM(valor_factura)
+                - SUM(costo_operativo)
+                - SUM(honorarios)
+                - SUM(comision_bancaria)
+                - SUM(iva)
+            )                                        AS margen_neto
+        FROM base
+        GROUP BY
+            cliente,
+            servicios,
+            tipo_mas_frecuente,
+            factura
+        ORDER BY valor_facturado DESC;
     """
 
     cur.execute(sql, {
@@ -141,10 +147,42 @@ def comercial_client_view(
         "y_end": y_end
     })
 
-    data = cur.fetchall()
+    rows = cur.fetchall()
 
     # --------------------------------------------------------
-    # AÑOS DISPONIBLES (PARA FILTRO UI)
+    # KPIs (BACKEND)
+    # --------------------------------------------------------
+    total_clients = len({r["cliente"] for r in rows if r["cliente"]})
+    total_services = sum(r["frecuencia"] for r in rows)
+    total_fact = sum(r["valor_facturado"] or 0 for r in rows)
+    total_costs = sum(
+        (r["costo_operativo"] or 0)
+        + (r["honorarios"] or 0)
+        + (r["iva"] or 0)
+        + (r["comision_bancaria"] or 0)
+        for r in rows
+    )
+    gross_margin = sum(r["margen_bruto"] or 0 for r in rows)
+    net_margin = sum(r["margen_neto"] or 0 for r in rows)
+
+    kpis = {
+        "kpi_clients": total_clients,
+        "kpi_services": total_services,
+        "kpi_revenue": round(total_fact, 2),
+        "kpi_costs": round(total_costs, 2),
+        "kpi_ticket_avg": round(
+            (total_fact / total_services), 2
+        ) if total_services else 0,
+        "kpi_gross_margin": round(gross_margin, 2),
+        "kpi_net_margin": round(net_margin, 2),
+        "kpi_profit_amt": round(net_margin, 2),
+        "kpi_profit_pct": round(
+            (net_margin / total_fact) * 100, 2
+        ) if total_fact else 0
+    }
+
+    # --------------------------------------------------------
+    # AÑOS DISPONIBLES
     # --------------------------------------------------------
     cur.execute("""
         SELECT DISTINCT
@@ -159,5 +197,6 @@ def comercial_client_view(
     return {
         "year_applied": year or date.today().year,
         "available_years": years,
-        "data": data
+        "kpis": kpis,
+        "data": rows
     }
