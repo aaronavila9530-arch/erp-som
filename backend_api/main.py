@@ -57,6 +57,9 @@ from routers.hr_policies import router as hr_policies_router
 #Informes
 from routers import reports_ai
 
+#Comercial
+from backend_api.routers import comercial
+
 # ============================================================
 # CONFIGURACIÓN FASTAPI
 # ============================================================
@@ -198,6 +201,8 @@ app.include_router(noticias.router)
 app.include_router(hr_policies_router)
 
 app.include_router(reports_ai.router)
+
+app.include_router(comercial.router)
 
 # ============================================================
 # EJECUCIÓN LOCAL
