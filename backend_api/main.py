@@ -58,7 +58,7 @@ from routers.hr_policies import router as hr_policies_router
 from routers import reports_ai
 
 #Comercial
-from backend_api.routers import comercial
+from .comercial import router as comercial_router
 
 # ============================================================
 # CONFIGURACIÓN FASTAPI
