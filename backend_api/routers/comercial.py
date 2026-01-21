@@ -1,41 +1,3 @@
-from fastapi import (
-    APIRouter,
-    Query,
-    Header,
-    HTTPException,
-    Depends
-)
-from typing import Optional, List
-from psycopg2.extras import RealDictCursor
-
-from database import get_db
-from rbac_service import has_permission
-
-
-router = APIRouter(
-    prefix="/comercial",
-    tags=["Comercial"]
-)
-
-# ============================================================
-# RBAC GUARD (MISMO PATRÓN QUE COLLECTIONS)
-# ============================================================
-def require_permission(module: str, action: str):
-    def checker(
-        x_user_role: str = Header(..., alias="X-User-Role")
-    ):
-        if not has_permission(x_user_role, module, action):
-            raise HTTPException(
-                status_code=403,
-                detail="No autorizado"
-            )
-    return checker
-
-
-# ============================================================
-# GET /comercial/board
-# PIZARRA COMERCIAL — SOLO LEE SERVICIOS
-# ============================================================
 @router.get(
     "/board",
     dependencies=[Depends(require_permission("comercial", "view"))]
@@ -54,13 +16,10 @@ def comercial_board(
     """
     🔒 BLINDADO / ANTI-LAG:
     - Si NO hay filtros → retorna []
-    - El frontend decide cuándo consultar
-    - NO hay estados por defecto
+    - CONFIRMADO / BUQUE POR CONFIRMAR → solo año en curso
+    - Otros estados → sin restricción de año
     """
 
-    # --------------------------------------------------------
-    # Si no hay filtros → NO consultar DB
-    # --------------------------------------------------------
     if not any([
         cliente,
         continente,
@@ -78,6 +37,9 @@ def comercial_board(
     filtros = []
     params = {}
 
+    # ----------------------------
+    # FILTROS BÁSICOS
+    # ----------------------------
     if cliente:
         filtros.append("cliente ILIKE %(cliente)s")
         params["cliente"] = f"%{cliente.strip()}%"
@@ -98,20 +60,31 @@ def comercial_board(
         filtros.append("surveyor ILIKE %(surveyor)s")
         params["surveyor"] = f"%{surveyor.strip()}%"
 
+    # ----------------------------
+    # ESTADOS + REGLA DE AÑO
+    # ----------------------------
+    estados_norm = []
     if estados:
-        # ✅ Case-insensitive contra DB
-        estados_norm = []
         for e in estados:
-            if e is None:
-                continue
-            e2 = str(e).strip()
-            if e2:
-                estados_norm.append(e2.upper())
+            if e:
+                estados_norm.append(str(e).strip().upper())
 
         if estados_norm:
             filtros.append("UPPER(estado) = ANY(%(estados)s)")
             params["estados"] = estados_norm
 
+            # 🎯 REGLA CLAVE:
+            # Si incluye CONFIRMADO o BUQUE POR CONFIRMAR
+            estados_restringidos = {"CONFIRMADO", "BUQUE POR CONFIRMAR"}
+
+            if estados_restringidos.intersection(estados_norm):
+                filtros.append(
+                    "EXTRACT(YEAR FROM fecha_inicio) = EXTRACT(YEAR FROM CURRENT_DATE)"
+                )
+
+    # ----------------------------
+    # FECHAS (si vienen explícitas)
+    # ----------------------------
     if fecha_desde:
         filtros.append("fecha_inicio::date >= %(fecha_desde)s::date")
         params["fecha_desde"] = fecha_desde.strip()
@@ -121,7 +94,6 @@ def comercial_board(
         params["fecha_hasta"] = fecha_hasta.strip()
 
     if not filtros:
-        # Si por alguna razón todo venía vacío tras normalizar → no consultamos
         cur.close()
         return []
 
