@@ -100,7 +100,7 @@ def comercial_board(
 
     if estados:
         filtros.append("estado = ANY(%(estados)s)")
-        params["estados"] = estados
+        params["estados"] = [e.upper() for e in estados]
 
     if fecha_desde:
         filtros.append("fecha_inicio >= %(fecha_desde)s")
