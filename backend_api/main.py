@@ -59,6 +59,7 @@ from routers.reports_ai import router as reports_ai_router
 
 # Comercial
 from routers.comercial import router as comercial_router
+from routers.comercial_clients_analytics import router as comercial_clients_analytics_router
 
 
 # ============================================================
@@ -204,7 +205,7 @@ app.include_router(hr_policies_router)
 app.include_router(reports_ai_router)
 
 app.include_router(comercial_router)
-
+app.include_router(comercial_clients_analytics_router)
 
 # ============================================================
 # EJECUCIÓN LOCAL
