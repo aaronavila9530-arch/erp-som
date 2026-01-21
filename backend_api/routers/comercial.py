@@ -2,7 +2,8 @@ from fastapi import (
     APIRouter,
     Query,
     Header,
-    HTTPException
+    HTTPException,
+    Depends
 )
 from typing import Optional, List
 from psycopg2.extras import RealDictCursor
@@ -37,7 +38,7 @@ def require_permission(module: str, action: str):
 # ============================================================
 @router.get(
     "/board",
-    dependencies=[require_permission("comercial", "view")]
+    dependencies=[Depends(require_permission("comercial", "view"))]
 )
 def comercial_board(
     cliente: Optional[str] = Query(None),
@@ -48,7 +49,7 @@ def comercial_board(
     estados: Optional[List[str]] = Query(None),
     fecha_desde: Optional[str] = Query(None),
     fecha_hasta: Optional[str] = Query(None),
-    conn = get_db()
+    conn=Depends(get_db)
 ):
     """
     🔒 BLINDADO / ANTI-LAG:
