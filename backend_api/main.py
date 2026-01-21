@@ -202,7 +202,6 @@ app.include_router(noticias.router)
 app.include_router(hr_policies_router)
 
 app.include_router(reports_ai_router)
-
 app.include_router(comercial_router)
 
 
