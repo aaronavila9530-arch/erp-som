@@ -79,28 +79,23 @@ def comercial_client_view(
         WITH base AS (
             SELECT
                 s.cliente,
-                s.operacion                            AS servicios,
-                s.operacion                            AS tipo_mas_frecuente,
+                s.operacion                             AS servicios,
+                s.operacion                             AS tipo_mas_frecuente,
                 s.fecha_inicio,
                 s.fecha_fin,
                 s.factura,
-                s.valor_factura,
-                s.costo_operativo,
-                s.honorarios,
+                COALESCE(s.valor_factura, 0)           AS valor_factura,
+                COALESCE(s.costo_operativo, 0)         AS costo_operativo,
+                COALESCE(s.honorarios, 0)              AS honorarios,
                 cli.pais,
-                COALESCE(ca.comision, 0)              AS comision_bancaria,
+                COALESCE(ca.comision, 0)               AS comision_bancaria,
                 CASE
                     WHEN cli.pais = 'Costa Rica'
                     THEN s.valor_factura - (s.valor_factura / 1.13)
                     ELSE 0
-                END                                    AS iva,
-                CASE
-                    WHEN cli.pais = 'Costa Rica'
-                    THEN s.valor_factura / 1.13
-                    ELSE s.valor_factura
-                END                                    AS subtotal
+                END                                     AS iva
             FROM servicios s
-            LEFT JOIN clientes cli
+            LEFT JOIN cliente cli
                 ON cli.nombrejuridico = s.cliente
             LEFT JOIN cash_app ca
                 ON ca.numero_documento = s.factura
@@ -153,7 +148,7 @@ def comercial_client_view(
     # KPIs (BACKEND)
     # --------------------------------------------------------
     total_clients = len({r["cliente"] for r in rows if r["cliente"]})
-    total_services = sum(r["frecuencia"] for r in rows)
+    total_services = sum(r["frecuencia"] or 0 for r in rows)
     total_fact = sum(r["valor_facturado"] or 0 for r in rows)
     total_costs = sum(
         (r["costo_operativo"] or 0)
@@ -166,17 +161,17 @@ def comercial_client_view(
     net_margin = sum(r["margen_neto"] or 0 for r in rows)
 
     kpis = {
-        "kpi_clients": total_clients,
-        "kpi_services": total_services,
-        "kpi_revenue": round(total_fact, 2),
-        "kpi_costs": round(total_costs, 2),
-        "kpi_ticket_avg": round(
+        "clientes": total_clients,
+        "servicios": total_services,
+        "facturado": round(total_fact, 2),
+        "costos": round(total_costs, 2),
+        "ticket_promedio": round(
             (total_fact / total_services), 2
         ) if total_services else 0,
-        "kpi_gross_margin": round(gross_margin, 2),
-        "kpi_net_margin": round(net_margin, 2),
-        "kpi_profit_amt": round(net_margin, 2),
-        "kpi_profit_pct": round(
+        "margen_bruto": round(gross_margin, 2),
+        "margen_neto": round(net_margin, 2),
+        "rentabilidad_monto": round(net_margin, 2),
+        "rentabilidad_pct": round(
             (net_margin / total_fact) * 100, 2
         ) if total_fact else 0
     }
