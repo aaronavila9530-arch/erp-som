@@ -55,8 +55,26 @@ def comercial_board(
     🔒 BLINDADO / ANTI-LAG:
     - Si NO hay filtros → retorna []
     - El frontend decide cuándo consultar
-    - NO hay estados por defecto
+    - Estados deben coincidir EXACTOS con DB
     """
+
+    # --------------------------------------------------------
+    # NORMALIZAR INPUTS (strip + limpiar vacíos)
+    # --------------------------------------------------------
+    cliente = cliente.strip() if cliente else None
+    continente = continente.strip() if continente else None
+    pais = pais.strip() if pais else None
+    puerto = puerto.strip() if puerto else None
+    surveyor = surveyor.strip() if surveyor else None
+
+    if estados:
+        estados = [
+            e.strip()
+            for e in estados
+            if e and isinstance(e, str) and e.strip()
+        ]
+        if not estados:
+            estados = None
 
     # --------------------------------------------------------
     # Si no hay filtros → NO consultar DB
@@ -78,6 +96,9 @@ def comercial_board(
     filtros = []
     params = {}
 
+    # --------------------------------------------------------
+    # FILTROS
+    # --------------------------------------------------------
     if cliente:
         filtros.append("cliente ILIKE %(cliente)s")
         params["cliente"] = f"%{cliente}%"
@@ -98,9 +119,10 @@ def comercial_board(
         filtros.append("surveyor ILIKE %(surveyor)s")
         params["surveyor"] = f"%{surveyor}%"
 
+    # ⚠️ ESTADOS: MATCH EXACTO CON DB (NO upper, NO lower)
     if estados:
         filtros.append("estado = ANY(%(estados)s)")
-        params["estados"] = [e.upper() for e in estados]
+        params["estados"] = estados
 
     if fecha_desde:
         filtros.append("fecha_inicio >= %(fecha_desde)s")
@@ -112,6 +134,9 @@ def comercial_board(
 
     where_sql = " AND ".join(filtros)
 
+    # --------------------------------------------------------
+    # QUERY FINAL
+    # --------------------------------------------------------
     sql = f"""
         SELECT
             consec,
