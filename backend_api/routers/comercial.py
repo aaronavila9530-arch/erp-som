@@ -55,26 +55,8 @@ def comercial_board(
     🔒 BLINDADO / ANTI-LAG:
     - Si NO hay filtros → retorna []
     - El frontend decide cuándo consultar
-    - Estados deben coincidir EXACTOS con DB
+    - NO hay estados por defecto
     """
-
-    # --------------------------------------------------------
-    # NORMALIZAR INPUTS (strip + limpiar vacíos)
-    # --------------------------------------------------------
-    cliente = cliente.strip() if cliente else None
-    continente = continente.strip() if continente else None
-    pais = pais.strip() if pais else None
-    puerto = puerto.strip() if puerto else None
-    surveyor = surveyor.strip() if surveyor else None
-
-    if estados:
-        estados = [
-            e.strip()
-            for e in estados
-            if e and isinstance(e, str) and e.strip()
-        ]
-        if not estados:
-            estados = None
 
     # --------------------------------------------------------
     # Si no hay filtros → NO consultar DB
@@ -96,47 +78,55 @@ def comercial_board(
     filtros = []
     params = {}
 
-    # --------------------------------------------------------
-    # FILTROS
-    # --------------------------------------------------------
     if cliente:
         filtros.append("cliente ILIKE %(cliente)s")
-        params["cliente"] = f"%{cliente}%"
+        params["cliente"] = f"%{cliente.strip()}%"
 
     if continente:
         filtros.append("continente = %(continente)s")
-        params["continente"] = continente
+        params["continente"] = continente.strip()
 
     if pais:
         filtros.append("pais = %(pais)s")
-        params["pais"] = pais
+        params["pais"] = pais.strip()
 
     if puerto:
         filtros.append("puerto = %(puerto)s")
-        params["puerto"] = puerto
+        params["puerto"] = puerto.strip()
 
     if surveyor:
         filtros.append("surveyor ILIKE %(surveyor)s")
-        params["surveyor"] = f"%{surveyor}%"
+        params["surveyor"] = f"%{surveyor.strip()}%"
 
-    # ⚠️ ESTADOS: MATCH EXACTO CON DB (NO upper, NO lower)
     if estados:
-        filtros.append("estado = ANY(%(estados)s)")
-        params["estados"] = estados
+        # ✅ Case-insensitive contra DB
+        estados_norm = []
+        for e in estados:
+            if e is None:
+                continue
+            e2 = str(e).strip()
+            if e2:
+                estados_norm.append(e2.upper())
+
+        if estados_norm:
+            filtros.append("UPPER(estado) = ANY(%(estados)s)")
+            params["estados"] = estados_norm
 
     if fecha_desde:
-        filtros.append("fecha_inicio >= %(fecha_desde)s")
-        params["fecha_desde"] = fecha_desde
+        filtros.append("fecha_inicio::date >= %(fecha_desde)s::date")
+        params["fecha_desde"] = fecha_desde.strip()
 
     if fecha_hasta:
-        filtros.append("fecha_inicio <= %(fecha_hasta)s")
-        params["fecha_hasta"] = fecha_hasta
+        filtros.append("fecha_inicio::date <= %(fecha_hasta)s::date")
+        params["fecha_hasta"] = fecha_hasta.strip()
+
+    if not filtros:
+        # Si por alguna razón todo venía vacío tras normalizar → no consultamos
+        cur.close()
+        return []
 
     where_sql = " AND ".join(filtros)
 
-    # --------------------------------------------------------
-    # QUERY FINAL
-    # --------------------------------------------------------
     sql = f"""
         SELECT
             consec,
