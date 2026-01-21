@@ -55,7 +55,7 @@ from routers.hr_policies import router as hr_policies_router
 
 
 #Informes
-from routers import reports_ai
+from .reports_ai import router as reports_ai_router
 
 #Comercial
 from .comercial import router as comercial_router
