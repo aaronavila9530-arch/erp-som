@@ -1,89 +1,115 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import (
+    APIRouter,
+    Query,
+    Header,
+    HTTPException
+)
 from typing import Optional, List
 from psycopg2.extras import RealDictCursor
 
-from backend_api.database import get_db
-from backend_api.auth import get_current_user
-from backend_api.rbac_service import has_permission
+from database import get_db
+from rbac_service import has_permission
+
 
 router = APIRouter(
     prefix="/comercial",
     tags=["Comercial"]
 )
 
+# ============================================================
+# RBAC GUARD (MISMO PATRÓN QUE COLLECTIONS)
+# ============================================================
+def require_permission(module: str, action: str):
+    def checker(
+        x_user_role: str = Header(..., alias="X-User-Role")
+    ):
+        if not has_permission(x_user_role, module, action):
+            raise HTTPException(
+                status_code=403,
+                detail="No autorizado"
+            )
+    return checker
+
 
 # ============================================================
-# BOARD — PIZARRA COMERCIAL
+# GET /comercial/board
+# PIZARRA COMERCIAL — SOLO LEE SERVICIOS
 # ============================================================
-@router.get("/board")
+@router.get(
+    "/board",
+    dependencies=[require_permission("comercial", "view")]
+)
 def comercial_board(
-    cliente: Optional[str] = None,
-    continente: Optional[str] = None,
-    pais: Optional[str] = None,
-    puerto: Optional[str] = None,
-    surveyor: Optional[str] = None,
+    cliente: Optional[str] = Query(None),
+    continente: Optional[str] = Query(None),
+    pais: Optional[str] = Query(None),
+    puerto: Optional[str] = Query(None),
+    surveyor: Optional[str] = Query(None),
     estados: Optional[List[str]] = Query(None),
-    fecha_desde: Optional[str] = None,
-    fecha_hasta: Optional[str] = None,
-    current_user=Depends(get_current_user),
-    conn=Depends(get_db)
+    fecha_desde: Optional[str] = Query(None),
+    fecha_hasta: Optional[str] = Query(None),
+    conn = get_db()
 ):
     """
-    ⚠️ IMPORTANTE:
-    - Si NO se envían filtros → devuelve [] (evita LAG)
-    - Estados por defecto NO se aplican aquí
+    🔒 BLINDADO / ANTI-LAG:
+    - Si NO hay filtros → retorna []
+    - El frontend decide cuándo consultar
+    - NO hay estados por defecto
     """
 
     # --------------------------------------------------------
-    # RBAC — SOLO VIEW
+    # Si no hay filtros → NO consultar DB
     # --------------------------------------------------------
-    if not has_permission(current_user["rol"], "comercial", "view"):
-        return []
-
-    # --------------------------------------------------------
-    # Si no hay filtros → NO CONSULTAR
-    # --------------------------------------------------------
-    if not any([cliente, continente, pais, puerto, surveyor, estados, fecha_desde, fecha_hasta]):
+    if not any([
+        cliente,
+        continente,
+        pais,
+        puerto,
+        surveyor,
+        estados,
+        fecha_desde,
+        fecha_hasta
+    ]):
         return []
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
-    conditions = []
+    filtros = []
     params = {}
 
     if cliente:
-        conditions.append("cliente ILIKE %(cliente)s")
+        filtros.append("cliente ILIKE %(cliente)s")
         params["cliente"] = f"%{cliente}%"
 
     if continente:
-        conditions.append("continente = %(continente)s")
+        filtros.append("continente = %(continente)s")
         params["continente"] = continente
 
     if pais:
-        conditions.append("pais = %(pais)s")
+        filtros.append("pais = %(pais)s")
         params["pais"] = pais
 
     if puerto:
-        conditions.append("puerto = %(puerto)s")
+        filtros.append("puerto = %(puerto)s")
         params["puerto"] = puerto
 
     if surveyor:
-        conditions.append("surveyor ILIKE %(surveyor)s")
+        filtros.append("surveyor ILIKE %(surveyor)s")
         params["surveyor"] = f"%{surveyor}%"
 
     if estados:
-        conditions.append("estado = ANY(%(estados)s)")
+        filtros.append("estado = ANY(%(estados)s)")
         params["estados"] = estados
 
     if fecha_desde:
-        conditions.append("fecha_inicio >= %(fecha_desde)s")
+        filtros.append("fecha_inicio >= %(fecha_desde)s")
         params["fecha_desde"] = fecha_desde
 
     if fecha_hasta:
-        conditions.append("fecha_inicio <= %(fecha_hasta)s")
+        filtros.append("fecha_inicio <= %(fecha_hasta)s")
         params["fecha_hasta"] = fecha_hasta
 
-    where_clause = " AND ".join(conditions)
+    where_sql = " AND ".join(filtros)
 
     sql = f"""
         SELECT
@@ -106,7 +132,7 @@ def comercial_board(
             demoras,
             duracion
         FROM servicios
-        WHERE {where_clause}
+        WHERE {where_sql}
         ORDER BY fecha_inicio DESC
         LIMIT 500
     """
