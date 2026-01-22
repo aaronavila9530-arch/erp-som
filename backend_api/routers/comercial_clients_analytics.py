@@ -43,6 +43,8 @@ def require_permission(module: str, action: str):
 )
 def comercial_client_view(
     year: Optional[int] = Query(None),
+    year_from: Optional[int] = Query(None),
+    year_to: Optional[int] = Query(None),
     cliente: Optional[str] = Query(None),
     servicio: Optional[str] = Query(None),
     conn=Depends(get_db)
@@ -50,9 +52,12 @@ def comercial_client_view(
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     # --------------------------------------------------------
-    # AÑO EFECTIVO
+    # AÑO / RANGO EFECTIVO (PRECEDENCIA)
     # --------------------------------------------------------
-    if year:
+    if year_from or year_to:
+        y_start = date(year_from or year_to, 1, 1)
+        y_end = date((year_to or year_from) + 1, 1, 1)
+    elif year:
         y_start = date(year, 1, 1)
         y_end = date(year + 1, 1, 1)
     else:
@@ -225,13 +230,11 @@ def comercial_client_view(
     cur.close()
 
     return {
-        "year_applied": year or date.today().year,
+        "year_applied": f"{y_start.year}-{y_end.year - 1}",
         "available_years": years,
         "kpis": kpis,
         "data": rows
     }
-
-
 
 
 # ============================================================
