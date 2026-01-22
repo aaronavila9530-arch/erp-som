@@ -154,30 +154,32 @@ def comercial_client_view(
     rows = cur.fetchall()
 
     # --------------------------------------------------------
+    # KPI — SERVICIOS REALES (DESDE BASE, NO DESDE ROWS)
+    # --------------------------------------------------------
+    cur.execute(f"""
+        SELECT COUNT(*) AS total
+        FROM (
+            SELECT DISTINCT
+                s.cliente,
+                s.operacion,
+                s.buque_contenedor
+            FROM servicios s
+            WHERE
+                s.fecha_inicio >= %(y_start)s
+                AND s.fecha_inicio < %(y_end)s
+                {filtros_sql}
+        ) t;
+    """, params)
+
+    total_services = cur.fetchone()["total"]
+
+    # --------------------------------------------------------
     # KPIs (YA FILTRADOS)
     # --------------------------------------------------------
     total_clients = len({
         r["cliente"]
         for r in rows
         if r["cliente"]
-    })
-
-    # --------------------------------------------------------
-    # SERVICIOS REALES
-    # cliente + servicio + buque (NORMALIZADOS)
-    # --------------------------------------------------------
-    total_services = len({
-        (
-            r["cliente"].strip().upper(),
-            r["servicios"].strip().upper(),
-            r["buque_contenedor"].strip().upper()
-        )
-        for r in rows
-        if (
-            r["cliente"]
-            and r["servicios"]
-            and r["buque_contenedor"]
-        )
     })
 
     total_fact = sum(r["valor_facturado"] or 0 for r in rows)
