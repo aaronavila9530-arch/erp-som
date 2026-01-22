@@ -154,15 +154,15 @@ def comercial_client_view(
     rows = cur.fetchall()
 
     # --------------------------------------------------------
-    # KPI — SERVICIOS REALES (DESDE BASE, NO DESDE ROWS)
+    # KPI — SERVICIOS REALES
+    # DEFINICIÓN: cliente + operacion
     # --------------------------------------------------------
     cur.execute(f"""
         SELECT COUNT(*) AS total
         FROM (
             SELECT DISTINCT
                 s.cliente,
-                s.operacion,
-                s.buque_contenedor
+                s.operacion
             FROM servicios s
             WHERE
                 s.fecha_inicio >= %(y_start)s
