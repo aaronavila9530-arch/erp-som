@@ -156,12 +156,25 @@ def comercial_client_view(
     # --------------------------------------------------------
     # KPIs (YA FILTRADOS)
     # --------------------------------------------------------
-    total_clients = len({r["cliente"] for r in rows if r["cliente"]})
-    total_services = len({
-        (r["servicios"], r["buque_contenedor"])
+    total_clients = len({
+        r["cliente"]
         for r in rows
-        if r["servicios"]
+        if r["cliente"]
     })
+
+    # ---------------------------------------------
+    # SERVICIOS REALES = cliente + servicio + buque
+    # ---------------------------------------------
+    total_services = len({
+        (
+            r["cliente"],
+            r["servicios"],
+            r["buque_contenedor"]
+        )
+        for r in rows
+        if r["cliente"] and r["servicios"] and r["buque_contenedor"]
+    })
+
     total_fact = sum(r["valor_facturado"] or 0 for r in rows)
 
     total_costs = sum(
