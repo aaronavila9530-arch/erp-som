@@ -210,3 +210,95 @@ def comercial_client_view(
         "kpis": kpis,
         "data": rows
     }
+
+
+
+
+# ============================================================
+# GET /comercial/clientes
+# DETALLE DE CLIENTES (READ ONLY)
+# ============================================================
+@router.get(
+    "/clientes",
+    dependencies=[Depends(require_permission("comercial", "view"))]
+)
+def get_comercial_clientes(
+    id: Optional[int] = Query(None),
+    codigo: Optional[str] = Query(None),
+    nombre: Optional[str] = Query(None),
+    conn=Depends(get_db)
+):
+    """
+    Retorna clientes para Analytics Comercial.
+
+    Filtros opcionales:
+    - id
+    - codigo
+    - nombre (LIKE nombre comercial)
+
+    Uso:
+    - Lista completa
+    - Popup detalle cliente
+    """
+
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+
+    # --------------------------------------------------------
+    # BASE QUERY
+    # --------------------------------------------------------
+    sql = """
+        SELECT
+            id,
+            codigo,
+            nombrejuridico,
+            nombrecomercial,
+            telefono,
+            cedulajuridicavat,
+            actividad_economica,
+            creado_en,
+            pais,
+            provincia,
+            canton,
+            distrito,
+            direccionexacta,
+            prefijo,
+            correo,
+            contacto_principal,
+            contacto_secundario,
+            fecha_pago,
+            comentarios
+        FROM cliente
+        WHERE 1 = 1
+    """
+
+    params = {}
+
+    # --------------------------------------------------------
+    # FILTROS DINÁMICOS
+    # --------------------------------------------------------
+    if id is not None:
+        sql += " AND id = %(id)s"
+        params["id"] = id
+
+    if codigo:
+        sql += " AND codigo = %(codigo)s"
+        params["codigo"] = codigo
+
+    if nombre:
+        sql += " AND nombrecomercial ILIKE %(nombre)s"
+        params["nombre"] = f"%{nombre}%"
+
+    sql += " ORDER BY nombrecomercial ASC;"
+
+    # --------------------------------------------------------
+    # EXEC
+    # --------------------------------------------------------
+    cur.execute(sql, params)
+    rows = cur.fetchall()
+    cur.close()
+
+    return {
+        "total": len(rows),
+        "data": rows
+    }
+
