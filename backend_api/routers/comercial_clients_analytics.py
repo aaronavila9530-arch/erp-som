@@ -7,7 +7,7 @@ from fastapi import (
 )
 from typing import Optional
 from psycopg2.extras import RealDictCursor
-from datetime import date, datetime
+from datetime import date
 
 from database import get_db
 from rbac_service import has_permission
@@ -26,13 +26,16 @@ def require_permission(module: str, action: str):
         x_user_role: str = Header(..., alias="X-User-Role")
     ):
         if not has_permission(x_user_role, module, action):
-            raise HTTPException(status_code=403, detail="No autorizado")
+            raise HTTPException(
+                status_code=403,
+                detail="No autorizado"
+            )
     return checker
 
 
 # ============================================================
 # GET /comercial/client-view
-# ANALÍTICA COMERCIAL POR CLIENTE / BUQUE / SERVICIO
+# ANALÍTICA COMERCIAL POR CLIENTE / SERVICIO
 # ============================================================
 @router.get(
     "/client-view",
@@ -40,8 +43,6 @@ def require_permission(module: str, action: str):
 )
 def comercial_client_view(
     year: Optional[int] = Query(None),
-    date_from: Optional[date] = Query(None),
-    date_to: Optional[date] = Query(None),
     cliente: Optional[str] = Query(None),
     servicio: Optional[str] = Query(None),
     conn=Depends(get_db)
@@ -49,27 +50,50 @@ def comercial_client_view(
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     # --------------------------------------------------------
-    # RANGO DE FECHAS EFECTIVO
+    # AÑO EFECTIVO
     # --------------------------------------------------------
-    if date_from and date_to:
-        f_start = date_from
-        f_end = date_to
+    if year:
+        y_start = date(year, 1, 1)
+        y_end = date(year + 1, 1, 1)
     else:
-        y = year or date.today().year
-        f_start = date(y, 1, 1)
-        f_end = date(y + 1, 1, 1)
+        current_year = date.today().year
+        y_start = date(current_year, 1, 1)
+        y_end = date(current_year + 1, 1, 1)
 
     # --------------------------------------------------------
-    # SQL BASE
+    # FILTROS OPCIONALES
     # --------------------------------------------------------
-    sql = """
+    filtros = []
+    params = {
+        "y_start": y_start,
+        "y_end": y_end
+    }
+
+    if cliente:
+        filtros.append("s.cliente = %(cliente)s")
+        params["cliente"] = cliente
+
+    if servicio:
+        filtros.append("s.operacion = %(servicio)s")
+        params["servicio"] = servicio
+
+    filtros_sql = ""
+    if filtros:
+        filtros_sql = " AND " + " AND ".join(filtros)
+
+    # --------------------------------------------------------
+    # SQL PRINCIPAL (BLINDADO)
+    # --------------------------------------------------------
+    sql = f"""
         WITH base AS (
             SELECT
                 s.cliente,
-                s.operacion                       AS servicio,
-                s.buque_contenedor               AS buque,
+                s.operacion                       AS servicios,
+                s.operacion                       AS tipo_mas_frecuente,
+                s.buque_contenedor,
                 s.fecha_inicio,
                 s.fecha_fin,
+                s.factura,
                 COALESCE(s.valor_factura, 0)     AS valor_factura,
                 COALESCE(s.costo_operativo, 0)   AS costo_operativo,
                 COALESCE(s.honorarios, 0)        AS honorarios,
@@ -77,63 +101,52 @@ def comercial_client_view(
                 COALESCE(ca.comision, 0)         AS comision_bancaria,
                 CASE
                     WHEN cli.pais = 'Costa Rica'
-                    THEN COALESCE(s.valor_factura, 0) - (COALESCE(s.valor_factura, 0) / 1.13)
+                    THEN s.valor_factura - (s.valor_factura / 1.13)
                     ELSE 0
                 END                               AS iva
             FROM servicios s
-            LEFT JOIN clientes cli
+            LEFT JOIN cliente cli
                 ON cli.nombrejuridico = s.cliente
             LEFT JOIN cash_app ca
                 ON ca.numero_documento = s.factura
             WHERE
-                s.fecha_inicio >= %(f_start)s
-                AND s.fecha_inicio < %(f_end)s
-    """
-
-    params = {
-        "f_start": f_start,
-        "f_end": f_end
-    }
-
-    if cliente:
-        sql += " AND s.cliente = %(cliente)s"
-        params["cliente"] = cliente
-
-    if servicio:
-        sql += " AND s.operacion = %(servicio)s"
-        params["servicio"] = servicio
-
-    sql += """
+                s.fecha_inicio >= %(y_start)s
+                AND s.fecha_inicio < %(y_end)s
+                {filtros_sql}
         )
         SELECT
             cliente,
-            buque,
-            servicio,
-            COUNT(*)                         AS frecuencia,
-            MIN(fecha_inicio)                AS fecha_inicio,
-            MAX(fecha_fin)                   AS fecha_fin,
-            SUM(valor_factura)               AS valor_facturado,
-            SUM(costo_operativo)             AS costo_operativo,
-            SUM(honorarios)                  AS honorarios,
-            SUM(iva)                         AS iva,
-            SUM(comision_bancaria)           AS comision_bancaria,
+            servicios,
+            buque_contenedor,
+            COUNT(*)                           AS frecuencia,
+            tipo_mas_frecuente,
+            MIN(fecha_inicio)                  AS fecha_inicio,
+            MAX(fecha_fin)                     AS fecha_fin,
+            factura,
+            SUM(valor_factura)                 AS valor_facturado,
+            SUM(costo_operativo)               AS costo_operativo,
+            SUM(honorarios)                    AS honorarios,
+            SUM(iva)                           AS iva,
+            SUM(comision_bancaria)             AS comision_bancaria,
             (
                 SUM(valor_factura)
                 - SUM(costo_operativo)
                 - SUM(honorarios)
-            )                                AS margen_bruto,
+            )                                  AS margen_bruto,
             (
                 SUM(valor_factura)
                 - SUM(costo_operativo)
                 - SUM(honorarios)
-                - SUM(iva)
                 - SUM(comision_bancaria)
-            )                                AS margen_neto
+                - SUM(iva)
+            )                                  AS margen_neto
         FROM base
         GROUP BY
             cliente,
-            buque,
-            servicio
+            servicios,
+            buque_contenedor,
+            tipo_mas_frecuente,
+            factura
         ORDER BY valor_facturado DESC;
     """
 
@@ -146,6 +159,7 @@ def comercial_client_view(
     total_clients = len({r["cliente"] for r in rows if r["cliente"]})
     total_services = sum(r["frecuencia"] or 0 for r in rows)
     total_fact = sum(r["valor_facturado"] or 0 for r in rows)
+
     total_costs = sum(
         (r["costo_operativo"] or 0)
         + (r["honorarios"] or 0)
@@ -153,8 +167,9 @@ def comercial_client_view(
         + (r["comision_bancaria"] or 0)
         for r in rows
     )
-    net_margin = sum(r["margen_neto"] or 0 for r in rows)
+
     gross_margin = sum(r["margen_bruto"] or 0 for r in rows)
+    net_margin = sum(r["margen_neto"] or 0 for r in rows)
 
     kpis = {
         "clientes": total_clients,
@@ -162,7 +177,7 @@ def comercial_client_view(
         "facturado": round(total_fact, 2),
         "costos": round(total_costs, 2),
         "ticket_promedio": round(
-            total_fact / total_services, 2
+            (total_fact / total_services), 2
         ) if total_services else 0,
         "margen_bruto": round(gross_margin, 2),
         "margen_neto": round(net_margin, 2),
@@ -176,7 +191,8 @@ def comercial_client_view(
     # AÑOS DISPONIBLES
     # --------------------------------------------------------
     cur.execute("""
-        SELECT DISTINCT EXTRACT(YEAR FROM fecha_inicio)::int AS year
+        SELECT DISTINCT
+            EXTRACT(YEAR FROM fecha_inicio)::int AS year
         FROM servicios
         ORDER BY year DESC
     """)
@@ -185,8 +201,7 @@ def comercial_client_view(
     cur.close()
 
     return {
-        "date_from": f_start,
-        "date_to": f_end,
+        "year_applied": year or date.today().year,
         "available_years": years,
         "kpis": kpis,
         "data": rows
