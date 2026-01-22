@@ -296,26 +296,28 @@ def get_comercial_clientes(
 
     params = {}
 
-        # --------------------------------------------------------
-        # FILTROS DINÁMICOS
-        # --------------------------------------------------------
-        if id is not None:
-            sql += " AND id = %(id)s"
-            params["id"] = id
+    # --------------------------------------------------------
+    # FILTROS DINÁMICOS
+    # --------------------------------------------------------
+    if id is not None:
+        sql += " AND id = %(id)s"
+        params["id"] = id
 
-        if codigo:
-            sql += " AND codigo = %(codigo)s"
-            params["codigo"] = codigo
+    if codigo:
+        sql += " AND codigo = %(codigo)s"
+        params["codigo"] = codigo
 
-        if nombre:
-            sql += """
-                AND (
-                    nombrejuridico = %(nombre)s
-                    OR nombrecomercial ILIKE %(nombre_like)s
-                )
-            """
-            params["nombre"] = nombre
-            params["nombre_like"] = f"%{nombre}%"
+    if nombre:
+        sql += """
+            AND (
+                nombrejuridico = %(nombre)s
+                OR nombrecomercial ILIKE %(nombre_like)s
+            )
+        """
+        params["nombre"] = nombre
+        params["nombre_like"] = f"%{nombre}%"
+
+    sql += " ORDER BY nombrecomercial ASC;"
 
     # --------------------------------------------------------
     # EXEC
@@ -328,4 +330,3 @@ def get_comercial_clientes(
         "total": len(rows),
         "data": rows
     }
-
