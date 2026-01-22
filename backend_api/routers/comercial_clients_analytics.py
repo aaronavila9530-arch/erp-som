@@ -162,17 +162,22 @@ def comercial_client_view(
         if r["cliente"]
     })
 
-    # ---------------------------------------------
-    # SERVICIOS REALES = cliente + servicio + buque
-    # ---------------------------------------------
+    # --------------------------------------------------------
+    # SERVICIOS REALES
+    # cliente + servicio + buque (NORMALIZADOS)
+    # --------------------------------------------------------
     total_services = len({
         (
-            r["cliente"],
-            r["servicios"],
-            r["buque_contenedor"]
+            r["cliente"].strip().upper(),
+            r["servicios"].strip().upper(),
+            r["buque_contenedor"].strip().upper()
         )
         for r in rows
-        if r["cliente"] and r["servicios"] and r["buque_contenedor"]
+        if (
+            r["cliente"]
+            and r["servicios"]
+            and r["buque_contenedor"]
+        )
     })
 
     total_fact = sum(r["valor_facturado"] or 0 for r in rows)
