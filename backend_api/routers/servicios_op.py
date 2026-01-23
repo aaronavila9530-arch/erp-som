@@ -502,7 +502,7 @@ def cerrar_operacion(consec: int, data: dict):
 
 
 # ============================================================
-# Asginar conseutivo al informe
+# Asignar consecutivo al informe
 # ============================================================
 @router.put("/generar_informe/{consec}")
 def generar_informe(consec: int):
@@ -556,7 +556,11 @@ def generar_informe(consec: int):
                 """
                 SELECT 1
                 FROM servicios
-                WHERE split_part(num_informe, '-', 1)::int = %s
+                WHERE
+                    num_informe IS NOT NULL
+                    AND num_informe <> ''
+                    AND split_part(num_informe, '-', 1) ~ '^[0-9]+$'
+                    AND split_part(num_informe, '-', 1)::int = %s
                 """,
                 (candidato,),
                 fetch=True

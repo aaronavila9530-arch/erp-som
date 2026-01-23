@@ -206,3 +206,75 @@ def comercial_ports_analytics(
         "years_available": years_available,
         "data": rows
     }
+
+
+# ============================================================
+# COMERCIAL — ANALYTICS / PUERTOS
+# ============================================================
+def get_comercial_ports_analytics_api(
+    year_from: int | None = None,
+    year_to: int | None = None,
+    clientes: list[str] | None = None,
+    continente: str | None = None,
+    pais: str | None = None
+):
+    """
+    GET /comercial/analytics/puertos
+    Analítica comercial por puerto
+    """
+
+    params = {}
+
+    # ---------------- AÑOS ----------------
+    if year_from is not None:
+        try:
+            params["year_from"] = int(year_from)
+        except Exception:
+            pass
+
+    if year_to is not None:
+        try:
+            params["year_to"] = int(year_to)
+        except Exception:
+            pass
+
+    # ---------------- FILTROS ----------------
+    if clientes:
+        if isinstance(clientes, (list, tuple)):
+            clientes_clean = [str(c).strip() for c in clientes if str(c).strip()]
+            if clientes_clean:
+                params["clientes"] = clientes_clean
+
+    if continente:
+        continente = str(continente).strip()
+        if continente:
+            params["continente"] = continente
+
+    if pais:
+        pais = str(pais).strip()
+        if pais:
+            params["pais"] = pais
+
+    # ---------------- REQUEST ----------------
+    resp = api_request(
+        "GET",
+        f"{BASE_URL}/comercial/analytics/puertos",
+        params=params,
+        timeout=30
+    )
+
+    # ---------------- ERRORES ----------------
+    if resp.status_code >= 400:
+        try:
+            detail = resp.json()
+        except Exception:
+            detail = resp.text
+        raise Exception(f"{resp.status_code} → {detail}")
+
+    # ---------------- PARSEO ----------------
+    payload = resp.json() or {}
+
+    return {
+        "years_available": payload.get("years_available", []),
+        "data": payload.get("data", [])
+    }
