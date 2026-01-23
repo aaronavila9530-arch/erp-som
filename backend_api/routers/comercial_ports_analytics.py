@@ -264,3 +264,115 @@ def comercial_ports_filters(conn=Depends(get_db)):
         "years": years,
         "clientes": clientes
     }
+
+
+# ============================================================
+# PORTS COVERAGE
+# ============================================================
+@router.get("/ports-coverage")
+def get_ports_coverage(
+    year_from: Optional[int] = Query(None),
+    year_to: Optional[int] = Query(None),
+    cliente: Optional[str] = Query(None),
+    min_ops: int = Query(3),
+    conn=Depends(get_db)
+):
+    """
+    Analiza cobertura de puertos:
+    - Sin operación
+    - Operación mínima
+    - Operación activa
+
+    Driver: continentes_paises_puertos
+    Fuente: servicios
+    """
+
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+
+    # =====================================================
+    # FILTROS DINÁMICOS SERVICIOS
+    # =====================================================
+    filtros = []
+    params = {}
+
+    if year_from:
+        filtros.append("EXTRACT(YEAR FROM s.fecha_inicio) >= %(year_from)s")
+        params["year_from"] = year_from
+
+    if year_to:
+        filtros.append("EXTRACT(YEAR FROM s.fecha_inicio) <= %(year_to)s")
+        params["year_to"] = year_to
+
+    if cliente:
+        filtros.append("s.cliente = %(cliente)s")
+        params["cliente"] = cliente
+
+    where_servicios = ""
+    if filtros:
+        where_servicios = "AND " + " AND ".join(filtros)
+
+    # =====================================================
+    # SQL PRINCIPAL
+    # =====================================================
+    sql = f"""
+        WITH servicios_agg AS (
+            SELECT
+                s.continente,
+                s.pais,
+                s.puerto,
+                COUNT(s.consec) AS total_operaciones,
+                SUM(COALESCE(s.valor_factura, 0)) AS total_facturado
+            FROM servicios s
+            WHERE 1=1
+            {where_servicios}
+            GROUP BY s.continente, s.pais, s.puerto
+        )
+        SELECT
+            cpp.continente,
+            cpp.pais,
+            cpp.puerto,
+            COALESCE(sa.total_operaciones, 0) AS total_operaciones,
+            COALESCE(sa.total_facturado, 0) AS total_facturado,
+            CASE
+                WHEN COALESCE(sa.total_operaciones, 0) = 0 THEN 'SIN_OPERACION'
+                WHEN COALESCE(sa.total_operaciones, 0) <= %(min_ops)s THEN 'OPERACION_MINIMA'
+                ELSE 'OPERACION_ACTIVA'
+            END AS estado_operativo
+        FROM continentes_paises_puertos cpp
+        LEFT JOIN servicios_agg sa
+            ON sa.continente = cpp.continente
+           AND sa.pais = cpp.pais
+           AND sa.puerto = cpp.puerto
+        ORDER BY
+            cpp.continente,
+            cpp.pais,
+            cpp.puerto;
+    """
+
+    params["min_ops"] = min_ops
+
+    cur.execute(sql, params)
+    rows = cur.fetchall()
+
+    # =====================================================
+    # KPIs EJECUTIVOS
+    # =====================================================
+    total_puertos = len(rows)
+    con_operacion = sum(1 for r in rows if r["total_operaciones"] > 0)
+    sin_operacion = sum(1 for r in rows if r["total_operaciones"] == 0)
+    operacion_minima = sum(1 for r in rows if r["estado_operativo"] == "OPERACION_MINIMA")
+    operacion_activa = sum(1 for r in rows if r["estado_operativo"] == "OPERACION_ACTIVA")
+
+    cobertura_pct = round((con_operacion / total_puertos * 100), 2) if total_puertos else 0
+
+    return {
+        "kpis": {
+            "total_puertos": total_puertos,
+            "con_operacion": con_operacion,
+            "sin_operacion": sin_operacion,
+            "operacion_minima": operacion_minima,
+            "operacion_activa": operacion_activa,
+            "cobertura_pct": cobertura_pct
+        },
+        "data": rows
+    }
