@@ -37,8 +37,110 @@ def require_permission(module: str, action: str):
 
 
 # ============================================================
+# GET /comercial/analytics/puertos/kpis
+# ============================================================
+@router.get(
+    "/analytics/puertos/kpis",
+    dependencies=[Depends(require_permission("comercial", "view"))]
+)
+def comercial_ports_kpis(
+    year_from: Optional[int] = Query(None),
+    year_to: Optional[int] = Query(None),
+    clientes: Optional[List[str]] = Query(None),
+    continente: Optional[str] = Query(None),
+    pais: Optional[str] = Query(None),
+    conn=Depends(get_db)
+):
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+
+    filtros = ["s.fecha_inicio IS NOT NULL"]
+    params = {}
+
+    if year_from:
+        filtros.append("EXTRACT(YEAR FROM s.fecha_inicio) >= %(year_from)s")
+        params["year_from"] = year_from
+
+    if year_to:
+        filtros.append("EXTRACT(YEAR FROM s.fecha_inicio) <= %(year_to)s")
+        params["year_to"] = year_to
+
+    if continente:
+        filtros.append("s.continente = %(continente)s")
+        params["continente"] = continente
+
+    if pais:
+        filtros.append("s.pais = %(pais)s")
+        params["pais"] = pais
+
+    if clientes:
+        filtros.append("c.nombrejuridico = ANY(%(clientes)s)")
+        params["clientes"] = clientes
+
+    where_sql = " AND ".join(filtros)
+
+    sql = f"""
+        WITH base AS (
+            SELECT
+                s.cliente,
+                s.pais AS servicio_pais,
+                s.puerto,
+                s.valor_factura,
+                s.honorarios,
+                s.costo_operativo,
+                ca.comision,
+                cli.pais AS cliente_pais
+            FROM servicios s
+            LEFT JOIN cliente cli
+                ON cli.nombrejuridico = s.cliente
+            LEFT JOIN cash_app ca
+                ON ca.numero_documento = s.factura
+            WHERE {where_sql}
+        )
+        SELECT
+            COUNT(DISTINCT cliente)               AS clientes,
+            COUNT(DISTINCT servicio_pais)         AS paises,
+            COUNT(DISTINCT puerto)                AS puertos,
+
+            SUM(
+                CASE
+                    WHEN cliente_pais = 'Costa Rica'
+                    THEN valor_factura / 1.13
+                    ELSE valor_factura
+                END
+            )                                     AS facturacion_neta,
+
+            SUM(
+                COALESCE(honorarios,0)
+              + COALESCE(costo_operativo,0)
+              + COALESCE(comision,0)
+            )                                     AS costos
+
+        FROM base;
+    """
+
+    cur.execute(sql, params)
+    r = cur.fetchone()
+    cur.close()
+
+    fact = float(r["facturacion_neta"] or 0)
+    costos = float(r["costos"] or 0)
+    margen = fact - costos
+    rent_pct = (margen / fact * 100) if fact else 0
+
+    return {
+        "clientes": r["clientes"],
+        "paises": r["paises"],
+        "puertos": r["puertos"],
+        "facturacion": round(fact, 2),
+        "costos": round(costos, 2),
+        "margen_neto": round(margen, 2),
+        "rentabilidad": round(margen, 2),
+        "rentabilidad_pct": round(rent_pct, 2)
+    }
+
+
+# ============================================================
 # GET /comercial/analytics/puertos
-# ANALÍTICA COMERCIAL POR PUERTO
 # ============================================================
 @router.get(
     "/analytics/puertos",
@@ -54,40 +156,16 @@ def comercial_ports_analytics(
 ):
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
-    # --------------------------------------------------------
-    # AÑOS DISPONIBLES
-    # --------------------------------------------------------
-    cur.execute("""
-        SELECT DISTINCT
-            EXTRACT(YEAR FROM fecha_inicio)::int AS year
-        FROM servicios
-        WHERE fecha_inicio IS NOT NULL
-        ORDER BY year;
-    """)
-    years_available = [r["year"] for r in cur.fetchall()]
+    filtros = ["s.fecha_inicio IS NOT NULL"]
+    params = {}
 
-    if not years_available:
-        cur.close()
-        return {
-            "years_available": [],
-            "data": []
-        }
+    if year_from:
+        filtros.append("EXTRACT(YEAR FROM s.fecha_inicio) >= %(year_from)s")
+        params["year_from"] = year_from
 
-    year_from = year_from or min(years_available)
-    year_to = year_to or max(years_available)
-
-    # --------------------------------------------------------
-    # FILTROS DINÁMICOS
-    # --------------------------------------------------------
-    filtros = [
-        "s.fecha_inicio IS NOT NULL",
-        "EXTRACT(YEAR FROM s.fecha_inicio) BETWEEN %(year_from)s AND %(year_to)s"
-    ]
-
-    params = {
-        "year_from": year_from,
-        "year_to": year_to
-    }
+    if year_to:
+        filtros.append("EXTRACT(YEAR FROM s.fecha_inicio) <= %(year_to)s")
+        params["year_to"] = year_to
 
     if continente:
         filtros.append("s.continente = %(continente)s")
@@ -101,180 +179,65 @@ def comercial_ports_analytics(
         filtros.append("c.nombrejuridico = ANY(%(clientes)s)")
         params["clientes"] = clientes
 
-    filtros_sql = " AND ".join(filtros)
+    where_sql = " AND ".join(filtros)
 
-    # --------------------------------------------------------
-    # SQL PRINCIPAL (ALINEADO A CLIENT VIEW)
-    # --------------------------------------------------------
     sql = f"""
         WITH base AS (
             SELECT
                 s.continente,
                 s.pais,
                 s.puerto,
-                COALESCE(s.valor_factura, 0)     AS valor_factura,
-                COALESCE(s.honorarios, 0)        AS honorarios,
-                COALESCE(s.costo_operativo, 0)   AS costo_operativo,
-                cli.pais                         AS cliente_pais
+                s.valor_factura,
+                cli.pais AS cliente_pais
             FROM servicios s
             LEFT JOIN cliente cli
                 ON cli.nombrejuridico = s.cliente
-            WHERE {filtros_sql}
+            WHERE {where_sql}
         ),
-        calc AS (
+        agg AS (
             SELECT
                 continente,
                 pais,
                 puerto,
-                COUNT(*)                         AS total_operaciones,
-                COUNT(valor_factura)             AS operaciones_facturadas,
-                SUM(valor_factura)               AS facturacion_bruta,
+                COUNT(*) AS total_operaciones,
                 SUM(
                     CASE
                         WHEN cliente_pais = 'Costa Rica'
                         THEN valor_factura / 1.13
                         ELSE valor_factura
                     END
-                )                                AS facturacion_neta,
-                SUM(
-                    CASE
-                        WHEN cliente_pais = 'Costa Rica'
-                        THEN valor_factura - (valor_factura / 1.13)
-                        ELSE 0
-                    END
-                )                                AS iva_total,
-                SUM(honorarios + costo_operativo) AS costo_total
+                ) AS facturacion_neta
             FROM base
             GROUP BY continente, pais, puerto
         ),
         ranked AS (
             SELECT *,
-                (facturacion_neta - costo_total) AS margen_bruto,
-                CASE
-                    WHEN facturacion_neta > 0
-                    THEN ((facturacion_neta - costo_total) / facturacion_neta) * 100
-                    ELSE 0
-                END                              AS margen_bruto_pct,
+                SUM(facturacion_neta) OVER () AS total_global,
                 SUM(facturacion_neta) OVER (
-                    PARTITION BY continente
                     ORDER BY facturacion_neta DESC
-                )
-                /
-                NULLIF(
-                    SUM(facturacion_neta) OVER (PARTITION BY continente),
-                    0
-                )                                AS acumulado_pct
-            FROM calc
+                ) AS acumulado
+            FROM agg
         )
         SELECT
             continente,
             pais,
             puerto,
             total_operaciones,
-            operaciones_facturadas,
             ROUND(
                 total_operaciones::numeric
-                / NULLIF(%(period)s, 0),
+                / NULLIF(SUM(total_operaciones) OVER (PARTITION BY pais), 0),
                 2
-            )                                   AS frecuencia,
-            ROUND(facturacion_bruta, 2)         AS facturacion_bruta,
-            ROUND(facturacion_neta, 2)          AS facturacion_neta,
-            ROUND(iva_total, 2)                 AS iva_total,
-            ROUND(
-                CASE
-                    WHEN operaciones_facturadas > 0
-                    THEN facturacion_neta / operaciones_facturadas
-                    ELSE 0
-                END,
-                2
-            )                                   AS ticket_promedio,
-            ROUND(costo_total, 2)               AS costo_total,
-            ROUND(margen_bruto, 2)              AS margen_bruto,
-            ROUND(margen_bruto_pct, 2)          AS margen_bruto_pct,
-            (acumulado_pct <= 0.8)              AS is_pareto_80
+            ) AS frecuencia,
+            ROUND(facturacion_neta, 2) AS facturacion_neta,
+            (acumulado / total_global <= 0.8) AS is_pareto_80
         FROM ranked
-        ORDER BY continente, facturacion_neta DESC;
+        ORDER BY facturacion_neta DESC;
     """
-
-    params["period"] = (year_to - year_from + 1) * 12
 
     cur.execute(sql, params)
     rows = cur.fetchall()
     cur.close()
 
     return {
-        "years_available": years_available,
         "data": rows
-    }
-
-
-# ============================================================
-# COMERCIAL — ANALYTICS / PUERTOS
-# ============================================================
-def get_comercial_ports_analytics_api(
-    year_from: int | None = None,
-    year_to: int | None = None,
-    clientes: list[str] | None = None,
-    continente: str | None = None,
-    pais: str | None = None
-):
-    """
-    GET /comercial/analytics/puertos
-    Analítica comercial por puerto
-    """
-
-    params = {}
-
-    # ---------------- AÑOS ----------------
-    if year_from is not None:
-        try:
-            params["year_from"] = int(year_from)
-        except Exception:
-            pass
-
-    if year_to is not None:
-        try:
-            params["year_to"] = int(year_to)
-        except Exception:
-            pass
-
-    # ---------------- FILTROS ----------------
-    if clientes:
-        if isinstance(clientes, (list, tuple)):
-            clientes_clean = [str(c).strip() for c in clientes if str(c).strip()]
-            if clientes_clean:
-                params["clientes"] = clientes_clean
-
-    if continente:
-        continente = str(continente).strip()
-        if continente:
-            params["continente"] = continente
-
-    if pais:
-        pais = str(pais).strip()
-        if pais:
-            params["pais"] = pais
-
-    # ---------------- REQUEST ----------------
-    resp = api_request(
-        "GET",
-        f"{BASE_URL}/comercial/analytics/puertos",
-        params=params,
-        timeout=30
-    )
-
-    # ---------------- ERRORES ----------------
-    if resp.status_code >= 400:
-        try:
-            detail = resp.json()
-        except Exception:
-            detail = resp.text
-        raise Exception(f"{resp.status_code} → {detail}")
-
-    # ---------------- PARSEO ----------------
-    payload = resp.json() or {}
-
-    return {
-        "years_available": payload.get("years_available", []),
-        "data": payload.get("data", [])
     }
