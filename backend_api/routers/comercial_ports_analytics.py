@@ -73,49 +73,30 @@ def comercial_ports_kpis(
         params["pais"] = pais
 
     if clientes:
-        filtros.append("c.nombrejuridico = ANY(%(clientes)s)")
+        filtros.append("s.cliente = ANY(%(clientes)s)")
         params["clientes"] = clientes
 
     where_sql = " AND ".join(filtros)
 
     sql = f"""
-        WITH base AS (
-            SELECT
-                s.cliente,
-                s.pais AS servicio_pais,
-                s.puerto,
-                s.valor_factura,
-                s.honorarios,
-                s.costo_operativo,
-                ca.comision,
-                cli.pais AS cliente_pais
-            FROM servicios s
-            LEFT JOIN cliente cli
-                ON cli.nombrejuridico = s.cliente
-            LEFT JOIN cash_app ca
-                ON ca.numero_documento = s.factura
-            WHERE {where_sql}
-        )
         SELECT
-            COUNT(DISTINCT cliente)               AS clientes,
-            COUNT(DISTINCT servicio_pais)         AS paises,
-            COUNT(DISTINCT puerto)                AS puertos,
+            COUNT(DISTINCT s.cliente)                        AS clientes,
+            COUNT(DISTINCT s.pais)                           AS paises,
+            COUNT(DISTINCT s.puerto)                         AS puertos,
 
             SUM(
                 CASE
-                    WHEN cliente_pais = 'Costa Rica'
-                    THEN valor_factura / 1.13
-                    ELSE valor_factura
+                    WHEN s.pais = 'Costa Rica'
+                    THEN s.valor_factura / 1.13
+                    ELSE s.valor_factura
                 END
-            )                                     AS facturacion_neta,
+            )                                                AS facturacion_neta,
 
-            SUM(
-                COALESCE(honorarios,0)
-              + COALESCE(costo_operativo,0)
-              + COALESCE(comision,0)
-            )                                     AS costos
+            SUM(COALESCE(s.honorarios,0))                    AS honorarios,
+            SUM(COALESCE(s.costo_operativo,0))               AS costos_operativos
 
-        FROM base;
+        FROM servicios s
+        WHERE {where_sql};
     """
 
     cur.execute(sql, params)
@@ -123,19 +104,22 @@ def comercial_ports_kpis(
     cur.close()
 
     fact = float(r["facturacion_neta"] or 0)
-    costos = float(r["costos"] or 0)
-    margen = fact - costos
-    rent_pct = (margen / fact * 100) if fact else 0
+    honorarios = float(r["honorarios"] or 0)
+    costos_op = float(r["costos_operativos"] or 0)
+
+    margen_bruto = fact - honorarios
+    margen_neto = fact - (honorarios + costos_op)
 
     return {
         "clientes": r["clientes"],
         "paises": r["paises"],
         "puertos": r["puertos"],
         "facturacion": round(fact, 2),
-        "costos": round(costos, 2),
-        "margen_neto": round(margen, 2),
-        "rentabilidad": round(margen, 2),
-        "rentabilidad_pct": round(rent_pct, 2)
+        "costos": round(honorarios + costos_op, 2),
+        "margen_bruto": round(margen_bruto, 2),
+        "margen_neto": round(margen_neto, 2),
+        "rentabilidad": round(margen_neto, 2),
+        "rentabilidad_pct": round((margen_neto / fact * 100) if fact else 0, 2)
     }
 
 
@@ -176,7 +160,7 @@ def comercial_ports_analytics(
         params["pais"] = pais
 
     if clientes:
-        filtros.append("c.nombrejuridico = ANY(%(clientes)s)")
+        filtros.append("s.cliente = ANY(%(clientes)s)")
         params["clientes"] = clientes
 
     where_sql = " AND ".join(filtros)
@@ -187,11 +171,14 @@ def comercial_ports_analytics(
                 s.continente,
                 s.pais,
                 s.puerto,
-                s.valor_factura,
-                cli.pais AS cliente_pais
+                CASE
+                    WHEN s.pais = 'Costa Rica'
+                    THEN s.valor_factura / 1.13
+                    ELSE s.valor_factura
+                END AS facturacion_neta,
+                COALESCE(s.honorarios,0) AS honorarios,
+                COALESCE(s.costo_operativo,0) AS costo_operativo
             FROM servicios s
-            LEFT JOIN cliente cli
-                ON cli.nombrejuridico = s.cliente
             WHERE {where_sql}
         ),
         agg AS (
@@ -200,22 +187,16 @@ def comercial_ports_analytics(
                 pais,
                 puerto,
                 COUNT(*) AS total_operaciones,
-                SUM(
-                    CASE
-                        WHEN cliente_pais = 'Costa Rica'
-                        THEN valor_factura / 1.13
-                        ELSE valor_factura
-                    END
-                ) AS facturacion_neta
+                SUM(facturacion_neta) AS facturacion_neta,
+                SUM(honorarios) AS honorarios,
+                SUM(costo_operativo) AS costo_operativo
             FROM base
             GROUP BY continente, pais, puerto
         ),
         ranked AS (
             SELECT *,
                 SUM(facturacion_neta) OVER () AS total_global,
-                SUM(facturacion_neta) OVER (
-                    ORDER BY facturacion_neta DESC
-                ) AS acumulado
+                SUM(facturacion_neta) OVER (ORDER BY facturacion_neta DESC) AS acumulado
             FROM agg
         )
         SELECT
@@ -229,6 +210,18 @@ def comercial_ports_analytics(
                 2
             ) AS frecuencia,
             ROUND(facturacion_neta, 2) AS facturacion_neta,
+            ROUND(
+                facturacion_neta / NULLIF(total_operaciones,0),
+                2
+            ) AS ticket_promedio,
+            ROUND(
+                facturacion_neta - honorarios,
+                2
+            ) AS margen_bruto,
+            ROUND(
+                facturacion_neta - (honorarios + costo_operativo),
+                2
+            ) AS margen_neto,
             (acumulado / total_global <= 0.8) AS is_pareto_80
         FROM ranked
         ORDER BY facturacion_neta DESC;
@@ -238,6 +231,36 @@ def comercial_ports_analytics(
     rows = cur.fetchall()
     cur.close()
 
+    return {"data": rows}
+
+
+@router.get(
+    "/analytics/puertos/filtros",
+    dependencies=[Depends(require_permission("comercial", "view"))]
+)
+def comercial_ports_filters(conn=Depends(get_db)):
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+
+    cur.execute("""
+        SELECT DISTINCT
+            EXTRACT(YEAR FROM fecha_inicio)::int AS year
+        FROM servicios
+        WHERE fecha_inicio IS NOT NULL
+        ORDER BY year DESC;
+    """)
+    years = [r["year"] for r in cur.fetchall()]
+
+    cur.execute("""
+        SELECT DISTINCT cliente
+        FROM servicios
+        WHERE cliente IS NOT NULL
+        ORDER BY cliente;
+    """)
+    clientes = [r["cliente"] for r in cur.fetchall()]
+
+    cur.close()
+
     return {
-        "data": rows
+        "years": years,
+        "clientes": clientes
     }
