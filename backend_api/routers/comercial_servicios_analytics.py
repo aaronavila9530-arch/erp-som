@@ -28,7 +28,7 @@ router = APIRouter(
 
 
 # ============================================================
-# ANALYTICS — RENTABILIDAD POR SERVICIO (BLINDADO)
+# ANALYTICS — RENTABILIDAD POR SERVICIO (BLINDADO FINAL)
 # ============================================================
 @router.get(
     "/by-servicio",
@@ -42,75 +42,55 @@ def servicios_analytics_by_servicio(
     puerto: Optional[str] = Query(None),
     conn=Depends(get_db)
 ):
-    """
-    Analiza rentabilidad y desempeño por SERVICIO (operacion)
-
-    Reglas de años:
-    • Sin años → año actual
-    • Un solo año → año exacto
-    • Ambos → rango real
-    """
-
     from datetime import datetime
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     current_year = datetime.now().year
 
     # =====================================================
-    # NORMALIZACIÓN DE AÑOS (CRÍTICO)
+    # NORMALIZACIÓN DE AÑOS
     # =====================================================
     if year_from and not year_to:
         year_to = year_from
-
     if year_to and not year_from:
         year_from = year_to
-
     if not year_from and not year_to:
         year_from = year_to = current_year
 
     # =====================================================
-    # FILTROS BASE (SIEMPRE APLICAN)
+    # FILTROS DINÁMICOS
     # =====================================================
     filtros = [
         "s.estado = 'Finalizado'",
         "s.fecha_inicio IS NOT NULL",
-        "EXTRACT(YEAR FROM s.fecha_inicio) BETWEEN %(year_from)s AND %(year_to)s",
-        "s.operacion IS NOT NULL",
-        "TRIM(s.operacion) <> ''"
+        "EXTRACT(YEAR FROM s.fecha_inicio) BETWEEN %s AND %s"
     ]
 
-    params = {
-        "year_from": year_from,
-        "year_to": year_to
-    }
+    params = [year_from, year_to]
 
-    # =====================================================
-    # FILTROS OPCIONALES (ROBUSTOS / CASE-INSENSITIVE)
-    # =====================================================
     if continente:
-        filtros.append("UPPER(TRIM(s.continente)) = UPPER(%(continente)s)")
-        params["continente"] = continente.strip()
+        filtros.append("UPPER(TRIM(s.continente)) = UPPER(%s)")
+        params.append(continente.strip())
 
     if pais:
-        filtros.append("UPPER(TRIM(s.pais)) = UPPER(%(pais)s)")
-        params["pais"] = pais.strip()
+        filtros.append("UPPER(TRIM(s.pais)) = UPPER(%s)")
+        params.append(pais.strip())
 
     if puerto:
-        filtros.append("UPPER(TRIM(s.puerto)) = UPPER(%(puerto)s)")
-        params["puerto"] = puerto.strip()
+        filtros.append("UPPER(TRIM(s.puerto)) = UPPER(%s)")
+        params.append(puerto.strip())
 
     where_clause = " AND ".join(filtros)
 
     # =====================================================
-    # SQL — RENTABILIDAD POR SERVICIO
+    # SQL PRINCIPAL
     # =====================================================
     sql = f"""
         SELECT
-            TRIM(s.operacion)                                AS servicio,
-            COUNT(s.consec)                                 AS cantidad_servicios,
+            TRIM(s.operacion) AS servicio,
+            COUNT(s.consec) AS cantidad_servicios,
 
-            -- FACTURACIÓN
-            SUM(COALESCE(s.valor_factura, 0))               AS revenue_bruto_total,
+            SUM(COALESCE(s.valor_factura, 0)) AS revenue_bruto_total,
 
             SUM(
                 CASE
@@ -118,15 +98,13 @@ def servicios_analytics_by_servicio(
                     THEN COALESCE(s.valor_factura, 0) / 1.13
                     ELSE COALESCE(s.valor_factura, 0)
                 END
-            )                                                AS revenue_neto_total,
+            ) AS revenue_neto_total,
 
-            -- COSTOS
             SUM(
                 COALESCE(s.honorarios, 0) +
                 COALESCE(s.costo_operativo, 0)
-            )                                                AS costo_total,
+            ) AS costo_total,
 
-            -- MARGEN NETO
             SUM(
                 CASE
                     WHEN s.pais = 'Costa Rica'
@@ -137,9 +115,8 @@ def servicios_analytics_by_servicio(
             - SUM(
                 COALESCE(s.honorarios, 0) +
                 COALESCE(s.costo_operativo, 0)
-            )                                                AS margen_neto,
+            ) AS margen_neto,
 
-            -- % MARGEN NETO
             CASE
                 WHEN SUM(
                     CASE
@@ -174,57 +151,35 @@ def servicios_analytics_by_servicio(
                     ) * 100,
                     2
                 )
-            END                                              AS margen_neto_pct
+            END AS margen_neto_pct
 
         FROM servicios s
         WHERE {where_clause}
-
         GROUP BY TRIM(s.operacion)
         ORDER BY revenue_neto_total DESC;
     """
 
-    cur.execute(sql, params)
+    cur.execute(sql, tuple(params))
     data = cur.fetchall()
 
     # =====================================================
-    # METADATA — GLOBAL, INDEPENDIENTE DE FILTROS
-    # (PARA COMBOBOX)
+    # METADATA GLOBAL (SIN FILTROS)
     # =====================================================
     meta_sql = """
         SELECT
-            ARRAY_AGG(DISTINCT EXTRACT(YEAR FROM s.fecha_inicio)::INT
-                      ORDER BY EXTRACT(YEAR FROM s.fecha_inicio)::INT DESC)
-                FILTER (WHERE s.fecha_inicio IS NOT NULL)
-                AS years,
-
-            ARRAY_AGG(DISTINCT TRIM(s.continente) ORDER BY TRIM(s.continente))
-                FILTER (WHERE s.continente IS NOT NULL AND TRIM(s.continente) <> '')
-                AS continentes,
-
-            ARRAY_AGG(DISTINCT TRIM(s.pais) ORDER BY TRIM(s.pais))
-                FILTER (WHERE s.pais IS NOT NULL AND TRIM(s.pais) <> '')
-                AS paises,
-
-            ARRAY_AGG(DISTINCT TRIM(s.puerto) ORDER BY TRIM(s.puerto))
-                FILTER (WHERE s.puerto IS NOT NULL AND TRIM(s.puerto) <> '')
-                AS puertos,
-
-            ARRAY_AGG(DISTINCT TRIM(s.operacion) ORDER BY TRIM(s.operacion))
-                FILTER (WHERE s.operacion IS NOT NULL AND TRIM(s.operacion) <> '')
-                AS servicios
-
-        FROM servicios s
-        WHERE s.estado = 'Finalizado'
-          AND s.fecha_inicio IS NOT NULL;
+            ARRAY_AGG(DISTINCT EXTRACT(YEAR FROM fecha_inicio)::INT ORDER BY EXTRACT(YEAR FROM fecha_inicio)::INT DESC) AS years,
+            ARRAY_AGG(DISTINCT TRIM(continente)) FILTER (WHERE continente IS NOT NULL AND TRIM(continente) <> '') AS continentes,
+            ARRAY_AGG(DISTINCT TRIM(pais)) FILTER (WHERE pais IS NOT NULL AND TRIM(pais) <> '') AS paises,
+            ARRAY_AGG(DISTINCT TRIM(puerto)) FILTER (WHERE puerto IS NOT NULL AND TRIM(puerto) <> '') AS puertos,
+            ARRAY_AGG(DISTINCT TRIM(operacion)) FILTER (WHERE operacion IS NOT NULL AND TRIM(operacion) <> '') AS servicios
+        FROM servicios
+        WHERE fecha_inicio IS NOT NULL;
     """
 
     cur.execute(meta_sql)
     meta = cur.fetchone() or {}
     cur.close()
 
-    # =====================================================
-    # RESPONSE
-    # =====================================================
     return {
         "filters": {
             "year_from": year_from,
