@@ -69,12 +69,14 @@ def servicios_analytics_by_servicio(
         year_from = year_to = current_year
 
     # =====================================================
-    # FILTROS BASE
+    # FILTROS BASE (SIEMPRE APLICAN)
     # =====================================================
     filtros = [
         "s.estado = 'Finalizado'",
         "s.fecha_inicio IS NOT NULL",
-        "EXTRACT(YEAR FROM s.fecha_inicio) BETWEEN %(year_from)s AND %(year_to)s"
+        "EXTRACT(YEAR FROM s.fecha_inicio) BETWEEN %(year_from)s AND %(year_to)s",
+        "s.operacion IS NOT NULL",
+        "TRIM(s.operacion) <> ''"
     ]
 
     params = {
@@ -83,7 +85,7 @@ def servicios_analytics_by_servicio(
     }
 
     # =====================================================
-    # FILTROS OPCIONALES (ROBUSTOS)
+    # FILTROS OPCIONALES (ROBUSTOS / CASE-INSENSITIVE)
     # =====================================================
     if continente:
         filtros.append("UPPER(TRIM(s.continente)) = UPPER(%(continente)s)")
@@ -185,30 +187,35 @@ def servicios_analytics_by_servicio(
     data = cur.fetchall()
 
     # =====================================================
-    # METADATA — SIEMPRE GLOBAL (NO DEPENDE DEL FILTRO)
+    # METADATA — GLOBAL, INDEPENDIENTE DE FILTROS
+    # (PARA COMBOBOX)
     # =====================================================
     meta_sql = """
         SELECT
-            ARRAY_AGG(DISTINCT EXTRACT(YEAR FROM fecha_inicio)::INT ORDER BY EXTRACT(YEAR FROM fecha_inicio)::INT DESC)
+            ARRAY_AGG(DISTINCT EXTRACT(YEAR FROM s.fecha_inicio)::INT
+                      ORDER BY EXTRACT(YEAR FROM s.fecha_inicio)::INT DESC)
+                FILTER (WHERE s.fecha_inicio IS NOT NULL)
                 AS years,
 
-            ARRAY_AGG(DISTINCT TRIM(continente) ORDER BY TRIM(continente))
-                FILTER (WHERE continente IS NOT NULL AND TRIM(continente) <> '')
+            ARRAY_AGG(DISTINCT TRIM(s.continente) ORDER BY TRIM(s.continente))
+                FILTER (WHERE s.continente IS NOT NULL AND TRIM(s.continente) <> '')
                 AS continentes,
 
-            ARRAY_AGG(DISTINCT TRIM(pais) ORDER BY TRIM(pais))
-                FILTER (WHERE pais IS NOT NULL AND TRIM(pais) <> '')
+            ARRAY_AGG(DISTINCT TRIM(s.pais) ORDER BY TRIM(s.pais))
+                FILTER (WHERE s.pais IS NOT NULL AND TRIM(s.pais) <> '')
                 AS paises,
 
-            ARRAY_AGG(DISTINCT TRIM(puerto) ORDER BY TRIM(puerto))
-                FILTER (WHERE puerto IS NOT NULL AND TRIM(puerto) <> '')
+            ARRAY_AGG(DISTINCT TRIM(s.puerto) ORDER BY TRIM(s.puerto))
+                FILTER (WHERE s.puerto IS NOT NULL AND TRIM(s.puerto) <> '')
                 AS puertos,
 
-            ARRAY_AGG(DISTINCT TRIM(operacion) ORDER BY TRIM(operacion))
-                FILTER (WHERE operacion IS NOT NULL AND TRIM(operacion) <> '')
+            ARRAY_AGG(DISTINCT TRIM(s.operacion) ORDER BY TRIM(s.operacion))
+                FILTER (WHERE s.operacion IS NOT NULL AND TRIM(s.operacion) <> '')
                 AS servicios
-        FROM servicios
-        WHERE fecha_inicio IS NOT NULL;
+
+        FROM servicios s
+        WHERE s.estado = 'Finalizado'
+          AND s.fecha_inicio IS NOT NULL;
     """
 
     cur.execute(meta_sql)
@@ -231,7 +238,6 @@ def servicios_analytics_by_servicio(
         "total": len(data),
         "data": data
     }
-
 
 # ============================================================
 # SERVICIOS NO OFRECIDOS (CATÁLOGO VS OPERACIÓN) — BLINDADO
