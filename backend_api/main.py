@@ -61,7 +61,7 @@ from routers.reports_ai import router as reports_ai_router
 from routers.comercial import router as comercial_router
 from routers.comercial_clients_analytics import router as comercial_clients_analytics_router
 from routers.comercial_ports_analytics import router as comercial_ports_analytics_router
-
+from routers.comercial_servicios_analytics import router as comercial_servicios_analytics_router
 
 # ============================================================
 # CONFIGURACIÓN FASTAPI
@@ -208,6 +208,8 @@ app.include_router(reports_ai_router)
 app.include_router(comercial_router)
 app.include_router(comercial_clients_analytics_router)
 app.include_router(comercial_ports_analytics_router)
+app.include_router(comercial_servicios_analytics_router)
+
 
 # ============================================================
 # EJECUCIÓN LOCAL
