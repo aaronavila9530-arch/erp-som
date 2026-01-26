@@ -222,11 +222,6 @@ def servicios_no_ofrecidos(
     puerto: Optional[str] = Query(None),
     conn=Depends(get_db)
 ):
-    """
-    Devuelve servicios del catálogo (serviciosmd)
-    que NO han sido ejecutados en el período filtrado.
-    """
-
     from datetime import datetime
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
@@ -243,7 +238,7 @@ def servicios_no_ofrecidos(
         year_from = year_to = current_year
 
     # =====================================================
-    # FILTROS BASE — SERVICIOS EJECUTADOS (BLINDADOS)
+    # FILTROS BASE — SERVICIOS EJECUTADOS
     # =====================================================
     filtros = [
         "UPPER(TRIM(s.estado)) = 'FINALIZADO'",
@@ -255,6 +250,9 @@ def servicios_no_ofrecidos(
 
     params = [year_from, year_to]
 
+    # =====================================================
+    # FILTROS OPCIONALES
+    # =====================================================
     if continente:
         filtros.append("UPPER(TRIM(s.continente)) = UPPER(%s)")
         params.append(continente.strip())
@@ -277,16 +275,19 @@ def servicios_no_ofrecidos(
             md.id,
             md.codigo,
             md.codigoprod,
-            TRIM(md.nombre)        AS servicio,
-            COALESCE(md.costo, 0) AS costo_base
+            TRIM(md.nombre) AS servicio,
+
+            COALESCE(
+                NULLIF(md.costo, '')::NUMERIC,
+                0
+            ) AS costo_base
+
         FROM serviciosmd md
         WHERE NOT EXISTS (
             SELECT 1
             FROM servicios s
             WHERE
-                s.operacion IS NOT NULL
-                AND TRIM(s.operacion) <> ''
-                AND UPPER(TRIM(s.operacion)) = UPPER(TRIM(md.nombre))
+                UPPER(TRIM(s.operacion)) = UPPER(TRIM(md.nombre))
                 AND {where_exec}
         )
         ORDER BY TRIM(md.nombre);
