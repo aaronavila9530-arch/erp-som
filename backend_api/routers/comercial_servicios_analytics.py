@@ -742,13 +742,19 @@ def servicios_kpis_ejecutivos(
         ),
         resumen AS (
             SELECT
-                COUNT(*)                    AS total_servicios,
-                SUM(revenue_bruto)          AS revenue_bruto_total,
-                SUM(revenue_neto)           AS revenue_neto_total,
-                SUM(iva_total)              AS iva_total,
-                SUM(honorarios + costos_operativos) AS costos_totales,
-                SUM(margen_bruto)           AS margen_bruto_total,
-                SUM(margen_neto)            AS margen_neto_total
+                COUNT(*) AS total_servicios,
+
+                COALESCE(SUM(revenue_bruto), 0) AS revenue_bruto_total,
+                COALESCE(SUM(revenue_neto), 0) AS revenue_neto_total,
+                COALESCE(SUM(iva_total), 0) AS iva_total,
+
+                COALESCE(
+                    SUM(honorarios + costos_operativos),
+                    0
+                ) AS costos_totales,
+
+                COALESCE(SUM(margen_bruto), 0) AS margen_bruto_total,
+                COALESCE(SUM(margen_neto), 0) AS margen_neto_total
             FROM base
         )
         SELECT
