@@ -28,7 +28,7 @@ router = APIRouter(
 
 
 # ============================================================
-# ANALYTICS — RENTABILIDAD POR SERVICIO (BLINDADO FINAL)
+# ANALYTICS — RENTABILIDAD POR SERVICIO (PATRÓN OFICIAL)
 # ============================================================
 @router.get(
     "/by-servicio",
@@ -48,8 +48,11 @@ def servicios_analytics_by_servicio(
     current_year = datetime.now().year
 
     # =====================================================
-    # NORMALIZACIÓN DE AÑOS
+    # NORMALIZACIÓN DE AÑOS (REGLA GLOBAL ERP-SOM)
     # =====================================================
+    # • Sin años → año en curso
+    # • Un año → año exacto
+    # • Dos años → rango real
     if year_from and not year_to:
         year_to = year_from
     if year_to and not year_from:
@@ -163,7 +166,7 @@ def servicios_analytics_by_servicio(
     data = cur.fetchall()
 
     # =====================================================
-    # METADATA GLOBAL (SIN FILTROS)
+    # METADATA GLOBAL (NO DEPENDE DE FILTROS)
     # =====================================================
     meta_sql = """
         SELECT
@@ -195,7 +198,7 @@ def servicios_analytics_by_servicio(
     }
 
 # ============================================================
-# SERVICIOS NO OFRECIDOS (CATÁLOGO VS OPERACIÓN) — BLINDADO
+# SERVICIOS NO OFRECIDOS (CATÁLOGO VS OPERACIÓN) — PATRÓN OFICIAL
 # ============================================================
 @router.get(
     "/not-offered",
@@ -213,10 +216,10 @@ def servicios_no_ofrecidos(
     Devuelve servicios del catálogo (serviciosmd)
     que NO han sido ejecutados en el período filtrado.
 
-    Reglas:
+    Reglas de años:
     • Sin años → año actual
     • Un año → año exacto
-    • Ambos → rango real
+    • Dos años → rango real
     """
 
     from datetime import datetime
@@ -225,45 +228,40 @@ def servicios_no_ofrecidos(
     current_year = datetime.now().year
 
     # =====================================================
-    # NORMALIZACIÓN DE AÑOS (CRÍTICO)
+    # NORMALIZACIÓN DE AÑOS (REGLA GLOBAL ERP-SOM)
     # =====================================================
     if year_from and not year_to:
         year_to = year_from
-
     if year_to and not year_from:
         year_from = year_to
-
     if not year_from and not year_to:
         year_from = year_to = current_year
 
     # =====================================================
-    # FILTROS BASE DE SERVICIOS EJECUTADOS
+    # FILTROS BASE — SERVICIOS EJECUTADOS
     # =====================================================
     filtros = [
         "s.estado = 'Finalizado'",
         "s.fecha_inicio IS NOT NULL",
-        "EXTRACT(YEAR FROM s.fecha_inicio) BETWEEN %(year_from)s AND %(year_to)s"
+        "EXTRACT(YEAR FROM s.fecha_inicio) BETWEEN %s AND %s"
     ]
 
-    params = {
-        "year_from": year_from,
-        "year_to": year_to
-    }
+    params = [year_from, year_to]
 
     # =====================================================
     # FILTROS OPCIONALES (ROBUSTOS)
     # =====================================================
     if continente:
-        filtros.append("UPPER(TRIM(s.continente)) = UPPER(%(continente)s)")
-        params["continente"] = continente.strip()
+        filtros.append("UPPER(TRIM(s.continente)) = UPPER(%s)")
+        params.append(continente.strip())
 
     if pais:
-        filtros.append("UPPER(TRIM(s.pais)) = UPPER(%(pais)s)")
-        params["pais"] = pais.strip()
+        filtros.append("UPPER(TRIM(s.pais)) = UPPER(%s)")
+        params.append(pais.strip())
 
     if puerto:
-        filtros.append("UPPER(TRIM(s.puerto)) = UPPER(%(puerto)s)")
-        params["puerto"] = puerto.strip()
+        filtros.append("UPPER(TRIM(s.puerto)) = UPPER(%s)")
+        params.append(puerto.strip())
 
     where_exec = " AND ".join(filtros)
 
@@ -288,7 +286,7 @@ def servicios_no_ofrecidos(
         ORDER BY TRIM(md.nombre);
     """
 
-    cur.execute(sql, params)
+    cur.execute(sql, tuple(params))
     data = cur.fetchall()
     cur.close()
 
@@ -308,7 +306,7 @@ def servicios_no_ofrecidos(
     }
 
 # ============================================================
-# COSTOS POR SURVEYOR — BLINDADO
+# COSTOS POR SURVEYOR — BLINDADO FINAL (PATRÓN ERP-SOM)
 # ============================================================
 @router.get(
     "/costos-por-surveyor",
@@ -322,10 +320,10 @@ def costos_por_surveyor(
     """
     Analiza costos y rentabilidad generados por surveyor.
 
-    Reglas:
+    Reglas de años:
     • Sin años → año actual
     • Un año → año exacto
-    • Ambos → rango real
+    • Dos años → rango real
     • Facturación neta de IVA (Costa Rica 13%)
     """
 
@@ -335,14 +333,12 @@ def costos_por_surveyor(
     current_year = datetime.now().year
 
     # =====================================================
-    # NORMALIZACIÓN DE AÑOS (CRÍTICO)
+    # NORMALIZACIÓN DE AÑOS (REGLA GLOBAL)
     # =====================================================
     if year_from and not year_to:
         year_to = year_from
-
     if year_to and not year_from:
         year_from = year_to
-
     if not year_from and not year_to:
         year_from = year_to = current_year
 
@@ -352,15 +348,12 @@ def costos_por_surveyor(
     filtros = [
         "s.estado = 'Finalizado'",
         "s.fecha_inicio IS NOT NULL",
-        "EXTRACT(YEAR FROM s.fecha_inicio) BETWEEN %(year_from)s AND %(year_to)s",
+        "EXTRACT(YEAR FROM s.fecha_inicio) BETWEEN %s AND %s",
         "s.surveyor IS NOT NULL",
         "TRIM(s.surveyor) <> ''"
     ]
 
-    params = {
-        "year_from": year_from,
-        "year_to": year_to
-    }
+    params = [year_from, year_to]
 
     where_clause = " AND ".join(filtros)
 
@@ -432,7 +425,7 @@ def costos_por_surveyor(
         ORDER BY honorarios_total DESC;
     """
 
-    cur.execute(sql, params)
+    cur.execute(sql, tuple(params))
     data = cur.fetchall()
     cur.close()
 
@@ -448,8 +441,9 @@ def costos_por_surveyor(
         "data": data
     }
 
+
 # ============================================================
-# SERVICIOS POR PAÍS / PUERTO — BLINDADO
+# SERVICIOS POR PAÍS / PUERTO — BLINDADO FINAL (PATRÓN ERP-SOM)
 # ============================================================
 @router.get(
     "/por-ubicacion",
@@ -478,14 +472,12 @@ def servicios_por_ubicacion(
     current_year = datetime.now().year
 
     # =====================================================
-    # NORMALIZACIÓN DE AÑOS (CRÍTICO)
+    # NORMALIZACIÓN DE AÑOS (REGLA GLOBAL)
     # =====================================================
     if year_from and not year_to:
         year_to = year_from
-
     if year_to and not year_from:
         year_from = year_to
-
     if not year_from and not year_to:
         year_from = year_to = current_year
 
@@ -495,7 +487,7 @@ def servicios_por_ubicacion(
     filtros = [
         "s.estado = 'Finalizado'",
         "s.fecha_inicio IS NOT NULL",
-        "EXTRACT(YEAR FROM s.fecha_inicio) BETWEEN %(year_from)s AND %(year_to)s",
+        "EXTRACT(YEAR FROM s.fecha_inicio) BETWEEN %s AND %s",
         "s.continente IS NOT NULL",
         "s.pais IS NOT NULL",
         "s.puerto IS NOT NULL",
@@ -504,10 +496,7 @@ def servicios_por_ubicacion(
         "TRIM(s.puerto) <> ''"
     ]
 
-    params = {
-        "year_from": year_from,
-        "year_to": year_to
-    }
+    params = [year_from, year_to]
 
     where_clause = " AND ".join(filtros)
 
@@ -585,7 +574,7 @@ def servicios_por_ubicacion(
         ORDER BY revenue_neto_total DESC;
     """
 
-    cur.execute(sql, params)
+    cur.execute(sql, tuple(params))
     data = cur.fetchall()
     cur.close()
 
