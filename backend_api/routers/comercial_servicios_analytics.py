@@ -28,7 +28,7 @@ router = APIRouter(
 
 
 # ============================================================
-# ANALYTICS — RENTABILIDAD POR SERVICIO (CORREGIDO)
+# ANALYTICS — RENTABILIDAD POR SERVICIO (BLINDADO)
 # ============================================================
 @router.get(
     "/by-servicio",
@@ -44,24 +44,32 @@ def servicios_analytics_by_servicio(
 ):
     """
     Analiza rentabilidad y desempeño por SERVICIO (operacion)
-    • Año por defecto: año en curso (backend)
-    • Filtros reales desde DB
-    • Facturación neta de IVA (Costa Rica 13%)
+
+    Reglas de años:
+    • Sin años → año actual
+    • Un solo año → año exacto
+    • Ambos → rango real
     """
 
+    from datetime import datetime
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
-    # =====================================================
-    # AÑO ACTUAL (BACKEND AUTHORITY)
-    # =====================================================
-    from datetime import datetime
     current_year = datetime.now().year
 
-    year_from = year_from or current_year
-    year_to = year_to or current_year
+    # =====================================================
+    # NORMALIZACIÓN DE AÑOS (CRÍTICO)
+    # =====================================================
+    if year_from and not year_to:
+        year_to = year_from
+
+    if year_to and not year_from:
+        year_from = year_to
+
+    if not year_from and not year_to:
+        year_from = year_to = current_year
 
     # =====================================================
-    # FILTROS BASE + DINÁMICOS
+    # FILTROS BASE
     # =====================================================
     filtros = [
         "s.estado = 'Finalizado'",
@@ -74,30 +82,33 @@ def servicios_analytics_by_servicio(
         "year_to": year_to
     }
 
+    # =====================================================
+    # FILTROS OPCIONALES (ROBUSTOS)
+    # =====================================================
     if continente:
-        filtros.append("TRIM(s.continente) = %(continente)s")
+        filtros.append("UPPER(TRIM(s.continente)) = UPPER(%(continente)s)")
         params["continente"] = continente.strip()
 
     if pais:
-        filtros.append("TRIM(s.pais) = %(pais)s")
+        filtros.append("UPPER(TRIM(s.pais)) = UPPER(%(pais)s)")
         params["pais"] = pais.strip()
 
     if puerto:
-        filtros.append("TRIM(s.puerto) = %(puerto)s")
+        filtros.append("UPPER(TRIM(s.puerto)) = UPPER(%(puerto)s)")
         params["puerto"] = puerto.strip()
 
     where_clause = " AND ".join(filtros)
 
     # =====================================================
-    # SQL PRINCIPAL — RENTABILIDAD POR SERVICIO
+    # SQL — RENTABILIDAD POR SERVICIO
     # =====================================================
     sql = f"""
         SELECT
-            TRIM(s.operacion)                               AS servicio,
-            COUNT(s.consec)                                AS cantidad_servicios,
+            TRIM(s.operacion)                                AS servicio,
+            COUNT(s.consec)                                 AS cantidad_servicios,
 
             -- FACTURACIÓN
-            SUM(COALESCE(s.valor_factura, 0))              AS revenue_bruto_total,
+            SUM(COALESCE(s.valor_factura, 0))               AS revenue_bruto_total,
 
             SUM(
                 CASE
@@ -105,15 +116,15 @@ def servicios_analytics_by_servicio(
                     THEN COALESCE(s.valor_factura, 0) / 1.13
                     ELSE COALESCE(s.valor_factura, 0)
                 END
-            )                                               AS revenue_neto_total,
+            )                                                AS revenue_neto_total,
 
             -- COSTOS
             SUM(
                 COALESCE(s.honorarios, 0) +
                 COALESCE(s.costo_operativo, 0)
-            )                                               AS costo_total,
+            )                                                AS costo_total,
 
-            -- MÁRGENES
+            -- MARGEN NETO
             SUM(
                 CASE
                     WHEN s.pais = 'Costa Rica'
@@ -124,8 +135,9 @@ def servicios_analytics_by_servicio(
             - SUM(
                 COALESCE(s.honorarios, 0) +
                 COALESCE(s.costo_operativo, 0)
-            )                                               AS margen_neto,
+            )                                                AS margen_neto,
 
+            -- % MARGEN NETO
             CASE
                 WHEN SUM(
                     CASE
@@ -160,7 +172,7 @@ def servicios_analytics_by_servicio(
                     ) * 100,
                     2
                 )
-            END                                             AS margen_neto_pct
+            END                                              AS margen_neto_pct
 
         FROM servicios s
         WHERE {where_clause}
@@ -173,21 +185,25 @@ def servicios_analytics_by_servicio(
     data = cur.fetchall()
 
     # =====================================================
-    # METADATA — FILTROS DISPONIBLES (REAL DB)
+    # METADATA — SIEMPRE GLOBAL (NO DEPENDE DEL FILTRO)
     # =====================================================
     meta_sql = """
         SELECT
             ARRAY_AGG(DISTINCT EXTRACT(YEAR FROM fecha_inicio)::INT ORDER BY EXTRACT(YEAR FROM fecha_inicio)::INT DESC)
                 AS years,
+
             ARRAY_AGG(DISTINCT TRIM(continente) ORDER BY TRIM(continente))
                 FILTER (WHERE continente IS NOT NULL AND TRIM(continente) <> '')
                 AS continentes,
+
             ARRAY_AGG(DISTINCT TRIM(pais) ORDER BY TRIM(pais))
                 FILTER (WHERE pais IS NOT NULL AND TRIM(pais) <> '')
                 AS paises,
+
             ARRAY_AGG(DISTINCT TRIM(puerto) ORDER BY TRIM(puerto))
                 FILTER (WHERE puerto IS NOT NULL AND TRIM(puerto) <> '')
                 AS puertos,
+
             ARRAY_AGG(DISTINCT TRIM(operacion) ORDER BY TRIM(operacion))
                 FILTER (WHERE operacion IS NOT NULL AND TRIM(operacion) <> '')
                 AS servicios
@@ -212,13 +228,13 @@ def servicios_analytics_by_servicio(
             "puertos": meta.get("puertos", []),
             "servicios": meta.get("servicios", [])
         },
-        "total_servicios_unicos": len(data),
+        "total": len(data),
         "data": data
     }
 
 
 # ============================================================
-# SERVICIOS NO OFRECIDOS (CATÁLOGO VS OPERACIÓN) — CORREGIDO
+# SERVICIOS NO OFRECIDOS (CATÁLOGO VS OPERACIÓN) — BLINDADO
 # ============================================================
 @router.get(
     "/not-offered",
@@ -235,22 +251,32 @@ def servicios_no_ofrecidos(
     """
     Devuelve servicios del catálogo (serviciosmd)
     que NO han sido ejecutados en el período filtrado.
-    • Año por defecto: año en curso (backend)
+
+    Reglas:
+    • Sin años → año actual
+    • Un año → año exacto
+    • Ambos → rango real
     """
 
+    from datetime import datetime
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
-    # =====================================================
-    # AÑO ACTUAL (BACKEND AUTHORITY)
-    # =====================================================
-    from datetime import datetime
     current_year = datetime.now().year
 
-    year_from = year_from or current_year
-    year_to = year_to or current_year
+    # =====================================================
+    # NORMALIZACIÓN DE AÑOS (CRÍTICO)
+    # =====================================================
+    if year_from and not year_to:
+        year_to = year_from
+
+    if year_to and not year_from:
+        year_from = year_to
+
+    if not year_from and not year_to:
+        year_from = year_to = current_year
 
     # =====================================================
-    # FILTROS DE EJECUCIÓN (SERVICIOS)
+    # FILTROS BASE DE SERVICIOS EJECUTADOS
     # =====================================================
     filtros = [
         "s.estado = 'Finalizado'",
@@ -263,16 +289,19 @@ def servicios_no_ofrecidos(
         "year_to": year_to
     }
 
+    # =====================================================
+    # FILTROS OPCIONALES (ROBUSTOS)
+    # =====================================================
     if continente:
-        filtros.append("TRIM(s.continente) = %(continente)s")
+        filtros.append("UPPER(TRIM(s.continente)) = UPPER(%(continente)s)")
         params["continente"] = continente.strip()
 
     if pais:
-        filtros.append("TRIM(s.pais) = %(pais)s")
+        filtros.append("UPPER(TRIM(s.pais)) = UPPER(%(pais)s)")
         params["pais"] = pais.strip()
 
     if puerto:
-        filtros.append("TRIM(s.puerto) = %(puerto)s")
+        filtros.append("UPPER(TRIM(s.puerto)) = UPPER(%(puerto)s)")
         params["puerto"] = puerto.strip()
 
     where_exec = " AND ".join(filtros)
@@ -300,7 +329,6 @@ def servicios_no_ofrecidos(
 
     cur.execute(sql, params)
     data = cur.fetchall()
-
     cur.close()
 
     # =====================================================
@@ -309,14 +337,17 @@ def servicios_no_ofrecidos(
     return {
         "filters": {
             "year_from": year_from,
-            "year_to": year_to
+            "year_to": year_to,
+            "continente": continente,
+            "pais": pais,
+            "puerto": puerto
         },
         "total_no_ofrecidos": len(data),
         "data": data
     }
 
 # ============================================================
-# COSTOS POR SURVEYOR — CORREGIDO
+# COSTOS POR SURVEYOR — BLINDADO
 # ============================================================
 @router.get(
     "/costos-por-surveyor",
@@ -329,20 +360,30 @@ def costos_por_surveyor(
 ):
     """
     Analiza costos y rentabilidad generados por surveyor.
-    • Año por defecto: año en curso (backend)
+
+    Reglas:
+    • Sin años → año actual
+    • Un año → año exacto
+    • Ambos → rango real
     • Facturación neta de IVA (Costa Rica 13%)
     """
 
+    from datetime import datetime
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
-    # =====================================================
-    # AÑO ACTUAL (BACKEND AUTHORITY)
-    # =====================================================
-    from datetime import datetime
     current_year = datetime.now().year
 
-    year_from = year_from or current_year
-    year_to = year_to or current_year
+    # =====================================================
+    # NORMALIZACIÓN DE AÑOS (CRÍTICO)
+    # =====================================================
+    if year_from and not year_to:
+        year_to = year_from
+
+    if year_to and not year_from:
+        year_from = year_to
+
+    if not year_from and not year_to:
+        year_from = year_to = current_year
 
     # =====================================================
     # FILTROS BASE
@@ -367,7 +408,7 @@ def costos_por_surveyor(
     # =====================================================
     sql = f"""
         SELECT
-            TRIM(s.surveyor) AS surveyor,
+            UPPER(TRIM(s.surveyor)) AS surveyor,
 
             COUNT(s.consec) AS total_servicios,
 
@@ -426,7 +467,7 @@ def costos_por_surveyor(
         FROM servicios s
         WHERE {where_clause}
 
-        GROUP BY TRIM(s.surveyor)
+        GROUP BY UPPER(TRIM(s.surveyor))
         ORDER BY honorarios_total DESC;
     """
 
@@ -446,9 +487,8 @@ def costos_por_surveyor(
         "data": data
     }
 
-
 # ============================================================
-# SERVICIOS POR PAÍS / PUERTO — CORREGIDO
+# SERVICIOS POR PAÍS / PUERTO — BLINDADO
 # ============================================================
 @router.get(
     "/por-ubicacion",
@@ -463,21 +503,30 @@ def servicios_por_ubicacion(
     Analiza volumen, revenue, costos y rentabilidad
     por continente / país / puerto.
 
-    • Año por defecto: año en curso (backend)
+    Reglas:
+    • Sin años → año actual
+    • Un año → año exacto
+    • Ambos → rango real
     • Solo servicios Finalizados
     • Facturación neta de IVA (Costa Rica 13%)
     """
 
+    from datetime import datetime
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
-    # =====================================================
-    # AÑO ACTUAL (BACKEND AUTHORITY)
-    # =====================================================
-    from datetime import datetime
     current_year = datetime.now().year
 
-    year_from = year_from or current_year
-    year_to = year_to or current_year
+    # =====================================================
+    # NORMALIZACIÓN DE AÑOS (CRÍTICO)
+    # =====================================================
+    if year_from and not year_to:
+        year_to = year_from
+
+    if year_to and not year_from:
+        year_from = year_to
+
+    if not year_from and not year_to:
+        year_from = year_to = current_year
 
     # =====================================================
     # FILTROS BASE
@@ -506,9 +555,9 @@ def servicios_por_ubicacion(
     # =====================================================
     sql = f"""
         SELECT
-            TRIM(s.continente) AS continente,
-            TRIM(s.pais)       AS pais,
-            TRIM(s.puerto)     AS puerto,
+            UPPER(TRIM(s.continente)) AS continente,
+            UPPER(TRIM(s.pais))       AS pais,
+            UPPER(TRIM(s.puerto))     AS puerto,
 
             -- VOLUMEN
             COUNT(s.consec) AS total_servicios,
@@ -568,9 +617,9 @@ def servicios_por_ubicacion(
         WHERE {where_clause}
 
         GROUP BY
-            TRIM(s.continente),
-            TRIM(s.pais),
-            TRIM(s.puerto)
+            UPPER(TRIM(s.continente)),
+            UPPER(TRIM(s.pais)),
+            UPPER(TRIM(s.puerto))
 
         ORDER BY revenue_neto_total DESC;
     """
@@ -592,7 +641,7 @@ def servicios_por_ubicacion(
     }
 
 # ============================================================
-# KPIs EJECUTIVOS — SERVICIOS (CORREGIDO)
+# KPIs EJECUTIVOS — SERVICIOS (BLINDADO)
 # ============================================================
 @router.get(
     "/kpis",
@@ -610,21 +659,30 @@ def servicios_kpis_ejecutivos(
     """
     KPIs ejecutivos para análisis de servicios.
 
-    • Año por defecto: año en curso (backend)
-    • Servicios únicos (NO ejecuciones)
+    Reglas:
+    • Sin años → año actual
+    • Un año → año exacto
+    • Ambos → rango real
+    • KPIs sobre servicios Finalizados
     • Revenue neto de IVA (Costa Rica 13%)
     """
 
+    from datetime import datetime
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
-    # =====================================================
-    # AÑO ACTUAL (BACKEND AUTHORITY)
-    # =====================================================
-    from datetime import datetime
     current_year = datetime.now().year
 
-    year_from = year_from or current_year
-    year_to = year_to or current_year
+    # =====================================================
+    # NORMALIZACIÓN DE AÑOS (CRÍTICO)
+    # =====================================================
+    if year_from and not year_to:
+        year_to = year_from
+
+    if year_to and not year_from:
+        year_from = year_to
+
+    if not year_from and not year_to:
+        year_from = year_to = current_year
 
     # =====================================================
     # FILTROS BASE
@@ -643,19 +701,19 @@ def servicios_kpis_ejecutivos(
     }
 
     if continente:
-        filtros.append("s.continente = %(continente)s")
+        filtros.append("UPPER(TRIM(s.continente)) = UPPER(TRIM(%(continente)s))")
         params["continente"] = continente
 
     if pais:
-        filtros.append("s.pais = %(pais)s")
+        filtros.append("UPPER(TRIM(s.pais)) = UPPER(TRIM(%(pais)s))")
         params["pais"] = pais
 
     if puerto:
-        filtros.append("s.puerto = %(puerto)s")
+        filtros.append("UPPER(TRIM(s.puerto)) = UPPER(TRIM(%(puerto)s))")
         params["puerto"] = puerto
 
     if operacion:
-        filtros.append("s.operacion = %(operacion)s")
+        filtros.append("UPPER(TRIM(s.operacion)) = UPPER(TRIM(%(operacion)s))")
         params["operacion"] = operacion
 
     where_clause = " AND ".join(filtros)
@@ -666,10 +724,7 @@ def servicios_kpis_ejecutivos(
     sql = f"""
         WITH base AS (
             SELECT
-                TRIM(s.operacion) AS operacion,
-
-                -- SERVICIOS ÚNICOS
-                COUNT(DISTINCT TRIM(s.operacion)) AS servicio_unico,
+                UPPER(TRIM(s.operacion)) AS operacion,
 
                 -- FACTURACIÓN
                 SUM(COALESCE(s.valor_factura, 0)) AS revenue_bruto,
@@ -720,7 +775,7 @@ def servicios_kpis_ejecutivos(
 
             FROM servicios s
             WHERE {where_clause}
-            GROUP BY TRIM(s.operacion)
+            GROUP BY UPPER(TRIM(s.operacion))
         ),
         resumen AS (
             SELECT
