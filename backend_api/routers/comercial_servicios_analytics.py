@@ -52,8 +52,10 @@ def servicios_analytics_by_servicio(
     # =====================================================
     if year_from and not year_to:
         year_to = year_from
+
     if year_to and not year_from:
         year_from = year_to
+
     if not year_from and not year_to:
         year_from = year_to = current_year
 
@@ -61,7 +63,7 @@ def servicios_analytics_by_servicio(
     # FILTROS DINÁMICOS (BLINDADOS)
     # =====================================================
     filtros = [
-        "s.estado = 'Finalizado'",
+        "UPPER(TRIM(s.estado)) = 'FINALIZADO'",
         "s.fecha_inicio IS NOT NULL",
         "EXTRACT(YEAR FROM s.fecha_inicio::date) BETWEEN %s AND %s"
     ]
@@ -94,7 +96,7 @@ def servicios_analytics_by_servicio(
 
             SUM(
                 CASE
-                    WHEN s.pais = 'Costa Rica'
+                    WHEN UPPER(TRIM(s.pais)) = 'COSTA RICA'
                     THEN COALESCE(s.valor_factura, 0) / 1.13
                     ELSE COALESCE(s.valor_factura, 0)
                 END
@@ -107,7 +109,7 @@ def servicios_analytics_by_servicio(
 
             SUM(
                 CASE
-                    WHEN s.pais = 'Costa Rica'
+                    WHEN UPPER(TRIM(s.pais)) = 'COSTA RICA'
                     THEN COALESCE(s.valor_factura, 0) / 1.13
                     ELSE COALESCE(s.valor_factura, 0)
                 END
@@ -120,7 +122,7 @@ def servicios_analytics_by_servicio(
             CASE
                 WHEN SUM(
                     CASE
-                        WHEN s.pais = 'Costa Rica'
+                        WHEN UPPER(TRIM(s.pais)) = 'COSTA RICA'
                         THEN COALESCE(s.valor_factura, 0) / 1.13
                         ELSE COALESCE(s.valor_factura, 0)
                     END
@@ -130,7 +132,7 @@ def servicios_analytics_by_servicio(
                         (
                             SUM(
                                 CASE
-                                    WHEN s.pais = 'Costa Rica'
+                                    WHEN UPPER(TRIM(s.pais)) = 'COSTA RICA'
                                     THEN COALESCE(s.valor_factura, 0) / 1.13
                                     ELSE COALESCE(s.valor_factura, 0)
                                 END
@@ -143,7 +145,7 @@ def servicios_analytics_by_servicio(
                         /
                         SUM(
                             CASE
-                                WHEN s.pais = 'Costa Rica'
+                                WHEN UPPER(TRIM(s.pais)) = 'COSTA RICA'
                                 THEN COALESCE(s.valor_factura, 0) / 1.13
                                 ELSE COALESCE(s.valor_factura, 0)
                             END
@@ -163,7 +165,7 @@ def servicios_analytics_by_servicio(
     data = cur.fetchall()
 
     # =====================================================
-    # METADATA GLOBAL (ALINEADA AL FILTRO)
+    # METADATA GLOBAL
     # =====================================================
     meta_sql = """
         SELECT
@@ -251,7 +253,7 @@ def servicios_no_ofrecidos(
     # FILTROS BASE — SERVICIOS EJECUTADOS (BLINDADOS)
     # =====================================================
     filtros = [
-        "s.estado = 'Finalizado'",
+        "UPPER(TRIM(s.estado)) = 'FINALIZADO'",
         "s.fecha_inicio IS NOT NULL",
         "EXTRACT(YEAR FROM s.fecha_inicio::date) BETWEEN %s AND %s"
     ]
@@ -355,10 +357,10 @@ def costos_por_surveyor(
         year_from = year_to = current_year
 
     # =====================================================
-    # FILTROS BASE (BLINDADOS)
+    # FILTROS BASE (BLINDADOS DE VERDAD)
     # =====================================================
     filtros = [
-        "s.estado = 'Finalizado'",
+        "UPPER(TRIM(s.estado)) = 'FINALIZADO'",
         "s.fecha_inicio IS NOT NULL",
         "EXTRACT(YEAR FROM s.fecha_inicio::date) BETWEEN %s AND %s",
         "s.surveyor IS NOT NULL",
@@ -473,7 +475,7 @@ def servicios_por_ubicacion(
     • Sin años → año actual
     • Un año → año exacto
     • Ambos → rango real
-    • Solo servicios Finalizados
+    • Solo servicios FINALIZADOS
     • Facturación neta de IVA (Costa Rica 13%)
     """
 
@@ -495,10 +497,10 @@ def servicios_por_ubicacion(
         year_from = year_to = current_year
 
     # =====================================================
-    # FILTROS BASE (BLINDADOS)
+    # FILTROS BASE (BLINDADOS DE VERDAD)
     # =====================================================
     filtros = [
-        "s.estado = 'Finalizado'",
+        "UPPER(TRIM(s.estado)) = 'FINALIZADO'",
         "s.fecha_inicio IS NOT NULL",
         "EXTRACT(YEAR FROM s.fecha_inicio::date) BETWEEN %s AND %s",
         "s.continente IS NOT NULL",
@@ -530,7 +532,7 @@ def servicios_por_ubicacion(
 
             SUM(
                 CASE
-                    WHEN s.pais = 'Costa Rica'
+                    WHEN UPPER(TRIM(s.pais)) = 'COSTA RICA'
                     THEN COALESCE(s.valor_factura, 0) / 1.13
                     ELSE COALESCE(s.valor_factura, 0)
                 END
@@ -539,9 +541,9 @@ def servicios_por_ubicacion(
             -- IVA
             SUM(
                 CASE
-                    WHEN s.pais = 'Costa Rica'
+                    WHEN UPPER(TRIM(s.pais)) = 'COSTA RICA'
                     THEN COALESCE(s.valor_factura, 0)
-                             - (COALESCE(s.valor_factura, 0) / 1.13)
+                         - (COALESCE(s.valor_factura, 0) / 1.13)
                     ELSE 0
                 END
             ) AS iva_total,
@@ -557,7 +559,7 @@ def servicios_por_ubicacion(
             -- MÁRGENES
             SUM(
                 CASE
-                    WHEN s.pais = 'Costa Rica'
+                    WHEN UPPER(TRIM(s.pais)) = 'COSTA RICA'
                     THEN COALESCE(s.valor_factura, 0) / 1.13
                     ELSE COALESCE(s.valor_factura, 0)
                 END
@@ -566,7 +568,7 @@ def servicios_por_ubicacion(
 
             SUM(
                 CASE
-                    WHEN s.pais = 'Costa Rica'
+                    WHEN UPPER(TRIM(s.pais)) = 'COSTA RICA'
                     THEN COALESCE(s.valor_factura, 0) / 1.13
                     ELSE COALESCE(s.valor_factura, 0)
                 END
@@ -626,7 +628,7 @@ def servicios_kpis_ejecutivos(
     • Sin años → año actual
     • Un año → año exacto
     • Ambos → rango real
-    • KPIs sobre servicios Finalizados
+    • KPIs sobre servicios FINALIZADOS
     • Revenue neto de IVA (Costa Rica 13%)
     """
 
@@ -648,10 +650,10 @@ def servicios_kpis_ejecutivos(
         year_from = year_to = current_year
 
     # =====================================================
-    # FILTROS BASE (BLINDADOS)
+    # FILTROS BASE (REALMENTE BLINDADOS)
     # =====================================================
     filtros = [
-        "s.estado = 'Finalizado'",
+        "UPPER(TRIM(s.estado)) = 'FINALIZADO'",
         "s.fecha_inicio IS NOT NULL",
         "EXTRACT(YEAR FROM s.fecha_inicio::date) BETWEEN %(year_from)s AND %(year_to)s",
         "s.operacion IS NOT NULL",
@@ -694,7 +696,7 @@ def servicios_kpis_ejecutivos(
 
                 SUM(
                     CASE
-                        WHEN s.pais = 'Costa Rica'
+                        WHEN UPPER(TRIM(s.pais)) = 'COSTA RICA'
                         THEN COALESCE(s.valor_factura, 0) / 1.13
                         ELSE COALESCE(s.valor_factura, 0)
                     END
@@ -703,7 +705,7 @@ def servicios_kpis_ejecutivos(
                 -- IVA
                 SUM(
                     CASE
-                        WHEN s.pais = 'Costa Rica'
+                        WHEN UPPER(TRIM(s.pais)) = 'COSTA RICA'
                         THEN COALESCE(s.valor_factura, 0)
                              - (COALESCE(s.valor_factura, 0) / 1.13)
                         ELSE 0
@@ -717,7 +719,7 @@ def servicios_kpis_ejecutivos(
                 -- MÁRGENES
                 SUM(
                     CASE
-                        WHEN s.pais = 'Costa Rica'
+                        WHEN UPPER(TRIM(s.pais)) = 'COSTA RICA'
                         THEN COALESCE(s.valor_factura, 0) / 1.13
                         ELSE COALESCE(s.valor_factura, 0)
                     END
@@ -726,7 +728,7 @@ def servicios_kpis_ejecutivos(
 
                 SUM(
                     CASE
-                        WHEN s.pais = 'Costa Rica'
+                        WHEN UPPER(TRIM(s.pais)) = 'COSTA RICA'
                         THEN COALESCE(s.valor_factura, 0) / 1.13
                         ELSE COALESCE(s.valor_factura, 0)
                     END
@@ -748,11 +750,7 @@ def servicios_kpis_ejecutivos(
                 COALESCE(SUM(revenue_neto), 0) AS revenue_neto_total,
                 COALESCE(SUM(iva_total), 0) AS iva_total,
 
-                COALESCE(
-                    SUM(honorarios + costos_operativos),
-                    0
-                ) AS costos_totales,
-
+                COALESCE(SUM(honorarios + costos_operativos), 0) AS costos_totales,
                 COALESCE(SUM(margen_bruto), 0) AS margen_bruto_total,
                 COALESCE(SUM(margen_neto), 0) AS margen_neto_total
             FROM base
@@ -789,8 +787,11 @@ def servicios_kpis_ejecutivos(
     cur.close()
 
     # =====================================================
-    # RESPONSE
+    # RESPONSE (BLINDADO A None)
     # =====================================================
+    def _n(v):
+        return round(v or 0, 2)
+
     return {
         "filters": {
             "year_from": year_from,
@@ -799,15 +800,15 @@ def servicios_kpis_ejecutivos(
         "kpis": {
             "total_servicios": kpis.get("total_servicios", 0),
 
-            "revenue_bruto_total": round(kpis.get("revenue_bruto_total", 0), 2),
-            "revenue_neto_total": round(kpis.get("revenue_neto_total", 0), 2),
-            "iva_total": round(kpis.get("iva_total", 0), 2),
+            "revenue_bruto_total": _n(kpis.get("revenue_bruto_total")),
+            "revenue_neto_total": _n(kpis.get("revenue_neto_total")),
+            "iva_total": _n(kpis.get("iva_total")),
 
-            "costos_totales": round(kpis.get("costos_totales", 0), 2),
+            "costos_totales": _n(kpis.get("costos_totales")),
 
-            "margen_bruto_total": round(kpis.get("margen_bruto_total", 0), 2),
-            "margen_neto_total": round(kpis.get("margen_neto_total", 0), 2),
-            "margen_neto_pct": kpis.get("margen_neto_pct", 0),
+            "margen_bruto_total": _n(kpis.get("margen_bruto_total")),
+            "margen_neto_total": _n(kpis.get("margen_neto_total")),
+            "margen_neto_pct": _n(kpis.get("margen_neto_pct")),
 
             "servicio_mas_rentable": kpis.get("servicio_mas_rentable"),
             "servicio_menos_rentable": kpis.get("servicio_menos_rentable"),
