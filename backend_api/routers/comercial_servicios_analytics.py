@@ -813,6 +813,11 @@ def servicios_kpis_ejecutivos(
 # ============================================================
 # COSTOS POR SURVEYOR — PARETO 80/20 (ERP-SOM)
 # ============================================================
+from typing import Optional
+from fastapi import Query, Depends
+from psycopg2.extras import RealDictCursor
+from datetime import datetime
+
 @router.get(
     "/costos-surveyor-pareto",
     dependencies=[Depends(require_permission("comercial", "view"))]
@@ -825,14 +830,34 @@ def costos_surveyor_pareto(
     """
     Analiza honorarios por surveyor con desglose por ubicación
     y cálculo Pareto 80/20.
+
+    • Año exacto (por fecha_inicio)
+    • Filtro opcional por operación
+    • Expone available_years para UI (combobox)
     """
 
-    from datetime import datetime
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
+    # =========================================================
+    # 1️⃣ AÑOS DISPONIBLES (METADATA PARA UI)
+    # =========================================================
+    cur.execute("""
+        SELECT DISTINCT
+            EXTRACT(YEAR FROM fecha_inicio)::int AS year
+        FROM servicios
+        WHERE fecha_inicio IS NOT NULL
+        ORDER BY year;
+    """)
+
+    available_years = [r["year"] for r in cur.fetchall() if r["year"]]
+
+    # Año por defecto = año actual (si UI no envía)
     current_year = datetime.now().year
     year = year or current_year
 
+    # =========================================================
+    # 2️⃣ FILTROS BASE
+    # =========================================================
     filtros = [
         "UPPER(TRIM(s.estado)) = 'FINALIZADO'",
         "s.fecha_inicio IS NOT NULL",
@@ -849,6 +874,9 @@ def costos_surveyor_pareto(
 
     where_clause = " AND ".join(filtros)
 
+    # =========================================================
+    # 3️⃣ QUERY PRINCIPAL · PARETO
+    # =========================================================
     sql = f"""
         WITH base AS (
             SELECT
@@ -871,9 +899,10 @@ def costos_surveyor_pareto(
                 *,
                 SUM(honorarios_total) OVER () AS total_global,
                 SUM(honorarios_total)
-                    OVER (ORDER BY honorarios_total DESC
-                          ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
-                    AS acumulado
+                    OVER (
+                        ORDER BY honorarios_total DESC
+                        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+                    ) AS acumulado
             FROM base
         )
         SELECT
@@ -883,7 +912,10 @@ def costos_surveyor_pareto(
             puerto,
             total_servicios,
             honorarios_total,
-            ROUND((acumulado / NULLIF(total_global, 0)) * 100, 2) AS acumulado_pct,
+            ROUND(
+                (acumulado / NULLIF(total_global, 0)) * 100,
+                2
+            ) AS acumulado_pct,
             CASE
                 WHEN (acumulado / NULLIF(total_global, 0)) <= 0.8
                 THEN TRUE
@@ -897,12 +929,15 @@ def costos_surveyor_pareto(
     data = cur.fetchall()
     cur.close()
 
+    # =========================================================
+    # 4️⃣ RESPONSE FINAL (UI-FRIENDLY)
+    # =========================================================
     return {
         "filters": {
             "year": year,
-            "operacion": operacion
+            "operacion": operacion,
+            "available_years": available_years
         },
         "total_surveyors": len({r["surveyor"] for r in data}),
         "data": data
     }
-
