@@ -235,7 +235,11 @@ def servicios_analytics_by_servicio(
         ORDER BY revenue_neto_total DESC;
     """
 
-    cur.execute(sql, params)
+    if params:
+        cur.execute(sql, params)
+    else:
+        cur.execute(sql)
+
     rows = cur.fetchall()
     cur.close()
 
@@ -386,7 +390,11 @@ def costos_por_surveyor(
         ORDER BY honorarios_total DESC;
     """
 
-    cur.execute(sql, params)
+    if params:
+        cur.execute(sql, params)
+    else:
+        cur.execute(sql)
+
     rows = cur.fetchall()
     cur.close()
 
@@ -501,7 +509,11 @@ def servicios_por_ubicacion(
         ORDER BY revenue_neto_total DESC;
     """
 
-    cur.execute(sql, params)
+    if params:
+        cur.execute(sql, params)
+    else:
+        cur.execute(sql)
+
     rows = cur.fetchall()
     cur.close()
 
@@ -534,6 +546,9 @@ def servicios_kpis_ejecutivos(
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
+    # =====================================================
+    # FILTROS DINÁMICOS
+    # =====================================================
     filtros = []
     params = {}
 
@@ -565,6 +580,9 @@ def servicios_kpis_ejecutivos(
     if filtros:
         where_clause = "AND " + " AND ".join(filtros)
 
+    # =====================================================
+    # SQL KPIs
+    # =====================================================
     sql = f"""
         WITH base AS (
             SELECT
@@ -669,10 +687,20 @@ def servicios_kpis_ejecutivos(
         FROM resumen r;
     """
 
-    cur.execute(sql, params)
+    # =====================================================
+    # EXECUTE (BLINDADO)
+    # =====================================================
+    if params:
+        cur.execute(sql, params)
+    else:
+        cur.execute(sql)
+
     kpis = cur.fetchone() or {}
     cur.close()
 
+    # =====================================================
+    # RESPONSE
+    # =====================================================
     return {
         "kpis": {
             "total_servicios": kpis.get("total_servicios", 0),
@@ -695,4 +723,3 @@ def servicios_kpis_ejecutivos(
             "servicio_menor_costo": kpis.get("servicio_menor_costo"),
         }
     }
-
