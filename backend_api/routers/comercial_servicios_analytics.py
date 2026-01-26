@@ -50,9 +50,6 @@ def servicios_analytics_by_servicio(
     # =====================================================
     # NORMALIZACIÓN DE AÑOS (REGLA GLOBAL ERP-SOM)
     # =====================================================
-    # • Sin años → año en curso
-    # • Un año → año exacto
-    # • Dos años → rango real
     if year_from and not year_to:
         year_to = year_from
     if year_to and not year_from:
@@ -61,12 +58,12 @@ def servicios_analytics_by_servicio(
         year_from = year_to = current_year
 
     # =====================================================
-    # FILTROS DINÁMICOS
+    # FILTROS DINÁMICOS (BLINDADOS)
     # =====================================================
     filtros = [
         "s.estado = 'Finalizado'",
         "s.fecha_inicio IS NOT NULL",
-        "EXTRACT(YEAR FROM s.fecha_inicio) BETWEEN %s AND %s"
+        "EXTRACT(YEAR FROM s.fecha_inicio::date) BETWEEN %s AND %s"
     ]
 
     params = [year_from, year_to]
@@ -166,15 +163,26 @@ def servicios_analytics_by_servicio(
     data = cur.fetchall()
 
     # =====================================================
-    # METADATA GLOBAL (NO DEPENDE DE FILTROS)
+    # METADATA GLOBAL (ALINEADA AL FILTRO)
     # =====================================================
     meta_sql = """
         SELECT
-            ARRAY_AGG(DISTINCT EXTRACT(YEAR FROM fecha_inicio)::INT ORDER BY EXTRACT(YEAR FROM fecha_inicio)::INT DESC) AS years,
-            ARRAY_AGG(DISTINCT TRIM(continente)) FILTER (WHERE continente IS NOT NULL AND TRIM(continente) <> '') AS continentes,
-            ARRAY_AGG(DISTINCT TRIM(pais)) FILTER (WHERE pais IS NOT NULL AND TRIM(pais) <> '') AS paises,
-            ARRAY_AGG(DISTINCT TRIM(puerto)) FILTER (WHERE puerto IS NOT NULL AND TRIM(puerto) <> '') AS puertos,
-            ARRAY_AGG(DISTINCT TRIM(operacion)) FILTER (WHERE operacion IS NOT NULL AND TRIM(operacion) <> '') AS servicios
+            ARRAY_AGG(
+                DISTINCT EXTRACT(YEAR FROM fecha_inicio::date)::INT
+                ORDER BY EXTRACT(YEAR FROM fecha_inicio::date)::INT DESC
+            ) AS years,
+
+            ARRAY_AGG(DISTINCT TRIM(continente))
+                FILTER (WHERE continente IS NOT NULL AND TRIM(continente) <> '') AS continentes,
+
+            ARRAY_AGG(DISTINCT TRIM(pais))
+                FILTER (WHERE pais IS NOT NULL AND TRIM(pais) <> '') AS paises,
+
+            ARRAY_AGG(DISTINCT TRIM(puerto))
+                FILTER (WHERE puerto IS NOT NULL AND TRIM(puerto) <> '') AS puertos,
+
+            ARRAY_AGG(DISTINCT TRIM(operacion))
+                FILTER (WHERE operacion IS NOT NULL AND TRIM(operacion) <> '') AS servicios
         FROM servicios
         WHERE fecha_inicio IS NOT NULL;
     """
@@ -232,18 +240,20 @@ def servicios_no_ofrecidos(
     # =====================================================
     if year_from and not year_to:
         year_to = year_from
+
     if year_to and not year_from:
         year_from = year_to
+
     if not year_from and not year_to:
         year_from = year_to = current_year
 
     # =====================================================
-    # FILTROS BASE — SERVICIOS EJECUTADOS
+    # FILTROS BASE — SERVICIOS EJECUTADOS (BLINDADOS)
     # =====================================================
     filtros = [
         "s.estado = 'Finalizado'",
         "s.fecha_inicio IS NOT NULL",
-        "EXTRACT(YEAR FROM s.fecha_inicio) BETWEEN %s AND %s"
+        "EXTRACT(YEAR FROM s.fecha_inicio::date) BETWEEN %s AND %s"
     ]
 
     params = [year_from, year_to]
@@ -333,22 +343,24 @@ def costos_por_surveyor(
     current_year = datetime.now().year
 
     # =====================================================
-    # NORMALIZACIÓN DE AÑOS (REGLA GLOBAL)
+    # NORMALIZACIÓN DE AÑOS (REGLA GLOBAL ERP-SOM)
     # =====================================================
     if year_from and not year_to:
         year_to = year_from
+
     if year_to and not year_from:
         year_from = year_to
+
     if not year_from and not year_to:
         year_from = year_to = current_year
 
     # =====================================================
-    # FILTROS BASE
+    # FILTROS BASE (BLINDADOS)
     # =====================================================
     filtros = [
         "s.estado = 'Finalizado'",
         "s.fecha_inicio IS NOT NULL",
-        "EXTRACT(YEAR FROM s.fecha_inicio) BETWEEN %s AND %s",
+        "EXTRACT(YEAR FROM s.fecha_inicio::date) BETWEEN %s AND %s",
         "s.surveyor IS NOT NULL",
         "TRIM(s.surveyor) <> ''"
     ]
@@ -391,7 +403,7 @@ def costos_por_surveyor(
                 CASE
                     WHEN s.pais = 'Costa Rica'
                     THEN COALESCE(s.valor_factura, 0)
-                         - (COALESCE(s.valor_factura, 0) / 1.13)
+                             - (COALESCE(s.valor_factura, 0) / 1.13)
                     ELSE 0
                 END
             )                                            AS iva_total,
@@ -441,7 +453,6 @@ def costos_por_surveyor(
         "data": data
     }
 
-
 # ============================================================
 # SERVICIOS POR PAÍS / PUERTO — BLINDADO FINAL (PATRÓN ERP-SOM)
 # ============================================================
@@ -472,22 +483,24 @@ def servicios_por_ubicacion(
     current_year = datetime.now().year
 
     # =====================================================
-    # NORMALIZACIÓN DE AÑOS (REGLA GLOBAL)
+    # NORMALIZACIÓN DE AÑOS (REGLA GLOBAL ERP-SOM)
     # =====================================================
     if year_from and not year_to:
         year_to = year_from
+
     if year_to and not year_from:
         year_from = year_to
+
     if not year_from and not year_to:
         year_from = year_to = current_year
 
     # =====================================================
-    # FILTROS BASE
+    # FILTROS BASE (BLINDADOS)
     # =====================================================
     filtros = [
         "s.estado = 'Finalizado'",
         "s.fecha_inicio IS NOT NULL",
-        "EXTRACT(YEAR FROM s.fecha_inicio) BETWEEN %s AND %s",
+        "EXTRACT(YEAR FROM s.fecha_inicio::date) BETWEEN %s AND %s",
         "s.continente IS NOT NULL",
         "s.pais IS NOT NULL",
         "s.puerto IS NOT NULL",
@@ -528,7 +541,7 @@ def servicios_por_ubicacion(
                 CASE
                     WHEN s.pais = 'Costa Rica'
                     THEN COALESCE(s.valor_factura, 0)
-                         - (COALESCE(s.valor_factura, 0) / 1.13)
+                             - (COALESCE(s.valor_factura, 0) / 1.13)
                     ELSE 0
                 END
             ) AS iva_total,
@@ -591,7 +604,7 @@ def servicios_por_ubicacion(
     }
 
 # ============================================================
-# KPIs EJECUTIVOS — SERVICIOS (BLINDADO)
+# KPIs EJECUTIVOS — SERVICIOS (BLINDADO FINAL)
 # ============================================================
 @router.get(
     "/kpis",
@@ -635,12 +648,12 @@ def servicios_kpis_ejecutivos(
         year_from = year_to = current_year
 
     # =====================================================
-    # FILTROS BASE
+    # FILTROS BASE (BLINDADOS)
     # =====================================================
     filtros = [
         "s.estado = 'Finalizado'",
         "s.fecha_inicio IS NOT NULL",
-        "EXTRACT(YEAR FROM s.fecha_inicio) BETWEEN %(year_from)s AND %(year_to)s",
+        "EXTRACT(YEAR FROM s.fecha_inicio::date) BETWEEN %(year_from)s AND %(year_to)s",
         "s.operacion IS NOT NULL",
         "TRIM(s.operacion) <> ''"
     ]
@@ -652,19 +665,19 @@ def servicios_kpis_ejecutivos(
 
     if continente:
         filtros.append("UPPER(TRIM(s.continente)) = UPPER(TRIM(%(continente)s))")
-        params["continente"] = continente
+        params["continente"] = continente.strip()
 
     if pais:
         filtros.append("UPPER(TRIM(s.pais)) = UPPER(TRIM(%(pais)s))")
-        params["pais"] = pais
+        params["pais"] = pais.strip()
 
     if puerto:
         filtros.append("UPPER(TRIM(s.puerto)) = UPPER(TRIM(%(puerto)s))")
-        params["puerto"] = puerto
+        params["puerto"] = puerto.strip()
 
     if operacion:
         filtros.append("UPPER(TRIM(s.operacion)) = UPPER(TRIM(%(operacion)s))")
-        params["operacion"] = operacion
+        params["operacion"] = operacion.strip()
 
     where_clause = " AND ".join(filtros)
 
