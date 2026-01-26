@@ -808,3 +808,101 @@ def servicios_kpis_ejecutivos(
             "servicio_menor_ingreso": kpis.get("servicio_menor_ingreso"),
         }
     }
+
+
+# ============================================================
+# COSTOS POR SURVEYOR — PARETO 80/20 (ERP-SOM)
+# ============================================================
+@router.get(
+    "/costos-surveyor-pareto",
+    dependencies=[Depends(require_permission("comercial", "view"))]
+)
+def costos_surveyor_pareto(
+    year: Optional[int] = Query(None),
+    operacion: Optional[str] = Query(None),
+    conn=Depends(get_db)
+):
+    """
+    Analiza honorarios por surveyor con desglose por ubicación
+    y cálculo Pareto 80/20.
+    """
+
+    from datetime import datetime
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+
+    current_year = datetime.now().year
+    year = year or current_year
+
+    filtros = [
+        "UPPER(TRIM(s.estado)) = 'FINALIZADO'",
+        "s.fecha_inicio IS NOT NULL",
+        "EXTRACT(YEAR FROM s.fecha_inicio::date) = %s",
+        "s.surveyor IS NOT NULL",
+        "TRIM(s.surveyor) <> ''"
+    ]
+
+    params = [year]
+
+    if operacion:
+        filtros.append("UPPER(TRIM(s.operacion)) = UPPER(%s)")
+        params.append(operacion.strip())
+
+    where_clause = " AND ".join(filtros)
+
+    sql = f"""
+        WITH base AS (
+            SELECT
+                UPPER(TRIM(s.surveyor))   AS surveyor,
+                UPPER(TRIM(s.continente)) AS continente,
+                UPPER(TRIM(s.pais))       AS pais,
+                UPPER(TRIM(s.puerto))     AS puerto,
+                COUNT(*)                  AS total_servicios,
+                SUM(COALESCE(s.honorarios, 0)) AS honorarios_total
+            FROM servicios s
+            WHERE {where_clause}
+            GROUP BY
+                UPPER(TRIM(s.surveyor)),
+                UPPER(TRIM(s.continente)),
+                UPPER(TRIM(s.pais)),
+                UPPER(TRIM(s.puerto))
+        ),
+        ranked AS (
+            SELECT
+                *,
+                SUM(honorarios_total) OVER () AS total_global,
+                SUM(honorarios_total)
+                    OVER (ORDER BY honorarios_total DESC
+                          ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+                    AS acumulado
+            FROM base
+        )
+        SELECT
+            surveyor,
+            continente,
+            pais,
+            puerto,
+            total_servicios,
+            honorarios_total,
+            ROUND((acumulado / NULLIF(total_global, 0)) * 100, 2) AS acumulado_pct,
+            CASE
+                WHEN (acumulado / NULLIF(total_global, 0)) <= 0.8
+                THEN TRUE
+                ELSE FALSE
+            END AS es_pareto_80
+        FROM ranked
+        ORDER BY honorarios_total DESC;
+    """
+
+    cur.execute(sql, tuple(params))
+    data = cur.fetchall()
+    cur.close()
+
+    return {
+        "filters": {
+            "year": year,
+            "operacion": operacion
+        },
+        "total_surveyors": len({r["surveyor"] for r in data}),
+        "data": data
+    }
+
