@@ -208,7 +208,7 @@ def servicios_analytics_by_servicio(
     }
 
 # ============================================================
-# SERVICIOS NO OFRECIDOS (CATÁLOGO VS OPERACIÓN) — PATRÓN OFICIAL
+# SERVICIOS NO OFRECIDOS (CATÁLOGO VS OPERACIÓN) — BLINDADO FINAL
 # ============================================================
 @router.get(
     "/not-offered",
@@ -225,11 +225,6 @@ def servicios_no_ofrecidos(
     """
     Devuelve servicios del catálogo (serviciosmd)
     que NO han sido ejecutados en el período filtrado.
-
-    Reglas de años:
-    • Sin años → año actual
-    • Un año → año exacto
-    • Dos años → rango real
     """
 
     from datetime import datetime
@@ -238,14 +233,12 @@ def servicios_no_ofrecidos(
     current_year = datetime.now().year
 
     # =====================================================
-    # NORMALIZACIÓN DE AÑOS (REGLA GLOBAL ERP-SOM)
+    # NORMALIZACIÓN DE AÑOS (ERP-SOM)
     # =====================================================
     if year_from and not year_to:
         year_to = year_from
-
     if year_to and not year_from:
         year_from = year_to
-
     if not year_from and not year_to:
         year_from = year_to = current_year
 
@@ -255,14 +248,13 @@ def servicios_no_ofrecidos(
     filtros = [
         "UPPER(TRIM(s.estado)) = 'FINALIZADO'",
         "s.fecha_inicio IS NOT NULL",
-        "EXTRACT(YEAR FROM s.fecha_inicio::date) BETWEEN %s AND %s"
+        "EXTRACT(YEAR FROM s.fecha_inicio::date) BETWEEN %s AND %s",
+        "s.operacion IS NOT NULL",
+        "TRIM(s.operacion) <> ''"
     ]
 
     params = [year_from, year_to]
 
-    # =====================================================
-    # FILTROS OPCIONALES (ROBUSTOS)
-    # =====================================================
     if continente:
         filtros.append("UPPER(TRIM(s.continente)) = UPPER(%s)")
         params.append(continente.strip())
@@ -292,7 +284,9 @@ def servicios_no_ofrecidos(
             SELECT 1
             FROM servicios s
             WHERE
-                UPPER(TRIM(s.operacion)) = UPPER(TRIM(md.nombre))
+                s.operacion IS NOT NULL
+                AND TRIM(s.operacion) <> ''
+                AND UPPER(TRIM(s.operacion)) = UPPER(TRIM(md.nombre))
                 AND {where_exec}
         )
         ORDER BY TRIM(md.nombre);
@@ -302,9 +296,6 @@ def servicios_no_ofrecidos(
     data = cur.fetchall()
     cur.close()
 
-    # =====================================================
-    # RESPONSE
-    # =====================================================
     return {
         "filters": {
             "year_from": year_from,
