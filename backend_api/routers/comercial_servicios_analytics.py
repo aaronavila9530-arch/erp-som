@@ -194,7 +194,7 @@ def servicios_analytics_by_servicio(
 
 
 # ============================================================
-# SERVICIOS NO OFRECIDOS (CATÁLOGO VS OPERACIÓN) — BLINDADO + QUARTER
+# SERVICIOS NO OFRECIDOS (CATÁLOGO VS OPERACIÓN) — ERP-SOM
 # ============================================================
 @router.get(
     "/not-offered",
@@ -203,6 +203,7 @@ def servicios_analytics_by_servicio(
 def servicios_no_ofrecidos(
     year_from: Optional[int] = Query(None),
     year_to: Optional[int] = Query(None),
+    quarter: Optional[str] = Query(None),   # 👈 NUEVO
     continente: Optional[str] = Query(None),
     pais: Optional[str] = Query(None),
     puerto: Optional[str] = Query(None),
@@ -214,7 +215,7 @@ def servicios_no_ofrecidos(
     current_year = datetime.now().year
 
     # =====================================================
-    # NORMALIZACIÓN DE AÑOS (ERP-SOM)
+    # NORMALIZACIÓN DE AÑOS
     # =====================================================
     if year_from and not year_to:
         year_to = year_from
@@ -237,7 +238,16 @@ def servicios_no_ofrecidos(
     params = [year_from, year_to]
 
     # =====================================================
-    # FILTROS OPCIONALES
+    # QUARTER (CRÍTICO)
+    # =====================================================
+    if quarter:
+        filtros.append(
+            "EXTRACT(QUARTER FROM s.fecha_inicio::date) = %s"
+        )
+        params.append(int(quarter.replace("Q", "")))
+
+    # =====================================================
+    # FILTROS GEO
     # =====================================================
     if continente:
         filtros.append("UPPER(TRIM(s.continente)) = UPPER(%s)")
@@ -254,7 +264,7 @@ def servicios_no_ofrecidos(
     where_exec = " AND ".join(filtros)
 
     # =====================================================
-    # QUARTERS DISPONIBLES (DESDE SERVICIOS EJECUTADOS)
+    # QUARTERS DISPONIBLES (DINÁMICOS)
     # =====================================================
     sql_quarters = f"""
         SELECT DISTINCT
@@ -268,7 +278,7 @@ def servicios_no_ofrecidos(
     available_quarters = [r["quarter"] for r in cur.fetchall()]
 
     # =====================================================
-    # SQL — SERVICIOS NO OFRECIDOS
+    # SERVICIOS NO OFRECIDOS (LÓGICA CORRECTA)
     # =====================================================
     sql = f"""
         SELECT
@@ -276,12 +286,7 @@ def servicios_no_ofrecidos(
             md.codigo,
             md.codigoprod,
             TRIM(md.nombre) AS servicio,
-
-            COALESCE(
-                NULLIF(md.costo, '')::NUMERIC,
-                0
-            ) AS costo_base
-
+            COALESCE(NULLIF(md.costo, '')::NUMERIC, 0) AS costo_base
         FROM serviciosmd md
         WHERE NOT EXISTS (
             SELECT 1
@@ -301,6 +306,7 @@ def servicios_no_ofrecidos(
         "filters": {
             "year_from": year_from,
             "year_to": year_to,
+            "quarter": quarter,
             "continente": continente,
             "pais": pais,
             "puerto": puerto,
@@ -311,7 +317,7 @@ def servicios_no_ofrecidos(
     }
 
 # ============================================================
-# COSTOS POR SURVEYOR — BLINDADO FINAL + QUARTER (ERP-SOM)
+# COSTOS POR SURVEYOR — FECHA HÍBRIDA ERP-SOM
 # ============================================================
 @router.get(
     "/costos-por-surveyor",
@@ -322,126 +328,82 @@ def costos_por_surveyor(
     year_to: Optional[int] = Query(None),
     conn=Depends(get_db)
 ):
-    """
-    Analiza costos y rentabilidad generados por surveyor.
-
-    Reglas de años:
-    • Sin años → año actual
-    • Un año → año exacto
-    • Dos años → rango real
-    • Facturación neta de IVA (Costa Rica 13%)
-    """
-
     from datetime import datetime
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     current_year = datetime.now().year
 
-    # =====================================================
-    # NORMALIZACIÓN DE AÑOS (REGLA GLOBAL ERP-SOM)
-    # =====================================================
+    # ---------------- NORMALIZACIÓN AÑOS ----------------
     if year_from and not year_to:
         year_to = year_from
-
     if year_to and not year_from:
         year_from = year_to
-
     if not year_from and not year_to:
         year_from = year_to = current_year
 
-    # =====================================================
-    # FILTROS BASE (BLINDADOS DE VERDAD)
-    # =====================================================
+    # ---------------- FECHA ANALÍTICA ----------------
+    fecha_analitica = """
+        CASE
+            WHEN EXTRACT(YEAR FROM s.fecha_inicio::date) >= 2026
+                 AND s.fecha_inicio IS NOT NULL
+            THEN s.fecha_inicio::date
+
+            WHEN s.num_informe ~ '^[0-9]+-[0-9]{4}-[0-9]{4}$'
+            THEN TO_DATE(
+                RIGHT(s.num_informe, 4) || '-' ||
+                SUBSTRING(s.num_informe FROM '[0-9]{4}-(\\d{2})(\\d{2})-' FOR '#"\\1"') || '-' ||
+                SUBSTRING(s.num_informe FROM '[0-9]{4}-(\\d{2})(\\d{2})-' FOR '#"\\2"'),
+                'YYYY-MM-DD'
+            )
+
+            ELSE NULL
+        END
+    """
+
     filtros = [
         "UPPER(TRIM(s.estado)) = 'FINALIZADO'",
-        "s.fecha_inicio IS NOT NULL",
-        "EXTRACT(YEAR FROM s.fecha_inicio::date) BETWEEN %s AND %s",
+        f"{fecha_analitica} IS NOT NULL",
+        f"EXTRACT(YEAR FROM {fecha_analitica}) BETWEEN %s AND %s",
         "s.surveyor IS NOT NULL",
         "TRIM(s.surveyor) <> ''"
     ]
 
     params = [year_from, year_to]
-
     where_clause = " AND ".join(filtros)
 
-    # =====================================================
-    # QUARTERS DISPONIBLES (DESDE SERVICIOS)
-    # =====================================================
+    # ---------------- QUARTERS DISPONIBLES ----------------
     sql_quarters = f"""
         SELECT DISTINCT
-            'Q' || EXTRACT(QUARTER FROM s.fecha_inicio::date) AS quarter
+            'Q' || EXTRACT(QUARTER FROM {fecha_analitica}) AS quarter
         FROM servicios s
         WHERE {where_clause}
         ORDER BY quarter;
     """
-
     cur.execute(sql_quarters, tuple(params))
     available_quarters = [r["quarter"] for r in cur.fetchall()]
 
-    # =====================================================
-    # SQL — COSTOS POR SURVEYOR
-    # =====================================================
+    # ---------------- COSTOS POR SURVEYOR ----------------
     sql = f"""
         SELECT
             UPPER(TRIM(s.surveyor)) AS surveyor,
+            COUNT(*) AS total_servicios,
 
-            COUNT(s.consec) AS total_servicios,
+            SUM(COALESCE(s.honorarios, 0)) AS honorarios_total,
+            SUM(COALESCE(s.costo_operativo, 0)) AS costo_operativo_total,
+            SUM(COALESCE(s.honorarios, 0) + COALESCE(s.costo_operativo, 0)) AS costo_total,
 
-            -- COSTOS
-            SUM(COALESCE(s.honorarios, 0))               AS honorarios_total,
-            AVG(COALESCE(s.honorarios, 0))               AS honorarios_promedio,
-            SUM(COALESCE(s.costo_operativo, 0))          AS costo_operativo_total,
-            SUM(
-                COALESCE(s.honorarios, 0) +
-                COALESCE(s.costo_operativo, 0)
-            )                                            AS costo_total,
-
-            -- FACTURACIÓN
-            SUM(COALESCE(s.valor_factura, 0))            AS revenue_bruto_total,
+            SUM(COALESCE(s.valor_factura, 0)) AS revenue_bruto_total,
 
             SUM(
                 CASE
-                    WHEN s.pais = 'Costa Rica'
+                    WHEN UPPER(TRIM(s.pais)) = 'COSTA RICA'
                     THEN COALESCE(s.valor_factura, 0) / 1.13
                     ELSE COALESCE(s.valor_factura, 0)
                 END
-            )                                            AS revenue_neto_total,
-
-            -- IVA
-            SUM(
-                CASE
-                    WHEN s.pais = 'Costa Rica'
-                    THEN COALESCE(s.valor_factura, 0)
-                             - (COALESCE(s.valor_factura, 0) / 1.13)
-                    ELSE 0
-                END
-            )                                            AS iva_total,
-
-            -- MÁRGENES
-            SUM(
-                CASE
-                    WHEN s.pais = 'Costa Rica'
-                    THEN COALESCE(s.valor_factura, 0) / 1.13
-                    ELSE COALESCE(s.valor_factura, 0)
-                END
-            )
-            - SUM(COALESCE(s.costo_operativo, 0))        AS margen_bruto,
-
-            SUM(
-                CASE
-                    WHEN s.pais = 'Costa Rica'
-                    THEN COALESCE(s.valor_factura, 0) / 1.13
-                    ELSE COALESCE(s.valor_factura, 0)
-                END
-            )
-            - SUM(
-                COALESCE(s.honorarios, 0) +
-                COALESCE(s.costo_operativo, 0)
-            )                                            AS margen_neto
+            ) AS revenue_neto_total
 
         FROM servicios s
         WHERE {where_clause}
-
         GROUP BY UPPER(TRIM(s.surveyor))
         ORDER BY honorarios_total DESC;
     """
@@ -450,22 +412,19 @@ def costos_por_surveyor(
     data = cur.fetchall()
     cur.close()
 
-    # =====================================================
-    # RESPONSE
-    # =====================================================
     return {
         "filters": {
             "year_from": year_from,
             "year_to": year_to,
-            "available_quarters": available_quarters
+            "available_quarters": available_quarters,
+            "fecha_regla": ">=2026 fecha_inicio | <=2025 num_informe"
         },
         "total_surveyors": len(data),
         "data": data
     }
 
-
 # ============================================================
-# SERVICIOS POR PAÍS / PUERTO — BLINDADO FINAL + QUARTER (ERP-SOM)
+# SERVICIOS POR PAÍS / PUERTO — FECHA HÍBRIDA ERP-SOM
 # ============================================================
 @router.get(
     "/por-ubicacion",
@@ -480,12 +439,9 @@ def servicios_por_ubicacion(
     Analiza volumen, revenue, costos y rentabilidad
     por continente / país / puerto.
 
-    Reglas:
-    • Sin años → año actual
-    • Un año → año exacto
-    • Ambos → rango real
-    • Solo servicios FINALIZADOS
-    • Facturación neta de IVA (Costa Rica 13%)
+    Regla de fecha analítica:
+    • >= 2026 → fecha_inicio
+    • <= 2025 → num_informe (XXXX-DDMM-YYYY)
     """
 
     from datetime import datetime
@@ -494,24 +450,43 @@ def servicios_por_ubicacion(
     current_year = datetime.now().year
 
     # =====================================================
-    # NORMALIZACIÓN DE AÑOS (REGLA GLOBAL ERP-SOM)
+    # NORMALIZACIÓN DE AÑOS (ERP-SOM)
     # =====================================================
     if year_from and not year_to:
         year_to = year_from
-
     if year_to and not year_from:
         year_from = year_to
-
     if not year_from and not year_to:
         year_from = year_to = current_year
 
     # =====================================================
-    # FILTROS BASE (BLINDADOS DE VERDAD)
+    # FECHA ANALÍTICA (HÍBRIDA)
+    # =====================================================
+    fecha_analitica = """
+        CASE
+            WHEN s.fecha_inicio IS NOT NULL
+                 AND EXTRACT(YEAR FROM s.fecha_inicio::date) >= 2026
+            THEN s.fecha_inicio::date
+
+            WHEN s.num_informe ~ '^[0-9]+-[0-9]{4}-[0-9]{4}$'
+            THEN TO_DATE(
+                RIGHT(s.num_informe, 4) || '-' ||
+                SUBSTRING(s.num_informe FROM '[0-9]+-(\\d{2})(\\d{2})-' FOR '#"\\1"') || '-' ||
+                SUBSTRING(s.num_informe FROM '[0-9]+-(\\d{2})(\\d{2})-' FOR '#"\\2"'),
+                'YYYY-MM-DD'
+            )
+
+            ELSE NULL
+        END
+    """
+
+    # =====================================================
+    # FILTROS BASE (BLINDADOS)
     # =====================================================
     filtros = [
         "UPPER(TRIM(s.estado)) = 'FINALIZADO'",
-        "s.fecha_inicio IS NOT NULL",
-        "EXTRACT(YEAR FROM s.fecha_inicio::date) BETWEEN %s AND %s",
+        f"{fecha_analitica} IS NOT NULL",
+        f"EXTRACT(YEAR FROM {fecha_analitica}) BETWEEN %s AND %s",
         "s.continente IS NOT NULL",
         "s.pais IS NOT NULL",
         "s.puerto IS NOT NULL",
@@ -521,15 +496,14 @@ def servicios_por_ubicacion(
     ]
 
     params = [year_from, year_to]
-
     where_clause = " AND ".join(filtros)
 
     # =====================================================
-    # QUARTERS DISPONIBLES (DESDE SERVICIOS)
+    # QUARTERS DISPONIBLES (DINÁMICOS)
     # =====================================================
     sql_quarters = f"""
         SELECT DISTINCT
-            'Q' || EXTRACT(QUARTER FROM s.fecha_inicio::date) AS quarter
+            'Q' || EXTRACT(QUARTER FROM {fecha_analitica}) AS quarter
         FROM servicios s
         WHERE {where_clause}
         ORDER BY quarter;
@@ -623,11 +597,13 @@ def servicios_por_ubicacion(
         "filters": {
             "year_from": year_from,
             "year_to": year_to,
-            "available_quarters": available_quarters
+            "available_quarters": available_quarters,
+            "fecha_regla": ">=2026 fecha_inicio | <=2025 num_informe"
         },
         "total_ubicaciones": len(data),
         "data": data
     }
+
 
 # ============================================================
 # KPIs EJECUTIVOS — SERVICIOS (BLINDADO FINAL + QUARTER)
