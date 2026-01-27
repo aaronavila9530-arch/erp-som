@@ -28,7 +28,7 @@ router = APIRouter(
 
 
 # ============================================================
-# ANALYTICS — RENTABILIDAD POR SERVICIO (PATRÓN OFICIAL)
+# ANALYTICS — RENTABILIDAD POR SERVICIO (PATRÓN OFICIAL + QUARTER)
 # ============================================================
 @router.get(
     "/by-servicio",
@@ -85,11 +85,15 @@ def servicios_analytics_by_servicio(
     where_clause = " AND ".join(filtros)
 
     # =====================================================
-    # SQL PRINCIPAL
+    # SQL PRINCIPAL (CON QUARTER)
     # =====================================================
     sql = f"""
         SELECT
             TRIM(s.operacion) AS servicio,
+
+            -- 🔹 QUARTER CALCULADO DESDE fecha_inicio
+            'Q' || EXTRACT(QUARTER FROM s.fecha_inicio::date) AS quarter,
+
             COUNT(s.consec) AS cantidad_servicios,
 
             SUM(COALESCE(s.valor_factura, 0)) AS revenue_bruto_total,
@@ -157,7 +161,10 @@ def servicios_analytics_by_servicio(
 
         FROM servicios s
         WHERE {where_clause}
-        GROUP BY TRIM(s.operacion)
+        GROUP BY
+            TRIM(s.operacion),
+            EXTRACT(QUARTER FROM s.fecha_inicio::date)
+
         ORDER BY revenue_neto_total DESC;
     """
 
@@ -165,50 +172,29 @@ def servicios_analytics_by_servicio(
     data = cur.fetchall()
 
     # =====================================================
-    # METADATA GLOBAL
+    # METADATA TEMPORAL (QUARTERS DISPONIBLES)
     # =====================================================
-    meta_sql = """
-        SELECT
-            ARRAY_AGG(
-                DISTINCT EXTRACT(YEAR FROM fecha_inicio::date)::INT
-                ORDER BY EXTRACT(YEAR FROM fecha_inicio::date)::INT DESC
-            ) AS years,
+    available_quarters = sorted({
+        r["quarter"] for r in data if r.get("quarter")
+    })
 
-            ARRAY_AGG(DISTINCT TRIM(continente))
-                FILTER (WHERE continente IS NOT NULL AND TRIM(continente) <> '') AS continentes,
-
-            ARRAY_AGG(DISTINCT TRIM(pais))
-                FILTER (WHERE pais IS NOT NULL AND TRIM(pais) <> '') AS paises,
-
-            ARRAY_AGG(DISTINCT TRIM(puerto))
-                FILTER (WHERE puerto IS NOT NULL AND TRIM(puerto) <> '') AS puertos,
-
-            ARRAY_AGG(DISTINCT TRIM(operacion))
-                FILTER (WHERE operacion IS NOT NULL AND TRIM(operacion) <> '') AS servicios
-        FROM servicios
-        WHERE fecha_inicio IS NOT NULL;
-    """
-
-    cur.execute(meta_sql)
-    meta = cur.fetchone() or {}
     cur.close()
 
     return {
         "filters": {
             "year_from": year_from,
             "year_to": year_to,
-            "available_years": meta.get("years", []),
-            "continentes": meta.get("continentes", []),
-            "paises": meta.get("paises", []),
-            "puertos": meta.get("puertos", []),
-            "servicios": meta.get("servicios", [])
+            "continente": continente,
+            "pais": pais,
+            "puerto": puerto,
+            "available_quarters": available_quarters
         },
-        "total": len(data),
         "data": data
     }
 
+
 # ============================================================
-# SERVICIOS NO OFRECIDOS (CATÁLOGO VS OPERACIÓN) — BLINDADO FINAL
+# SERVICIOS NO OFRECIDOS (CATÁLOGO VS OPERACIÓN) — BLINDADO + QUARTER
 # ============================================================
 @router.get(
     "/not-offered",
@@ -268,6 +254,20 @@ def servicios_no_ofrecidos(
     where_exec = " AND ".join(filtros)
 
     # =====================================================
+    # QUARTERS DISPONIBLES (DESDE SERVICIOS EJECUTADOS)
+    # =====================================================
+    sql_quarters = f"""
+        SELECT DISTINCT
+            'Q' || EXTRACT(QUARTER FROM s.fecha_inicio::date) AS quarter
+        FROM servicios s
+        WHERE {where_exec}
+        ORDER BY quarter;
+    """
+
+    cur.execute(sql_quarters, tuple(params))
+    available_quarters = [r["quarter"] for r in cur.fetchall()]
+
+    # =====================================================
     # SQL — SERVICIOS NO OFRECIDOS
     # =====================================================
     sql = f"""
@@ -303,14 +303,15 @@ def servicios_no_ofrecidos(
             "year_to": year_to,
             "continente": continente,
             "pais": pais,
-            "puerto": puerto
+            "puerto": puerto,
+            "available_quarters": available_quarters
         },
         "total_no_ofrecidos": len(data),
         "data": data
     }
 
 # ============================================================
-# COSTOS POR SURVEYOR — BLINDADO FINAL (PATRÓN ERP-SOM)
+# COSTOS POR SURVEYOR — BLINDADO FINAL + QUARTER (ERP-SOM)
 # ============================================================
 @router.get(
     "/costos-por-surveyor",
@@ -362,6 +363,20 @@ def costos_por_surveyor(
     params = [year_from, year_to]
 
     where_clause = " AND ".join(filtros)
+
+    # =====================================================
+    # QUARTERS DISPONIBLES (DESDE SERVICIOS)
+    # =====================================================
+    sql_quarters = f"""
+        SELECT DISTINCT
+            'Q' || EXTRACT(QUARTER FROM s.fecha_inicio::date) AS quarter
+        FROM servicios s
+        WHERE {where_clause}
+        ORDER BY quarter;
+    """
+
+    cur.execute(sql_quarters, tuple(params))
+    available_quarters = [r["quarter"] for r in cur.fetchall()]
 
     # =====================================================
     # SQL — COSTOS POR SURVEYOR
@@ -441,14 +456,16 @@ def costos_por_surveyor(
     return {
         "filters": {
             "year_from": year_from,
-            "year_to": year_to
+            "year_to": year_to,
+            "available_quarters": available_quarters
         },
         "total_surveyors": len(data),
         "data": data
     }
 
+
 # ============================================================
-# SERVICIOS POR PAÍS / PUERTO — BLINDADO FINAL (PATRÓN ERP-SOM)
+# SERVICIOS POR PAÍS / PUERTO — BLINDADO FINAL + QUARTER (ERP-SOM)
 # ============================================================
 @router.get(
     "/por-ubicacion",
@@ -506,6 +523,20 @@ def servicios_por_ubicacion(
     params = [year_from, year_to]
 
     where_clause = " AND ".join(filtros)
+
+    # =====================================================
+    # QUARTERS DISPONIBLES (DESDE SERVICIOS)
+    # =====================================================
+    sql_quarters = f"""
+        SELECT DISTINCT
+            'Q' || EXTRACT(QUARTER FROM s.fecha_inicio::date) AS quarter
+        FROM servicios s
+        WHERE {where_clause}
+        ORDER BY quarter;
+    """
+
+    cur.execute(sql_quarters, tuple(params))
+    available_quarters = [r["quarter"] for r in cur.fetchall()]
 
     # =====================================================
     # SQL — SERVICIOS POR UBICACIÓN
@@ -591,14 +622,15 @@ def servicios_por_ubicacion(
     return {
         "filters": {
             "year_from": year_from,
-            "year_to": year_to
+            "year_to": year_to,
+            "available_quarters": available_quarters
         },
         "total_ubicaciones": len(data),
         "data": data
     }
 
 # ============================================================
-# KPIs EJECUTIVOS — SERVICIOS (BLINDADO FINAL)
+# KPIs EJECUTIVOS — SERVICIOS (BLINDADO FINAL + QUARTER)
 # ============================================================
 @router.get(
     "/kpis",
@@ -622,6 +654,7 @@ def servicios_kpis_ejecutivos(
     • Ambos → rango real
     • KPIs sobre servicios FINALIZADOS
     • Revenue neto de IVA (Costa Rica 13%)
+    • Quarter calculado desde fecha_inicio (Q1–Q4)
     """
 
     from datetime import datetime
@@ -674,6 +707,20 @@ def servicios_kpis_ejecutivos(
         params["operacion"] = operacion.strip()
 
     where_clause = " AND ".join(filtros)
+
+    # =====================================================
+    # QUARTERS DISPONIBLES (DESDE SERVICIOS)
+    # =====================================================
+    sql_quarters = f"""
+        SELECT DISTINCT
+            'Q' || EXTRACT(QUARTER FROM s.fecha_inicio::date) AS quarter
+        FROM servicios s
+        WHERE {where_clause}
+        ORDER BY quarter;
+    """
+
+    cur.execute(sql_quarters, params)
+    available_quarters = [r["quarter"] for r in cur.fetchall()]
 
     # =====================================================
     # SQL — KPIs EJECUTIVOS
@@ -787,7 +834,8 @@ def servicios_kpis_ejecutivos(
     return {
         "filters": {
             "year_from": year_from,
-            "year_to": year_to
+            "year_to": year_to,
+            "available_quarters": available_quarters
         },
         "kpis": {
             "total_servicios": kpis.get("total_servicios", 0),
@@ -811,7 +859,7 @@ def servicios_kpis_ejecutivos(
 
 
 # ============================================================
-# COSTOS POR SURVEYOR — PARETO 80/20 (ERP-SOM)
+# COSTOS POR SURVEYOR — PARETO 80/20 (ERP-SOM + QUARTER)
 # ============================================================
 from typing import Optional
 from fastapi import Query, Depends
@@ -833,7 +881,8 @@ def costos_surveyor_pareto(
 
     • Año exacto (por fecha_inicio)
     • Filtro opcional por operación
-    • Expone available_years para UI (combobox)
+    • Quarter calculado desde fecha_inicio (Q1–Q4)
+    • Expone available_years y available_quarters para UI
     """
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -851,12 +900,27 @@ def costos_surveyor_pareto(
 
     available_years = [r["year"] for r in cur.fetchall() if r["year"]]
 
-    # Año por defecto = año actual (si UI no envía)
+    # Año por defecto = año actual
     current_year = datetime.now().year
     year = year or current_year
 
     # =========================================================
-    # 2️⃣ FILTROS BASE
+    # 2️⃣ QUARTERS DISPONIBLES (METADATA PARA UI)
+    # =========================================================
+    cur.execute("""
+        SELECT DISTINCT
+            'Q' || EXTRACT(QUARTER FROM fecha_inicio::date) AS quarter
+        FROM servicios
+        WHERE
+            fecha_inicio IS NOT NULL
+            AND EXTRACT(YEAR FROM fecha_inicio::date) = %s
+        ORDER BY quarter;
+    """, (year,))
+
+    available_quarters = [r["quarter"] for r in cur.fetchall()]
+
+    # =========================================================
+    # 3️⃣ FILTROS BASE (BLINDADOS)
     # =========================================================
     filtros = [
         "UPPER(TRIM(s.estado)) = 'FINALIZADO'",
@@ -875,7 +939,7 @@ def costos_surveyor_pareto(
     where_clause = " AND ".join(filtros)
 
     # =========================================================
-    # 3️⃣ QUERY PRINCIPAL · PARETO
+    # 4️⃣ QUERY PRINCIPAL · PARETO 80/20
     # =========================================================
     sql = f"""
         WITH base AS (
@@ -930,13 +994,14 @@ def costos_surveyor_pareto(
     cur.close()
 
     # =========================================================
-    # 4️⃣ RESPONSE FINAL (UI-FRIENDLY)
+    # 5️⃣ RESPONSE FINAL (UI-FRIENDLY)
     # =========================================================
     return {
         "filters": {
             "year": year,
             "operacion": operacion,
-            "available_years": available_years
+            "available_years": available_years,
+            "available_quarters": available_quarters
         },
         "total_surveyors": len({r["surveyor"] for r in data}),
         "data": data
