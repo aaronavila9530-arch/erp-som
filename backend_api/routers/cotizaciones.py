@@ -36,17 +36,23 @@ router = APIRouter(
 
 class CotizacionCreate(BaseModel):
     cliente: str
-    servicio: str
+    servicio: Optional[str] = None
     continente: Optional[str] = None
     pais: Optional[str] = None
     puerto: Optional[str] = None
-    precio: float
-    moneda: Optional[str] = "USD"
-    fecha_servicio: Optional[date] = None
-    validez_dias: Optional[int] = 15
-    terminos_pago: Optional[str] = "15 días"
-    idioma: str  # ES | EN
-    texto_cotizacion: str
+    precio: Optional[float] = None
+    idioma: Optional[str] = "ES"
+    validez: Optional[int] = 15
+    status: Optional[str] = "ACTIVA"
+
+    servicio_1: Optional[str] = None
+    precio_1: Optional[float] = None
+    servicio_2: Optional[str] = None
+    precio_2: Optional[float] = None
+    servicio_3: Optional[str] = None
+    precio_3: Optional[float] = None
+    servicio_4: Optional[str] = None
+    precio_4: Optional[float] = None
 
 
 class CotizacionUpdate(BaseModel):
@@ -56,13 +62,20 @@ class CotizacionUpdate(BaseModel):
     pais: Optional[str] = None
     puerto: Optional[str] = None
     precio: Optional[float] = None
-    moneda: Optional[str] = None
-    fecha_servicio: Optional[date] = None
-    validez_dias: Optional[int] = None
-    terminos_pago: Optional[str] = None
     idioma: Optional[str] = None
-    texto_cotizacion: Optional[str] = None
-    estado: Optional[str] = None
+    validez: Optional[int] = None
+    status: Optional[str] = None
+
+    servicio_1: Optional[str] = None
+    precio_1: Optional[float] = None
+    servicio_2: Optional[str] = None
+    precio_2: Optional[float] = None
+    servicio_3: Optional[str] = None
+    precio_3: Optional[float] = None
+    servicio_4: Optional[str] = None
+    precio_4: Optional[float] = None
+
+    razon_cancelacion: Optional[str] = None
 
 
 # ============================================================
@@ -150,21 +163,18 @@ def listar_cotizaciones(conn=Depends(get_db)):
     cur.execute("""
         SELECT
             id,
-            codigo_cotizacion,
+            quotation_number,
             cliente,
             servicio,
             continente,
             pais,
             puerto,
             precio,
-            moneda,
-            fecha_servicio,
-            validez_dias,
-            terminos_pago,
             idioma,
-            estado,
+            validez,
+            status,
             created_at
-        FROM comercial.cotizaciones
+        FROM public.cotizaciones
         ORDER BY created_at DESC;
     """)
 
@@ -174,6 +184,39 @@ def listar_cotizaciones(conn=Depends(get_db)):
     return {
         "total": len(data),
         "data": data
+    }
+
+# ============================================================
+# Consecutivo Cotización
+# ============================================================
+
+@router.get(
+    "/next-quotation-number",
+    dependencies=[Depends(require_permission("comercial", "edit"))]
+)
+def get_next_quotation_number(conn=Depends(get_db)):
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT quotation_number
+        FROM public.cotizaciones
+        ORDER BY id DESC
+        LIMIT 1
+        FOR UPDATE;
+    """)
+
+    row = cur.fetchone()
+
+    if row and row[0]:
+        last_num = int(row[0].replace("Quotation", "").strip())
+        next_num = last_num + 1
+    else:
+        next_num = 1
+
+    cur.close()
+
+    return {
+        "quotation_number": f"Quotation {next_num:05d}"
     }
 
 
@@ -188,48 +231,45 @@ def listar_cotizaciones(conn=Depends(get_db)):
 def crear_cotizacion(payload: CotizacionCreate, conn=Depends(get_db)):
     cur = conn.cursor()
 
+    cur.execute("""
+        SELECT quotation_number
+        FROM public.cotizaciones
+        ORDER BY id DESC
+        LIMIT 1
+        FOR UPDATE;
+    """)
+
+    row = cur.fetchone()
+    next_num = int(row[0].replace("Quotation", "").strip()) + 1 if row else 1
+    quotation_number = f"Quotation {next_num:05d}"
+
     sql = """
-        INSERT INTO comercial.cotizaciones (
-            cliente,
-            servicio,
-            continente,
-            pais,
-            puerto,
-            precio,
-            moneda,
-            fecha_servicio,
-            validez_dias,
-            terminos_pago,
-            idioma,
-            texto_cotizacion
+        INSERT INTO public.cotizaciones (
+            cliente, servicio, continente, pais, puerto,
+            precio, idioma, validez, status,
+            servicio_1, precio_1, servicio_2, precio_2,
+            servicio_3, precio_3, servicio_4, precio_4,
+            quotation_number
         )
         VALUES (
-            %(cliente)s,
-            %(servicio)s,
-            %(continente)s,
-            %(pais)s,
-            %(puerto)s,
-            %(precio)s,
-            %(moneda)s,
-            %(fecha_servicio)s,
-            %(validez_dias)s,
-            %(terminos_pago)s,
-            %(idioma)s,
-            %(texto_cotizacion)s
+            %(cliente)s, %(servicio)s, %(continente)s, %(pais)s, %(puerto)s,
+            %(precio)s, %(idioma)s, %(validez)s, %(status)s,
+            %(servicio_1)s, %(precio_1)s, %(servicio_2)s, %(precio_2)s,
+            %(servicio_3)s, %(precio_3)s, %(servicio_4)s, %(precio_4)s,
+            %(quotation_number)s
         )
-        RETURNING id, codigo_cotizacion;
+        RETURNING id, quotation_number;
     """
 
-    cur.execute(sql, payload.dict())
+    params = payload.dict()
+    params["quotation_number"] = quotation_number
+
+    cur.execute(sql, params)
     row = cur.fetchone()
     conn.commit()
     cur.close()
 
-    return {
-        "status": "OK",
-        "id": row[0],
-        "codigo": row[1]
-    }
+    return {"status": "OK", "id": row[0], "quotation_number": row[1]}
 
 
 # ============================================================
@@ -260,7 +300,7 @@ def actualizar_cotizacion(
     fields.append("updated_at = NOW()")
 
     sql = f"""
-        UPDATE comercial.cotizaciones
+        UPDATE public.cotizaciones
         SET {", ".join(fields)}
         WHERE id = %(id)s;
     """
@@ -284,7 +324,7 @@ def eliminar_cotizacion(cotizacion_id: int, conn=Depends(get_db)):
     cur = conn.cursor()
 
     cur.execute("""
-        DELETE FROM comercial.cotizaciones
+        DELETE FROM public.cotizaciones
         WHERE id = %s;
     """, (cotizacion_id,))
 
