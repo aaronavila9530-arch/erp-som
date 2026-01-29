@@ -397,3 +397,76 @@ def eliminar_cotizacion(cotizacion_id: int, conn=Depends(get_db)):
     cur.close()
 
     return {"status": "OK"}
+
+
+
+# ============================================================
+# GET — KPIs COTIZACIONES COMERCIALES
+# ============================================================
+
+@router.get(
+    "/kpis",
+    dependencies=[Depends(require_permission("comercial", "view"))]
+)
+def get_cotizaciones_kpis(
+    year: int | None = None,
+    cliente: str | None = None,
+    servicio: str | None = None,
+    pais: str | None = None,
+    puerto: str | None = None,
+    status: str | None = None,
+    conn=Depends(get_db)
+):
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+
+    filters = []
+    params = {}
+
+    if year:
+        filters.append("EXTRACT(YEAR FROM updated_at) = %(year)s")
+        params["year"] = year
+
+    if cliente:
+        filters.append("cliente = %(cliente)s")
+        params["cliente"] = cliente
+
+    if servicio:
+        filters.append("servicio = %(servicio)s")
+        params["servicio"] = servicio
+
+    if pais:
+        filters.append("pais = %(pais)s")
+        params["pais"] = pais
+
+    if puerto:
+        filters.append("puerto = %(puerto)s")
+        params["puerto"] = puerto
+
+    if status:
+        filters.append("status = %(status)s")
+        params["status"] = status
+
+    where_clause = f"WHERE {' AND '.join(filters)}" if filters else ""
+
+    sql = f"""
+        SELECT
+            COUNT(DISTINCT cliente)                     AS clientes,
+            COUNT(DISTINCT servicio)                    AS servicios,
+            COUNT(DISTINCT pais)                        AS paises,
+            COUNT(DISTINCT puerto)                      AS puertos,
+            COUNT(*) FILTER (WHERE status = 'PENDIENTE') AS pendientes,
+            COUNT(*) FILTER (WHERE status = 'APROBADO')  AS aprobadas,
+            COUNT(*) FILTER (WHERE status = 'CANCELADO') AS canceladas
+        FROM public.cotizaciones
+        {where_clause};
+    """
+
+    cur.execute(sql, params)
+    result = cur.fetchone()
+    cur.close()
+
+    return {
+        "year": year,
+        "kpis": result
+    }
+
