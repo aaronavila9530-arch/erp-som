@@ -273,7 +273,7 @@ def crear_cotizacion(payload: CotizacionCreate, conn=Depends(get_db)):
 
 
 # ============================================================
-# PUT — ACTUALIZAR COTIZACIÓN
+# PUT — ACTUALIZAR COTIZACIÓN (STATUS / RAZÓN)
 # ============================================================
 
 @router.put(
@@ -285,17 +285,77 @@ def actualizar_cotizacion(
     payload: CotizacionUpdate,
     conn=Depends(get_db)
 ):
-    cur = conn.cursor()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
 
+    # --------------------------------------------------------
+    # Validar existencia de la cotización
+    # --------------------------------------------------------
+    cur.execute("""
+        SELECT id, status
+        FROM public.cotizaciones
+        WHERE id = %s;
+    """, (cotizacion_id,))
+
+    current = cur.fetchone()
+    if not current:
+        cur.close()
+        raise HTTPException(status_code=404, detail="Cotización no encontrada")
+
+    status_actual = current["status"]
+    data = payload.dict(exclude_unset=True)
+
+    if not data:
+        cur.close()
+        raise HTTPException(
+            status_code=400,
+            detail="No hay campos para actualizar"
+        )
+
+    # --------------------------------------------------------
+    # Validaciones de negocio sobre STATUS
+    # --------------------------------------------------------
+    nuevo_status = data.get("status")
+
+    if nuevo_status:
+        if nuevo_status not in ("PENDIENTE", "APROBADO", "CANCELADO"):
+            cur.close()
+            raise HTTPException(
+                status_code=400,
+                detail="Estado inválido"
+            )
+
+        # No permitir volver atrás
+        if status_actual == "APROBADO":
+            cur.close()
+            raise HTTPException(
+                status_code=400,
+                detail="Una cotización APROBADA no puede modificarse"
+            )
+
+        if status_actual == "CANCELADO":
+            cur.close()
+            raise HTTPException(
+                status_code=400,
+                detail="Una cotización CANCELADA no puede modificarse"
+            )
+
+        # Si se cancela → razón obligatoria
+        if nuevo_status == "CANCELADO" and not data.get("razon_cancelacion"):
+            cur.close()
+            raise HTTPException(
+                status_code=400,
+                detail="Debe indicar la razón de cancelación"
+            )
+
+    # --------------------------------------------------------
+    # Construcción segura del UPDATE
+    # --------------------------------------------------------
     fields = []
     params = {"id": cotizacion_id}
 
-    for k, v in payload.dict(exclude_unset=True).items():
+    for k, v in data.items():
         fields.append(f"{k} = %({k})s")
         params[k] = v
-
-    if not fields:
-        raise HTTPException(status_code=400, detail="No hay campos para actualizar")
 
     fields.append("updated_at = NOW()")
 
@@ -309,7 +369,10 @@ def actualizar_cotizacion(
     conn.commit()
     cur.close()
 
-    return {"status": "OK"}
+    return {
+        "status": "OK",
+        "id": cotizacion_id
+    }
 
 
 
