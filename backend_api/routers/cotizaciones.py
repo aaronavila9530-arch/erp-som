@@ -43,7 +43,7 @@ class CotizacionCreate(BaseModel):
     precio: Optional[float] = None
     idioma: Optional[str] = "ES"
     validez: Optional[int] = 15
-    status: Optional[str] = "ACTIVA"
+    status: Optional[str] = "PENDIENTE"
 
     servicio_1: Optional[str] = None
     precio_1: Optional[float] = None
