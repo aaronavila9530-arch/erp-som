@@ -7,55 +7,41 @@ from typing import Optional
 # =========================================================
 def _get_openai_client():
     """
-    Lazy loader del cliente OpenAI.
-    Evita que el backend crashee si la key no está configurada
-    o si el SDK no está disponible.
+    Lazy loader del cliente OpenAI (SDK v1).
     """
     api_key = os.getenv("OPENAI_API_KEY")
 
     if not api_key:
-        raise RuntimeError(
-            "OPENAI_API_KEY no está configurada en el entorno."
-        )
+        raise RuntimeError("OPENAI_API_KEY no está configurada en el entorno.")
 
     try:
         from openai import OpenAI
         return OpenAI(api_key=api_key)
     except Exception as e:
-        raise RuntimeError(
-            f"No se pudo inicializar OpenAI client: {str(e)}"
-        )
+        raise RuntimeError(f"No se pudo inicializar OpenAI client: {str(e)}")
 
 
 # =========================================================
-# PROMPT LOADER (INLINE, SIN PATHS)
+# PROMPT
 # =========================================================
 def load_container_prompt() -> str:
-    """
-    Prompt base para informes de inspección de contenedores.
-    Optimizado para uso en claims, P&I Clubs e informes técnicos.
-    """
     return """
 You are acting as a Senior Marine Surveyor and Maritime Consultant
 with over 20 years of professional experience in container inspections,
-cargo condition surveys, damage assessments, and maritime claims handling.
+cargo condition surveys, and maritime claims handling.
 
 You are fully conversant with standard practices applied by
 P&I Clubs, marine insurers, shipping lines, terminal operators,
-and survey companies.
+and port authorities.
 
 You write exclusively in formal British English,
-using precise, objective, and industry-accepted maritime
-and insurance terminology suitable for official survey reports.
+using precise maritime and insurance terminology.
 
-STRICT PROFESSIONAL RULES:
-- You do NOT invent facts
-- You do NOT introduce assumptions
-- You do NOT speculate on causes, responsibilities, or liability
-- You do NOT exaggerate findings
-- You only clarify, structure, and professionally formalise the text provided
+You do NOT invent facts.
+You do NOT add assumptions.
+You do NOT speculate or assign liability.
 
-Inspection Context (for reference only):
+Inspection Context:
 - Inspection Type: Container Inspection
 - Container Number: {{container_no}}
 - Cargo Description: {{cargo}}
@@ -67,22 +53,23 @@ Original Surveyor Draft:
 {{user_text}}
 \"\"\"
 
-INSTRUCTIONS:
-- Preserve the original meaning and factual content
-- Use third-person narrative at all times
-- Maintain a neutral, factual, and technical tone
-- Improve clarity, structure, grammar, and terminology
-- Use recognised maritime survey vocabulary
-- Do NOT introduce new findings, causes, opinions, or conclusions
+Rewrite the draft as a formal inspection narrative.
 
-OUTPUT FORMAT (MANDATORY):
+Rules:
+- Preserve the original meaning
+- Use third-person narrative
+- Maintain a neutral, factual, and technical tone
+- Do not invent findings, causes, or conclusions
+
+Return the output strictly in the following format:
+
 Inspection Narrative:
-<rewritten inspection narrative>
+<rewritten narrative>
 """.strip()
 
 
 # =========================================================
-# AI LOGIC (PRODUCTION SAFE)
+# AI LOGIC (RESPONSES API)
 # =========================================================
 def improve_container_text(
     user_text: str,
@@ -96,11 +83,9 @@ def improve_container_text(
         raise ValueError("El texto de entrada está vacío.")
 
     client = _get_openai_client()
-    prompt_template = load_container_prompt()
 
-    # Reemplazo seguro (NO usar .format)
     prompt = (
-        prompt_template
+        load_container_prompt()
         .replace("{{container_no}}", container_no or "N/A")
         .replace("{{cargo}}", cargo or "N/A")
         .replace("{{location}}", location or "N/A")
@@ -110,28 +95,21 @@ def improve_container_text(
 
     try:
         response = client.responses.create(
-            model="gpt-4.1-mini",
-            input=[
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ],
-            temperature=0.2
+            model="gpt-4o-mini",
+            input=prompt,
+            temperature=0.2,
+            max_output_tokens=600
         )
     except Exception as e:
-        raise RuntimeError(
-            f"Error llamando a OpenAI API: {str(e)}"
-        )
+        raise RuntimeError(f"Error llamando a OpenAI Responses API: {str(e)}")
 
-    # =====================================================
-    # BLINDAJE DE RESPUESTA
-    # =====================================================
-    output_text = getattr(response, "output_text", None)
+    # 🔒 Blindaje de salida
+    try:
+        output_text = response.output_text
+    except Exception:
+        raise RuntimeError("Respuesta inválida del modelo AI.")
 
     if not output_text or not output_text.strip():
-        raise RuntimeError(
-            "La respuesta del modelo AI está vacía o es inválida."
-        )
+        raise RuntimeError("La IA devolvió una respuesta vacía.")
 
     return output_text.strip()
