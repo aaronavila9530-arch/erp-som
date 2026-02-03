@@ -56,6 +56,7 @@ from routers.hr_policies import router as hr_policies_router
 
 # Informes
 from routers.reports_ai import router as reports_ai_router
+from routers.container_reports_router import router as container_reports_router
 
 # Comercial
 from routers.comercial import router as comercial_router
@@ -207,6 +208,7 @@ app.include_router(noticias.router)
 app.include_router(hr_policies_router)
 
 app.include_router(reports_ai_router)
+app.include_router(container_reports_router)
 
 app.include_router(comercial_router)
 app.include_router(comercial_clients_analytics_router)
