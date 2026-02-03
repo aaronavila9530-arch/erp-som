@@ -49,11 +49,7 @@ def create_container_report(payload: dict, conn=Depends(get_db)):
 # ============================================================
 
 @router.put("/{report_id}")
-def update_container_report(
-    report_id: int,
-    payload: dict,
-    conn=Depends(get_db)
-):
+def update_container_report(report_id: int, payload: dict, conn=Depends(get_db)):
     if not payload:
         raise HTTPException(status_code=400, detail="No data provided")
 
@@ -123,10 +119,6 @@ def get_container_reports(conn=Depends(get_db)):
         "total": len(data),
         "data": data
     }
-
-
-
-
 
 # ============================================================
 # GET — REPORTE POR ID
