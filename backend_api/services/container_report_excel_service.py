@@ -49,24 +49,24 @@ def generate_container_report_excel(report: dict) -> str:
     # =====================================================
     # HEADER / GENERAL
     # =====================================================
-    _safe_set(ws, "B4", report.get("report_no"))
-    _safe_set(ws, "E4", report.get("bl"))
-    _safe_set(ws, "B5", report.get("seals"))
-    _safe_set(ws, "E5", report.get("appointment"))
-    _safe_set(ws, "B6", report.get("shippers"))
+    _safe_set(ws, "AD3", report.get("report_no"))
+    _safe_set(ws, "E6", report.get("bl"))
+    _safe_set(ws, "E7", report.get("seals"))
+    _safe_set(ws, "E8", report.get("appointment"))
+    _safe_set(ws, "E9", report.get("shippers"))
 
-    _safe_set(ws, "B8", report.get("inspection_place"))
-    _safe_set(ws, "E8", report.get("contact_person"))
-    _safe_set(ws, "B9", report.get("on_behalf_of"))
-    _safe_set(ws, "E9", report.get("consignee_notify"))
+    _safe_set(ws, "Q5", report.get("inspection_place"))
+    _safe_set(ws, "Q6", report.get("contact_person"))
+    _safe_set(ws, "Z8", report.get("on_behalf_of"))
+    _safe_set(ws, "Z9", report.get("consignee_notify"))
 
-    _safe_set(ws, "B11", report.get("vessel"))
-    _safe_set(ws, "E11", report.get("contact_datetime"))
+    _safe_set(ws, "AB5", report.get("vessel"))
+    _safe_set(ws, "AD6", report.get("contact_datetime"))
 
-    _safe_set(ws, "B12", report.get("init_inspection_datetime"))
-    _safe_set(ws, "C12", report.get("init_to"))
-    _safe_set(ws, "E12", report.get("final_inspection_datetime"))
-    _safe_set(ws, "F12", report.get("final_to"))
+    _safe_set(ws, "P7", report.get("init_inspection_datetime"))
+    _safe_set(ws, "V7", report.get("init_to"))
+    _safe_set(ws, "AD7", report.get("final_inspection_datetime"))
+    _safe_set(ws, "AI7", report.get("final_to"))
 
     # =====================================================
     # CONTAINER DESCRIPTION (CHECKBOXES)
@@ -114,16 +114,16 @@ def generate_container_report_excel(report: dict) -> str:
     _safe_set(ws, "C29", report.get("qty_2"))
     _safe_set(ws, "D29", report.get("qty_3"))
 
-    _safe_set(ws, "B31", report.get("package_marking"))
-    _safe_set(ws, "B33", report.get("goods_condition"))
+    _safe_set(ws, "B22", report.get("package_marking"))
+    _safe_set(ws, "B25", report.get("goods_condition"))
 
     # =====================================================
     # NARRATIVES
     # =====================================================
-    _safe_set(ws, "B35", report.get("damage_details"))
-    _safe_set(ws, "B38", report.get("remarks"))
-    _safe_set(ws, "B41", report.get("conclusion"))
-    _safe_set(ws, "B44", report.get("picture_link"))
+    _safe_set(ws, "B27", report.get("damage_details"))
+    _safe_set(ws, "B31", report.get("remarks"))
+    _safe_set(ws, "B37", report.get("conclusion"))
+    _safe_set(ws, "B40", report.get("picture_link"))
 
     # =====================================================
     # DOCUMENTS
@@ -154,12 +154,9 @@ def generate_container_report_excel(report: dict) -> str:
     # =====================================================
     # PERSONS
     # =====================================================
-    _safe_set(ws, "B55", report.get("person_1"))
-    _safe_set(ws, "B56", report.get("person_2"))
-    _safe_set(ws, "B57", report.get("person_3"))
-
-    _safe_set(ws, "E55", report.get("created_at"))
-    _safe_set(ws, "E56", report.get("updated_at"))
+    _safe_set(ws, "C53", report.get("person_1"))
+    _safe_set(ws, "C54", report.get("person_2"))
+    _safe_set(ws, "C55", report.get("person_3"))
 
     # =====================================================
     # SAVE TEMP FILE
