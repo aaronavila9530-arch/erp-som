@@ -162,18 +162,38 @@ def download_container_report_excel(report_id: int, conn=Depends(get_db)):
     if not report:
         raise HTTPException(status_code=404, detail="Report not found")
 
+    # ---------------------------------------------------------
+    # Import DIFERIDO (evita crash en startup)
+    # ---------------------------------------------------------
+    try:
+        from services.container_report_excel_service import (
+            generate_container_report_excel
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Excel service not available. "
+                "Missing dependency (openpyxl).\n"
+                f"Detail: {e}"
+            )
+        )
+
+    # ---------------------------------------------------------
+    # Generar Excel desde template
+    # ---------------------------------------------------------
     try:
         file_path = generate_container_report_excel(report)
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"Error generating Excel: {e}"
+            detail=f"Error generating Excel file: {e}"
         )
 
     filename = f"Container_Report_{report.get('report_no') or report_id}.xlsx"
 
     return FileResponse(
-        file_path,
+        path=file_path,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         filename=filename
     )
