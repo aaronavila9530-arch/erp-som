@@ -9,7 +9,6 @@ from psycopg2.extras import RealDictCursor
 from datetime import datetime
 
 from database import get_db
-from services.container_report_excel_service import generate_container_report_excel
 
 router = APIRouter(
     prefix="/container-reports",
@@ -41,10 +40,7 @@ def create_container_report(payload: dict, conn=Depends(get_db)):
     conn.commit()
     cur.close()
 
-    return {
-        "success": True,
-        "id": row[0]
-    }
+    return {"success": True, "id": row[0]}
 
 # ============================================================
 # PUT — ACTUALIZAR REPORTE
@@ -117,10 +113,7 @@ def get_container_reports(conn=Depends(get_db)):
     data = cur.fetchall()
     cur.close()
 
-    return {
-        "total": len(data),
-        "data": data
-    }
+    return {"total": len(data), "data": data}
 
 # ============================================================
 # GET — REPORTE POR ID
@@ -162,9 +155,9 @@ def download_container_report_excel(report_id: int, conn=Depends(get_db)):
     if not report:
         raise HTTPException(status_code=404, detail="Report not found")
 
-    # ---------------------------------------------------------
-    # Import DIFERIDO (evita crash en startup)
-    # ---------------------------------------------------------
+    # --------------------------------------------------------
+    # IMPORT DIFERIDO (EVITA CRASH EN RAILWAY)
+    # --------------------------------------------------------
     try:
         from services.container_report_excel_service import (
             generate_container_report_excel
@@ -173,15 +166,15 @@ def download_container_report_excel(report_id: int, conn=Depends(get_db)):
         raise HTTPException(
             status_code=500,
             detail=(
-                "Excel service not available. "
-                "Missing dependency (openpyxl).\n"
+                "Excel export service unavailable. "
+                "Missing dependency: openpyxl.\n"
                 f"Detail: {e}"
             )
         )
 
-    # ---------------------------------------------------------
-    # Generar Excel desde template
-    # ---------------------------------------------------------
+    # --------------------------------------------------------
+    # GENERAR EXCEL DESDE TEMPLATE
+    # --------------------------------------------------------
     try:
         file_path = generate_container_report_excel(report)
     except Exception as e:
