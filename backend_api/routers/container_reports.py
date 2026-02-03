@@ -4,10 +4,12 @@
 # ============================================================
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse
 from psycopg2.extras import RealDictCursor
 from datetime import datetime
 
 from database import get_db
+from services.container_report_excel_service import generate_container_report_excel
 
 router = APIRouter(
     prefix="/container-reports",
@@ -140,3 +142,38 @@ def get_container_report_by_id(report_id: int, conn=Depends(get_db)):
         raise HTTPException(status_code=404, detail="Report not found")
 
     return {"data": row}
+
+# ============================================================
+# GET — EXPORTAR REPORTE A EXCEL (TEMPLATE)
+# ============================================================
+
+@router.get("/{report_id}/excel")
+def download_container_report_excel(report_id: int, conn=Depends(get_db)):
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+
+    cur.execute(
+        "SELECT * FROM public.container_reports WHERE id = %s;",
+        (report_id,)
+    )
+
+    report = cur.fetchone()
+    cur.close()
+
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found")
+
+    try:
+        file_path = generate_container_report_excel(report)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error generating Excel: {e}"
+        )
+
+    filename = f"Container_Report_{report.get('report_no') or report_id}.xlsx"
+
+    return FileResponse(
+        file_path,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        filename=filename
+    )
