@@ -129,7 +129,7 @@ def get_container_reports(conn=Depends(get_db)):
 
 
 # ============================================================
-# GET — REPORTE POR Id
+# GET — REPORTE POR ID
 # ============================================================
 
 @router.get("/{report_id}")
