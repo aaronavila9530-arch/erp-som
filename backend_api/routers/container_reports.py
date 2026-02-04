@@ -190,3 +190,90 @@ def download_container_report_excel(report_id: int, conn=Depends(get_db)):
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         filename=filename
     )
+
+
+# ============================================================
+# GET — FILTROS PARA COMBOBOX (SERVICIOS → INFORMES)
+# ============================================================
+
+@router.get("/filters")
+def get_container_report_filters(conn=Depends(get_db)):
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+
+    cur.execute("""
+        SELECT
+            ARRAY(
+                SELECT DISTINCT cliente
+                FROM public.servicios
+                WHERE cliente IS NOT NULL
+                ORDER BY cliente
+            ) AS clientes,
+
+            ARRAY(
+                SELECT DISTINCT buque_contenedor
+                FROM public.servicios
+                WHERE buque_contenedor IS NOT NULL
+                ORDER BY buque_contenedor
+            ) AS buques_contenedor,
+
+            ARRAY(
+                SELECT DISTINCT EXTRACT(YEAR FROM fecha_inicio)::INT
+                FROM public.servicios
+                WHERE fecha_inicio IS NOT NULL
+                ORDER BY 1 DESC
+            ) AS anios,
+
+            ARRAY(
+                SELECT DISTINCT EXTRACT(MONTH FROM fecha_inicio)::INT
+                FROM public.servicios
+                WHERE fecha_inicio IS NOT NULL
+                ORDER BY 1
+            ) AS meses
+    """)
+
+    row = cur.fetchone()
+    cur.close()
+
+    return row
+
+
+# ============================================================
+# GET — INFORMES DISPONIBLES (num_informe)
+# ============================================================
+
+@router.get("/informes")
+def get_container_reports_by_servicio(
+    cliente: str,
+    buque_contenedor: str,
+    anio: int,
+    mes: int,
+    conn=Depends(get_db)
+):
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+
+    cur.execute("""
+        SELECT
+            id,
+            num_informe,
+            fecha_inicio
+        FROM public.servicios
+        WHERE cliente = %(cliente)s
+          AND buque_contenedor = %(buque)s
+          AND EXTRACT(YEAR FROM fecha_inicio) = %(anio)s
+          AND EXTRACT(MONTH FROM fecha_inicio) = %(mes)s
+          AND num_informe IS NOT NULL
+        ORDER BY fecha_inicio
+    """, {
+        "cliente": cliente,
+        "buque": buque_contenedor,
+        "anio": anio,
+        "mes": mes
+    })
+
+    rows = cur.fetchall()
+    cur.close()
+
+    return {
+        "total": len(rows),
+        "data": rows
+    }

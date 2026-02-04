@@ -49,7 +49,7 @@ def generate_container_report_excel(report: dict) -> str:
     # =====================================================
     # HEADER / GENERAL
     # =====================================================
-    _safe_set(ws, "AD3", report.get("report_no"))
+    _safe_set(ws, "C5", report.get("report_no"))
     _safe_set(ws, "E6", report.get("bl"))
     _safe_set(ws, "E7", report.get("seals"))
     _safe_set(ws, "E8", report.get("appointment"))
@@ -124,7 +124,7 @@ def generate_container_report_excel(report: dict) -> str:
     _safe_set(ws, "B27", report.get("damage_details"))
     _safe_set(ws, "B31", report.get("remarks"))
     _safe_set(ws, "B37", report.get("conclusion"))
-    _safe_set(ws, "B40", report.get("picture_link"))
+    _safe_set(ws, "B42", report.get("picture_link"))
 
     # =====================================================
     # DOCUMENTS
