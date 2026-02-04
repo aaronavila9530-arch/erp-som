@@ -205,28 +205,32 @@ def get_container_report_filters(conn=Depends(get_db)):
             ARRAY(
                 SELECT DISTINCT cliente
                 FROM public.servicios
-                WHERE cliente IS NOT NULL
+                WHERE num_informe IS NOT NULL
+                  AND cliente IS NOT NULL
                 ORDER BY cliente
             ) AS clientes,
 
             ARRAY(
                 SELECT DISTINCT buque_contenedor
                 FROM public.servicios
-                WHERE buque_contenedor IS NOT NULL
+                WHERE num_informe IS NOT NULL
+                  AND buque_contenedor IS NOT NULL
                 ORDER BY buque_contenedor
             ) AS buques_contenedor,
 
             ARRAY(
                 SELECT DISTINCT EXTRACT(YEAR FROM fecha_inicio)::INT
                 FROM public.servicios
-                WHERE fecha_inicio IS NOT NULL
+                WHERE num_informe IS NOT NULL
+                  AND fecha_inicio IS NOT NULL
                 ORDER BY 1 DESC
             ) AS anios,
 
             ARRAY(
                 SELECT DISTINCT EXTRACT(MONTH FROM fecha_inicio)::INT
                 FROM public.servicios
-                WHERE fecha_inicio IS NOT NULL
+                WHERE num_informe IS NOT NULL
+                  AND fecha_inicio IS NOT NULL
                 ORDER BY 1
             ) AS meses
     """)
