@@ -403,19 +403,112 @@ def get_container_reports_by_servicio(
         cur.close()
 
 
+
+
 # ============================================================
-# PUT — ACTUALIZAR REPORTE
+# PUT — ACTUALIZAR REPORTE (FULL UPDATE · BLINDADO)
 # ============================================================
 
 @router.put("/{report_id}")
-def update_container_report(report_id: int, payload: dict, conn=Depends(get_db)):
+def update_container_report(
+    report_id: int,
+    payload: dict,
+    conn=Depends(get_db)
+):
     if not payload:
         raise HTTPException(status_code=400, detail="No data provided")
 
-    payload["updated_at"] = datetime.utcnow()
-    payload["id"] = report_id
+    # ========================================================
+    # CAMPOS PERMITIDOS (1:1 CON TABLA)
+    # ========================================================
+    ALLOWED_FIELDS = {
+        "report_no", "bl", "seals", "appointment", "shippers",
+        "inspection_place", "contact_person", "on_behalf_of",
+        "consignee_notify", "vessel", "contact_datetime",
+        "init_inspection_datetime", "init_to",
+        "final_inspection_datetime", "final_to",
 
-    fields = [f"{k} = %({k})s" for k in payload.keys() if k != "id"]
+        "container_size_20", "container_size_40",
+        "container_type_dry", "container_type_reefer",
+        "container_type_iso", "container_type_flat_rack",
+        "container_load_fcl", "container_load_lcl",
+
+        "cause_seals_bl", "cause_change_seals", "cause_customs",
+        "cause_transfer", "cause_leaking", "cause_damage",
+        "cause_stuff_condition", "cause_detail",
+
+        "goods_description",
+        "package_carton", "package_bags", "package_boxes",
+        "package_drums", "package_pallets", "package_bulk",
+        "package_bales", "package_crates", "package_other",
+
+        "qty_1_left", "qty_1_right",
+        "qty_2_left", "qty_2_right",
+        "qty_3_left", "qty_3_right",
+
+        "package_marking", "goods_condition",
+        "damage_details", "remarks", "conclusion",
+
+        "picture_link",
+        "doc_bl", "doc_packing_list", "doc_shipping_invoice",
+        "doc_cargo_manifest", "doc_commercial_invoice",
+        "doc_delivery_record", "doc_notice_loss",
+        "doc_insurance_policy", "doc_other",
+
+        "quality_packing_exam", "quality_un_witness",
+        "quality_visual_exam", "quality_product_exam",
+        "quality_documents", "quality_sanitary_cert",
+        "quality_phytosanitary_cert", "quality_factory_cert",
+        "quality_origin_cert",
+
+        "person_1_name", "person_1_position",
+        "person_2_name", "person_2_position",
+        "person_3_name", "person_3_position",
+
+        "ic_manuf", "ic_csc", "ic_max_gw", "ic_tare",
+
+        "new_commodity", "used_commodity",
+        "net_weight", "gross_weight", "volume",
+
+        "tr_number", "tr_manuf", "tr_csc", "tr_seal",
+        "tr_max_gw", "tr_tare",
+
+        "scope_100", "scope_random", "scope_items",
+
+        "linked_report_number",
+        "container_type_text",
+        "status",
+        "user"
+    }
+
+    # ========================================================
+    # FILTRAR PAYLOAD
+    # ========================================================
+    clean_payload = {
+        k: v for k, v in payload.items()
+        if k in ALLOWED_FIELDS
+    }
+
+    if not clean_payload:
+        raise HTTPException(
+            status_code=400,
+            detail="No valid fields to update"
+        )
+
+    clean_payload["updated_at"] = datetime.utcnow()
+    clean_payload["id"] = report_id
+
+    # ========================================================
+    # CONSTRUIR UPDATE DINÁMICO (ESCAPANDO user)
+    # ========================================================
+    fields = []
+    for k in clean_payload.keys():
+        if k == "id":
+            continue
+        if k == "user":
+            fields.append('"user" = %(user)s')
+        else:
+            fields.append(f"{k} = %({k})s")
 
     sql = f"""
         UPDATE public.container_reports
@@ -424,7 +517,7 @@ def update_container_report(report_id: int, payload: dict, conn=Depends(get_db))
     """
 
     cur = conn.cursor()
-    cur.execute(sql, payload)
+    cur.execute(sql, clean_payload)
 
     if cur.rowcount == 0:
         cur.close()
@@ -433,7 +526,11 @@ def update_container_report(report_id: int, payload: dict, conn=Depends(get_db))
     conn.commit()
     cur.close()
 
-    return {"success": True}
+    return {
+        "success": True,
+        "id": report_id
+    }
+
 
 # ============================================================
 # DELETE — ELIMINAR REPORTE
@@ -458,23 +555,45 @@ def delete_container_report(report_id: int, conn=Depends(get_db)):
     return {"success": True}
 
 # ============================================================
-# GET — LISTAR REPORTES
+# GET — LISTAR REPORTES (TABLA INFORMES)
 # ============================================================
 
-@router.get("")
+@router.get("/list")
 def get_container_reports(conn=Depends(get_db)):
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
-    cur.execute("""
-        SELECT *
-        FROM public.container_reports
-        ORDER BY created_at DESC;
-    """)
+    try:
+        cur.execute("""
+            SELECT
+                cr.id,
+                cr.linked_report_number            AS report_no,
+                cr."user"                          AS "user",
+                cr.status,
+                cr.vessel,
 
-    data = cur.fetchall()
-    cur.close()
+                -- Customer desde servicios usando num_informe
+                s.cliente                          AS customer,
 
-    return {"total": len(data), "data": data}
+                -- Año y mes desde created_at
+                EXTRACT(YEAR FROM cr.created_at)::INT  AS year,
+                EXTRACT(MONTH FROM cr.created_at)::INT AS month,
+
+                cr.created_at
+            FROM public.container_reports cr
+            LEFT JOIN public.servicios s
+                ON s.num_informe = cr.linked_report_number
+            ORDER BY cr.created_at DESC;
+        """)
+
+        rows = cur.fetchall() or []
+
+        return {
+            "total": len(rows),
+            "data": rows
+        }
+
+    finally:
+        cur.close()
 
 # ============================================================
 # GET — REPORTE POR ID
@@ -552,4 +671,47 @@ def download_container_report_excel(report_id: int, conn=Depends(get_db)):
         filename=filename
     )
 
+
+
+# ============================================================
+# POST — GENERAR PDF FINAL (HORIZONTAL) DESDE EXCEL
+# ============================================================
+
+@router.post("/{report_id}/generate-pdf")
+def generate_container_report_pdf(report_id: int, conn=Depends(get_db)):
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+
+    cur.execute(
+        "SELECT * FROM public.container_reports WHERE id = %s;",
+        (report_id,)
+    )
+
+    report = cur.fetchone()
+    cur.close()
+
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found")
+
+    try:
+        from services.container_report_pdf_service import (
+            generate_container_report_pdf
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"PDF service unavailable: {e}"
+        )
+
+    try:
+        pdf_path = generate_container_report_pdf(report)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error generating PDF: {e}"
+        )
+
+    return {
+        "success": True,
+        "pdf_path": pdf_path
+    }
 
