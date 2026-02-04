@@ -71,48 +71,49 @@ def generate_container_report_excel(report: dict) -> str:
     # =====================================================
     # CONTAINER DESCRIPTION (CHECKBOXES)
     # =====================================================
-    _check(ws, "C15", report.get("container_size_20"))
-    _check(ws, "D15", report.get("container_size_40"))
+    _check(ws, "A12", report.get("container_size_20"))
+    _check(ws, "A13", report.get("container_size_40"))
 
-    _check(ws, "C16", report.get("container_type_dry"))
-    _check(ws, "D16", report.get("container_type_reefer"))
-    _check(ws, "E16", report.get("container_type_iso"))
-    _check(ws, "F16", report.get("container_type_flat_rack"))
+    _check(ws, "E12", report.get("container_type_dry"))
+    _check(ws, "E13", report.get("container_type_reefer"))
+    _check(ws, "I12", report.get("container_type_iso"))
+    _check(ws, "I13", report.get("container_type_flat_rack"))
 
-    _check(ws, "C17", report.get("container_load_fcl"))
-    _check(ws, "D17", report.get("container_load_lcl"))
+    _check(ws, "N12", report.get("container_load_fcl"))
+    _check(ws, "N13", report.get("container_load_lcl"))
 
     # =====================================================
     # CAUSE OF INSPECTION
     # =====================================================
-    _check(ws, "B20", report.get("cause_seals_bl"))
-    _check(ws, "C20", report.get("cause_change_seals"))
-    _check(ws, "D20", report.get("cause_customs"))
-    _check(ws, "E20", report.get("cause_transfer"))
-    _check(ws, "F20", report.get("cause_leaking"))
-    _check(ws, "B21", report.get("cause_damage"))
-    _check(ws, "C21", report.get("cause_stuff_condition"))
+    _check(ws, "Q12", report.get("cause_seals_bl"))
+    _check(ws, "Q13", report.get("cause_change_seals"))
+    _check(ws, "W12", report.get("cause_customs"))
+    _check(ws, "W13", report.get("cause_transfer"))
+    _check(ws, "AB12", report.get("cause_leaking"))
+    _check(ws, "AB13", report.get("cause_damage"))
+    _check(ws, "AG12", report.get("cause_stuff_condition"))
+    _check(ws, "AG13", report.get("cause_condition"))
 
-    _safe_set(ws, "B22", report.get("cause_detail"))
+    _safe_set(ws, "I14", report.get("cause_detail"))
 
     # =====================================================
     # GOODS & PACKAGES
     # =====================================================
-    _safe_set(ws, "B25", report.get("goods_description"))
+    _safe_set(ws, "B17", report.get("goods_description"))
 
-    _check(ws, "B27", report.get("package_carton"))
-    _check(ws, "C27", report.get("package_bags"))
-    _check(ws, "D27", report.get("package_boxes"))
-    _check(ws, "E27", report.get("package_drums"))
-    _check(ws, "F27", report.get("package_pallets"))
-    _check(ws, "B28", report.get("package_bulk"))
-    _check(ws, "C28", report.get("package_bales"))
-    _check(ws, "D28", report.get("package_crates"))
-    _check(ws, "E28", report.get("package_other"))
+    _check(ws, "U17", report.get("package_carton"))
+    _check(ws, "U18", report.get("package_bags"))
+    _check(ws, "U19", report.get("package_boxes"))
+    _check(ws, "Y17", report.get("package_drums"))
+    _check(ws, "Y18", report.get("package_pallets"))
+    _check(ws, "Y19", report.get("package_bulk"))
+    _check(ws, "AB17", report.get("package_bales"))
+    _check(ws, "AB18", report.get("package_crates"))
+    _check(ws, "AB19", report.get("package_other"))
 
-    _safe_set(ws, "B29", report.get("qty_1"))
-    _safe_set(ws, "C29", report.get("qty_2"))
-    _safe_set(ws, "D29", report.get("qty_3"))
+    _safe_set(ws, "AF17", report.get("qty_1"))
+    _safe_set(ws, "AF18", report.get("qty_2"))
+    _safe_set(ws, "AF19", report.get("qty_3"))
 
     _safe_set(ws, "B22", report.get("package_marking"))
     _safe_set(ws, "B25", report.get("goods_condition"))
@@ -128,28 +129,28 @@ def generate_container_report_excel(report: dict) -> str:
     # =====================================================
     # DOCUMENTS
     # =====================================================
-    _check(ws, "B47", report.get("doc_bl"))
-    _check(ws, "C47", report.get("doc_packing_list"))
-    _check(ws, "D47", report.get("doc_shipping_invoice"))
-    _check(ws, "E47", report.get("doc_cargo_manifest"))
-    _check(ws, "F47", report.get("doc_commercial_invoice"))
-    _check(ws, "B48", report.get("doc_delivery_record"))
-    _check(ws, "C48", report.get("doc_notice_loss"))
-    _check(ws, "D48", report.get("doc_insurance_policy"))
-    _check(ws, "E48", report.get("doc_other"))
+    _check(ws, "A42", report.get("doc_bl"))
+    _check(ws, "A43", report.get("doc_packing_list"))
+    _check(ws, "A44", report.get("doc_shipping_invoice"))
+    _check(ws, "A45", report.get("doc_cargo_manifest"))
+    _check(ws, "A46", report.get("doc_commercial_invoice"))
+    _check(ws, "A47", report.get("doc_delivery_record"))
+    _check(ws, "A48", report.get("doc_notice_loss"))
+    _check(ws, "A49", report.get("doc_insurance_policy"))
+    _check(ws, "A50", report.get("doc_other"))
 
     # =====================================================
     # QUALITY
     # =====================================================
-    _check(ws, "B51", report.get("quality_packing_exam"))
-    _check(ws, "C51", report.get("quality_un_witness"))
-    _check(ws, "D51", report.get("quality_visual_exam"))
-    _check(ws, "E51", report.get("quality_product_exam"))
-    _check(ws, "F51", report.get("quality_documents"))
-    _check(ws, "B52", report.get("quality_sanitary_cert"))
-    _check(ws, "C52", report.get("quality_phytosanitary_cert"))
-    _check(ws, "D52", report.get("quality_factory_cert"))
-    _check(ws, "E52", report.get("quality_origin_cert"))
+    _check(ws, "J42", report.get("quality_packing_exam"))
+    _check(ws, "J43", report.get("quality_un_witness"))
+    _check(ws, "J44", report.get("quality_visual_exam"))
+    _check(ws, "J45", report.get("quality_product_exam"))
+    _check(ws, "J46", report.get("quality_documents"))
+    _check(ws, "J47", report.get("quality_sanitary_cert"))
+    _check(ws, "J48", report.get("quality_phytosanitary_cert"))
+    _check(ws, "J49", report.get("quality_factory_cert"))
+    _check(ws, "J50", report.get("quality_origin_cert"))
 
     # =====================================================
     # PERSONS
