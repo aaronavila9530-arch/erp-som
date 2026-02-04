@@ -43,6 +43,125 @@ def create_container_report(payload: dict, conn=Depends(get_db)):
     return {"success": True, "id": row[0]}
 
 # ============================================================
+# GET — FILTROS PARA COMBOBOX (SERVICIOS → INFORMES)
+# ============================================================
+
+@router.get("/filters")
+def get_container_report_filters(conn=Depends(get_db)):
+
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+
+    try:
+        cur.execute("""
+            SELECT
+                COALESCE(
+                    ARRAY(
+                        SELECT DISTINCT cliente
+                        FROM public.servicios
+                        WHERE num_informe IS NOT NULL
+                          AND cliente IS NOT NULL
+                        ORDER BY cliente
+                    ),
+                    ARRAY[]::TEXT[]
+                ) AS clientes,
+
+                COALESCE(
+                    ARRAY(
+                        SELECT DISTINCT buque_contenedor
+                        FROM public.servicios
+                        WHERE num_informe IS NOT NULL
+                          AND buque_contenedor IS NOT NULL
+                        ORDER BY buque_contenedor
+                    ),
+                    ARRAY[]::TEXT[]
+                ) AS buques_contenedor,
+
+                COALESCE(
+                    ARRAY(
+                        SELECT DISTINCT EXTRACT(YEAR FROM fecha_inicio)::INT
+                        FROM public.servicios
+                        WHERE num_informe IS NOT NULL
+                          AND fecha_inicio IS NOT NULL
+                        ORDER BY 1 DESC
+                    ),
+                    ARRAY[]::INT[]
+                ) AS anios,
+
+                COALESCE(
+                    ARRAY(
+                        SELECT DISTINCT EXTRACT(MONTH FROM fecha_inicio)::INT
+                        FROM public.servicios
+                        WHERE num_informe IS NOT NULL
+                          AND fecha_inicio IS NOT NULL
+                        ORDER BY 1
+                    ),
+                    ARRAY[]::INT[]
+                ) AS meses
+        """)
+
+        row = cur.fetchone() or {}
+
+        return {
+            "clientes": row.get("clientes", []),
+            "buques_contenedor": row.get("buques_contenedor", []),
+            "anios": row.get("anios", []),
+            "meses": row.get("meses", [])
+        }
+
+    finally:
+        cur.close()
+
+
+# ============================================================
+# GET — INFORMES DISPONIBLES (num_informe)
+# ============================================================
+
+@router.get("/informes")
+def get_container_reports_by_servicio(
+    cliente: str | None = None,
+    buque_contenedor: str | None = None,
+    anio: int | None = None,
+    mes: int | None = None,
+    conn=Depends(get_db)
+):
+
+    if not all([cliente, buque_contenedor, anio, mes]):
+        return {"total": 0, "data": []}
+
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+
+    try:
+        cur.execute("""
+            SELECT
+                id,
+                num_informe,
+                fecha_inicio
+            FROM public.servicios
+            WHERE cliente = %(cliente)s
+              AND buque_contenedor = %(buque)s
+              AND EXTRACT(YEAR FROM fecha_inicio) = %(anio)s
+              AND EXTRACT(MONTH FROM fecha_inicio) = %(mes)s
+              AND num_informe IS NOT NULL
+            ORDER BY fecha_inicio
+        """, {
+            "cliente": cliente.strip(),
+            "buque": buque_contenedor.strip(),
+            "anio": anio,
+            "mes": mes
+        })
+
+        rows = cur.fetchall() or []
+
+        return {
+            "total": len(rows),
+            "data": rows
+        }
+
+    finally:
+        cur.close()
+
+
+# ============================================================
 # PUT — ACTUALIZAR REPORTE
 # ============================================================
 
@@ -191,126 +310,4 @@ def download_container_report_excel(report_id: int, conn=Depends(get_db)):
         filename=filename
     )
 
-
-# ============================================================
-# GET — FILTROS PARA COMBOBOX (SERVICIOS → INFORMES)
-# ============================================================
-
-@router.get("/filters")
-def get_container_report_filters(conn=Depends(get_db)):
-
-    cur = conn.cursor(cursor_factory=RealDictCursor)
-
-    try:
-        cur.execute("""
-            SELECT
-                COALESCE(
-                    ARRAY(
-                        SELECT DISTINCT cliente
-                        FROM public.servicios
-                        WHERE num_informe IS NOT NULL
-                          AND cliente IS NOT NULL
-                        ORDER BY cliente
-                    ),
-                    ARRAY[]::TEXT[]
-                ) AS clientes,
-
-                COALESCE(
-                    ARRAY(
-                        SELECT DISTINCT buque_contenedor
-                        FROM public.servicios
-                        WHERE num_informe IS NOT NULL
-                          AND buque_contenedor IS NOT NULL
-                        ORDER BY buque_contenedor
-                    ),
-                    ARRAY[]::TEXT[]
-                ) AS buques_contenedor,
-
-                COALESCE(
-                    ARRAY(
-                        SELECT DISTINCT EXTRACT(YEAR FROM fecha_inicio)::INT
-                        FROM public.servicios
-                        WHERE num_informe IS NOT NULL
-                          AND fecha_inicio IS NOT NULL
-                        ORDER BY 1 DESC
-                    ),
-                    ARRAY[]::INT[]
-                ) AS anios,
-
-                COALESCE(
-                    ARRAY(
-                        SELECT DISTINCT EXTRACT(MONTH FROM fecha_inicio)::INT
-                        FROM public.servicios
-                        WHERE num_informe IS NOT NULL
-                          AND fecha_inicio IS NOT NULL
-                        ORDER BY 1
-                    ),
-                    ARRAY[]::INT[]
-                ) AS meses
-        """)
-
-        row = cur.fetchone() or {}
-
-        return {
-            "clientes": row.get("clientes", []),
-            "buques_contenedor": row.get("buques_contenedor", []),
-            "anios": row.get("anios", []),
-            "meses": row.get("meses", [])
-        }
-
-    finally:
-        cur.close()
-
-
-# ============================================================
-# GET — INFORMES DISPONIBLES (num_informe)
-# ============================================================
-
-@router.get("/informes")
-def get_container_reports_by_servicio(
-    cliente: str | None = None,
-    buque_contenedor: str | None = None,
-    anio: int | None = None,
-    mes: int | None = None,
-    conn=Depends(get_db)
-):
-
-    # 🔒 Blindaje contra 422 / llamadas incompletas
-    if not all([cliente, buque_contenedor, anio, mes]):
-        return {
-            "total": 0,
-            "data": []
-        }
-
-    cur = conn.cursor(cursor_factory=RealDictCursor)
-
-    try:
-        cur.execute("""
-            SELECT
-                id,
-                num_informe,
-                fecha_inicio
-            FROM public.servicios
-            WHERE cliente = %(cliente)s
-              AND buque_contenedor = %(buque)s
-              AND EXTRACT(YEAR FROM fecha_inicio) = %(anio)s
-              AND EXTRACT(MONTH FROM fecha_inicio) = %(mes)s
-              AND num_informe IS NOT NULL
-            ORDER BY fecha_inicio
-        """, {
-            "cliente": cliente.strip(),
-            "buque": buque_contenedor.strip(),
-            "anio": anio,
-            "mes": mes
-        })
-
-        rows = cur.fetchall() or []
-
-        return {
-            "total": len(rows),
-            "data": rows
-        }
-
-    finally:
-        cur.close()
 
