@@ -50,6 +50,7 @@ class ContainerReportExcelGenerator:
         ws[cell].value = value
         ws[cell].number_format = 'DD-MM-YYYY"  "HH:MM'
 
+
     def _safe_hyperlink(
         self,
         ws: Worksheet,
