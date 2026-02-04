@@ -29,6 +29,47 @@ def _safe_set(ws: Worksheet, cell: str, value):
     ws[cell].value = value
 
 
+def _safe_set_date(ws: Worksheet, cell: str, value):
+    if not value:
+        return
+
+    try:
+        if isinstance(value, str):
+            value = datetime.fromisoformat(value)
+    except Exception:
+        pass
+
+    for merged in ws.merged_cells.ranges:
+        if cell in merged:
+            c = ws.cell(
+                row=merged.min_row,
+                column=merged.min_col
+            )
+            c.value = value
+            c.number_format = "DD-MM-YYYY"
+            return
+
+    ws[cell].value = value
+    ws[cell].number_format = "DD-MM-YYYY"
+
+
+def _safe_hyperlink(ws: Worksheet, cell: str, url: str):
+    for merged in ws.merged_cells.ranges:
+        if cell in merged:
+            c = ws.cell(
+                row=merged.min_row,
+                column=merged.min_col
+            )
+            c.value = url
+            c.hyperlink = url
+            c.style = "Hyperlink"
+            return
+
+    ws[cell].value = url
+    ws[cell].hyperlink = url
+    ws[cell].style = "Hyperlink"
+
+
 def _check(ws: Worksheet, cell: str, flag: bool):
     _safe_set(ws, cell, "✔" if flag else "")
 
@@ -46,10 +87,6 @@ def generate_container_report_excel(report: dict) -> str:
 
     wb = load_workbook(TEMPLATE_PATH)
     ws = wb.active
-
-    # =====================================================
-    # HEADER / GENERAL
-    # =====================================================
 
     # =====================================================
     # REPORT LINK (AGREGADO)
@@ -71,28 +108,14 @@ def generate_container_report_excel(report: dict) -> str:
     _safe_set(ws, "AB5", report.get("vessel"))
 
     # =====================================================
-    # DATES — FORMAT DD-MM-YYYY
+    # DATES — FORMAT DD-MM-YYYY (SAFE)
     # =====================================================
-    def _set_date(ws, cell, value):
-        if not value:
-            return
+    _safe_set_date(ws, "AD6", report.get("contact_datetime"))
+    _safe_set_date(ws, "P7", report.get("init_inspection_datetime"))
+    _safe_set_date(ws, "V7", report.get("init_to"))
+    _safe_set_date(ws, "AD7", report.get("final_inspection_datetime"))
+    _safe_set_date(ws, "AI7", report.get("final_to"))
 
-        try:
-            if isinstance(value, str):
-                value = datetime.fromisoformat(value)
-
-            ws[cell].value = value
-            ws[cell].number_format = "DD-MM-YYYY"
-
-        except Exception:
-            ws[cell].value = value
-
-    _set_date(ws, "AD6", report.get("contact_datetime"))
-
-    _set_date(ws, "P7", report.get("init_inspection_datetime"))
-    _set_date(ws, "V7", report.get("init_to"))
-    _set_date(ws, "AD7", report.get("final_inspection_datetime"))
-    _set_date(ws, "AI7", report.get("final_to"))
     # =====================================================
     # CONTAINER DESCRIPTION
     # =====================================================
@@ -117,7 +140,7 @@ def generate_container_report_excel(report: dict) -> str:
     _check(ws, "AB12", report.get("cause_leaking"))
     _check(ws, "AB13", report.get("cause_damage"))
     _check(ws, "AG12", report.get("cause_stuff_condition"))
-    _check(ws, "AG13", report.get("cause_stuff_condition"))  # alineado
+    _check(ws, "AG13", report.get("cause_stuff_condition"))
 
     _safe_set(ws, "I14", report.get("cause_detail"))
 
@@ -136,7 +159,6 @@ def generate_container_report_excel(report: dict) -> str:
     _check(ws, "AB18", report.get("package_crates"))
     _check(ws, "AB19", report.get("package_other"))
 
-    # QTY (alineado a form real)
     _safe_set(ws, "AF17", report.get("qty_1_left"))
     _safe_set(ws, "AI17", report.get("qty_1_right"))
     _safe_set(ws, "AF18", report.get("qty_2_left"))
@@ -185,7 +207,7 @@ def generate_container_report_excel(report: dict) -> str:
     _check(ws, "J50", report.get("quality_origin_cert"))
 
     # =====================================================
-    # INSPECTED CONTAINER (AGREGADO)
+    # INSPECTED CONTAINER
     # =====================================================
     _safe_set(ws, "W45", report.get("ic_manuf"))
     _safe_set(ws, "W46", report.get("ic_csc"))
@@ -193,7 +215,7 @@ def generate_container_report_excel(report: dict) -> str:
     _safe_set(ws, "X48", report.get("ic_tare"))
 
     # =====================================================
-    # GENERAL DETAILS (AGREGADO)
+    # GENERAL DETAILS
     # =====================================================
     _check(ws, "P55", report.get("new_commodity"))
     _check(ws, "V55", report.get("used_commodity"))
@@ -202,7 +224,7 @@ def generate_container_report_excel(report: dict) -> str:
     _safe_set(ws, "W54", report.get("volume"))
 
     # =====================================================
-    # TRANSFER TO CONTAINER (AGREGADO)
+    # TRANSFER TO CONTAINER
     # =====================================================
     _safe_set(ws, "AF45", report.get("tr_number"))
     _safe_set(ws, "AF46", report.get("tr_manuf"))
@@ -212,14 +234,14 @@ def generate_container_report_excel(report: dict) -> str:
     _safe_set(ws, "AG50", report.get("tr_tare"))
 
     # =====================================================
-    # SCOPE OF INSPECTION (AGREGADO)
+    # SCOPE OF INSPECTION
     # =====================================================
     _check(ws, "AB52", report.get("scope_100"))
     _check(ws, "AB53", report.get("scope_random"))
     _safe_set(ws, "AB54", report.get("scope_items"))
 
     # =====================================================
-    # PERSONS PRESENT (ALINEADO)
+    # PERSONS PRESENT
     # =====================================================
     _safe_set(ws, "B56", report.get("person_1_name"))
     _safe_set(ws, "N56", report.get("person_1_position"))
