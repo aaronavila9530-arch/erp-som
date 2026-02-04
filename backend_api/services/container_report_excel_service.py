@@ -54,8 +54,7 @@ class ContainerReportExcelGenerator:
         self,
         ws: Worksheet,
         cell: str,
-        url: str,
-        text: str = "Link Pictures"
+        url: str
     ):
         for merged in ws.merged_cells.ranges:
             if cell in merged:
@@ -63,18 +62,16 @@ class ContainerReportExcelGenerator:
                     row=merged.min_row,
                     column=merged.min_col
                 )
-                c.value = text
+                c.value = url
                 c.hyperlink = url
-                c.style = "Hyperlink"
                 c.alignment = Alignment(
                     horizontal="left",
                     vertical="center"
                 )
                 return
 
-        ws[cell].value = text
+        ws[cell].value = url
         ws[cell].hyperlink = url
-        ws[cell].style = "Hyperlink"
         ws[cell].alignment = Alignment(
             horizontal="left",
             vertical="center"
