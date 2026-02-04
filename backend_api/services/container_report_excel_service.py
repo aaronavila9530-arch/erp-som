@@ -2,6 +2,7 @@ import os
 import tempfile
 from openpyxl import load_workbook
 from openpyxl.worksheet.worksheet import Worksheet
+from datetime import datetime
 
 
 TEMPLATE_PATH = os.path.abspath(
@@ -54,7 +55,7 @@ def generate_container_report_excel(report: dict) -> str:
     # REPORT LINK (AGREGADO)
     # =====================================================
     _safe_set(ws, "AD3", report.get("linked_report_number"))
-    _safe_set(ws, "Q2", report.get("container_type_text"))
+    _safe_set(ws, "Q3", report.get("container_type_text"))
 
     _safe_set(ws, "C5", report.get("report_no"))
     _safe_set(ws, "E6", report.get("bl"))
@@ -68,13 +69,30 @@ def generate_container_report_excel(report: dict) -> str:
     _safe_set(ws, "Z9", report.get("consignee_notify"))
 
     _safe_set(ws, "AB5", report.get("vessel"))
-    _safe_set(ws, "AD6", report.get("contact_datetime"))
 
-    _safe_set(ws, "P7", report.get("init_inspection_datetime"))
-    _safe_set(ws, "V7", report.get("init_to"))
-    _safe_set(ws, "AD7", report.get("final_inspection_datetime"))
-    _safe_set(ws, "AI7", report.get("final_to"))
+    # =====================================================
+    # DATES — FORMAT DD-MM-YYYY
+    # =====================================================
+    def _set_date(ws, cell, value):
+        if not value:
+            return
 
+        try:
+            if isinstance(value, str):
+                value = datetime.fromisoformat(value)
+
+            ws[cell].value = value
+            ws[cell].number_format = "DD-MM-YYYY"
+
+        except Exception:
+            ws[cell].value = value
+
+    _set_date(ws, "AD6", report.get("contact_datetime"))
+
+    _set_date(ws, "P7", report.get("init_inspection_datetime"))
+    _set_date(ws, "V7", report.get("init_to"))
+    _set_date(ws, "AD7", report.get("final_inspection_datetime"))
+    _set_date(ws, "AI7", report.get("final_to"))
     # =====================================================
     # CONTAINER DESCRIPTION
     # =====================================================
@@ -135,7 +153,14 @@ def generate_container_report_excel(report: dict) -> str:
     _safe_set(ws, "B27", report.get("damage_details"))
     _safe_set(ws, "B31", report.get("remarks"))
     _safe_set(ws, "B37", report.get("conclusion"))
-    _safe_set(ws, "B42", report.get("picture_link"))
+
+    picture_link = report.get("picture_link")
+    if picture_link:
+        ws["B42"].value = picture_link
+        ws["B42"].hyperlink = picture_link
+        ws["B42"].style = "Hyperlink"
+
+
 
     # =====================================================
     # DOCUMENTS
