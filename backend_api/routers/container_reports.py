@@ -15,19 +15,190 @@ router = APIRouter(
     tags=["Informes — Container Reports"]
 )
 
+from datetime import datetime
+from fastapi import Depends
+from psycopg2.extras import RealDictCursor
+
 # ============================================================
-# POST — CREAR REPORTE
+# POST — CREAR CONTAINER REPORT (ALINEADO 1:1)
 # ============================================================
 
 @router.post("")
 def create_container_report(payload: dict, conn=Depends(get_db)):
+
     cur = conn.cursor()
 
-    payload["created_at"] = datetime.utcnow()
-    payload["updated_at"] = datetime.utcnow()
+    # ========================================================
+    # COLUMNAS PERMITIDAS (1:1 CON TABLA)
+    # ========================================================
+    ALLOWED_FIELDS = {
+        # META
+        "linked_report_number",
+        "container_type_text",
+        "user",
+        "status",
 
-    columns = ", ".join(payload.keys())
-    values = ", ".join([f"%({k})s" for k in payload.keys()])
+        # GENERAL INFORMATION
+        "report_no",
+        "bl",
+        "seals",
+        "appointment",
+        "shippers",
+        "inspection_place",
+        "contact_person",
+        "on_behalf_of",
+        "consignee_notify",
+        "vessel",
+        "contact_datetime",
+        "init_inspection_datetime",
+        "init_to",
+        "final_inspection_datetime",
+        "final_to",
+
+        # CONTAINER DESCRIPTION
+        "container_size_20",
+        "container_size_40",
+        "container_type_dry",
+        "container_type_reefer",
+        "container_type_iso",
+        "container_type_flat_rack",
+        "container_load_fcl",
+        "container_load_lcl",
+
+        # CAUSE
+        "cause_seals_bl",
+        "cause_change_seals",
+        "cause_customs",
+        "cause_transfer",
+        "cause_leaking",
+        "cause_damage",
+        "cause_stuff_condition",
+        "cause_detail",
+
+        # GOODS & PACKAGES
+        "goods_description",
+        "package_carton",
+        "package_bags",
+        "package_boxes",
+        "package_drums",
+        "package_pallets",
+        "package_bulk",
+        "package_bales",
+        "package_crates",
+        "package_other",
+        "qty_1_left",
+        "qty_1_right",
+        "qty_2_left",
+        "qty_2_right",
+        "qty_3_left",
+        "qty_3_right",
+        "package_marking",
+        "goods_condition",
+
+        # NARRATIVES
+        "damage_details",
+        "remarks",
+        "conclusion",
+
+        # LINKS & DOCS
+        "picture_link",
+        "doc_bl",
+        "doc_packing_list",
+        "doc_shipping_invoice",
+        "doc_cargo_manifest",
+        "doc_commercial_invoice",
+        "doc_delivery_record",
+        "doc_notice_loss",
+        "doc_insurance_policy",
+        "doc_other",
+
+        # QUALITY
+        "quality_packing_exam",
+        "quality_un_witness",
+        "quality_visual_exam",
+        "quality_product_exam",
+        "quality_documents",
+        "quality_sanitary_cert",
+        "quality_phytosanitary_cert",
+        "quality_factory_cert",
+        "quality_origin_cert",
+
+        # PERSONS
+        "person_1_name",
+        "person_1_position",
+        "person_2_name",
+        "person_2_position",
+        "person_3_name",
+        "person_3_position",
+
+        # INSPECTED CONTAINER
+        "ic_manuf",
+        "ic_csc",
+        "ic_max_gw",
+        "ic_tare",
+
+        # GENERAL DETAILS
+        "new_commodity",
+        "used_commodity",
+        "net_weight",
+        "gross_weight",
+        "volume",
+
+        # TRANSFER
+        "tr_number",
+        "tr_manuf",
+        "tr_csc",
+        "tr_seal",
+        "tr_max_gw",
+        "tr_tare",
+
+        # SCOPE
+        "scope_100",
+        "scope_random",
+        "scope_items",
+    }
+
+    # ========================================================
+    # LIMPIAR PAYLOAD
+    # ========================================================
+    clean_payload = {
+        k: payload.get(k)
+        for k in ALLOWED_FIELDS
+        if k in payload
+    }
+
+    # ========================================================
+    # DEFAULTS DE SISTEMA
+    # ========================================================
+    clean_payload["status"] = clean_payload.get("status") or "draft"
+    clean_payload["user"] = clean_payload.get("user") or "system"
+
+    clean_payload["created_at"] = datetime.utcnow()
+    clean_payload["updated_at"] = datetime.utcnow()
+
+    # ========================================================
+    # NORMALIZAR BOOLEANOS
+    # ========================================================
+    for k, v in clean_payload.items():
+        if isinstance(v, bool):
+            continue
+        if v is None and k.startswith((
+            "container_",
+            "cause_",
+            "package_",
+            "doc_",
+            "quality_",
+            "scope_",
+            "new_",
+            "used_"
+        )):
+            clean_payload[k] = False
+
+    # ========================================================
+    # INSERT DINÁMICO
+    # ========================================================
+    columns = ", ".join(clean_payload.keys())
+    values = ", ".join([f"%({k})s" for k in clean_payload.keys()])
 
     sql = f"""
         INSERT INTO public.container_reports ({columns})
@@ -35,12 +206,17 @@ def create_container_report(payload: dict, conn=Depends(get_db)):
         RETURNING id;
     """
 
-    cur.execute(sql, payload)
+    cur.execute(sql, clean_payload)
     row = cur.fetchone()
+
     conn.commit()
     cur.close()
 
-    return {"success": True, "id": row[0]}
+    return {
+        "success": True,
+        "id": row[0],
+        "status": clean_payload["status"]
+    }
 
 # ============================================================
 # GET — FILTROS BASE PARA COMBOBOX (SERVICIOS → INFORMES)
