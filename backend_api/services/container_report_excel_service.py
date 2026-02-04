@@ -3,7 +3,7 @@ import tempfile
 from openpyxl import load_workbook
 from openpyxl.worksheet.worksheet import Worksheet
 from datetime import datetime
-
+from openpyxl.styles import Alignment
 
 TEMPLATE_PATH = os.path.abspath(
     os.path.join(
@@ -66,11 +66,19 @@ class ContainerReportExcelGenerator:
                 c.value = text
                 c.hyperlink = url
                 c.style = "Hyperlink"
+                c.alignment = Alignment(
+                    horizontal="left",
+                    vertical="center"
+                )
                 return
 
         ws[cell].value = text
         ws[cell].hyperlink = url
         ws[cell].style = "Hyperlink"
+        ws[cell].alignment = Alignment(
+            horizontal="left",
+            vertical="center"
+        )
 
     def _check(self, ws: Worksheet, cell: str, flag: bool):
         self._safe_set(ws, cell, "✔" if flag else "")
