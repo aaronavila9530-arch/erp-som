@@ -43,7 +43,7 @@ def create_container_report(payload: dict, conn=Depends(get_db)):
     return {"success": True, "id": row[0]}
 
 # ============================================================
-# GET — FILTROS PARA COMBOBOX (SERVICIOS → INFORMES)
+# GET — FILTROS BASE PARA COMBOBOX (SERVICIOS → INFORMES)
 # ============================================================
 
 @router.get("/filters")
@@ -67,17 +67,6 @@ def get_container_report_filters(conn=Depends(get_db)):
 
                 COALESCE(
                     ARRAY(
-                        SELECT DISTINCT buque_contenedor
-                        FROM public.servicios
-                        WHERE num_informe IS NOT NULL
-                          AND buque_contenedor IS NOT NULL
-                        ORDER BY buque_contenedor
-                    ),
-                    ARRAY[]::TEXT[]
-                ) AS buques_contenedor,
-
-                COALESCE(
-                    ARRAY(
                         SELECT DISTINCT EXTRACT(YEAR FROM fecha_inicio)::INT
                         FROM public.servicios
                         WHERE num_informe IS NOT NULL
@@ -85,28 +74,88 @@ def get_container_report_filters(conn=Depends(get_db)):
                         ORDER BY 1 DESC
                     ),
                     ARRAY[]::INT[]
-                ) AS anios,
-
-                COALESCE(
-                    ARRAY(
-                        SELECT DISTINCT EXTRACT(MONTH FROM fecha_inicio)::INT
-                        FROM public.servicios
-                        WHERE num_informe IS NOT NULL
-                          AND fecha_inicio IS NOT NULL
-                        ORDER BY 1
-                    ),
-                    ARRAY[]::INT[]
-                ) AS meses
+                ) AS anios
         """)
 
         row = cur.fetchone() or {}
 
         return {
             "clientes": row.get("clientes", []),
-            "buques_contenedor": row.get("buques_contenedor", []),
-            "anios": row.get("anios", []),
-            "meses": row.get("meses", [])
+            "anios": row.get("anios", [])
         }
+
+    finally:
+        cur.close()
+
+
+# ============================================================
+# GET — MESES DISPONIBLES POR CLIENTE / AÑO
+# ============================================================
+
+@router.get("/filters/months")
+def get_container_report_months(
+    cliente: str | None = None,
+    anio: int | None = None,
+    conn=Depends(get_db)
+):
+
+    if not all([cliente, anio]):
+        return {"meses": []}
+
+    cur = conn.cursor()
+
+    try:
+        cur.execute("""
+            SELECT DISTINCT EXTRACT(MONTH FROM fecha_inicio)::INT AS mes
+            FROM public.servicios
+            WHERE num_informe IS NOT NULL
+              AND cliente = %s
+              AND fecha_inicio IS NOT NULL
+              AND EXTRACT(YEAR FROM fecha_inicio) = %s
+            ORDER BY mes
+        """, (cliente.strip(), anio))
+
+        meses = [r[0] for r in cur.fetchall()]
+
+        return {"meses": meses}
+
+    finally:
+        cur.close()
+
+
+# ============================================================
+# GET — VESSELS DISPONIBLES POR CLIENTE / AÑO / MES
+# ============================================================
+
+@router.get("/filters/vessels")
+def get_container_report_vessels(
+    cliente: str | None = None,
+    anio: int | None = None,
+    mes: int | None = None,
+    conn=Depends(get_db)
+):
+
+    if not all([cliente, anio, mes]):
+        return {"buques_contenedor": []}
+
+    cur = conn.cursor()
+
+    try:
+        cur.execute("""
+            SELECT DISTINCT buque_contenedor
+            FROM public.servicios
+            WHERE num_informe IS NOT NULL
+              AND cliente = %s
+              AND buque_contenedor IS NOT NULL
+              AND fecha_inicio IS NOT NULL
+              AND EXTRACT(YEAR FROM fecha_inicio) = %s
+              AND EXTRACT(MONTH FROM fecha_inicio) = %s
+            ORDER BY buque_contenedor
+        """, (cliente.strip(), anio, mes))
+
+        vessels = [r[0] for r in cur.fetchall()]
+
+        return {"buques_contenedor": vessels}
 
     finally:
         cur.close()
@@ -134,14 +183,19 @@ def get_container_reports_by_servicio(
         cur.execute("""
             SELECT
                 id,
+                cliente,
+                buque_contenedor,
+                EXTRACT(YEAR FROM fecha_inicio)::INT AS anio,
+                EXTRACT(MONTH FROM fecha_inicio)::INT AS mes,
                 num_informe,
                 fecha_inicio
             FROM public.servicios
             WHERE cliente = %(cliente)s
               AND buque_contenedor = %(buque)s
+              AND num_informe IS NOT NULL
+              AND fecha_inicio IS NOT NULL
               AND EXTRACT(YEAR FROM fecha_inicio) = %(anio)s
               AND EXTRACT(MONTH FROM fecha_inicio) = %(mes)s
-              AND num_informe IS NOT NULL
             ORDER BY fecha_inicio
         """, {
             "cliente": cliente.strip(),
