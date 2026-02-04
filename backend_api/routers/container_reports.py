@@ -36,7 +36,7 @@ def create_container_report(payload: dict, conn=Depends(get_db)):
             # META
             "linked_report_number",
             "container_type_text",
-            "user",
+            "user",     # ⚠️ palabra reservada en PostgreSQL
             "status",
 
             # GENERAL INFORMATION
@@ -196,14 +196,21 @@ def create_container_report(payload: dict, conn=Depends(get_db)):
                 clean_payload[k] = False
 
         # ====================================================
-        # INSERT DINÁMICO
+        # INSERT DINÁMICO (ESCAPANDO "user")
         # ====================================================
-        columns = ", ".join(clean_payload.keys())
-        values = ", ".join([f"%({k})s" for k in clean_payload.keys()])
+        columns = []
+        values = []
+
+        for k in clean_payload.keys():
+            if k == "user":
+                columns.append('"user"')  # 🔒 escape keyword
+            else:
+                columns.append(k)
+            values.append(f"%({k})s")
 
         sql = f"""
-            INSERT INTO public.container_reports ({columns})
-            VALUES ({values})
+            INSERT INTO public.container_reports ({", ".join(columns)})
+            VALUES ({", ".join(values)})
             RETURNING id;
         """
 
