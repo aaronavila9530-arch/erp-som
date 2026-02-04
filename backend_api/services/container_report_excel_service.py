@@ -44,11 +44,11 @@ class ContainerReportExcelGenerator:
                     column=merged.min_col
                 )
                 c.value = value
-                c.number_format = "DD-MM-YYYY"
+                c.number_format = 'DD-MM-YYYY"  "HH:MM'
                 return
 
         ws[cell].value = value
-        ws[cell].number_format = "DD-MM-YYYY"
+        ws[cell].number_format = 'DD-MM-YYYY"  "HH:MM'
 
     def _safe_hyperlink(
         self,
@@ -78,7 +78,7 @@ class ContainerReportExcelGenerator:
         )
 
     def _check(self, ws: Worksheet, cell: str, flag: bool):
-        self._safe_set(ws, cell, "✔" if flag else "")
+        self._safe_set(ws, cell, "" if flag else "")
 
 
 # =====================================================
