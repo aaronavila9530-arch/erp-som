@@ -49,6 +49,13 @@ def generate_container_report_excel(report: dict) -> str:
     # =====================================================
     # HEADER / GENERAL
     # =====================================================
+
+    # =====================================================
+    # REPORT LINK (AGREGADO)
+    # =====================================================
+    _safe_set(ws, "AD3", report.get("linked_report_number"))
+    _safe_set(ws, "Q2", report.get("container_type_text"))
+
     _safe_set(ws, "C5", report.get("report_no"))
     _safe_set(ws, "E6", report.get("bl"))
     _safe_set(ws, "E7", report.get("seals"))
@@ -69,7 +76,7 @@ def generate_container_report_excel(report: dict) -> str:
     _safe_set(ws, "AI7", report.get("final_to"))
 
     # =====================================================
-    # CONTAINER DESCRIPTION (CHECKBOXES)
+    # CONTAINER DESCRIPTION
     # =====================================================
     _check(ws, "A12", report.get("container_size_20"))
     _check(ws, "A13", report.get("container_size_40"))
@@ -92,7 +99,7 @@ def generate_container_report_excel(report: dict) -> str:
     _check(ws, "AB12", report.get("cause_leaking"))
     _check(ws, "AB13", report.get("cause_damage"))
     _check(ws, "AG12", report.get("cause_stuff_condition"))
-    _check(ws, "AG13", report.get("cause_condition"))
+    _check(ws, "AG13", report.get("cause_stuff_condition"))  # alineado
 
     _safe_set(ws, "I14", report.get("cause_detail"))
 
@@ -111,9 +118,13 @@ def generate_container_report_excel(report: dict) -> str:
     _check(ws, "AB18", report.get("package_crates"))
     _check(ws, "AB19", report.get("package_other"))
 
-    _safe_set(ws, "AF17", report.get("qty_1"))
-    _safe_set(ws, "AF18", report.get("qty_2"))
-    _safe_set(ws, "AF19", report.get("qty_3"))
+    # QTY (alineado a form real)
+    _safe_set(ws, "AF17", report.get("qty_1_left"))
+    _safe_set(ws, "AI17", report.get("qty_1_right"))
+    _safe_set(ws, "AF18", report.get("qty_2_left"))
+    _safe_set(ws, "AI18", report.get("qty_2_right"))
+    _safe_set(ws, "AF19", report.get("qty_3_left"))
+    _safe_set(ws, "AI19", report.get("qty_3_right"))
 
     _safe_set(ws, "B22", report.get("package_marking"))
     _safe_set(ws, "B25", report.get("goods_condition"))
@@ -153,11 +164,50 @@ def generate_container_report_excel(report: dict) -> str:
     _check(ws, "J50", report.get("quality_origin_cert"))
 
     # =====================================================
-    # PERSONS
+    # INSPECTED CONTAINER (AGREGADO)
     # =====================================================
-    _safe_set(ws, "C53", report.get("person_1"))
-    _safe_set(ws, "C54", report.get("person_2"))
-    _safe_set(ws, "C55", report.get("person_3"))
+    _safe_set(ws, "W45", report.get("ic_manuf"))
+    _safe_set(ws, "W46", report.get("ic_csc"))
+    _safe_set(ws, "X47", report.get("ic_max_gw"))
+    _safe_set(ws, "X48", report.get("ic_tare"))
+
+    # =====================================================
+    # GENERAL DETAILS (AGREGADO)
+    # =====================================================
+    _check(ws, "P55", report.get("new_commodity"))
+    _check(ws, "V55", report.get("used_commodity"))
+    _safe_set(ws, "W52", report.get("net_weight"))
+    _safe_set(ws, "W53", report.get("gross_weight"))
+    _safe_set(ws, "W54", report.get("volume"))
+
+    # =====================================================
+    # TRANSFER TO CONTAINER (AGREGADO)
+    # =====================================================
+    _safe_set(ws, "AF45", report.get("tr_number"))
+    _safe_set(ws, "AF46", report.get("tr_manuf"))
+    _safe_set(ws, "AF47", report.get("tr_csc"))
+    _safe_set(ws, "AF48", report.get("tr_seal"))
+    _safe_set(ws, "AG49", report.get("tr_max_gw"))
+    _safe_set(ws, "AG50", report.get("tr_tare"))
+
+    # =====================================================
+    # SCOPE OF INSPECTION (AGREGADO)
+    # =====================================================
+    _check(ws, "AB52", report.get("scope_100"))
+    _check(ws, "AB53", report.get("scope_random"))
+    _safe_set(ws, "AB54", report.get("scope_items"))
+
+    # =====================================================
+    # PERSONS PRESENT (ALINEADO)
+    # =====================================================
+    _safe_set(ws, "B56", report.get("person_1_name"))
+    _safe_set(ws, "N56", report.get("person_1_position"))
+
+    _safe_set(ws, "B57", report.get("person_2_name"))
+    _safe_set(ws, "N57", report.get("person_2_position"))
+
+    _safe_set(ws, "B58", report.get("person_3_name"))
+    _safe_set(ws, "N58", report.get("person_3_position"))
 
     # =====================================================
     # SAVE TEMP FILE
