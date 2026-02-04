@@ -174,6 +174,7 @@ def get_container_reports_by_servicio(
     conn=Depends(get_db)
 ):
 
+    # 🔒 Blindaje contra llamadas incompletas
     if not all([cliente, buque_contenedor, anio, mes]):
         return {"total": 0, "data": []}
 
@@ -182,20 +183,15 @@ def get_container_reports_by_servicio(
     try:
         cur.execute("""
             SELECT
-                id,
-                cliente,
-                buque_contenedor,
-                EXTRACT(YEAR FROM fecha_inicio)::INT AS anio,
-                EXTRACT(MONTH FROM fecha_inicio)::INT AS mes,
+                consec,
                 num_informe,
                 fecha_inicio
             FROM public.servicios
             WHERE cliente = %(cliente)s
               AND buque_contenedor = %(buque)s
-              AND num_informe IS NOT NULL
-              AND fecha_inicio IS NOT NULL
               AND EXTRACT(YEAR FROM fecha_inicio) = %(anio)s
               AND EXTRACT(MONTH FROM fecha_inicio) = %(mes)s
+              AND num_informe IS NOT NULL
             ORDER BY fecha_inicio
         """, {
             "cliente": cliente.strip(),
