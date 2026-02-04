@@ -19,6 +19,9 @@ from datetime import datetime
 from fastapi import Depends
 from psycopg2.extras import RealDictCursor
 
+
+
+
 # ============================================================
 # POST — CREAR CONTAINER REPORT (ALINEADO 1:1 · BLINDADO)
 # ============================================================
@@ -553,6 +556,32 @@ def delete_container_report(report_id: int, conn=Depends(get_db)):
     cur.close()
 
     return {"success": True}
+
+# ============================================================
+# GET — STATUS DISPONIBLES (container_reports)
+# ============================================================
+
+@router.get("/statuses")
+def get_container_report_statuses(conn=Depends(get_db)):
+    cur = conn.cursor()
+
+    try:
+        cur.execute("""
+            SELECT DISTINCT status
+            FROM public.container_reports
+            WHERE status IS NOT NULL
+            ORDER BY status
+        """)
+
+        statuses = [r[0] for r in cur.fetchall()]
+
+        return {
+            "data": ["All"] + statuses
+        }
+
+    finally:
+        cur.close()
+
 
 # ============================================================
 # GET — LISTAR REPORTES (TABLA INFORMES)
