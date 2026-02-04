@@ -198,47 +198,68 @@ def download_container_report_excel(report_id: int, conn=Depends(get_db)):
 
 @router.get("/filters")
 def get_container_report_filters(conn=Depends(get_db)):
+
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
-    cur.execute("""
-        SELECT
-            ARRAY(
-                SELECT DISTINCT cliente
-                FROM public.servicios
-                WHERE num_informe IS NOT NULL
-                  AND cliente IS NOT NULL
-                ORDER BY cliente
-            ) AS clientes,
+    try:
+        cur.execute("""
+            SELECT
+                COALESCE(
+                    ARRAY(
+                        SELECT DISTINCT cliente
+                        FROM public.servicios
+                        WHERE num_informe IS NOT NULL
+                          AND cliente IS NOT NULL
+                        ORDER BY cliente
+                    ),
+                    ARRAY[]::TEXT[]
+                ) AS clientes,
 
-            ARRAY(
-                SELECT DISTINCT buque_contenedor
-                FROM public.servicios
-                WHERE num_informe IS NOT NULL
-                  AND buque_contenedor IS NOT NULL
-                ORDER BY buque_contenedor
-            ) AS buques_contenedor,
+                COALESCE(
+                    ARRAY(
+                        SELECT DISTINCT buque_contenedor
+                        FROM public.servicios
+                        WHERE num_informe IS NOT NULL
+                          AND buque_contenedor IS NOT NULL
+                        ORDER BY buque_contenedor
+                    ),
+                    ARRAY[]::TEXT[]
+                ) AS buques_contenedor,
 
-            ARRAY(
-                SELECT DISTINCT EXTRACT(YEAR FROM fecha_inicio)::INT
-                FROM public.servicios
-                WHERE num_informe IS NOT NULL
-                  AND fecha_inicio IS NOT NULL
-                ORDER BY 1 DESC
-            ) AS anios,
+                COALESCE(
+                    ARRAY(
+                        SELECT DISTINCT EXTRACT(YEAR FROM fecha_inicio)::INT
+                        FROM public.servicios
+                        WHERE num_informe IS NOT NULL
+                          AND fecha_inicio IS NOT NULL
+                        ORDER BY 1 DESC
+                    ),
+                    ARRAY[]::INT[]
+                ) AS anios,
 
-            ARRAY(
-                SELECT DISTINCT EXTRACT(MONTH FROM fecha_inicio)::INT
-                FROM public.servicios
-                WHERE num_informe IS NOT NULL
-                  AND fecha_inicio IS NOT NULL
-                ORDER BY 1
-            ) AS meses
-    """)
+                COALESCE(
+                    ARRAY(
+                        SELECT DISTINCT EXTRACT(MONTH FROM fecha_inicio)::INT
+                        FROM public.servicios
+                        WHERE num_informe IS NOT NULL
+                          AND fecha_inicio IS NOT NULL
+                        ORDER BY 1
+                    ),
+                    ARRAY[]::INT[]
+                ) AS meses
+        """)
 
-    row = cur.fetchone()
-    cur.close()
+        row = cur.fetchone() or {}
 
-    return row
+        return {
+            "clientes": row.get("clientes", []),
+            "buques_contenedor": row.get("buques_contenedor", []),
+            "anios": row.get("anios", []),
+            "meses": row.get("meses", [])
+        }
+
+    finally:
+        cur.close()
 
 
 # ============================================================
@@ -247,37 +268,49 @@ def get_container_report_filters(conn=Depends(get_db)):
 
 @router.get("/informes")
 def get_container_reports_by_servicio(
-    cliente: str,
-    buque_contenedor: str,
-    anio: int,
-    mes: int,
+    cliente: str | None = None,
+    buque_contenedor: str | None = None,
+    anio: int | None = None,
+    mes: int | None = None,
     conn=Depends(get_db)
 ):
+
+    # 🔒 Blindaje contra 422 / llamadas incompletas
+    if not all([cliente, buque_contenedor, anio, mes]):
+        return {
+            "total": 0,
+            "data": []
+        }
+
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
-    cur.execute("""
-        SELECT
-            id,
-            num_informe,
-            fecha_inicio
-        FROM public.servicios
-        WHERE cliente = %(cliente)s
-          AND buque_contenedor = %(buque)s
-          AND EXTRACT(YEAR FROM fecha_inicio) = %(anio)s
-          AND EXTRACT(MONTH FROM fecha_inicio) = %(mes)s
-          AND num_informe IS NOT NULL
-        ORDER BY fecha_inicio
-    """, {
-        "cliente": cliente,
-        "buque": buque_contenedor,
-        "anio": anio,
-        "mes": mes
-    })
+    try:
+        cur.execute("""
+            SELECT
+                id,
+                num_informe,
+                fecha_inicio
+            FROM public.servicios
+            WHERE cliente = %(cliente)s
+              AND buque_contenedor = %(buque)s
+              AND EXTRACT(YEAR FROM fecha_inicio) = %(anio)s
+              AND EXTRACT(MONTH FROM fecha_inicio) = %(mes)s
+              AND num_informe IS NOT NULL
+            ORDER BY fecha_inicio
+        """, {
+            "cliente": cliente.strip(),
+            "buque": buque_contenedor.strip(),
+            "anio": anio,
+            "mes": mes
+        })
 
-    rows = cur.fetchall()
-    cur.close()
+        rows = cur.fetchall() or []
 
-    return {
-        "total": len(rows),
-        "data": rows
-    }
+        return {
+            "total": len(rows),
+            "data": rows
+        }
+
+    finally:
+        cur.close()
+
