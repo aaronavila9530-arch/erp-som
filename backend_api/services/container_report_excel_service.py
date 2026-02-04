@@ -184,7 +184,7 @@ def generate_container_report_excel(report: dict) -> str:
 
     picture_link = report.get("picture_link")
     if picture_link:
-        generator._safe_hyperlink(ws, "A42", picture_link)
+        generator._safe_hyperlink(ws, "B42", picture_link)
 
     # =====================================================
     # DOCUMENTS
