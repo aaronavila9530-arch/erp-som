@@ -702,10 +702,6 @@ def download_container_report_excel(report_id: int, conn=Depends(get_db)):
 
 
 
-# ============================================================
-# POST — GENERAR PDF FINAL DESDE EXCEL
-# ============================================================
-
 @router.post("/{report_id}/generate-pdf")
 def generate_container_report_pdf_router(
     report_id: int,
@@ -713,25 +709,58 @@ def generate_container_report_pdf_router(
 ):
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
-    cur.execute(
-        "SELECT * FROM public.container_reports WHERE id = %s;",
-        (report_id,)
-    )
-    report = cur.fetchone()
-
-    if not report:
-        cur.close()
-        raise HTTPException(status_code=404, detail="Report not found")
-
     try:
-        from services.container_report_pdf_service import (
-            generate_container_report_pdf
+        # --------------------------------------------------
+        # 1) Validar que el reporte exista
+        # --------------------------------------------------
+        cur.execute(
+            "SELECT * FROM public.container_reports WHERE id = %s;",
+            (report_id,)
         )
+        report = cur.fetchone()
 
-        # 🔥 GENERA PDF REAL
+        if not report:
+            raise HTTPException(
+                status_code=404,
+                detail="Report not found"
+            )
+
+        # --------------------------------------------------
+        # 2) Validar LibreOffice en el sistema
+        # --------------------------------------------------
+        if not shutil.which("libreoffice") and not shutil.which("soffice"):
+            raise HTTPException(
+                status_code=500,
+                detail="LibreOffice is not installed on the server"
+            )
+
+        # --------------------------------------------------
+        # 3) Importar servicio PDF
+        # --------------------------------------------------
+        try:
+            from services.container_report_pdf_service import (
+                generate_container_report_pdf
+            )
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"PDF service import failed: {e}"
+            )
+
+        # --------------------------------------------------
+        # 4) Generar PDF REAL desde Excel
+        # --------------------------------------------------
         pdf_path = generate_container_report_pdf(report)
 
-        # 🔥 GUARDA LA RUTA EN BD (ESTO FALTABA)
+        if not pdf_path or not os.path.exists(pdf_path):
+            raise HTTPException(
+                status_code=500,
+                detail="PDF was not generated or file does not exist"
+            )
+
+        # --------------------------------------------------
+        # 5) Guardar ruta del PDF en BD
+        # --------------------------------------------------
         cur.execute(
             """
             UPDATE public.container_reports
@@ -742,22 +771,25 @@ def generate_container_report_pdf_router(
         )
 
         conn.commit()
-        cur.close()
 
         return {
             "success": True,
             "pdf_path": pdf_path
         }
 
+    except HTTPException:
+        conn.rollback()
+        raise
+
     except Exception as e:
         conn.rollback()
-        cur.close()
         raise HTTPException(
             status_code=500,
             detail=str(e)
         )
 
-
+    finally:
+        cur.close()
 
 # ============================================================
 # GET — DESCARGAR REPORTE EN PDF
