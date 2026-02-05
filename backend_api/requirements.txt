@@ -11,3 +11,4 @@ Pillow
 python-dateutil
 openai>=1.0.0
 openpyxl
+python-docx
