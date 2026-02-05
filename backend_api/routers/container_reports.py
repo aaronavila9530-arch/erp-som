@@ -748,3 +748,34 @@ def generate_container_report_pdf(report_id: int, conn=Depends(get_db)):
         "file_path": excel_path,
         "type": "excel"
     }
+
+
+
+# ============================================================
+# GET — DESCARGAR REPORTE EN PDF
+# ============================================================
+
+@router.get("/{report_id}/download-pdf")
+def download_container_report_pdf(report_id: int, conn=Depends(get_db)):
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+
+    cur.execute(
+        """
+        SELECT pdf_path
+        FROM public.container_reports
+        WHERE id = %s
+        """,
+        (report_id,)
+    )
+
+    row = cur.fetchone()
+    cur.close()
+
+    if not row or not row["pdf_path"]:
+        raise HTTPException(status_code=404, detail="PDF not found")
+
+    return FileResponse(
+        row["pdf_path"],
+        media_type="application/pdf",
+        filename=f"container_report_{report_id}.pdf"
+    )
