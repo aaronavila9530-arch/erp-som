@@ -9,6 +9,7 @@ from psycopg2.extras import RealDictCursor
 from datetime import datetime
 import shutil
 import os
+import tempfile
 
 from database import get_db
 
@@ -702,6 +703,10 @@ def download_container_report_excel(report_id: int, conn=Depends(get_db)):
 
 
 
+# ============================================================
+# POST — GENERAR PDF FINAL DESDE EXCEL (SIN BD · SAVE AS)
+# ============================================================
+
 @router.post("/{report_id}/generate-pdf")
 def generate_container_report_pdf_router(
     report_id: int,
@@ -726,7 +731,7 @@ def generate_container_report_pdf_router(
             )
 
         # --------------------------------------------------
-        # 2) Validar LibreOffice en el sistema
+        # 2) Validar LibreOffice (libreoffice o soffice)
         # --------------------------------------------------
         if not shutil.which("libreoffice") and not shutil.which("soffice"):
             raise HTTPException(
@@ -748,41 +753,29 @@ def generate_container_report_pdf_router(
             )
 
         # --------------------------------------------------
-        # 4) Generar PDF REAL desde Excel
+        # 4) Generar PDF REAL (archivo temporal)
         # --------------------------------------------------
         pdf_path = generate_container_report_pdf(report)
 
         if not pdf_path or not os.path.exists(pdf_path):
             raise HTTPException(
                 status_code=500,
-                detail="PDF was not generated or file does not exist"
+                detail="PDF was not generated"
             )
 
         # --------------------------------------------------
-        # 5) Guardar ruta del PDF en BD
+        # 5) DEVOLVER PDF DIRECTAMENTE (SAVE AS)
         # --------------------------------------------------
-        cur.execute(
-            """
-            UPDATE public.container_reports
-            SET pdf_path = %s
-            WHERE id = %s
-            """,
-            (pdf_path, report_id)
+        return FileResponse(
+            path=pdf_path,
+            media_type="application/pdf",
+            filename=f"container_report_{report_id}.pdf"
         )
 
-        conn.commit()
-
-        return {
-            "success": True,
-            "pdf_path": pdf_path
-        }
-
     except HTTPException:
-        conn.rollback()
         raise
 
     except Exception as e:
-        conn.rollback()
         raise HTTPException(
             status_code=500,
             detail=str(e)
