@@ -79,7 +79,7 @@ class ContainerReportExcelGenerator:
         )
 
     def _check(self, ws: Worksheet, cell: str, flag: bool):
-        self._safe_set(ws, cell, "" if flag else "")
+        self._safe_set(ws, cell, "✔" if flag else "")
 
 
 # =====================================================
@@ -99,25 +99,25 @@ def generate_container_report_excel(report: dict) -> str:
     generator._safe_set(ws, "Q3", report.get("container_type_text"))
 
     generator._safe_set(ws, "C5", report.get("report_no"))
-    generator._safe_set(ws, "E6", report.get("bl"))
-    generator._safe_set(ws, "E7", report.get("seals"))
-    generator._safe_set(ws, "E8", report.get("appointment"))
-    generator._safe_set(ws, "E9", report.get("shippers"))
+    generator._safe_set(ws, "C6", report.get("bl"))
+    generator._safe_set(ws, "C7", report.get("seals"))
+    generator._safe_set(ws, "C8", report.get("appointment"))
+    generator._safe_set(ws, "D9", report.get("shippers"))
 
-    generator._safe_set(ws, "Q5", report.get("inspection_place"))
-    generator._safe_set(ws, "Q6", report.get("contact_person"))
-    generator._safe_set(ws, "Z8", report.get("on_behalf_of"))
-    generator._safe_set(ws, "Z9", report.get("consignee_notify"))
+    generator._safe_set(ws, "P5", report.get("inspection_place"))
+    generator._safe_set(ws, "P6", report.get("contact_person"))
+    generator._safe_set(ws, "X8", report.get("on_behalf_of"))
+    generator._safe_set(ws, "X9", report.get("consignee_notify"))
 
-    generator._safe_set(ws, "AB5", report.get("vessel"))
+    generator._safe_set(ws, "AA5", report.get("vessel"))
 
     # =====================================================
     # DATES — FORMAT DD-MM-YYYY (SAFE)
     # =====================================================
-    generator._safe_set_date(ws, "AD6", report.get("contact_datetime"))
+    generator._safe_set_date(ws, "AC6", report.get("contact_datetime"))
     generator._safe_set_date(ws, "P7", report.get("init_inspection_datetime"))
     generator._safe_set_date(ws, "V7", report.get("init_to"))
-    generator._safe_set_date(ws, "AD7", report.get("final_inspection_datetime"))
+    generator._safe_set_date(ws, "AC7", report.get("final_inspection_datetime"))
     generator._safe_set_date(ws, "AI7", report.get("final_to"))
 
     # =====================================================
