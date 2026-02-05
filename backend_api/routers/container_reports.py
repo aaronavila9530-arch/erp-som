@@ -756,7 +756,10 @@ def generate_container_report_pdf(report_id: int, conn=Depends(get_db)):
 # ============================================================
 
 @router.get("/{report_id}/download-pdf")
-def download_container_report_pdf(report_id: int, conn=Depends(get_db)):
+def download_container_report_pdf(
+    report_id: int,
+    conn=Depends(get_db)
+):
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     cur.execute(
@@ -774,8 +777,13 @@ def download_container_report_pdf(report_id: int, conn=Depends(get_db)):
     if not row or not row["pdf_path"]:
         raise HTTPException(status_code=404, detail="PDF not found")
 
+    pdf_path = row["pdf_path"]
+
+    if not os.path.exists(pdf_path):
+        raise HTTPException(status_code=404, detail="PDF file missing on disk")
+
     return FileResponse(
-        row["pdf_path"],
+        path=pdf_path,
         media_type="application/pdf",
-        filename=f"container_report_{report_id}.pdf"
+        filename=os.path.basename(pdf_path)
     )
