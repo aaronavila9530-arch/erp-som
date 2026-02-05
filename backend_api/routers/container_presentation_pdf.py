@@ -130,7 +130,7 @@ def generate_unified_pdf(
                 detail="Container report not found"
             )
 
-        linked = report["linked_report_number"]
+        linked = report.get("linked_report_number")
 
         # -------------------------------------------------
         # 2️⃣ OBTENER CLIENTE (servicios)
@@ -145,24 +145,35 @@ def generate_unified_pdf(
             """, (linked,))
             row = cur.fetchone()
             if row:
-                cliente = row["cliente"]
+                cliente = row.get("cliente")
 
         # -------------------------------------------------
-        # 3️⃣ FORMATEAR FECHA
+        # 3️⃣ NORMALIZAR FECHA (BLINDADO)
         # -------------------------------------------------
+        raw_date = report.get("init_inspection_datetime")
         date_fmt = None
-        if report["init_inspection_datetime"]:
-            date_fmt = report["init_inspection_datetime"].strftime("%d-%m-%Y")
+
+        if raw_date:
+            if isinstance(raw_date, datetime):
+                date_fmt = raw_date.strftime("%d-%m-%Y")
+
+            elif isinstance(raw_date, str):
+                try:
+                    parsed = datetime.strptime(raw_date, "%Y-%m-%d %H:%M")
+                    date_fmt = parsed.strftime("%d-%m-%Y")
+                except ValueError:
+                    # fallback seguro
+                    date_fmt = raw_date.split(" ")[0]
 
         # -------------------------------------------------
-        # 4️⃣ CONSTRUIR DATA (⬅️ AQUÍ ESTABA EL BUG)
+        # 4️⃣ DATA FINAL PARA PRESENTATION
         # -------------------------------------------------
         data = {
-            "cert_no": linked,
-            "container": report["report_no"],
-            "to": cliente,
-            "place": report["inspection_place"],
-            "date": date_fmt
+            "cert_no": str(linked or ""),
+            "container": str(report.get("report_no") or ""),
+            "to": str(cliente or ""),
+            "place": str(report.get("inspection_place") or ""),
+            "date": str(date_fmt or "")
         }
 
         # -------------------------------------------------
@@ -170,24 +181,31 @@ def generate_unified_pdf(
         # -------------------------------------------------
         presentation_pdf = generate_presentation_pdf(data)
 
-        if not isinstance(presentation_pdf, str):
-            raise RuntimeError("Presentation PDF did not return a file path")
+        if not isinstance(presentation_pdf, str) or not presentation_pdf:
+            raise RuntimeError(
+                "Presentation PDF service did not return a valid file path"
+            )
 
         # -------------------------------------------------
         # 6️⃣ GENERAR CONTAINER REPORT PDF (PATH)
         # -------------------------------------------------
         report_pdf = generate_container_report_pdf(container_report_id)
 
-        if not isinstance(report_pdf, str):
-            raise RuntimeError("Container report PDF did not return a file path")
+        if not isinstance(report_pdf, str) or not report_pdf:
+            raise RuntimeError(
+                "Container report PDF service did not return a valid file path"
+            )
 
         # -------------------------------------------------
-        # 7️⃣ MERGE
+        # 7️⃣ MERGE PDFs
         # -------------------------------------------------
         unified_pdf = merge_pdfs(
             presentation_pdf,
             report_pdf
         )
+
+        if not isinstance(unified_pdf, str) or not unified_pdf:
+            raise RuntimeError("Merged PDF path is invalid")
 
         return FileResponse(
             unified_pdf,
