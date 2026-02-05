@@ -1,20 +1,17 @@
 FROM python:3.11
 
-# -------------------------------
-# Variables de entorno
-# -------------------------------
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
 # -------------------------------
-# Dependencias del sistema (PDF)
+# Dependencias del sistema
 # -------------------------------
 RUN apt-get update && apt-get install -y \
-    libreoffice-core \
     libreoffice-calc \
+    libreoffice-writer \
     fonts-dejavu \
     fonts-liberation \
-    && apt-get clean \
+    fonts-freefont-ttf \
     && rm -rf /var/lib/apt/lists/*
 
 # -------------------------------
@@ -25,13 +22,13 @@ WORKDIR /app
 # -------------------------------
 # Dependencias Python
 # -------------------------------
-COPY backend_api/requirements.txt .
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # -------------------------------
-# Código
+# Código (CLAVE)
 # -------------------------------
-COPY backend_api/ .
+COPY . .
 
 # -------------------------------
 # Puerto
@@ -39,6 +36,6 @@ COPY backend_api/ .
 EXPOSE 8000
 
 # -------------------------------
-# Ejecutar FastAPI
+# Arranque
 # -------------------------------
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
