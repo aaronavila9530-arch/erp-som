@@ -18,23 +18,49 @@ TEMPLATE_PATH = os.path.abspath(
 
 
 # =====================================================
-# INTERNAL — SAFE REPLACE IN PARAGRAPHS
+# INTERNAL — SAFE REPLACE (PRESERVA ESTILOS)
 # =====================================================
 def _replace_in_paragraphs(paragraphs, placeholders: dict):
     for p in paragraphs:
-        full_text = p.text
-        replaced = False
+        if not p.runs:
+            continue
 
+        # texto completo real (Word puede partirlo en runs)
+        full_text = "".join(run.text for run in p.runs)
+
+        replaced = False
         for key, value in placeholders.items():
             if key in full_text:
                 full_text = full_text.replace(key, value)
                 replaced = True
 
         if replaced:
-            # limpiar runs y reasignar texto completo
+            # conservar estilo del primer run
+            base_run = p.runs[0]
+            base_style = {
+                "bold": base_run.bold,
+                "italic": base_run.italic,
+                "underline": base_run.underline,
+                "font_name": base_run.font.name,
+                "font_size": base_run.font.size,
+                "font_color": base_run.font.color.rgb if base_run.font.color else None,
+            }
+
+            # limpiar runs
             for run in p.runs:
                 run.text = ""
-            p.add_run(full_text)
+
+            # crear nuevo run con el texto final
+            new_run = p.add_run(full_text)
+
+            # restaurar estilo
+            new_run.bold = base_style["bold"]
+            new_run.italic = base_style["italic"]
+            new_run.underline = base_style["underline"]
+            new_run.font.name = base_style["font_name"]
+            new_run.font.size = base_style["font_size"]
+            if base_style["font_color"]:
+                new_run.font.color.rgb = base_style["font_color"]
 
 
 # =====================================================
@@ -45,7 +71,8 @@ def _replace_in_tables(tables, placeholders: dict):
         for row in table.rows:
             for cell in row.cells:
                 _replace_in_paragraphs(cell.paragraphs, placeholders)
-                _replace_in_tables(cell.tables, placeholders)
+                if cell.tables:
+                    _replace_in_tables(cell.tables, placeholders)
 
 
 # =====================================================
@@ -54,11 +81,11 @@ def _replace_in_tables(tables, placeholders: dict):
 def generate_presentation_pdf(data: dict) -> str:
     """
     Genera PDF desde presentation_containers.docx
-    Reemplaza placeholders en:
-    - paragraphs
-    - tables
-    - headers
-    - footers
+    Reemplaza placeholders respetando:
+    - colores
+    - negrita
+    - tamaño
+    - alineación
     """
 
     # -------------------------------------------------
@@ -111,7 +138,7 @@ def generate_presentation_pdf(data: dict) -> str:
     output_dir = tempfile.mkdtemp()
 
     # -------------------------------------------------
-    # CONVERT TO PDF (LibreOffice)
+    # CONVERT TO PDF (LibreOffice Headless)
     # -------------------------------------------------
     try:
         subprocess.run(
@@ -150,6 +177,4 @@ def generate_presentation_pdf(data: dict) -> str:
     if not os.path.exists(pdf_path):
         raise RuntimeError("PDF generation failed — output file not found")
 
-    return pdf_path 
-
-
+    return pdf_path
