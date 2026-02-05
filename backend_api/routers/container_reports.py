@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from psycopg2.extras import RealDictCursor
 from datetime import datetime
+import shutil
 
 from database import get_db
 
