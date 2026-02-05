@@ -150,4 +150,5 @@ def generate_presentation_pdf(data: dict) -> str:
     if not os.path.exists(pdf_path):
         raise RuntimeError("PDF generation failed — output file not found")
 
-    return pdf_path
+    return pdf_path 
+
