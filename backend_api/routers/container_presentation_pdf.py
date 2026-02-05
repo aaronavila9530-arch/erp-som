@@ -111,14 +111,10 @@ def generate_unified_pdf(
 
     try:
         # -------------------------------------------------
-        # 1️⃣ OBTENER DATOS BASE (container_reports)
+        # 1️⃣ OBTENER REPORTE COMPLETO (OBLIGATORIO PARA EXCEL)
         # -------------------------------------------------
         cur.execute("""
-            SELECT
-                linked_report_number,
-                report_no,
-                inspection_place,
-                init_inspection_datetime
+            SELECT *
             FROM container_reports
             WHERE id = %s
         """, (container_report_id,))
@@ -129,6 +125,23 @@ def generate_unified_pdf(
                 status_code=404,
                 detail="Container report not found"
             )
+
+        # -------------------------------------------------
+        # 🔒 BLINDAJE EXCEL — NORMALIZAR BOOLEANOS NULL
+        # (NO afecta presentación ni BD)
+        # -------------------------------------------------
+        for k, v in report.items():
+            if k.startswith((
+                "container_",
+                "cause_",
+                "package_",
+                "doc_",
+                "quality_",
+                "scope_",
+                "new_",
+                "used_"
+            )) and v is None:
+                report[k] = False
 
         linked = report.get("linked_report_number")
 
@@ -156,13 +169,11 @@ def generate_unified_pdf(
         if raw_date:
             if isinstance(raw_date, datetime):
                 date_fmt = raw_date.strftime("%d-%m-%Y")
-
             elif isinstance(raw_date, str):
                 try:
                     parsed = datetime.strptime(raw_date, "%Y-%m-%d %H:%M")
                     date_fmt = parsed.strftime("%d-%m-%Y")
                 except ValueError:
-                    # fallback seguro
                     date_fmt = raw_date.split(" ")[0]
 
         # -------------------------------------------------
@@ -187,7 +198,7 @@ def generate_unified_pdf(
             )
 
         # -------------------------------------------------
-        # 6️⃣ GENERAR CONTAINER REPORT PDF (PATH)
+        # 6️⃣ GENERAR CONTAINER REPORT PDF (EXCEL → PDF)
         # -------------------------------------------------
         report_pdf = generate_container_report_pdf(report)
 
