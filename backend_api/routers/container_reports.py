@@ -8,6 +8,7 @@ from fastapi.responses import FileResponse
 from psycopg2.extras import RealDictCursor
 from datetime import datetime
 import shutil
+import os
 
 from database import get_db
 
@@ -19,8 +20,6 @@ router = APIRouter(
 from datetime import datetime
 from fastapi import Depends
 from psycopg2.extras import RealDictCursor
-
-
 
 
 # ============================================================
