@@ -189,7 +189,7 @@ def generate_unified_pdf(
         # -------------------------------------------------
         # 6️⃣ GENERAR CONTAINER REPORT PDF (PATH)
         # -------------------------------------------------
-        report_pdf = generate_container_report_pdf(container_report_id)
+        report_pdf = generate_container_report_pdf(report)
 
         if not isinstance(report_pdf, str) or not report_pdf:
             raise RuntimeError(
