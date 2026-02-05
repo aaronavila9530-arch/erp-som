@@ -703,51 +703,59 @@ def download_container_report_excel(report_id: int, conn=Depends(get_db)):
 
 
 # ============================================================
-# POST — GENERAR REPORTE FINAL (DESDE EXCEL)
+# POST — GENERAR PDF FINAL DESDE EXCEL
 # ============================================================
 
 @router.post("/{report_id}/generate-pdf")
-def generate_container_report_pdf(report_id: int, conn=Depends(get_db)):
+def generate_container_report_pdf_router(
+    report_id: int,
+    conn=Depends(get_db)
+):
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     cur.execute(
         "SELECT * FROM public.container_reports WHERE id = %s;",
         (report_id,)
     )
-
     report = cur.fetchone()
-    cur.close()
 
     if not report:
-        raise HTTPException(
-            status_code=404,
-            detail="Report not found"
-        )
+        cur.close()
+        raise HTTPException(status_code=404, detail="Report not found")
 
     try:
-        # ✅ SERVICIO REAL (EXCEL)
-        from services.container_report_excel_service import (
-            generate_container_report_excel
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Excel service unavailable: {e}"
+        from services.container_report_pdf_service import (
+            generate_container_report_pdf
         )
 
-    try:
-        excel_path = generate_container_report_excel(report)
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error generating report: {e}"
+        # 🔥 GENERA PDF REAL
+        pdf_path = generate_container_report_pdf(report)
+
+        # 🔥 GUARDA LA RUTA EN BD (ESTO FALTABA)
+        cur.execute(
+            """
+            UPDATE public.container_reports
+            SET pdf_path = %s
+            WHERE id = %s
+            """,
+            (pdf_path, report_id)
         )
 
-    return {
-        "success": True,
-        "file_path": excel_path,
-        "type": "excel"
-    }
+        conn.commit()
+        cur.close()
+
+        return {
+            "success": True,
+            "pdf_path": pdf_path
+        }
+
+    except Exception as e:
+        conn.rollback()
+        cur.close()
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
 
 
 
