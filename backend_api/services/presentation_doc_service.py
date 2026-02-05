@@ -5,7 +5,7 @@ from docx import Document
 
 
 # =====================================================
-# TEMPLATE PATH (PRODUCTION SAFE)
+# TEMPLATE PATH (ABSOLUTO Y REAL)
 # =====================================================
 TEMPLATE_PATH = os.path.abspath(
     os.path.join(
@@ -18,20 +18,55 @@ TEMPLATE_PATH = os.path.abspath(
 
 
 # =====================================================
+# INTERNAL — SAFE REPLACE IN PARAGRAPHS
+# =====================================================
+def _replace_in_paragraphs(paragraphs, placeholders: dict):
+    for p in paragraphs:
+        full_text = p.text
+        replaced = False
+
+        for key, value in placeholders.items():
+            if key in full_text:
+                full_text = full_text.replace(key, value)
+                replaced = True
+
+        if replaced:
+            # limpiar runs y reasignar texto completo
+            for run in p.runs:
+                run.text = ""
+            p.add_run(full_text)
+
+
+# =====================================================
+# INTERNAL — SAFE REPLACE IN TABLES
+# =====================================================
+def _replace_in_tables(tables, placeholders: dict):
+    for table in tables:
+        for row in table.rows:
+            for cell in row.cells:
+                _replace_in_paragraphs(cell.paragraphs, placeholders)
+                _replace_in_tables(cell.tables, placeholders)
+
+
+# =====================================================
 # GENERATE PRESENTATION PDF
 # =====================================================
 def generate_presentation_pdf(data: dict) -> str:
     """
     Genera PDF desde presentation_containers.docx
-    Reemplaza placeholders sin perder formato
+    Reemplaza placeholders en:
+    - paragraphs
+    - tables
+    - headers
+    - footers
     """
 
     # -------------------------------------------------
     # VALIDATIONS
     # -------------------------------------------------
-    if not os.path.isfile(TEMPLATE_PATH):
-        raise RuntimeError(
-            f"Presentation template not found at runtime: {TEMPLATE_PATH}"
+    if not os.path.exists(TEMPLATE_PATH):
+        raise FileNotFoundError(
+            f"Presentation template not found: {TEMPLATE_PATH}"
         )
 
     if not isinstance(data, dict):
@@ -51,15 +86,20 @@ def generate_presentation_pdf(data: dict) -> str:
     }
 
     # -------------------------------------------------
-    # SAFE TEXT REPLACEMENT (RUN LEVEL)
+    # BODY
     # -------------------------------------------------
-    for paragraph in doc.paragraphs:
-        for run in paragraph.runs:
-            text = run.text
-            for key, value in placeholders.items():
-                if key in text:
-                    text = text.replace(key, value)
-            run.text = text
+    _replace_in_paragraphs(doc.paragraphs, placeholders)
+    _replace_in_tables(doc.tables, placeholders)
+
+    # -------------------------------------------------
+    # HEADERS / FOOTERS
+    # -------------------------------------------------
+    for section in doc.sections:
+        _replace_in_paragraphs(section.header.paragraphs, placeholders)
+        _replace_in_tables(section.header.tables, placeholders)
+
+        _replace_in_paragraphs(section.footer.paragraphs, placeholders)
+        _replace_in_tables(section.footer.tables, placeholders)
 
     # -------------------------------------------------
     # SAVE TEMP DOCX
@@ -71,7 +111,7 @@ def generate_presentation_pdf(data: dict) -> str:
     output_dir = tempfile.mkdtemp()
 
     # -------------------------------------------------
-    # CONVERT TO PDF (LIBREOFFICE)
+    # CONVERT TO PDF (LibreOffice)
     # -------------------------------------------------
     try:
         subprocess.run(
@@ -90,24 +130,24 @@ def generate_presentation_pdf(data: dict) -> str:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE
         )
+
     except FileNotFoundError:
         raise RuntimeError(
-            "LibreOffice (soffice) not available in runtime environment"
+            "LibreOffice (soffice) is not installed or not available in PATH"
         )
+
     except subprocess.CalledProcessError as e:
         raise RuntimeError(
-            f"DOCX to PDF conversion failed: {e.stderr.decode(errors='ignore')}"
+            f"Error converting DOCX to PDF: {e.stderr.decode(errors='ignore')}"
         )
 
     # -------------------------------------------------
     # VALIDATE OUTPUT
     # -------------------------------------------------
-    pdf_path = os.path.join(
-        output_dir,
-        os.path.splitext(os.path.basename(docx_path))[0] + ".pdf"
-    )
+    pdf_name = os.path.splitext(os.path.basename(docx_path))[0] + ".pdf"
+    pdf_path = os.path.join(output_dir, pdf_name)
 
-    if not os.path.isfile(pdf_path):
-        raise RuntimeError("PDF generation failed — output not created")
+    if not os.path.exists(pdf_path):
+        raise RuntimeError("PDF generation failed — output file not found")
 
     return pdf_path
