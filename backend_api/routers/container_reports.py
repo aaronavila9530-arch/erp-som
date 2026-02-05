@@ -703,7 +703,7 @@ def download_container_report_excel(report_id: int, conn=Depends(get_db)):
 
 
 # ============================================================
-# POST — GENERAR PDF FINAL (HORIZONTAL) DESDE EXCEL
+# POST — GENERAR REPORTE FINAL (DESDE EXCEL)
 # ============================================================
 
 @router.post("/{report_id}/generate-pdf")
@@ -719,28 +719,32 @@ def generate_container_report_pdf(report_id: int, conn=Depends(get_db)):
     cur.close()
 
     if not report:
-        raise HTTPException(status_code=404, detail="Report not found")
+        raise HTTPException(
+            status_code=404,
+            detail="Report not found"
+        )
 
     try:
-        from services.container_report_pdf_service import (
-            generate_container_report_pdf
+        # ✅ SERVICIO REAL (EXCEL)
+        from services.container_report_excel_service import (
+            generate_container_report_excel
         )
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"PDF service unavailable: {e}"
+            detail=f"Excel service unavailable: {e}"
         )
 
     try:
-        pdf_path = generate_container_report_pdf(report)
+        excel_path = generate_container_report_excel(report)
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"Error generating PDF: {e}"
+            detail=f"Error generating report: {e}"
         )
 
     return {
         "success": True,
-        "pdf_path": pdf_path
+        "file_path": excel_path,
+        "type": "excel"
     }
-
