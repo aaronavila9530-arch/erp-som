@@ -3,29 +3,29 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from services.container_report_excel_service import (
-    generate_container_report_excel
-)
+from services.container_report_excel_service import generate_container_report_excel
 
 
 def generate_container_report_pdf(report: dict) -> str:
     """
-    Genera PDF REAL a partir del Excel usando LibreOffice
+    Genera PDF REAL desde Excel usando LibreOffice (Docker-safe)
     """
 
-    # 1) Generar Excel desde template
+    # 1) Generar Excel
     excel_path = generate_container_report_excel(report)
 
     if not os.path.exists(excel_path):
         raise RuntimeError("Excel file was not generated")
 
-    # 2) Carpeta destino
+    # 2) Directorio temporal
     output_dir = tempfile.mkdtemp(prefix="container_pdf_")
 
-    # 3) Convertir Excel → PDF (horizontal)
+    # 3) Usar soffice (NO libreoffice)
     cmd = [
-        "libreoffice",
+        "soffice",
         "--headless",
+        "--nologo",
+        "--nolockcheck",
         "--convert-to",
         "pdf",
         "--outdir",
