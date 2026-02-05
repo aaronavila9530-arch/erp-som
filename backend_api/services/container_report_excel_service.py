@@ -221,8 +221,8 @@ def generate_container_report_excel(report: dict) -> str:
     # =====================================================
     # GENERAL DETAILS
     # =====================================================
-    generator._check(ws, "P49", report.get("new_commodity"))
-    generator._check(ws, "V50", report.get("used_commodity"))
+    generator._check(ws, "S49", report.get("new_commodity"))  
+    generator._check(ws, "S50", report.get("used_commodity"))
     generator._safe_set(ws, "W51", report.get("net_weight"))
     generator._safe_set(ws, "W52", report.get("gross_weight"))
     generator._safe_set(ws, "W53", report.get("volume"))
