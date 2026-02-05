@@ -18,58 +18,27 @@ TEMPLATE_PATH = os.path.abspath(
 
 
 # =====================================================
-# INTERNAL — SAFE REPLACE (PRESERVA ESTILOS)
+# INTERNAL — SAFE REPLACE (RUN-LEVEL, PRESERVA TODO)
 # =====================================================
 def _replace_in_paragraphs(paragraphs, placeholders: dict):
+    """
+    Reemplaza placeholders SOLO dentro del run que los contiene.
+    NO toca tamaños, colores, fuentes, alineación ni layout.
+    """
     for p in paragraphs:
-        if not p.runs:
-            continue
+        for run in p.runs:
+            if not run.text:
+                continue
 
-        # Texto completo (Word puede fragmentarlo en runs)
-        full_text = "".join(run.text for run in p.runs)
+            original_text = run.text
 
-        replaced = False
-        for key, value in placeholders.items():
-            if key in full_text:
-                full_text = full_text.replace(key, value)
-                replaced = True
-
-        if replaced:
-            base_run = p.runs[0]
-
-            # Guardar estilo base
-            style = {
-                "bold": base_run.bold,
-                "italic": base_run.italic,
-                "underline": base_run.underline,
-                "font_name": base_run.font.name,
-                "font_size": base_run.font.size,
-                "font_color": (
-                    base_run.font.color.rgb
-                    if base_run.font.color and base_run.font.color.rgb
-                    else None
-                ),
-            }
-
-            # Limpiar runs
-            for run in p.runs:
-                run.text = ""
-
-            # Nuevo run con texto final
-            new_run = p.add_run(full_text)
-
-            # Restaurar estilo
-            new_run.bold = style["bold"]
-            new_run.italic = style["italic"]
-            new_run.underline = style["underline"]
-            new_run.font.name = style["font_name"]
-            new_run.font.size = style["font_size"]
-            if style["font_color"]:
-                new_run.font.color.rgb = style["font_color"]
+            for key, value in placeholders.items():
+                if key in original_text:
+                    run.text = original_text.replace(key, value)
 
 
 # =====================================================
-# INTERNAL — TABLES
+# INTERNAL — TABLES (RECURSIVO)
 # =====================================================
 def _replace_in_tables(tables, placeholders):
     for table in tables:
@@ -86,7 +55,13 @@ def _replace_in_tables(tables, placeholders):
 def generate_presentation_pdf(data: dict) -> str:
     """
     Genera PDF desde presentation_containers.docx
-    Reemplaza placeholders respetando estilos
+    Reemplaza placeholders respetando:
+    - tamaño
+    - color
+    - negrita
+    - fuente
+    - alineación
+    - layout original del Word
     """
 
     # -----------------------------
