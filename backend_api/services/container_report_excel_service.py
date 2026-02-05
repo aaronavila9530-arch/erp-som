@@ -187,74 +187,74 @@ def generate_container_report_excel(report: dict) -> str:
     # =====================================================
     # DOCUMENTS
     # =====================================================
-    generator._check(ws, "A42", report.get("doc_bl"))
-    generator._check(ws, "A43", report.get("doc_packing_list"))
-    generator._check(ws, "A44", report.get("doc_shipping_invoice"))
-    generator._check(ws, "A45", report.get("doc_cargo_manifest"))
-    generator._check(ws, "A46", report.get("doc_commercial_invoice"))
-    generator._check(ws, "A47", report.get("doc_delivery_record"))
-    generator._check(ws, "A48", report.get("doc_notice_loss"))
-    generator._check(ws, "A49", report.get("doc_insurance_policy"))
-    generator._check(ws, "A50", report.get("doc_other"))
+    generator._check(ws, "A44, report.get("doc_bl"))
+    generator._check(ws, "A45, report.get("doc_packing_list"))
+    generator._check(ws, "A46, report.get("doc_shipping_invoice"))
+    generator._check(ws, "A47, report.get("doc_cargo_manifest"))
+    generator._check(ws, "A48, report.get("doc_commercial_invoice"))
+    generator._check(ws, "A49, report.get("doc_delivery_record"))
+    generator._check(ws, "A50 report.get("doc_notice_loss"))
+    generator._check(ws, "A51 report.get("doc_insurance_policy"))
+    generator._check(ws, "A52, report.get("doc_other"))
 
     # =====================================================
     # QUALITY
     # =====================================================
-    generator._check(ws, "J42", report.get("quality_packing_exam"))
-    generator._check(ws, "J43", report.get("quality_un_witness"))
-    generator._check(ws, "J44", report.get("quality_visual_exam"))
-    generator._check(ws, "J45", report.get("quality_product_exam"))
-    generator._check(ws, "J46", report.get("quality_documents"))
-    generator._check(ws, "J47", report.get("quality_sanitary_cert"))
-    generator._check(ws, "J48", report.get("quality_phytosanitary_cert"))
-    generator._check(ws, "J49", report.get("quality_factory_cert"))
-    generator._check(ws, "J50", report.get("quality_origin_cert"))
+    generator._check(ws, "J44, report.get("quality_packing_exam"))
+    generator._check(ws, "J45, report.get("quality_un_witness"))
+    generator._check(ws, "J46, report.get("quality_visual_exam"))
+    generator._check(ws, "J47, report.get("quality_product_exam"))
+    generator._check(ws, "J48, report.get("quality_documents"))
+    generator._check(ws, "J49, report.get("quality_sanitary_cert"))
+    generator._check(ws, "J50 report.get("quality_phytosanitary_cert"))
+    generator._check(ws, "J51 report.get("quality_factory_cert"))
+    generator._check(ws, "J52, report.get("quality_origin_cert"))
 
     # =====================================================
     # INSPECTED CONTAINER
     # =====================================================
-    generator._safe_set(ws, "W45", report.get("ic_manuf"))
-    generator._safe_set(ws, "W46", report.get("ic_csc"))
-    generator._safe_set(ws, "X47", report.get("ic_max_gw"))
-    generator._safe_set(ws, "X48", report.get("ic_tare"))
+    generator._safe_set(ws, "W44, report.get("ic_manuf"))
+    generator._safe_set(ws, "W45, report.get("ic_csc"))
+    generator._safe_set(ws, "X46, report.get("ic_max_gw"))
+    generator._safe_set(ws, "X47, report.get("ic_tare"))
 
     # =====================================================
     # GENERAL DETAILS
     # =====================================================
-    generator._check(ws, "P55", report.get("new_commodity"))
-    generator._check(ws, "V55", report.get("used_commodity"))
-    generator._safe_set(ws, "W52", report.get("net_weight"))
-    generator._safe_set(ws, "W53", report.get("gross_weight"))
-    generator._safe_set(ws, "W54", report.get("volume"))
+    generator._check(ws, "P49 report.get("new_commodity"))
+    generator._check(ws, "V50 report.get("used_commodity"))
+    generator._safe_set(ws, "W51, report.get("net_weight"))
+    generator._safe_set(ws, "W52, report.get("gross_weight"))
+    generator._safe_set(ws, "W53report.get("volume"))
 
     # =====================================================
     # TRANSFER TO CONTAINER
     # =====================================================
-    generator._safe_set(ws, "AF45", report.get("tr_number"))
-    generator._safe_set(ws, "AF46", report.get("tr_manuf"))
-    generator._safe_set(ws, "AF47", report.get("tr_csc"))
-    generator._safe_set(ws, "AF48", report.get("tr_seal"))
-    generator._safe_set(ws, "AG49", report.get("tr_max_gw"))
-    generator._safe_set(ws, "AG50", report.get("tr_tare"))
+    generator._safe_set(ws, "AF44, report.get("tr_number"))
+    generator._safe_set(ws, "AF45, report.get("tr_manuf"))
+    generator._safe_set(ws, "AF46, report.get("tr_csc"))
+    generator._safe_set(ws, "AF47, report.get("tr_seal"))
+    generator._safe_set(ws, "AG48, report.get("tr_max_gw"))
+    generator._safe_set(ws, "AG49 report.get("tr_tare"))
 
     # =====================================================
     # SCOPE OF INSPECTION
     # =====================================================
-    generator._check(ws, "AB52", report.get("scope_100"))
-    generator._check(ws, "AB53", report.get("scope_random"))
-    generator._safe_set(ws, "AB54", report.get("scope_items"))
+    generator._check(ws, "AB51, report.get("scope_100"))
+    generator._check(ws, "AB52, report.get("scope_random"))
+    generator._safe_set(ws, "AB53, report.get("scope_items"))
 
     # =====================================================
     # PERSONS PRESENT
     # =====================================================
-    generator._safe_set(ws, "B56", report.get("person_1_name"))
-    generator._safe_set(ws, "N56", report.get("person_1_position"))
+    generator._safe_set(ws, "B55", report.get("person_1_name"))
+    generator._safe_set(ws, "N55", report.get("person_1_position"))
 
-    generator._safe_set(ws, "B57", report.get("person_2_name"))
-    generator._safe_set(ws, "N57", report.get("person_2_position"))
+    generator._safe_set(ws, "B56", report.get("person_2_name"))
+    generator._safe_set(ws, "N56, report.get("person_2_position"))
 
-    generator._safe_set(ws, "B58", report.get("person_3_name"))
-    generator._safe_set(ws, "N58", report.get("person_3_position"))
+    generator._safe_set(ws, "B57, report.get("person_3_name"))
+    generator._safe_set(ws, "N57, report.get("person_3_position"))
 
     # =====================================================
     # SAVE TEMP FILE
