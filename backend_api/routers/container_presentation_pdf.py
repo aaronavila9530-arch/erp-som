@@ -99,31 +99,91 @@ def generate_presentation_only(
         )
 
 
+# =====================================================
+# UNIFIED PDF (Presentation + Container Report)
+# =====================================================
 @router.get("/{container_report_id}/unified")
 def generate_unified_pdf(
     container_report_id: int,
     conn=Depends(get_db)
 ):
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+
     try:
-        # ----------------------------------
-        # 1️⃣ PRESENTATION PDF (PATH)
-        # ----------------------------------
+        # -------------------------------------------------
+        # 1️⃣ OBTENER DATOS BASE (container_reports)
+        # -------------------------------------------------
+        cur.execute("""
+            SELECT
+                linked_report_number,
+                report_no,
+                inspection_place,
+                init_inspection_datetime
+            FROM container_reports
+            WHERE id = %s
+        """, (container_report_id,))
+
+        report = cur.fetchone()
+        if not report:
+            raise HTTPException(
+                status_code=404,
+                detail="Container report not found"
+            )
+
+        linked = report["linked_report_number"]
+
+        # -------------------------------------------------
+        # 2️⃣ OBTENER CLIENTE (servicios)
+        # -------------------------------------------------
+        cliente = None
+        if linked:
+            cur.execute("""
+                SELECT cliente
+                FROM servicios
+                WHERE num_informe = %s
+                LIMIT 1
+            """, (linked,))
+            row = cur.fetchone()
+            if row:
+                cliente = row["cliente"]
+
+        # -------------------------------------------------
+        # 3️⃣ FORMATEAR FECHA
+        # -------------------------------------------------
+        date_fmt = None
+        if report["init_inspection_datetime"]:
+            date_fmt = report["init_inspection_datetime"].strftime("%d-%m-%Y")
+
+        # -------------------------------------------------
+        # 4️⃣ CONSTRUIR DATA (⬅️ AQUÍ ESTABA EL BUG)
+        # -------------------------------------------------
+        data = {
+            "cert_no": linked,
+            "container": report["report_no"],
+            "to": cliente,
+            "place": report["inspection_place"],
+            "date": date_fmt
+        }
+
+        # -------------------------------------------------
+        # 5️⃣ GENERAR PRESENTATION PDF (PATH)
+        # -------------------------------------------------
         presentation_pdf = generate_presentation_pdf(data)
 
         if not isinstance(presentation_pdf, str):
-            raise RuntimeError("Presentation PDF did not return a path")
+            raise RuntimeError("Presentation PDF did not return a file path")
 
-        # ----------------------------------
-        # 2️⃣ REPORT PDF DESDE SERVICE (PATH)
-        # ----------------------------------
+        # -------------------------------------------------
+        # 6️⃣ GENERAR CONTAINER REPORT PDF (PATH)
+        # -------------------------------------------------
         report_pdf = generate_container_report_pdf(container_report_id)
 
         if not isinstance(report_pdf, str):
-            raise RuntimeError("Report PDF did not return a path")
+            raise RuntimeError("Container report PDF did not return a file path")
 
-        # ----------------------------------
-        # 3️⃣ MERGE
-        # ----------------------------------
+        # -------------------------------------------------
+        # 7️⃣ MERGE
+        # -------------------------------------------------
         unified_pdf = merge_pdfs(
             presentation_pdf,
             report_pdf
@@ -135,8 +195,15 @@ def generate_unified_pdf(
             media_type="application/pdf"
         )
 
+    except HTTPException:
+        raise
+
     except Exception as e:
+        conn.rollback()
         raise HTTPException(
             status_code=500,
             detail=f"Error generating unified PDF: {str(e)}"
         )
+
+    finally:
+        cur.close()
