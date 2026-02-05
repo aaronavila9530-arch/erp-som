@@ -105,31 +105,25 @@ def generate_unified_pdf(
     conn=Depends(get_db)
 ):
     try:
-        # -----------------------------
-        # 1️⃣ PRESENTATION PDF
-        # -----------------------------
-        presentation_pdf = generate_presentation_pdf({
-            "cert_no": "...",
-            "container": "...",
-            "to": "...",
-            "place": "...",
-            "date": "..."
-        })
+        # ----------------------------------
+        # 1️⃣ PRESENTATION PDF (PATH)
+        # ----------------------------------
+        presentation_pdf = generate_presentation_pdf(data)
 
         if not isinstance(presentation_pdf, str):
-            raise RuntimeError("Presentation PDF service did not return a path")
+            raise RuntimeError("Presentation PDF did not return a path")
 
-        # -----------------------------
-        # 2️⃣ CONTAINER REPORT PDF (SERVICE)
-        # -----------------------------
+        # ----------------------------------
+        # 2️⃣ REPORT PDF DESDE SERVICE (PATH)
+        # ----------------------------------
         report_pdf = generate_container_report_pdf(container_report_id)
 
         if not isinstance(report_pdf, str):
-            raise RuntimeError("Report PDF service did not return a path")
+            raise RuntimeError("Report PDF did not return a path")
 
-        # -----------------------------
+        # ----------------------------------
         # 3️⃣ MERGE
-        # -----------------------------
+        # ----------------------------------
         unified_pdf = merge_pdfs(
             presentation_pdf,
             report_pdf
