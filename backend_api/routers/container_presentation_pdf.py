@@ -99,24 +99,41 @@ def generate_presentation_only(
         )
 
 
-# =====================================================
-# UNIFIED PDF (Presentation + Container Report)
-# =====================================================
 @router.get("/{container_report_id}/unified")
 def generate_unified_pdf(
     container_report_id: int,
     conn=Depends(get_db)
 ):
     try:
-        # 1️⃣ Presentation
-        data = _get_presentation_data(container_report_id, conn)
-        presentation_pdf = generate_presentation_pdf(data)
+        # -----------------------------
+        # 1️⃣ PRESENTATION PDF
+        # -----------------------------
+        presentation_pdf = generate_presentation_pdf({
+            "cert_no": "...",
+            "container": "...",
+            "to": "...",
+            "place": "...",
+            "date": "..."
+        })
 
-        # 2️⃣ Container Report PDF (SERVICE — NO ROUTER)
+        if not isinstance(presentation_pdf, str):
+            raise RuntimeError("Presentation PDF service did not return a path")
+
+        # -----------------------------
+        # 2️⃣ CONTAINER REPORT PDF (SERVICE)
+        # -----------------------------
         report_pdf = generate_container_report_pdf(container_report_id)
 
-        # 3️⃣ Merge PDFs
-        unified_pdf = merge_pdfs(presentation_pdf, report_pdf)
+        if not isinstance(report_pdf, str):
+            raise RuntimeError("Report PDF service did not return a path")
+
+        # -----------------------------
+        # 3️⃣ MERGE
+        # -----------------------------
+        unified_pdf = merge_pdfs(
+            presentation_pdf,
+            report_pdf
+        )
 
         return FileResponse(
             unified_pdf,
@@ -124,10 +141,8 @@ def generate_unified_pdf(
             media_type="application/pdf"
         )
 
-    except HTTPException:
-        raise
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"Error generating unified PDF: {e}"
+            detail=f"Error generating unified PDF: {str(e)}"
         )
