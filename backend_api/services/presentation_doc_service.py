@@ -18,27 +18,26 @@ TEMPLATE_PATH = os.path.abspath(
 
 
 # =====================================================
-# INTERNAL — SAFE REPLACE (RUN-LEVEL, PRESERVA TODO)
+# INTERNAL — SAFE REPLACE (RUN-LEVEL, 1 PASADA)
 # =====================================================
 def _replace_in_paragraphs(paragraphs, placeholders: dict):
     """
-    Reemplaza placeholders SOLO dentro del run que los contiene.
-    NO toca tamaños, colores, fuentes, alineación ni layout.
+    Reemplaza placeholders SOLO una vez por run.
+    No reconstruye texto, no toca estilos, no rompe layout.
     """
     for p in paragraphs:
         for run in p.runs:
             if not run.text:
                 continue
 
-            original_text = run.text
-
             for key, value in placeholders.items():
-                if key in original_text:
-                    run.text = original_text.replace(key, value)
+                if key in run.text:
+                    run.text = run.text.replace(key, value)
+                    break  # 🔒 CRÍTICO: no volver a tocar este run
 
 
 # =====================================================
-# INTERNAL — TABLES (RECURSIVO)
+# INTERNAL — TABLES (RECURSIVO SEGURO)
 # =====================================================
 def _replace_in_tables(tables, placeholders):
     for table in tables:
@@ -55,13 +54,13 @@ def _replace_in_tables(tables, placeholders):
 def generate_presentation_pdf(data: dict) -> str:
     """
     Genera PDF desde presentation_containers.docx
-    Reemplaza placeholders respetando:
+    Respeta EXACTAMENTE:
     - tamaño
     - color
-    - negrita
     - fuente
+    - negrita
     - alineación
-    - layout original del Word
+    - imágenes
     """
 
     # -----------------------------
@@ -131,8 +130,12 @@ def generate_presentation_pdf(data: dict) -> str:
             ],
             check=True,
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE
+            stderr=subprocess.PIPE,
+            timeout=60  # 🔒 evita cuelgues
         )
+
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("LibreOffice PDF conversion timed out")
 
     except FileNotFoundError:
         raise RuntimeError(
