@@ -16,19 +16,31 @@ router = APIRouter(
 )
 
 # ============================================================
-# POST — CREAR PROYECTO / CALCULO
+# POST — CREAR PROYECTO / CALCULO (MULTI-LINE)
 # ============================================================
 @router.post("")
 def create_proyecto_calculo(payload: dict, conn=Depends(get_db)):
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     try:
-        if not payload.get("nombre_proyecto"):
+        # ---------------- VALIDACIONES ----------------
+        nombre_proyecto = payload.get("nombre_proyecto")
+        if not nombre_proyecto:
             raise HTTPException(
                 status_code=400,
                 detail="nombre_proyecto is required"
             )
 
+        personal_costos = payload.get("personal_costos")
+        if not isinstance(personal_costos, list) or not personal_costos:
+            raise HTTPException(
+                status_code=400,
+                detail="personal_costos must be a non-empty list"
+            )
+
+        tiempo = float(payload.get("tiempo", 0))
+
+        # ---------------- SQL ----------------
         sql = """
         INSERT INTO proyectos_calculo (
             nombre_proyecto,
@@ -65,31 +77,42 @@ def create_proyecto_calculo(payload: dict, conn=Depends(get_db)):
         RETURNING id;
         """
 
-        # Defaults seguros
-        data = {
-            "nombre_proyecto": payload.get("nombre_proyecto"),
-            "personal": payload.get("personal", 0),
-            "costo": payload.get("costo", 0),
-            "moneda": payload.get("moneda", "USD"),
-            "tiempo": payload.get("tiempo", 0),
-            "total_honorarios": payload.get("total_honorarios", 0),
-            "gasto_alimentacion": payload.get("gasto_alimentacion", 0),
-            "gasto_comunicacion": payload.get("gasto_comunicacion", 0),
-            "gasto_transporte": payload.get("gasto_transporte", 0),
-            "total_gastos": payload.get("total_gastos", 0),
-            "margen": payload.get("margen", 0),
-            "precio": payload.get("precio", 0),
-            "utilidad": payload.get("utilidad", 0),
-            "comentarios": payload.get("comentarios"),
-        }
+        inserted_ids = []
 
-        cur.execute(sql, data)
-        new_id = cur.fetchone()["id"]
+        # ---------------- MULTI INSERT (1 PERSONA = 1 FILA) ----------------
+        for costo_persona in personal_costos:
+
+            if not isinstance(costo_persona, (int, float)):
+                continue
+
+            total_honorarios = round(costo_persona * tiempo, 2)
+
+            data = {
+                "nombre_proyecto": nombre_proyecto,
+                "personal": 1,  # 🔴 CLAVE: 1 FILA = 1 PERSONA
+                "costo": costo_persona,
+                "moneda": payload.get("moneda", "USD"),
+                "tiempo": tiempo,
+                "total_honorarios": total_honorarios,
+                "gasto_alimentacion": payload.get("gasto_alimentacion", 0),
+                "gasto_comunicacion": payload.get("gasto_comunicacion", 0),
+                "gasto_transporte": payload.get("gasto_transporte", 0),
+                "total_gastos": payload.get("total_gastos", 0),
+                "margen": payload.get("margen", 0),
+                "precio": payload.get("precio", 0),
+                "utilidad": payload.get("utilidad", 0),
+                "comentarios": payload.get("comentarios"),
+            }
+
+            cur.execute(sql, data)
+            inserted_ids.append(cur.fetchone()["id"])
+
         conn.commit()
 
         return {
             "success": True,
-            "id": new_id
+            "rows_created": len(inserted_ids),
+            "ids": inserted_ids
         }
 
     except HTTPException:
@@ -105,7 +128,6 @@ def create_proyecto_calculo(payload: dict, conn=Depends(get_db)):
     finally:
         cur.close()
 
-
 # ============================================================
 # GET — LISTAR PROYECTOS
 # ============================================================
@@ -114,9 +136,24 @@ def list_proyectos_calculo(conn=Depends(get_db)):
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     cur.execute("""
-        SELECT *
+        SELECT
+            nombre_proyecto,
+            moneda,
+            tiempo,
+            COUNT(*)                     AS personas,
+            SUM(costo)                   AS costo_hora_total,
+            SUM(total_honorarios)        AS total_honorarios,
+            MAX(gasto_alimentacion)      AS gasto_alimentacion,
+            MAX(gasto_comunicacion)      AS gasto_comunicacion,
+            MAX(gasto_transporte)        AS gasto_transporte,
+            MAX(total_gastos)            AS total_gastos,
+            MAX(margen)                  AS margen,
+            MAX(precio)                  AS precio,
+            MAX(utilidad)                AS utilidad,
+            MAX(creado_el)               AS creado_el
         FROM proyectos_calculo
-        ORDER BY creado_el DESC
+        GROUP BY nombre_proyecto, moneda, tiempo
+        ORDER BY creado_el DESC;
     """)
 
     rows = cur.fetchall() or []
@@ -131,38 +168,68 @@ def list_proyectos_calculo(conn=Depends(get_db)):
 # ============================================================
 # GET — OBTENER POR ID
 # ============================================================
-@router.get("/{proyecto_id}")
+@router.get("/{nombre_proyecto}")
 def get_proyecto_calculo(
-    proyecto_id: int,
+    nombre_proyecto: str,
     conn=Depends(get_db)
 ):
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
-    cur.execute(
-        "SELECT * FROM proyectos_calculo WHERE id = %s;",
-        (proyecto_id,)
-    )
+    # ---- Cabecera agregada ----
+    cur.execute("""
+        SELECT
+            nombre_proyecto,
+            moneda,
+            tiempo,
+            SUM(total_honorarios)   AS total_honorarios,
+            MAX(gasto_alimentacion) AS gasto_alimentacion,
+            MAX(gasto_comunicacion) AS gasto_comunicacion,
+            MAX(gasto_transporte)   AS gasto_transporte,
+            MAX(total_gastos)       AS total_gastos,
+            MAX(margen)             AS margen,
+            MAX(precio)             AS precio,
+            MAX(utilidad)           AS utilidad
+        FROM proyectos_calculo
+        WHERE nombre_proyecto = %s
+        GROUP BY nombre_proyecto, moneda, tiempo;
+    """, (nombre_proyecto,))
 
-    row = cur.fetchone()
-    cur.close()
-
-    if not row:
+    header = cur.fetchone()
+    if not header:
+        cur.close()
         raise HTTPException(
             status_code=404,
             detail="Proyecto no encontrado"
         )
 
+    # ---- Detalle personas ----
+    cur.execute("""
+        SELECT
+            id,
+            costo,
+            total_honorarios
+        FROM proyectos_calculo
+        WHERE nombre_proyecto = %s
+        ORDER BY id;
+    """, (nombre_proyecto,))
+
+    personas = cur.fetchall() or []
+    cur.close()
+
     return {
-        "data": row
+        "data": {
+            "header": header,
+            "personas": personas
+        }
     }
 
 
 # ============================================================
 # PUT — ACTUALIZAR PROYECTO
 # ============================================================
-@router.put("/{proyecto_id}")
+@router.put("/{nombre_proyecto}")
 def update_proyecto_calculo(
-    proyecto_id: int,
+    nombre_proyecto: str,
     payload: dict,
     conn=Depends(get_db)
 ):
@@ -173,12 +240,8 @@ def update_proyecto_calculo(
         )
 
     allowed_fields = {
-        "nombre_proyecto",
-        "personal",
-        "costo",
         "moneda",
         "tiempo",
-        "total_honorarios",
         "gasto_alimentacion",
         "gasto_comunicacion",
         "gasto_transporte",
@@ -200,16 +263,16 @@ def update_proyecto_calculo(
             detail="No valid fields to update"
         )
 
-    clean_payload["id"] = proyecto_id
-
     fields_sql = ", ".join(
-        f"{k} = %({k})s" for k in clean_payload if k != "id"
+        f"{k} = %({k})s" for k in clean_payload
     )
+
+    clean_payload["nombre_proyecto"] = nombre_proyecto
 
     sql = f"""
         UPDATE proyectos_calculo
         SET {fields_sql}
-        WHERE id = %(id)s;
+        WHERE nombre_proyecto = %(nombre_proyecto)s;
     """
 
     cur = conn.cursor()
@@ -227,23 +290,23 @@ def update_proyecto_calculo(
 
     return {
         "success": True,
-        "id": proyecto_id
+        "rows_updated": cur.rowcount
     }
 
 
 # ============================================================
 # DELETE — ELIMINAR PROYECTO
 # ============================================================
-@router.delete("/{proyecto_id}")
+@router.delete("/{nombre_proyecto}")
 def delete_proyecto_calculo(
-    proyecto_id: int,
+    nombre_proyecto: str,
     conn=Depends(get_db)
 ):
     cur = conn.cursor()
 
     cur.execute(
-        "DELETE FROM proyectos_calculo WHERE id = %s;",
-        (proyecto_id,)
+        "DELETE FROM proyectos_calculo WHERE nombre_proyecto = %s;",
+        (nombre_proyecto,)
     )
 
     if cur.rowcount == 0:
@@ -257,5 +320,6 @@ def delete_proyecto_calculo(
     cur.close()
 
     return {
-        "success": True
+        "success": True,
+        "rows_deleted": cur.rowcount
     }
