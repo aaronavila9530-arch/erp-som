@@ -20,54 +20,55 @@ GITHUB_API_URL = (
 @router.get("/")
 def check_version():
     """
-    🔒 ENDPOINT DE VERSIONES — BACKEND NEUTRO
+    🔒 ENDPOINT DE VERSIONES — BACKEND NEUTRO Y SEGURO
 
-    • El backend NO conoce su versión
+    • El backend NO conoce la versión instalada
     • El backend NO compara versiones
-    • El backend SOLO refleja GitHub
-    • El frontend decide qué hacer
+    • El backend SOLO refleja GitHub Releases
+    • El frontend decide si actualizar o no
     """
 
     try:
-        r = requests.get(
+        response = requests.get(
             GITHUB_API_URL,
-            timeout=15,
+            timeout=10,
             headers={
-                "Accept": "application/vnd.github+json"
+                "Accept": "application/vnd.github+json",
+                "User-Agent": "ERP-SOM-Version-Checker"
             }
         )
-        r.raise_for_status()
-        data = r.json()
+        response.raise_for_status()
+        data = response.json()
 
-        # --------------------------------------------
-        # VERSION DESDE GITHUB (tag_name)
-        # --------------------------------------------
+        # ----------------------------------------------------
+        # OBTENER TAG DE VERSIÓN
+        # ----------------------------------------------------
         tag = (data.get("tag_name") or "").strip()
-        latest_version = tag.lstrip("v")
+
+        if not tag:
+            raise ValueError("Release sin tag_name")
+
+        # Normalizar: v1.0.6 → 1.0.6
+        latest_version = tag.lstrip("v").strip()
 
         if not latest_version:
-            raise ValueError("GitHub release sin tag_name")
+            raise ValueError("Versión inválida en tag_name")
 
-        # --------------------------------------------
+        # ----------------------------------------------------
         # BUSCAR INSTALLER .exe
-        # --------------------------------------------
-        assets = data.get("assets", [])
-        installer = next(
-            (
-                a for a in assets
-                if a.get("name", "").lower().endswith(".exe")
-            ),
-            None
-        )
+        # ----------------------------------------------------
+        installer_url = None
+        for asset in data.get("assets", []):
+            name = (asset.get("name") or "").lower()
+            if name.endswith(".exe"):
+                installer_url = asset.get("browser_download_url")
+                break
 
         return {
             "latest_version": latest_version,
-            "download_url": (
-                installer.get("browser_download_url")
-                if installer else None
-            ),
+            "download_url": installer_url,
             "force_update": True,
-            "message": "Nueva versión disponible del ERP-SOM."
+            "message": f"Nueva versión {latest_version} disponible del ERP-SOM."
         }
 
     except Exception:
@@ -76,8 +77,8 @@ def check_version():
         # ====================================================
         # • GitHub caído
         # • Sin internet
+        # • Rate limit
         # • JSON inválido
-        # • Timeout
         #
         # 👉 JAMÁS BLOQUEAR EL ERP
         # ====================================================
