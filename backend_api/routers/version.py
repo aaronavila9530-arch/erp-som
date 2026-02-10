@@ -6,42 +6,83 @@ router = APIRouter(
     tags=["Version"]
 )
 
+# ============================================================
+# CONFIGURACIÓN
+# ============================================================
 GITHUB_REPO = "aaronavila9530-arch/erp-som"
-CURRENT_VERSION = "1.0.3"
-APP_VERSION = CURRENT_VERSION  # 👈 alias para frontend
+GITHUB_API_URL = (
+    f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+)
 
-
+# ============================================================
+# VERSION CHECK (BACKEND NEUTRO Y BLINDADO)
+# ============================================================
 @router.get("/")
 def check_version():
-    url = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+    """
+    🔒 ENDPOINT DE VERSIONES — BACKEND NEUTRO
+
+    • El backend NO conoce su versión
+    • El backend NO compara versiones
+    • El backend SOLO refleja GitHub
+    • El frontend decide qué hacer
+    """
 
     try:
-        r = requests.get(url, timeout=15)
+        r = requests.get(
+            GITHUB_API_URL,
+            timeout=15,
+            headers={
+                "Accept": "application/vnd.github+json"
+            }
+        )
         r.raise_for_status()
         data = r.json()
 
-        tag = data.get("tag_name", "")
+        # --------------------------------------------
+        # VERSION DESDE GITHUB (tag_name)
+        # --------------------------------------------
+        tag = (data.get("tag_name") or "").strip()
         latest_version = tag.lstrip("v")
 
+        if not latest_version:
+            raise ValueError("GitHub release sin tag_name")
+
+        # --------------------------------------------
+        # BUSCAR INSTALLER .exe
+        # --------------------------------------------
         assets = data.get("assets", [])
         installer = next(
-            (a for a in assets if a.get("name", "").lower().endswith(".exe")),
+            (
+                a for a in assets
+                if a.get("name", "").lower().endswith(".exe")
+            ),
             None
         )
 
         return {
-            "current_version": CURRENT_VERSION,
             "latest_version": latest_version,
-            "download_url": installer["browser_download_url"] if installer else None,
-            "force_update": latest_version != CURRENT_VERSION,
-            "message": "UPDATE REQUIRED" if latest_version != CURRENT_VERSION else ""
+            "download_url": (
+                installer.get("browser_download_url")
+                if installer else None
+            ),
+            "force_update": True,
+            "message": "Nueva versión disponible del ERP-SOM."
         }
 
     except Exception:
-        # FAIL SAFE: jamás romper el ERP
+        # ====================================================
+        # FAIL SAFE ABSOLUTO
+        # ====================================================
+        # • GitHub caído
+        # • Sin internet
+        # • JSON inválido
+        # • Timeout
+        #
+        # 👉 JAMÁS BLOQUEAR EL ERP
+        # ====================================================
         return {
-            "current_version": CURRENT_VERSION,
-            "latest_version": CURRENT_VERSION,
+            "latest_version": None,
             "download_url": None,
             "force_update": False,
             "message": ""

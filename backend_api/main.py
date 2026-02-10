@@ -60,6 +60,7 @@ from routers.container_reports import router as container_reports_router
 from routers.container_presentation import router as container_presentation_router
 from routers.container_presentation_pdf import router as container_presentation_pdf_router
 from routers import proyectos_calculo
+from routers import vessel_grain_sampling
 
 # Comercial
 from routers.comercial import router as comercial_router
@@ -215,6 +216,7 @@ app.include_router(container_reports_router)
 app.include_router(container_presentation_router)
 app.include_router(container_presentation_pdf_router)
 app.include_router(proyectos_calculo.router)
+app.include_router(vessel_grain_sampling.router)
 
 app.include_router(comercial_router)
 app.include_router(comercial_clients_analytics_router)
@@ -222,8 +224,6 @@ app.include_router(comercial_ports_analytics_router)
 app.include_router(comercial_servicios_analytics_router)
 app.include_router(servicios_precios_router)
 app.include_router(cotizaciones_router)
-
-
 
 
 # ============================================================
