@@ -10,78 +10,81 @@ router = APIRouter(
 # CONFIGURACIÓN
 # ============================================================
 GITHUB_REPO = "aaronavila9530-arch/erp-som"
-GITHUB_API_URL = (
-    f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
-)
+GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 
 # ============================================================
-# VERSION CHECK (BACKEND NEUTRO Y BLINDADO)
+# VERSION CHECK (BACKEND NEUTRO, BLINDADO, AISLADO)
 # ============================================================
 @router.get("/")
 def check_version():
     """
-    🔒 ENDPOINT DE VERSIONES — BACKEND NEUTRO Y SEGURO
+    🔒 ENDPOINT DE VERSIONES — BACKEND AISLADO
 
-    • El backend NO conoce la versión instalada
-    • El backend NO compara versiones
-    • El backend SOLO refleja GitHub Releases
-    • El frontend decide si actualizar o no
+    • NO importa db
+    • NO importa settings
+    • NO compara versiones
+    • NO conoce versión instalada
+    • SOLO refleja GitHub
+    • JAMÁS rompe el backend
     """
 
     try:
-        response = requests.get(
+        r = requests.get(
             GITHUB_API_URL,
-            timeout=10,
+            timeout=8,
             headers={
                 "Accept": "application/vnd.github+json",
-                "User-Agent": "ERP-SOM-Version-Checker"
+                "User-Agent": "ERP-SOM-Version-Endpoint"
             }
         )
-        response.raise_for_status()
-        data = response.json()
+        r.raise_for_status()
+        data = r.json()
 
-        # ----------------------------------------------------
-        # OBTENER TAG DE VERSIÓN
-        # ----------------------------------------------------
-        tag = (data.get("tag_name") or "").strip()
+        # ------------------------------
+        # Extraer versión
+        # ------------------------------
+        tag = data.get("tag_name")
+        if not isinstance(tag, str):
+            raise ValueError("tag_name inválido")
 
-        if not tag:
-            raise ValueError("Release sin tag_name")
-
-        # Normalizar: v1.0.6 → 1.0.6
         latest_version = tag.lstrip("v").strip()
-
         if not latest_version:
-            raise ValueError("Versión inválida en tag_name")
+            raise ValueError("versión vacía")
 
-        # ----------------------------------------------------
-        # BUSCAR INSTALLER .exe
-        # ----------------------------------------------------
-        installer_url = None
-        for asset in data.get("assets", []):
-            name = (asset.get("name") or "").lower()
-            if name.endswith(".exe"):
-                installer_url = asset.get("browser_download_url")
-                break
+        # ------------------------------
+        # Buscar instalador .exe
+        # ------------------------------
+        download_url = None
+        assets = data.get("assets", [])
+
+        if isinstance(assets, list):
+            for a in assets:
+                name = str(a.get("name", "")).lower()
+                if name.endswith(".exe"):
+                    download_url = a.get("browser_download_url")
+                    break
 
         return {
             "latest_version": latest_version,
-            "download_url": installer_url,
+            "download_url": download_url,
+            # 👇 EL BACKEND SIEMPRE OBLIGA UPDATE
+            # El frontend decide si aplica o no
             "force_update": True,
             "message": f"Nueva versión {latest_version} disponible del ERP-SOM."
         }
 
     except Exception:
-        # ====================================================
+        # ----------------------------------------------------
         # FAIL SAFE ABSOLUTO
-        # ====================================================
+        # ----------------------------------------------------
         # • GitHub caído
         # • Sin internet
         # • Rate limit
         # • JSON inválido
         #
-        # 👉 JAMÁS BLOQUEAR EL ERP
-        # ====================================================
+        # 👉 JAMÁS BLOQUEAR EL BACKEND
+        # 👉 JAMÁS LANZAR EXCEPCIÓN
+        # ----------------------------------------------------
         return {
             "latest_version": None,
             "download_url": None,
