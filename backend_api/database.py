@@ -4,6 +4,7 @@
 # ✔ Desarrollo local
 # ✔ PyInstaller EXE
 # ✔ Railway PostgreSQL (SSL)
+# ✔ FastAPI (get_db dependency)
 # =====================================================
 
 import os
@@ -22,7 +23,6 @@ from psycopg2 import OperationalError
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 if not DATABASE_URL:
-    # 🔐 Fallback SOLO para desktop
     DATABASE_URL = (
         "postgresql://postgres:"
         "LjjyuIUsTSCdiwPVHSSwtIYPOsRQytGX"
@@ -53,7 +53,8 @@ def _initialize_pool():
             minconn=1,
             maxconn=10,
             dsn=DATABASE_URL,
-            connect_timeout=CONNECT_TIMEOUT
+            connect_timeout=CONNECT_TIMEOUT,
+            sslmode="require"
         )
 
 
@@ -93,7 +94,8 @@ def connect():
         try:
             return psycopg2.connect(
                 DATABASE_URL,
-                connect_timeout=CONNECT_TIMEOUT
+                connect_timeout=CONNECT_TIMEOUT,
+                sslmode="require"
             )
         except OperationalError:
             time.sleep(RETRY_DELAY)
@@ -125,6 +127,20 @@ def sql(query, params=None, fetch=False):
         print("❌ Error SQL:", e)
         raise
 
+    finally:
+        if conn:
+            release_conn(conn)
+
+
+# =====================================================
+# FASTAPI DEPENDENCY (IMPORTANTE)
+# =====================================================
+
+def get_db():
+    conn = None
+    try:
+        conn = get_conn()
+        yield conn
     finally:
         if conn:
             release_conn(conn)
