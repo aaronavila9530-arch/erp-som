@@ -1,33 +1,34 @@
 # =====================================================
-# DATABASE — ERP-SOM (BLINDADO FRONTEND DIRECTO RAILWAY)
+# DATABASE — ERP-SOM DESKTOP
 # Compatible con:
-# • Tkinter Desktop
-# • Railway Public TCP Proxy
-# • SSL obligatorio
-# • Cold start
-# • Reconexión automática
+# ✔ Desarrollo local
+# ✔ PyInstaller EXE
+# ✔ Railway PostgreSQL (SSL)
 # =====================================================
 
 import os
 import time
 import psycopg2
-from psycopg2 import pool, OperationalError
+from psycopg2 import pool
+from psycopg2 import OperationalError
 
 # =====================================================
 # DATABASE URL
+# Prioridad:
+# 1️⃣ Variable de entorno
+# 2️⃣ Fallback seguro (para EXE desktop)
 # =====================================================
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 if not DATABASE_URL:
-    raise RuntimeError("❌ DATABASE_URL no está definida.")
-
-# Forzar SSL si no viene en la URL
-if "sslmode=" not in DATABASE_URL:
-    if "?" in DATABASE_URL:
-        DATABASE_URL += "&sslmode=require"
-    else:
-        DATABASE_URL += "?sslmode=require"
+    # 🔐 Fallback SOLO para desktop
+    DATABASE_URL = (
+        "postgresql://postgres:"
+        "LjjyuIUsTSCdiwPVHSSwtIYPOsRQytGX"
+        "@shortline.proxy.rlwy.net:50018/"
+        "railway?sslmode=require"
+    )
 
 # =====================================================
 # CONFIGURACIÓN
@@ -41,108 +42,71 @@ _connection_pool = None
 
 
 # =====================================================
-# CREAR / RECREAR POOL
+# INICIALIZAR POOL
 # =====================================================
-
-def _create_pool():
-    return pool.SimpleConnectionPool(
-        minconn=1,
-        maxconn=10,
-        dsn=DATABASE_URL,
-        connect_timeout=CONNECT_TIMEOUT
-    )
-
 
 def _initialize_pool():
     global _connection_pool
 
     if _connection_pool is None:
-        _connection_pool = _create_pool()
-
-
-def _reset_pool():
-    global _connection_pool
-    try:
-        if _connection_pool:
-            _connection_pool.closeall()
-    except Exception:
-        pass
-    _connection_pool = _create_pool()
+        _connection_pool = pool.SimpleConnectionPool(
+            minconn=1,
+            maxconn=10,
+            dsn=DATABASE_URL,
+            connect_timeout=CONNECT_TIMEOUT
+        )
 
 
 # =====================================================
-# OBTENER CONEXIÓN (CON VALIDACIÓN REAL)
+# OBTENER CONEXIÓN (CON REINTENTOS)
 # =====================================================
 
 def get_conn():
-    global _connection_pool
-
     _initialize_pool()
+
     last_error = None
 
     for attempt in range(MAX_RETRIES):
         try:
             conn = _connection_pool.getconn()
-
-            # Validar que conexión sigue viva
-            with conn.cursor() as cur:
-                cur.execute("SELECT 1")
-
             return conn
 
-        except Exception as e:
+        except OperationalError as e:
             last_error = e
-            print(f"⚠ DB intento {attempt+1}/{MAX_RETRIES} falló: {e}")
-
+            print(f"⚠ DB intento {attempt+1}/{MAX_RETRIES} falló...")
             time.sleep(RETRY_DELAY)
-            _reset_pool()
 
-    raise OperationalError(f"No se pudo conectar a la base de datos: {last_error}")
+    raise last_error
 
 
 def release_conn(conn):
-    global _connection_pool
     if _connection_pool and conn:
-        try:
-            _connection_pool.putconn(conn)
-        except Exception:
-            pass
+        _connection_pool.putconn(conn)
 
 
 # =====================================================
-# CONEXIÓN DIRECTA (SIN POOL)
+# CONEXIÓN DIRECTA (legacy)
 # =====================================================
 
 def connect():
-    last_error = None
-
     for attempt in range(MAX_RETRIES):
         try:
-            conn = psycopg2.connect(
+            return psycopg2.connect(
                 DATABASE_URL,
                 connect_timeout=CONNECT_TIMEOUT
             )
-
-            with conn.cursor() as cur:
-                cur.execute("SELECT 1")
-
-            return conn
-
-        except Exception as e:
-            last_error = e
-            print(f"⚠ Connect intento {attempt+1}/{MAX_RETRIES} falló: {e}")
+        except OperationalError:
             time.sleep(RETRY_DELAY)
 
-    raise OperationalError(f"No se pudo conectar: {last_error}")
+    raise OperationalError("No se pudo conectar a la base de datos.")
 
 
 # =====================================================
-# SQL LEGACY
+# FUNCIÓN SQL GENÉRICA
 # =====================================================
 
 def sql(query, params=None, fetch=False):
     conn = None
-
     try:
         conn = get_conn()
         cur = conn.cursor()
@@ -161,20 +125,6 @@ def sql(query, params=None, fetch=False):
         print("❌ Error SQL:", e)
         raise
 
-    finally:
-        if conn:
-            release_conn(conn)
-
-
-# =====================================================
-# DEPENDENCY GENERATOR (SI ALGÚN DÍA USAS FASTAPI)
-# =====================================================
-
-def get_db():
-    conn = None
-    try:
-        conn = get_conn()
-        yield conn
     finally:
         if conn:
             release_conn(conn)
