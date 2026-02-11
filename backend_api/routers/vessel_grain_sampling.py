@@ -32,19 +32,31 @@ def create_vessel_grain_sampling_report(
                 inspection_info,
                 captain,
                 chief_officer,
+
                 vessel_name,
                 flag_port,
                 grt,
                 nrt,
                 imo,
                 build_year,
-                times,
+
+                arrival_buoy_time,
+                nor_tendered_time,
+                holds_opening_time,
+                surveyors_onboard_time,
+                seals_verification_time,
+                sampling_start_time,
+                sampling_end_time,
+                surveyors_disembark_time,
+
                 products_summary,
-                products_table,
+                products,
+
                 supervision,
                 sampling,
                 procedure,
                 conclusion,
+
                 created_at,
                 updated_at
             ) VALUES (
@@ -56,19 +68,31 @@ def create_vessel_grain_sampling_report(
                 %(inspection_info)s,
                 %(captain)s,
                 %(chief_officer)s,
+
                 %(vessel_name)s,
                 %(flag_port)s,
                 %(grt)s,
                 %(nrt)s,
                 %(imo)s,
                 %(build_year)s,
-                %(times)s,
+
+                %(arrival_buoy_time)s,
+                %(nor_tendered_time)s,
+                %(holds_opening_time)s,
+                %(surveyors_onboard_time)s,
+                %(seals_verification_time)s,
+                %(sampling_start_time)s,
+                %(sampling_end_time)s,
+                %(surveyors_disembark_time)s,
+
                 %(products_summary)s,
-                %(products_table)s,
+                %(products)s,
+
                 %(supervision)s,
                 %(sampling)s,
                 %(procedure)s,
                 %(conclusion)s,
+
                 NOW(),
                 NOW()
             )
@@ -143,6 +167,7 @@ def get_vessel_grain_sampling_report(
                 id,
                 created_at,
                 updated_at,
+
                 cert_no,
                 place_date,
                 purpose,
@@ -151,15 +176,26 @@ def get_vessel_grain_sampling_report(
                 inspection_info,
                 captain,
                 chief_officer,
+
                 vessel_name,
                 flag_port,
                 grt,
                 nrt,
                 imo,
                 build_year,
-                times,
+
+                arrival_buoy_time,
+                nor_tendered_time,
+                holds_opening_time,
+                surveyors_onboard_time,
+                seals_verification_time,
+                sampling_start_time,
+                sampling_end_time,
+                surveyors_disembark_time,
+
                 products_summary,
-                products_table,
+                products,
+
                 supervision,
                 sampling,
                 procedure,
@@ -210,19 +246,31 @@ def update_vessel_grain_sampling_report(
                 inspection_info = %(inspection_info)s,
                 captain = %(captain)s,
                 chief_officer = %(chief_officer)s,
+
                 vessel_name = %(vessel_name)s,
                 flag_port = %(flag_port)s,
                 grt = %(grt)s,
                 nrt = %(nrt)s,
                 imo = %(imo)s,
                 build_year = %(build_year)s,
-                times = %(times)s,
+
+                arrival_buoy_time = %(arrival_buoy_time)s,
+                nor_tendered_time = %(nor_tendered_time)s,
+                holds_opening_time = %(holds_opening_time)s,
+                surveyors_onboard_time = %(surveyors_onboard_time)s,
+                seals_verification_time = %(seals_verification_time)s,
+                sampling_start_time = %(sampling_start_time)s,
+                sampling_end_time = %(sampling_end_time)s,
+                surveyors_disembark_time = %(surveyors_disembark_time)s,
+
                 products_summary = %(products_summary)s,
-                products_table = %(products_table)s,
+                products = %(products)s,
+
                 supervision = %(supervision)s,
                 sampling = %(sampling)s,
                 procedure = %(procedure)s,
                 conclusion = %(conclusion)s,
+
                 updated_at = NOW()
             WHERE id = %(id)s
         """)
