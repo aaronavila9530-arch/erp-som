@@ -69,7 +69,7 @@ def check_version():
             "download_url": download_url,
             # 👇 EL BACKEND SIEMPRE OBLIGA UPDATE
             # El frontend decide si aplica o no
-            "force_update": True,
+            "force_update": False,
             "message": f"Nueva versión {latest_version} disponible del ERP-SOM."
         }
 
