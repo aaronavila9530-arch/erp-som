@@ -252,7 +252,7 @@ def list_vessel_grain_sampling_reports(
         cur.close()
 
 # ============================================================
-# GET — SELECTOR SERVICIOS (para CERT Nº popup)
+# GET — SELECTOR SERVICIOS (dinámico + año + mes)
 # ============================================================
 @router.get("/services-selector")
 def get_services_for_grain_sampling(
@@ -262,28 +262,26 @@ def get_services_for_grain_sampling(
     cliente: Optional[str] = None,
     buque: Optional[str] = None,
     estado: Optional[str] = None,
+    year: Optional[int] = Query(None),
+    month: Optional[int] = Query(None),
     conn=Depends(get_db)
 ):
     """
-    Devuelve lista de servicios tipo Buque
-    para seleccionar CERT Nº y autocompletar
-    buque, cliente, continente, país y puerto.
+    Selector dinámico de servicios tipo Buque.
+    Soporta filtros dependientes simultáneos y filtro por año/mes
+    basado en fecha_inicio.
     """
 
     from psycopg2.extras import RealDictCursor
+
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     try:
 
-        query = """
-            SELECT
-                consec,
-                num_informe,
-                buque_contenedor,
-                cliente,
-                continente,
-                pais,
-                puerto
+        # ================================
+        # BASE QUERY
+        # ================================
+        base_query = """
             FROM servicios
             WHERE tipo = 'Buque'
               AND num_informe IS NOT NULL
@@ -291,39 +289,100 @@ def get_services_for_grain_sampling(
 
         params = []
 
-        # 🔎 Filtros dinámicos
+        # ================================
+        # FILTROS DINÁMICOS
+        # ================================
         if continente:
-            query += " AND continente ILIKE %s"
-            params.append(f"%{continente}%")
+            base_query += " AND continente = %s"
+            params.append(continente)
 
         if pais:
-            query += " AND pais ILIKE %s"
-            params.append(f"%{pais}%")
+            base_query += " AND pais = %s"
+            params.append(pais)
 
         if puerto:
-            query += " AND puerto ILIKE %s"
-            params.append(f"%{puerto}%")
+            base_query += " AND puerto = %s"
+            params.append(puerto)
 
         if cliente:
-            query += " AND cliente ILIKE %s"
-            params.append(f"%{cliente}%")
+            base_query += " AND cliente = %s"
+            params.append(cliente)
 
         if buque:
-            query += " AND buque_contenedor ILIKE %s"
-            params.append(f"%{buque}%")
+            base_query += " AND buque_contenedor = %s"
+            params.append(buque)
 
         if estado:
-            query += " AND estado ILIKE %s"
-            params.append(f"%{estado}%")
+            base_query += " AND estado = %s"
+            params.append(estado)
 
-        query += " ORDER BY fecha_inicio DESC NULLS LAST"
+        # ================================
+        # FILTRO AÑO / MES (fecha_inicio)
+        # ================================
+        if year:
+            base_query += " AND EXTRACT(YEAR FROM fecha_inicio) = %s"
+            params.append(year)
 
-        cur.execute(query, params)
-        rows = cur.fetchall()
+        if month:
+            base_query += " AND EXTRACT(MONTH FROM fecha_inicio) = %s"
+            params.append(month)
+
+        # ================================
+        # 1️⃣ RESULTADOS PARA TABLA
+        # ================================
+        results_query = """
+            SELECT
+                consec,
+                num_informe,
+                buque_contenedor,
+                cliente,
+                continente,
+                pais,
+                puerto,
+                estado,
+                fecha_inicio
+        """ + base_query + """
+            ORDER BY fecha_inicio DESC NULLS LAST
+        """
+
+        cur.execute(results_query, params)
+        rows = cur.fetchall() or []
+
+        # ================================
+        # 2️⃣ VALORES ÚNICOS DINÁMICOS
+        # ================================
+        filters_query = """
+            SELECT DISTINCT
+                continente,
+                pais,
+                puerto,
+                cliente,
+                buque_contenedor,
+                estado,
+                EXTRACT(YEAR FROM fecha_inicio) AS year,
+                EXTRACT(MONTH FROM fecha_inicio) AS month
+        """ + base_query
+
+        cur.execute(filters_query, params)
+        filter_rows = cur.fetchall() or []
+
+        # Construcción de listas únicas limpias
+        unique_values = {
+            "continentes": sorted({r["continente"] for r in filter_rows if r["continente"]}),
+            "paises": sorted({r["pais"] for r in filter_rows if r["pais"]}),
+            "puertos": sorted({r["puerto"] for r in filter_rows if r["puerto"]}),
+            "clientes": sorted({r["cliente"] for r in filter_rows if r["cliente"]}),
+            "buques": sorted({r["buque_contenedor"] for r in filter_rows if r["buque_contenedor"]}),
+            "estados": sorted({r["estado"] for r in filter_rows if r["estado"]}),
+            "years": sorted({int(r["year"]) for r in filter_rows if r["year"]}),
+            "months": sorted({int(r["month"]) for r in filter_rows if r["month"]})
+        }
 
         return {
             "success": True,
-            "data": rows
+            "count": len(rows),
+            "data": rows,
+            "filters": unique_values
         }
 
     except Exception as e:
