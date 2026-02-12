@@ -65,7 +65,7 @@ def add_servicio(data: ServicioCreate):
             fecha_inicio, hora_inicio
         )
         VALUES (
-            %(tipo)s, 'Buque por confirmar', '',
+            %(tipo)s, 'Confirmado', '',
             %(buque_contenedor)s, %(cliente)s, %(contacto)s, %(detalle)s,
             %(continente)s, %(pais)s, %(puerto)s,
             %(operacion)s, %(surveyor)s, %(honorarios)s, %(costo_operativo)s,
@@ -365,7 +365,7 @@ def confirmar_servicio(consec: int, data: dict):
             UPDATE servicios
             SET fecha_inicio = %(fecha_inicio)s,
                 hora_inicio = %(hora_inicio)s,
-                estado = 'Confirmado'
+                estado = 'En Operación'
             WHERE consec = %(consec)s
         """
         params = {
