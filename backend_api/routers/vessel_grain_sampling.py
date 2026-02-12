@@ -277,7 +277,7 @@ def get_services_for_grain_sampling(
 
         query = """
             SELECT
-                id,
+                consec,
                 num_informe,
                 buque_contenedor,
                 cliente,
