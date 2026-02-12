@@ -251,6 +251,90 @@ def list_vessel_grain_sampling_reports(
     finally:
         cur.close()
 
+# ============================================================
+# GET — SELECTOR SERVICIOS (para CERT Nº popup)
+# ============================================================
+@router.get("/services-selector")
+def get_services_for_grain_sampling(
+    continente: Optional[str] = None,
+    pais: Optional[str] = None,
+    puerto: Optional[str] = None,
+    cliente: Optional[str] = None,
+    buque: Optional[str] = None,
+    estado: Optional[str] = None,
+    conn=Depends(get_db)
+):
+    """
+    Devuelve lista de servicios tipo Buque
+    para seleccionar CERT Nº y autocompletar
+    buque, cliente, continente, país y puerto.
+    """
+
+    from psycopg2.extras import RealDictCursor
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+
+    try:
+
+        query = """
+            SELECT
+                id,
+                num_informe,
+                buque_contenedor,
+                cliente,
+                continente,
+                pais,
+                puerto
+            FROM servicios
+            WHERE tipo = 'Buque'
+              AND num_informe IS NOT NULL
+        """
+
+        params = []
+
+        # 🔎 Filtros dinámicos
+        if continente:
+            query += " AND continente ILIKE %s"
+            params.append(f"%{continente}%")
+
+        if pais:
+            query += " AND pais ILIKE %s"
+            params.append(f"%{pais}%")
+
+        if puerto:
+            query += " AND puerto ILIKE %s"
+            params.append(f"%{puerto}%")
+
+        if cliente:
+            query += " AND cliente ILIKE %s"
+            params.append(f"%{cliente}%")
+
+        if buque:
+            query += " AND buque_contenedor ILIKE %s"
+            params.append(f"%{buque}%")
+
+        if estado:
+            query += " AND estado ILIKE %s"
+            params.append(f"%{estado}%")
+
+        query += " ORDER BY fecha_inicio DESC NULLS LAST"
+
+        cur.execute(query, params)
+        rows = cur.fetchall()
+
+        return {
+            "success": True,
+            "data": rows
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error fetching services selector: {str(e)}"
+        )
+
+    finally:
+        cur.close()
+
 
 # ============================================================
 # GET — SINGLE GRAIN SAMPLING REPORT BY ID (1:1 ALIGNED)
@@ -514,86 +598,3 @@ def update_vessel_grain_sampling_report(
         cur.close()
 
 
-# ============================================================
-# GET — SELECTOR SERVICIOS (para CERT Nº popup)
-# ============================================================
-@router.get("/services-selector")
-def get_services_for_grain_sampling(
-    continente: Optional[str] = None,
-    pais: Optional[str] = None,
-    puerto: Optional[str] = None,
-    cliente: Optional[str] = None,
-    buque: Optional[str] = None,
-    estado: Optional[str] = None,
-    conn=Depends(get_db)
-):
-    """
-    Devuelve lista de servicios tipo Buque
-    para seleccionar CERT Nº y autocompletar
-    buque, cliente, continente, país y puerto.
-    """
-
-    from psycopg2.extras import RealDictCursor
-    cur = conn.cursor(cursor_factory=RealDictCursor)
-
-    try:
-
-        query = """
-            SELECT
-                id,
-                num_informe,
-                buque_contenedor,
-                cliente,
-                continente,
-                pais,
-                puerto
-            FROM servicios
-            WHERE tipo = 'Buque'
-              AND num_informe IS NOT NULL
-        """
-
-        params = []
-
-        # 🔎 Filtros dinámicos
-        if continente:
-            query += " AND continente ILIKE %s"
-            params.append(f"%{continente}%")
-
-        if pais:
-            query += " AND pais ILIKE %s"
-            params.append(f"%{pais}%")
-
-        if puerto:
-            query += " AND puerto ILIKE %s"
-            params.append(f"%{puerto}%")
-
-        if cliente:
-            query += " AND cliente ILIKE %s"
-            params.append(f"%{cliente}%")
-
-        if buque:
-            query += " AND buque_contenedor ILIKE %s"
-            params.append(f"%{buque}%")
-
-        if estado:
-            query += " AND estado ILIKE %s"
-            params.append(f"%{estado}%")
-
-        query += " ORDER BY fecha_inicio DESC NULLS LAST"
-
-        cur.execute(query, params)
-        rows = cur.fetchall()
-
-        return {
-            "success": True,
-            "data": rows
-        }
-
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error fetching services selector: {str(e)}"
-        )
-
-    finally:
-        cur.close()
