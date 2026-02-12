@@ -358,26 +358,135 @@ def marcar_por_confirmar(consec: int):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ============================================================
+# CONFIRMAR SERVICIO + GENERAR CONSECUTIVO
+# ============================================================
 @router.put("/confirmar/{consec}")
 def confirmar_servicio(consec: int, data: dict):
+
     try:
-        sql = """
+        # --------------------------------------------------
+        # 1. Lock para evitar doble ejecución
+        # --------------------------------------------------
+        database.sql(
+            "SELECT pg_advisory_lock(%s)",
+            (consec,),
+            fetch=False
+        )
+
+        fecha_inicio = data.get("fecha_inicio")
+        hora_inicio  = data.get("hora_inicio")
+
+        if not fecha_inicio or not hora_inicio:
+            raise HTTPException(
+                status_code=400,
+                detail="Fecha y hora de inicio requeridas"
+            )
+
+        # --------------------------------------------------
+        # 2. Obtener servicio
+        # --------------------------------------------------
+        row = database.sql(
+            """
+            SELECT num_informe
+            FROM servicios
+            WHERE consec = %s
+            """,
+            (consec,),
+            fetch=True
+        )
+
+        if not row:
+            raise HTTPException(404, "Servicio no encontrado")
+
+        num_existente = row[0][0]
+
+        # --------------------------------------------------
+        # 3. Si ya tiene consecutivo → solo actualizar estado
+        # --------------------------------------------------
+        if num_existente:
+            database.sql(
+                """
+                UPDATE servicios
+                SET
+                    fecha_inicio = %s,
+                    hora_inicio  = %s,
+                    estado       = 'En Operación'
+                WHERE consec = %s
+                """,
+                (fecha_inicio, hora_inicio, consec)
+            )
+
+            return {
+                "status": "ok",
+                "num_informe": num_existente,
+                "generated_now": False
+            }
+
+        # --------------------------------------------------
+        # 4. Buscar siguiente consecutivo libre
+        # --------------------------------------------------
+        base = 2141
+        candidato = base + 1
+
+        while True:
+            existe = database.sql(
+                """
+                SELECT 1
+                FROM servicios
+                WHERE
+                    num_informe IS NOT NULL
+                    AND num_informe <> ''
+                    AND split_part(num_informe, '-', 1) ~ '^[0-9]+$'
+                    AND split_part(num_informe, '-', 1)::int = %s
+                """,
+                (candidato,),
+                fetch=True
+            )
+
+            if not existe:
+                break
+
+            candidato += 1
+
+        # --------------------------------------------------
+        # 5. Construir num_informe usando fecha_inicio
+        # --------------------------------------------------
+        fecha_dt = datetime.strptime(
+            fecha_inicio[:10],
+            "%Y-%m-%d"
+        )
+
+        num_informe = f"{candidato}-{fecha_dt.strftime('%d%m')}-{fecha_dt.strftime('%Y')}"
+
+        # --------------------------------------------------
+        # 6. Guardar todo
+        # --------------------------------------------------
+        database.sql(
+            """
             UPDATE servicios
-            SET fecha_inicio = %(fecha_inicio)s,
-                hora_inicio = %(hora_inicio)s,
-                estado = 'En Operación'
-            WHERE consec = %(consec)s
-        """
-        params = {
-            "fecha_inicio": data.get("fecha_inicio"),
-            "hora_inicio": data.get("hora_inicio"),
-            "consec": consec
+            SET
+                fecha_inicio = %s,
+                hora_inicio  = %s,
+                num_informe  = %s,
+                estado       = 'En Operación'
+            WHERE consec = %s
+            """,
+            (fecha_inicio, hora_inicio, num_informe, consec)
+        )
+
+        return {
+            "status": "ok",
+            "num_informe": num_informe,
+            "generated_now": True
         }
 
-        database.sql(sql, params)
-        return {"status": "ok", "msg": f"Servicio {consec} confirmado"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        database.sql(
+            "SELECT pg_advisory_unlock(%s)",
+            (consec,),
+            fetch=False
+        )
 
 
 
@@ -502,26 +611,15 @@ def cerrar_operacion(consec: int, data: dict):
 
 
 # ============================================================
-# Asignar consecutivo al informe
+# FINALIZAR SERVICIO (NO GENERA CONSECUTIVO)
 # ============================================================
 @router.put("/generar_informe/{consec}")
 def generar_informe(consec: int):
-    try:
-        # --------------------------------------------------
-        # 1. Bloqueo para evitar doble ejecución
-        # --------------------------------------------------
-        database.sql(
-            "SELECT pg_advisory_lock(%s)",
-            (consec,),
-            fetch=False
-        )
 
-        # --------------------------------------------------
-        # 2. Obtener servicio
-        # --------------------------------------------------
+    try:
         row = database.sql(
             """
-            SELECT num_informe, fecha_inicio
+            SELECT num_informe
             FROM servicios
             WHERE consec = %s
             """,
@@ -532,79 +630,28 @@ def generar_informe(consec: int):
         if not row:
             raise HTTPException(404, "Servicio no encontrado")
 
-        num_existente, fecha_inicio = row[0]
+        num_informe = row[0][0]
 
-        # Si ya tiene informe, devolverlo
-        if num_existente:
-            return {
-                "status": "ok",
-                "num_informe": num_existente,
-                "generated_now": False
-            }
-
-        if not fecha_inicio:
-            raise HTTPException(400, "Servicio sin fecha de inicio")
-
-        # --------------------------------------------------
-        # 3. Buscar siguiente consecutivo libre DESDE 2142
-        # --------------------------------------------------
-        base = 2141
-        candidato = base + 1
-
-        while True:
-            existe = database.sql(
-                """
-                SELECT 1
-                FROM servicios
-                WHERE
-                    num_informe IS NOT NULL
-                    AND num_informe <> ''
-                    AND split_part(num_informe, '-', 1) ~ '^[0-9]+$'
-                    AND split_part(num_informe, '-', 1)::int = %s
-                """,
-                (candidato,),
-                fetch=True
+        if not num_informe:
+            raise HTTPException(
+                status_code=400,
+                detail="El servicio aún no tiene consecutivo generado"
             )
 
-            if not existe:
-                break
-
-            candidato += 1
-
-        # --------------------------------------------------
-        # 4. Construir num_informe
-        # --------------------------------------------------
-        fecha_dt = (
-            fecha_inicio
-            if not isinstance(fecha_inicio, str)
-            else datetime.strptime(fecha_inicio[:10], "%Y-%m-%d")
-        )
-
-        num_informe = f"{candidato}-{fecha_dt.strftime('%d%m')}-{fecha_dt.strftime('%Y')}"
-
-        # --------------------------------------------------
-        # 5. Guardar
-        # --------------------------------------------------
         database.sql(
             """
             UPDATE servicios
-            SET
-                num_informe = %s,
-                estado = 'Finalizado'
+            SET estado = 'Finalizado'
             WHERE consec = %s
             """,
-            (num_informe, consec)
+            (consec,)
         )
 
         return {
             "status": "ok",
             "num_informe": num_informe,
-            "generated_now": True
+            "msg": "Servicio finalizado correctamente"
         }
 
-    finally:
-        database.sql(
-            "SELECT pg_advisory_unlock(%s)",
-            (consec,),
-            fetch=False
-        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
