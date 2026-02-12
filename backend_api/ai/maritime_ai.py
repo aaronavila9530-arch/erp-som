@@ -22,7 +22,7 @@ def _get_openai_client():
 
 
 # =========================================================
-# PROMPT
+# PROMPT LOADERS
 # =========================================================
 def load_container_prompt() -> str:
     return """
@@ -30,15 +30,8 @@ You are acting as a Senior Marine Surveyor and Maritime Consultant
 with over 20 years of professional experience in container inspections,
 cargo condition surveys, and maritime claims handling.
 
-You are fully conversant with standard practices applied by
-P&I Clubs, marine insurers, shipping lines, terminal operators,
-and port authorities.
-
-You write exclusively in formal British English,
-using precise maritime and insurance terminology.
-
+You write exclusively in formal British English.
 You do NOT invent facts.
-You do NOT add assumptions.
 You do NOT speculate or assign liability.
 
 Inspection Context:
@@ -55,21 +48,26 @@ Original Surveyor Draft:
 
 Rewrite the draft as a formal inspection narrative.
 
-Rules:
-- Preserve the original meaning
-- Use third-person narrative
-- Maintain a neutral, factual, and technical tone
-- Do not invent findings, causes, or conclusions
-
-Return the output strictly in the following format:
+Return strictly:
 
 Inspection Narrative:
 <rewritten narrative>
 """.strip()
 
 
+def load_grain_sampling_prompt() -> str:
+    base_path = os.path.dirname(__file__)
+    prompt_path = os.path.join(base_path, "maritime_grain_sampling.prompt.txt")
+
+    if not os.path.exists(prompt_path):
+        raise FileNotFoundError("Grain sampling prompt file not found.")
+
+    with open(prompt_path, "r", encoding="utf-8") as f:
+        return f.read().strip()
+
+
 # =========================================================
-# AI LOGIC (RESPONSES API)
+# CONTAINER AI LOGIC
 # =========================================================
 def improve_container_text(
     user_text: str,
@@ -93,21 +91,54 @@ def improve_container_text(
         .replace("{{user_text}}", user_text.strip())
     )
 
-    try:
-        response = client.responses.create(
-            model="gpt-4o-mini",
-            input=prompt,
-            temperature=0.2,
-            max_output_tokens=600
-        )
-    except Exception as e:
-        raise RuntimeError(f"Error llamando a OpenAI Responses API: {str(e)}")
+    response = client.responses.create(
+        model="gpt-4o-mini",
+        input=prompt,
+        temperature=0.2,
+        max_output_tokens=600
+    )
 
-    # 🔒 Blindaje de salida
-    try:
-        output_text = response.output_text
-    except Exception:
-        raise RuntimeError("Respuesta inválida del modelo AI.")
+    output_text = getattr(response, "output_text", None)
+
+    if not output_text or not output_text.strip():
+        raise RuntimeError("La IA devolvió una respuesta vacía.")
+
+    return output_text.strip()
+
+
+# =========================================================
+# GRAIN SAMPLING AI LOGIC
+# =========================================================
+def improve_grain_sampling_text(
+    user_text: str,
+    vessel: Optional[str],
+    location: Optional[str],
+    product: Optional[str],
+    authority: Optional[str]
+) -> str:
+
+    if not user_text or not user_text.strip():
+        raise ValueError("El texto de entrada está vacío.")
+
+    client = _get_openai_client()
+
+    prompt = (
+        load_grain_sampling_prompt()
+        .replace("{{vessel}}", vessel or "N/A")
+        .replace("{{location}}", location or "N/A")
+        .replace("{{product}}", product or "Bulk Grain")
+        .replace("{{authority}}", authority or "N/A")
+        .replace("{{user_text}}", user_text.strip())
+    )
+
+    response = client.responses.create(
+        model="gpt-4o-mini",
+        input=prompt,
+        temperature=0.15,
+        max_output_tokens=800
+    )
+
+    output_text = getattr(response, "output_text", None)
 
     if not output_text or not output_text.strip():
         raise RuntimeError("La IA devolvió una respuesta vacía.")
