@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from psycopg2.extras import RealDictCursor
 from datetime import datetime
+from typing import Optional
 
 from database import get_db
 
