@@ -1,14 +1,13 @@
 # ============================================================
 # ROUTER — STATUS INFORMES (SERVICIOS)
 # Archivo: status_informes.py
-# Alineado a estructura real del backend (database.get_db)
 # ============================================================
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from psycopg2.extras import RealDictCursor
 from typing import Optional
 
-from database import get_db   # 🔥 CORRECTO (NO db)
+from database import get_db
 
 
 router = APIRouter(
@@ -32,10 +31,11 @@ def list_status_informes(
     conn=Depends(get_db)
 ):
     """
-    ✔ Default: solo status_informe = 'Pending'
+    ✔ Solo tipo = 'Buque'
+    ✔ Solo num_informe válido (no NULL, no vacío, no 'None')
+    ✔ Default: status_informe = 'Pending'
     ✔ Filtros dinámicos
     ✔ Año/Mes derivados desde fecha_inicio
-    ✔ Solo tipo = 'Buque'
     """
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -62,6 +62,9 @@ def list_status_informes(
                 status_informe
             FROM servicios
             WHERE tipo = 'Buque'
+              AND num_informe IS NOT NULL
+              AND TRIM(num_informe) <> ''
+              AND LOWER(TRIM(num_informe)) <> 'none'
         """
 
         conditions = []
@@ -150,6 +153,7 @@ def get_available_statuses(conn=Depends(get_db)):
             SELECT DISTINCT status_informe
             FROM servicios
             WHERE status_informe IS NOT NULL
+              AND TRIM(status_informe) <> ''
             ORDER BY status_informe
         """)
 
