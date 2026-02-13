@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from psycopg2.extras import RealDictCursor
 from datetime import datetime
 from typing import Optional
+import json
 
 from database import get_db
 
@@ -20,78 +21,41 @@ def create_vessel_grain_sampling_report(
     payload: dict,
     conn=Depends(get_db)
 ):
-    """
-    100% aligned with current GrainSamplingVesselForm payload.
-    Hardened:
-    - No KeyError
-    - Safe defaults
-    - JSON normalized
-    - Datetime normalization
-    - Rollback protected
-    """
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
-    # =========================================================
-    # SAFE ACCESS
-    # =========================================================
-    def safe(key, default=""):
+    def safe(key, default=None):
         value = payload.get(key, default)
-        return value if value is not None else default
-
-    def safe_dict(key):
-        value = payload.get(key, {})
-        return value if isinstance(value, dict) else {}
+        return value if value not in ["", None] else default
 
     def safe_list(key):
         value = payload.get(key, [])
         return value if isinstance(value, list) else []
 
-    # =========================================================
-    # NORMALIZE TIMES
-    # =========================================================
-    times = safe_dict("times")
-
-    arrival_buoy_time = times.get("Arribo Boya")
-    nor_tendered_time = times.get("NOR Tendered")
-    holds_opening_time = times.get("Apertura Bodegas")
-    sampling_start_time = times.get("Inicio Muestreo")
-    sampling_end_time = times.get("Final Muestreo")
-
     try:
+
         cur.execute("""
             INSERT INTO vessel_grain_sampling_reports (
 
-                -- HEADER
                 cert_no,
                 place_date,
-                puerto,
 
-                -- MAIN DATA
                 vessel_name,
-                cliente,
+                requested_by,
+
                 captain,
                 chief_officer,
 
-                -- OPERATIONAL TIMES
                 arrival_buoy_time,
                 nor_tendered_time,
                 holds_opening_time,
                 sampling_start_time,
                 sampling_end_time,
 
-                -- PRODUCTS
-                tonnage_total,
-                holds_general,
-                products_table,
+                products,
+                products_total,
 
-                -- SAMPLING DETAILS
-                supervision_datetime,
-                mag_representative,
-                sampled_holds,
-                sampling_points,
-
-                -- CONCLUSION
+                supervision,
                 conclusion,
 
                 created_at,
@@ -101,10 +65,10 @@ def create_vessel_grain_sampling_report(
 
                 %(cert_no)s,
                 %(place_date)s,
-                %(puerto)s,
 
                 %(vessel_name)s,
-                %(cliente)s,
+                %(requested_by)s,
+
                 %(captain)s,
                 %(chief_officer)s,
 
@@ -114,15 +78,10 @@ def create_vessel_grain_sampling_report(
                 %(sampling_start_time)s,
                 %(sampling_end_time)s,
 
-                %(tonnage_total)s,
-                %(holds_general)s,
-                %(products_table)s,
+                %(products)s,
+                %(products_total)s,
 
-                %(supervision_datetime)s,
-                %(mag_representative)s,
-                %(sampled_holds)s,
-                %(sampling_points)s,
-
+                %(supervision)s,
                 %(conclusion)s,
 
                 NOW(),
@@ -131,36 +90,25 @@ def create_vessel_grain_sampling_report(
             RETURNING id
         """, {
 
-            # HEADER
             "cert_no": safe("cert_no"),
-            "place_date": safe("inspection_date"),
-            "puerto": safe("port"),
+            "place_date": safe("place_date"),
 
-            # MAIN
-            "vessel_name": safe("vessel"),
-            "cliente": safe("client"),
+            "vessel_name": safe("vessel_name"),
+            "requested_by": safe("requested_by"),
+
             "captain": safe("captain"),
             "chief_officer": safe("chief_officer"),
 
-            # TIMES
-            "arrival_buoy_time": arrival_buoy_time,
-            "nor_tendered_time": nor_tendered_time,
-            "holds_opening_time": holds_opening_time,
-            "sampling_start_time": sampling_start_time,
-            "sampling_end_time": sampling_end_time,
+            "arrival_buoy_time": safe("arrival_buoy_time"),
+            "nor_tendered_time": safe("nor_tendered_time"),
+            "holds_opening_time": safe("holds_opening_time"),
+            "sampling_start_time": safe("sampling_start_time"),
+            "sampling_end_time": safe("sampling_end_time"),
 
-            # PRODUCTS
-            "tonnage_total": safe("tonnage_total"),
-            "holds_general": safe("holds_general"),
-            "products_table": safe_list("products_table"),
+            "products": json.dumps(safe_list("products")),
+            "products_total": safe("products_total"),
 
-            # SAMPLING
-            "supervision_datetime": safe("supervision_datetime"),
-            "mag_representative": safe("mag_representative"),
-            "sampled_holds": safe("sampled_holds"),
-            "sampling_points": safe_list("sampling_points"),
-
-            # CONCLUSION
+            "supervision": safe("supervision"),
             "conclusion": safe("conclusion"),
         })
 
