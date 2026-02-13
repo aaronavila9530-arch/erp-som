@@ -16,6 +16,7 @@ router = APIRouter(
 # ============================================================
 # CREATE — NEW GRAIN SAMPLING REPORT (ALIGNED 1:1 WITH UI)
 # ============================================================
+
 @router.post("")
 def create_vessel_grain_sampling_report(
     payload: dict,
@@ -34,6 +35,9 @@ def create_vessel_grain_sampling_report(
 
     try:
 
+        # ====================================================
+        # INSERT VESSEL GRAIN SAMPLING
+        # ====================================================
         cur.execute("""
             INSERT INTO vessel_grain_sampling_reports (
 
@@ -112,7 +116,25 @@ def create_vessel_grain_sampling_report(
             "conclusion": safe("conclusion"),
         })
 
-        new_id = cur.fetchone()["id"]
+        row = cur.fetchone()
+        new_id = row["id"]
+
+        # ====================================================
+        # 🔥 UPDATE SERVICIOS.STATUS_INFORME = 'Created'
+        # Basado en cert_no → servicios.num_informe
+        # ====================================================
+        cert_no = safe("cert_no")
+
+        if cert_no:
+            cur.execute("""
+                UPDATE servicios
+                SET status_informe = 'Created'
+                WHERE num_informe = %s
+            """, (cert_no,))
+
+        # ====================================================
+        # COMMIT FINAL (AMBAS OPERACIONES)
+        # ====================================================
         conn.commit()
 
         return {

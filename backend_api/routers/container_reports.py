@@ -40,7 +40,7 @@ def create_container_report(payload: dict, conn=Depends(get_db)):
             # META
             "linked_report_number",
             "container_type_text",
-            "user",     # ⚠️ palabra reservada en PostgreSQL
+            "user",
             "status",
 
             # GENERAL INFORMATION
@@ -173,11 +173,10 @@ def create_container_report(payload: dict, conn=Depends(get_db)):
         }
 
         # ====================================================
-        # DEFAULTS DE SISTEMA
+        # DEFAULTS
         # ====================================================
         clean_payload["status"] = clean_payload.get("status") or "draft"
         clean_payload["user"] = clean_payload.get("user") or "system"
-
         clean_payload["created_at"] = datetime.utcnow()
         clean_payload["updated_at"] = datetime.utcnow()
 
@@ -200,14 +199,14 @@ def create_container_report(payload: dict, conn=Depends(get_db)):
                 clean_payload[k] = False
 
         # ====================================================
-        # INSERT DINÁMICO (ESCAPANDO "user")
+        # INSERT
         # ====================================================
         columns = []
         values = []
 
         for k in clean_payload.keys():
             if k == "user":
-                columns.append('"user"')  # 🔒 escape keyword
+                columns.append('"user"')
             else:
                 columns.append(k)
             values.append(f"%({k})s")
@@ -220,6 +219,24 @@ def create_container_report(payload: dict, conn=Depends(get_db)):
 
         cur.execute(sql, clean_payload)
         row = cur.fetchone()
+
+        # ====================================================
+        # 🔥 NUEVA LÓGICA
+        # ACTUALIZAR SERVICIOS → status_informe = Generated
+        # ====================================================
+        linked_number = clean_payload.get("linked_report_number")
+
+        if linked_number:
+            cur.execute("""
+                UPDATE servicios
+                SET status_informe = 'Generated'
+                WHERE num_informe = %s
+                AND status_informe = 'Pending'
+            """, (linked_number,))
+
+        # ====================================================
+        # COMMIT FINAL
+        # ====================================================
         conn.commit()
 
         return {
