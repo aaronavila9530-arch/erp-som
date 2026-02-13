@@ -13,7 +13,7 @@ router = APIRouter(
 
 
 # ============================================================
-# CREATE — NEW GRAIN SAMPLING REPORT (1:1 WORD ALIGNED)
+# CREATE — NEW GRAIN SAMPLING REPORT (ALIGNED 1:1 WITH UI)
 # ============================================================
 @router.post("")
 def create_vessel_grain_sampling_report(
@@ -21,165 +21,147 @@ def create_vessel_grain_sampling_report(
     conn=Depends(get_db)
 ):
     """
-    1:1 aligned with official Word template & UI structure.
-    Fully hardened:
+    100% aligned with current GrainSamplingVesselForm payload.
+    Hardened:
     - No KeyError
     - Safe defaults
-    - Explicit field mapping
+    - JSON normalized
+    - Datetime normalization
     - Rollback protected
     """
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
-    # 🔒 BLINDAJE — Normalizar payload
+    # =========================================================
+    # SAFE ACCESS
+    # =========================================================
     def safe(key, default=""):
         value = payload.get(key, default)
         return value if value is not None else default
 
+    def safe_dict(key):
+        value = payload.get(key, {})
+        return value if isinstance(value, dict) else {}
+
+    def safe_list(key):
+        value = payload.get(key, [])
+        return value if isinstance(value, list) else []
+
+    # =========================================================
+    # NORMALIZE TIMES
+    # =========================================================
+    times = safe_dict("times")
+
+    arrival_buoy_time = times.get("Arribo Boya")
+    nor_tendered_time = times.get("NOR Tendered")
+    holds_opening_time = times.get("Apertura Bodegas")
+    sampling_start_time = times.get("Inicio Muestreo")
+    sampling_end_time = times.get("Final Muestreo")
+
     try:
         cur.execute("""
             INSERT INTO vessel_grain_sampling_reports (
+
                 -- HEADER
                 cert_no,
                 place_date,
+                puerto,
 
-                -- INTRODUCCIÓN
-                purpose,
-                requested_by,
-                arrival_info,
-                inspection_info,
+                -- MAIN DATA
+                vessel_name,
+                cliente,
                 captain,
                 chief_officer,
 
-                -- BUQUE
-                vessel_name,
-                flag_port,
-                grt,
-                nrt,
-                imo,
-                build_year,
-
-                -- TIEMPOS
+                -- OPERATIONAL TIMES
                 arrival_buoy_time,
                 nor_tendered_time,
                 holds_opening_time,
-                surveyors_onboard_time,
-                seals_verification_time,
                 sampling_start_time,
                 sampling_end_time,
-                surveyors_disembark_time,
 
-                -- PRODUCTOS
-                products_header_line,
-                products,
-                products_total,
+                -- PRODUCTS
+                tonnage_total,
+                holds_general,
+                products_table,
 
-                -- CUERPO TEXTO
-                supervision,
-                sampling,
-                procedure,
+                -- SAMPLING DETAILS
+                supervision_datetime,
+                mag_representative,
+                sampled_holds,
+                sampling_points,
+
+                -- CONCLUSION
                 conclusion,
-
-                -- DECLARACIÓN / FIRMA
-                legal_text,
-                attachments,
-                surveyor_name,
-                surveyor_position,
 
                 created_at,
                 updated_at
+
             ) VALUES (
+
                 %(cert_no)s,
                 %(place_date)s,
-
-                %(purpose)s,
-                %(requested_by)s,
-                %(arrival_info)s,
-                %(inspection_info)s,
-                %(captain)s,
-                %(chief_officer)s,
+                %(puerto)s,
 
                 %(vessel_name)s,
-                %(flag_port)s,
-                %(grt)s,
-                %(nrt)s,
-                %(imo)s,
-                %(build_year)s,
+                %(cliente)s,
+                %(captain)s,
+                %(chief_officer)s,
 
                 %(arrival_buoy_time)s,
                 %(nor_tendered_time)s,
                 %(holds_opening_time)s,
-                %(surveyors_onboard_time)s,
-                %(seals_verification_time)s,
                 %(sampling_start_time)s,
                 %(sampling_end_time)s,
-                %(surveyors_disembark_time)s,
 
-                %(products_header_line)s,
-                %(products)s,
-                %(products_total)s,
+                %(tonnage_total)s,
+                %(holds_general)s,
+                %(products_table)s,
 
-                %(supervision)s,
-                %(sampling)s,
-                %(procedure)s,
+                %(supervision_datetime)s,
+                %(mag_representative)s,
+                %(sampled_holds)s,
+                %(sampling_points)s,
+
                 %(conclusion)s,
-
-                %(legal_text)s,
-                %(attachments)s,
-                %(surveyor_name)s,
-                %(surveyor_position)s,
 
                 NOW(),
                 NOW()
             )
             RETURNING id
         """, {
+
             # HEADER
             "cert_no": safe("cert_no"),
-            "place_date": safe("place_date"),
+            "place_date": safe("inspection_date"),
+            "puerto": safe("port"),
 
-            # INTRO
-            "purpose": safe("purpose"),
-            "requested_by": safe("requested_by"),
-            "arrival_info": safe("arrival_info"),
-            "inspection_info": safe("inspection_info"),
+            # MAIN
+            "vessel_name": safe("vessel"),
+            "cliente": safe("client"),
             "captain": safe("captain"),
             "chief_officer": safe("chief_officer"),
 
-            # BUQUE
-            "vessel_name": safe("vessel_name"),
-            "flag_port": safe("flag_port"),
-            "grt": safe("grt"),
-            "nrt": safe("nrt"),
-            "imo": safe("imo"),
-            "build_year": safe("build_year"),
+            # TIMES
+            "arrival_buoy_time": arrival_buoy_time,
+            "nor_tendered_time": nor_tendered_time,
+            "holds_opening_time": holds_opening_time,
+            "sampling_start_time": sampling_start_time,
+            "sampling_end_time": sampling_end_time,
 
-            # TIEMPOS
-            "arrival_buoy_time": safe("arrival_buoy_time"),
-            "nor_tendered_time": safe("nor_tendered_time"),
-            "holds_opening_time": safe("holds_opening_time"),
-            "surveyors_onboard_time": safe("surveyors_onboard_time"),
-            "seals_verification_time": safe("seals_verification_time"),
-            "sampling_start_time": safe("sampling_start_time"),
-            "sampling_end_time": safe("sampling_end_time"),
-            "surveyors_disembark_time": safe("surveyors_disembark_time"),
+            # PRODUCTS
+            "tonnage_total": safe("tonnage_total"),
+            "holds_general": safe("holds_general"),
+            "products_table": safe_list("products_table"),
 
-            # PRODUCTOS
-            "products_header_line": safe("products_header_line"),
-            "products": safe("products"),  # JSON table
-            "products_total": safe("products_total"),
+            # SAMPLING
+            "supervision_datetime": safe("supervision_datetime"),
+            "mag_representative": safe("mag_representative"),
+            "sampled_holds": safe("sampled_holds"),
+            "sampling_points": safe_list("sampling_points"),
 
-            # TEXT
-            "supervision": safe("supervision"),
-            "sampling": safe("sampling"),
-            "procedure": safe("procedure"),
+            # CONCLUSION
             "conclusion": safe("conclusion"),
-
-            # DECLARACIÓN
-            "legal_text": safe("legal_text"),
-            "attachments": safe("attachments"),
-            "surveyor_name": safe("surveyor_name"),
-            "surveyor_position": safe("surveyor_position"),
         })
 
         new_id = cur.fetchone()["id"]
@@ -202,19 +184,18 @@ def create_vessel_grain_sampling_report(
 
 
 # ============================================================
-# GET — LIST ALL GRAIN SAMPLING REPORTS (HARDENED)
+# GET — LIST ALL GRAIN SAMPLING REPORTS (ALIGNED + HARDENED)
 # ============================================================
 @router.get("")
 def list_vessel_grain_sampling_reports(
     conn=Depends(get_db)
 ):
     """
-    Returns lightweight list for grid/table view.
-    1:1 aligned with report structure.
+    Lightweight grid list aligned with current schema.
     Hardened:
-    - Safe DB handling
-    - Explicit fields
+    - Explicit columns only
     - No SELECT *
+    - Safe empty handling
     - Stable ordering
     """
 
@@ -226,12 +207,15 @@ def list_vessel_grain_sampling_reports(
                 id,
                 cert_no,
                 place_date,
+                puerto,
                 vessel_name,
-                surveyor_name,
+                cliente,
+                tonnage_total,
+                supervision_datetime,
                 created_at,
                 updated_at
             FROM vessel_grain_sampling_reports
-            ORDER BY created_at DESC, id DESC
+            ORDER BY created_at DESC NULLS LAST, id DESC
         """)
 
         rows = cur.fetchall() or []
@@ -398,7 +382,7 @@ def get_services_for_grain_sampling(
 
 
 # ============================================================
-# GET — SINGLE GRAIN SAMPLING REPORT BY ID (1:1 ALIGNED)
+# GET — SINGLE GRAIN SAMPLING REPORT BY ID (ALIGNED 1:1)
 # ============================================================
 @router.get("/{report_id}")
 def get_vessel_grain_sampling_report(
@@ -406,12 +390,12 @@ def get_vessel_grain_sampling_report(
     conn=Depends(get_db)
 ):
     """
-    Returns full report 1:1 aligned with Word template.
+    Returns full report aligned 1:1 with current UI structure.
     Hardened:
-    - Explicit field selection
+    - Explicit fields only
     - 404 safe
-    - Exception protected
-    - No legacy fields
+    - No legacy columns
+    - JSON fields preserved
     """
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -427,24 +411,15 @@ def get_vessel_grain_sampling_report(
                 -- HEADER
                 cert_no,
                 place_date,
+                puerto,
 
-                -- INTRODUCCIÓN
-                purpose,
-                requested_by,
-                arrival_info,
-                inspection_info,
+                -- MAIN DATA
+                vessel_name,
+                cliente,
                 captain,
                 chief_officer,
 
-                -- BUQUE
-                vessel_name,
-                flag_port,
-                grt,
-                nrt,
-                imo,
-                build_year,
-
-                -- TIEMPOS
+                -- TIMES (JSON)
                 arrival_buoy_time,
                 nor_tendered_time,
                 holds_opening_time,
@@ -454,22 +429,19 @@ def get_vessel_grain_sampling_report(
                 sampling_end_time,
                 surveyors_disembark_time,
 
-                -- PRODUCTOS (1:1)
-                products_header_line,
-                products,
-                products_total,
+                -- PRODUCTS
+                tonnage_total,
+                holds_general,
+                products_table,
 
-                -- CUERPO
-                supervision,
-                sampling,
-                procedure,
-                conclusion,
+                -- SAMPLING DETAILS
+                supervision_datetime,
+                mag_representative,
+                sampled_holds,
+                sampling_points,
 
-                -- DECLARACIÓN / FIRMA
-                legal_text,
-                attachments,
-                surveyor_name,
-                surveyor_position
+                -- CONCLUSION
+                conclusion
 
             FROM vessel_grain_sampling_reports
             WHERE id = %s
@@ -500,9 +472,8 @@ def get_vessel_grain_sampling_report(
     finally:
         cur.close()
 
-
 # ============================================================
-# UPDATE — FULL UPDATE (PUT) 1:1 ALIGNED & HARDENED
+# UPDATE — FULL UPDATE (PUT) 1:1 ALIGNED WITH CURRENT UI
 # ============================================================
 @router.put("/{report_id}")
 def update_vessel_grain_sampling_report(
@@ -511,11 +482,12 @@ def update_vessel_grain_sampling_report(
     conn=Depends(get_db)
 ):
     """
-    Full update aligned 1:1 with Word template.
+    Full update aligned 1:1 with current UI structure.
     Hardened:
     - Safe payload access
     - No KeyError
     - Explicit field mapping
+    - JSON safe
     - Rollback protected
     - 404 safe
     """
@@ -534,24 +506,15 @@ def update_vessel_grain_sampling_report(
                 -- HEADER
                 cert_no = %(cert_no)s,
                 place_date = %(place_date)s,
+                puerto = %(puerto)s,
 
-                -- INTRODUCCIÓN
-                purpose = %(purpose)s,
-                requested_by = %(requested_by)s,
-                arrival_info = %(arrival_info)s,
-                inspection_info = %(inspection_info)s,
+                -- MAIN DATA
+                vessel_name = %(vessel_name)s,
+                cliente = %(cliente)s,
                 captain = %(captain)s,
                 chief_officer = %(chief_officer)s,
 
-                -- BUQUE
-                vessel_name = %(vessel_name)s,
-                flag_port = %(flag_port)s,
-                grt = %(grt)s,
-                nrt = %(nrt)s,
-                imo = %(imo)s,
-                build_year = %(build_year)s,
-
-                -- TIEMPOS
+                -- TIMES
                 arrival_buoy_time = %(arrival_buoy_time)s,
                 nor_tendered_time = %(nor_tendered_time)s,
                 holds_opening_time = %(holds_opening_time)s,
@@ -561,22 +524,19 @@ def update_vessel_grain_sampling_report(
                 sampling_end_time = %(sampling_end_time)s,
                 surveyors_disembark_time = %(surveyors_disembark_time)s,
 
-                -- PRODUCTOS
-                products_header_line = %(products_header_line)s,
-                products = %(products)s,
-                products_total = %(products_total)s,
+                -- PRODUCTS
+                tonnage_total = %(tonnage_total)s,
+                holds_general = %(holds_general)s,
+                products_table = %(products_table)s,
 
-                -- CUERPO
-                supervision = %(supervision)s,
-                sampling = %(sampling)s,
-                procedure = %(procedure)s,
+                -- SAMPLING DETAILS
+                supervision_datetime = %(supervision_datetime)s,
+                mag_representative = %(mag_representative)s,
+                sampled_holds = %(sampled_holds)s,
+                sampling_points = %(sampling_points)s,
+
+                -- CONCLUSION
                 conclusion = %(conclusion)s,
-
-                -- DECLARACIÓN / FIRMA
-                legal_text = %(legal_text)s,
-                attachments = %(attachments)s,
-                surveyor_name = %(surveyor_name)s,
-                surveyor_position = %(surveyor_position)s,
 
                 updated_at = NOW()
 
@@ -586,25 +546,16 @@ def update_vessel_grain_sampling_report(
 
             # HEADER
             "cert_no": safe("cert_no"),
-            "place_date": safe("place_date"),
+            "place_date": safe("inspection_date"),
+            "puerto": safe("port"),
 
-            # INTRO
-            "purpose": safe("purpose"),
-            "requested_by": safe("requested_by"),
-            "arrival_info": safe("arrival_info"),
-            "inspection_info": safe("inspection_info"),
+            # MAIN
+            "vessel_name": safe("vessel"),
+            "cliente": safe("client"),
             "captain": safe("captain"),
             "chief_officer": safe("chief_officer"),
 
-            # BUQUE
-            "vessel_name": safe("vessel_name"),
-            "flag_port": safe("flag_port"),
-            "grt": safe("grt"),
-            "nrt": safe("nrt"),
-            "imo": safe("imo"),
-            "build_year": safe("build_year"),
-
-            # TIEMPOS
+            # TIMES
             "arrival_buoy_time": safe("arrival_buoy_time"),
             "nor_tendered_time": safe("nor_tendered_time"),
             "holds_opening_time": safe("holds_opening_time"),
@@ -614,22 +565,19 @@ def update_vessel_grain_sampling_report(
             "sampling_end_time": safe("sampling_end_time"),
             "surveyors_disembark_time": safe("surveyors_disembark_time"),
 
-            # PRODUCTOS
-            "products_header_line": safe("products_header_line"),
-            "products": safe("products"),
-            "products_total": safe("products_total"),
+            # PRODUCTS
+            "tonnage_total": safe("tonnage_total"),
+            "holds_general": safe("holds_general"),
+            "products_table": safe("products_table"),
 
-            # TEXT
-            "supervision": safe("supervision"),
-            "sampling": safe("sampling"),
-            "procedure": safe("procedure"),
+            # SAMPLING
+            "supervision_datetime": safe("supervision_datetime"),
+            "mag_representative": safe("mag_representative"),
+            "sampled_holds": safe("sampled_holds"),
+            "sampling_points": safe("sampling_points"),
+
+            # CONCLUSION
             "conclusion": safe("conclusion"),
-
-            # DECLARACIÓN
-            "legal_text": safe("legal_text"),
-            "attachments": safe("attachments"),
-            "surveyor_name": safe("surveyor_name"),
-            "surveyor_position": safe("surveyor_position"),
         })
 
         if cur.rowcount == 0:
@@ -657,5 +605,6 @@ def update_vessel_grain_sampling_report(
 
     finally:
         cur.close()
+
 
 
