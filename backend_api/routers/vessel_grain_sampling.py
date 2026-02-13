@@ -14,7 +14,7 @@ router = APIRouter(
 
 
 # ============================================================
-# CREATE — NEW GRAIN SAMPLING REPORT (ALIGNED 1:1 WITH UI)
+# CREATE — NEW GRAIN SAMPLING REPORT (FULLY ALIGNED 1:1)
 # ============================================================
 
 @router.post("")
@@ -29,39 +29,76 @@ def create_vessel_grain_sampling_report(
         value = payload.get(key, default)
         return value if value not in ["", None] else default
 
-    def safe_list(key):
-        value = payload.get(key, [])
-        return value if isinstance(value, list) else []
-
     try:
 
-        # ====================================================
-        # INSERT VESSEL GRAIN SAMPLING
-        # ====================================================
         cur.execute("""
             INSERT INTO vessel_grain_sampling_reports (
 
                 cert_no,
                 place_date,
 
-                vessel_name,
                 requested_by,
-
                 captain,
                 chief_officer,
+                vessel_name,
 
+                -- SHIP DATA
+                ship_flag,
+                ship_grt,
+                ship_nrt,
+                ship_imo,
+                ship_year,
+
+                -- TIMES
                 arrival_buoy_time,
                 nor_tendered_time,
                 holds_opening_time,
+                surveyors_onboard_time,
+                seals_verification_time,
                 sampling_start_time,
                 sampling_end_time,
+                surveyors_disembark_time,
 
-                products,
+                -- PRODUCTS (5)
+                hold1_product,
+                hold1_tonnage,
+                hold2_product,
+                hold2_tonnage,
+                hold3_product,
+                hold3_tonnage,
+                hold4_product,
+                hold4_tonnage,
+                hold5_product,
+                hold5_tonnage,
+
                 products_total,
+
+                -- SAMPLING (3 x 5)
+                sample1_hold,
+                sample1_proa_babor,
+                sample1_proa_estribor,
+                sample1_centro,
+                sample1_popa_babor,
+                sample1_popa_estribor,
+
+                sample2_hold,
+                sample2_proa_babor,
+                sample2_proa_estribor,
+                sample2_centro,
+                sample2_popa_babor,
+                sample2_popa_estribor,
+
+                sample3_hold,
+                sample3_proa_babor,
+                sample3_proa_estribor,
+                sample3_centro,
+                sample3_popa_babor,
+                sample3_popa_estribor,
 
                 supervision,
                 conclusion,
 
+                status,
                 created_at,
                 updated_at
 
@@ -70,61 +107,146 @@ def create_vessel_grain_sampling_report(
                 %(cert_no)s,
                 %(place_date)s,
 
-                %(vessel_name)s,
                 %(requested_by)s,
-
                 %(captain)s,
                 %(chief_officer)s,
+                %(vessel_name)s,
+
+                %(ship_flag)s,
+                %(ship_grt)s,
+                %(ship_nrt)s,
+                %(ship_imo)s,
+                %(ship_year)s,
 
                 %(arrival_buoy_time)s,
                 %(nor_tendered_time)s,
                 %(holds_opening_time)s,
+                %(surveyors_onboard_time)s,
+                %(seals_verification_time)s,
                 %(sampling_start_time)s,
                 %(sampling_end_time)s,
+                %(surveyors_disembark_time)s,
 
-                %(products)s,
+                %(hold1_product)s,
+                %(hold1_tonnage)s,
+                %(hold2_product)s,
+                %(hold2_tonnage)s,
+                %(hold3_product)s,
+                %(hold3_tonnage)s,
+                %(hold4_product)s,
+                %(hold4_tonnage)s,
+                %(hold5_product)s,
+                %(hold5_tonnage)s,
+
                 %(products_total)s,
+
+                %(sample1_hold)s,
+                %(sample1_proa_babor)s,
+                %(sample1_proa_estribor)s,
+                %(sample1_centro)s,
+                %(sample1_popa_babor)s,
+                %(sample1_popa_estribor)s,
+
+                %(sample2_hold)s,
+                %(sample2_proa_babor)s,
+                %(sample2_proa_estribor)s,
+                %(sample2_centro)s,
+                %(sample2_popa_babor)s,
+                %(sample2_popa_estribor)s,
+
+                %(sample3_hold)s,
+                %(sample3_proa_babor)s,
+                %(sample3_proa_estribor)s,
+                %(sample3_centro)s,
+                %(sample3_popa_babor)s,
+                %(sample3_popa_estribor)s,
 
                 %(supervision)s,
                 %(conclusion)s,
 
+                %(status)s,
                 NOW(),
                 NOW()
             )
             RETURNING id
         """, {
 
+            # HEADER
             "cert_no": safe("cert_no"),
             "place_date": safe("place_date"),
 
-            "vessel_name": safe("vessel_name"),
             "requested_by": safe("requested_by"),
-
             "captain": safe("captain"),
             "chief_officer": safe("chief_officer"),
+            "vessel_name": safe("vessel_name"),
 
+            # SHIP
+            "ship_flag": safe("ship_flag"),
+            "ship_grt": safe("ship_grt"),
+            "ship_nrt": safe("ship_nrt"),
+            "ship_imo": safe("ship_imo"),
+            "ship_year": safe("ship_year"),
+
+            # TIMES
             "arrival_buoy_time": safe("arrival_buoy_time"),
             "nor_tendered_time": safe("nor_tendered_time"),
             "holds_opening_time": safe("holds_opening_time"),
+            "surveyors_onboard_time": safe("surveyors_onboard_time"),
+            "seals_verification_time": safe("seals_verification_time"),
             "sampling_start_time": safe("sampling_start_time"),
             "sampling_end_time": safe("sampling_end_time"),
+            "surveyors_disembark_time": safe("surveyors_disembark_time"),
 
-            "products": json.dumps(safe_list("products")),
+            # PRODUCTS
+            "hold1_product": safe("hold1_product"),
+            "hold1_tonnage": safe("hold1_tonnage"),
+            "hold2_product": safe("hold2_product"),
+            "hold2_tonnage": safe("hold2_tonnage"),
+            "hold3_product": safe("hold3_product"),
+            "hold3_tonnage": safe("hold3_tonnage"),
+            "hold4_product": safe("hold4_product"),
+            "hold4_tonnage": safe("hold4_tonnage"),
+            "hold5_product": safe("hold5_product"),
+            "hold5_tonnage": safe("hold5_tonnage"),
+
             "products_total": safe("products_total"),
+
+            # SAMPLING 1
+            "sample1_hold": safe("sample1_hold"),
+            "sample1_proa_babor": safe("sample1_proa_babor"),
+            "sample1_proa_estribor": safe("sample1_proa_estribor"),
+            "sample1_centro": safe("sample1_centro"),
+            "sample1_popa_babor": safe("sample1_popa_babor"),
+            "sample1_popa_estribor": safe("sample1_popa_estribor"),
+
+            # SAMPLING 2
+            "sample2_hold": safe("sample2_hold"),
+            "sample2_proa_babor": safe("sample2_proa_babor"),
+            "sample2_proa_estribor": safe("sample2_proa_estribor"),
+            "sample2_centro": safe("sample2_centro"),
+            "sample2_popa_babor": safe("sample2_popa_babor"),
+            "sample2_popa_estribor": safe("sample2_popa_estribor"),
+
+            # SAMPLING 3
+            "sample3_hold": safe("sample3_hold"),
+            "sample3_proa_babor": safe("sample3_proa_babor"),
+            "sample3_proa_estribor": safe("sample3_proa_estribor"),
+            "sample3_centro": safe("sample3_centro"),
+            "sample3_popa_babor": safe("sample3_popa_babor"),
+            "sample3_popa_estribor": safe("sample3_popa_estribor"),
 
             "supervision": safe("supervision"),
             "conclusion": safe("conclusion"),
+
+            # STATUS SIEMPRE
+            "status": safe("status", "Created"),
         })
 
         row = cur.fetchone()
         new_id = row["id"]
 
-        # ====================================================
-        # 🔥 UPDATE SERVICIOS.STATUS_INFORME = 'Created'
-        # Basado en cert_no → servicios.num_informe
-        # ====================================================
+        # UPDATE SERVICIOS
         cert_no = safe("cert_no")
-
         if cert_no:
             cur.execute("""
                 UPDATE servicios
@@ -132,9 +254,6 @@ def create_vessel_grain_sampling_report(
                 WHERE num_informe = %s
             """, (cert_no,))
 
-        # ====================================================
-        # COMMIT FINAL (AMBAS OPERACIONES)
-        # ====================================================
         conn.commit()
 
         return {
@@ -154,8 +273,9 @@ def create_vessel_grain_sampling_report(
 
 
 # ============================================================
-# GET — LIST ALL GRAIN SAMPLING REPORTS (ALIGNED)
+# GET — LIST ALL GRAIN SAMPLING REPORTS (FULLY ALIGNED 1:1)
 # ============================================================
+
 @router.get("")
 def list_vessel_grain_sampling_reports(
     conn=Depends(get_db)
@@ -164,18 +284,83 @@ def list_vessel_grain_sampling_reports(
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     try:
+
         cur.execute("""
             SELECT
+
                 id,
+
                 cert_no,
                 place_date,
-                vessel_name,
+
                 requested_by,
+                captain,
+                chief_officer,
+                vessel_name,
+
+                -- SHIP DATA
+                ship_flag,
+                ship_grt,
+                ship_nrt,
+                ship_imo,
+                ship_year,
+
+                -- TIMES
+                arrival_buoy_time,
+                nor_tendered_time,
+                holds_opening_time,
+                surveyors_onboard_time,
+                seals_verification_time,
+                sampling_start_time,
+                sampling_end_time,
+                surveyors_disembark_time,
+
+                -- PRODUCTS (5)
+                hold1_product,
+                hold1_tonnage,
+                hold2_product,
+                hold2_tonnage,
+                hold3_product,
+                hold3_tonnage,
+                hold4_product,
+                hold4_tonnage,
+                hold5_product,
+                hold5_tonnage,
+
                 products_total,
+
+                -- SAMPLING (3 x 5)
+                sample1_hold,
+                sample1_proa_babor,
+                sample1_proa_estribor,
+                sample1_centro,
+                sample1_popa_babor,
+                sample1_popa_estribor,
+
+                sample2_hold,
+                sample2_proa_babor,
+                sample2_proa_estribor,
+                sample2_centro,
+                sample2_popa_babor,
+                sample2_popa_estribor,
+
+                sample3_hold,
+                sample3_proa_babor,
+                sample3_proa_estribor,
+                sample3_centro,
+                sample3_popa_babor,
+                sample3_popa_estribor,
+
                 supervision,
+                conclusion,
+
+                status,
+
                 created_at,
                 updated_at
+
             FROM vessel_grain_sampling_reports
+
             ORDER BY created_at DESC NULLS LAST, id DESC
         """)
 
@@ -195,6 +380,7 @@ def list_vessel_grain_sampling_reports(
 
     finally:
         cur.close()
+
 
 # ============================================================
 # GET — SELECTOR SERVICIOS (dinámico + año + mes + operacion)

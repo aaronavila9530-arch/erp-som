@@ -1,97 +1,101 @@
 import psycopg2
 
-DATABASE_URL = "postgresql://postgres:IrPzbLzKJFQtUnMlBKcHLHcLIAqagHCT@tramway.proxy.rlwy.net:15258/railway?sslmode=require"
-
+DATABASE_URL = "postgresql://postgres:IrPzbLzKJFQtUnMlBKcHLHcLIAqagHCT@tramway.proxy.rlwy.net:15258/railway"
 
 def run():
-
-    print("🔧 Connecting to Railway DB...")
-
     conn = psycopg2.connect(DATABASE_URL)
     cur = conn.cursor()
 
-    try:
+    print("🔄 Reestructurando tabla vessel_grain_sampling_reports...")
 
-        print("🔍 Aligning vessel_grain_sampling_reports table...")
+    # 1️⃣ Renombrar tabla original
+    cur.execute("""
+        ALTER TABLE vessel_grain_sampling_reports
+        RENAME TO vessel_grain_sampling_reports_old;
+    """)
 
-        # =====================================================
-        # ADD MISSING COLUMNS (SAFE MODE)
-        # =====================================================
+    # 2️⃣ Crear nueva tabla alineada 1:1 con el Form
+    cur.execute("""
+        CREATE TABLE vessel_grain_sampling_reports (
+            id SERIAL PRIMARY KEY,
+            created_at TIMESTAMP DEFAULT NOW(),
+            updated_at TIMESTAMP DEFAULT NOW(),
 
-        alter_statements = [
+            cert_no TEXT,
+            place_date TEXT,
 
-            # HEADER
-            """
-            ALTER TABLE vessel_grain_sampling_reports
-            ADD COLUMN IF NOT EXISTS requested_by TEXT;
-            """,
+            requested_by TEXT,
+            captain TEXT,
+            chief_officer TEXT,
+            vessel_name TEXT,
 
-            # TIMES (si faltan)
-            """
-            ALTER TABLE vessel_grain_sampling_reports
-            ADD COLUMN IF NOT EXISTS arrival_buoy_time TIMESTAMP;
-            """,
+            -- SHIP DATA
+            ship_flag TEXT,
+            ship_grt TEXT,
+            ship_nrt TEXT,
+            ship_imo TEXT,
+            ship_year TEXT,
 
-            """
-            ALTER TABLE vessel_grain_sampling_reports
-            ADD COLUMN IF NOT EXISTS nor_tendered_time TIMESTAMP;
-            """,
+            -- TIMES
+            arrival_buoy_time TIMESTAMP,
+            nor_tendered_time TIMESTAMP,
+            holds_opening_time TIMESTAMP,
+            surveyors_onboard_time TIMESTAMP,
+            seals_verification_time TIMESTAMP,
+            sampling_start_time TIMESTAMP,
+            sampling_end_time TIMESTAMP,
+            surveyors_disembark_time TIMESTAMP,
 
-            """
-            ALTER TABLE vessel_grain_sampling_reports
-            ADD COLUMN IF NOT EXISTS holds_opening_time TIMESTAMP;
-            """,
+            -- PRODUCTS (5)
+            hold1_product TEXT,
+            hold1_tonnage TEXT,
+            hold2_product TEXT,
+            hold2_tonnage TEXT,
+            hold3_product TEXT,
+            hold3_tonnage TEXT,
+            hold4_product TEXT,
+            hold4_tonnage TEXT,
+            hold5_product TEXT,
+            hold5_tonnage TEXT,
 
-            """
-            ALTER TABLE vessel_grain_sampling_reports
-            ADD COLUMN IF NOT EXISTS sampling_start_time TIMESTAMP;
-            """,
+            products_total TEXT,
 
-            """
-            ALTER TABLE vessel_grain_sampling_reports
-            ADD COLUMN IF NOT EXISTS sampling_end_time TIMESTAMP;
-            """,
+            -- SAMPLING (3 BODEGAS × 5 PUNTOS)
+            sample1_hold TEXT,
+            sample1_proa_babor TEXT,
+            sample1_proa_estribor TEXT,
+            sample1_centro TEXT,
+            sample1_popa_babor TEXT,
+            sample1_popa_estribor TEXT,
 
-            # PRODUCTS STRUCTURE
-            """
-            ALTER TABLE vessel_grain_sampling_reports
-            ADD COLUMN IF NOT EXISTS products JSONB;
-            """,
+            sample2_hold TEXT,
+            sample2_proa_babor TEXT,
+            sample2_proa_estribor TEXT,
+            sample2_centro TEXT,
+            sample2_popa_babor TEXT,
+            sample2_popa_estribor TEXT,
 
-            """
-            ALTER TABLE vessel_grain_sampling_reports
-            ADD COLUMN IF NOT EXISTS products_total TEXT;
-            """,
+            sample3_hold TEXT,
+            sample3_proa_babor TEXT,
+            sample3_proa_estribor TEXT,
+            sample3_centro TEXT,
+            sample3_popa_babor TEXT,
+            sample3_popa_estribor TEXT,
 
-            # SUPERVISION
-            """
-            ALTER TABLE vessel_grain_sampling_reports
-            ADD COLUMN IF NOT EXISTS supervision TIMESTAMP;
-            """,
+            supervision TIMESTAMP,
+            conclusion TEXT,
 
-            # CONCLUSION
-            """
-            ALTER TABLE vessel_grain_sampling_reports
-            ADD COLUMN IF NOT EXISTS conclusion TEXT;
-            """,
-        ]
+            -- STATUS SIEMPRE AL FINAL
+            status TEXT
+        );
+    """)
 
-        for stmt in alter_statements:
-            cur.execute(stmt)
+    conn.commit()
+    cur.close()
+    conn.close()
 
-        conn.commit()
-
-        print("✅ Table aligned successfully.")
-
-    except Exception as e:
-        conn.rollback()
-        print("❌ ERROR:", e)
-
-    finally:
-        cur.close()
-        conn.close()
-        print("🔒 Connection closed.")
-
+    print("✅ Tabla alineada 1:1 con el Form correctamente.")
+    print("⚠️ La tabla anterior quedó como vessel_grain_sampling_reports_old.")
 
 if __name__ == "__main__":
     run()
