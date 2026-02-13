@@ -1,12 +1,15 @@
 # ============================================================
 # ROUTER — STATUS INFORMES (SERVICIOS)
 # Archivo: status_informes.py
+# Alineado a estructura real del backend (database.get_db)
 # ============================================================
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from psycopg2.extras import RealDictCursor
 from typing import Optional
-from db import get_db
+
+from database import get_db   # 🔥 CORRECTO (NO db)
+
 
 router = APIRouter(
     prefix="/status-informes",
@@ -29,11 +32,10 @@ def list_status_informes(
     conn=Depends(get_db)
 ):
     """
-    Devuelve servicios para grid de informes.
-
     ✔ Default: solo status_informe = 'Pending'
-    ✔ Permite filtros dinámicos
-    ✔ Deriva año y mes desde fecha_inicio
+    ✔ Filtros dinámicos
+    ✔ Año/Mes derivados desde fecha_inicio
+    ✔ Solo tipo = 'Buque'
     """
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -66,7 +68,7 @@ def list_status_informes(
         params = []
 
         # ====================================================
-        # STATUS (DEFAULT PENDING)
+        # STATUS (DEFAULT: Pending)
         # ====================================================
         if status:
             conditions.append("status_informe = %s")
@@ -107,7 +109,10 @@ def list_status_informes(
         if conditions:
             query += " AND " + " AND ".join(conditions)
 
-        query += " ORDER BY fecha_inicio DESC NULLS LAST, consec DESC"
+        query += """
+            ORDER BY fecha_inicio DESC NULLS LAST,
+                     consec DESC
+        """
 
         # ====================================================
         # EXECUTE
@@ -133,7 +138,7 @@ def list_status_informes(
 
 
 # ============================================================
-# GET — STATUS DISPONIBLES (PARA COMBOBOX)
+# GET — STATUS DISPONIBLES (COMBOBOX)
 # ============================================================
 @router.get("/statuses")
 def get_available_statuses(conn=Depends(get_db)):
