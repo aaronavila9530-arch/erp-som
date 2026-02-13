@@ -132,20 +132,12 @@ def create_vessel_grain_sampling_report(
 
 
 # ============================================================
-# GET — LIST ALL GRAIN SAMPLING REPORTS (ALIGNED + HARDENED)
+# GET — LIST ALL GRAIN SAMPLING REPORTS (ALIGNED)
 # ============================================================
 @router.get("")
 def list_vessel_grain_sampling_reports(
     conn=Depends(get_db)
 ):
-    """
-    Lightweight grid list aligned with current schema.
-    Hardened:
-    - Explicit columns only
-    - No SELECT *
-    - Safe empty handling
-    - Stable ordering
-    """
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
@@ -155,11 +147,10 @@ def list_vessel_grain_sampling_reports(
                 id,
                 cert_no,
                 place_date,
-                puerto,
                 vessel_name,
-                cliente,
-                tonnage_total,
-                supervision_datetime,
+                requested_by,
+                products_total,
+                supervision,
                 created_at,
                 updated_at
             FROM vessel_grain_sampling_reports
@@ -330,65 +321,42 @@ def get_services_for_grain_sampling(
 
 
 # ============================================================
-# GET — SINGLE GRAIN SAMPLING REPORT BY ID (ALIGNED 1:1)
+# GET — SINGLE GRAIN SAMPLING REPORT BY ID (ALIGNED)
 # ============================================================
 @router.get("/{report_id}")
 def get_vessel_grain_sampling_report(
     report_id: int,
     conn=Depends(get_db)
 ):
-    """
-    Returns full report aligned 1:1 with current UI structure.
-    Hardened:
-    - Explicit fields only
-    - 404 safe
-    - No legacy columns
-    - JSON fields preserved
-    """
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     try:
         cur.execute("""
             SELECT
-                -- META
                 id,
                 created_at,
                 updated_at,
 
-                -- HEADER
                 cert_no,
                 place_date,
-                puerto,
 
-                -- MAIN DATA
                 vessel_name,
-                cliente,
+                requested_by,
+
                 captain,
                 chief_officer,
 
-                -- TIMES (JSON)
                 arrival_buoy_time,
                 nor_tendered_time,
                 holds_opening_time,
-                surveyors_onboard_time,
-                seals_verification_time,
                 sampling_start_time,
                 sampling_end_time,
-                surveyors_disembark_time,
 
-                -- PRODUCTS
-                tonnage_total,
-                holds_general,
-                products_table,
+                products,
+                products_total,
 
-                -- SAMPLING DETAILS
-                supervision_datetime,
-                mag_representative,
-                sampled_holds,
-                sampling_points,
-
-                -- CONCLUSION
+                supervision,
                 conclusion
 
             FROM vessel_grain_sampling_reports
@@ -402,6 +370,12 @@ def get_vessel_grain_sampling_report(
                 status_code=404,
                 detail="Grain sampling report not found"
             )
+
+        # Convert JSONB (psycopg already handles this normally,
+        # but we harden just in case legacy rows exist)
+        if report.get("products") and isinstance(report["products"], str):
+            import json
+            report["products"] = json.loads(report["products"])
 
         return {
             "success": True,
@@ -420,8 +394,9 @@ def get_vessel_grain_sampling_report(
     finally:
         cur.close()
 
+
 # ============================================================
-# UPDATE — FULL UPDATE (PUT) 1:1 ALIGNED WITH CURRENT UI
+# UPDATE — FULL UPDATE (PUT) ALIGNED WITH CURRENT FRONTEND
 # ============================================================
 @router.put("/{report_id}")
 def update_vessel_grain_sampling_report(
@@ -429,102 +404,69 @@ def update_vessel_grain_sampling_report(
     payload: dict,
     conn=Depends(get_db)
 ):
-    """
-    Full update aligned 1:1 with current UI structure.
-    Hardened:
-    - Safe payload access
-    - No KeyError
-    - Explicit field mapping
-    - JSON safe
-    - Rollback protected
-    - 404 safe
-    """
 
     cur = conn.cursor()
 
-    # 🔒 Safe getter
-    def safe(key, default=""):
+    def safe(key, default=None):
         value = payload.get(key, default)
-        return value if value is not None else default
+        return value if value not in ["", None] else default
+
+    def safe_list(key):
+        value = payload.get(key, [])
+        return value if isinstance(value, list) else []
 
     try:
+
         cur.execute("""
             UPDATE vessel_grain_sampling_reports
             SET
-                -- HEADER
                 cert_no = %(cert_no)s,
                 place_date = %(place_date)s,
-                puerto = %(puerto)s,
 
-                -- MAIN DATA
                 vessel_name = %(vessel_name)s,
-                cliente = %(cliente)s,
+                requested_by = %(requested_by)s,
+
                 captain = %(captain)s,
                 chief_officer = %(chief_officer)s,
 
-                -- TIMES
                 arrival_buoy_time = %(arrival_buoy_time)s,
                 nor_tendered_time = %(nor_tendered_time)s,
                 holds_opening_time = %(holds_opening_time)s,
-                surveyors_onboard_time = %(surveyors_onboard_time)s,
-                seals_verification_time = %(seals_verification_time)s,
                 sampling_start_time = %(sampling_start_time)s,
                 sampling_end_time = %(sampling_end_time)s,
-                surveyors_disembark_time = %(surveyors_disembark_time)s,
 
-                -- PRODUCTS
-                tonnage_total = %(tonnage_total)s,
-                holds_general = %(holds_general)s,
-                products_table = %(products_table)s,
+                products = %(products)s,
+                products_total = %(products_total)s,
 
-                -- SAMPLING DETAILS
-                supervision_datetime = %(supervision_datetime)s,
-                mag_representative = %(mag_representative)s,
-                sampled_holds = %(sampled_holds)s,
-                sampling_points = %(sampling_points)s,
-
-                -- CONCLUSION
+                supervision = %(supervision)s,
                 conclusion = %(conclusion)s,
 
                 updated_at = NOW()
 
             WHERE id = %(id)s
         """, {
+
             "id": report_id,
 
-            # HEADER
             "cert_no": safe("cert_no"),
-            "place_date": safe("inspection_date"),
-            "puerto": safe("port"),
+            "place_date": safe("place_date"),
 
-            # MAIN
-            "vessel_name": safe("vessel"),
-            "cliente": safe("client"),
+            "vessel_name": safe("vessel_name"),
+            "requested_by": safe("requested_by"),
+
             "captain": safe("captain"),
             "chief_officer": safe("chief_officer"),
 
-            # TIMES
             "arrival_buoy_time": safe("arrival_buoy_time"),
             "nor_tendered_time": safe("nor_tendered_time"),
             "holds_opening_time": safe("holds_opening_time"),
-            "surveyors_onboard_time": safe("surveyors_onboard_time"),
-            "seals_verification_time": safe("seals_verification_time"),
             "sampling_start_time": safe("sampling_start_time"),
             "sampling_end_time": safe("sampling_end_time"),
-            "surveyors_disembark_time": safe("surveyors_disembark_time"),
 
-            # PRODUCTS
-            "tonnage_total": safe("tonnage_total"),
-            "holds_general": safe("holds_general"),
-            "products_table": safe("products_table"),
+            "products": json.dumps(safe_list("products")),
+            "products_total": safe("products_total"),
 
-            # SAMPLING
-            "supervision_datetime": safe("supervision_datetime"),
-            "mag_representative": safe("mag_representative"),
-            "sampled_holds": safe("sampled_holds"),
-            "sampling_points": safe("sampling_points"),
-
-            # CONCLUSION
+            "supervision": safe("supervision"),
             "conclusion": safe("conclusion"),
         })
 
@@ -553,6 +495,5 @@ def update_vessel_grain_sampling_report(
 
     finally:
         cur.close()
-
 
 
