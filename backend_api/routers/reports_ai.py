@@ -36,25 +36,49 @@ def improve_container(payload: dict):
 
 
 # =========================================================
-# GRAIN SAMPLING AI (NUEVO)
+# GRAIN SAMPLING AI (BILINGUAL + HARDENED)
 # =========================================================
 @router.post("/improve/grain")
 def improve_grain(payload: dict):
+
     try:
+        # 🔒 Validación básica
+        user_text = (payload.get("text") or "").strip()
+        if not user_text:
+            raise HTTPException(
+                status_code=400,
+                detail="Text is required"
+            )
+
+        # 🔒 Normalizar idioma
+        language = (payload.get("language") or "ES").upper()
+        if language not in ("ES", "EN"):
+            language = "ES"
+
+        # 🔥 Llamada al servicio IA
         result = improve_grain_sampling_text(
-            user_text=payload.get("text", ""),
+            user_text=user_text,
             vessel=payload.get("vessel"),
             location=payload.get("location"),
             product=payload.get("product"),
             authority=payload.get("authority"),
+            language=language  # 🔥 NUEVO
         )
 
-        return {"text": result}
+        return {
+            "success": True,
+            "language": language,
+            "text": result
+        }
+
+    except HTTPException:
+        raise
 
     except Exception as e:
         # 🔥 DEBUG CRÍTICO
         print("❌ AI GRAIN ERROR:", repr(e))
+
         raise HTTPException(
             status_code=500,
-            detail=str(e)
+            detail=f"AI grain improvement failed: {str(e)}"
         )

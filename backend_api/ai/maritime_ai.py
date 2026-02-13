@@ -107,14 +107,15 @@ def improve_container_text(
 
 
 # =========================================================
-# GRAIN SAMPLING AI LOGIC
+# GRAIN SAMPLING AI LOGIC (BILINGUAL + HARDENED)
 # =========================================================
 def improve_grain_sampling_text(
     user_text: str,
     vessel: Optional[str],
     location: Optional[str],
     product: Optional[str],
-    authority: Optional[str]
+    authority: Optional[str],
+    language: str = "ES"  # 🔥 NUEVO
 ) -> str:
 
     if not user_text or not user_text.strip():
@@ -122,13 +123,34 @@ def improve_grain_sampling_text(
 
     client = _get_openai_client()
 
+    # 🔒 Normalizar idioma
+    language = (language or "ES").upper()
+    if language not in ("ES", "EN"):
+        language = "ES"
+
+    # 🔥 Cargar prompt base
+    base_prompt = load_grain_sampling_prompt()
+
+    # 🔥 Instrucción dinámica por idioma
+    if language == "EN":
+        language_instruction = (
+            "\n\nIMPORTANT: Rewrite the report strictly in professional maritime English. "
+            "Use formal surveyor tone. Maintain technical precision. Avoid exaggeration."
+        )
+    else:
+        language_instruction = (
+            "\n\nIMPORTANTE: Reescribe el informe estrictamente en español técnico profesional marítimo. "
+            "Mantén tono formal de surveyor. Evita exageraciones."
+        )
+
     prompt = (
-        load_grain_sampling_prompt()
+        base_prompt
         .replace("{{vessel}}", vessel or "N/A")
         .replace("{{location}}", location or "N/A")
         .replace("{{product}}", product or "Bulk Grain")
         .replace("{{authority}}", authority or "N/A")
         .replace("{{user_text}}", user_text.strip())
+        + language_instruction
     )
 
     response = client.responses.create(
