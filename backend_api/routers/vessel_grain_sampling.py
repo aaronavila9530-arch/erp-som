@@ -252,8 +252,12 @@ def list_vessel_grain_sampling_reports(
         cur.close()
 
 # ============================================================
-# GET — SELECTOR SERVICIOS (dinámico + año + mes)
+# GET — SELECTOR SERVICIOS (dinámico + año + mes + operacion)
 # ============================================================
+from typing import Optional
+from fastapi import Query, Depends, HTTPException
+from psycopg2.extras import RealDictCursor
+
 @router.get("/services-selector")
 def get_services_for_grain_sampling(
     continente: Optional[str] = None,
@@ -261,26 +265,25 @@ def get_services_for_grain_sampling(
     puerto: Optional[str] = None,
     cliente: Optional[str] = None,
     buque: Optional[str] = None,
-    estado: Optional[str] = None,
+    operacion: Optional[str] = None,
     year: Optional[int] = Query(None),
     month: Optional[int] = Query(None),
     conn=Depends(get_db)
 ):
     """
     Selector dinámico de servicios tipo Buque.
-    Soporta filtros dependientes simultáneos y filtro por año/mes
-    basado en fecha_inicio.
+    Filtros dependientes simultáneos.
+    Año y mes basados en fecha_inicio.
+    Estado fue reemplazado por operacion.
     """
-
-    from psycopg2.extras import RealDictCursor
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     try:
 
-        # ================================
+        # =====================================================
         # BASE QUERY
-        # ================================
+        # =====================================================
         base_query = """
             FROM servicios
             WHERE tipo = 'Buque'
@@ -289,9 +292,9 @@ def get_services_for_grain_sampling(
 
         params = []
 
-        # ================================
+        # =====================================================
         # FILTROS DINÁMICOS
-        # ================================
+        # =====================================================
         if continente:
             base_query += " AND continente = %s"
             params.append(continente)
@@ -312,13 +315,13 @@ def get_services_for_grain_sampling(
             base_query += " AND buque_contenedor = %s"
             params.append(buque)
 
-        if estado:
-            base_query += " AND estado = %s"
-            params.append(estado)
+        if operacion:
+            base_query += " AND operacion = %s"
+            params.append(operacion)
 
-        # ================================
+        # =====================================================
         # FILTRO AÑO / MES (fecha_inicio)
-        # ================================
+        # =====================================================
         if year:
             base_query += " AND EXTRACT(YEAR FROM fecha_inicio) = %s"
             params.append(year)
@@ -327,9 +330,9 @@ def get_services_for_grain_sampling(
             base_query += " AND EXTRACT(MONTH FROM fecha_inicio) = %s"
             params.append(month)
 
-        # ================================
+        # =====================================================
         # 1️⃣ RESULTADOS PARA TABLA
-        # ================================
+        # =====================================================
         results_query = """
             SELECT
                 consec,
@@ -339,7 +342,7 @@ def get_services_for_grain_sampling(
                 continente,
                 pais,
                 puerto,
-                estado,
+                operacion,
                 fecha_inicio
         """ + base_query + """
             ORDER BY fecha_inicio DESC NULLS LAST
@@ -348,9 +351,9 @@ def get_services_for_grain_sampling(
         cur.execute(results_query, params)
         rows = cur.fetchall() or []
 
-        # ================================
+        # =====================================================
         # 2️⃣ VALORES ÚNICOS DINÁMICOS
-        # ================================
+        # =====================================================
         filters_query = """
             SELECT DISTINCT
                 continente,
@@ -358,7 +361,7 @@ def get_services_for_grain_sampling(
                 puerto,
                 cliente,
                 buque_contenedor,
-                estado,
+                operacion,
                 EXTRACT(YEAR FROM fecha_inicio) AS year,
                 EXTRACT(MONTH FROM fecha_inicio) AS month
         """ + base_query
@@ -366,14 +369,13 @@ def get_services_for_grain_sampling(
         cur.execute(filters_query, params)
         filter_rows = cur.fetchall() or []
 
-        # Construcción de listas únicas limpias
         unique_values = {
             "continentes": sorted({r["continente"] for r in filter_rows if r["continente"]}),
             "paises": sorted({r["pais"] for r in filter_rows if r["pais"]}),
             "puertos": sorted({r["puerto"] for r in filter_rows if r["puerto"]}),
             "clientes": sorted({r["cliente"] for r in filter_rows if r["cliente"]}),
             "buques": sorted({r["buque_contenedor"] for r in filter_rows if r["buque_contenedor"]}),
-            "estados": sorted({r["estado"] for r in filter_rows if r["estado"]}),
+            "operaciones": sorted({r["operacion"] for r in filter_rows if r["operacion"]}),
             "years": sorted({int(r["year"]) for r in filter_rows if r["year"]}),
             "months": sorted({int(r["month"]) for r in filter_rows if r["month"]})
         }
