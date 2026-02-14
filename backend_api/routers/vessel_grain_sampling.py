@@ -644,8 +644,9 @@ def get_vessel_grain_sampling_report(
 
 
 # ============================================================
-# UPDATE — FULL UPDATE (PUT) ALIGNED WITH CURRENT FRONTEND
+# UPDATE — FULL UPDATE (PUT) ALIGNED 100% WITH CURRENT TABLE
 # ============================================================
+
 @router.put("/{report_id}")
 def update_vessel_grain_sampling_report(
     report_id: int,
@@ -659,35 +660,78 @@ def update_vessel_grain_sampling_report(
         value = payload.get(key, default)
         return value if value not in ["", None] else default
 
-    def safe_list(key):
-        value = payload.get(key, [])
-        return value if isinstance(value, list) else []
-
     try:
 
         cur.execute("""
             UPDATE vessel_grain_sampling_reports
             SET
+
+                -- HEADER
                 cert_no = %(cert_no)s,
                 place_date = %(place_date)s,
 
+                -- MAIN
                 vessel_name = %(vessel_name)s,
                 requested_by = %(requested_by)s,
-
                 captain = %(captain)s,
                 chief_officer = %(chief_officer)s,
 
+                -- SHIP DATA
+                ship_flag = %(ship_flag)s,
+                ship_grt = %(ship_grt)s,
+                ship_nrt = %(ship_nrt)s,
+                ship_imo = %(ship_imo)s,
+                ship_year = %(ship_year)s,
+
+                -- TIMES
                 arrival_buoy_time = %(arrival_buoy_time)s,
                 nor_tendered_time = %(nor_tendered_time)s,
                 holds_opening_time = %(holds_opening_time)s,
+                surveyors_onboard_time = %(surveyors_onboard_time)s,
+                seals_verification_time = %(seals_verification_time)s,
                 sampling_start_time = %(sampling_start_time)s,
                 sampling_end_time = %(sampling_end_time)s,
+                surveyors_disembark_time = %(surveyors_disembark_time)s,
 
-                products = %(products)s,
+                -- HOLDS (5)
+                hold1_product = %(hold1_product)s,
+                hold1_tonnage = %(hold1_tonnage)s,
+                hold2_product = %(hold2_product)s,
+                hold2_tonnage = %(hold2_tonnage)s,
+                hold3_product = %(hold3_product)s,
+                hold3_tonnage = %(hold3_tonnage)s,
+                hold4_product = %(hold4_product)s,
+                hold4_tonnage = %(hold4_tonnage)s,
+                hold5_product = %(hold5_product)s,
+                hold5_tonnage = %(hold5_tonnage)s,
+
                 products_total = %(products_total)s,
+
+                -- SAMPLING (3)
+                sample1_hold = %(sample1_hold)s,
+                sample1_proa_babor = %(sample1_proa_babor)s,
+                sample1_proa_estribor = %(sample1_proa_estribor)s,
+                sample1_centro = %(sample1_centro)s,
+                sample1_popa_babor = %(sample1_popa_babor)s,
+                sample1_popa_estribor = %(sample1_popa_estribor)s,
+
+                sample2_hold = %(sample2_hold)s,
+                sample2_proa_babor = %(sample2_proa_babor)s,
+                sample2_proa_estribor = %(sample2_proa_estribor)s,
+                sample2_centro = %(sample2_centro)s,
+                sample2_popa_babor = %(sample2_popa_babor)s,
+                sample2_popa_estribor = %(sample2_popa_estribor)s,
+
+                sample3_hold = %(sample3_hold)s,
+                sample3_proa_babor = %(sample3_proa_babor)s,
+                sample3_proa_estribor = %(sample3_proa_estribor)s,
+                sample3_centro = %(sample3_centro)s,
+                sample3_popa_babor = %(sample3_popa_babor)s,
+                sample3_popa_estribor = %(sample3_popa_estribor)s,
 
                 supervision = %(supervision)s,
                 conclusion = %(conclusion)s,
+                status = %(status)s,
 
                 updated_at = NOW()
 
@@ -696,26 +740,72 @@ def update_vessel_grain_sampling_report(
 
             "id": report_id,
 
+            # HEADER
             "cert_no": safe("cert_no"),
             "place_date": safe("place_date"),
 
+            # MAIN
             "vessel_name": safe("vessel_name"),
             "requested_by": safe("requested_by"),
-
             "captain": safe("captain"),
             "chief_officer": safe("chief_officer"),
 
+            # SHIP
+            "ship_flag": safe("ship_flag"),
+            "ship_grt": safe("ship_grt"),
+            "ship_nrt": safe("ship_nrt"),
+            "ship_imo": safe("ship_imo"),
+            "ship_year": safe("ship_year"),
+
+            # TIMES
             "arrival_buoy_time": safe("arrival_buoy_time"),
             "nor_tendered_time": safe("nor_tendered_time"),
             "holds_opening_time": safe("holds_opening_time"),
+            "surveyors_onboard_time": safe("surveyors_onboard_time"),
+            "seals_verification_time": safe("seals_verification_time"),
             "sampling_start_time": safe("sampling_start_time"),
             "sampling_end_time": safe("sampling_end_time"),
+            "surveyors_disembark_time": safe("surveyors_disembark_time"),
 
-            "products": json.dumps(safe_list("products")),
+            # HOLDS
+            "hold1_product": safe("hold1_product"),
+            "hold1_tonnage": safe("hold1_tonnage"),
+            "hold2_product": safe("hold2_product"),
+            "hold2_tonnage": safe("hold2_tonnage"),
+            "hold3_product": safe("hold3_product"),
+            "hold3_tonnage": safe("hold3_tonnage"),
+            "hold4_product": safe("hold4_product"),
+            "hold4_tonnage": safe("hold4_tonnage"),
+            "hold5_product": safe("hold5_product"),
+            "hold5_tonnage": safe("hold5_tonnage"),
+
             "products_total": safe("products_total"),
+
+            # SAMPLING
+            "sample1_hold": safe("sample1_hold"),
+            "sample1_proa_babor": safe("sample1_proa_babor"),
+            "sample1_proa_estribor": safe("sample1_proa_estribor"),
+            "sample1_centro": safe("sample1_centro"),
+            "sample1_popa_babor": safe("sample1_popa_babor"),
+            "sample1_popa_estribor": safe("sample1_popa_estribor"),
+
+            "sample2_hold": safe("sample2_hold"),
+            "sample2_proa_babor": safe("sample2_proa_babor"),
+            "sample2_proa_estribor": safe("sample2_proa_estribor"),
+            "sample2_centro": safe("sample2_centro"),
+            "sample2_popa_babor": safe("sample2_popa_babor"),
+            "sample2_popa_estribor": safe("sample2_popa_estribor"),
+
+            "sample3_hold": safe("sample3_hold"),
+            "sample3_proa_babor": safe("sample3_proa_babor"),
+            "sample3_proa_estribor": safe("sample3_proa_estribor"),
+            "sample3_centro": safe("sample3_centro"),
+            "sample3_popa_babor": safe("sample3_popa_babor"),
+            "sample3_popa_estribor": safe("sample3_popa_estribor"),
 
             "supervision": safe("supervision"),
             "conclusion": safe("conclusion"),
+            "status": safe("status", "Created")
         })
 
         if cur.rowcount == 0:
