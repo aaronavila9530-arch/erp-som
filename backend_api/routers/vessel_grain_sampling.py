@@ -529,7 +529,7 @@ def get_services_for_grain_sampling(
 
 
 # ============================================================
-# GET — SINGLE GRAIN SAMPLING REPORT BY ID (ALIGNED)
+# GET — SINGLE GRAIN SAMPLING REPORT BY ID (FULL 1:1 ALIGNED)
 # ============================================================
 @router.get("/{report_id}")
 def get_vessel_grain_sampling_report(
@@ -540,8 +540,10 @@ def get_vessel_grain_sampling_report(
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     try:
+
         cur.execute("""
             SELECT
+
                 id,
                 created_at,
                 updated_at,
@@ -549,23 +551,67 @@ def get_vessel_grain_sampling_report(
                 cert_no,
                 place_date,
 
-                vessel_name,
                 requested_by,
-
                 captain,
                 chief_officer,
+                vessel_name,
 
+                -- SHIP DATA
+                ship_flag,
+                ship_grt,
+                ship_nrt,
+                ship_imo,
+                ship_year,
+
+                -- TIMES
                 arrival_buoy_time,
                 nor_tendered_time,
                 holds_opening_time,
+                surveyors_onboard_time,
+                seals_verification_time,
                 sampling_start_time,
                 sampling_end_time,
+                surveyors_disembark_time,
 
-                products,
+                -- PRODUCTS
+                hold1_product,
+                hold1_tonnage,
+                hold2_product,
+                hold2_tonnage,
+                hold3_product,
+                hold3_tonnage,
+                hold4_product,
+                hold4_tonnage,
+                hold5_product,
+                hold5_tonnage,
+
                 products_total,
 
+                -- SAMPLING
+                sample1_hold,
+                sample1_proa_babor,
+                sample1_proa_estribor,
+                sample1_centro,
+                sample1_popa_babor,
+                sample1_popa_estribor,
+
+                sample2_hold,
+                sample2_proa_babor,
+                sample2_proa_estribor,
+                sample2_centro,
+                sample2_popa_babor,
+                sample2_popa_estribor,
+
+                sample3_hold,
+                sample3_proa_babor,
+                sample3_proa_estribor,
+                sample3_centro,
+                sample3_popa_babor,
+                sample3_popa_estribor,
+
                 supervision,
-                conclusion
+                conclusion,
+                status
 
             FROM vessel_grain_sampling_reports
             WHERE id = %s
@@ -578,12 +624,6 @@ def get_vessel_grain_sampling_report(
                 status_code=404,
                 detail="Grain sampling report not found"
             )
-
-        # Convert JSONB (psycopg already handles this normally,
-        # but we harden just in case legacy rows exist)
-        if report.get("products") and isinstance(report["products"], str):
-            import json
-            report["products"] = json.loads(report["products"])
 
         return {
             "success": True,
