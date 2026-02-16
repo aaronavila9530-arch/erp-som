@@ -4,25 +4,25 @@ from docx import Document
 
 
 # ============================================================
-# GENERATE GRAIN SAMPLING WORD REPORT (FORMAT SAFE)
+# GENERATE GRAIN SAMPLING WORD REPORT (ULTRA SAFE)
 # ============================================================
 
 def generate_grain_sampling_doc(data: dict) -> str:
 
     # ========================================================
-    # LOAD TEMPLATE (BACKEND SAFE)
+    # LOAD TEMPLATE
     # ========================================================
 
     base_dir = os.path.dirname(os.path.abspath(__file__))
 
-    template_path = os.path.join(
-        base_dir,
-        "..",
-        "templates",
-        "Supervision_Muestreo_Granos.docx"
+    template_path = os.path.abspath(
+        os.path.join(
+            base_dir,
+            "..",
+            "templates",
+            "Supervision_Muestreo_Granos.docx"
+        )
     )
-
-    template_path = os.path.abspath(template_path)
 
     if not os.path.exists(template_path):
         raise Exception(f"Template not found at: {template_path}")
@@ -37,40 +37,54 @@ def generate_grain_sampling_doc(data: dict) -> str:
         return "" if value is None else str(value)
 
     # ========================================================
-    # SAFE RUN-LEVEL REPLACEMENT
-    # SOLO reemplaza el placeholder exacto
-    # NO reconstruye párrafo
-    # NO toca formato
-    # NO redistribuye texto
+    # ADVANCED PLACEHOLDER REPLACEMENT
+    # Detecta placeholders partidos en múltiples runs
+    # Solo reemplaza el bloque específico
+    # No destruye imágenes ni formato externo
     # ========================================================
 
     def replace_in_paragraph(paragraph, data_dict):
+
+        if not paragraph.runs:
+            return
+
+        full_text = "".join(run.text for run in paragraph.runs)
 
         for key, value in data_dict.items():
 
             placeholder = f"{{{key}}}"
 
-            # Buscar placeholder completo en el texto visible
-            if placeholder not in paragraph.text:
+            if placeholder not in full_text:
                 continue
 
-            # Caso simple: placeholder está completo en un run
+            replacement = safe(value)
+            new_full_text = full_text.replace(placeholder, replacement)
+
+            # Ahora redistribuimos texto de forma segura
+            # pero SIN alterar estructura de runs que contienen imágenes
+
+            index = 0
             for run in paragraph.runs:
-                if placeholder in run.text:
-                    run.text = run.text.replace(
-                        placeholder,
-                        safe(value)
-                    )
+
+                original_length = len(run.text)
+
+                if original_length == 0:
+                    continue
+
+                run.text = new_full_text[index:index + original_length]
+                index += original_length
+
+            full_text = new_full_text
 
     # ========================================================
-    # BODY
+    # PROCESS BODY
     # ========================================================
 
     for paragraph in doc.paragraphs:
         replace_in_paragraph(paragraph, data)
 
     # ========================================================
-    # TABLES
+    # PROCESS TABLES
     # ========================================================
 
     for table in doc.tables:
@@ -80,12 +94,12 @@ def generate_grain_sampling_doc(data: dict) -> str:
                     replace_in_paragraph(paragraph, data)
 
     # ========================================================
-    # HEADERS & FOOTERS (SIN DESTRUIR IMÁGENES)
+    # PROCESS HEADERS & FOOTERS
     # ========================================================
 
     for section in doc.sections:
 
-        # Header
+        # HEADER
         header = section.header
         for paragraph in header.paragraphs:
             replace_in_paragraph(paragraph, data)
@@ -96,7 +110,7 @@ def generate_grain_sampling_doc(data: dict) -> str:
                     for paragraph in cell.paragraphs:
                         replace_in_paragraph(paragraph, data)
 
-        # Footer
+        # FOOTER
         footer = section.footer
         for paragraph in footer.paragraphs:
             replace_in_paragraph(paragraph, data)
@@ -108,7 +122,7 @@ def generate_grain_sampling_doc(data: dict) -> str:
                         replace_in_paragraph(paragraph, data)
 
     # ========================================================
-    # SAVE TEMP FILE (RAILWAY SAFE)
+    # SAVE TEMP FILE
     # ========================================================
 
     output_path = os.path.join(
