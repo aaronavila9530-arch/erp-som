@@ -39,32 +39,62 @@ def generate_grain_sampling_doc(data: dict) -> str:
         return str(value)
 
     # ========================================================
-    # REPLACE PLACEHOLDERS
+    # RUN-SAFE PLACEHOLDER REPLACEMENT
+    # ========================================================
+
+    def replace_placeholders_in_paragraph(paragraph, data_dict):
+
+        if not paragraph.runs:
+            return
+
+        full_text = "".join(run.text for run in paragraph.runs)
+
+        replaced = False
+
+        for key, value in data_dict.items():
+            placeholder = f"{{{key}}}"
+            if placeholder in full_text:
+                full_text = full_text.replace(placeholder, safe(value))
+                replaced = True
+
+        if replaced:
+            # Clear existing runs
+            for run in paragraph.runs:
+                run.text = ""
+
+            # Put full replaced text in first run
+            paragraph.runs[0].text = full_text
+
+    # ========================================================
+    # BODY
     # ========================================================
 
     for paragraph in doc.paragraphs:
-        for key, value in data.items():
-            placeholder = f"{{{key}}}"
-            if placeholder in paragraph.text:
-                paragraph.text = paragraph.text.replace(
-                    placeholder,
-                    safe(value)
-                )
+        replace_placeholders_in_paragraph(paragraph, data)
 
     # ========================================================
-    # TABLE SUPPORT
+    # TABLES
     # ========================================================
 
     for table in doc.tables:
         for row in table.rows:
             for cell in row.cells:
-                for key, value in data.items():
-                    placeholder = f"{{{key}}}"
-                    if placeholder in cell.text:
-                        cell.text = cell.text.replace(
-                            placeholder,
-                            safe(value)
-                        )
+                for paragraph in cell.paragraphs:
+                    replace_placeholders_in_paragraph(paragraph, data)
+
+    # ========================================================
+    # HEADERS & FOOTERS
+    # ========================================================
+
+    for section in doc.sections:
+
+        # Header
+        for paragraph in section.header.paragraphs:
+            replace_placeholders_in_paragraph(paragraph, data)
+
+        # Footer
+        for paragraph in section.footer.paragraphs:
+            replace_placeholders_in_paragraph(paragraph, data)
 
     # ========================================================
     # SAVE TEMP FILE (RAILWAY SAFE)
