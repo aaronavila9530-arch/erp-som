@@ -4,7 +4,7 @@ from docx import Document
 
 
 # ============================================================
-# GENERATE GRAIN SAMPLING WORD REPORT
+# GENERATE GRAIN SAMPLING WORD REPORT (FORMAT SAFE)
 # ============================================================
 
 def generate_grain_sampling_doc(data: dict) -> str:
@@ -34,12 +34,14 @@ def generate_grain_sampling_doc(data: dict) -> str:
     # ========================================================
 
     def safe(value):
-        if value is None:
-            return ""
-        return str(value)
+        return "" if value is None else str(value)
 
     # ========================================================
-    # REPLACE PLACEHOLDERS WITHOUT DESTROYING FORMAT
+    # SAFE RUN-LEVEL REPLACEMENT
+    # SOLO reemplaza el placeholder exacto
+    # NO reconstruye párrafo
+    # NO toca formato
+    # NO redistribuye texto
     # ========================================================
 
     def replace_in_paragraph(paragraph, data_dict):
@@ -48,32 +50,17 @@ def generate_grain_sampling_doc(data: dict) -> str:
 
             placeholder = f"{{{key}}}"
 
-            # Si el placeholder no aparece ni siquiera en el texto completo, saltamos
+            # Buscar placeholder completo en el texto visible
             if placeholder not in paragraph.text:
                 continue
 
-            # Caso 1: placeholder completo dentro de un solo run
+            # Caso simple: placeholder está completo en un run
             for run in paragraph.runs:
                 if placeholder in run.text:
                     run.text = run.text.replace(
                         placeholder,
                         safe(value)
                     )
-
-            # Caso 2: placeholder dividido en múltiples runs
-            # Reconstruimos texto solo para detectar, pero NO destruimos formato
-            full_text = "".join(run.text for run in paragraph.runs)
-
-            if placeholder in full_text:
-
-                new_text = full_text.replace(placeholder, safe(value))
-
-                # Ahora redistribuimos carácter por carácter
-                index = 0
-                for run in paragraph.runs:
-                    length = len(run.text)
-                    run.text = new_text[index:index + length]
-                    index += length
 
     # ========================================================
     # BODY
@@ -93,19 +80,35 @@ def generate_grain_sampling_doc(data: dict) -> str:
                     replace_in_paragraph(paragraph, data)
 
     # ========================================================
-    # HEADERS & FOOTERS
+    # HEADERS & FOOTERS (SIN DESTRUIR IMÁGENES)
     # ========================================================
 
     for section in doc.sections:
 
-        for paragraph in section.header.paragraphs:
+        # Header
+        header = section.header
+        for paragraph in header.paragraphs:
             replace_in_paragraph(paragraph, data)
 
-        for paragraph in section.footer.paragraphs:
+        for table in header.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    for paragraph in cell.paragraphs:
+                        replace_in_paragraph(paragraph, data)
+
+        # Footer
+        footer = section.footer
+        for paragraph in footer.paragraphs:
             replace_in_paragraph(paragraph, data)
+
+        for table in footer.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    for paragraph in cell.paragraphs:
+                        replace_in_paragraph(paragraph, data)
 
     # ========================================================
-    # SAVE TEMP FILE
+    # SAVE TEMP FILE (RAILWAY SAFE)
     # ========================================================
 
     output_path = os.path.join(
