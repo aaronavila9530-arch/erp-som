@@ -7,31 +7,44 @@ from services.grain_sampling_doc_service import generate_grain_sampling_doc
 
 
 # ============================================================
-# GENERATE GRAIN SAMPLING PDF (REAL PDF VIA LIBREOFFICE)
+# GENERATE GRAIN SAMPLING PDF (LAYOUT-PRESERVED VERSION)
 # ============================================================
 
 def generate_grain_sampling_pdf(report: dict) -> str:
     """
-    Genera PDF real desde Word usando LibreOffice (Docker-safe)
+    Genera PDF real desde Word usando LibreOffice
+    preservando layout, márgenes y tipografías
     """
 
-    # 1) Generar Word
+    # --------------------------------------------------------
+    # 1) GENERAR WORD
+    # --------------------------------------------------------
+
     word_path = generate_grain_sampling_doc(report)
 
     if not os.path.exists(word_path):
         raise RuntimeError("Word file was not generated")
 
-    # 2) Directorio temporal
+    # --------------------------------------------------------
+    # 2) DIRECTORIO TEMPORAL
+    # --------------------------------------------------------
+
     output_dir = tempfile.mkdtemp(prefix="grain_sampling_pdf_")
 
-    # 3) Comando LibreOffice (igual patrón que containers)
+    # --------------------------------------------------------
+    # 3) COMANDO LIBREOFFICE CON EXPORT FILTER
+    # --------------------------------------------------------
+
     cmd = [
         "soffice",
         "--headless",
         "--nologo",
         "--nolockcheck",
+        "--nodefault",
+        "--nofirststartwizard",
+        "--invisible",
         "--convert-to",
-        "pdf",
+        "pdf:writer_pdf_Export",
         "--outdir",
         output_dir,
         word_path
@@ -49,7 +62,10 @@ def generate_grain_sampling_pdf(report: dict) -> str:
             f"LibreOffice PDF conversion failed:\n{result.stderr}"
         )
 
-    # 4) PDF generado
+    # --------------------------------------------------------
+    # 4) VALIDAR PDF
+    # --------------------------------------------------------
+
     pdf_name = Path(word_path).with_suffix(".pdf").name
     pdf_path = os.path.join(output_dir, pdf_name)
 
