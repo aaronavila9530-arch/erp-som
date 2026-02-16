@@ -837,7 +837,7 @@ def update_vessel_grain_sampling_report(
 
 
 # ============================================================
-# APPROVE REPORT (STATUS ONLY)
+# APPROVE + GENERATE PDF
 # ============================================================
 
 @router.put("/{report_id}/approve")
@@ -846,10 +846,26 @@ def approve_vessel_grain_sampling_report(
     conn=Depends(get_db)
 ):
 
-    cur = conn.cursor()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
 
     try:
 
+        # 1) Obtener reporte
+        cur.execute("""
+            SELECT *
+            FROM vessel_grain_sampling_reports
+            WHERE id = %s
+        """, (report_id,))
+
+        report = cur.fetchone()
+
+        if not report:
+            raise HTTPException(
+                status_code=404,
+                detail="Report not found"
+            )
+
+        # 2) Cambiar status
         cur.execute("""
             UPDATE vessel_grain_sampling_reports
             SET status = 'Approved',
@@ -857,15 +873,16 @@ def approve_vessel_grain_sampling_report(
             WHERE id = %s
         """, (report_id,))
 
-        if cur.rowcount == 0:
-            raise HTTPException(
-                status_code=404,
-                detail="Report not found"
-            )
-
         conn.commit()
 
-        return {"success": True}
+        # 3) Generar PDF
+        pdf_path = generate_grain_sampling_pdf(report)
+
+        return FileResponse(
+            path=pdf_path,
+            filename=f"{report['cert_no']}_Grain_Sampling_Report.pdf",
+            media_type="application/pdf"
+        )
 
     except Exception as e:
         conn.rollback()
