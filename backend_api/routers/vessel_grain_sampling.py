@@ -955,9 +955,6 @@ def generate_word_vessel_grain_sampling(
 
 
 
-# =========================================================
-# GET DATA FOR FINAL PRESENTATION POPUP
-# =========================================================
 @router.get("/{report_id}/presentation-data")
 def get_vessel_presentation_data(
     report_id: int,
@@ -970,31 +967,42 @@ def get_vessel_presentation_data(
                 cert_no,
                 requested_by,
                 vessel_name,
-                DATE(sampling_start_time) AS sampling_date
+                sampling_start_time
             FROM vessel_grain_sampling_reports
             WHERE id = :report_id
         """)
 
-        result = db.execute(query, {"report_id": report_id}).fetchone()
+        result = db.execute(
+            query,
+            {"report_id": report_id}
+        ).mappings().fetchone()
 
-        if not result:
+        if result is None:
             raise HTTPException(
                 status_code=404,
                 detail="Report not found"
             )
 
+        sampling_date = None
+
+        if result["sampling_start_time"] is not None:
+            sampling_date = str(result["sampling_start_time"]).split(" ")[0]
+
         return {
             "success": True,
             "data": {
-                "cert_no": result.cert_no,
-                "requested_by": result.requested_by,
-                "vessel_name": result.vessel_name,
-                "sampling_date": str(result.sampling_date)
+                "cert_no": result["cert_no"],
+                "requested_by": result["requested_by"],
+                "vessel_name": result["vessel_name"],
+                "sampling_date": sampling_date
             }
         }
+
+    except HTTPException:
+        raise
 
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=str(e)
+            detail=f"Presentation data error: {str(e)}"
         )
