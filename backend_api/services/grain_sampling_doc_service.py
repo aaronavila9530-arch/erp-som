@@ -4,7 +4,7 @@ from docx import Document
 
 
 # ============================================================
-# GENERATE GRAIN SAMPLING WORD REPORT (FULL SAFE VERSION)
+# GENERATE GRAIN SAMPLING WORD REPORT (FORMAT PRESERVING)
 # ============================================================
 
 def generate_grain_sampling_doc(data: dict) -> str:
@@ -37,11 +37,11 @@ def generate_grain_sampling_doc(data: dict) -> str:
         return "" if value is None else str(value)
 
     # ========================================================
-    # SMART PLACEHOLDER REPLACEMENT
-    # Reemplaza aunque esté dividido en múltiples runs
-    # Solo limpia los runs involucrados
-    # No reconstruye el párrafo completo
-    # No toca imágenes
+    # ULTRA SAFE REPLACEMENT
+    # Mantiene runs originales
+    # Mantiene formato
+    # No borra imágenes
+    # No colapsa estilos
     # ========================================================
 
     def replace_in_paragraph(paragraph, data_dict):
@@ -49,50 +49,40 @@ def generate_grain_sampling_doc(data: dict) -> str:
         if not paragraph.runs:
             return
 
-        # Texto completo lógico
+        # Texto lógico completo
         full_text = "".join(run.text for run in paragraph.runs)
 
+        modified = False
+
         for key, value in data_dict.items():
-
             placeholder = f"{{{key}}}"
+            if placeholder in full_text:
+                full_text = full_text.replace(
+                    placeholder,
+                    safe(value)
+                )
+                modified = True
 
-            if placeholder not in full_text:
+        if not modified:
+            return
+
+        # Ahora reescribimos carácter por carácter
+        index = 0
+
+        for run in paragraph.runs:
+
+            original_length = len(run.text)
+
+            if original_length == 0:
                 continue
 
-            replacement = safe(value)
+            run.text = full_text[index:index + original_length]
+            index += original_length
 
-            # Ubicación exacta del placeholder
-            start_index = full_text.find(placeholder)
-            end_index = start_index + len(placeholder)
-
-            current_pos = 0
-            first_run_index = None
-
-            # Detectar runs involucrados
-            for i, run in enumerate(paragraph.runs):
-
-                run_text = run.text
-                run_len = len(run_text)
-
-                run_start = current_pos
-                run_end = current_pos + run_len
-
-                if run_end > start_index and run_start < end_index:
-
-                    if first_run_index is None:
-                        first_run_index = i
-
-                    # Limpiar solo texto del placeholder en este run
-                    run.text = ""
-
-                current_pos += run_len
-
-            # Insertar valor completo en el primer run afectado
-            if first_run_index is not None:
-                paragraph.runs[first_run_index].text = replacement
-
-            # Actualizar full_text para múltiples placeholders
-            full_text = full_text.replace(placeholder, replacement)
+        # Si el nuevo texto es más largo que la suma original,
+        # lo agregamos al último run SIN romper formato
+        if index < len(full_text):
+            paragraph.runs[-1].text += full_text[index:]
 
     # ========================================================
     # PROCESS BODY
@@ -142,7 +132,7 @@ def generate_grain_sampling_doc(data: dict) -> str:
                         replace_in_paragraph(paragraph, data)
 
     # ========================================================
-    # SAVE TEMP FILE
+    # SAVE FILE
     # ========================================================
 
     output_path = os.path.join(
