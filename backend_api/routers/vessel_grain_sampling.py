@@ -837,7 +837,7 @@ def update_vessel_grain_sampling_report(
 
 
 # ============================================================
-# APPROVE + GENERATE PDF
+# APPROVE REPORT + GENERATE PDF
 # ============================================================
 
 @router.put("/{report_id}/approve")
@@ -846,11 +846,15 @@ def approve_vessel_grain_sampling_report(
     conn=Depends(get_db)
 ):
 
+    from services.grain_sampling_pdf_service import generate_grain_sampling_pdf
+    from fastapi.responses import FileResponse
+    from psycopg2.extras import RealDictCursor
+
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     try:
 
-        # 1) Obtener reporte
+        # 1️⃣ Obtener reporte completo
         cur.execute("""
             SELECT *
             FROM vessel_grain_sampling_reports
@@ -865,7 +869,7 @@ def approve_vessel_grain_sampling_report(
                 detail="Report not found"
             )
 
-        # 2) Cambiar status
+        # 2️⃣ Cambiar status
         cur.execute("""
             UPDATE vessel_grain_sampling_reports
             SET status = 'Approved',
@@ -875,9 +879,13 @@ def approve_vessel_grain_sampling_report(
 
         conn.commit()
 
-        # 3) Generar PDF
+        # 3️⃣ Generar PDF REAL
         pdf_path = generate_grain_sampling_pdf(report)
 
+        if not os.path.exists(pdf_path):
+            raise RuntimeError("PDF file was not generated")
+
+        # 4️⃣ Devolver PDF
         return FileResponse(
             path=pdf_path,
             filename=f"{report['cert_no']}_Grain_Sampling_Report.pdf",
