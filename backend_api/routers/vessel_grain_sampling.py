@@ -835,3 +835,77 @@ def update_vessel_grain_sampling_report(
         cur.close()
 
 
+
+# ============================================================
+# APPROVE + GENERATE WORD REPORT
+# ============================================================
+
+@router.post("/{report_id}/approve")
+def approve_vessel_grain_sampling_report(
+    report_id: int,
+    conn=Depends(get_db)
+):
+
+    from services.grain_sampling_doc_service import (
+        generate_grain_sampling_doc
+    )
+
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+
+    try:
+
+        # ==========================================
+        # GET FULL REPORT
+        # ==========================================
+        cur.execute("""
+            SELECT *
+            FROM vessel_grain_sampling_reports
+            WHERE id = %s
+        """, (report_id,))
+
+        report = cur.fetchone()
+
+        if not report:
+            raise HTTPException(
+                status_code=404,
+                detail="Report not found"
+            )
+
+        # ==========================================
+        # UPDATE STATUS
+        # ==========================================
+        cur.execute("""
+            UPDATE vessel_grain_sampling_reports
+            SET status = 'Approved',
+                updated_at = NOW()
+            WHERE id = %s
+        """, (report_id,))
+
+        conn.commit()
+
+        # ==========================================
+        # GENERATE DOCUMENT
+        # ==========================================
+        file_path = generate_grain_sampling_doc(report)
+
+        from fastapi.responses import FileResponse
+
+        return FileResponse(
+            path=file_path,
+            filename=f"{report['cert_no']}_Grain_Sampling_Report.docx",
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        )
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error approving report: {str(e)}"
+        )
+
+    finally:
+        cur.close()
+
