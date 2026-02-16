@@ -963,44 +963,43 @@ def get_vessel_presentation_data(
 ):
     try:
 
-        cursor = db.cursor()
-
-        cursor.execute("""
+        query = """
             SELECT
                 cert_no,
                 requested_by,
                 vessel_name,
+                ship_grt,
+                ship_nrt,
                 sampling_start_time
             FROM vessel_grain_sampling_reports
             WHERE id = %s
-        """, (report_id,))
+        """
 
+        cursor = db.cursor()
+        cursor.execute(query, (report_id,))
         row = cursor.fetchone()
 
-        if not row:
+        if row is None:
             raise HTTPException(
                 status_code=404,
                 detail="Report not found"
             )
 
-        cert_no, requested_by, vessel_name, sampling_start_time = row
-
         sampling_date = None
-        if sampling_start_time:
-            sampling_date = str(sampling_start_time).split(" ")[0]
+        if row[5]:
+            sampling_date = str(row[5]).split(" ")[0]
 
         return {
             "success": True,
             "data": {
-                "cert_no": cert_no,
-                "requested_by": requested_by,
-                "vessel_name": vessel_name,
-                "sampling_date": sampling_date
+                "cert_no": row[0],
+                "requested_by": row[1],
+                "vessel_name": row[2],
+                "ship_grt": row[3],
+                "ship_nrt": row[4],
+                "sampling_start_time": sampling_date
             }
         }
-
-    except HTTPException:
-        raise
 
     except Exception as e:
         raise HTTPException(
