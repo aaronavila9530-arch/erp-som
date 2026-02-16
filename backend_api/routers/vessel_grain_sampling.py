@@ -3,6 +3,7 @@ from psycopg2.extras import RealDictCursor
 from datetime import datetime
 from typing import Optional
 import json
+import os
 
 from database import get_db
 
