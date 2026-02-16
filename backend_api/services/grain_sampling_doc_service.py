@@ -1,7 +1,6 @@
 import os
 import tempfile
 from docx import Document
-from resource_utils import resource_path
 
 
 # ============================================================
@@ -11,20 +10,29 @@ from resource_utils import resource_path
 def generate_grain_sampling_doc(data: dict) -> str:
 
     # ========================================================
-    # LOAD TEMPLATE (PORTABLE)
+    # LOAD TEMPLATE (BACKEND SAFE)
     # ========================================================
-    template_path = resource_path(
-        os.path.join("templates", "Supervision_Muestreo_Granos.docx")
+
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+
+    template_path = os.path.join(
+        base_dir,
+        "..",
+        "templates",
+        "Supervision_Muestreo_Granos.docx"
     )
 
+    template_path = os.path.abspath(template_path)
+
     if not os.path.exists(template_path):
-        raise Exception("Template not found in /templates directory")
+        raise Exception(f"Template not found at: {template_path}")
 
     doc = Document(template_path)
 
     # ========================================================
     # SAFE VALUE
     # ========================================================
+
     def safe(value):
         if value is None:
             return ""
@@ -33,6 +41,7 @@ def generate_grain_sampling_doc(data: dict) -> str:
     # ========================================================
     # REPLACE PLACEHOLDERS
     # ========================================================
+
     for paragraph in doc.paragraphs:
         for key, value in data.items():
             placeholder = f"{{{key}}}"
@@ -45,6 +54,7 @@ def generate_grain_sampling_doc(data: dict) -> str:
     # ========================================================
     # TABLE SUPPORT
     # ========================================================
+
     for table in doc.tables:
         for row in table.rows:
             for cell in row.cells:
@@ -57,11 +67,11 @@ def generate_grain_sampling_doc(data: dict) -> str:
                         )
 
     # ========================================================
-    # SAVE TEMP FILE
+    # SAVE TEMP FILE (RAILWAY SAFE)
     # ========================================================
-    temp_dir = tempfile.gettempdir()
+
     output_path = os.path.join(
-        temp_dir,
+        tempfile.gettempdir(),
         f"{data.get('cert_no', 'grain_sampling')}.docx"
     )
 
