@@ -953,47 +953,48 @@ def generate_word_vessel_grain_sampling(
     finally:
         cur.close()
 
-
-
+# =========================================================
+# GET DATA FOR FINAL PRESENTATION POPUP
+# =========================================================
 @router.get("/{report_id}/presentation-data")
 def get_vessel_presentation_data(
     report_id: int,
-    db: Session = Depends(get_db)
+    db = Depends(get_db)
 ):
     try:
 
-        query = text("""
+        cursor = db.cursor()
+
+        cursor.execute("""
             SELECT
                 cert_no,
                 requested_by,
                 vessel_name,
                 sampling_start_time
             FROM vessel_grain_sampling_reports
-            WHERE id = :report_id
-        """)
+            WHERE id = %s
+        """, (report_id,))
 
-        result = db.execute(
-            query,
-            {"report_id": report_id}
-        ).mappings().fetchone()
+        row = cursor.fetchone()
 
-        if result is None:
+        if not row:
             raise HTTPException(
                 status_code=404,
                 detail="Report not found"
             )
 
-        sampling_date = None
+        cert_no, requested_by, vessel_name, sampling_start_time = row
 
-        if result["sampling_start_time"] is not None:
-            sampling_date = str(result["sampling_start_time"]).split(" ")[0]
+        sampling_date = None
+        if sampling_start_time:
+            sampling_date = str(sampling_start_time).split(" ")[0]
 
         return {
             "success": True,
             "data": {
-                "cert_no": result["cert_no"],
-                "requested_by": result["requested_by"],
-                "vessel_name": result["vessel_name"],
+                "cert_no": cert_no,
+                "requested_by": requested_by,
+                "vessel_name": vessel_name,
                 "sampling_date": sampling_date
             }
         }
