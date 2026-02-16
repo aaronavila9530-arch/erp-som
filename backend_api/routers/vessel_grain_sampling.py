@@ -1,10 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
-from psycopg2.extras import RealDictCursor
+from sqlalchemy.orm import Session
+from sqlalchemy import text
 from datetime import datetime
 from typing import Optional
 import json
 import os
-from sqlalchemy import text
 
 from database import get_db
 
