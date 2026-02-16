@@ -951,3 +951,49 @@ def generate_word_vessel_grain_sampling(
 
     finally:
         cur.close()
+
+
+
+# =========================================================
+# GET DATA FOR FINAL PRESENTATION POPUP
+# =========================================================
+@router.get("/{report_id}/presentation-data")
+def get_vessel_presentation_data(
+    report_id: int,
+    db: Session = Depends(get_db)
+):
+    try:
+
+        query = text("""
+            SELECT
+                cert_no,
+                requested_by,
+                vessel_name,
+                DATE(sampling_start_time) AS sampling_date
+            FROM vessel_grain_sampling_reports
+            WHERE id = :report_id
+        """)
+
+        result = db.execute(query, {"report_id": report_id}).fetchone()
+
+        if not result:
+            raise HTTPException(
+                status_code=404,
+                detail="Report not found"
+            )
+
+        return {
+            "success": True,
+            "data": {
+                "cert_no": result.cert_no,
+                "requested_by": result.requested_by,
+                "vessel_name": result.vessel_name,
+                "sampling_date": str(result.sampling_date)
+            }
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
