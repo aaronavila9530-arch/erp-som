@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Optional
 import json
 import os
+from sqlalchemy.orm import Session
 
 from database import get_db
 
