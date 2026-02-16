@@ -7,42 +7,44 @@ from services.grain_sampling_doc_service import generate_grain_sampling_doc
 
 
 # ============================================================
-# GENERATE GRAIN SAMPLING PDF (LAYOUT-PRESERVED VERSION)
+# GENERATE GRAIN SAMPLING PDF (LAYOUT PRESERVATION MODE)
 # ============================================================
 
 def generate_grain_sampling_pdf(report: dict) -> str:
     """
     Genera PDF real desde Word usando LibreOffice
-    preservando layout, márgenes y tipografías
+    Preserva layout, márgenes y posicionamiento
     """
 
-    # --------------------------------------------------------
-    # 1) GENERAR WORD
-    # --------------------------------------------------------
+    # ========================================================
+    # 1) GENERAR WORD DESDE TEMPLATE
+    # ========================================================
 
     word_path = generate_grain_sampling_doc(report)
 
     if not os.path.exists(word_path):
         raise RuntimeError("Word file was not generated")
 
-    # --------------------------------------------------------
-    # 2) DIRECTORIO TEMPORAL
-    # --------------------------------------------------------
+    # ========================================================
+    # 2) DIRECTORIO TEMPORAL AISLADO
+    # ========================================================
 
     output_dir = tempfile.mkdtemp(prefix="grain_sampling_pdf_")
+    libre_profile = tempfile.mkdtemp(prefix="lo_profile_")
 
-    # --------------------------------------------------------
-    # 3) COMANDO LIBREOFFICE CON EXPORT FILTER
-    # --------------------------------------------------------
+    # ========================================================
+    # 3) COMANDO LIBREOFFICE ULTRA CONTROLADO
+    # ========================================================
 
     cmd = [
         "soffice",
         "--headless",
         "--nologo",
-        "--nolockcheck",
         "--nodefault",
+        "--nolockcheck",
         "--nofirststartwizard",
-        "--invisible",
+        "--norestore",
+        f"-env:UserInstallation=file://{libre_profile}",
         "--convert-to",
         "pdf:writer_pdf_Export",
         "--outdir",
@@ -62,14 +64,17 @@ def generate_grain_sampling_pdf(report: dict) -> str:
             f"LibreOffice PDF conversion failed:\n{result.stderr}"
         )
 
-    # --------------------------------------------------------
-    # 4) VALIDAR PDF
-    # --------------------------------------------------------
+    # ========================================================
+    # 4) VALIDAR PDF GENERADO
+    # ========================================================
 
     pdf_name = Path(word_path).with_suffix(".pdf").name
     pdf_path = os.path.join(output_dir, pdf_name)
 
     if not os.path.exists(pdf_path):
         raise RuntimeError("PDF was not created")
+
+    if os.path.getsize(pdf_path) == 0:
+        raise RuntimeError("PDF was generated but is empty")
 
     return pdf_path
