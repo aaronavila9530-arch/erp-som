@@ -137,23 +137,53 @@ def _replace_placeholder_in_paragraph(paragraph, placeholder: str, value: str) -
     return replaced_any
 
 
-def _replace_in_paragraphs(paragraphs, placeholders: Dict[str, str]):
+def _replace_in_paragraphs(paragraphs, placeholders: dict):
+    """
+    Reemplaza placeholders incluso si están partidos en varios runs,
+    pero SOLO modifica los runs que contienen partes del placeholder.
+    No reconstruye el párrafo completo.
+    No toca texto contiguo.
+    """
     for p in paragraphs:
-        full_text = "".join(run.text for run in p.runs)
 
-        replaced = False
         for key, value in placeholders.items():
-            if key in full_text:
-                full_text = full_text.replace(key, value)
-                replaced = True
 
-        if replaced:
-            # conservar formato del primer run del párrafo
-            if p.runs:
-                base_run = p.runs[0]
-                for r in p.runs:
-                    r.text = ""
-                p.runs[0].text = full_text
+            # Construir texto completo del párrafo
+            full_text = "".join(run.text for run in p.runs)
+
+            if key not in full_text:
+                continue
+
+            # Buscar posición exacta
+            start = full_text.find(key)
+            end = start + len(key)
+
+            current_pos = 0
+
+            for run in p.runs:
+                run_text = run.text
+                run_len = len(run_text)
+
+                run_start = current_pos
+                run_end = current_pos + run_len
+
+                # Si el run intersecta con el placeholder
+                if run_end > start and run_start < end:
+
+                    # Determinar qué parte cortar
+                    prefix_len = max(0, start - run_start)
+                    suffix_len = max(0, run_end - end)
+
+                    prefix = run_text[:prefix_len]
+                    suffix = run_text[run_len - suffix_len:] if suffix_len > 0 else ""
+
+                    # Solo en el primer run colocamos el value
+                    if run_start <= start < run_end:
+                        run.text = prefix + value + suffix
+                    else:
+                        run.text = ""
+
+                current_pos += run_len
 
 
 def _replace_in_tables(tables, placeholders: Dict[str, str]) -> None:
