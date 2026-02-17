@@ -508,7 +508,7 @@ def aplicar_pago(payload: dict, conn=Depends(get_db)):
             raise HTTPException(400, "tipo_aplicacion debe ser PAGO")
 
         # ==============================
-        # NORMALIZAR DOCUMENTO (CLAVE)
+        # NORMALIZAR DOCUMENTO
         # ==============================
         numero_norm = numero_documento.lstrip("0")
 
@@ -548,67 +548,72 @@ def aplicar_pago(payload: dict, conn=Depends(get_db)):
         cash_id = cur.fetchone()["id"]
 
         # ==============================
-        # 4) Recalcular saldo en collections
+        # 4) Recalcular saldo SOLO FACTURA
         # ==============================
         cur.execute("""
             SELECT total
             FROM collections
             WHERE ltrim(numero_documento, '0') = %s
               AND codigo_cliente = %s
+              AND tipo_documento = 'FACTURA'
             FOR UPDATE
         """, (numero_norm, codigo_cliente))
 
         factura = cur.fetchone()
 
-        collections_updated = False
-        saldo_actual = None
-        estado_factura = None
+        if not factura:
+            raise HTTPException(
+                404,
+                "Factura no encontrada o el documento no es una FACTURA"
+            )
 
-        if factura:
-            total_factura = float(factura["total"] or 0)
+        total_factura = float(factura["total"] or 0)
 
-            cur.execute("""
-                SELECT COALESCE(SUM(monto_pagado + comision), 0) AS total_pagado
-                FROM cash_app
-                WHERE ltrim(numero_documento, '0') = %s
-                  AND codigo_cliente = %s
-                  AND tipo_aplicacion = 'PAGO'
-            """, (numero_norm, codigo_cliente))
+        # Calcular total pagado SOLO sobre pagos
+        cur.execute("""
+            SELECT COALESCE(SUM(monto_pagado + comision), 0) AS total_pagado
+            FROM cash_app
+            WHERE ltrim(numero_documento, '0') = %s
+              AND codigo_cliente = %s
+              AND tipo_aplicacion = 'PAGO'
+        """, (numero_norm, codigo_cliente))
 
-            total_pagado = float(cur.fetchone()["total_pagado"] or 0)
+        total_pagado = float(cur.fetchone()["total_pagado"] or 0)
 
-            saldo_actual = total_factura - total_pagado
+        saldo_actual = total_factura - total_pagado
 
-            if saldo_actual <= 0:
-                saldo_actual = 0.0
-                estado_factura = "PAGADA"
-            elif saldo_actual < total_factura:
-                estado_factura = "PAGO_PARCIAL"
-            else:
-                estado_factura = "PENDIENTE_PAGO"
+        if saldo_actual <= 0:
+            saldo_actual = 0.0
+            estado_factura = "PAGADA"
+        elif saldo_actual < total_factura:
+            estado_factura = "PAGO_PARCIAL"
+        else:
+            estado_factura = "PENDIENTE_PAGO"
 
-            cur.execute("""
-                UPDATE collections
-                SET
-                    saldo_pendiente = %s,
-                    estado_factura = %s
-                WHERE ltrim(numero_documento, '0') = %s
-                  AND codigo_cliente = %s
-            """, (
-                saldo_actual,
-                estado_factura,
-                numero_norm,
-                codigo_cliente
-            ))
-
-            collections_updated = True
+        # ==============================
+        # 5) Actualizar SOLO FACTURA
+        # ==============================
+        cur.execute("""
+            UPDATE collections
+            SET
+                saldo_pendiente = %s,
+                estado_factura = %s
+            WHERE ltrim(numero_documento, '0') = %s
+              AND codigo_cliente = %s
+              AND tipo_documento = 'FACTURA'
+        """, (
+            saldo_actual,
+            estado_factura,
+            numero_norm,
+            codigo_cliente
+        ))
 
         conn.commit()
 
         return {
             "status": "ok",
             "cash_app_id": cash_id,
-            "collections_updated": collections_updated,
+            "collections_updated": True,
             "saldo_actual": saldo_actual,
             "estado_factura": estado_factura
         }
