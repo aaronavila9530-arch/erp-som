@@ -52,6 +52,7 @@ def _replace_in_paragraphs(paragraphs, placeholders: Dict[str, str]):
                     prefix = run_text[:prefix_len]
                     suffix = run_text[run_len - suffix_len:] if suffix_len > 0 else ""
 
+                    # Solo el primer run que intersecta recibe el value
                     if run_start <= start < run_end:
                         run.text = prefix + value + suffix
                     else:
@@ -70,9 +71,13 @@ def _replace_in_tables(tables, placeholders: Dict[str, str]):
 
 
 # =====================================================
-# MAIN — GENERATE PDF WITH WORD (docx2pdf)
+# MAIN — GENERATE PDF USING MICROSOFT WORD
 # =====================================================
-def generate_vessel_presentation_pdf(data: dict) -> str:
+def generate_vessel_presentation_doc(data: dict) -> str:
+    """
+    Mantiene el nombre original para no romper imports existentes.
+    Genera PDF usando Microsoft Word (docx2pdf).
+    """
 
     if not os.path.exists(TEMPLATE_PATH):
         raise FileNotFoundError(
