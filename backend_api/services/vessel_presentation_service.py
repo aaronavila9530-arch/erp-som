@@ -1,8 +1,8 @@
 import os
 import tempfile
-from typing import Dict, List, Tuple
-
+from typing import Dict
 from docx import Document
+from docx2pdf import convert
 
 
 TEMPLATE_PATH = os.path.abspath(
@@ -16,145 +16,22 @@ TEMPLATE_PATH = os.path.abspath(
 
 
 # =====================================================
-# INTERNAL — MAP TEXT POS -> RUN INDEX
+# INTERNAL — SAFE REPLACE (CROSS-RUN SIN RECONSTRUIR)
 # =====================================================
-def _build_run_index(paragraph) -> Tuple[str, List[Tuple[int, int]]]:
+def _replace_in_paragraphs(paragraphs, placeholders: Dict[str, str]):
     """
-    Devuelve:
-      - full_text concatenado de runs
-      - spans: lista (start,end) por run sobre full_text
-    """
-    spans: List[Tuple[int, int]] = []
-    parts: List[str] = []
-    pos = 0
-
-    for r in paragraph.runs:
-        t = r.text or ""
-        parts.append(t)
-        start = pos
-        pos += len(t)
-        end = pos
-        spans.append((start, end))
-
-    return "".join(parts), spans
-
-
-def _find_run_at_pos(spans: List[Tuple[int, int]], pos: int) -> int:
-    """
-    Dado un índice pos en full_text, devuelve el índice del run que lo contiene.
-    """
-    for i, (s, e) in enumerate(spans):
-        if s <= pos < e:
-            return i
-    return max(0, len(spans) - 1)
-
-
-# =====================================================
-# INTERNAL — SAFE REPLACE (CROSS-RUN SIN CREAR RUNS)
-# =====================================================
-def _replace_placeholder_in_paragraph(paragraph, placeholder: str, value: str) -> bool:
-    """
-    Reemplaza placeholder incluso si está partido entre runs, SIN:
-    - crear runs nuevos
-    - mover nodos
-    - reconstruir párrafo
-
-    Preserva 100% el formato de:
-    - texto a la par del placeholder
-    - runs anteriores/siguientes (ej. "CERT N°" azul)
-    - el formato del run objetivo (el que ya tenía el estilo del placeholder)
-    """
-    if not paragraph.runs:
-        return False
-
-    replaced_any = False
-
-    while True:
-        full_text, spans = _build_run_index(paragraph)
-        idx = full_text.find(placeholder)
-        if idx == -1:
-            break
-
-        start_pos = idx
-        end_pos = idx + len(placeholder)  # exclusivo
-
-        start_run_idx = _find_run_at_pos(spans, start_pos)
-        end_run_idx = _find_run_at_pos(spans, max(start_pos, end_pos - 1))
-
-        start_run = paragraph.runs[start_run_idx]
-        end_run = paragraph.runs[end_run_idx]
-
-        start_run_start, _ = spans[start_run_idx]
-        end_run_start, _ = spans[end_run_idx]
-
-        start_off = start_pos - start_run_start
-        end_off_exclusive = end_pos - end_run_start
-
-        start_text = start_run.text or ""
-        end_text = end_run.text or ""
-
-        prefix = start_text[:start_off]
-        suffix = end_text[end_off_exclusive:] if end_off_exclusive <= len(end_text) else ""
-
-        # Caso 1: todo en el mismo run
-        if start_run_idx == end_run_idx:
-            start_run.text = start_text[:start_off] + value + start_text[start_off + len(placeholder):]
-            replaced_any = True
-            continue
-
-        # Caso 2: cruza varios runs
-        # 1) preserva prefijo en start_run y sufijo en end_run
-        start_run.text = prefix
-        end_run.text = suffix
-
-        # 2) seleccionar run objetivo para el VALOR sin cambiar formato:
-        #    preferimos un run intermedio "real" (ej: 'cert_no', 'vessel_name') si existe.
-        target_idx = None
-        for i in range(start_run_idx + 1, end_run_idx):
-            t = paragraph.runs[i].text or ""
-            if t.strip():  # suele ser 'cert_no' sin llaves
-                target_idx = i
-                break
-
-        # fallback: si no hay intermedio, usamos start o end según convenga
-        if target_idx is None:
-            # Si start_run solo era '{' normalmente prefix queda vacío -> OK usar start_run
-            # Si no, usar end_run para no mezclar con prefix
-            target_idx = start_run_idx if prefix == "" else end_run_idx
-
-        # 3) vaciar runs internos excepto el objetivo
-        for i in range(start_run_idx + 1, end_run_idx):
-            if i == target_idx:
-                continue
-            paragraph.runs[i].text = ""
-
-        # 4) escribir el valor en el run objetivo SIN tocar estilos
-        target_run = paragraph.runs[target_idx]
-        target_run.text = value
-
-        replaced_any = True
-
-    return replaced_any
-
-
-def _replace_in_paragraphs(paragraphs, placeholders: dict):
-    """
-    Reemplaza placeholders incluso si están partidos en varios runs,
-    pero SOLO modifica los runs que contienen partes del placeholder.
-    No reconstruye el párrafo completo.
-    No toca texto contiguo.
+    Reemplaza placeholders aunque estén fragmentados en múltiples runs.
+    NO reconstruye el párrafo completo.
+    NO altera texto contiguo.
     """
     for p in paragraphs:
-
         for key, value in placeholders.items():
 
-            # Construir texto completo del párrafo
             full_text = "".join(run.text for run in p.runs)
 
             if key not in full_text:
                 continue
 
-            # Buscar posición exacta
             start = full_text.find(key)
             end = start + len(key)
 
@@ -167,17 +44,14 @@ def _replace_in_paragraphs(paragraphs, placeholders: dict):
                 run_start = current_pos
                 run_end = current_pos + run_len
 
-                # Si el run intersecta con el placeholder
                 if run_end > start and run_start < end:
 
-                    # Determinar qué parte cortar
                     prefix_len = max(0, start - run_start)
                     suffix_len = max(0, run_end - end)
 
                     prefix = run_text[:prefix_len]
                     suffix = run_text[run_len - suffix_len:] if suffix_len > 0 else ""
 
-                    # Solo en el primer run colocamos el value
                     if run_start <= start < run_end:
                         run.text = prefix + value + suffix
                     else:
@@ -186,7 +60,7 @@ def _replace_in_paragraphs(paragraphs, placeholders: dict):
                 current_pos += run_len
 
 
-def _replace_in_tables(tables, placeholders: Dict[str, str]) -> None:
+def _replace_in_tables(tables, placeholders: Dict[str, str]):
     for table in tables:
         for row in table.rows:
             for cell in row.cells:
@@ -196,15 +70,19 @@ def _replace_in_tables(tables, placeholders: Dict[str, str]) -> None:
 
 
 # =====================================================
-# MAIN
+# MAIN — GENERATE PDF WITH WORD (docx2pdf)
 # =====================================================
-def generate_vessel_presentation_doc(data: dict) -> str:
+def generate_vessel_presentation_pdf(data: dict) -> str:
+
     if not os.path.exists(TEMPLATE_PATH):
-        raise FileNotFoundError(f"Presentation template not found: {TEMPLATE_PATH}")
+        raise FileNotFoundError(
+            f"Presentation template not found: {TEMPLATE_PATH}"
+        )
 
     if not isinstance(data, dict):
         raise ValueError("Invalid data payload — expected dict")
 
+    # Normalizar fecha
     raw_dt = data.get("sampling_start_time") or ""
     sampling_date = str(raw_dt).split(" ")[0] if raw_dt else ""
 
@@ -217,6 +95,7 @@ def generate_vessel_presentation_doc(data: dict) -> str:
         "{sampling_start_time}": sampling_date,
     }
 
+    # Cargar template
     doc = Document(TEMPLATE_PATH)
 
     # BODY
@@ -231,7 +110,18 @@ def generate_vessel_presentation_doc(data: dict) -> str:
         _replace_in_paragraphs(section.footer.paragraphs, placeholders)
         _replace_in_tables(section.footer.tables, placeholders)
 
-    fd, output_path = tempfile.mkstemp(suffix=".docx")
+    # Guardar DOCX temporal
+    fd, temp_docx = tempfile.mkstemp(suffix=".docx")
     os.close(fd)
-    doc.save(output_path)
-    return output_path
+    doc.save(temp_docx)
+
+    # Crear ruta PDF final
+    temp_pdf = temp_docx.replace(".docx", ".pdf")
+
+    # Convertir usando Microsoft Word real
+    convert(temp_docx, temp_pdf)
+
+    if not os.path.exists(temp_pdf):
+        raise RuntimeError("PDF conversion failed")
+
+    return temp_pdf
