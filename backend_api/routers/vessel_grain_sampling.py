@@ -954,10 +954,10 @@ def generate_word_vessel_grain_sampling(
         cur.close()
 
 # =========================================================
-# GET DATA FOR FINAL PRESENTATION POPUP
+# GENERATE VESSEL PRESENTATION PDF
 # =========================================================
-@router.get("/{report_id}/presentation-data")
-def get_vessel_presentation_data(
+@router.post("/{report_id}/presentation-pdf")
+def generate_vessel_presentation_pdf(
     report_id: int,
     db = Depends(get_db)
 ):
@@ -989,20 +989,31 @@ def get_vessel_presentation_data(
         if row[5]:
             sampling_date = str(row[5]).split(" ")[0]
 
-        return {
-            "success": True,
-            "data": {
-                "cert_no": row[0],
-                "requested_by": row[1],
-                "vessel_name": row[2],
-                "ship_grt": row[3],
-                "ship_nrt": row[4],
-                "sampling_start_time": sampling_date
-            }
+        report_data = {
+            "cert_no": row[0],
+            "requested_by": row[1],
+            "vessel_name": row[2],
+            "ship_grt": row[3],
+            "ship_nrt": row[4],
+            "sampling_start_time": sampling_date
         }
+
+        # 🔥 IMPORTANTE: importar aquí dentro
+        from services.vessel_presentation_service import \
+            generate_vessel_presentation_doc
+
+        pdf_path = generate_vessel_presentation_doc(report_data)
+
+        from fastapi.responses import FileResponse
+
+        return FileResponse(
+            pdf_path,
+            media_type="application/pdf",
+            filename=f"Presentation_{row[0]}.pdf"
+        )
 
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"Presentation data error: {str(e)}"
+            detail=f"Presentation PDF error: {str(e)}"
         )

@@ -16,49 +16,54 @@ TEMPLATE_PATH = os.path.abspath(
 
 
 # =====================================================
-# INTERNAL — SAFE REPLACE (CROSS-RUN SIN RECONSTRUIR)
+# INTERNAL — SAFE REPLACE (REAL CROSS-RUN SAFE)
 # =====================================================
+def _replace_in_paragraph(paragraph, placeholder: str, value: str):
+
+    if not paragraph.runs:
+        return
+
+    full_text = "".join(run.text for run in paragraph.runs)
+
+    if placeholder not in full_text:
+        return
+
+    start = full_text.index(placeholder)
+    end = start + len(placeholder)
+
+    current_pos = 0
+    first_replacement_done = False
+
+    for run in paragraph.runs:
+
+        run_text = run.text
+        run_len = len(run_text)
+
+        run_start = current_pos
+        run_end = current_pos + run_len
+
+        # ¿Intersecta con el placeholder?
+        if run_end > start and run_start < end:
+
+            prefix_len = max(0, start - run_start)
+            suffix_len = max(0, run_end - end)
+
+            prefix = run_text[:prefix_len]
+            suffix = run_text[run_len - suffix_len:] if suffix_len > 0 else ""
+
+            if not first_replacement_done:
+                run.text = prefix + value + suffix
+                first_replacement_done = True
+            else:
+                run.text = ""
+
+        current_pos += run_len
+
+
 def _replace_in_paragraphs(paragraphs, placeholders: Dict[str, str]):
-    """
-    Reemplaza placeholders aunque estén fragmentados en múltiples runs.
-    NO reconstruye el párrafo completo.
-    NO altera texto contiguo.
-    """
     for p in paragraphs:
         for key, value in placeholders.items():
-
-            full_text = "".join(run.text for run in p.runs)
-
-            if key not in full_text:
-                continue
-
-            start = full_text.find(key)
-            end = start + len(key)
-
-            current_pos = 0
-
-            for run in p.runs:
-                run_text = run.text
-                run_len = len(run_text)
-
-                run_start = current_pos
-                run_end = current_pos + run_len
-
-                if run_end > start and run_start < end:
-
-                    prefix_len = max(0, start - run_start)
-                    suffix_len = max(0, run_end - end)
-
-                    prefix = run_text[:prefix_len]
-                    suffix = run_text[run_len - suffix_len:] if suffix_len > 0 else ""
-
-                    # Solo el primer run que intersecta recibe el value
-                    if run_start <= start < run_end:
-                        run.text = prefix + value + suffix
-                    else:
-                        run.text = ""
-
-                current_pos += run_len
+            _replace_in_paragraph(p, key, value)
 
 
 def _replace_in_tables(tables, placeholders: Dict[str, str]):
@@ -74,10 +79,6 @@ def _replace_in_tables(tables, placeholders: Dict[str, str]):
 # MAIN — GENERATE PDF USING MICROSOFT WORD
 # =====================================================
 def generate_vessel_presentation_doc(data: dict) -> str:
-    """
-    Mantiene el nombre original para no romper imports existentes.
-    Genera PDF usando Microsoft Word (docx2pdf).
-    """
 
     if not os.path.exists(TEMPLATE_PATH):
         raise FileNotFoundError(
@@ -87,7 +88,6 @@ def generate_vessel_presentation_doc(data: dict) -> str:
     if not isinstance(data, dict):
         raise ValueError("Invalid data payload — expected dict")
 
-    # Normalizar fecha
     raw_dt = data.get("sampling_start_time") or ""
     sampling_date = str(raw_dt).split(" ")[0] if raw_dt else ""
 
@@ -100,7 +100,6 @@ def generate_vessel_presentation_doc(data: dict) -> str:
         "{sampling_start_time}": sampling_date,
     }
 
-    # Cargar template
     doc = Document(TEMPLATE_PATH)
 
     # BODY
@@ -120,10 +119,8 @@ def generate_vessel_presentation_doc(data: dict) -> str:
     os.close(fd)
     doc.save(temp_docx)
 
-    # Crear ruta PDF final
+    # Convertir con Word real
     temp_pdf = temp_docx.replace(".docx", ".pdf")
-
-    # Convertir usando Microsoft Word real
     convert(temp_docx, temp_pdf)
 
     if not os.path.exists(temp_pdf):
