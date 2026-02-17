@@ -1077,3 +1077,93 @@ def get_vessel_presentation_data(
     finally:
         cur.close()
 
+
+
+# =========================================================
+# GENERATE VESSEL UNIFIED PDF (Presentation + Report)
+# =========================================================
+@router.post("/{report_id}/unified-pdf")
+def generate_vessel_unified_pdf(
+    report_id: int,
+    conn=Depends(get_db)
+):
+    from fastapi.responses import FileResponse
+    from psycopg2.extras import RealDictCursor
+
+    from services.vessel_presentation_service import generate_vessel_presentation_doc
+    from services.grain_sampling_pdf_service import generate_grain_sampling_pdf
+    from services.pdf_merge_service import merge_pdfs
+
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+
+    try:
+        # -------------------------------------------------
+        # 1️⃣ Obtener reporte completo
+        # -------------------------------------------------
+        cur.execute("""
+            SELECT *
+            FROM vessel_grain_sampling_reports
+            WHERE id = %s
+        """, (report_id,))
+
+        report = cur.fetchone()
+
+        if not report:
+            raise HTTPException(
+                status_code=404,
+                detail="Report not found"
+            )
+
+        # -------------------------------------------------
+        # 2️⃣ Generar Presentation PDF
+        # -------------------------------------------------
+        presentation_data = {
+            "cert_no": report.get("cert_no"),
+            "requested_by": report.get("requested_by"),
+            "vessel_name": report.get("vessel_name"),
+            "ship_grt": report.get("ship_grt"),
+            "ship_nrt": report.get("ship_nrt"),
+            "sampling_start_time": report.get("sampling_start_time"),
+        }
+
+        presentation_pdf = generate_vessel_presentation_doc(presentation_data)
+
+        if not os.path.exists(presentation_pdf):
+            raise RuntimeError("Presentation PDF was not generated")
+
+        # -------------------------------------------------
+        # 3️⃣ Generar Grain Sampling Report PDF
+        # -------------------------------------------------
+        report_pdf = generate_grain_sampling_pdf(report)
+
+        if not os.path.exists(report_pdf):
+            raise RuntimeError("Grain Sampling PDF was not generated")
+
+        # -------------------------------------------------
+        # 4️⃣ Merge PDFs
+        # -------------------------------------------------
+        unified_pdf = merge_pdfs(
+            presentation_pdf,
+            report_pdf
+        )
+
+        if not os.path.exists(unified_pdf):
+            raise RuntimeError("Unified PDF was not created")
+
+        # -------------------------------------------------
+        # 5️⃣ Devolver PDF final
+        # -------------------------------------------------
+        return FileResponse(
+            unified_pdf,
+            filename=f"{report.get('cert_no')}_Unified_Report.pdf",
+            media_type="application/pdf"
+        )
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unified PDF error: {str(e)}"
+        )
+
+    finally:
+        cur.close()
