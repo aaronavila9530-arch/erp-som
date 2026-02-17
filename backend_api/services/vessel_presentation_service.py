@@ -137,10 +137,23 @@ def _replace_placeholder_in_paragraph(paragraph, placeholder: str, value: str) -
     return replaced_any
 
 
-def _replace_in_paragraphs(paragraphs, placeholders: Dict[str, str]) -> None:
+def _replace_in_paragraphs(paragraphs, placeholders: Dict[str, str]):
     for p in paragraphs:
-        for key, val in placeholders.items():
-            _replace_placeholder_in_paragraph(p, key, val)
+        full_text = "".join(run.text for run in p.runs)
+
+        replaced = False
+        for key, value in placeholders.items():
+            if key in full_text:
+                full_text = full_text.replace(key, value)
+                replaced = True
+
+        if replaced:
+            # conservar formato del primer run del párrafo
+            if p.runs:
+                base_run = p.runs[0]
+                for r in p.runs:
+                    r.text = ""
+                p.runs[0].text = full_text
 
 
 def _replace_in_tables(tables, placeholders: Dict[str, str]) -> None:
