@@ -1017,3 +1017,63 @@ def generate_vessel_presentation_pdf(
             status_code=500,
             detail=f"Presentation PDF error: {str(e)}"
         )
+
+
+# =========================================================
+# GET DATA FOR FINAL PRESENTATION POPUP
+# =========================================================
+@router.get("/{report_id}/presentation-data")
+def get_vessel_presentation_data(
+    report_id: int,
+    conn=Depends(get_db)
+):
+    from psycopg2.extras import RealDictCursor
+
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+
+    try:
+        cur.execute("""
+            SELECT
+                cert_no,
+                requested_by,
+                vessel_name,
+                ship_grt,
+                ship_nrt,
+                sampling_start_time
+            FROM vessel_grain_sampling_reports
+            WHERE id = %s
+        """, (report_id,))
+
+        row = cur.fetchone()
+
+        if not row:
+            raise HTTPException(
+                status_code=404,
+                detail="Report not found"
+            )
+
+        sampling_date = None
+        if row["sampling_start_time"]:
+            sampling_date = str(row["sampling_start_time"]).split(" ")[0]
+
+        return {
+            "success": True,
+            "data": {
+                "cert_no": row["cert_no"],
+                "requested_by": row["requested_by"],
+                "vessel_name": row["vessel_name"],
+                "ship_grt": row["ship_grt"],
+                "ship_nrt": row["ship_nrt"],
+                "sampling_start_time": sampling_date
+            }
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Presentation data error: {str(e)}"
+        )
+
+    finally:
+        cur.close()
+
