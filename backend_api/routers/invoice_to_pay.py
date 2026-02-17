@@ -371,8 +371,10 @@ def invoice_to_pay_kpis(conn=Depends(get_db)):
     }
 
 # ============================================================
-# 3️⃣ APPLY PAYMENT
+# 3️⃣ APPLY PAYMENT — BLINDADO FINANCIERO
 # ============================================================
+from decimal import Decimal, ROUND_HALF_UP, InvalidOperation
+
 @router.post("/apply-payment")
 def apply_payment(
     obligation_id: int,
@@ -380,52 +382,137 @@ def apply_payment(
     payment_date: date,
     conn=Depends(get_db)
 ):
-    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur = None
 
-    cur.execute("""
-        SELECT id, balance
-        FROM payment_obligations
-        WHERE id = %s
-          AND record_type = 'OBLIGATION'
-    """, (obligation_id,))
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
 
-    obligation = cur.fetchone()
-    if not obligation:
-        raise HTTPException(status_code=404, detail="Obligation not found")
+        # =====================================================
+        # 1️⃣ BLOQUEAR FILA (ANTI CONCURRENCIA)
+        # =====================================================
+        cur.execute("""
+            SELECT id, balance, status
+            FROM payment_obligations
+            WHERE id = %s
+              AND record_type = 'OBLIGATION'
+            FOR UPDATE
+        """, (obligation_id,))
 
-    balance = obligation["balance"]
+        obligation = cur.fetchone()
 
-    if amount <= 0:
-        raise HTTPException(status_code=400, detail="Invalid payment amount")
+        if not obligation:
+            raise HTTPException(
+                status_code=404,
+                detail="Obligation not found"
+            )
 
-    if amount > balance:
-        raise HTTPException(status_code=400, detail="Payment exceeds outstanding balance")
+        # =====================================================
+        # 2️⃣ CONVERTIR A DECIMAL (FINANCIERO CORRECTO)
+        # =====================================================
+        try:
+            balance = Decimal(str(obligation["balance"])).quantize(
+                Decimal("0.01"),
+                rounding=ROUND_HALF_UP
+            )
 
-    new_balance = balance - amount
-    new_status = "PAID" if new_balance == 0 else "PARTIAL"
+            amount_decimal = Decimal(str(amount)).quantize(
+                Decimal("0.01"),
+                rounding=ROUND_HALF_UP
+            )
 
-    cur.execute("""
-        UPDATE payment_obligations
-        SET
-            balance = %s,
-            status = %s,
-            last_payment_date = %s,
-            updated_at = NOW()
-        WHERE id = %s
-    """, (
-        new_balance,
-        new_status,
-        payment_date,
-        obligation_id
-    ))
+        except InvalidOperation:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid monetary format"
+            )
 
-    conn.commit()
+        # =====================================================
+        # 3️⃣ VALIDACIONES DE NEGOCIO
+        # =====================================================
+        if amount_decimal <= Decimal("0.00"):
+            raise HTTPException(
+                status_code=400,
+                detail="Payment amount must be greater than zero"
+            )
 
-    return {
-        "message": "Payment applied successfully",
-        "new_balance": new_balance,
-        "status": new_status
-    }
+        if obligation["status"] == "PAID":
+            raise HTTPException(
+                status_code=400,
+                detail="Obligation is already fully paid"
+            )
+
+        if amount_decimal > balance:
+            raise HTTPException(
+                status_code=400,
+                detail="Payment exceeds outstanding balance"
+            )
+
+        # =====================================================
+        # 4️⃣ CÁLCULO SEGURO DE NUEVO SALDO
+        # =====================================================
+        new_balance = (balance - amount_decimal).quantize(
+            Decimal("0.01"),
+            rounding=ROUND_HALF_UP
+        )
+
+        if new_balance < Decimal("0.00"):
+            # Protección extrema (nunca debería pasar)
+            raise HTTPException(
+                status_code=400,
+                detail="Resulting balance cannot be negative"
+            )
+
+        new_status = (
+            "PAID"
+            if new_balance == Decimal("0.00")
+            else "PARTIAL"
+        )
+
+        # =====================================================
+        # 5️⃣ UPDATE TRANSACCIONAL
+        # =====================================================
+        cur.execute("""
+            UPDATE payment_obligations
+            SET
+                balance = %s,
+                status = %s,
+                last_payment_date = %s,
+                updated_at = NOW()
+            WHERE id = %s
+        """, (
+            new_balance,
+            new_status,
+            payment_date,
+            obligation_id
+        ))
+
+        conn.commit()
+
+        return {
+            "message": "Payment applied successfully",
+            "obligation_id": obligation_id,
+            "previous_balance": float(balance),
+            "applied_amount": float(amount_decimal),
+            "new_balance": float(new_balance),
+            "status": new_status
+        }
+
+    except HTTPException:
+        if conn:
+            conn.rollback()
+        raise
+
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error applying payment: {repr(e)}"
+        )
+
+    finally:
+        if cur:
+            cur.close()
 
 # ============================================================
 # 4️⃣ MANUAL OBLIGATION
