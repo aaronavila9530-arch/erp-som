@@ -1,10 +1,13 @@
 import os
 import tempfile
+import subprocess
 from typing import Dict
 from docx import Document
-from docx2pdf import convert
 
 
+# =====================================================
+# TEMPLATE PATH
+# =====================================================
 TEMPLATE_PATH = os.path.abspath(
     os.path.join(
         os.path.dirname(__file__),
@@ -16,7 +19,7 @@ TEMPLATE_PATH = os.path.abspath(
 
 
 # =====================================================
-# INTERNAL — SAFE REPLACE (REAL CROSS-RUN SAFE)
+# INTERNAL — SAFE REPLACE (CROSS-RUN SAFE)
 # =====================================================
 def _replace_in_paragraph(paragraph, placeholder: str, value: str):
 
@@ -42,7 +45,6 @@ def _replace_in_paragraph(paragraph, placeholder: str, value: str):
         run_start = current_pos
         run_end = current_pos + run_len
 
-        # ¿Intersecta con el placeholder?
         if run_end > start and run_start < end:
 
             prefix_len = max(0, start - run_start)
@@ -76,10 +78,13 @@ def _replace_in_tables(tables, placeholders: Dict[str, str]):
 
 
 # =====================================================
-# MAIN — GENERATE PDF USING MICROSOFT WORD
+# MAIN — GENERATE PDF USING LIBREOFFICE (HEADLESS)
 # =====================================================
 def generate_vessel_presentation_doc(data: dict) -> str:
 
+    # -------------------------------------------------
+    # VALIDATIONS
+    # -------------------------------------------------
     if not os.path.exists(TEMPLATE_PATH):
         raise FileNotFoundError(
             f"Presentation template not found: {TEMPLATE_PATH}"
@@ -88,6 +93,9 @@ def generate_vessel_presentation_doc(data: dict) -> str:
     if not isinstance(data, dict):
         raise ValueError("Invalid data payload — expected dict")
 
+    # -------------------------------------------------
+    # NORMALIZE DATE
+    # -------------------------------------------------
     raw_dt = data.get("sampling_start_time") or ""
     sampling_date = str(raw_dt).split(" ")[0] if raw_dt else ""
 
@@ -100,6 +108,9 @@ def generate_vessel_presentation_doc(data: dict) -> str:
         "{sampling_start_time}": sampling_date,
     }
 
+    # -------------------------------------------------
+    # LOAD TEMPLATE
+    # -------------------------------------------------
     doc = Document(TEMPLATE_PATH)
 
     # BODY
@@ -110,20 +121,62 @@ def generate_vessel_presentation_doc(data: dict) -> str:
     for section in doc.sections:
         _replace_in_paragraphs(section.header.paragraphs, placeholders)
         _replace_in_tables(section.header.tables, placeholders)
-
         _replace_in_paragraphs(section.footer.paragraphs, placeholders)
         _replace_in_tables(section.footer.tables, placeholders)
 
-    # Guardar DOCX temporal
+    # -------------------------------------------------
+    # SAVE TEMP DOCX
+    # -------------------------------------------------
     fd, temp_docx = tempfile.mkstemp(suffix=".docx")
     os.close(fd)
     doc.save(temp_docx)
 
-    # Convertir con Word real
-    temp_pdf = temp_docx.replace(".docx", ".pdf")
-    convert(temp_docx, temp_pdf)
+    output_dir = tempfile.mkdtemp()
 
-    if not os.path.exists(temp_pdf):
-        raise RuntimeError("PDF conversion failed")
+    # -------------------------------------------------
+    # CONVERT USING LIBREOFFICE
+    # -------------------------------------------------
+    try:
+        subprocess.run(
+            [
+                "soffice",
+                "--headless",
+                "--nologo",
+                "--nolockcheck",
+                "--convert-to",
+                "pdf",
+                "--outdir",
+                output_dir,
+                temp_docx
+            ],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            timeout=60
+        )
 
-    return temp_pdf
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("LibreOffice PDF conversion timed out")
+
+    except FileNotFoundError:
+        raise RuntimeError(
+            "LibreOffice (soffice) is not installed or not available in PATH"
+        )
+
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(
+            f"Error converting DOCX to PDF: {e.stderr.decode(errors='ignore')}"
+        )
+
+    # -------------------------------------------------
+    # VALIDATE OUTPUT
+    # -------------------------------------------------
+    pdf_path = os.path.join(
+        output_dir,
+        os.path.splitext(os.path.basename(temp_docx))[0] + ".pdf"
+    )
+
+    if not os.path.exists(pdf_path):
+        raise RuntimeError("PDF generation failed — output file not found")
+
+    return pdf_path
