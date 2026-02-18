@@ -3,8 +3,9 @@ from psycopg2.extras import RealDictCursor
 from typing import Optional
 from datetime import datetime
 from fastapi.responses import FileResponse
-from services.vessel_truck_supervision_doc_service import generate_vessel_truck_supervision_doc
-from services.word_pdf_service import convert_docx_to_pdf
+from services.vessel_truck_supervision_pdf_service import generate_vessel_truck_supervision_pdf
+
+
 
 
 from database import get_db
@@ -631,20 +632,18 @@ def approve_vessel_truck_supervision(
         report = cur.fetchone()
 
         if not report:
-            raise HTTPException(status_code=404, detail="Report not found")
+            raise HTTPException(
+                status_code=404,
+                detail="Report not found"
+            )
 
         # =====================================================
-        # 2️⃣ Generar DOCX desde template (MULTIUSUARIO)
+        # 2️⃣ Generar PDF (Word + LibreOffice)
         # =====================================================
-        doc_path = generate_vessel_truck_supervision_doc(report)
+        pdf_path = generate_vessel_truck_supervision_pdf(report)
 
         # =====================================================
-        # 3️⃣ Convertir DOCX → PDF
-        # =====================================================
-        pdf_path = convert_docx_to_pdf(doc_path)
-
-        # =====================================================
-        # 4️⃣ Actualizar status del reporte
+        # 3️⃣ Actualizar status del reporte
         # =====================================================
         cur.execute("""
             UPDATE vessel_truck_supervision_reports
@@ -654,9 +653,10 @@ def approve_vessel_truck_supervision(
         """, (report_id,))
 
         # =====================================================
-        # 5️⃣ Actualizar servicios.status_informe
+        # 4️⃣ Actualizar servicios.status_informe
         # =====================================================
         cert_no = report.get("cert_no")
+
         if cert_no:
             cur.execute("""
                 UPDATE servicios
@@ -667,7 +667,7 @@ def approve_vessel_truck_supervision(
         conn.commit()
 
         # =====================================================
-        # 6️⃣ Devolver PDF al frontend
+        # 5️⃣ Devolver PDF al frontend
         # =====================================================
         return FileResponse(
             path=pdf_path,
@@ -684,4 +684,3 @@ def approve_vessel_truck_supervision(
 
     finally:
         cur.close()
-
