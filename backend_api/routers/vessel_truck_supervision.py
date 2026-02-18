@@ -287,11 +287,12 @@ def create_vessel_truck_supervision(
 
 
 # =========================================================
-# LIST ALL
+# LIST ALL (OPTIONAL STATUS FILTER)
 # =========================================================
 
 @router.get("/")
 def list_vessel_truck_supervision(
+    status: str | None = None,
     conn=Depends(get_db)
 ):
 
@@ -299,11 +300,50 @@ def list_vessel_truck_supervision(
 
     try:
 
-        cur.execute("""
-            SELECT *
+        base_query = """
+            SELECT
+                id,
+                created_at,
+                updated_at,
+
+                cert_no,
+                port,
+                country,
+                report_date,
+
+                vessel_name,
+                flag_port_registry,
+                grt,
+                nrt,
+                imo_no,
+                build_year,
+
+                captain,
+                chief_officer,
+
+                arrival_date,
+                inspection_date,
+                supervision_completed_date,
+
+                process_text,
+                findings_documental_text,
+                findings_operational_text,
+                incidents_text,
+                conclusion_text,
+
+                status
             FROM vessel_truck_supervision_reports
-            ORDER BY id DESC
-        """)
+        """
+
+        params = []
+
+        if status:
+            base_query += " WHERE status = %s"
+            params.append(status)
+
+        base_query += " ORDER BY id DESC"
+
+        cur.execute(base_query, params)
 
         rows = cur.fetchall() or []
 
@@ -338,7 +378,38 @@ def get_vessel_truck_supervision(
     try:
 
         cur.execute("""
-            SELECT *
+            SELECT
+                id,
+                created_at,
+                updated_at,
+
+                cert_no,
+                port,
+                country,
+                report_date,
+
+                vessel_name,
+                flag_port_registry,
+                grt,
+                nrt,
+                imo_no,
+                build_year,
+
+                captain,
+                chief_officer,
+
+                arrival_date,
+                inspection_date,
+                supervision_completed_date,
+
+                process_text,
+                findings_documental_text,
+                findings_operational_text,
+                incidents_text,
+                conclusion_text,
+
+                status
+
             FROM vessel_truck_supervision_reports
             WHERE id = %s
         """, (report_id,))
@@ -388,7 +459,20 @@ def update_vessel_truck_supervision(
 
     try:
 
-        cur.execute("""
+        # =====================================================
+        # DETECT APPROVAL ACTION
+        # =====================================================
+        approve = payload.get("approve", False)
+
+        if approve:
+            status_value = "Approved"
+        else:
+            status_value = None
+
+        # =====================================================
+        # BASE UPDATE
+        # =====================================================
+        update_query = """
             UPDATE vessel_truck_supervision_reports
             SET
 
@@ -412,13 +496,24 @@ def update_vessel_truck_supervision(
                 supervision_completed_date = %(supervision_completed_date)s,
 
                 process_text = %(process_text)s,
-                findings_text = %(findings_text)s,
+                findings_documental_text = %(findings_documental_text)s,
+                findings_operational_text = %(findings_operational_text)s,
+                incidents_text = %(incidents_text)s,
                 conclusion_text = %(conclusion_text)s,
+        """
 
+        # =====================================================
+        # CONDITIONAL STATUS UPDATE
+        # =====================================================
+        if status_value:
+            update_query += " status = %(status)s, "
+
+        update_query += """
                 updated_at = NOW()
-
             WHERE id = %(id)s
-        """, {
+        """
+
+        params = {
 
             "id": report_id,
 
@@ -442,9 +537,16 @@ def update_vessel_truck_supervision(
             "supervision_completed_date": safe("supervision_completed_date"),
 
             "process_text": safe("process_text"),
-            "findings_text": safe("findings_text"),
+            "findings_documental_text": safe("findings_documental_text"),
+            "findings_operational_text": safe("findings_operational_text"),
+            "incidents_text": safe("incidents_text"),
             "conclusion_text": safe("conclusion_text"),
-        })
+        }
+
+        if status_value:
+            params["status"] = status_value
+
+        cur.execute(update_query, params)
 
         if cur.rowcount == 0:
             raise HTTPException(
@@ -456,7 +558,8 @@ def update_vessel_truck_supervision(
 
         return {
             "success": True,
-            "id": report_id
+            "id": report_id,
+            "approved": approve
         }
 
     except HTTPException:
