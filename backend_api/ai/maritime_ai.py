@@ -166,3 +166,69 @@ def improve_grain_sampling_text(
         raise RuntimeError("La IA devolvió una respuesta vacía.")
 
     return output_text.strip()
+
+
+
+# =========================================================
+# TRUCK SUPERVISION AI LOGIC (BILINGUAL)
+# =========================================================
+def improve_truck_supervision_text(
+    user_text: str,
+    vessel: Optional[str],
+    location: Optional[str],
+    cargo: Optional[str],
+    language: str = "ES"
+) -> str:
+
+    if not user_text or not user_text.strip():
+        raise ValueError("El texto de entrada está vacío.")
+
+    client = _get_openai_client()
+
+    language = (language or "ES").upper()
+    if language not in ("ES", "EN"):
+        language = "ES"
+
+    base_path = os.path.dirname(__file__)
+    prompt_path = os.path.join(base_path, "maritime_truck_supervision.prompt.txt")
+
+    if not os.path.exists(prompt_path):
+        raise FileNotFoundError("Truck supervision prompt file not found.")
+
+    with open(prompt_path, "r", encoding="utf-8") as f:
+        base_prompt = f.read().strip()
+
+    if language == "EN":
+        language_instruction = (
+            "\n\nIMPORTANT: Rewrite strictly in professional maritime English. "
+            "Maintain technical precision and neutral surveyor tone."
+        )
+    else:
+        language_instruction = (
+            "\n\nIMPORTANTE: Reescribe estrictamente en español técnico profesional marítimo. "
+            "Mantén tono formal de inspector portuario."
+        )
+
+    prompt = (
+        base_prompt
+        .replace("{{vessel}}", vessel or "N/A")
+        .replace("{{location}}", location or "N/A")
+        .replace("{{cargo}}", cargo or "Bulk Cargo")
+        .replace("{{user_text}}", user_text.strip())
+        + language_instruction
+    )
+
+    response = client.responses.create(
+        model="gpt-4o-mini",
+        input=prompt,
+        temperature=0.15,
+        max_output_tokens=1000
+    )
+
+    output_text = getattr(response, "output_text", None)
+
+    if not output_text or not output_text.strip():
+        raise RuntimeError("La IA devolvió una respuesta vacía.")
+
+    return output_text.strip()
+

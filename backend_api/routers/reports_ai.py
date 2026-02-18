@@ -82,3 +82,48 @@ def improve_grain(payload: dict):
             status_code=500,
             detail=f"AI grain improvement failed: {str(e)}"
         )
+
+
+
+# =========================================================
+# TRUCK SUPERVISION AI
+# =========================================================
+@router.post("/improve/truck")
+def improve_truck(payload: dict):
+
+    try:
+        user_text = (payload.get("text") or "").strip()
+        if not user_text:
+            raise HTTPException(
+                status_code=400,
+                detail="Text is required"
+            )
+
+        language = (payload.get("language") or "ES").upper()
+        if language not in ("ES", "EN"):
+            language = "ES"
+
+        result = improve_truck_supervision_text(
+            user_text=user_text,
+            vessel=payload.get("vessel"),
+            location=payload.get("location"),
+            cargo=payload.get("cargo"),
+            language=language
+        )
+
+        return {
+            "success": True,
+            "language": language,
+            "text": result
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        print("❌ AI TRUCK ERROR:", repr(e))
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"AI truck improvement failed: {str(e)}"
+        )
