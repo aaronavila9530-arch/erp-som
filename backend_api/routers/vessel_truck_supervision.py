@@ -197,10 +197,8 @@ def update_vessel_truck_supervision(
 # =========================================================
 # FILTER SERVICIOS (PARA POPUP BUSQUEDA)
 # =========================================================
-
-from sqlalchemy import extract, func
-from models import Servicio
-
+from psycopg2.extras import RealDictCursor
+from fastapi import Query
 
 @router.get("/servicios-filter")
 def filter_servicios(
@@ -210,87 +208,85 @@ def filter_servicios(
     continente: str | None = None,
     pais: str | None = None,
     puerto: str | None = None,
-    anio: int | None = None,
-    mes: int | None = None,
-    db: Session = Depends(get_db)
+    anio: int | None = Query(None),
+    mes: int | None = Query(None),
+    conn=Depends(get_db)
 ):
 
-    query = db.query(Servicio)
+    cur = conn.cursor(cursor_factory=RealDictCursor)
 
-    # ================= TEXT FILTERS (case insensitive) =================
+    try:
 
-    if num_informe:
-        query = query.filter(
-            func.lower(Servicio.num_informe) == num_informe.lower()
+        base_query = """
+            FROM servicios
+            WHERE tipo = 'Buque'
+              AND num_informe IS NOT NULL
+        """
+
+        params = []
+
+        if num_informe:
+            base_query += " AND num_informe = %s"
+            params.append(num_informe)
+
+        if buque_contenedor:
+            base_query += " AND buque_contenedor = %s"
+            params.append(buque_contenedor)
+
+        if cliente:
+            base_query += " AND cliente = %s"
+            params.append(cliente)
+
+        if continente:
+            base_query += " AND continente = %s"
+            params.append(continente)
+
+        if pais:
+            base_query += " AND pais = %s"
+            params.append(pais)
+
+        if puerto:
+            base_query += " AND puerto = %s"
+            params.append(puerto)
+
+        if anio:
+            base_query += " AND EXTRACT(YEAR FROM fecha_inicio) = %s"
+            params.append(anio)
+
+        if mes:
+            base_query += " AND EXTRACT(MONTH FROM fecha_inicio) = %s"
+            params.append(mes)
+
+        query = """
+            SELECT
+                consec AS id,
+                num_informe,
+                buque_contenedor,
+                cliente,
+                continente,
+                pais,
+                puerto,
+                EXTRACT(YEAR FROM fecha_inicio) AS anio,
+                EXTRACT(MONTH FROM fecha_inicio) AS mes
+        """ + base_query + """
+            ORDER BY fecha_inicio DESC NULLS LAST
+            LIMIT 500
+        """
+
+        cur.execute(query, params)
+        rows = cur.fetchall() or []
+
+        return {
+            "success": True,
+            "count": len(rows),
+            "data": rows
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error filtering servicios: {str(e)}"
         )
 
-    if buque_contenedor:
-        query = query.filter(
-            func.lower(Servicio.buque_contenedor) == buque_contenedor.lower()
-        )
-
-    if cliente:
-        query = query.filter(
-            func.lower(Servicio.cliente) == cliente.lower()
-        )
-
-    if continente:
-        query = query.filter(
-            func.lower(Servicio.continente) == continente.lower()
-        )
-
-    if pais:
-        query = query.filter(
-            func.lower(Servicio.pais) == pais.lower()
-        )
-
-    if puerto:
-        query = query.filter(
-            func.lower(Servicio.puerto) == puerto.lower()
-        )
-
-    # ================= DATE FILTERS =================
-
-    if anio:
-        query = query.filter(
-            Servicio.fecha_inicio.isnot(None)
-        ).filter(
-            extract("year", Servicio.fecha_inicio) == anio
-        )
-
-    if mes:
-        query = query.filter(
-            Servicio.fecha_inicio.isnot(None)
-        ).filter(
-            extract("month", Servicio.fecha_inicio) == mes
-        )
-
-    # ================= ORDER + LIMIT =================
-
-    results = (
-        query
-        .order_by(Servicio.fecha_inicio.desc().nullslast())
-        .limit(500)
-        .all()
-    )
-
-    data = []
-
-    for r in results:
-        data.append({
-            "id": r.id,
-            "num_informe": r.num_informe,
-            "buque_contenedor": r.buque_contenedor,
-            "cliente": r.cliente,
-            "continente": r.continente,
-            "pais": r.pais,
-            "puerto": r.puerto,
-            "anio": r.fecha_inicio.year if r.fecha_inicio else None,
-            "mes": r.fecha_inicio.month if r.fecha_inicio else None
-        })
-
-    return {
-        "success": True,
-        "count": len(data),
-        "data": data
-    }
+    finally:
+        cur.close()
