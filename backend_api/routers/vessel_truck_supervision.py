@@ -204,9 +204,13 @@ def create_vessel_truck_supervision(
                 supervision_completed_date,
 
                 process_text,
-                findings_text,
                 conclusion_text,
 
+                findings_documental_text,
+                findings_operational_text,
+                incidents_text,
+
+                status,
                 created_at,
                 updated_at
 
@@ -232,14 +236,18 @@ def create_vessel_truck_supervision(
                 %(supervision_completed_date)s,
 
                 %(process_text)s,
-                %(findings_text)s,
                 %(conclusion_text)s,
 
+                %(findings_documental_text)s,
+                %(findings_operational_text)s,
+                %(incidents_text)s,
+
+                'Pending for review',
                 NOW(),
                 NOW()
 
             )
-            RETURNING id, created_at, updated_at
+            RETURNING id, created_at, updated_at, status
         """, {
 
             "cert_no": safe("cert_no"),
@@ -262,8 +270,11 @@ def create_vessel_truck_supervision(
             "supervision_completed_date": safe("supervision_completed_date"),
 
             "process_text": safe("process_text"),
-            "findings_text": safe("findings_text"),
             "conclusion_text": safe("conclusion_text"),
+
+            "findings_documental_text": safe("findings_documental_text"),
+            "findings_operational_text": safe("findings_operational_text"),
+            "incidents_text": safe("incidents_text"),
         })
 
         new_record = cur.fetchone()
@@ -284,7 +295,6 @@ def create_vessel_truck_supervision(
 
     finally:
         cur.close()
-
 
 # =========================================================
 # LIST ALL (OPTIONAL STATUS FILTER)
