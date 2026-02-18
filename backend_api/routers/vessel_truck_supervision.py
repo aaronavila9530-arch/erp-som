@@ -17,6 +17,104 @@ router = APIRouter(
 
 
 # =========================================================
+# FILTER SERVICIOS (PARA POPUP BUSQUEDA)
+# =========================================================
+from psycopg2.extras import RealDictCursor
+from fastapi import Query
+
+@router.get("/servicios-filter")
+def filter_servicios(
+    num_informe: str | None = None,
+    buque_contenedor: str | None = None,
+    cliente: str | None = None,
+    continente: str | None = None,
+    pais: str | None = None,
+    puerto: str | None = None,
+    anio: int | None = Query(None),
+    mes: int | None = Query(None),
+    conn=Depends(get_db)
+):
+
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+
+    try:
+
+        base_query = """
+            FROM servicios
+            WHERE tipo = 'Buque'
+              AND num_informe IS NOT NULL
+        """
+
+        params = []
+
+        if num_informe:
+            base_query += " AND num_informe = %s"
+            params.append(num_informe)
+
+        if buque_contenedor:
+            base_query += " AND buque_contenedor = %s"
+            params.append(buque_contenedor)
+
+        if cliente:
+            base_query += " AND cliente = %s"
+            params.append(cliente)
+
+        if continente:
+            base_query += " AND continente = %s"
+            params.append(continente)
+
+        if pais:
+            base_query += " AND pais = %s"
+            params.append(pais)
+
+        if puerto:
+            base_query += " AND puerto = %s"
+            params.append(puerto)
+
+        if anio:
+            base_query += " AND EXTRACT(YEAR FROM fecha_inicio) = %s"
+            params.append(anio)
+
+        if mes:
+            base_query += " AND EXTRACT(MONTH FROM fecha_inicio) = %s"
+            params.append(mes)
+
+        query = """
+            SELECT
+                consec AS id,
+                num_informe,
+                buque_contenedor,
+                cliente,
+                continente,
+                pais,
+                puerto,
+                EXTRACT(YEAR FROM fecha_inicio) AS anio,
+                EXTRACT(MONTH FROM fecha_inicio) AS mes
+        """ + base_query + """
+            ORDER BY fecha_inicio DESC NULLS LAST
+            LIMIT 500
+        """
+
+        cur.execute(query, params)
+        rows = cur.fetchall() or []
+
+        return {
+            "success": True,
+            "count": len(rows),
+            "data": rows
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error filtering servicios: {str(e)}"
+        )
+
+    finally:
+        cur.close()
+
+
+# =========================================================
 # CREATE
 # =========================================================
 
@@ -326,117 +424,3 @@ def update_vessel_truck_supervision(
         cur.close()
 
 
-# =========================================================
-# FILTER SERVICIOS (PARA POPUP BUSQUEDA)
-# =========================================================
-
-from psycopg2.extras import RealDictCursor
-from fastapi import Query
-
-
-@router.get("/servicios-filter")
-def filter_servicios(
-    num_informe: str | None = None,
-    buque_contenedor: str | None = None,
-    cliente: str | None = None,
-    continente: str | None = None,
-    pais: str | None = None,
-    puerto: str | None = None,
-    anio: int | None = Query(None, ge=1900, le=2100),
-    mes: int | None = Query(None, ge=1, le=12),
-    conn=Depends(get_db)
-):
-
-    cur = conn.cursor(cursor_factory=RealDictCursor)
-
-    try:
-
-        # =====================================================
-        # BASE QUERY
-        # =====================================================
-
-        base_query = """
-            FROM servicios
-            WHERE tipo = 'Buque'
-              AND num_informe IS NOT NULL
-        """
-
-        params = []
-
-        # =====================================================
-        # TEXT FILTERS (exact match)
-        # =====================================================
-
-        if num_informe:
-            base_query += " AND num_informe = %s"
-            params.append(num_informe.strip())
-
-        if buque_contenedor:
-            base_query += " AND buque_contenedor = %s"
-            params.append(buque_contenedor.strip())
-
-        if cliente:
-            base_query += " AND cliente = %s"
-            params.append(cliente.strip())
-
-        if continente:
-            base_query += " AND continente = %s"
-            params.append(continente.strip())
-
-        if pais:
-            base_query += " AND pais = %s"
-            params.append(pais.strip())
-
-        if puerto:
-            base_query += " AND puerto = %s"
-            params.append(puerto.strip())
-
-        # =====================================================
-        # DATE FILTERS
-        # =====================================================
-
-        if anio is not None:
-            base_query += " AND EXTRACT(YEAR FROM fecha_inicio) = %s"
-            params.append(anio)
-
-        if mes is not None:
-            base_query += " AND EXTRACT(MONTH FROM fecha_inicio) = %s"
-            params.append(mes)
-
-        # =====================================================
-        # FINAL QUERY
-        # =====================================================
-
-        final_query = """
-            SELECT
-                consec AS id,
-                num_informe,
-                buque_contenedor,
-                cliente,
-                continente,
-                pais,
-                puerto,
-                EXTRACT(YEAR FROM fecha_inicio)::int AS anio,
-                EXTRACT(MONTH FROM fecha_inicio)::int AS mes
-        """ + base_query + """
-            ORDER BY fecha_inicio DESC NULLS LAST
-            LIMIT 500
-        """
-
-        cur.execute(final_query, params)
-        rows = cur.fetchall() or []
-
-        return {
-            "success": True,
-            "count": len(rows),
-            "data": rows
-        }
-
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error filtering servicios: {str(e)}"
-        )
-
-    finally:
-        cur.close()
