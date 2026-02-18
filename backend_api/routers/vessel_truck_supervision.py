@@ -163,6 +163,8 @@ def filter_servicios(
         cur.close()
 
 
+from datetime import datetime
+
 # =========================================================
 # CREATE
 # =========================================================
@@ -178,6 +180,14 @@ def create_vessel_truck_supervision(
     def safe(key, default=None):
         value = payload.get(key, default)
         return value if value not in ["", None] else default
+
+    def parse_date(value):
+        if not value:
+            return None
+        try:
+            return datetime.strptime(value, "%d-%m-%Y").date()
+        except:
+            return None
 
     try:
 
@@ -253,7 +263,8 @@ def create_vessel_truck_supervision(
             "cert_no": safe("cert_no"),
             "port": safe("port"),
             "country": safe("country"),
-            "report_date": safe("report_date"),
+
+            "report_date": parse_date(payload.get("report_date")),
 
             "vessel_name": safe("vessel_name"),
             "flag_port_registry": safe("flag_port_registry"),
@@ -265,9 +276,9 @@ def create_vessel_truck_supervision(
             "captain": safe("captain"),
             "chief_officer": safe("chief_officer"),
 
-            "arrival_date": safe("arrival_date"),
-            "inspection_date": safe("inspection_date"),
-            "supervision_completed_date": safe("supervision_completed_date"),
+            "arrival_date": parse_date(payload.get("arrival_date")),
+            "inspection_date": parse_date(payload.get("inspection_date")),
+            "supervision_completed_date": parse_date(payload.get("supervision_completed_date")),
 
             "process_text": safe("process_text"),
             "conclusion_text": safe("conclusion_text"),
