@@ -17,27 +17,33 @@ router = APIRouter(
 
 
 # =========================================================
-# FILTER SERVICIOS (PARA POPUP BUSQUEDA)
+# FILTER SERVICIOS (CASCADE + FILTERS + DATA)
 # =========================================================
+
 from psycopg2.extras import RealDictCursor
-from fastapi import Query
+from fastapi import Query, Depends, HTTPException
+
 
 @router.get("/servicios-filter")
 def filter_servicios(
-    num_informe: str | None = None,
-    buque_contenedor: str | None = None,
-    cliente: str | None = None,
     continente: str | None = None,
     pais: str | None = None,
     puerto: str | None = None,
-    anio: int | None = Query(None),
-    mes: int | None = Query(None),
+    cliente: str | None = None,
+    buque_contenedor: str | None = None,
+    operacion: str | None = None,
+    anio: int | None = Query(None, ge=1900, le=2100),
+    mes: int | None = Query(None, ge=1, le=12),
     conn=Depends(get_db)
 ):
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     try:
+
+        # =====================================================
+        # BASE QUERY
+        # =====================================================
 
         base_query = """
             FROM servicios
@@ -47,39 +53,51 @@ def filter_servicios(
 
         params = []
 
-        if num_informe:
-            base_query += " AND num_informe = %s"
-            params.append(num_informe)
+        # =====================================================
+        # YEAR / MONTH (PRINCIPALES)
+        # =====================================================
 
-        if buque_contenedor:
-            base_query += " AND buque_contenedor = %s"
-            params.append(buque_contenedor)
-
-        if cliente:
-            base_query += " AND cliente = %s"
-            params.append(cliente)
-
-        if continente:
-            base_query += " AND continente = %s"
-            params.append(continente)
-
-        if pais:
-            base_query += " AND pais = %s"
-            params.append(pais)
-
-        if puerto:
-            base_query += " AND puerto = %s"
-            params.append(puerto)
-
-        if anio:
+        if anio is not None:
             base_query += " AND EXTRACT(YEAR FROM fecha_inicio) = %s"
             params.append(anio)
 
-        if mes:
+        if mes is not None:
             base_query += " AND EXTRACT(MONTH FROM fecha_inicio) = %s"
             params.append(mes)
 
-        query = """
+        # =====================================================
+        # RESTO FILTROS
+        # =====================================================
+
+        if continente:
+            base_query += " AND continente = %s"
+            params.append(continente.strip())
+
+        if pais:
+            base_query += " AND pais = %s"
+            params.append(pais.strip())
+
+        if puerto:
+            base_query += " AND puerto = %s"
+            params.append(puerto.strip())
+
+        if cliente:
+            base_query += " AND cliente = %s"
+            params.append(cliente.strip())
+
+        if buque_contenedor:
+            base_query += " AND buque_contenedor = %s"
+            params.append(buque_contenedor.strip())
+
+        if operacion:
+            base_query += " AND operacion = %s"
+            params.append(operacion.strip())
+
+        # =====================================================
+        # DATA QUERY
+        # =====================================================
+
+        data_query = """
             SELECT
                 consec AS id,
                 num_informe,
@@ -88,20 +106,51 @@ def filter_servicios(
                 continente,
                 pais,
                 puerto,
-                EXTRACT(YEAR FROM fecha_inicio) AS anio,
-                EXTRACT(MONTH FROM fecha_inicio) AS mes
+                operacion,
+                EXTRACT(YEAR FROM fecha_inicio)::int AS anio,
+                EXTRACT(MONTH FROM fecha_inicio)::int AS mes
         """ + base_query + """
             ORDER BY fecha_inicio DESC NULLS LAST
             LIMIT 500
         """
 
-        cur.execute(query, params)
+        cur.execute(data_query, params)
         rows = cur.fetchall() or []
 
+        # =====================================================
+        # FILTERS QUERY (MISMO BASE QUERY)
+        # =====================================================
+
+        filters_query = """
+            SELECT
+                ARRAY_AGG(DISTINCT EXTRACT(YEAR FROM fecha_inicio)::int) AS years,
+                ARRAY_AGG(DISTINCT EXTRACT(MONTH FROM fecha_inicio)::int) AS months,
+                ARRAY_AGG(DISTINCT continente) AS continentes,
+                ARRAY_AGG(DISTINCT pais) AS paises,
+                ARRAY_AGG(DISTINCT puerto) AS puertos,
+                ARRAY_AGG(DISTINCT cliente) AS clientes,
+                ARRAY_AGG(DISTINCT buque_contenedor) AS buques,
+                ARRAY_AGG(DISTINCT operacion) AS operaciones
+        """ + base_query
+
+        cur.execute(filters_query, params)
+        filters_raw = cur.fetchone() or {}
+
+        filters = {
+            "years": sorted([y for y in filters_raw.get("years") or [] if y]),
+            "months": sorted([m for m in filters_raw.get("months") or [] if m]),
+            "continentes": sorted([c for c in filters_raw.get("continentes") or [] if c]),
+            "paises": sorted([p for p in filters_raw.get("paises") or [] if p]),
+            "puertos": sorted([p for p in filters_raw.get("puertos") or [] if p]),
+            "clientes": sorted([c for c in filters_raw.get("clientes") or [] if c]),
+            "buques": sorted([b for b in filters_raw.get("buques") or [] if b]),
+            "operaciones": sorted([o for o in filters_raw.get("operaciones") or [] if o]),
+        }
+
         return {
-            "success": True,
-            "count": len(rows),
-            "data": rows
+            "filters": filters,
+            "data": rows,
+            "count": len(rows)
         }
 
     except Exception as e:
