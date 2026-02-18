@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from ai.maritime_ai import (
     improve_container_text,
+    improve_truck_supervision_text,
     improve_grain_sampling_text
 )
 
