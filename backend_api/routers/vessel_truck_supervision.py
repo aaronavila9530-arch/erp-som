@@ -2,6 +2,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from psycopg2.extras import RealDictCursor
 from typing import Optional
 from datetime import datetime
+from fastapi.responses import FileResponse
+from services.vessel_truck_supervision_doc_service import generate_vessel_truck_supervision_doc
+from services.word_pdf_service import convert_docx_to_pdf
+
 
 from database import get_db
 
@@ -603,4 +607,81 @@ def update_vessel_truck_supervision(
     finally:
         cur.close()
 
+
+
+@router.post("/{report_id}/approve")
+def approve_vessel_truck_supervision(
+    report_id: int,
+    conn=Depends(get_db)
+):
+
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+
+    try:
+
+        # =====================================================
+        # 1️⃣ Obtener reporte
+        # =====================================================
+        cur.execute("""
+            SELECT *
+            FROM vessel_truck_supervision_reports
+            WHERE id = %s
+        """, (report_id,))
+
+        report = cur.fetchone()
+
+        if not report:
+            raise HTTPException(status_code=404, detail="Report not found")
+
+        # =====================================================
+        # 2️⃣ Generar DOCX desde template (MULTIUSUARIO)
+        # =====================================================
+        doc_path = generate_vessel_truck_supervision_doc(report)
+
+        # =====================================================
+        # 3️⃣ Convertir DOCX → PDF
+        # =====================================================
+        pdf_path = convert_docx_to_pdf(doc_path)
+
+        # =====================================================
+        # 4️⃣ Actualizar status del reporte
+        # =====================================================
+        cur.execute("""
+            UPDATE vessel_truck_supervision_reports
+            SET status = 'Approved',
+                updated_at = NOW()
+            WHERE id = %s
+        """, (report_id,))
+
+        # =====================================================
+        # 5️⃣ Actualizar servicios.status_informe
+        # =====================================================
+        cert_no = report.get("cert_no")
+        if cert_no:
+            cur.execute("""
+                UPDATE servicios
+                SET status_informe = 'Approved'
+                WHERE num_informe = %s
+            """, (cert_no,))
+
+        conn.commit()
+
+        # =====================================================
+        # 6️⃣ Devolver PDF al frontend
+        # =====================================================
+        return FileResponse(
+            path=pdf_path,
+            filename=f"{report.get('cert_no')}_Truck_Supervision_Report.pdf",
+            media_type="application/pdf"
+        )
+
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error approving report: {str(e)}"
+        )
+
+    finally:
+        cur.close()
 
