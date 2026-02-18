@@ -46,30 +46,28 @@ def generate_vessel_truck_supervision_doc(data: dict) -> str:
             return
 
         full_text = "".join(run.text for run in paragraph.runs)
-        modified = False
 
+        # Reemplazar TODOS los placeholders del template
         for key, value in data.items():
-            placeholder = f"{{{key}}}"   # 👈 UNA SOLA LLAVE
+            placeholder = f"{{{key}}}"
             if placeholder in full_text:
                 full_text = full_text.replace(
                     placeholder,
                     safe(value)
                 )
-                modified = True
 
-        if not modified:
-            return
-
+        # Reescribir todo el texto preservando formato
         index = 0
 
         for run in paragraph.runs:
-            original_length = len(run.text)
-            if original_length == 0:
+            length = len(run.text)
+            if length == 0:
                 continue
 
-            run.text = full_text[index:index + original_length]
-            index += original_length
+            run.text = full_text[index:index + length]
+            index += length
 
+        # Si sobran caracteres
         if index < len(full_text):
             paragraph.runs[-1].text += full_text[index:]
 
