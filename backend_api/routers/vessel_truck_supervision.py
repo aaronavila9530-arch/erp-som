@@ -1,93 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import Column, Integer, String, Text, DateTime
-from sqlalchemy.orm import Session
-from pydantic import BaseModel
-from typing import Optional, List
+from psycopg2.extras import RealDictCursor
+from typing import Optional
 from datetime import datetime
 
 from database import get_db
-
-
-# =========================================================
-# SQLALCHEMY MODEL
-# =========================================================
-
-class VesselTruckSupervisionReport(Base):
-    __tablename__ = "vessel_truck_supervision_reports"
-
-    id = Column(Integer, primary_key=True, index=True)
-
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow)
-
-    cert_no = Column(String)
-    port = Column(String)
-    country = Column(String)
-    report_date = Column(DateTime)
-
-    vessel_name = Column(String)
-    flag_port_registry = Column(String)
-    grt = Column(String)
-    nrt = Column(String)
-    imo_no = Column(String)
-    build_year = Column(String)
-
-    captain = Column(String)
-    chief_officer = Column(String)
-
-    arrival_date = Column(DateTime)
-    inspection_date = Column(DateTime)
-    supervision_completed_date = Column(DateTime)
-
-    process_text = Column(Text)
-    findings_text = Column(Text)
-    conclusion_text = Column(Text)
-
-
-# =========================================================
-# Pydantic Schemas
-# =========================================================
-
-class VesselTruckSupervisionBase(BaseModel):
-    cert_no: Optional[str] = None
-    port: Optional[str] = None
-    country: Optional[str] = None
-    report_date: Optional[datetime] = None
-
-    vessel_name: Optional[str] = None
-    flag_port_registry: Optional[str] = None
-    grt: Optional[str] = None
-    nrt: Optional[str] = None
-    imo_no: Optional[str] = None
-    build_year: Optional[str] = None
-
-    captain: Optional[str] = None
-    chief_officer: Optional[str] = None
-
-    arrival_date: Optional[datetime] = None
-    inspection_date: Optional[datetime] = None
-    supervision_completed_date: Optional[datetime] = None
-
-    process_text: Optional[str] = None
-    findings_text: Optional[str] = None
-    conclusion_text: Optional[str] = None
-
-
-class VesselTruckSupervisionCreate(VesselTruckSupervisionBase):
-    pass
-
-
-class VesselTruckSupervisionUpdate(VesselTruckSupervisionBase):
-    pass
-
-
-class VesselTruckSupervisionResponse(VesselTruckSupervisionBase):
-    id: int
-    created_at: datetime
-    updated_at: datetime
-
-    class Config:
-        orm_mode = True
 
 
 # =========================================================
@@ -104,101 +20,319 @@ router = APIRouter(
 # CREATE
 # =========================================================
 
-@router.post("/", response_model=VesselTruckSupervisionResponse)
+@router.post("/")
 def create_vessel_truck_supervision(
-    payload: VesselTruckSupervisionCreate,
-    db: Session = Depends(get_db)
+    payload: dict,
+    conn=Depends(get_db)
 ):
 
-    new_report = VesselTruckSupervisionReport(
-        **payload.dict(),
-        created_at=datetime.utcnow(),
-        updated_at=datetime.utcnow()
-    )
+    cur = conn.cursor(cursor_factory=RealDictCursor)
 
-    db.add(new_report)
-    db.commit()
-    db.refresh(new_report)
+    def safe(key, default=None):
+        value = payload.get(key, default)
+        return value if value not in ["", None] else default
 
-    return new_report
+    try:
+
+        cur.execute("""
+            INSERT INTO vessel_truck_supervision_reports (
+
+                cert_no,
+                port,
+                country,
+                report_date,
+
+                vessel_name,
+                flag_port_registry,
+                grt,
+                nrt,
+                imo_no,
+                build_year,
+
+                captain,
+                chief_officer,
+
+                arrival_date,
+                inspection_date,
+                supervision_completed_date,
+
+                process_text,
+                findings_text,
+                conclusion_text,
+
+                created_at,
+                updated_at
+
+            ) VALUES (
+
+                %(cert_no)s,
+                %(port)s,
+                %(country)s,
+                %(report_date)s,
+
+                %(vessel_name)s,
+                %(flag_port_registry)s,
+                %(grt)s,
+                %(nrt)s,
+                %(imo_no)s,
+                %(build_year)s,
+
+                %(captain)s,
+                %(chief_officer)s,
+
+                %(arrival_date)s,
+                %(inspection_date)s,
+                %(supervision_completed_date)s,
+
+                %(process_text)s,
+                %(findings_text)s,
+                %(conclusion_text)s,
+
+                NOW(),
+                NOW()
+
+            )
+            RETURNING id, created_at, updated_at
+        """, {
+
+            "cert_no": safe("cert_no"),
+            "port": safe("port"),
+            "country": safe("country"),
+            "report_date": safe("report_date"),
+
+            "vessel_name": safe("vessel_name"),
+            "flag_port_registry": safe("flag_port_registry"),
+            "grt": safe("grt"),
+            "nrt": safe("nrt"),
+            "imo_no": safe("imo_no"),
+            "build_year": safe("build_year"),
+
+            "captain": safe("captain"),
+            "chief_officer": safe("chief_officer"),
+
+            "arrival_date": safe("arrival_date"),
+            "inspection_date": safe("inspection_date"),
+            "supervision_completed_date": safe("supervision_completed_date"),
+
+            "process_text": safe("process_text"),
+            "findings_text": safe("findings_text"),
+            "conclusion_text": safe("conclusion_text"),
+        })
+
+        new_record = cur.fetchone()
+
+        conn.commit()
+
+        return {
+            "success": True,
+            "data": new_record
+        }
+
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error creating report: {str(e)}"
+        )
+
+    finally:
+        cur.close()
 
 
 # =========================================================
 # LIST ALL
 # =========================================================
 
-@router.get("/", response_model=List[VesselTruckSupervisionResponse])
+@router.get("/")
 def list_vessel_truck_supervision(
-    db: Session = Depends(get_db)
+    conn=Depends(get_db)
 ):
 
-    return (
-        db.query(VesselTruckSupervisionReport)
-        .order_by(VesselTruckSupervisionReport.id.desc())
-        .all()
-    )
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+
+    try:
+
+        cur.execute("""
+            SELECT *
+            FROM vessel_truck_supervision_reports
+            ORDER BY id DESC
+        """)
+
+        rows = cur.fetchall() or []
+
+        return {
+            "success": True,
+            "count": len(rows),
+            "data": rows
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error listing reports: {str(e)}"
+        )
+
+    finally:
+        cur.close()
 
 
 # =========================================================
 # GET BY ID
 # =========================================================
 
-@router.get("/{report_id}", response_model=VesselTruckSupervisionResponse)
+@router.get("/{report_id}")
 def get_vessel_truck_supervision(
     report_id: int,
-    db: Session = Depends(get_db)
+    conn=Depends(get_db)
 ):
 
-    report = (
-        db.query(VesselTruckSupervisionReport)
-        .filter(VesselTruckSupervisionReport.id == report_id)
-        .first()
-    )
+    cur = conn.cursor(cursor_factory=RealDictCursor)
 
-    if not report:
-        raise HTTPException(status_code=404, detail="Report not found")
+    try:
 
-    return report
+        cur.execute("""
+            SELECT *
+            FROM vessel_truck_supervision_reports
+            WHERE id = %s
+        """, (report_id,))
+
+        report = cur.fetchone()
+
+        if not report:
+            raise HTTPException(
+                status_code=404,
+                detail="Report not found"
+            )
+
+        return {
+            "success": True,
+            "data": report
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error retrieving report: {str(e)}"
+        )
+
+    finally:
+        cur.close()
 
 
 # =========================================================
 # UPDATE
 # =========================================================
 
-@router.put("/{report_id}", response_model=VesselTruckSupervisionResponse)
+@router.put("/{report_id}")
 def update_vessel_truck_supervision(
     report_id: int,
-    payload: VesselTruckSupervisionUpdate,
-    db: Session = Depends(get_db)
+    payload: dict,
+    conn=Depends(get_db)
 ):
 
-    report = (
-        db.query(VesselTruckSupervisionReport)
-        .filter(VesselTruckSupervisionReport.id == report_id)
-        .first()
-    )
+    cur = conn.cursor()
 
-    if not report:
-        raise HTTPException(status_code=404, detail="Report not found")
+    def safe(key, default=None):
+        value = payload.get(key, default)
+        return value if value not in ["", None] else default
 
-    update_data = payload.dict(exclude_unset=True)
+    try:
 
-    for key, value in update_data.items():
-        setattr(report, key, value)
+        cur.execute("""
+            UPDATE vessel_truck_supervision_reports
+            SET
 
-    report.updated_at = datetime.utcnow()
+                cert_no = %(cert_no)s,
+                port = %(port)s,
+                country = %(country)s,
+                report_date = %(report_date)s,
 
-    db.commit()
-    db.refresh(report)
+                vessel_name = %(vessel_name)s,
+                flag_port_registry = %(flag_port_registry)s,
+                grt = %(grt)s,
+                nrt = %(nrt)s,
+                imo_no = %(imo_no)s,
+                build_year = %(build_year)s,
 
-    return report
+                captain = %(captain)s,
+                chief_officer = %(chief_officer)s,
+
+                arrival_date = %(arrival_date)s,
+                inspection_date = %(inspection_date)s,
+                supervision_completed_date = %(supervision_completed_date)s,
+
+                process_text = %(process_text)s,
+                findings_text = %(findings_text)s,
+                conclusion_text = %(conclusion_text)s,
+
+                updated_at = NOW()
+
+            WHERE id = %(id)s
+        """, {
+
+            "id": report_id,
+
+            "cert_no": safe("cert_no"),
+            "port": safe("port"),
+            "country": safe("country"),
+            "report_date": safe("report_date"),
+
+            "vessel_name": safe("vessel_name"),
+            "flag_port_registry": safe("flag_port_registry"),
+            "grt": safe("grt"),
+            "nrt": safe("nrt"),
+            "imo_no": safe("imo_no"),
+            "build_year": safe("build_year"),
+
+            "captain": safe("captain"),
+            "chief_officer": safe("chief_officer"),
+
+            "arrival_date": safe("arrival_date"),
+            "inspection_date": safe("inspection_date"),
+            "supervision_completed_date": safe("supervision_completed_date"),
+
+            "process_text": safe("process_text"),
+            "findings_text": safe("findings_text"),
+            "conclusion_text": safe("conclusion_text"),
+        })
+
+        if cur.rowcount == 0:
+            raise HTTPException(
+                status_code=404,
+                detail="Report not found"
+            )
+
+        conn.commit()
+
+        return {
+            "success": True,
+            "id": report_id
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error updating report: {str(e)}"
+        )
+
+    finally:
+        cur.close()
 
 
 # =========================================================
 # FILTER SERVICIOS (PARA POPUP BUSQUEDA)
 # =========================================================
+
 from psycopg2.extras import RealDictCursor
 from fastapi import Query
+
 
 @router.get("/servicios-filter")
 def filter_servicios(
@@ -208,14 +342,18 @@ def filter_servicios(
     continente: str | None = None,
     pais: str | None = None,
     puerto: str | None = None,
-    anio: int | None = Query(None),
-    mes: int | None = Query(None),
+    anio: int | None = Query(None, ge=1900, le=2100),
+    mes: int | None = Query(None, ge=1, le=12),
     conn=Depends(get_db)
 ):
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     try:
+
+        # =====================================================
+        # BASE QUERY
+        # =====================================================
 
         base_query = """
             FROM servicios
@@ -225,39 +363,51 @@ def filter_servicios(
 
         params = []
 
+        # =====================================================
+        # TEXT FILTERS (exact match)
+        # =====================================================
+
         if num_informe:
             base_query += " AND num_informe = %s"
-            params.append(num_informe)
+            params.append(num_informe.strip())
 
         if buque_contenedor:
             base_query += " AND buque_contenedor = %s"
-            params.append(buque_contenedor)
+            params.append(buque_contenedor.strip())
 
         if cliente:
             base_query += " AND cliente = %s"
-            params.append(cliente)
+            params.append(cliente.strip())
 
         if continente:
             base_query += " AND continente = %s"
-            params.append(continente)
+            params.append(continente.strip())
 
         if pais:
             base_query += " AND pais = %s"
-            params.append(pais)
+            params.append(pais.strip())
 
         if puerto:
             base_query += " AND puerto = %s"
-            params.append(puerto)
+            params.append(puerto.strip())
 
-        if anio:
+        # =====================================================
+        # DATE FILTERS
+        # =====================================================
+
+        if anio is not None:
             base_query += " AND EXTRACT(YEAR FROM fecha_inicio) = %s"
             params.append(anio)
 
-        if mes:
+        if mes is not None:
             base_query += " AND EXTRACT(MONTH FROM fecha_inicio) = %s"
             params.append(mes)
 
-        query = """
+        # =====================================================
+        # FINAL QUERY
+        # =====================================================
+
+        final_query = """
             SELECT
                 consec AS id,
                 num_informe,
@@ -266,14 +416,14 @@ def filter_servicios(
                 continente,
                 pais,
                 puerto,
-                EXTRACT(YEAR FROM fecha_inicio) AS anio,
-                EXTRACT(MONTH FROM fecha_inicio) AS mes
+                EXTRACT(YEAR FROM fecha_inicio)::int AS anio,
+                EXTRACT(MONTH FROM fecha_inicio)::int AS mes
         """ + base_query + """
             ORDER BY fecha_inicio DESC NULLS LAST
             LIMIT 500
         """
 
-        cur.execute(query, params)
+        cur.execute(final_query, params)
         rows = cur.fetchall() or []
 
         return {
