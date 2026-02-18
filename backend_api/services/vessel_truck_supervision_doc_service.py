@@ -3,84 +3,128 @@ import tempfile
 from docx import Document
 
 
-TEMPLATE_PATH = os.path.abspath(
-    os.path.join(
-        os.path.dirname(__file__),
-        "..",
-        "templates",
-        "vessel_truck_supervision.docx"
+# ============================================================
+# GENERATE VESSEL TRUCK SUPERVISION WORD REPORT
+# ============================================================
+
+def generate_vessel_truck_supervision_doc(data: dict) -> str:
+
+    # ========================================================
+    # LOAD TEMPLATE (RELATIVE PATH)
+    # ========================================================
+
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+
+    template_path = os.path.abspath(
+        os.path.join(
+            base_dir,
+            "..",
+            "templates",
+            "vessel_truck_supervision.docx"
+        )
     )
-)
 
+    if not os.path.exists(template_path):
+        raise Exception(f"Template not found at: {template_path}")
 
-# =====================================================
-# SAFE REPLACEMENT (NO ROMPE ESTILOS)
-# =====================================================
-def _replace_in_paragraphs(paragraphs, placeholders: dict):
+    doc = Document(template_path)
 
-    for p in paragraphs:
-        for run in p.runs:
+    # ========================================================
+    # SAFE VALUE
+    # ========================================================
 
-            if not run.text:
+    def safe(value):
+        return "" if value is None else str(value)
+
+    # ========================================================
+    # SAFE REPLACEMENT (IGUAL QUE GRAIN SAMPLING)
+    # ========================================================
+
+    def replace_in_paragraph(paragraph):
+
+        if not paragraph.runs:
+            return
+
+        full_text = "".join(run.text for run in paragraph.runs)
+        modified = False
+
+        for key, value in data.items():
+            placeholder = f"{{{key}}}"   # 👈 UNA SOLA LLAVE
+            if placeholder in full_text:
+                full_text = full_text.replace(
+                    placeholder,
+                    safe(value)
+                )
+                modified = True
+
+        if not modified:
+            return
+
+        index = 0
+
+        for run in paragraph.runs:
+            original_length = len(run.text)
+            if original_length == 0:
                 continue
 
-            for key, value in placeholders.items():
-                if key in run.text:
-                    run.text = run.text.replace(key, str(value))
-                    break
+            run.text = full_text[index:index + original_length]
+            index += original_length
 
+        if index < len(full_text):
+            paragraph.runs[-1].text += full_text[index:]
 
-def _replace_in_tables(tables, placeholders):
+    # ========================================================
+    # BODY
+    # ========================================================
 
-    for table in tables:
+    for paragraph in doc.paragraphs:
+        replace_in_paragraph(paragraph)
+
+    # ========================================================
+    # TABLES
+    # ========================================================
+
+    for table in doc.tables:
         for row in table.rows:
             for cell in row.cells:
+                for paragraph in cell.paragraphs:
+                    replace_in_paragraph(paragraph)
 
-                _replace_in_paragraphs(cell.paragraphs, placeholders)
+    # ========================================================
+    # HEADERS & FOOTERS
+    # ========================================================
 
-                if cell.tables:
-                    _replace_in_tables(cell.tables, placeholders)
+    for section in doc.sections:
 
+        header = section.header
+        for paragraph in header.paragraphs:
+            replace_in_paragraph(paragraph)
 
-# =====================================================
-# GENERATE DOCX
-# =====================================================
-def generate_vessel_truck_supervision_doc(report_data: dict):
+        for table in header.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    for paragraph in cell.paragraphs:
+                        replace_in_paragraph(paragraph)
 
-    doc = Document(TEMPLATE_PATH)
+        footer = section.footer
+        for paragraph in footer.paragraphs:
+            replace_in_paragraph(paragraph)
 
-    placeholders = {
-        "{{CERT_NO}}": report_data.get("cert_no", ""),
-        "{{PORT}}": report_data.get("port", ""),
-        "{{COUNTRY}}": report_data.get("country", ""),
-        "{{REPORT_DATE}}": str(report_data.get("report_date", "")),
+        for table in footer.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    for paragraph in cell.paragraphs:
+                        replace_in_paragraph(paragraph)
 
-        "{{VESSEL_NAME}}": report_data.get("vessel_name", ""),
-        "{{FLAG}}": report_data.get("flag_port_registry", ""),
-        "{{GRT}}": report_data.get("grt", ""),
-        "{{NRT}}": report_data.get("nrt", ""),
-        "{{IMO}}": report_data.get("imo_no", ""),
-        "{{BUILD_YEAR}}": report_data.get("build_year", ""),
+    # ========================================================
+    # SAVE
+    # ========================================================
 
-        "{{CAPTAIN}}": report_data.get("captain", ""),
-        "{{CHIEF_OFFICER}}": report_data.get("chief_officer", ""),
+    output_path = os.path.join(
+        tempfile.gettempdir(),
+        f"{data.get('cert_no', 'truck_supervision')}.docx"
+    )
 
-        "{{ARRIVAL_DATE}}": str(report_data.get("arrival_date", "")),
-        "{{INSPECTION_DATE}}": str(report_data.get("inspection_date", "")),
-        "{{SUPERVISION_COMPLETED_DATE}}": str(report_data.get("supervision_completed_date", "")),
+    doc.save(output_path)
 
-        "{{PROCESS_TEXT}}": report_data.get("process_text", ""),
-        "{{CONCLUSION_TEXT}}": report_data.get("conclusion_text", ""),
-
-        "{{FINDINGS_DOCUMENTAL}}": report_data.get("findings_documental_text", ""),
-        "{{FINDINGS_OPERATIONAL}}": report_data.get("findings_operational_text", ""),
-        "{{INCIDENTS}}": report_data.get("incidents_text", "")
-    }
-
-    _replace_in_paragraphs(doc.paragraphs, placeholders)
-    _replace_in_tables(doc.tables, placeholders)
-
-    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".docx")
-    doc.save(temp_file.name)
-
-    return temp_file.name
+    return output_path
