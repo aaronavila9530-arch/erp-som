@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime
 
-from database import Base, get_db
+from database import get_db
 
 
 # =========================================================
