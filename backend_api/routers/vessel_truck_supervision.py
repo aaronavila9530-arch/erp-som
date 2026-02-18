@@ -195,6 +195,7 @@ def create_vessel_truck_supervision(
             INSERT INTO vessel_truck_supervision_reports (
 
                 cert_no,
+                customer,
                 port,
                 country,
                 report_date,
@@ -227,6 +228,7 @@ def create_vessel_truck_supervision(
             ) VALUES (
 
                 %(cert_no)s,
+                %(customer)s,
                 %(port)s,
                 %(country)s,
                 %(report_date)s,
@@ -261,6 +263,7 @@ def create_vessel_truck_supervision(
         """, {
 
             "cert_no": safe("cert_no"),
+            "customer": safe("customer"),
             "port": safe("port"),
             "country": safe("country"),
 
@@ -328,6 +331,7 @@ def list_vessel_truck_supervision(
                 updated_at,
 
                 cert_no,
+                customer,
                 port,
                 country,
                 report_date,
@@ -405,6 +409,7 @@ def get_vessel_truck_supervision(
                 updated_at,
 
                 cert_no,
+                customer,
                 port,
                 country,
                 report_date,
@@ -498,6 +503,7 @@ def update_vessel_truck_supervision(
             SET
 
                 cert_no = %(cert_no)s,
+                customer = %(customer)s,
                 port = %(port)s,
                 country = %(country)s,
                 report_date = %(report_date)s,
@@ -539,6 +545,7 @@ def update_vessel_truck_supervision(
             "id": report_id,
 
             "cert_no": safe("cert_no"),
+            "customer": safe("customer"),
             "port": safe("port"),
             "country": safe("country"),
             "report_date": safe("report_date"),
