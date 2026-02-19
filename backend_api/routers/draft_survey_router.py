@@ -354,4 +354,29 @@ def update_draft_survey(general_id: int, payload: dict, conn=Depends(get_db)):
         cur.close()
 
 
+# =========================================================
+# Preview
+# =========================================================
 
+
+@router.post("/preview/excel")
+def preview_draft_survey_excel(payload: dict):
+
+    try:
+        from services.draft_survey_excel_service import generate_draft_survey_excel
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Excel preview service unavailable: {e}"
+        )
+
+    try:
+        file_path = generate_draft_survey_excel(payload)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error generating excel preview: {e}")
+
+    return FileResponse(
+        path=file_path,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        filename="Draft_Survey_Preview.xlsx"
+    )
