@@ -22,7 +22,7 @@ class DraftSurveyExcelGenerator:
     # =========================================================
     EXCEL_MAPPING = {
 
-        "GENERAL": {
+        "General": {
             "date_fields": [],
             "fields": {
 
@@ -81,7 +81,7 @@ class DraftSurveyExcelGenerator:
             }
         },
 
-        "DRAFT": {
+        "draft": {
             "date_fields": ["init_date", "final_date"],
             "fields": {
 
