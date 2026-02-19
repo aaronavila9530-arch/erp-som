@@ -4,6 +4,11 @@ from typing import Optional
 from datetime import datetime
 from fastapi.responses import FileResponse
 from services.vessel_truck_supervision_pdf_service import generate_vessel_truck_supervision_pdf
+from services.presentation_truck_supervision_service import (
+    generate_truck_supervision_presentation_pdf
+)
+from services.pdf_merge_service import merge_pdfs
+
 
 
 
@@ -610,6 +615,10 @@ def update_vessel_truck_supervision(
 
 
 
+# =========================================================
+# approve generar reporte
+# =========================================================
+
 @router.post("/{report_id}/approve")
 def approve_vessel_truck_supervision(
     report_id: int,
@@ -680,6 +689,76 @@ def approve_vessel_truck_supervision(
         raise HTTPException(
             status_code=500,
             detail=f"Error approving report: {str(e)}"
+        )
+
+    finally:
+        cur.close()
+
+
+
+
+# =========================================================
+# crear presentación
+# =========================================================
+
+@router.get("/{report_id}/presentation")
+def generate_truck_presentation(report_id: int, conn=Depends(get_db)):
+
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+
+    try:
+        cur.execute(
+            "SELECT * FROM vessel_truck_supervision_reports WHERE id = %s",
+            (report_id,)
+        )
+        report = cur.fetchone()
+
+        if not report:
+            raise HTTPException(status_code=404, detail="Report not found")
+
+        pdf_path = generate_truck_supervision_presentation_pdf(report)
+
+        return FileResponse(
+            pdf_path,
+            filename=f"Presentation_{report.get('cert_no')}.pdf",
+            media_type="application/pdf"
+        )
+
+    finally:
+        cur.close()
+
+
+
+# =========================================================
+# merge unificado reporte
+# =========================================================
+
+@router.get("/{report_id}/unified")
+def generate_truck_unified(report_id: int, conn=Depends(get_db)):
+
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+
+    try:
+        cur.execute(
+            "SELECT * FROM vessel_truck_supervision_reports WHERE id = %s",
+            (report_id,)
+        )
+        report = cur.fetchone()
+
+        if not report:
+            raise HTTPException(status_code=404, detail="Report not found")
+
+        presentation_pdf = generate_truck_supervision_presentation_pdf(report)
+
+        # Aquí debes generar o localizar el PDF principal del reporte
+        report_pdf = generate_vessel_truck_supervision_pdf(report)
+
+        unified_pdf = merge_pdfs(presentation_pdf, report_pdf)
+
+        return FileResponse(
+            unified_pdf,
+            filename=f"Unified_{report.get('cert_no')}.pdf",
+            media_type="application/pdf"
         )
 
     finally:
