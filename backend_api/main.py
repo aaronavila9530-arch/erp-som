@@ -63,6 +63,7 @@ from routers import proyectos_calculo
 from routers import vessel_grain_sampling
 from routers import status_informes
 from routers.vessel_truck_supervision import router as vessel_truck_supervision_router
+from routers.draft_survey_router import router as draft_survey_router
 
 # Comercial
 from routers.comercial import router as comercial_router
@@ -221,6 +222,7 @@ app.include_router(proyectos_calculo.router)
 app.include_router(vessel_grain_sampling.router)
 app.include_router(status_informes.router)
 app.include_router(vessel_truck_supervision_router)
+app.include_router(draft_survey_router)
 
 app.include_router(comercial_router)
 app.include_router(comercial_clients_analytics_router)
