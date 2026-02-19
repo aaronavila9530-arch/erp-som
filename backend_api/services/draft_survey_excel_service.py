@@ -27,61 +27,57 @@ class DraftSurveyExcelGenerator:
             "fields": {
 
                 # HEADER
-                "vessel_mv": "C5",
-                "survey_no": "H5",
-                "call_letters": "J5",
-                "vessel_previous_names": "C6",
+                "vessel_mv": "X1",
+                "survey_no": "X3",
+                "call_letters": "AI3",
+                "vessel_previous_names": "J6",
 
                 # REGISTRY BLOCK
                 "flag": "C8",
-                "registry": "H8",
-                "built_year": "C9",
-                "by": "H9",
+                "registry": "M8",
+                "built_year": "W8",
+                "by": "AA8",
 
                 # OFFICERS
-                "master": "C11",
-                "chief_officer": "C12",
-                "chief_engineer": "C13",
-                "witness_draughts": "C14",
-                "witness_sounding": "C15",
+                "master": "H10",
+                "chief_officer": "H11",
+                "chief_engineer": "H12",
+                "witness_draughts": "H13",
+                "witness_sounding": "H14",
 
                 # SURVEY INFO
-                "initial_surveyors": "H11",
-                "final_surveyors": "H12",
-                "survey_requested_by": "H13",
-                "on_account_of": "H14",
-                "attended_also_by": "H15",
+                "initial_surveyors": "AB10",
+                "final_surveyors": "AB11",
+                "survey_requested_by": "AB12",
+                "on_account_of": "AB13",
+                "attended_also_by": "AB14",
 
                 # LOCATIONS
-                "init_ships_location": "C16",
-                "final_ships_location": "H16",
+                "init_ships_location": "H16",
+                "final_ships_location": "AB16",
 
                 # DIMENSIONS
-                "length_overall": "C18",
-                "length_between_pp": "C19",
-                "extreme_breadth": "C20",
-                "moulded_breadth": "C21",
-                "depth_overall_incl_keel_plate": "C22",
-                "moulded_depth": "C23",
-                "summer_draught": "C24",
-                "summer_freeboard": "C25",
+                "length_overall": "M18",
+                "length_between_pp": "M19",
+                "extreme_breadth": "M20",
+                "moulded_breadth": "M21",
+                "depth_overall_incl_keel_plate": "M22",
+                "moulded_depth": "M23",
+                "summer_draught": "M24",
+                "summer_freeboard": "M25",
 
                 # CONSTANTS / TONNAGE
-                "constant_declared": "H18",
-                "constant_calculated": "H19",
-                "light_displacement": "H20",
-                "light_shipweight_plan": "H21",
-                "summer_displacement": "H22",
-                "summer_deadweight": "H23",
-                "net_register_tons": "H24",
-                "gross_register_tons": "H25",
+                "constant_declared": "AG18",
+                "constant_calculated": "AG19",
+                "light_displacement": "AG20",
+                "light_shipweight_plan": "AG21",
+                "summer_displacement": "AG22",
+                "summer_deadweight": "AG23",
+                "net_register_tons": "AG24",
+                "gross_register_tons": "AG25",
 
                 # HYDROSTATIC
-                "hydro_tables_issued": "C27",
-                "trim_tables_available": "C28",
-
-                # EXTRA FIELD VISIBLE
-                "hydrometer_no": "H27"
+                "hydro_tables_issued": "L32",
             }
         },
 
@@ -181,14 +177,34 @@ class DraftSurveyExcelGenerator:
     }
 
     # =========================================================
-    # SAFE SETTERS
+    # SAFE SETTERS (MERGE SAFE + NUMERIC SAFE + BOOL SAFE)
     # =========================================================
     def _safe_set(self, ws: Worksheet, cell: str, value):
+
+        if value in [None, ""]:
+            return
+
+        # Normalizar booleanos a YES/NO si aplica
+        if isinstance(value, bool):
+            value = "YES" if value else "NO"
+
+        # Intentar convertir a número si es numérico
+        try:
+            if isinstance(value, str):
+                v = value.replace(",", ".")
+                if v.replace(".", "", 1).isdigit():
+                    value = float(v)
+        except Exception:
+            pass
+
+        # Manejo de merged cells
         for merged in ws.merged_cells.ranges:
             if cell in merged:
                 ws.cell(row=merged.min_row, column=merged.min_col).value = value
                 return
+
         ws[cell].value = value
+
 
     def _safe_set_date(self, ws: Worksheet, cell: str, value):
 
@@ -202,6 +218,7 @@ class DraftSurveyExcelGenerator:
                 parsed = value
             elif isinstance(value, str):
                 v = value.strip()
+
                 if "-" in v and len(v.split("-")[0]) == 4:
                     parsed = datetime.strptime(v.split(" ")[0], "%Y-%m-%d")
                 else:
