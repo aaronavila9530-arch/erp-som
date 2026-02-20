@@ -112,7 +112,7 @@ class DraftSurveyExcelGenerator:
                 # NUEVOS CAMPOS INITIAL
                 # ============================
 
-                "init_tpc_p": "O16",
+                "init_tpc_p": "Q16",
                 "init_tpc_s": "U16",
                 "init_bl_figure": "M35",
 
