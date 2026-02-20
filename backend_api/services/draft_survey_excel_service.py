@@ -370,21 +370,48 @@ class DraftSurveyExcelGenerator:
         parsed = None
 
         try:
+            # -------------------------------------------------
+            # 1) Si ya es datetime o date → usar directo
+            # -------------------------------------------------
             if isinstance(value, (datetime, date)):
                 parsed = value
-            elif isinstance(value, str):
-                v = value.strip()
 
-                if "-" in v and len(v.split("-")[0]) == 4:
-                    parsed = datetime.strptime(v.split(" ")[0], "%Y-%m-%d")
-                else:
-                    parsed = datetime.strptime(v.split(" ")[0], "%d-%m-%Y")
+            # -------------------------------------------------
+            # 2) Si es string → intentar múltiples formatos
+            # -------------------------------------------------
+            elif isinstance(value, str):
+
+                v = value.strip().split(" ")[0]
+
+                # Intentar formatos comunes usados en el ERP
+                date_formats = [
+                    "%m-%d-%Y",  # 02-20-2026  ← DateEntry actual
+                    "%d-%m-%Y",  # 20-02-2026
+                    "%Y-%m-%d",  # 2026-02-20
+                    "%m/%d/%Y",
+                    "%d/%m/%Y",
+                    "%Y/%m/%d",
+                ]
+
+                for fmt in date_formats:
+                    try:
+                        parsed = datetime.strptime(v, fmt)
+                        break
+                    except Exception:
+                        continue
+
         except Exception:
             parsed = None
 
+        # -------------------------------------------------
+        # Si no logró parsear, salir silenciosamente
+        # -------------------------------------------------
         if not parsed:
             return
 
+        # -------------------------------------------------
+        # Manejo seguro de merged cells
+        # -------------------------------------------------
         for merged in ws.merged_cells.ranges:
             if cell in merged:
                 c = ws.cell(row=merged.min_row, column=merged.min_col)
@@ -392,6 +419,9 @@ class DraftSurveyExcelGenerator:
                 c.number_format = "DD-MM-YYYY"
                 return
 
+        # -------------------------------------------------
+        # Celda normal
+        # -------------------------------------------------
         ws[cell].value = parsed
         ws[cell].number_format = "DD-MM-YYYY"
 
