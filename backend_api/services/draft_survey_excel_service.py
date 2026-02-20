@@ -81,7 +81,7 @@ class DraftSurveyExcelGenerator:
             }
         },
 
-        "draft": {
+        "Draft": {
             "date_fields": ["init_date", "final_date"],
             "fields": {
 
@@ -190,7 +190,7 @@ class DraftSurveyExcelGenerator:
             }
         },
 
-        "deductions": {
+        "Deductions": {
             "date_fields": [],
             "fields": {
 
