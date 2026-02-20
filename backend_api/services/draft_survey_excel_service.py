@@ -86,48 +86,46 @@ class DraftSurveyExcelGenerator:
             "fields": {
 
                 # =====================================================
-                # INITIAL BLOCK
+                # INITIAL — TOP
                 # =====================================================
 
                 "init_date": "T2",
                 "init_time_from": "T3",
                 "init_time_to": "T4",
-                "init_cargo": "AB2",
-                "init_port_from": "AB3",
-                "init_port_to": "AB4",
+                "cargo": "AB2",
+                "port_from": "AB3",
+                "port_to": "AB4",
 
-                # DRAFT READINGS
+                # =====================================================
+                # INITIAL — DRAFT READINGS
+                # =====================================================
+
                 "init_draft_fwd_port": "A8",
-                "init_draft_fwd_stb": "A9",
-                "init_draft_mid_port": "A10",
-                "init_draft_mid_stb": "E8",
-                "init_draft_aft_port": "E9",
-                "init_draft_aft_stb": "E10",
+                "init_draft_fwd_stb": "F8",
+                "init_draft_mid_port": "A9",
+                "init_draft_mid_stb": "F9",
+                "init_draft_aft_port": "A10",
+                "init_draft_aft_stb": "F10",
 
-                # TRIM BLOCK
+                "init_draft_fwd_marks": "V8",
+                "init_draft_mid_marks": "V9",
+                "init_draft_aft_marks": "V10",
+
                 "init_sg": "I13",
                 "init_lpp": "M13",
 
-                # ============================
-                # NUEVOS CAMPOS INITIAL
-                # ============================
+                # =====================================================
+                # INITIAL — FIGURES
+                # =====================================================
 
                 "init_tpc_p": "Q16",
                 "init_tpc_s": "U16",
                 "init_bl_figure": "M35",
 
-                # ============================
-                # HYDRO INITIAL (YELLOW)
-                # ============================
+                # =====================================================
+                # INITIAL — DEDUCTIONS
+                # =====================================================
 
-                "init_hydro_draft": "I28",
-                "init_hydro_mtc_plus_50": "I29",
-                "init_hydro_draft_minus": "I30",
-                "init_hydro_draft_plus": "M28",
-                "init_hydro_mtc_minus_50": "M29",
-                "init_hydro_lcf": "M30",
-
-                # DEDUCTIONS
                 "init_ballast": "G18",
                 "init_fresh_water": "G19",
                 "init_fuel_oil": "G20",
@@ -138,12 +136,73 @@ class DraftSurveyExcelGenerator:
                 "init_others": "G25",
 
                 # =====================================================
-                # FINAL BLOCK
+                # INITIAL — HYDRO 1 (CUADRO 1)
+                # 4 filas EXACTAS:
+                #   F1: draft/disp/tpc/lcf
+                #   F2: draft/disp/tpc/lcf
+                #   F3: draft_mtc / mtc+50 / mtc-50
+                #   F4: mtc+50 / mtc-50
+                # =====================================================
+
+                # Fila 1
+                "init_hydro1_draft_1": "BG27",
+                "init_hydro1_disp_1":  "BH27",
+                "init_hydro1_tpc_1":   "BI27",
+                "init_hydro1_lcf_1":   "BJ27",
+
+                # Fila 2
+                "init_hydro1_draft_2": "BG29",
+                "init_hydro1_disp_2":  "BH29",
+                "init_hydro1_tpc_2":   "BI29",
+                "init_hydro1_lcf_2":   "BJ29",
+
+                # Fila 3
+                "init_hydro1_draft_mtc":  "BG31",
+                "init_hydro1_mtc_p50_1":  "BH31",
+                "init_hydro1_mtc_m50_1":  "BJ31",
+
+                # Fila 4
+                "init_hydro1_mtc_p50_2":  "BH33",
+                "init_hydro1_mtc_m50_2":  "BJ33",
+
+
+                # =====================================================
+                # INITIAL — HYDRO 2 (CUADRO 2)
+                # MISMA ESTRUCTURA, SOLO CAMBIA EL BLOQUE DE CELDAS
+                # =====================================================
+
+                # Fila 1
+                "init_hydro2_draft_1": "BG36",
+                "init_hydro2_disp_1":  "BH36",
+                "init_hydro2_tpc_1":   "BI36",
+                "init_hydro2_lcf_1":   "BJ36",
+
+                # Fila 2
+                "init_hydro2_draft_2": "BG38",
+                "init_hydro2_disp_2":  "BH38",
+                "init_hydro2_tpc_2":   "BI38",
+                "init_hydro2_lcf_2":   "BJ38",
+
+                # Fila 3
+                "init_hydro2_draft_mtc":  "BG40",
+                "init_hydro2_mtc_p50_1":  "BH40",
+                "init_hydro2_mtc_m50_1":  "BJ40",
+
+                # Fila 4
+                "init_hydro2_mtc_p50_2":  "BH42",
+                "init_hydro2_mtc_m50_2":  "BJ42",
+
+                # =====================================================
+                # FINAL — TOP
                 # =====================================================
 
                 "final_date": "AS2",
                 "final_time_from": "AS3",
                 "final_time_to": "AS4",
+
+                # =====================================================
+                # FINAL — DRAFT READINGS
+                # =====================================================
 
                 "final_draft_fwd_port": "Z8",
                 "final_draft_fwd_stb": "Z9",
@@ -152,26 +211,24 @@ class DraftSurveyExcelGenerator:
                 "final_draft_aft_port": "AD9",
                 "final_draft_aft_stb": "AD10",
 
-                "final_sg": "AH13",
+                "final_draft_fwd_marks": "AU8",
+                "final_draft_mid_marks": "AU9",
+                "final_draft_aft_marks": "AU10",
 
-                # ============================
-                # NUEVOS CAMPOS FINAL
-                # ============================
+                "final_sg": "AH13",
+                "final_lpp": "AL13",
+
+                # =====================================================
+                # FINAL — FIGURES
+                # =====================================================
 
                 "final_tpc_p": "AP16",
                 "final_tpc_s": "AT16",
                 "final_bl_figure": "AG35",
 
-                # ============================
-                # HYDRO FINAL (YELLOW)
-                # ============================
-
-                "final_hydro_draft": "AH28",
-                "final_hydro_mtc_plus_50": "AH29",
-                "final_hydro_draft_minus": "AH30",
-                "final_hydro_draft_plus": "AL28",
-                "final_hydro_mtc_minus_50": "AL29",
-                "final_hydro_lcf": "AL30",
+                # =====================================================
+                # FINAL — DEDUCTIONS
+                # =====================================================
 
                 "final_fuel_oil": "AS20",
                 "final_diesel_oil": "AS21",
@@ -181,7 +238,58 @@ class DraftSurveyExcelGenerator:
                 "final_others": "AS25",
 
                 # =====================================================
-                # FIRMAS
+                # FINAL — HYDRO 1 (CUADRO 1 — 4 FILAS)
+                # =====================================================
+
+                # Fila 1
+                "final_hydro1_draft_1": "BG27",
+                "final_hydro1_disp_1":  "BH27",
+                "final_hydro1_tpc_1":   "BI27",
+                "final_hydro1_lcf_1":   "BJ27",
+
+                # Fila 2
+                "final_hydro1_draft_2": "BG29",
+                "final_hydro1_disp_2":  "BH29",
+                "final_hydro1_tpc_2":   "BI29",
+                "final_hydro1_lcf_2":   "BJ29",
+
+                # Fila 3
+                "final_hydro1_draft_mtc": "BG31",
+                "final_hydro1_mtc_p50_1": "BH31",
+                "final_hydro1_mtc_m50_1": "BJ31",
+
+                # Fila 4
+                "final_hydro1_mtc_p50_2": "BH33",
+                "final_hydro1_mtc_m50_2": "BJ33",
+
+
+                # =====================================================
+                # FINAL — HYDRO 2 (CUADRO 2 — 4 FILAS)
+                # =====================================================
+
+                # Fila 1
+                "final_hydro2_draft_1": "BG36",
+                "final_hydro2_disp_1":  "BH36",
+                "final_hydro2_tpc_1":   "BI36",
+                "final_hydro2_lcf_1":   "BJ36",
+
+                # Fila 2
+                "final_hydro2_draft_2": "BG38",
+                "final_hydro2_disp_2":  "BH38",
+                "final_hydro2_tpc_2":   "BI38",
+                "final_hydro2_lcf_2":   "BJ38",
+
+                # Fila 3
+                "final_hydro2_draft_mtc": "BG40",
+                "final_hydro2_mtc_p50_1": "BH40",
+                "final_hydro2_mtc_m50_1": "BJ40",
+
+                # Fila 4
+                "final_hydro2_mtc_p50_2": "BH42",
+                "final_hydro2_mtc_m50_2": "BJ42",
+
+                # =====================================================
+                # SIGNATURES
                 # =====================================================
 
                 "chief_officer": "AN29",
@@ -190,147 +298,132 @@ class DraftSurveyExcelGenerator:
             }
         },
 
+
         "Deductions": {
             "date_fields": [],
             "fields": {
 
                 # =====================================================
-                # INITIAL BALLAST
+                # INITIAL BALLAST (HEIGHT + VOLUME)
                 # =====================================================
 
-                "init_FPT_sounding": "D8",
-                "init_FPT_volume": "E8",
-                "init_FPT_density": "F8",
+                "init_FPT_height": "G11",
+                "init_FPT_volume": "J11",
 
-                "init_WBT 1P_sounding": "D9",
-                "init_WBT 1P_volume": "E9",
-                "init_WBT 1P_density": "F9",
+                "init_WBT 1P_height": "G12",
+                "init_WBT 1P_volume": "J12",
 
-                "init_WBT 1S_sounding": "D10",
-                "init_WBT 1S_volume": "E10",
-                "init_WBT 1S_density": "F10",
+                "init_WBT 1S_height": "G13",
+                "init_WBT 1S_volume": "J13",
 
-                "init_WBT 2P_sounding": "D11",
-                "init_WBT 2P_volume": "E11",
-                "init_WBT 2P_density": "F11",
+                "init_WBT 2P_height": "G14",
+                "init_WBT 2P_volume": "J14",
 
-                "init_WBT 2S_sounding": "D12",
-                "init_WBT 2S_volume": "E12",
-                "init_WBT 2S_density": "F12",
+                "init_WBT 2S_height": "G15",
+                "init_WBT 2S_volume": "J15",
 
-                "init_WBT 3P_sounding": "D13",
-                "init_WBT 3P_volume": "E13",
-                "init_WBT 3P_density": "F13",
+                "init_WBT 3P_height": "G17",
+                "init_WBT 3P_volume": "J17",
 
-                "init_WBT 3S_sounding": "D14",
-                "init_WBT 3S_volume": "E14",
-                "init_WBT 3S_density": "F14",
+                "init_WBT 3S_height": "G18",
+                "init_WBT 3S_volume": "J18",
 
-                "init_WBT 4P_sounding": "D15",
-                "init_WBT 4P_volume": "E15",
-                "init_WBT 4P_density": "F15",
+                "init_WBT 4P_height": "G19",
+                "init_WBT 4P_volume": "J19",
 
-                "init_WBT 4S_sounding": "D16",
-                "init_WBT 4S_volume": "E16",
-                "init_WBT 4S_density": "F16",
+                "init_WBT 4S_height": "G20",
+                "init_WBT 4S_volume": "J20",
 
-                "init_WBT 5P_sounding": "D17",
-                "init_WBT 5P_volume": "E17",
-                "init_WBT 5P_density": "F17",
+                "init_WBT 5P_height": "G21",
+                "init_WBT 5P_volume": "J21",
 
-                "init_WBT 5S_sounding": "D18",
-                "init_WBT 5S_volume": "E18",
-                "init_WBT 5S_density": "F18",
+                "init_WBT 5S_height": "G22",
+                "init_WBT 5S_volume": "J22",
 
-                "init_APT_sounding": "D19",
-                "init_APT_volume": "E19",
-                "init_APT_density": "F19",
+                "init_APT_height": "G23",
+                "init_APT_volume": "J23",
 
-                "init_SLOP TANK_volume": "E20",
-                "init_FW WASH_volume": "E21",
+                "init_SLOP TANK_height": "G24",
+                "init_SLOP TANK_volume": "J24",
+
+                "init_FW WASH_height": "G25",
+                "init_FW WASH_volume": "J25",
 
                 # =====================================================
-                # INITIAL FRESH WATER
+                # INITIAL FRESH WATER (HEIGHT + VOLUME)
                 # =====================================================
 
-                "init_FW P_volume": "E24",
+                "init_FW P_height": "G47",
+                "init_FW P_volume": "J47",
 
-                "init_FW S_volume": "E25",
+                "init_FW S_height": "G48",
+                "init_FW S_volume": "J48",
 
-                "init_FW DIST_volume": "E26",
-
-                # =====================================================
-                # FINAL BALLAST
-                # =====================================================
-
-                "final_FPT_sounding": "J8",
-                "final_FPT_volume": "K8",
-                "final_FPT_density": "L8",
-
-                "final_WBT 1P_sounding": "J9",
-                "final_WBT 1P_volume": "K9",
-                "final_WBT 1P_density": "L9",
-
-                "final_WBT 1S_sounding": "J10",
-                "final_WBT 1S_volume": "K10",
-                "final_WBT 1S_density": "L10",
-
-                "final_WBT 2P_sounding": "J11",
-                "final_WBT 2P_volume": "K11",
-                "final_WBT 2P_density": "L11",
-
-                "final_WBT 2S_sounding": "J12",
-                "final_WBT 2S_volume": "K12",
-                "final_WBT 2S_density": "L12",
-
-                "final_WBT 3P_sounding": "J13",
-                "final_WBT 3P_volume": "K13",
-                "final_WBT 3P_density": "L13",
-
-                "final_WBT 3S_sounding": "J14",
-                "final_WBT 3S_volume": "K14",
-                "final_WBT 3S_density": "L14",
-
-                "final_WBT 4P_sounding": "J15",
-                "final_WBT 4P_volume": "K15",
-                "final_WBT 4P_density": "L15",
-
-                "final_WBT 4S_sounding": "J16",
-                "final_WBT 4S_volume": "K16",
-                "final_WBT 4S_density": "L16",
-
-                "final_WBT 5P_sounding": "J17",
-                "final_WBT 5P_volume": "K17",
-                "final_WBT 5P_density": "L17",
-
-                "final_WBT 5S_sounding": "J18",
-                "final_WBT 5S_volume": "K18",
-                "final_WBT 5S_density": "L18",
-
-                "final_APT_sounding": "J19",
-                "final_APT_volume": "K19",
-                "final_APT_density": "L19",
-
-                "final_SLOP TANK_sounding": "J20",
-                "final_SLOP TANK_volume": "K20",
-                "final_SLOP TANK_density": "L20",
-
-                "final_FW WASH_sounding": "J21",
-                "final_FW WASH_volume": "K21",
-                "final_FW WASH_density": "L21",
+                "init_FW DIST_height": "G49",
+                "init_FW DIST_volume": "J49",
 
                 # =====================================================
-                # FINAL FRESH WATER
+                # FINAL BALLAST (HEIGHT + VOLUME)
                 # =====================================================
 
-                "final_FW P_volume": "K24",
+                "final_FPT_height": "W11",
+                "final_FPT_volume": "Z11",
 
-                "final_FW S_volume": "K25",
+                "final_WBT 1P_height": "W12",
+                "final_WBT 1P_volume": "Z12",
 
-                "final_FW DIST_volume": "K26",
+                "final_WBT 1S_height": "W13",
+                "final_WBT 1S_volume": "Z13",
+
+                "final_WBT 2P_height": "W14",
+                "final_WBT 2P_volume": "Z14",
+
+                "final_WBT 2S_height": "W15",
+                "final_WBT 2S_volume": "Z15",
+
+                "final_WBT 3P_height": "W16",
+                "final_WBT 3P_volume": "Z16",
+
+                "final_WBT 3S_height": "W17",
+                "final_WBT 3S_volume": "Z17",
+
+                "final_WBT 4P_height": "W18",
+                "final_WBT 4P_volume": "Z18",
+
+                "final_WBT 4S_height": "W19",
+                "final_WBT 4S_volume": "Z19",
+
+                "final_WBT 5P_height": "W20",
+                "final_WBT 5P_volume": "Z20",
+
+                "final_WBT 5S_height": "W21",
+                "final_WBT 5S_volume": "Z21",
+
+                "final_APT_height": "W22",
+                "final_APT_volume": "Z22",
+
+                "final_SLOP TANK_height": "W23",
+                "final_SLOP TANK_volume": "Z23",
+
+                "final_FW WASH_height": "W24",
+                "final_FW WASH_volume": "Z24",
+
+                # =====================================================
+                # FINAL FRESH WATER (HEIGHT + VOLUME)
+                # =====================================================
+
+                "final_FW P_height": "D47",
+                "final_FW P_volume": "J47",
+
+                "final_FW S_height": "D48",
+                "final_FW S_volume": "J48",
+
+                "final_FW DIST_height": "D49",
+                "final_FW DIST_volume": "J49",
             }
         }
-    }   # ← ESTA llave faltaba (cierra EXCEL_MAPPING)
+
+    }  # ← CERRAR EXCEL_MAPPING
 
     # =========================================================
     # SAFE SETTERS (MERGE SAFE + NUMERIC SAFE + BOOL SAFE)
