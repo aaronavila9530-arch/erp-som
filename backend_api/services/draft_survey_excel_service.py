@@ -327,53 +327,53 @@ class DraftSurveyExcelGenerator:
                 "init_WBT 2S_volume": "J15",
                 "init_WBT 2S_density": "M15",
 
-                "init_WBT 3P_sounding": "G17",
-                "init_WBT 3P_volume": "J17",
-                "init_WBT 3P_density": "M17",
+                "init_WBT 3P_sounding": "G16",
+                "init_WBT 3P_volume": "J16",
+                "init_WBT 3P_density": "M16",
 
-                "init_WBT 3S_sounding": "G18",
-                "init_WBT 3S_volume": "J18",
-                "init_WBT 3S_density": "M18",
+                "init_WBT 3S_sounding": "G17",
+                "init_WBT 3S_volume": "J17",
+                "init_WBT 3S_density": "M17",
 
-                "init_WBT 4P_sounding": "G19",
-                "init_WBT 4P_volume": "J19",
-                "init_WBT 4P_density": "M19",
+                "init_WBT 4P_sounding": "G18",
+                "init_WBT 4P_volume": "J18",
+                "init_WBT 4P_density": "M18",
 
-                "init_WBT 4S_sounding": "G20",
-                "init_WBT 4S_volume": "J20",
-                "init_WBT 4S_density": "M20",
+                "init_WBT 4S_sounding": "G19",
+                "init_WBT 4S_volume": "J19",
+                "init_WBT 4S_density": "M19",
 
-                "init_WBT 5P_sounding": "G21",
-                "init_WBT 5P_volume": "J21",
-                "init_WBT 5P_density": "M21",
+                "init_WBT 5P_sounding": "G20",
+                "init_WBT 5P_volume": "J20",
+                "init_WBT 5P_density": "M20",
 
-                "init_WBT 5S_sounding": "G22",
-                "init_WBT 5S_volume": "J22",
-                "init_WBT 5S_density": "M22",
+                "init_WBT 5S_sounding": "G21",
+                "init_WBT 5S_volume": "J21",
+                "init_WBT 5S_density": "M21",
 
-                "init_APT_sounding": "G23",
-                "init_APT_volume": "J23",
-                "init_APT_density": "M23",
+                "init_APT_sounding": "G22",
+                "init_APT_volume": "J22",
+                "init_APT_density": "M22",
 
-                "init_SLOP TANK_sounding": "G24",
-                "init_SLOP TANK_volume": "J24",
-                "init_SLOP TANK_density": "M24",
+                "init_SLOP TANK_sounding": "G23",
+                "init_SLOP TANK_volume": "J23",
+                "init_SLOP TANK_density": "M23",
 
-                "init_FW WASH_sounding": "G25",
-                "init_FW WASH_volume": "J25",
-                "init_FW WASH_density": "M25",
+                "init_FW WASH_sounding": "G24",
+                "init_FW WASH_volume": "J24",
+                "init_FW WASH_density": "M24",
 
                 # =====================================================
                 # INITIAL FRESH WATER (HEIGHT + VOLUME)
                 # =====================================================
 
-                "init_FW P_height": "G47",
+                "init_FW P_height": "D47",
                 "init_FW P_volume": "J47",
 
-                "init_FW S_height": "G48",
+                "init_FW S_height": "D48",
                 "init_FW S_volume": "J48",
 
-                "init_FW DIST_height": "G49",
+                "init_FW DIST_height": "D49",
                 "init_FW DIST_volume": "J49",
 
                 # =====================================================
@@ -382,59 +382,59 @@ class DraftSurveyExcelGenerator:
 
                 "final_FPT_sounding": "W11",
                 "final_FPT_volume": "Z11",
-                "final_FPT_density": "AF11",
+                "final_FPT_density": "AC11",
 
                 "final_WBT 1P_sounding": "W12",
                 "final_WBT 1P_volume": "Z12",
-                "final_WBT 1P_density": "AF12",
+                "final_WBT 1P_density": "AC12",
 
                 "final_WBT 1S_sounding": "W13",
                 "final_WBT 1S_volume": "Z13",
-                "final_WBT 1S_density": "AF13",
+                "final_WBT 1S_density": "AC13",
 
                 "final_WBT 2P_sounding": "W14",
                 "final_WBT 2P_volume": "Z14",
-                "final_WBT 2P_density": "AF14",
+                "final_WBT 2P_density": "AC14",
 
                 "final_WBT 2S_sounding": "W15",
                 "final_WBT 2S_volume": "Z15",
-                "final_WBT 2S_density": "AF15",
+                "final_WBT 2S_density": "AC15",
 
                 "final_WBT 3P_sounding": "W16",
                 "final_WBT 3P_volume": "Z16",
-                "final_WBT 3P_density": "AF16",
+                "final_WBT 3P_density": "AC16",
 
                 "final_WBT 3S_sounding": "W17",
                 "final_WBT 3S_volume": "Z17",
-                "final_WBT 3S_density": "AF17",
+                "final_WBT 3S_density": "AC17",
 
                 "final_WBT 4P_sounding": "W18",
                 "final_WBT 4P_volume": "Z18",
-                "final_WBT 4P_density": "AF18",
+                "final_WBT 4P_density": "AC18",
 
                 "final_WBT 4S_sounding": "W19",
                 "final_WBT 4S_volume": "Z19",
-                "final_WBT 4S_density": "AF19",
+                "final_WBT 4S_density": "AC19",
 
                 "final_WBT 5P_sounding": "W20",
                 "final_WBT 5P_volume": "Z20",
-                "final_WBT 5P_density": "AF20",
+                "final_WBT 5P_density": "AC20",
 
                 "final_WBT 5S_sounding": "W21",
                 "final_WBT 5S_volume": "Z21",
-                "final_WBT 5S_density": "AF21",
+                "final_WBT 5S_density": "AC21",
 
                 "final_APT_sounding": "W22",
                 "final_APT_volume": "Z22",
-                "final_APT_density": "AF22",
+                "final_APT_density": "AC22",
 
                 "final_SLOP TANK_sounding": "W23",
                 "final_SLOP TANK_volume": "Z23",
-                "final_SLOP TANK_density": "AF23",
+                "final_SLOP TANK_density": "AC23",
 
                 "final_FW WASH_sounding": "W24",
                 "final_FW WASH_volume": "Z24",
-                "final_FW WASH_density": "AF24",
+                "final_FW WASH_density": "AC24",
 
                 # =====================================================
                 # FINAL FRESH WATER (HEIGHT + VOLUME)
