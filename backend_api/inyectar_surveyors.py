@@ -3,7 +3,7 @@ import psycopg2
 import pandas as pd
 
 
-DB_URL = "postgresql://postgres:LjjyuIUsTSCdiwPVHSSwtIYPOsRQytGX@shortline.proxy.rlwy.net:50018/railway"
+DB_URL = "postgresql://postgres:IrPzbLzKJFQtUnMlBKcHLHcLIAqagHCT@tramway.proxy.rlwy.net:15258/railway"
 
 BASE_DIR = r"C:\Users\Aaron Avila\Documents\ERP-SOM\backend_api"
 EXCEL_FILE = os.path.join(BASE_DIR, "surveyors.xlsx")
