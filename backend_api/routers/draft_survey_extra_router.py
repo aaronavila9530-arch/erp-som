@@ -29,7 +29,7 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
         # 🔎 VALIDAR QUE EL DRAFT EXISTA (EVITA FK ERROR)
         # =====================================================
         cur.execute(
-            "SELECT id FROM draft_survey WHERE id = %s",
+            "SELECT id FROM draft_survey WHERE general_id = %s",
             (draft_survey_id,)
         )
         if not cur.fetchone():
