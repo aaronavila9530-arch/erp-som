@@ -22,9 +22,10 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
     cur = conn.cursor()
 
     try:
+        payload = _safe_payload(payload)
         payload["draft_survey_id"] = draft_survey_id
 
-        cur.execute("""
+        sql = """
             INSERT INTO draft_survey_ballast (
                 draft_survey_id,
                 init_fpt_sounding, init_fpt_volume, init_fpt_density,
@@ -97,7 +98,11 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
                 %(final_fw_dist_height)s, %(final_fw_dist_volume)s,
                 'Pending for review'
             )
-        """, payload)
+        """
+
+        payload = _ensure_keys(payload, sql)
+
+        cur.execute(sql, payload)
 
         conn.commit()
         return {"success": True}
