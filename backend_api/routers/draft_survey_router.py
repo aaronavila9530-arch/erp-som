@@ -549,6 +549,19 @@ def update_draft_survey(general_id: int, payload: dict, conn=Depends(get_db)):
             WHERE general_id=%(general_id)s
         """, {**payload, "general_id": general_id, "status": new_status})
 
+        conn.commit()
+
+        return {
+            "success": True,
+            "status": new_status
+        }
+
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+    finally:
+        cur.close()
 # =========================================================
 # Preview
 # =========================================================
