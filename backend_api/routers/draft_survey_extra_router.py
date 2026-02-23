@@ -22,7 +22,10 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
     cur = conn.cursor()
 
     try:
-        payload = _safe_payload(payload)
+        # =====================================================
+        # 🔒 PAYLOAD SAFE
+        # =====================================================
+        payload = payload or {}
         payload["draft_survey_id"] = draft_survey_id
 
         sql = """
@@ -100,8 +103,35 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
             )
         """
 
-        payload = _ensure_keys(payload, sql)
+        # =====================================================
+        # 🔒 AUTO INYECTAR KEYS FALTANTES
+        # =====================================================
+        import re
+        keys = re.findall(r"%\((.*?)\)s", sql)
+        for k in keys:
+            payload.setdefault(k, None)
 
+        # =====================================================
+        # 🔒 LIMPIAR STRINGS VACÍOS ("" → NULL)
+        # =====================================================
+        for k, v in payload.items():
+            if isinstance(v, str):
+                value = v.strip()
+                if value == "":
+                    payload[k] = None
+                else:
+                    # intentar convertir a número si es numérico
+                    try:
+                        if "." in value:
+                            payload[k] = float(value)
+                        else:
+                            payload[k] = int(value)
+                    except Exception:
+                        payload[k] = value
+
+        # =====================================================
+        # EJECUTAR
+        # =====================================================
         cur.execute(sql, payload)
 
         conn.commit()
@@ -110,6 +140,7 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
     except Exception as e:
         conn.rollback()
         raise HTTPException(status_code=500, detail=str(e))
+
     finally:
         cur.close()
 
