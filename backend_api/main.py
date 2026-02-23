@@ -100,29 +100,13 @@ app.add_middleware(
 # DEBUG: IMPRIMIR RUTAS REGISTRADAS EN STARTUP (SOLO /collections)
 # ============================================================
 @app.on_event("startup")
-def _debug_routes_collections():
-    try:
-        paths = []
-        for r in app.router.routes:
-            path = getattr(r, "path", "")
-            methods = getattr(r, "methods", None)
-
-            if isinstance(path, str) and path.startswith("/collections"):
-                paths.append((path, sorted(list(methods)) if methods else []))
-
-        print("\n=== ROUTES /collections REGISTRADAS ===")
-        if not paths:
-            print("NO HAY RUTAS /collections REGISTRADAS (CRÍTICO)")
-        else:
-            for p, m in sorted(paths):
-                print(f"{p}  {m}")
-        print("=== FIN ROUTES ===\n")
-
-    except Exception as e:
-        print("\n=== ERROR DEBUG ROUTES ===")
-        print(str(e))
-        print("=== FIN ERROR ===\n")
-
+def _debug_routes_all():
+    print("\n=== TODAS LAS RUTAS REGISTRADAS ===")
+    for r in app.router.routes:
+        path = getattr(r, "path", "")
+        methods = getattr(r, "methods", None)
+        print(path, sorted(list(methods)) if methods else [])
+    print("=== FIN ===\n")
 
 # ============================================================
 # HEALTH CHECK
