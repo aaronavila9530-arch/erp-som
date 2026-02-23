@@ -241,11 +241,6 @@ def create_word(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
 
     try:
 
-        # =====================================================
-        # NORMALIZAR VACÍOS → NULL
-        # =====================================================
-        cleaned_payload = {}
-
         expected_fields = [
             "word_mt", "word_product", "word_vessel", "word_port", "word_country",
             "word_survey_requested_by", "word_on_behalf_of",
@@ -262,17 +257,14 @@ def create_word(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
             "word_shore_difference", "word_shore_percentage"
         ]
 
+        # 🔒 Normalizar
+        cleaned = {}
         for field in expected_fields:
             value = payload.get(field)
+            cleaned[field] = None if value in ["", "None", None] else value
 
-            if value == "" or value == "None":
-                cleaned_payload[field] = None
-            else:
-                cleaned_payload[field] = value
+        cleaned["draft_survey_id"] = draft_survey_id
 
-        # =====================================================
-        # INSERT CON TIMESTAMPS EXPLÍCITOS
-        # =====================================================
         cur.execute("""
             INSERT INTO draft_survey_word_report (
                 draft_survey_id,
@@ -294,69 +286,32 @@ def create_word(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
                 status
             )
             VALUES (
-                %s,
+                %(draft_survey_id)s,
                 NOW(),
                 NOW(),
-                %s, %s, %s, %s, %s,
-                %s, %s,
-                %s, %s,
-                %s, %s, %s, %s,
-                %s, %s,
-                %s, %s,
-                %s, %s, %s, %s,
-                %s, %s, %s,
-                %s, %s,
-                %s, %s,
-                %s, %s,
-                %s, %s,
+                %(word_mt)s, %(word_product)s, %(word_vessel)s, %(word_port)s, %(word_country)s,
+                %(word_survey_requested_by)s, %(word_on_behalf_of)s,
+                %(word_master)s, %(word_chief_officer)s,
+                %(word_name)s, %(word_port_registry)s, %(word_grt)s, %(word_nrt)s,
+                %(word_year)s, %(word_imo)s,
+                %(word_arrived_buoy)s, %(word_nor_tendered)s,
+                %(word_all_fast)s, %(word_initial_draft)s,
+                %(word_commenced)s, %(word_completed)s, %(word_final_draft)s,
+                %(word_metric_tons)s, %(word_goods_product)s, %(word_holds)s,
+                %(word_draft_figures)s, %(word_bl_figures)s,
+                %(word_difference)s, %(word_percentage)s,
+                %(word_shore_scale)s, %(word_shore_bl)s,
+                %(word_shore_difference)s, %(word_shore_percentage)s,
                 'Pending for review'
             )
-        """, (
-            draft_survey_id,
-            cleaned_payload["word_mt"],
-            cleaned_payload["word_product"],
-            cleaned_payload["word_vessel"],
-            cleaned_payload["word_port"],
-            cleaned_payload["word_country"],
-            cleaned_payload["word_survey_requested_by"],
-            cleaned_payload["word_on_behalf_of"],
-            cleaned_payload["word_master"],
-            cleaned_payload["word_chief_officer"],
-            cleaned_payload["word_name"],
-            cleaned_payload["word_port_registry"],
-            cleaned_payload["word_grt"],
-            cleaned_payload["word_nrt"],
-            cleaned_payload["word_year"],
-            cleaned_payload["word_imo"],
-            cleaned_payload["word_arrived_buoy"],
-            cleaned_payload["word_nor_tendered"],
-            cleaned_payload["word_all_fast"],
-            cleaned_payload["word_initial_draft"],
-            cleaned_payload["word_commenced"],
-            cleaned_payload["word_completed"],
-            cleaned_payload["word_final_draft"],
-            cleaned_payload["word_metric_tons"],
-            cleaned_payload["word_goods_product"],
-            cleaned_payload["word_holds"],
-            cleaned_payload["word_draft_figures"],
-            cleaned_payload["word_bl_figures"],
-            cleaned_payload["word_difference"],
-            cleaned_payload["word_percentage"],
-            cleaned_payload["word_shore_scale"],
-            cleaned_payload["word_shore_bl"],
-            cleaned_payload["word_shore_difference"],
-            cleaned_payload["word_shore_percentage"]
-        ))
+        """, cleaned)
 
         conn.commit()
         return {"success": True}
 
     except Exception as e:
         conn.rollback()
-
-        # 🔴 ESTO TE VA A DECIR EL ERROR REAL EN LOG
         print("WORD INSERT ERROR:", str(e))
-
         raise HTTPException(status_code=500, detail=str(e))
 
     finally:
