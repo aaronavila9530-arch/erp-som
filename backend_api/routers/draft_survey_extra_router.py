@@ -13,7 +13,7 @@ router = APIRouter(
 )
 
 # ---------------------------------------------------------
-# POST — CREATE BALLAST
+# POST — CREATE BALLAST (FULL HARDENED VERSION)
 # ---------------------------------------------------------
 
 @router.post("/ballast/{draft_survey_id}")
@@ -22,11 +22,34 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
     cur = conn.cursor()
 
     try:
-        # =====================================================
-        # 🔒 PAYLOAD SAFE
-        # =====================================================
         payload = payload or {}
         payload["draft_survey_id"] = draft_survey_id
+
+        # =====================================================
+        # 🔎 VALIDAR QUE EL DRAFT EXISTA (EVITA FK ERROR)
+        # =====================================================
+        cur.execute(
+            "SELECT id FROM draft_survey WHERE id = %s",
+            (draft_survey_id,)
+        )
+        if not cur.fetchone():
+            raise HTTPException(
+                status_code=404,
+                detail=f"draft_survey_id {draft_survey_id} does not exist"
+            )
+
+        # =====================================================
+        # 🔎 EVITAR DUPLICADO (SI SOLO PERMITES 1 BALLAST)
+        # =====================================================
+        cur.execute(
+            "SELECT 1 FROM draft_survey_ballast WHERE draft_survey_id = %s",
+            (draft_survey_id,)
+        )
+        if cur.fetchone():
+            raise HTTPException(
+                status_code=400,
+                detail="Ballast already exists for this draft_survey_id"
+            )
 
         sql = """
             INSERT INTO draft_survey_ballast (
@@ -103,47 +126,41 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
             )
         """
 
-        # =====================================================
-        # 🔒 AUTO INYECTAR KEYS FALTANTES
-        # =====================================================
         import re
         keys = re.findall(r"%\((.*?)\)s", sql)
+
         for k in keys:
             payload.setdefault(k, None)
 
-        # =====================================================
-        # 🔒 LIMPIAR STRINGS VACÍOS ("" → NULL)
-        # =====================================================
-        for k, v in payload.items():
-            if isinstance(v, str):
-                value = v.strip()
-                if value == "":
+        # limpiar datos
+        for k in payload:
+            if isinstance(payload[k], str):
+                val = payload[k].strip()
+                if val == "":
                     payload[k] = None
                 else:
-                    # intentar convertir a número si es numérico
                     try:
-                        if "." in value:
-                            payload[k] = float(value)
-                        else:
-                            payload[k] = int(value)
-                    except Exception:
-                        payload[k] = value
+                        payload[k] = float(val) if "." in val else int(val)
+                    except:
+                        payload[k] = val
 
-        # =====================================================
-        # EJECUTAR
-        # =====================================================
         cur.execute(sql, payload)
-
         conn.commit()
+
         return {"success": True}
+
+    except HTTPException:
+        raise
 
     except Exception as e:
         conn.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ballast insert failed: {str(e)}"
+        )
 
     finally:
         cur.close()
-
 # ---------------------------------------------------------
 # GET BALLAST
 # ---------------------------------------------------------
