@@ -240,8 +240,37 @@ def create_word(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
     cur = conn.cursor()
 
     try:
+        # =====================================================
+        # 🔒 LISTA COMPLETA DE CAMPOS ESPERADOS
+        # =====================================================
+        expected_fields = [
+            "word_mt", "word_product", "word_vessel", "word_port", "word_country",
+            "word_survey_requested_by", "word_on_behalf_of",
+            "word_master", "word_chief_officer",
+            "word_name", "word_port_registry", "word_grt", "word_nrt",
+            "word_year", "word_imo",
+            "word_arrived_buoy", "word_nor_tendered",
+            "word_all_fast", "word_initial_draft",
+            "word_commenced", "word_completed", "word_final_draft",
+            "word_metric_tons", "word_goods_product", "word_holds",
+            "word_draft_figures", "word_bl_figures",
+            "word_difference", "word_percentage",
+            "word_shore_scale", "word_shore_bl",
+            "word_shore_difference", "word_shore_percentage"
+        ]
+
+        # =====================================================
+        # 🔒 GARANTIZAR QUE TODAS LAS KEYS EXISTAN
+        # =====================================================
+        for field in expected_fields:
+            if field not in payload:
+                payload[field] = None
+
         payload["draft_survey_id"] = draft_survey_id
 
+        # =====================================================
+        # INSERT
+        # =====================================================
         cur.execute("""
             INSERT INTO draft_survey_word_report (
                 draft_survey_id,
@@ -285,5 +314,6 @@ def create_word(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
     except Exception as e:
         conn.rollback()
         raise HTTPException(status_code=500, detail=str(e))
+
     finally:
         cur.close()
