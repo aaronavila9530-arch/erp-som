@@ -12,10 +12,6 @@ router = APIRouter(
     tags=["Draft Survey Extra"]
 )
 
-# ---------------------------------------------------------
-# POST — CREATE BALLAST (FULL HARDENED VERSION)
-# ---------------------------------------------------------
-
 @router.post("/ballast/{draft_survey_id}")
 def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
 
@@ -23,144 +19,145 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
 
     try:
         payload = payload or {}
-        payload["draft_survey_id"] = draft_survey_id
 
         # =====================================================
-        # 🔎 VALIDAR QUE EL DRAFT EXISTA (EVITA FK ERROR)
+        # 1️⃣ RESOLVER draft_survey.id REAL DESDE general_id
         # =====================================================
         cur.execute(
             "SELECT id FROM draft_survey WHERE general_id = %s",
             (draft_survey_id,)
         )
-        if not cur.fetchone():
+        row = cur.fetchone()
+
+        if not row:
             raise HTTPException(
                 status_code=404,
                 detail=f"draft_survey_id {draft_survey_id} does not exist"
             )
 
+        real_draft_id = row[0]
+
         # =====================================================
-        # 🔎 EVITAR DUPLICADO (SI SOLO PERMITES 1 BALLAST)
+        # 2️⃣ NORMALIZAR KEYS DEL FRONTEND
         # =====================================================
-        cur.execute(
-            "SELECT 1 FROM draft_survey_ballast WHERE draft_survey_id = %s",
-            (draft_survey_id,)
-        )
-        if cur.fetchone():
-            raise HTTPException(
-                status_code=400,
-                detail="Ballast already exists for this draft_survey_id"
+        normalized = {}
+
+        for k, v in payload.items():
+
+            if not isinstance(k, str):
+                continue
+
+            new_key = (
+                k.lower()
+                 .replace(" ", "_")
+                 .replace("tank", "tank")
             )
 
+            # ejemplo:
+            # init_WBT 1P_volume → init_wbt_1p_volume
+            # init_SLOP TANK_density → init_slop_tank_density
+            # init_FW P_height → init_fw_p_height
+
+            normalized[new_key] = v
+
+        normalized["draft_survey_id"] = real_draft_id
+
+        # =====================================================
+        # 3️⃣ EXTRAER PLACEHOLDERS DEL SQL
+        # =====================================================
         sql = """
-            INSERT INTO draft_survey_ballast (
-                draft_survey_id,
-                init_fpt_sounding, init_fpt_volume, init_fpt_density,
-                init_wbt_1p_sounding, init_wbt_1p_volume, init_wbt_1p_density,
-                init_wbt_1s_sounding, init_wbt_1s_volume, init_wbt_1s_density,
-                init_wbt_2p_sounding, init_wbt_2p_volume, init_wbt_2p_density,
-                init_wbt_2s_sounding, init_wbt_2s_volume, init_wbt_2s_density,
-                init_wbt_3p_sounding, init_wbt_3p_volume, init_wbt_3p_density,
-                init_wbt_3s_sounding, init_wbt_3s_volume, init_wbt_3s_density,
-                init_wbt_4p_sounding, init_wbt_4p_volume, init_wbt_4p_density,
-                init_wbt_4s_sounding, init_wbt_4s_volume, init_wbt_4s_density,
-                init_wbt_5p_sounding, init_wbt_5p_volume, init_wbt_5p_density,
-                init_wbt_5s_sounding, init_wbt_5s_volume, init_wbt_5s_density,
-                init_apt_sounding, init_apt_volume, init_apt_density,
-                init_slop_tank_sounding, init_slop_tank_volume, init_slop_tank_density,
-                init_fw_p_height, init_fw_p_volume,
-                init_fw_s_height, init_fw_s_volume,
-                init_fw_dist_height, init_fw_dist_volume,
-                final_fpt_sounding, final_fpt_volume, final_fpt_density,
-                final_wbt_1p_sounding, final_wbt_1p_volume, final_wbt_1p_density,
-                final_wbt_1s_sounding, final_wbt_1s_volume, final_wbt_1s_density,
-                final_wbt_2p_sounding, final_wbt_2p_volume, final_wbt_2p_density,
-                final_wbt_2s_sounding, final_wbt_2s_volume, final_wbt_2s_density,
-                final_wbt_3p_sounding, final_wbt_3p_volume, final_wbt_3p_density,
-                final_wbt_3s_sounding, final_wbt_3s_volume, final_wbt_3s_density,
-                final_wbt_4p_sounding, final_wbt_4p_volume, final_wbt_4p_density,
-                final_wbt_4s_sounding, final_wbt_4s_volume, final_wbt_4s_density,
-                final_wbt_5p_sounding, final_wbt_5p_volume, final_wbt_5p_density,
-                final_wbt_5s_sounding, final_wbt_5s_volume, final_wbt_5s_density,
-                final_apt_sounding, final_apt_volume, final_apt_density,
-                final_slop_tank_sounding, final_slop_tank_volume, final_slop_tank_density,
-                final_fw_p_height, final_fw_p_volume,
-                final_fw_s_height, final_fw_s_volume,
-                final_fw_dist_height, final_fw_dist_volume,
-                status
-            )
-            VALUES (
-                %(draft_survey_id)s,
-                %(init_fpt_sounding)s, %(init_fpt_volume)s, %(init_fpt_density)s,
-                %(init_wbt_1p_sounding)s, %(init_wbt_1p_volume)s, %(init_wbt_1p_density)s,
-                %(init_wbt_1s_sounding)s, %(init_wbt_1s_volume)s, %(init_wbt_1s_density)s,
-                %(init_wbt_2p_sounding)s, %(init_wbt_2p_volume)s, %(init_wbt_2p_density)s,
-                %(init_wbt_2s_sounding)s, %(init_wbt_2s_volume)s, %(init_wbt_2s_density)s,
-                %(init_wbt_3p_sounding)s, %(init_wbt_3p_volume)s, %(init_wbt_3p_density)s,
-                %(init_wbt_3s_sounding)s, %(init_wbt_3s_volume)s, %(init_wbt_3s_density)s,
-                %(init_wbt_4p_sounding)s, %(init_wbt_4p_volume)s, %(init_wbt_4p_density)s,
-                %(init_wbt_4s_sounding)s, %(init_wbt_4s_volume)s, %(init_wbt_4s_density)s,
-                %(init_wbt_5p_sounding)s, %(init_wbt_5p_volume)s, %(init_wbt_5p_density)s,
-                %(init_wbt_5s_sounding)s, %(init_wbt_5s_volume)s, %(init_wbt_5s_density)s,
-                %(init_apt_sounding)s, %(init_apt_volume)s, %(init_apt_density)s,
-                %(init_slop_tank_sounding)s, %(init_slop_tank_volume)s, %(init_slop_tank_density)s,
-                %(init_fw_p_height)s, %(init_fw_p_volume)s,
-                %(init_fw_s_height)s, %(init_fw_s_volume)s,
-                %(init_fw_dist_height)s, %(init_fw_dist_volume)s,
-                %(final_fpt_sounding)s, %(final_fpt_volume)s, %(final_fpt_density)s,
-                %(final_wbt_1p_sounding)s, %(final_wbt_1p_volume)s, %(final_wbt_1p_density)s,
-                %(final_wbt_1s_sounding)s, %(final_wbt_1s_volume)s, %(final_wbt_1s_density)s,
-                %(final_wbt_2p_sounding)s, %(final_wbt_2p_volume)s, %(final_wbt_2p_density)s,
-                %(final_wbt_2s_sounding)s, %(final_wbt_2s_volume)s, %(final_wbt_2s_density)s,
-                %(final_wbt_3p_sounding)s, %(final_wbt_3p_volume)s, %(final_wbt_3p_density)s,
-                %(final_wbt_3s_sounding)s, %(final_wbt_3s_volume)s, %(final_wbt_3s_density)s,
-                %(final_wbt_4p_sounding)s, %(final_wbt_4p_volume)s, %(final_wbt_4p_density)s,
-                %(final_wbt_4s_sounding)s, %(final_wbt_4s_volume)s, %(final_wbt_4s_density)s,
-                %(final_wbt_5p_sounding)s, %(final_wbt_5p_volume)s, %(final_wbt_5p_density)s,
-                %(final_wbt_5s_sounding)s, %(final_wbt_5s_volume)s, %(final_wbt_5s_density)s,
-                %(final_apt_sounding)s, %(final_apt_volume)s, %(final_apt_density)s,
-                %(final_slop_tank_sounding)s, %(final_slop_tank_volume)s, %(final_slop_tank_density)s,
-                %(final_fw_p_height)s, %(final_fw_p_volume)s,
-                %(final_fw_s_height)s, %(final_fw_s_volume)s,
-                %(final_fw_dist_height)s, %(final_fw_dist_volume)s,
-                'Pending for review'
-            )
+        INSERT INTO draft_survey_ballast (
+            draft_survey_id,
+            init_fpt_sounding, init_fpt_volume, init_fpt_density,
+            init_wbt_1p_sounding, init_wbt_1p_volume, init_wbt_1p_density,
+            init_wbt_1s_sounding, init_wbt_1s_volume, init_wbt_1s_density,
+            init_wbt_2p_sounding, init_wbt_2p_volume, init_wbt_2p_density,
+            init_wbt_2s_sounding, init_wbt_2s_volume, init_wbt_2s_density,
+            init_wbt_3p_sounding, init_wbt_3p_volume, init_wbt_3p_density,
+            init_wbt_3s_sounding, init_wbt_3s_volume, init_wbt_3s_density,
+            init_wbt_4p_sounding, init_wbt_4p_volume, init_wbt_4p_density,
+            init_wbt_4s_sounding, init_wbt_4s_volume, init_wbt_4s_density,
+            init_wbt_5p_sounding, init_wbt_5p_volume, init_wbt_5p_density,
+            init_wbt_5s_sounding, init_wbt_5s_volume, init_wbt_5s_density,
+            init_apt_sounding, init_apt_volume, init_apt_density,
+            init_slop_tank_sounding, init_slop_tank_volume, init_slop_tank_density,
+            init_fw_p_height, init_fw_p_volume,
+            init_fw_s_height, init_fw_s_volume,
+            init_fw_dist_height, init_fw_dist_volume,
+            final_fpt_sounding, final_fpt_volume, final_fpt_density,
+            final_wbt_1p_sounding, final_wbt_1p_volume, final_wbt_1p_density,
+            final_wbt_1s_sounding, final_wbt_1s_volume, final_wbt_1s_density,
+            final_wbt_2p_sounding, final_wbt_2p_volume, final_wbt_2p_density,
+            final_wbt_2s_sounding, final_wbt_2s_volume, final_wbt_2s_density,
+            final_wbt_3p_sounding, final_wbt_3p_volume, final_wbt_3p_density,
+            final_wbt_3s_sounding, final_wbt_3s_volume, final_wbt_3s_density,
+            final_wbt_4p_sounding, final_wbt_4p_volume, final_wbt_4p_density,
+            final_wbt_4s_sounding, final_wbt_4s_volume, final_wbt_4s_density,
+            final_wbt_5p_sounding, final_wbt_5p_volume, final_wbt_5p_density,
+            final_wbt_5s_sounding, final_wbt_5s_volume, final_wbt_5s_density,
+            final_apt_sounding, final_apt_volume, final_apt_density,
+            final_slop_tank_sounding, final_slop_tank_volume, final_slop_tank_density,
+            final_fw_p_height, final_fw_p_volume,
+            final_fw_s_height, final_fw_s_volume,
+            final_fw_dist_height, final_fw_dist_volume,
+            status
+        )
+        VALUES (
+            %(draft_survey_id)s,
+            %(init_fpt_sounding)s, %(init_fpt_volume)s, %(init_fpt_density)s,
+            %(init_wbt_1p_sounding)s, %(init_wbt_1p_volume)s, %(init_wbt_1p_density)s,
+            %(init_wbt_1s_sounding)s, %(init_wbt_1s_volume)s, %(init_wbt_1s_density)s,
+            %(init_wbt_2p_sounding)s, %(init_wbt_2p_volume)s, %(init_wbt_2p_density)s,
+            %(init_wbt_2s_sounding)s, %(init_wbt_2s_volume)s, %(init_wbt_2s_density)s,
+            %(init_wbt_3p_sounding)s, %(init_wbt_3p_volume)s, %(init_wbt_3p_density)s,
+            %(init_wbt_3s_sounding)s, %(init_wbt_3s_volume)s, %(init_wbt_3s_density)s,
+            %(init_wbt_4p_sounding)s, %(init_wbt_4p_volume)s, %(init_wbt_4p_density)s,
+            %(init_wbt_4s_sounding)s, %(init_wbt_4s_volume)s, %(init_wbt_4s_density)s,
+            %(init_wbt_5p_sounding)s, %(init_wbt_5p_volume)s, %(init_wbt_5p_density)s,
+            %(init_wbt_5s_sounding)s, %(init_wbt_5s_volume)s, %(init_wbt_5s_density)s,
+            %(init_apt_sounding)s, %(init_apt_volume)s, %(init_apt_density)s,
+            %(init_slop_tank_sounding)s, %(init_slop_tank_volume)s, %(init_slop_tank_density)s,
+            %(init_fw_p_height)s, %(init_fw_p_volume)s,
+            %(init_fw_s_height)s, %(init_fw_s_volume)s,
+            %(init_fw_dist_height)s, %(init_fw_dist_volume)s,
+            %(final_fpt_sounding)s, %(final_fpt_volume)s, %(final_fpt_density)s,
+            %(final_wbt_1p_sounding)s, %(final_wbt_1p_volume)s, %(final_wbt_1p_density)s,
+            %(final_wbt_1s_sounding)s, %(final_wbt_1s_volume)s, %(final_wbt_1s_density)s,
+            %(final_wbt_2p_sounding)s, %(final_wbt_2p_volume)s, %(final_wbt_2p_density)s,
+            %(final_wbt_2s_sounding)s, %(final_wbt_2s_volume)s, %(final_wbt_2s_density)s,
+            %(final_wbt_3p_sounding)s, %(final_wbt_3p_volume)s, %(final_wbt_3p_density)s,
+            %(final_wbt_3s_sounding)s, %(final_wbt_3s_volume)s, %(final_wbt_3s_density)s,
+            %(final_wbt_4p_sounding)s, %(final_wbt_4p_volume)s, %(final_wbt_4p_density)s,
+            %(final_wbt_4s_sounding)s, %(final_wbt_4s_volume)s, %(final_wbt_4s_density)s,
+            %(final_wbt_5p_sounding)s, %(final_wbt_5p_volume)s, %(final_wbt_5p_density)s,
+            %(final_wbt_5s_sounding)s, %(final_wbt_5s_volume)s, %(final_wbt_5s_density)s,
+            %(final_apt_sounding)s, %(final_apt_volume)s, %(final_apt_density)s,
+            %(final_slop_tank_sounding)s, %(final_slop_tank_volume)s, %(final_slop_tank_density)s,
+            %(final_fw_p_height)s, %(final_fw_p_volume)s,
+            %(final_fw_s_height)s, %(final_fw_s_volume)s,
+            %(final_fw_dist_height)s, %(final_fw_dist_volume)s,
+            'Pending for review'
+        )
         """
 
+        # rellenar faltantes con None
         import re
         keys = re.findall(r"%\((.*?)\)s", sql)
-
         for k in keys:
-            payload.setdefault(k, None)
+            normalized.setdefault(k, None)
 
-        # limpiar datos
-        for k in payload:
-            if isinstance(payload[k], str):
-                val = payload[k].strip()
-                if val == "":
-                    payload[k] = None
-                else:
-                    try:
-                        payload[k] = float(val) if "." in val else int(val)
-                    except:
-                        payload[k] = val
-
-        cur.execute(sql, payload)
+        cur.execute(sql, normalized)
         conn.commit()
 
         return {"success": True}
 
-    except HTTPException:
-        raise
-
     except Exception as e:
         conn.rollback()
-        raise HTTPException(
-            status_code=500,
-            detail=f"Ballast insert failed: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=str(e))
 
     finally:
         cur.close()
+
 # ---------------------------------------------------------
 # GET BALLAST
 # ---------------------------------------------------------
