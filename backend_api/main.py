@@ -66,6 +66,7 @@ from routers.vessel_truck_supervision import router as vessel_truck_supervision_
 from routers.draft_survey_router import router as draft_survey_router
 from routers.draft_survey_extra_router import router as draft_survey_extra_router
 from routers.draft_survey_filters_router import router as draft_survey_filters_router
+from routers.draft_survey_unified_router import router as draft_survey_unified_router
 
 # Comercial
 from routers.comercial import router as comercial_router
@@ -211,6 +212,7 @@ app.include_router(vessel_truck_supervision_router)
 app.include_router(draft_survey_router)
 app.include_router(draft_survey_extra_router)
 app.include_router(draft_survey_filters_router)
+app.include_router(draft_survey_unified_router)
 
 app.include_router(comercial_router)
 app.include_router(comercial_clients_analytics_router)

@@ -547,13 +547,27 @@ class DraftSurveyExcelGenerator:
         ws[cell].number_format = "DD-MM-YYYY"
 
 
-def generate_draft_survey_excel(payload: dict) -> str:
+def generate_draft_survey_excel(payload: dict, variant: str = "final") -> str:
 
     if not os.path.exists(TEMPLATE_PATH):
         raise FileNotFoundError(f"Draft Survey template not found: {TEMPLATE_PATH}")
 
     gen = DraftSurveyExcelGenerator()
     wb = load_workbook(TEMPLATE_PATH, data_only=False)
+
+    # =========================================================
+    # VARIANT CONTROL (FINAL / INTERMEDIATE)
+    # =========================================================
+    if (variant or "").lower() == "intermediate":
+        try:
+            # Asumimos que Z6 está en la hoja "General"
+            if "General" in wb.sheetnames:
+                wb["General"]["Z6"].value = "INTERMEDIATE DRAFT SURVEY"
+            else:
+                # fallback a primera hoja si cambia nombre
+                wb.worksheets[0]["Z6"].value = "INTERMEDIATE DRAFT SURVEY"
+        except Exception:
+            pass
 
     try:
         wb.calculation.fullCalcOnLoad = True
