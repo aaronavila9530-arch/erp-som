@@ -299,6 +299,9 @@ class DraftSurveyExcelGenerator:
         },
 
 
+class DraftSurveyExcelMapping:
+
+    EXCEL_MAPPING = {
         "Deductions": {
             "date_fields": [],
             "fields": {
@@ -362,6 +365,32 @@ class DraftSurveyExcelGenerator:
                 "init_FW WASH_sounding": "G24",
                 "init_FW WASH_volume": "J24",
                 "init_FW WASH_density": "M24",
+
+                # --------- TANQUES 15–20 (AJUSTAR NOMBRES SEGÚN TEMPLATE) ---------
+
+                "init_WBT 6P_sounding": "G25",
+                "init_WBT 6P_volume": "J25",
+                "init_WBT 6P_density": "M25",
+
+                "init_WBT 6S_sounding": "G26",
+                "init_WBT 6S_volume": "J26",
+                "init_WBT 6S_density": "M26",
+
+                "init_WBT 7P_sounding": "G27",
+                "init_WBT 7P_volume": "J27",
+                "init_WBT 7P_density": "M27",
+
+                "init_WBT 7S_sounding": "G28",
+                "init_WBT 7S_volume": "J28",
+                "init_WBT 7S_density": "M28",
+
+                "init_WBT 8P_sounding": "G29",
+                "init_WBT 8P_volume": "J29",
+                "init_WBT 8P_density": "M29",
+
+                "init_WBT 8S_sounding": "G30",
+                "init_WBT 8S_volume": "J30",
+                "init_WBT 8S_density": "M30",
 
                 # =====================================================
                 # INITIAL FRESH WATER (HEIGHT + VOLUME)
@@ -436,6 +465,32 @@ class DraftSurveyExcelGenerator:
                 "final_FW WASH_volume": "Z24",
                 "final_FW WASH_density": "AC24",
 
+                # --------- TANQUES 15–20 (AJUSTAR NOMBRES SEGÚN TEMPLATE) ---------
+
+                "final_WBT 6P_sounding": "W25",
+                "final_WBT 6P_volume": "Z25",
+                "final_WBT 6P_density": "AC25",
+
+                "final_WBT 6S_sounding": "W26",
+                "final_WBT 6S_volume": "Z26",
+                "final_WBT 6S_density": "AC26",
+
+                "final_WBT 7P_sounding": "W27",
+                "final_WBT 7P_volume": "Z27",
+                "final_WBT 7P_density": "AC27",
+
+                "final_WBT 7S_sounding": "W28",
+                "final_WBT 7S_volume": "Z28",
+                "final_WBT 7S_density": "AC28",
+
+                "final_WBT 8P_sounding": "W29",
+                "final_WBT 8P_volume": "Z29",
+                "final_WBT 8P_density": "AC29",
+
+                "final_WBT 8S_sounding": "W30",
+                "final_WBT 8S_volume": "Z30",
+                "final_WBT 8S_density": "AC30",
+
                 # =====================================================
                 # FINAL FRESH WATER (HEIGHT + VOLUME)
                 # =====================================================
@@ -450,8 +505,7 @@ class DraftSurveyExcelGenerator:
                 "final_FW DIST_volume": "AC49",
             }
         }
-
-    }  # ← CERRAR EXCEL_MAPPING
+    }
 
     # =========================================================
     # SAFE SETTERS (MERGE SAFE + NUMERIC SAFE + BOOL SAFE)
