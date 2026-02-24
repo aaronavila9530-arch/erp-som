@@ -24,8 +24,8 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
         # 🔒 BLINDAJE METADATA
         # =====================================================
         metadata_keys = [
-            "year","month","continent","country",
-            "port","client","draft_report_number"
+            "year", "month", "continent", "country",
+            "port", "client", "draft_report_number"
         ]
 
         for key in metadata_keys:
@@ -49,120 +49,92 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
         real_draft_id = row[0]
 
         # =====================================================
-        # 2️⃣ NORMALIZAR KEYS DEL FRONTEND
+        # 2️⃣ NORMALIZAR KEYS
         # =====================================================
         normalized = {}
 
         for k, v in payload.items():
-
             if not isinstance(k, str):
                 continue
 
-            new_key = (
-                k.lower()
-                 .replace(" ", "_")
-                 .replace("tank", "tank")
-            )
-
+            new_key = k.lower().strip().replace(" ", "_")
             normalized[new_key] = v
 
         normalized["draft_survey_id"] = real_draft_id
 
         # =====================================================
-        # 3️⃣ INSERT 100% ALINEADO CON DB
+        # 3️⃣ CONSTRUIR SQL DINÁMICO HASTA 20 TANQUES
         # =====================================================
-        sql = """
-        INSERT INTO draft_survey_ballast (
-            draft_survey_id,
 
-            init_fpt_sounding, init_fpt_volume, init_fpt_density,
-            init_wbt_1p_sounding, init_wbt_1p_volume, init_wbt_1p_density,
-            init_wbt_1s_sounding, init_wbt_1s_volume, init_wbt_1s_density,
-            init_wbt_2p_sounding, init_wbt_2p_volume, init_wbt_2p_density,
-            init_wbt_2s_sounding, init_wbt_2s_volume, init_wbt_2s_density,
-            init_wbt_3p_sounding, init_wbt_3p_volume, init_wbt_3p_density,
-            init_wbt_3s_sounding, init_wbt_3s_volume, init_wbt_3s_density,
-            init_wbt_4p_sounding, init_wbt_4p_volume, init_wbt_4p_density,
-            init_wbt_4s_sounding, init_wbt_4s_volume, init_wbt_4s_density,
-            init_wbt_5p_sounding, init_wbt_5p_volume, init_wbt_5p_density,
-            init_wbt_5s_sounding, init_wbt_5s_volume, init_wbt_5s_density,
-            init_apt_sounding, init_apt_volume, init_apt_density,
-            init_slop_tank_sounding, init_slop_tank_volume, init_slop_tank_density,
-            init_fw_p_height, init_fw_p_volume,
-            init_fw_s_height, init_fw_s_volume,
-            init_fw_dist_height, init_fw_dist_volume,
+        columns = ["draft_survey_id"]
+        values = ["%(draft_survey_id)s"]
 
-            final_fpt_sounding, final_fpt_volume, final_fpt_density,
-            final_wbt_1p_sounding, final_wbt_1p_volume, final_wbt_1p_density,
-            final_wbt_1s_sounding, final_wbt_1s_volume, final_wbt_1s_density,
-            final_wbt_2p_sounding, final_wbt_2p_volume, final_wbt_2p_density,
-            final_wbt_2s_sounding, final_wbt_2s_volume, final_wbt_2s_density,
-            final_wbt_3p_sounding, final_wbt_3p_volume, final_wbt_3p_density,
-            final_wbt_3s_sounding, final_wbt_3s_volume, final_wbt_3s_density,
-            final_wbt_4p_sounding, final_wbt_4p_volume, final_wbt_4p_density,
-            final_wbt_4s_sounding, final_wbt_4s_volume, final_wbt_4s_density,
-            final_wbt_5p_sounding, final_wbt_5p_volume, final_wbt_5p_density,
-            final_wbt_5s_sounding, final_wbt_5s_volume, final_wbt_5s_density,
-            final_apt_sounding, final_apt_volume, final_apt_density,
-            final_slop_tank_sounding, final_slop_tank_volume, final_slop_tank_density,
-            final_fw_p_height, final_fw_p_volume,
-            final_fw_s_height, final_fw_s_volume,
-            final_fw_dist_height, final_fw_dist_volume,
+        # ---------------------------
+        # FPT / APT / SLOP
+        # ---------------------------
+        for phase in ["init", "final"]:
+            for base in ["fpt", "apt", "slop_tank"]:
+                for field in ["sounding", "volume", "density"]:
+                    col = f"{phase}_{base}_{field}"
+                    columns.append(col)
+                    values.append(f"%({col})s")
 
-            -- 🔵 NUEVO METADATA
-            year, month, continent, country, port, client, draft_report_number,
+        # ---------------------------
+        # WBT 1 → 20
+        # ---------------------------
+        for phase in ["init", "final"]:
+            for i in range(1, 21):
+                for side in ["p", "s"]:
+                    for field in ["sounding", "volume", "density"]:
+                        col = f"{phase}_wbt_{i}{side}_{field}"
+                        columns.append(col)
+                        values.append(f"%({col})s")
 
-            status
-        )
-        VALUES (
-            %(draft_survey_id)s,
+        # ---------------------------
+        # FRESH WATER
+        # ---------------------------
+        for phase in ["init", "final"]:
+            for fw in ["fw_p", "fw_s", "fw_dist"]:
+                for field in ["height", "volume"]:
+                    col = f"{phase}_{fw}_{field}"
+                    columns.append(col)
+                    values.append(f"%({col})s")
 
-            %(init_fpt_sounding)s, %(init_fpt_volume)s, %(init_fpt_density)s,
-            %(init_wbt_1p_sounding)s, %(init_wbt_1p_volume)s, %(init_wbt_1p_density)s,
-            %(init_wbt_1s_sounding)s, %(init_wbt_1s_volume)s, %(init_wbt_1s_density)s,
-            %(init_wbt_2p_sounding)s, %(init_wbt_2p_volume)s, %(init_wbt_2p_density)s,
-            %(init_wbt_2s_sounding)s, %(init_wbt_2s_volume)s, %(init_wbt_2s_density)s,
-            %(init_wbt_3p_sounding)s, %(init_wbt_3p_volume)s, %(init_wbt_3p_density)s,
-            %(init_wbt_3s_sounding)s, %(init_wbt_3s_volume)s, %(init_wbt_3s_density)s,
-            %(init_wbt_4p_sounding)s, %(init_wbt_4p_volume)s, %(init_wbt_4p_density)s,
-            %(init_wbt_4s_sounding)s, %(init_wbt_4s_volume)s, %(init_wbt_4s_density)s,
-            %(init_wbt_5p_sounding)s, %(init_wbt_5p_volume)s, %(init_wbt_5p_density)s,
-            %(init_wbt_5s_sounding)s, %(init_wbt_5s_volume)s, %(init_wbt_5s_density)s,
-            %(init_apt_sounding)s, %(init_apt_volume)s, %(init_apt_density)s,
-            %(init_slop_tank_sounding)s, %(init_slop_tank_volume)s, %(init_slop_tank_density)s,
-            %(init_fw_p_height)s, %(init_fw_p_volume)s,
-            %(init_fw_s_height)s, %(init_fw_s_volume)s,
-            %(init_fw_dist_height)s, %(init_fw_dist_volume)s,
+        # ---------------------------
+        # METADATA
+        # ---------------------------
+        for m in metadata_keys:
+            columns.append(m)
+            values.append(f"%({m})s")
 
-            %(final_fpt_sounding)s, %(final_fpt_volume)s, %(final_fpt_density)s,
-            %(final_wbt_1p_sounding)s, %(final_wbt_1p_volume)s, %(final_wbt_1p_density)s,
-            %(final_wbt_1s_sounding)s, %(final_wbt_1s_volume)s, %(final_wbt_1s_density)s,
-            %(final_wbt_2p_sounding)s, %(final_wbt_2p_volume)s, %(final_wbt_2p_density)s,
-            %(final_wbt_2s_sounding)s, %(final_wbt_2s_volume)s, %(final_wbt_2s_density)s,
-            %(final_wbt_3p_sounding)s, %(final_wbt_3p_volume)s, %(final_wbt_3p_density)s,
-            %(final_wbt_3s_sounding)s, %(final_wbt_3s_volume)s, %(final_wbt_3s_density)s,
-            %(final_wbt_4p_sounding)s, %(final_wbt_4p_volume)s, %(final_wbt_4p_density)s,
-            %(final_wbt_4s_sounding)s, %(final_wbt_4s_volume)s, %(final_wbt_4s_density)s,
-            %(final_wbt_5p_sounding)s, %(final_wbt_5p_volume)s, %(final_wbt_5p_density)s,
-            %(final_wbt_5s_sounding)s, %(final_wbt_5s_volume)s, %(final_wbt_5s_density)s,
-            %(final_apt_sounding)s, %(final_apt_volume)s, %(final_apt_density)s,
-            %(final_slop_tank_sounding)s, %(final_slop_tank_volume)s, %(final_slop_tank_density)s,
-            %(final_fw_p_height)s, %(final_fw_p_volume)s,
-            %(final_fw_s_height)s, %(final_fw_s_volume)s,
-            %(final_fw_dist_height)s, %(final_fw_dist_volume)s,
+        # STATUS
+        columns.append("status")
+        values.append("'Pending for review'")
 
-            %(year)s, %(month)s, %(continent)s, %(country)s, %(port)s, %(client)s, %(draft_report_number)s,
-
-            'Pending for review'
-        )
+        # =====================================================
+        # 🔧 GENERAR SQL FINAL
+        # =====================================================
+        sql = f"""
+            INSERT INTO draft_survey_ballast (
+                {", ".join(columns)}
+            )
+            VALUES (
+                {", ".join(values)}
+            )
         """
 
-        # rellenar faltantes con None
+        # =====================================================
+        # 🔒 RELLENAR FALTANTES CON None
+        # =====================================================
         import re
         keys = re.findall(r"%\((.*?)\)s", sql)
+
         for k in keys:
             normalized.setdefault(k, None)
 
+        # =====================================================
+        # 🚀 EXECUTE
+        # =====================================================
         cur.execute(sql, normalized)
         conn.commit()
 
@@ -174,6 +146,7 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
 
     finally:
         cur.close()
+
 
 # ---------------------------------------------------------
 # GET BALLAST
@@ -202,7 +175,7 @@ def get_ballast(draft_survey_id: int, conn=Depends(get_db)):
         cur.close()
 
 # ---------------------------------------------------------
-# PUT BALLAST (FULL UPDATE)
+# PUT BALLAST (FULL UPDATE - DINÁMICO HASTA 20 TANQUES)
 # ---------------------------------------------------------
 
 @router.put("/ballast/{draft_survey_id}")
@@ -218,7 +191,7 @@ def update_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
         # -------------------------------------------------
         cur.execute("""
             SELECT status FROM draft_survey_ballast
-            WHERE draft_survey_id=%s
+            WHERE draft_survey_id = %s
         """, (draft_survey_id,))
 
         row = cur.fetchone()
@@ -230,139 +203,87 @@ def update_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
         # 🔒 BLINDAJE METADATA
         # -------------------------------------------------
         metadata_keys = [
-            "year","month","continent","country",
-            "port","client","draft_report_number"
+            "year", "month", "continent", "country",
+            "port", "client", "draft_report_number"
         ]
 
         for key in metadata_keys:
             payload.setdefault(key, None)
 
-        payload["draft_survey_id"] = draft_survey_id
-        payload["status"] = payload.get("status", "Approved")
+        # -------------------------------------------------
+        # 🔒 NORMALIZAR KEYS
+        # -------------------------------------------------
+        normalized = {}
+
+        for k, v in payload.items():
+            if not isinstance(k, str):
+                continue
+            new_key = k.lower().strip().replace(" ", "_")
+            normalized[new_key] = v
+
+        normalized["draft_survey_id"] = draft_survey_id
+        normalized["status"] = normalized.get("status", "Approved")
 
         # -------------------------------------------------
-        # FULL UPDATE 1:1 CON LA TABLA
+        # 🔧 CONSTRUIR UPDATE DINÁMICO
         # -------------------------------------------------
-        sql = """
-        UPDATE draft_survey_ballast
-        SET
-            init_fpt_sounding=%(init_fpt_sounding)s,
-            init_fpt_volume=%(init_fpt_volume)s,
-            init_fpt_density=%(init_fpt_density)s,
+        set_clauses = []
 
-            init_wbt_1p_sounding=%(init_wbt_1p_sounding)s,
-            init_wbt_1p_volume=%(init_wbt_1p_volume)s,
-            init_wbt_1p_density=%(init_wbt_1p_density)s,
-            init_wbt_1s_sounding=%(init_wbt_1s_sounding)s,
-            init_wbt_1s_volume=%(init_wbt_1s_volume)s,
-            init_wbt_1s_density=%(init_wbt_1s_density)s,
-            init_wbt_2p_sounding=%(init_wbt_2p_sounding)s,
-            init_wbt_2p_volume=%(init_wbt_2p_volume)s,
-            init_wbt_2p_density=%(init_wbt_2p_density)s,
-            init_wbt_2s_sounding=%(init_wbt_2s_sounding)s,
-            init_wbt_2s_volume=%(init_wbt_2s_volume)s,
-            init_wbt_2s_density=%(init_wbt_2s_density)s,
-            init_wbt_3p_sounding=%(init_wbt_3p_sounding)s,
-            init_wbt_3p_volume=%(init_wbt_3p_volume)s,
-            init_wbt_3p_density=%(init_wbt_3p_density)s,
-            init_wbt_3s_sounding=%(init_wbt_3s_sounding)s,
-            init_wbt_3s_volume=%(init_wbt_3s_volume)s,
-            init_wbt_3s_density=%(init_wbt_3s_density)s,
-            init_wbt_4p_sounding=%(init_wbt_4p_sounding)s,
-            init_wbt_4p_volume=%(init_wbt_4p_volume)s,
-            init_wbt_4p_density=%(init_wbt_4p_density)s,
-            init_wbt_4s_sounding=%(init_wbt_4s_sounding)s,
-            init_wbt_4s_volume=%(init_wbt_4s_volume)s,
-            init_wbt_4s_density=%(init_wbt_4s_density)s,
-            init_wbt_5p_sounding=%(init_wbt_5p_sounding)s,
-            init_wbt_5p_volume=%(init_wbt_5p_volume)s,
-            init_wbt_5p_density=%(init_wbt_5p_density)s,
-            init_wbt_5s_sounding=%(init_wbt_5s_sounding)s,
-            init_wbt_5s_volume=%(init_wbt_5s_volume)s,
-            init_wbt_5s_density=%(init_wbt_5s_density)s,
-            init_apt_sounding=%(init_apt_sounding)s,
-            init_apt_volume=%(init_apt_volume)s,
-            init_apt_density=%(init_apt_density)s,
-            init_slop_tank_sounding=%(init_slop_tank_sounding)s,
-            init_slop_tank_volume=%(init_slop_tank_volume)s,
-            init_slop_tank_density=%(init_slop_tank_density)s,
+        # -------- FPT / APT / SLOP --------
+        for phase in ["init", "final"]:
+            for base in ["fpt", "apt", "slop_tank"]:
+                for field in ["sounding", "volume", "density"]:
+                    col = f"{phase}_{base}_{field}"
+                    set_clauses.append(f"{col}=%({col})s")
 
-            init_fw_p_height=%(init_fw_p_height)s,
-            init_fw_p_volume=%(init_fw_p_volume)s,
-            init_fw_s_height=%(init_fw_s_height)s,
-            init_fw_s_volume=%(init_fw_s_volume)s,
-            init_fw_dist_height=%(init_fw_dist_height)s,
-            init_fw_dist_volume=%(init_fw_dist_volume)s,
+        # -------- WBT 1 → 20 --------
+        for phase in ["init", "final"]:
+            for i in range(1, 21):
+                for side in ["p", "s"]:
+                    for field in ["sounding", "volume", "density"]:
+                        col = f"{phase}_wbt_{i}{side}_{field}"
+                        set_clauses.append(f"{col}=%({col})s")
 
-            final_fpt_sounding=%(final_fpt_sounding)s,
-            final_fpt_volume=%(final_fpt_volume)s,
-            final_fpt_density=%(final_fpt_density)s,
+        # -------- FRESH WATER --------
+        for phase in ["init", "final"]:
+            for fw in ["fw_p", "fw_s", "fw_dist"]:
+                for field in ["height", "volume"]:
+                    col = f"{phase}_{fw}_{field}"
+                    set_clauses.append(f"{col}=%({col})s")
 
-            final_wbt_1p_sounding=%(final_wbt_1p_sounding)s,
-            final_wbt_1p_volume=%(final_wbt_1p_volume)s,
-            final_wbt_1p_density=%(final_wbt_1p_density)s,
-            final_wbt_1s_sounding=%(final_wbt_1s_sounding)s,
-            final_wbt_1s_volume=%(final_wbt_1s_volume)s,
-            final_wbt_1s_density=%(final_wbt_1s_density)s,
-            final_wbt_2p_sounding=%(final_wbt_2p_sounding)s,
-            final_wbt_2p_volume=%(final_wbt_2p_volume)s,
-            final_wbt_2p_density=%(final_wbt_2p_density)s,
-            final_wbt_2s_sounding=%(final_wbt_2s_sounding)s,
-            final_wbt_2s_volume=%(final_wbt_2s_volume)s,
-            final_wbt_2s_density=%(final_wbt_2s_density)s,
-            final_wbt_3p_sounding=%(final_wbt_3p_sounding)s,
-            final_wbt_3p_volume=%(final_wbt_3p_volume)s,
-            final_wbt_3p_density=%(final_wbt_3p_density)s,
-            final_wbt_3s_sounding=%(final_wbt_3s_sounding)s,
-            final_wbt_3s_volume=%(final_wbt_3s_volume)s,
-            final_wbt_3s_density=%(final_wbt_3s_density)s,
-            final_wbt_4p_sounding=%(final_wbt_4p_sounding)s,
-            final_wbt_4p_volume=%(final_wbt_4p_volume)s,
-            final_wbt_4p_density=%(final_wbt_4p_density)s,
-            final_wbt_4s_sounding=%(final_wbt_4s_sounding)s,
-            final_wbt_4s_volume=%(final_wbt_4s_volume)s,
-            final_wbt_4s_density=%(final_wbt_4s_density)s,
-            final_wbt_5p_sounding=%(final_wbt_5p_sounding)s,
-            final_wbt_5p_volume=%(final_wbt_5p_volume)s,
-            final_wbt_5p_density=%(final_wbt_5p_density)s,
-            final_wbt_5s_sounding=%(final_wbt_5s_sounding)s,
-            final_wbt_5s_volume=%(final_wbt_5s_volume)s,
-            final_wbt_5s_density=%(final_wbt_5s_density)s,
-            final_apt_sounding=%(final_apt_sounding)s,
-            final_apt_volume=%(final_apt_volume)s,
-            final_apt_density=%(final_apt_density)s,
-            final_slop_tank_sounding=%(final_slop_tank_sounding)s,
-            final_slop_tank_volume=%(final_slop_tank_volume)s,
-            final_slop_tank_density=%(final_slop_tank_density)s,
+        # -------- METADATA --------
+        for m in metadata_keys:
+            set_clauses.append(f"{m}=%({m})s")
 
-            final_fw_p_height=%(final_fw_p_height)s,
-            final_fw_p_volume=%(final_fw_p_volume)s,
-            final_fw_s_height=%(final_fw_s_height)s,
-            final_fw_s_volume=%(final_fw_s_volume)s,
-            final_fw_dist_height=%(final_fw_dist_height)s,
-            final_fw_dist_volume=%(final_fw_dist_volume)s,
+        # -------- STATUS + UPDATED_AT --------
+        set_clauses.append("status=%(status)s")
+        set_clauses.append("updated_at=NOW()")
 
-            year=%(year)s,
-            month=%(month)s,
-            continent=%(continent)s,
-            country=%(country)s,
-            port=%(port)s,
-            client=%(client)s,
-            draft_report_number=%(draft_report_number)s,
-
-            status=%(status)s,
-            updated_at=NOW()
-
-        WHERE draft_survey_id=%(draft_survey_id)s
+        sql = f"""
+            UPDATE draft_survey_ballast
+            SET
+                {", ".join(set_clauses)}
+            WHERE draft_survey_id = %(draft_survey_id)s
         """
 
-        cur.execute(sql, payload)
+        # -------------------------------------------------
+        # 🔒 RELLENAR FALTANTES CON None
+        # -------------------------------------------------
+        import re
+        keys = re.findall(r"%\((.*?)\)s", sql)
 
+        for k in keys:
+            normalized.setdefault(k, None)
+
+        # -------------------------------------------------
+        # 🚀 EXECUTE
+        # -------------------------------------------------
+        cur.execute(sql, normalized)
         conn.commit()
 
         return {
             "success": True,
-            "status": payload["status"]
+            "status": normalized["status"]
         }
 
     except Exception as e:
