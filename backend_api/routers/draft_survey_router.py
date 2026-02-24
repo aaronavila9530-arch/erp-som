@@ -168,7 +168,10 @@ def create_draft_survey(payload: dict, conn=Depends(get_db)):
             "light_shipweight_plan","summer_displacement",
             "summer_deadweight","net_register_tons",
             "gross_register_tons","hydro_tables_issued",
-            "trim_tables_available","hydrometer_no"
+            "trim_tables_available","hydrometer_no",
+
+            # 🔵 NUEVO — METADATA GENERAL
+            "year","month","continent","country","port","client","draft_report_number"
         ]
 
         required_draft_keys = [
@@ -202,14 +205,18 @@ def create_draft_survey(payload: dict, conn=Depends(get_db)):
             "init_hydro2_tpc_2","init_hydro2_lcf_2",
             "init_hydro2_draft_mtc","init_hydro2_mtc_p50_1",
             "init_hydro2_mtc_m50_1","init_hydro2_mtc_p50_2",
-            "init_hydro2_mtc_m50_2"
+            "init_hydro2_mtc_m50_2",
+
+            # 🔵 NUEVO — METADATA + FIRMAS DRAFT
+            "year","month","continent","country","port","client","draft_report_number",
+            "chief_officer","master","msl_surveyor"
         ]
 
         for key in required_general_keys + required_draft_keys:
             payload.setdefault(key, None)
 
         # =====================================================
-        # 1️⃣ INSERT GENERAL (STATUS FORZADO)
+        # 1️⃣ INSERT GENERAL
         # =====================================================
         cur.execute("""
             INSERT INTO general_draft_survey (
@@ -229,6 +236,10 @@ def create_draft_survey(payload: dict, conn=Depends(get_db)):
                 net_register_tons, gross_register_tons,
                 hydro_tables_issued, trim_tables_available,
                 hydrometer_no,
+
+                -- 🔵 NUEVO
+                year, month, continent, country, port, client, draft_report_number,
+
                 status
             )
             VALUES (
@@ -248,6 +259,9 @@ def create_draft_survey(payload: dict, conn=Depends(get_db)):
                 %(net_register_tons)s, %(gross_register_tons)s,
                 %(hydro_tables_issued)s, %(trim_tables_available)s,
                 %(hydrometer_no)s,
+
+                %(year)s, %(month)s, %(continent)s, %(country)s, %(port)s, %(client)s, %(draft_report_number)s,
+
                 'Pending for review'
             )
             RETURNING id
@@ -256,7 +270,7 @@ def create_draft_survey(payload: dict, conn=Depends(get_db)):
         general_id = cur.fetchone()["id"]
 
         # =====================================================
-        # 2️⃣ INSERT DRAFT (STATUS FORZADO)
+        # 2️⃣ INSERT DRAFT
         # =====================================================
         draft_data = payload.copy()
         draft_data["general_id"] = general_id
@@ -291,6 +305,11 @@ def create_draft_survey(payload: dict, conn=Depends(get_db)):
                 init_hydro2_draft_2, init_hydro2_disp_2, init_hydro2_tpc_2, init_hydro2_lcf_2,
                 init_hydro2_draft_mtc, init_hydro2_mtc_p50_1, init_hydro2_mtc_m50_1,
                 init_hydro2_mtc_p50_2, init_hydro2_mtc_m50_2,
+
+                -- 🔵 NUEVO
+                year, month, continent, country, port, client, draft_report_number,
+                chief_officer, master, msl_surveyor,
+
                 status
             )
             VALUES (
@@ -322,6 +341,10 @@ def create_draft_survey(payload: dict, conn=Depends(get_db)):
                 %(init_hydro2_draft_2)s, %(init_hydro2_disp_2)s, %(init_hydro2_tpc_2)s, %(init_hydro2_lcf_2)s,
                 %(init_hydro2_draft_mtc)s, %(init_hydro2_mtc_p50_1)s, %(init_hydro2_mtc_m50_1)s,
                 %(init_hydro2_mtc_p50_2)s, %(init_hydro2_mtc_m50_2)s,
+
+                %(year)s, %(month)s, %(continent)s, %(country)s, %(port)s, %(client)s, %(draft_report_number)s,
+                %(chief_officer)s, %(master)s, %(msl_surveyor)s,
+
                 'Pending for review'
             )
         """, draft_data)
@@ -409,8 +432,23 @@ def update_draft_survey(general_id: int, payload: dict, conn=Depends(get_db)):
         # ===============================
         # NORMALIZACIONES
         # ===============================
+        payload = payload or {}
+
         payload["init_date"] = parse_date(payload.get("init_date"))
         payload["final_date"] = parse_date(payload.get("final_date"))
+
+        # ===============================
+        # 🔒 BLINDAJE NUEVAS KEYS
+        # ===============================
+        required_new_keys = [
+            # Metadata
+            "year","month","continent","country","port","client","draft_report_number",
+            # Firmas nuevas en draft
+            "chief_officer","master","msl_surveyor"
+        ]
+
+        for key in required_new_keys:
+            payload.setdefault(key, None)
 
         # ===============================
         # STATUS CONTROLADO
@@ -423,7 +461,7 @@ def update_draft_survey(general_id: int, payload: dict, conn=Depends(get_db)):
             new_status = "Pending for review"
 
         # =====================================================
-        # UPDATE GENERAL (100% CAMPOS)
+        # UPDATE GENERAL (100% CAMPOS + METADATA)
         # =====================================================
         cur.execute("""
             UPDATE general_draft_survey
@@ -467,13 +505,23 @@ def update_draft_survey(general_id: int, payload: dict, conn=Depends(get_db)):
                 hydro_tables_issued=%(hydro_tables_issued)s,
                 trim_tables_available=%(trim_tables_available)s,
                 hydrometer_no=%(hydrometer_no)s,
+
+                -- 🔵 NUEVO METADATA
+                year=%(year)s,
+                month=%(month)s,
+                continent=%(continent)s,
+                country=%(country)s,
+                port=%(port)s,
+                client=%(client)s,
+                draft_report_number=%(draft_report_number)s,
+
                 status=%(status)s,
                 updated_at=NOW()
             WHERE id=%(general_id)s
         """, {**payload, "general_id": general_id, "status": new_status})
 
         # =====================================================
-        # UPDATE DRAFT (100% CAMPOS)
+        # UPDATE DRAFT (100% CAMPOS + METADATA + FIRMAS)
         # =====================================================
         cur.execute("""
             UPDATE draft_survey
@@ -574,6 +622,20 @@ def update_draft_survey(general_id: int, payload: dict, conn=Depends(get_db)):
                 init_hydro2_mtc_p50_2=%(init_hydro2_mtc_p50_2)s,
                 init_hydro2_mtc_m50_2=%(init_hydro2_mtc_m50_2)s,
 
+                -- 🔵 NUEVO METADATA
+                year=%(year)s,
+                month=%(month)s,
+                continent=%(continent)s,
+                country=%(country)s,
+                port=%(port)s,
+                client=%(client)s,
+                draft_report_number=%(draft_report_number)s,
+
+                -- 🔵 NUEVAS FIRMAS
+                chief_officer=%(chief_officer)s,
+                master=%(master)s,
+                msl_surveyor=%(msl_surveyor)s,
+
                 status=%(status)s,
                 updated_at=NOW()
 
@@ -593,6 +655,7 @@ def update_draft_survey(general_id: int, payload: dict, conn=Depends(get_db)):
 
     finally:
         cur.close()
+
 # =========================================================
 # Preview
 # =========================================================

@@ -26,7 +26,7 @@ def inject_port():
 
         cursor.execute(
             check_query,
-            ("América", "Chile", "Caleta Patillos")
+            ("América", "Perú", "Pisco")
         )
 
         existing = cursor.fetchone()
@@ -46,7 +46,7 @@ def inject_port():
 
             cursor.execute(
                 insert_query,
-                ("América", "Chile", "Caleta Patillos")
+                ("América", "Perú", "Pisco")
             )
 
             new_id = cursor.fetchone()[0]
