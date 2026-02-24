@@ -558,19 +558,32 @@ def generate_draft_survey_excel(payload: dict, variant: str = "final") -> str:
     # =========================================================
     # VARIANT CONTROL (FINAL / INTERMEDIATE)
     # =========================================================
-    if (variant or "").lower() == "intermediate":
-        try:
-            # Asumimos que Z6 está en la hoja "General"
-            if "General" in wb.sheetnames:
-                wb["General"]["Z6"].value = "INTERMEDIATE DRAFT SURVEY"
-            else:
-                # fallback a primera hoja si cambia nombre
-                wb.worksheets[0]["Z6"].value = "INTERMEDIATE DRAFT SURVEY"
-        except Exception:
-            pass
-
+    # =========================================================
+    # VARIANT CONTROL (FINAL / INTERMEDIATE)
+    # =========================================================
     try:
-        wb.calculation.fullCalcOnLoad = True
+
+        title_text = "FINAL DRAFT SURVEY"
+
+        if (variant or "").lower() == "intermediate":
+            title_text = "INTERMEDIATE DRAFT SURVEY"
+
+        # 🔥 El título está en hoja Draft
+        if "Draft" in wb.sheetnames:
+
+            ws_title = wb["Draft"]
+
+            # Manejo seguro de merge
+            for merged in ws_title.merged_cells.ranges:
+                if "Z6" in merged:
+                    ws_title.cell(
+                        row=merged.min_row,
+                        column=merged.min_col
+                    ).value = title_text
+                    break
+            else:
+                ws_title["Z6"].value = title_text
+
     except Exception:
         pass
 
