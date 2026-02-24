@@ -171,7 +171,7 @@ def _update_by_report_number(
 
 
 # =========================================================
-# GET — UNIFICADO (4 TABLAS)
+# GET — UNIFICADO (4 TABLAS)  ✅ CORREGIDO
 # =========================================================
 @router.get("/unified/{draft_report_number}")
 def get_draft_survey_unified(draft_report_number: str, conn=Depends(get_db)):
@@ -211,22 +211,31 @@ def get_draft_survey_unified(draft_report_number: str, conn=Depends(get_db)):
         general_row = cur.fetchone()
         general = _row_to_dict(cur, general_row)
 
-        # Validación: si no existe nada, 404
         if not any([draft, ballast, word, general]):
             raise HTTPException(
                 status_code=404,
                 detail=f"No se encontró Draft Survey para draft_report_number={draft_report_number}"
             )
 
+        # 🔥 MERGE TOTAL (PLANO)
+        unified = {}
+
+        if general:
+            unified.update(general)
+
+        if draft:
+            unified.update(draft)
+
+        if ballast:
+            unified.update(ballast)
+
+        if word:
+            unified.update(word)
+
         return {
             "success": True,
             "draft_report_number": draft_report_number,
-            "data": {
-                "draft": draft,
-                "ballast": ballast,
-                "word": word,
-                "general": general,
-            }
+            "data": unified
         }
 
     except HTTPException:
