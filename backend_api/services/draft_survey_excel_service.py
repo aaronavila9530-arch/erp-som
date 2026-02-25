@@ -597,9 +597,11 @@ class DraftSurveyExcelGenerator:
         ws[cell].number_format = "DD-MM-YYYY"
 
 
-# =========================================================
-# GENERATE EXCEL (TITLE CONTROL = COORD + CONTENT SEARCH)
-# =========================================================
+class DraftSurveyExcelGenerator:
+
+    # =========================================================
+    # GENERATE EXCEL (TITLE CONTROL = COORD + HARD FORCE)
+    # =========================================================
     def generate_draft_survey_excel(self, payload: dict, variant: str = "final") -> str:
 
         if not os.path.exists(TEMPLATE_PATH):
@@ -613,44 +615,35 @@ class DraftSurveyExcelGenerator:
         # VARIANT CONTROL (FINAL / INTERMEDIATE)
         # =====================================================
         variant_norm = (variant or "").strip().lower()
-        title_text = "FINAL DRAFT SURVEY"
-        header_text = "FINAL SURVEY"
 
+        # Z6 (merged) => "FINAL DRAFT SURVEY" / "INTERMEDIATE DRAFT SURVEY"
+        title_text = "FINAL DRAFT SURVEY"
         if variant_norm == "intermediate":
             title_text = "INTERMEDIATE DRAFT SURVEY"
-            header_text = "INTERMEDIATE SURVEY"
+
+        # AT1 (NOT MERGED anymore) => same text as title_text (per your change)
+        at1_text = title_text
 
         # -------------------------------------------------
-        # MERGE-SAFE WRITER (ALWAYS WRITES TOP-LEFT OF MERGE)
+        # MERGE-SAFE WRITER (WRITES TOP-LEFT OF MERGE)
         # -------------------------------------------------
         from openpyxl.utils.cell import coordinate_to_tuple, get_column_letter
 
         def _set_merge_safe(ws: Worksheet, coord: str, value: str) -> None:
             """
             Writes to coord. If coord is inside a merged range, writes to the
-            top-left cell of that merged range, and clears the rest of the
-            cells in the merged range to avoid Excel showing stale values.
+            top-left cell of that merged range (Excel reads only top-left).
+            If not merged, writes directly.
             """
             r, c = coordinate_to_tuple(coord)
 
             for mr in list(ws.merged_cells.ranges):
                 min_col, min_row, max_col, max_row = mr.bounds
                 if min_row <= r <= max_row and min_col <= c <= max_col:
-
-                    # top-left of the merge
                     tl = f"{get_column_letter(min_col)}{min_row}"
                     ws[tl].value = value
-
-                    # clear other cells inside the merge (Excel shows top-left anyway,
-                    # but clearing avoids weird "looks unchanged" scenarios)
-                    for rr in range(min_row, max_row + 1):
-                        for cc in range(min_col, max_col + 1):
-                            cell_addr = f"{get_column_letter(cc)}{rr}"
-                            if cell_addr != tl:
-                                ws[cell_addr].value = None
                     return
 
-            # not merged
             ws[coord].value = value
 
         # -------------------------------------------------
@@ -659,13 +652,17 @@ class DraftSurveyExcelGenerator:
         if "Draft" in wb.sheetnames:
             ws_title = wb["Draft"]
 
-            # ✅ Blue title (merged) — this one you said works
+            # ✅ Z6 stays merged (works for you) — write merge-safe
             _set_merge_safe(ws_title, "Z6", title_text)
 
-            # ✅ Header "FINAL SURVEY" — your template is merged AP1:AW1
-            # We force it by writing to a few coords inside that merge so it can't miss.
-            for coord in ("AP1", "AQ1", "AR1", "AS1", "AT1", "AU1", "AV1", "AW1"):
-                _set_merge_safe(ws_title, coord, header_text)
+            # ✅ AT1 is now a normal cell (NOT merged) — FORCE write directly
+            # (we still call merge-safe, but also hard-force after, to be 100% sure)
+            _set_merge_safe(ws_title, "AT1", at1_text)
+            ws_title["AT1"].value = at1_text
+
+            # Optional: make sure it is stored as plain text (avoid weird formatting carry)
+            if ws_title["AT1"].data_type != "s":
+                ws_title["AT1"].value = str(at1_text)
 
         # =====================================================
         # APPLY MULTI-SHEET MAPPING
