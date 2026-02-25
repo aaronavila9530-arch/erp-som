@@ -597,10 +597,8 @@ class DraftSurveyExcelGenerator:
         ws[cell].number_format = "DD-MM-YYYY"
 
 
-class DraftSurveyExcelGenerator:
-
     # =========================================================
-    # GENERATE EXCEL (TITLE CONTROL = COORD + HARD FORCE)
+    # GENERATE EXCEL (AT1 HARD FORCE + POST-SAVE VERIFY)
     # =========================================================
     def generate_draft_survey_excel(self, payload: dict, variant: str = "final") -> str:
 
@@ -609,33 +607,29 @@ class DraftSurveyExcelGenerator:
                 f"Draft Survey template not found: {TEMPLATE_PATH}"
             )
 
-        wb = load_workbook(TEMPLATE_PATH, data_only=False)
+        payload = payload or {}
 
-        # =====================================================
-        # VARIANT CONTROL (FINAL / INTERMEDIATE)
-        # =====================================================
         variant_norm = (variant or "").strip().lower()
-
-        # Z6 (merged) => "FINAL DRAFT SURVEY" / "INTERMEDIATE DRAFT SURVEY"
         title_text = "FINAL DRAFT SURVEY"
         if variant_norm == "intermediate":
             title_text = "INTERMEDIATE DRAFT SURVEY"
 
-        # AT1 (NOT MERGED anymore) => same text as title_text (per your change)
-        at1_text = title_text
+        # 1) Load template
+        wb = load_workbook(TEMPLATE_PATH, data_only=False)
+
+        # 2) Force titles on Draft sheet
+        if "Draft" not in wb.sheetnames:
+            raise Exception("Sheet 'Draft' not found in template.")
+
+        ws_title = wb["Draft"]
 
         # -------------------------------------------------
-        # MERGE-SAFE WRITER (WRITES TOP-LEFT OF MERGE)
+        # MERGE-SAFE SET (for Z6 only)
         # -------------------------------------------------
         from openpyxl.utils.cell import coordinate_to_tuple, get_column_letter
 
         def _set_merge_safe(ws: Worksheet, coord: str, value: str) -> None:
-            """
-            Writes to coord. If coord is inside a merged range, writes to the
-            top-left cell of that merged range (Excel reads only top-left).
-            If not merged, writes directly.
-            """
-            r, c = coordinate_to_tuple(coord)
+            r, c = coordinate_to_tuple(coord)  # (row, col)
 
             for mr in list(ws.merged_cells.ranges):
                 min_col, min_row, max_col, max_row = mr.bounds
@@ -646,43 +640,58 @@ class DraftSurveyExcelGenerator:
 
             ws[coord].value = value
 
+        # ✅ Z6 (merged) — keep as you have it
+        _set_merge_safe(ws_title, "Z6", title_text)
+
+        # ✅ AT1 (NOT merged) — HARD FORCE
+        ws_title["AT1"].value = str(title_text)
+
         # -------------------------------------------------
-        # FORCE TITLES ON DRAFT SHEET
+        # EXTRA HARDENING: if something "resists", replace by content
+        # (Draft sheet only)
         # -------------------------------------------------
-        if "Draft" in wb.sheetnames:
-            ws_title = wb["Draft"]
+        needles = {
+            "FINAL DRAFT SURVEY",
+            "FINAL SURVEY",
+            "FINAL  SURVEY",
+            "FINAL  DRAFT  SURVEY",
+        }
+        needles_upper = {n.strip().upper() for n in needles}
 
-            # ✅ Z6 stays merged (works for you) — write merge-safe
-            _set_merge_safe(ws_title, "Z6", title_text)
+        def _replace_anywhere_in_sheet(ws: Worksheet, repl: str) -> int:
+            """
+            Replaces any cell whose string value matches needles_upper.
+            Returns count of replacements.
+            """
+            count = 0
+            for row in ws.iter_rows():
+                for cell in row:
+                    v = cell.value
+                    if isinstance(v, str) and v.strip().upper() in needles_upper:
+                        cell.value = repl
+                        count += 1
+            return count
 
-            # ✅ AT1 is now a normal cell (NOT merged) — FORCE write directly
-            # (we still call merge-safe, but also hard-force after, to be 100% sure)
-            _set_merge_safe(ws_title, "AT1", at1_text)
-            ws_title["AT1"].value = at1_text
+        # If AT1 is still not what we want (in-memory), do a content sweep
+        if str(ws_title["AT1"].value).strip().upper() != title_text.strip().upper():
+            _replace_anywhere_in_sheet(ws_title, title_text)
+            ws_title["AT1"].value = str(title_text)
 
-            # Optional: make sure it is stored as plain text (avoid weird formatting carry)
-            if ws_title["AT1"].data_type != "s":
-                ws_title["AT1"].value = str(at1_text)
-
-        # =====================================================
-        # APPLY MULTI-SHEET MAPPING
-        # =====================================================
-        payload = payload or {}
-
+        # -------------------------------------------------
+        # 3) Apply mapping (normal flow)
+        # -------------------------------------------------
         for sheet_name, config in self.EXCEL_MAPPING.items():
 
             if sheet_name not in wb.sheetnames:
                 continue
 
             ws = wb[sheet_name]
-
             date_fields = set(config.get("date_fields") or [])
             fields_map = config.get("fields") or {}
 
             for field, cell in fields_map.items():
 
                 value = payload.get(field)
-
                 if value in [None, ""]:
                     continue
 
@@ -691,11 +700,35 @@ class DraftSurveyExcelGenerator:
                 else:
                     self._safe_set(ws, cell, value)
 
-        # =====================================================
-        # SAVE TEMP FILE
-        # =====================================================
+        # -------------------------------------------------
+        # 4) Save temp file
+        # -------------------------------------------------
         fd, tmp_path = tempfile.mkstemp(suffix=".xlsx")
         os.close(fd)
         wb.save(tmp_path)
+
+        # -------------------------------------------------
+        # 5) POST-SAVE VERIFY (THIS IS THE KEY)
+        #    If this fails, you are NOT opening the file you generated
+        #    OR you are NOT calling this method at all.
+        # -------------------------------------------------
+        try:
+            wb_check = load_workbook(tmp_path, data_only=False)
+            if "Draft" not in wb_check.sheetnames:
+                raise Exception("Post-save verify failed: Sheet 'Draft' missing.")
+
+            ws_check = wb_check["Draft"]
+            got = ws_check["AT1"].value
+
+            if str(got or "").strip().upper() != title_text.strip().upper():
+                raise Exception(
+                    f"Post-save verify failed: AT1='{got}' expected '{title_text}'. "
+                    "Esto prueba que (a) NO estás llamando este método, "
+                    "o (b) NO estás abriendo el tmp_path que este método genera."
+                )
+
+        except Exception as e:
+            # 🔥 NO lo escondemos: queremos que reviente para ubicar el flujo real
+            raise
 
         return tmp_path
