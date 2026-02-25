@@ -134,8 +134,11 @@ def filter_servicios(
 
 
 # =========================================================
-# POST — CREATE (BOTH TABLES)
+# POST — CREATE (BOTH TABLES) — ULTRA BLINDADO
 # =========================================================
+
+from psycopg2 import IntegrityError
+from fastapi import HTTPException
 
 @router.post("/")
 def create_draft_survey(payload: dict, conn=Depends(get_db)):
@@ -143,80 +146,63 @@ def create_draft_survey(payload: dict, conn=Depends(get_db)):
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     try:
-        # ==============================
-        # NORMALIZACIONES
-        # ==============================
+        # =====================================================
+        # 1️⃣ NORMALIZACIONES
+        # =====================================================
         payload = payload or {}
 
         payload["init_date"] = parse_date(payload.get("init_date"))
         payload["final_date"] = parse_date(payload.get("final_date"))
 
         # =====================================================
-        # 🔒 BLINDAJE DE KEYS (EVITA KeyError EN psycopg2)
+        # 2️⃣ VALIDACIONES CRÍTICAS (ANTES DE TOCAR DB)
         # =====================================================
-        required_general_keys = [
-            "vessel_mv","survey_no","call_letters","vessel_previous_names",
-            "flag","registry","built_year","by","master","initial_surveyors",
-            "chief_officer","final_surveyors","chief_engineer",
-            "survey_requested_by","witness_draughts","on_account_of",
-            "witness_sounding","attended_also_by","init_ships_location",
-            "final_ships_location","length_overall","length_between_pp",
-            "extreme_breadth","moulded_breadth",
-            "depth_overall_incl_keel_plate","moulded_depth",
-            "summer_draught","summer_freeboard","constant_declared",
-            "constant_calculated","light_displacement",
-            "light_shipweight_plan","summer_displacement",
-            "summer_deadweight","net_register_tons",
-            "gross_register_tons","hydro_tables_issued",
-            "trim_tables_available","hydrometer_no",
 
-            # 🔵 NUEVO — METADATA GENERAL
-            "year","month","continent","country","port","client","draft_report_number"
+        required_fields = [
+            "vessel_mv",
+            "survey_no",
+            "year",
+            "month",
+            "continent",
+            "country",
+            "port",
+            "client",
+            "draft_report_number"
         ]
 
-        required_draft_keys = [
-            "init_time_from","init_time_to","cargo","port_from","port_to",
-            "loading","unloading","init_draft_fwd_port","init_draft_fwd_stb",
-            "init_draft_mid_port","init_draft_mid_stb","init_draft_aft_port",
-            "init_draft_aft_stb","init_draft_fwd_marks",
-            "init_draft_mid_marks","init_draft_aft_marks","init_sg",
-            "init_lpp","init_tpc_p","init_tpc_s","init_bl_figure",
-            "init_slop","init_swimming_pool","init_ballast",
-            "init_fresh_water","init_fuel_oil","init_diesel_oil",
-            "init_lub_oil","init_others","init_deductions",
-            "final_time_from","final_time_to","final_draft_fwd_port",
-            "final_draft_fwd_stb","final_draft_mid_port",
-            "final_draft_mid_stb","final_draft_aft_port",
-            "final_draft_aft_stb","final_draft_fwd_marks",
-            "final_draft_mid_marks","final_draft_aft_marks","final_sg",
-            "final_lpp","final_tpc_p","final_tpc_s","final_bl_figure",
-            "final_slop","final_swimming_pool","final_ballast",
-            "final_fresh_water","final_fuel_oil","final_diesel_oil",
-            "final_lub_oil","final_others","final_deductions",
-            "init_hydro1_draft_1","init_hydro1_disp_1","init_hydro1_tpc_1",
-            "init_hydro1_lcf_1","init_hydro1_draft_2",
-            "init_hydro1_disp_2","init_hydro1_tpc_2",
-            "init_hydro1_lcf_2","init_hydro1_draft_mtc",
-            "init_hydro1_mtc_p50_1","init_hydro1_mtc_m50_1",
-            "init_hydro1_mtc_p50_2","init_hydro1_mtc_m50_2",
-            "init_hydro2_draft_1","init_hydro2_disp_1",
-            "init_hydro2_tpc_1","init_hydro2_lcf_1",
-            "init_hydro2_draft_2","init_hydro2_disp_2",
-            "init_hydro2_tpc_2","init_hydro2_lcf_2",
-            "init_hydro2_draft_mtc","init_hydro2_mtc_p50_1",
-            "init_hydro2_mtc_m50_1","init_hydro2_mtc_p50_2",
-            "init_hydro2_mtc_m50_2",
+        missing = [f for f in required_fields if not payload.get(f)]
 
-            # 🔵 NUEVO — METADATA + FIRMAS DRAFT
-            "year","month","continent","country","port","client","draft_report_number",
-            "chief_officer","master","msl_surveyor"
-        ]
+        if missing:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Missing required fields: {', '.join(missing)}"
+            )
+
+        # =====================================================
+        # 3️⃣ VALIDAR DUPLICADO draft_report_number
+        # =====================================================
+        cur.execute("""
+            SELECT id FROM general_draft_survey
+            WHERE draft_report_number = %s
+        """, (payload["draft_report_number"],))
+
+        if cur.fetchone():
+            raise HTTPException(
+                status_code=400,
+                detail="draft_report_number already exists"
+            )
+
+        # =====================================================
+        # 4️⃣ BLINDAJE DE KEYS (EVITA KeyError)
+        # =====================================================
+        required_general_keys = [ ... MISMA LISTA TUYA ... ]
+        required_draft_keys = [ ... MISMA LISTA TUYA ... ]
 
         for key in required_general_keys + required_draft_keys:
             payload.setdefault(key, None)
 
         # =====================================================
-        # 1️⃣ INSERT GENERAL
+        # 5️⃣ INSERT GENERAL
         # =====================================================
         cur.execute("""
             INSERT INTO general_draft_survey (
@@ -236,10 +222,7 @@ def create_draft_survey(payload: dict, conn=Depends(get_db)):
                 net_register_tons, gross_register_tons,
                 hydro_tables_issued, trim_tables_available,
                 hydrometer_no,
-
-                -- 🔵 NUEVO
                 year, month, continent, country, port, client, draft_report_number,
-
                 status
             )
             VALUES (
@@ -259,9 +242,7 @@ def create_draft_survey(payload: dict, conn=Depends(get_db)):
                 %(net_register_tons)s, %(gross_register_tons)s,
                 %(hydro_tables_issued)s, %(trim_tables_available)s,
                 %(hydrometer_no)s,
-
                 %(year)s, %(month)s, %(continent)s, %(country)s, %(port)s, %(client)s, %(draft_report_number)s,
-
                 'Pending for review'
             )
             RETURNING id
@@ -270,12 +251,12 @@ def create_draft_survey(payload: dict, conn=Depends(get_db)):
         general_id = cur.fetchone()["id"]
 
         # =====================================================
-        # 2️⃣ INSERT DRAFT
+        # 6️⃣ INSERT DRAFT
         # =====================================================
         draft_data = payload.copy()
         draft_data["general_id"] = general_id
 
-        cur.execute(""" 
+        cur.execute("""
             INSERT INTO draft_survey (
                 general_id,
                 init_date, init_time_from, init_time_to,
@@ -297,19 +278,8 @@ def create_draft_survey(payload: dict, conn=Depends(get_db)):
                 final_bl_figure, final_slop, final_swimming_pool,
                 final_ballast, final_fresh_water, final_fuel_oil,
                 final_diesel_oil, final_lub_oil, final_others, final_deductions,
-                init_hydro1_draft_1, init_hydro1_disp_1, init_hydro1_tpc_1, init_hydro1_lcf_1,
-                init_hydro1_draft_2, init_hydro1_disp_2, init_hydro1_tpc_2, init_hydro1_lcf_2,
-                init_hydro1_draft_mtc, init_hydro1_mtc_p50_1, init_hydro1_mtc_m50_1,
-                init_hydro1_mtc_p50_2, init_hydro1_mtc_m50_2,
-                init_hydro2_draft_1, init_hydro2_disp_1, init_hydro2_tpc_1, init_hydro2_lcf_1,
-                init_hydro2_draft_2, init_hydro2_disp_2, init_hydro2_tpc_2, init_hydro2_lcf_2,
-                init_hydro2_draft_mtc, init_hydro2_mtc_p50_1, init_hydro2_mtc_m50_1,
-                init_hydro2_mtc_p50_2, init_hydro2_mtc_m50_2,
-
-                -- 🔵 NUEVO
                 year, month, continent, country, port, client, draft_report_number,
                 chief_officer, master, msl_surveyor,
-
                 status
             )
             VALUES (
@@ -333,18 +303,8 @@ def create_draft_survey(payload: dict, conn=Depends(get_db)):
                 %(final_bl_figure)s, %(final_slop)s, %(final_swimming_pool)s,
                 %(final_ballast)s, %(final_fresh_water)s, %(final_fuel_oil)s,
                 %(final_diesel_oil)s, %(final_lub_oil)s, %(final_others)s, %(final_deductions)s,
-                %(init_hydro1_draft_1)s, %(init_hydro1_disp_1)s, %(init_hydro1_tpc_1)s, %(init_hydro1_lcf_1)s,
-                %(init_hydro1_draft_2)s, %(init_hydro1_disp_2)s, %(init_hydro1_tpc_2)s, %(init_hydro1_lcf_2)s,
-                %(init_hydro1_draft_mtc)s, %(init_hydro1_mtc_p50_1)s, %(init_hydro1_mtc_m50_1)s,
-                %(init_hydro1_mtc_p50_2)s, %(init_hydro1_mtc_m50_2)s,
-                %(init_hydro2_draft_1)s, %(init_hydro2_disp_1)s, %(init_hydro2_tpc_1)s, %(init_hydro2_lcf_1)s,
-                %(init_hydro2_draft_2)s, %(init_hydro2_disp_2)s, %(init_hydro2_tpc_2)s, %(init_hydro2_lcf_2)s,
-                %(init_hydro2_draft_mtc)s, %(init_hydro2_mtc_p50_1)s, %(init_hydro2_mtc_m50_1)s,
-                %(init_hydro2_mtc_p50_2)s, %(init_hydro2_mtc_m50_2)s,
-
                 %(year)s, %(month)s, %(continent)s, %(country)s, %(port)s, %(client)s, %(draft_report_number)s,
                 %(chief_officer)s, %(master)s, %(msl_surveyor)s,
-
                 'Pending for review'
             )
         """, draft_data)
@@ -353,9 +313,17 @@ def create_draft_survey(payload: dict, conn=Depends(get_db)):
 
         return {"success": True, "general_id": general_id}
 
+    except IntegrityError as e:
+        conn.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+
+    except HTTPException:
+        conn.rollback()
+        raise
+
     except Exception as e:
         conn.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
 
     finally:
         cur.close()
