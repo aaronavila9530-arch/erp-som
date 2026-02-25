@@ -33,6 +33,7 @@ TEMPLATE_WORD_PATH = os.path.abspath(
     )
 )
 
+# Estas hojas van en Landscape (las demás Portrait)
 LANDSCAPE_SHEETS = {
     "ECE DRAUGHT SURVEY CODE   Draught survey report",
     "ECE DRAUGHT SURVEY CODE D2",
@@ -113,18 +114,16 @@ class DraftSurveyApprovePdfService:
     def _replace_in_paragraph_safe(self, paragraph, repl: dict):
         """
         Reemplazo ultra-seguro:
-        - No elimina runs
-        - No reconstruye párrafo
-        - Respeta fuente, tamaño, negrita, colores
+        - No reconstruye estilos
+        - Respeta fuente/tamaño/negrita/colores
         - Maneja placeholders fragmentados en múltiples runs
         """
-
         if not paragraph.runs:
             return
 
         full_text = "".join(run.text for run in paragraph.runs)
 
-        if "{" not in full_text:
+        if "{" not in full_text or "}" not in full_text:
             return
 
         changed = False
@@ -149,6 +148,7 @@ class DraftSurveyApprovePdfService:
 
     def _convert_docx_to_pdf(self, docx_path: str, pdf_path: str):
 
+        # Windows: docx2pdf usa Microsoft Word (respeta formatos)
         if docx2pdf_convert:
             out_dir = os.path.dirname(pdf_path)
             os.makedirs(out_dir, exist_ok=True)
@@ -161,6 +161,7 @@ class DraftSurveyApprovePdfService:
                 shutil.move(gen_path, pdf_path)
             return
 
+        # Fallback: LibreOffice soffice (si existe en PATH)
         out_dir = os.path.dirname(pdf_path)
         os.makedirs(out_dir, exist_ok=True)
 
@@ -184,80 +185,167 @@ class DraftSurveyApprovePdfService:
             shutil.move(gen_path, pdf_path)
 
     # =========================================================
-    # EXCEL PIPELINE (LANDSCAPE CONTROLADO + 1 PAGINA)
+    # EXCEL PIPELINE (LANDSCAPE CONTROLADO + SIEMPRE PÁGINA 1)
     # =========================================================
     def _generate_excel_sheet_pdfs(self, payload: dict) -> list:
+        """
+        Reglas:
+        - Genera excel con openpyxl (tu servicio)
+        - Abre con Excel COM (Windows)
+        - Aplica orientación:
+            - LANDSCAPE_SHEETS -> Landscape
+            - resto -> Portrait
+        - Fuerza PrintArea imprimible (aunque haya fórmulas/números)
+        - Exporta SIEMPRE página 1 de cada hoja a un PDF individual
+        - Devuelve lista de PDFs para merge
+        """
 
         if pythoncom is None or win32com is None:
-            raise RuntimeError("pywin32 not installed.")
+            raise RuntimeError("pywin32 not installed (win32com/pythoncom not available).")
 
         generator = DraftSurveyExcelGenerator()
         excel_path = generator.generate(payload)
 
-        if not os.path.exists(excel_path):
+        if not excel_path or not os.path.exists(excel_path):
             raise RuntimeError("Excel file was not generated")
 
         out_dir = tempfile.mkdtemp(prefix="draft_excel_pdf_")
         pdfs = []
 
-        pythoncom.CoInitialize()
-        excel = win32com.client.DispatchEx("Excel.Application")
-        excel.Visible = False
-        excel.DisplayAlerts = False
-
+        # Constantes COM (evita depender de win32.constants)
         xlTypePDF = 0
+        xlPortrait = 1
+        xlLandscape = 2
+        xlQualityStandard = 0
+
+        pythoncom.CoInitialize()
+        excel = None
+        wb = None
 
         try:
+            excel = win32com.client.DispatchEx("Excel.Application")
+            excel.Visible = False
+            excel.DisplayAlerts = False
+
+            # Blindaje para COM
+            try:
+                excel.EnableEvents = False
+            except Exception:
+                pass
+
+            try:
+                excel.AskToUpdateLinks = False
+            except Exception:
+                pass
+
+            try:
+                excel.Calculation = -4105  # xlCalculationAutomatic
+            except Exception:
+                pass
+
             wb = excel.Workbooks.Open(excel_path, UpdateLinks=0, ReadOnly=True)
 
-            for ws in wb.Worksheets:
+            # Recalcular antes de exportar (no “importa” fórmulas; solo que imprima consistente)
+            try:
+                excel.CalculateFullRebuild()
+                while getattr(excel, "CalculationState", 0) != 0:
+                    pass
+            except Exception:
+                pass
 
+            for ws in wb.Worksheets:
                 sheet_name = ws.Name
 
+                # -----------------------------
+                # 1) PageSetup: orientación
+                # -----------------------------
                 try:
                     if sheet_name in LANDSCAPE_SHEETS:
-                        ws.PageSetup.Orientation = 2  # Landscape
+                        ws.PageSetup.Orientation = xlLandscape
                     else:
-                        ws.PageSetup.Orientation = 1  # Portrait
+                        ws.PageSetup.Orientation = xlPortrait
                 except Exception:
                     pass
 
+                # -----------------------------
+                # 2) Fit 1 página de ancho (alto libre)
+                # -----------------------------
                 try:
                     ws.PageSetup.Zoom = False
                     ws.PageSetup.FitToPagesWide = 1
-                    ws.PageSetup.FitToPagesTall = 0
+                    ws.PageSetup.FitToPagesTall = 0  # alto libre (evita recortes raros)
                     ws.PageSetup.CenterHorizontally = True
                 except Exception:
                     pass
 
-                pdf_path = os.path.join(
-                    out_dir,
-                    f"{self._safe_filename(sheet_name)}.pdf"
-                )
+                # -----------------------------
+                # 3) Forzar PrintArea imprimible SIEMPRE
+                #    (evita E_INVALIDARG con From/To)
+                # -----------------------------
+                try:
+                    used = ws.UsedRange
+                    # Address puede venir como $A$1:$K$60; perfecto para PrintArea
+                    addr = used.Address
 
-                ws.ExportAsFixedFormat(
-                    Type=xlTypePDF,
-                    Filename=pdf_path,
-                    Quality=0,
-                    IncludeDocProperties=True,
-                    IgnorePrintAreas=False,
-                    From=1,
-                    To=1,
-                    OpenAfterPublish=False
-                )
+                    # Si la hoja está “vacía” (UsedRange a veces devuelve A1), igual imprimimos A1
+                    # para garantizar que exista página 1.
+                    if not addr:
+                        addr = "$A$1"
+
+                    ws.PageSetup.PrintArea = addr
+                except Exception:
+                    # Último fallback: A1 siempre
+                    try:
+                        ws.PageSetup.PrintArea = "$A$1"
+                    except Exception:
+                        pass
+
+                # -----------------------------
+                # 4) Exportar SIEMPRE página 1
+                # -----------------------------
+                pdf_path = os.path.join(out_dir, f"{self._safe_filename(sheet_name)}.pdf")
+
+                try:
+                    ws.ExportAsFixedFormat(
+                        Type=xlTypePDF,
+                        Filename=pdf_path,
+                        Quality=xlQualityStandard,
+                        IncludeDocProperties=True,
+                        IgnorePrintAreas=False,  # usamos PrintArea definido arriba
+                        From=1,
+                        To=1,
+                        OpenAfterPublish=False
+                    )
+                except Exception:
+                    # Fallback ultra: si Excel sigue llorando, exporta igual ignorando PrintArea
+                    # (pero manteniendo From/To=1)
+                    ws.ExportAsFixedFormat(
+                        Type=xlTypePDF,
+                        Filename=pdf_path,
+                        Quality=xlQualityStandard,
+                        IncludeDocProperties=True,
+                        IgnorePrintAreas=True,
+                        From=1,
+                        To=1,
+                        OpenAfterPublish=False
+                    )
 
                 if os.path.exists(pdf_path):
                     pdfs.append(pdf_path)
 
         finally:
             try:
-                wb.Close(False)
+                if wb is not None:
+                    wb.Close(False)
             except Exception:
                 pass
+
             try:
-                excel.Quit()
+                if excel is not None:
+                    excel.Quit()
             except Exception:
                 pass
+
             try:
                 pythoncom.CoUninitialize()
             except Exception:
@@ -273,3 +361,4 @@ class DraftSurveyApprovePdfService:
         for ch in bad:
             name = name.replace(ch, "_")
         return name.strip()[:120]
+
