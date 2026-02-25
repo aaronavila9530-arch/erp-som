@@ -468,6 +468,7 @@ def list_draft_surveys(conn=Depends(get_db)):
     finally:
         cur.close()
 
+
 # =========================================================
 # GET BY ID (FULL JOIN)
 # =========================================================
