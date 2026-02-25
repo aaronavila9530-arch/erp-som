@@ -619,24 +619,24 @@ def generate_draft_survey_excel(payload: dict, variant: str = "final") -> str:
 
             ws_title = wb["Draft"]
 
-            # Safe merged cell handling
-            merged_written = False
+            def _write_merge_safe(ws, target_cell, value):
+                """
+                Escribe correctamente incluso si la celda pertenece
+                a un rango merged.
+                """
+                for merged in ws.merged_cells.ranges:
+                    if target_cell in str(merged):
+                        ws.cell(
+                            row=merged.min_row,
+                            column=merged.min_col
+                        ).value = value
+                        return
 
-            for merged in ws_title.merged_cells.ranges:
-                if "Z6" in str(merged):
-                    ws_title.cell(
-                        row=merged.min_row,
-                        column=merged.min_col
-                    ).value = title_text
-                    merged_written = True
-                    break
+                ws[target_cell].value = value
 
-            if not merged_written:
-                ws_title["Z6"].value = title_text
-
-            # Optional secondary title cell
-            if "AP1" in ws_title:
-                ws_title["AP1"].value = title_text
+            # 🔥 Forzar escritura en ambos títulos
+            _write_merge_safe(ws_title, "Z6", title_text)
+            _write_merge_safe(ws_title, "AP1", title_text)
 
     except Exception:
         pass
