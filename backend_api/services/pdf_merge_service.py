@@ -77,3 +77,38 @@ def merge_pdfs(presentation_pdf: str, report_pdf: str) -> str:
         )
 
     return output_path
+
+
+
+def merge_pdf_list(pdf_paths: list) -> str:
+    """
+    Une N PDFs en uno solo, en orden.
+    """
+    if not pdf_paths or not isinstance(pdf_paths, list):
+        raise ValueError("pdf_paths must be a non-empty list")
+
+    writer = PdfWriter()
+
+    for p in pdf_paths:
+        if not isinstance(p, str) or not p:
+            raise ValueError("Each PDF path must be a non-empty string")
+        if not os.path.exists(p):
+            raise FileNotFoundError(f"PDF not found: {p}")
+
+        reader = PdfReader(p)
+        if not reader.pages:
+            raise RuntimeError(f"PDF has no pages: {p}")
+
+        for page in reader.pages:
+            writer.add_page(page)
+
+    fd, out_path = tempfile.mkstemp(suffix=".pdf")
+    os.close(fd)
+
+    with open(out_path, "wb") as f:
+        writer.write(f)
+
+    if not os.path.exists(out_path):
+        raise RuntimeError("Merged PDF was not created")
+
+    return out_path
