@@ -411,37 +411,3 @@ def get_draft_survey_headers(conn=Depends(get_db)):
             pass
 
 
-@router.get("/headers-list")
-def get_draft_survey_headers_list(conn=Depends(get_db)):
-
-    cur = conn.cursor(cursor_factory=RealDictCursor)
-
-    try:
-        cur.execute("""
-            SELECT
-                draft_report_number,
-                status,
-                year,
-                month,
-                continent,
-                country,
-                port,
-                client
-            FROM general_draft_survey
-            ORDER BY draft_report_number DESC
-        """)
-
-        rows = cur.fetchall() or []
-
-        return {
-            "success": True,
-            "data": rows
-        }
-
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Headers fetch error: {e}"
-        )
-    finally:
-        cur.close()
