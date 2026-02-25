@@ -21,7 +21,6 @@ class DraftSurveyExcelGenerator:
     # MASTER MAPPING STRUCTURE (FULL TEMPLATE 1:1)
     # =========================================================
     EXCEL_MAPPING = {
-
         "General": {
             "date_fields": [],
             "fields": {
@@ -612,9 +611,6 @@ def generate_draft_survey_excel(payload: dict, variant: str = "final") -> str:
     # =========================================================
     # VARIANT CONTROL (FINAL / INTERMEDIATE)
     # =========================================================
-    # =========================================================
-    # VARIANT CONTROL (FINAL / INTERMEDIATE)
-    # =========================================================
     try:
 
         title_text = "FINAL DRAFT SURVEY"
@@ -622,21 +618,28 @@ def generate_draft_survey_excel(payload: dict, variant: str = "final") -> str:
         if (variant or "").lower() == "intermediate":
             title_text = "INTERMEDIATE DRAFT SURVEY"
 
-        # 🔥 El título está en hoja Draft
         if "Draft" in wb.sheetnames:
 
             ws_title = wb["Draft"]
 
-            # Manejo seguro de merge
+            # Safe merged cell handling
+            merged_written = False
+
             for merged in ws_title.merged_cells.ranges:
-                if "Z6" in merged:
+                if "Z6" in str(merged):
                     ws_title.cell(
                         row=merged.min_row,
                         column=merged.min_col
                     ).value = title_text
+                    merged_written = True
                     break
-            else:
+
+            if not merged_written:
                 ws_title["Z6"].value = title_text
+
+            # Optional secondary title cell
+            if "AP1" in ws_title:
+                ws_title["AP1"].value = title_text
 
     except Exception:
         pass
