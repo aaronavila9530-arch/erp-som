@@ -295,12 +295,9 @@ class DraftSurveyExcelGenerator:
                 "master": "AN32",
                 "msl_surveyor": "AN35",
             }
-        },
+        }   # ← cierra "Draft"
+        ,
 
-
-class DraftSurveyExcelMapping:
-
-    EXCEL_MAPPING = {
         "Deductions": {
             "date_fields": [],
             "fields": {
