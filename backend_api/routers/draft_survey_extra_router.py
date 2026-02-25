@@ -12,6 +12,9 @@ router = APIRouter(
     tags=["Draft Survey Extra"]
 )
 
+# =========================================================
+# POST — BALLAST (CREATE) — ULTRA BLINDADO / NO EXIGE CAMPOS
+# =========================================================
 @router.post("/ballast/{draft_survey_id}")
 def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
 
@@ -21,18 +24,16 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
         payload = payload or {}
 
         # =====================================================
-        # 🔒 BLINDAJE METADATA
+        # 🔒 METADATA (NO OBLIGATORIA AQUÍ) — NORMALIZAR VACÍOS
         # =====================================================
         metadata_keys = [
             "year", "month", "continent", "country",
             "port", "client", "draft_report_number"
         ]
 
-        for key in metadata_keys:
-            payload.setdefault(key, None)
-
         # =====================================================
         # 1️⃣ RESOLVER draft_survey.id REAL DESDE general_id
+        #     (TU RUTA RECIBE general_id EN EL PATH)
         # =====================================================
         cur.execute(
             "SELECT id FROM draft_survey WHERE general_id = %s",
@@ -49,7 +50,8 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
         real_draft_id = row[0]
 
         # =====================================================
-        # 2️⃣ NORMALIZAR KEYS
+        # 2️⃣ NORMALIZAR KEYS + LIMPIAR STRINGS VACÍOS
+        #    (NO EXIGIR QUE VENGAN TODOS LOS CAMPOS)
         # =====================================================
         normalized = {}
 
@@ -58,14 +60,32 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
                 continue
 
             new_key = k.lower().strip().replace(" ", "_")
-            normalized[new_key] = v
+
+            # 🔒 Si viene "" o "None" -> None (evita 400 por tipos / constraints)
+            if v is None:
+                normalized[new_key] = None
+            elif isinstance(v, str):
+                vv = v.strip()
+                normalized[new_key] = None if vv in ("", "none", "null") else vv
+            else:
+                normalized[new_key] = v
+
+        # Asegurar metadata keys aunque no vengan
+        for m in metadata_keys:
+            if m not in normalized:
+                normalized[m] = None
+            else:
+                # Normalizar metadata si venía vacío
+                mv = normalized.get(m)
+                if isinstance(mv, str):
+                    mvv = mv.strip()
+                    normalized[m] = None if mvv in ("", "none", "null") else mvv
 
         normalized["draft_survey_id"] = real_draft_id
 
         # =====================================================
-        # 3️⃣ CONSTRUIR SQL DINÁMICO HASTA 20 TANQUES
+        # 3️⃣ ARMAR SQL DINÁMICO (20 TANQUES) — NO EXIGE VALORES
         # =====================================================
-
         columns = ["draft_survey_id"]
         values = ["%(draft_survey_id)s"]
 
@@ -111,9 +131,6 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
         columns.append("status")
         values.append("'Pending for review'")
 
-        # =====================================================
-        # 🔧 GENERAR SQL FINAL
-        # =====================================================
         sql = f"""
             INSERT INTO draft_survey_ballast (
                 {", ".join(columns)}
@@ -124,21 +141,55 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
         """
 
         # =====================================================
-        # 🔒 RELLENAR FALTANTES CON None
+        # 🔒 RELLENAR FALTANTES CON None (NO EXIGE QUE VENGAN)
         # =====================================================
         import re
         keys = re.findall(r"%\((.*?)\)s", sql)
-
         for k in keys:
-            normalized.setdefault(k, None)
+            if k not in normalized:
+                normalized[k] = None
 
         # =====================================================
-        # 🚀 EXECUTE
+        # 🔒 (OPCIONAL) EVITAR DUPLICADOS: si ya existe para ese draft
+        #     -> update en vez de reventar por unique constraint
+        #     (NO CAMBIA TU UX, SOLO EVITA 400/500)
         # =====================================================
-        cur.execute(sql, normalized)
+        try:
+            cur.execute(
+                "SELECT id FROM draft_survey_ballast WHERE draft_survey_id = %s",
+                (real_draft_id,)
+            )
+            exists = cur.fetchone()
+        except Exception:
+            exists = None
+
+        if exists:
+            # Si ya existe registro ballast, hacemos UPDATE dinámico
+            set_parts = []
+            for col in columns:
+                if col in ("draft_survey_id", "status"):
+                    continue
+                set_parts.append(f"{col} = %({col})s")
+
+            update_sql = f"""
+                UPDATE draft_survey_ballast
+                SET
+                    {", ".join(set_parts)},
+                    updated_at = NOW(),
+                    status = 'Pending for review'
+                WHERE draft_survey_id = %(draft_survey_id)s
+            """
+            cur.execute(update_sql, normalized)
+        else:
+            # Insert normal
+            cur.execute(sql, normalized)
+
         conn.commit()
+        return {"success": True, "draft_survey_id": real_draft_id}
 
-        return {"success": True}
+    except HTTPException:
+        conn.rollback()
+        raise
 
     except Exception as e:
         conn.rollback()
@@ -295,20 +346,18 @@ def update_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
 
 
 # =========================================================
-# ================= WORD REPORT ===========================
+# ================= WORD REPORT (CREATE) ===================
 # =========================================================
-
 @router.post("/word/{draft_survey_id}")
 def create_word(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
 
     cur = conn.cursor()
 
     try:
-
         payload = payload or {}
 
         # =====================================================
-        # 🔒 CAMPOS WORD ESPERADOS
+        # 🔒 CAMPOS WORD ESPERADOS (NO OBLIGA A LLENAR)
         # =====================================================
         expected_fields = [
             "word_mt", "word_product", "word_vessel", "word_port", "word_country",
@@ -327,7 +376,7 @@ def create_word(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
         ]
 
         # =====================================================
-        # 🔒 METADATA (ALINEADO CON TABLA)
+        # 🔒 METADATA (NO OBLIGATORIA AQUÍ) — SOLO COPIAR SI VIENE
         # =====================================================
         metadata_fields = [
             "year", "month", "continent", "country",
@@ -335,81 +384,139 @@ def create_word(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
         ]
 
         # =====================================================
-        # 🔒 NORMALIZACIÓN + BLINDAJE
+        # 1️⃣ RESOLVER draft_survey.id REAL DESDE general_id (PATH)
+        #    (MISMA LÓGICA QUE BALLAST PARA NO REVENTAR)
         # =====================================================
+        cur.execute(
+            "SELECT id FROM draft_survey WHERE general_id = %s",
+            (draft_survey_id,)
+        )
+        row = cur.fetchone()
+
+        if row:
+            real_draft_id = row[0]
+        else:
+            # fallback: si te pasan el draft_survey.id directo
+            real_draft_id = draft_survey_id
+
+        # =====================================================
+        # 2️⃣ NORMALIZAR + LIMPIAR VACÍOS (ANTI-400)
+        # =====================================================
+        def _clean_value(v):
+            if v is None:
+                return None
+            if isinstance(v, str):
+                vv = v.strip()
+                return None if vv.lower() in ("", "none", "null") else vv
+            return v
+
         cleaned = {}
 
-        for field in expected_fields + metadata_fields:
-            value = payload.get(field)
-            cleaned[field] = None if value in ["", "None", None] else value
+        # Word fields
+        for field in expected_fields:
+            cleaned[field] = _clean_value(payload.get(field))
 
-        cleaned["draft_survey_id"] = draft_survey_id
+        # Metadata fields (no obligar)
+        for field in metadata_fields:
+            cleaned[field] = _clean_value(payload.get(field))
+
+        cleaned["draft_survey_id"] = real_draft_id
 
         # Status controlado
-        cleaned["status"] = payload.get("status", "Pending for review")
+        cleaned["status"] = _clean_value(payload.get("status")) or "Pending for review"
 
         # =====================================================
-        # INSERT 100% 1:1 CON LA TABLA
+        # 3️⃣ UPSERT: SI YA EXISTE WORD PARA ESE draft -> UPDATE
+        #    (evita 400 por unique constraint / duplicados)
         # =====================================================
-        sql = """
-            INSERT INTO draft_survey_word_report (
-                draft_survey_id,
-                created_at,
-                updated_at,
+        cur.execute(
+            "SELECT id FROM draft_survey_word_report WHERE draft_survey_id = %s",
+            (real_draft_id,)
+        )
+        exists = cur.fetchone()
 
-                word_mt, word_product, word_vessel, word_port, word_country,
-                word_survey_requested_by, word_on_behalf_of,
-                word_master, word_chief_officer,
-                word_name, word_port_registry, word_grt, word_nrt,
-                word_year, word_imo,
-                word_arrived_buoy, word_nor_tendered,
-                word_all_fast, word_initial_draft,
-                word_commenced, word_completed, word_final_draft,
-                word_metric_tons, word_goods_product, word_holds,
-                word_draft_figures, word_bl_figures,
-                word_difference, word_percentage,
-                word_shore_scale, word_shore_bl,
-                word_shore_difference, word_shore_percentage,
+        if exists:
+            # UPDATE dinámico de todos los campos editables
+            set_parts = []
 
-                year, month, continent, country,
-                port, client, draft_report_number,
+            for col in expected_fields + metadata_fields:
+                set_parts.append(f"{col} = %({col})s")
 
-                status
-            )
-            VALUES (
-                %(draft_survey_id)s,
-                NOW(),
-                NOW(),
+            update_sql = f"""
+                UPDATE draft_survey_word_report
+                SET
+                    {", ".join(set_parts)},
+                    updated_at = NOW(),
+                    status = %(status)s
+                WHERE draft_survey_id = %(draft_survey_id)s
+            """
+            cur.execute(update_sql, cleaned)
 
-                %(word_mt)s, %(word_product)s, %(word_vessel)s, %(word_port)s, %(word_country)s,
-                %(word_survey_requested_by)s, %(word_on_behalf_of)s,
-                %(word_master)s, %(word_chief_officer)s,
-                %(word_name)s, %(word_port_registry)s, %(word_grt)s, %(word_nrt)s,
-                %(word_year)s, %(word_imo)s,
-                %(word_arrived_buoy)s, %(word_nor_tendered)s,
-                %(word_all_fast)s, %(word_initial_draft)s,
-                %(word_commenced)s, %(word_completed)s, %(word_final_draft)s,
-                %(word_metric_tons)s, %(word_goods_product)s, %(word_holds)s,
-                %(word_draft_figures)s, %(word_bl_figures)s,
-                %(word_difference)s, %(word_percentage)s,
-                %(word_shore_scale)s, %(word_shore_bl)s,
-                %(word_shore_difference)s, %(word_shore_percentage)s,
+        else:
+            # INSERT 1:1
+            insert_sql = """
+                INSERT INTO draft_survey_word_report (
+                    draft_survey_id,
+                    created_at,
+                    updated_at,
 
-                %(year)s, %(month)s, %(continent)s, %(country)s,
-                %(port)s, %(client)s, %(draft_report_number)s,
+                    word_mt, word_product, word_vessel, word_port, word_country,
+                    word_survey_requested_by, word_on_behalf_of,
+                    word_master, word_chief_officer,
+                    word_name, word_port_registry, word_grt, word_nrt,
+                    word_year, word_imo,
+                    word_arrived_buoy, word_nor_tendered,
+                    word_all_fast, word_initial_draft,
+                    word_commenced, word_completed, word_final_draft,
+                    word_metric_tons, word_goods_product, word_holds,
+                    word_draft_figures, word_bl_figures,
+                    word_difference, word_percentage,
+                    word_shore_scale, word_shore_bl,
+                    word_shore_difference, word_shore_percentage,
 
-                %(status)s
-            )
-        """
+                    year, month, continent, country,
+                    port, client, draft_report_number,
 
-        cur.execute(sql, cleaned)
+                    status
+                )
+                VALUES (
+                    %(draft_survey_id)s,
+                    NOW(),
+                    NOW(),
+
+                    %(word_mt)s, %(word_product)s, %(word_vessel)s, %(word_port)s, %(word_country)s,
+                    %(word_survey_requested_by)s, %(word_on_behalf_of)s,
+                    %(word_master)s, %(word_chief_officer)s,
+                    %(word_name)s, %(word_port_registry)s, %(word_grt)s, %(word_nrt)s,
+                    %(word_year)s, %(word_imo)s,
+                    %(word_arrived_buoy)s, %(word_nor_tendered)s,
+                    %(word_all_fast)s, %(word_initial_draft)s,
+                    %(word_commenced)s, %(word_completed)s, %(word_final_draft)s,
+                    %(word_metric_tons)s, %(word_goods_product)s, %(word_holds)s,
+                    %(word_draft_figures)s, %(word_bl_figures)s,
+                    %(word_difference)s, %(word_percentage)s,
+                    %(word_shore_scale)s, %(word_shore_bl)s,
+                    %(word_shore_difference)s, %(word_shore_percentage)s,
+
+                    %(year)s, %(month)s, %(continent)s, %(country)s,
+                    %(port)s, %(client)s, %(draft_report_number)s,
+
+                    %(status)s
+                )
+            """
+            cur.execute(insert_sql, cleaned)
 
         conn.commit()
 
         return {
             "success": True,
+            "draft_survey_id": real_draft_id,
             "status": cleaned["status"]
         }
+
+    except HTTPException:
+        conn.rollback()
+        raise
 
     except Exception as e:
         conn.rollback()

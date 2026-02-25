@@ -134,7 +134,12 @@ def filter_servicios(
 
 
 # =========================================================
-# POST — CREATE (BOTH TABLES) — ULTRA BLINDADO REAL
+# POST — CREATE (BOTH TABLES) — ULTRA BLINDADO REAL (FIXES)
+# - Limpia strings vacíos/"None"/"null" -> None
+# - Normaliza init_cargo/init_port_from/init_port_to si el form manda cargo/port_from/port_to
+# - Normaliza trim_tables_available desde trim_tables_yes/no si viene así
+# - INSERT draft_survey: usa TODAS las columnas que tu tabla tiene (no solo 10)
+#   para evitar NOT NULL / defaults / triggers raros y alinear 1:1
 # =========================================================
 
 from psycopg2.extras import RealDictCursor
@@ -148,15 +153,71 @@ def create_draft_survey(payload: dict, conn=Depends(get_db)):
 
     try:
         # =====================================================
-        # 1️⃣ NORMALIZACIONES
+        # 0️⃣ BASE + CLEAN STRINGS
         # =====================================================
         payload = payload or {}
 
+        def _clean_value(v):
+            if v is None:
+                return None
+            if isinstance(v, str):
+                vv = v.strip()
+                if vv == "":
+                    return None
+                if vv.lower() in ("none", "null"):
+                    return None
+                return vv
+            return v
+
+        payload = {k: _clean_value(v) for k, v in payload.items() if isinstance(k, str)}
+
+        # =====================================================
+        # 1️⃣ NORMALIZACIONES FECHAS
+        # =====================================================
         payload["init_date"] = parse_date(payload.get("init_date"))
         payload["final_date"] = parse_date(payload.get("final_date"))
 
         # =====================================================
-        # 2️⃣ VALIDACIONES CRÍTICAS
+        # 1.1️⃣ NORMALIZAR NOMBRES (FORM vs DB)
+        # - Tu form usa: cargo / port_from / port_to
+        # - Tu tabla draft_survey tiene: init_cargo / init_port_from / init_port_to
+        # - Además en tu lista required_draft_keys metiste ambos (cargo/port_from/port_to)
+        #   pero en INSERT estabas usando cargo/port_from/port_to.
+        #   Esto revienta porque la tabla real tiene init_*.
+        # =====================================================
+        if payload.get("init_cargo") is None and payload.get("cargo") is not None:
+            payload["init_cargo"] = payload.get("cargo")
+
+        if payload.get("init_port_from") is None and payload.get("port_from") is not None:
+            payload["init_port_from"] = payload.get("port_from")
+
+        if payload.get("init_port_to") is None and payload.get("port_to") is not None:
+            payload["init_port_to"] = payload.get("port_to")
+
+        # (por compatibilidad, también permitir que venga init_* y rellenar los globales)
+        if payload.get("cargo") is None and payload.get("init_cargo") is not None:
+            payload["cargo"] = payload.get("init_cargo")
+
+        if payload.get("port_from") is None and payload.get("init_port_from") is not None:
+            payload["port_from"] = payload.get("init_port_from")
+
+        if payload.get("port_to") is None and payload.get("init_port_to") is not None:
+            payload["port_to"] = payload.get("init_port_to")
+
+        # =====================================================
+        # 1.2️⃣ NORMALIZAR TRIM TABLES AVAILABLE
+        # - En tu UI guardas trim_tables_yes/no booleanvars
+        # - En DB es trim_tables_available
+        # =====================================================
+        if payload.get("trim_tables_available") is None:
+            if payload.get("trim_tables_yes") is not None:
+                try:
+                    payload["trim_tables_available"] = bool(payload.get("trim_tables_yes"))
+                except Exception:
+                    payload["trim_tables_available"] = None
+
+        # =====================================================
+        # 2️⃣ VALIDACIONES CRÍTICAS (SOLO LO QUE DE VERDAD ES CRÍTICO)
         # =====================================================
         critical_fields = [
             "vessel_mv",
@@ -171,7 +232,6 @@ def create_draft_survey(payload: dict, conn=Depends(get_db)):
         ]
 
         missing = [f for f in critical_fields if not payload.get(f)]
-
         if missing:
             raise HTTPException(
                 status_code=400,
@@ -187,13 +247,11 @@ def create_draft_survey(payload: dict, conn=Depends(get_db)):
         """, (payload["draft_report_number"],))
 
         if cur.fetchone():
-            raise HTTPException(
-                status_code=400,
-                detail="draft_report_number already exists"
-            )
+            raise HTTPException(status_code=400, detail="draft_report_number already exists")
 
         # =====================================================
-        # 4️⃣ LISTAS COMPLETAS DE KEYS (TU MISMA ESTRUCTURA)
+        # 4️⃣ LISTAS COMPLETAS DE KEYS (BLINDAJE)
+        # - Ajuste: usa init_cargo / init_port_from / init_port_to (DB real)
         # =====================================================
         required_general_keys = [
             "vessel_mv","survey_no","call_letters","vessel_previous_names",
@@ -214,25 +272,67 @@ def create_draft_survey(payload: dict, conn=Depends(get_db)):
         ]
 
         required_draft_keys = [
-            "init_time_from","init_time_to","cargo","port_from","port_to",
-            "loading","unloading","init_draft_fwd_port","init_draft_fwd_stb",
-            "init_draft_mid_port","init_draft_mid_stb","init_draft_aft_port",
-            "init_draft_aft_stb","init_draft_fwd_marks",
-            "init_draft_mid_marks","init_draft_aft_marks","init_sg",
-            "init_lpp","init_tpc_p","init_tpc_s","init_bl_figure",
+            # TOP / TIMES
+            "init_date","init_time_from","init_time_to",
+            "final_date","final_time_from","final_time_to",
+
+            # GLOBAL / INITIAL HEADER (DB real init_*)
+            "init_cargo","init_port_from","init_port_to",
+            "cargo","port_from","port_to",  # compat
+
+            "loading","unloading",
+
+            # DRAFT READINGS
+            "init_draft_fwd_port","init_draft_fwd_stb",
+            "init_draft_mid_port","init_draft_mid_stb",
+            "init_draft_aft_port","init_draft_aft_stb",
+            "init_draft_fwd_marks","init_draft_mid_marks","init_draft_aft_marks",
+            "init_sg","init_lpp",
+
+            "final_draft_fwd_port","final_draft_fwd_stb",
+            "final_draft_mid_port","final_draft_mid_stb",
+            "final_draft_aft_port","final_draft_aft_stb",
+            "final_draft_fwd_marks","final_draft_mid_marks","final_draft_aft_marks",
+            "final_sg","final_lpp",
+
+            # FIGURES
+            "init_tpc_p","init_tpc_s","init_bl_figure",
+            "final_tpc_p","final_tpc_s","final_bl_figure",
+
+            # LIQUIDS
             "init_slop","init_swimming_pool","init_ballast",
             "init_fresh_water","init_fuel_oil","init_diesel_oil",
             "init_lub_oil","init_others","init_deductions",
-            "final_time_from","final_time_to","final_draft_fwd_port",
-            "final_draft_fwd_stb","final_draft_mid_port",
-            "final_draft_mid_stb","final_draft_aft_port",
-            "final_draft_aft_stb","final_draft_fwd_marks",
-            "final_draft_mid_marks","final_draft_aft_marks","final_sg",
-            "final_lpp","final_tpc_p","final_tpc_s","final_bl_figure",
+
             "final_slop","final_swimming_pool","final_ballast",
             "final_fresh_water","final_fuel_oil","final_diesel_oil",
             "final_lub_oil","final_others","final_deductions",
+
+            # HYDRO (INIT SOLO, pero si viene final también lo guardamos)
+            "init_hydro1_draft_1","init_hydro1_disp_1","init_hydro1_tpc_1","init_hydro1_lcf_1",
+            "init_hydro1_draft_2","init_hydro1_disp_2","init_hydro1_tpc_2","init_hydro1_lcf_2",
+            "init_hydro1_draft_mtc","init_hydro1_mtc_p50_1","init_hydro1_mtc_m50_1",
+            "init_hydro1_mtc_p50_2","init_hydro1_mtc_m50_2",
+
+            "init_hydro2_draft_1","init_hydro2_disp_1","init_hydro2_tpc_1","init_hydro2_lcf_1",
+            "init_hydro2_draft_2","init_hydro2_disp_2","init_hydro2_tpc_2","init_hydro2_lcf_2",
+            "init_hydro2_draft_mtc","init_hydro2_mtc_p50_1","init_hydro2_mtc_m50_1",
+            "init_hydro2_mtc_p50_2","init_hydro2_mtc_m50_2",
+
+            "final_hydro1_draft_1","final_hydro1_disp_1","final_hydro1_tpc_1","final_hydro1_lcf_1",
+            "final_hydro1_draft_2","final_hydro1_disp_2","final_hydro1_tpc_2","final_hydro1_lcf_2",
+            "final_hydro1_draft_mtc","final_hydro1_mtc_p50_1","final_hydro1_mtc_m50_1",
+            "final_hydro1_mtc_p50_2","final_hydro1_mtc_m50_2",
+
+            "final_hydro2_draft_1","final_hydro2_disp_1","final_hydro2_tpc_1","final_hydro2_lcf_1",
+            "final_hydro2_draft_2","final_hydro2_disp_2","final_hydro2_tpc_2","final_hydro2_lcf_2",
+            "final_hydro2_draft_mtc","final_hydro2_mtc_p50_1","final_hydro2_mtc_m50_1",
+            "final_hydro2_mtc_p50_2","final_hydro2_mtc_m50_2",
+
+            # METADATA
             "year","month","continent","country","port","client","draft_report_number",
+
+            # SIGNATURES
             "chief_officer","master","msl_surveyor"
         ]
 
@@ -289,7 +389,7 @@ def create_draft_survey(payload: dict, conn=Depends(get_db)):
         general_id = cur.fetchone()["id"]
 
         # =====================================================
-        # 6️⃣ INSERT DRAFT
+        # 6️⃣ INSERT DRAFT (FULL 1:1 CON TU TABLA draft_survey)
         # =====================================================
         draft_data = payload.copy()
         draft_data["general_id"] = general_id
@@ -297,24 +397,119 @@ def create_draft_survey(payload: dict, conn=Depends(get_db)):
         cur.execute("""
             INSERT INTO draft_survey (
                 general_id,
+
                 init_date, init_time_from, init_time_to,
+                init_cargo, init_port_from, init_port_to,
+
+                init_draft_fwd_port, init_draft_fwd_stb,
+                init_draft_mid_port, init_draft_mid_stb,
+                init_draft_aft_port, init_draft_aft_stb,
+                init_sg, init_ballast, init_fresh_water,
+                init_fuel_oil, init_diesel_oil, init_lub_oil,
+                init_others, init_deductions,
+
+                final_date, final_time_from, final_time_to,
+                final_draft_fwd_port, final_draft_fwd_stb,
+                final_draft_mid_port, final_draft_mid_stb,
+                final_draft_aft_port, final_draft_aft_stb,
+                final_sg, final_ballast, final_fresh_water,
+                final_fuel_oil, final_diesel_oil, final_lub_oil,
+                final_others, final_deductions,
+
                 cargo, port_from, port_to, loading, unloading,
+
+                init_draft_fwd_marks, init_draft_mid_marks, init_draft_aft_marks,
+                final_draft_fwd_marks, final_draft_mid_marks, final_draft_aft_marks,
+
+                init_lpp, final_lpp,
+                init_tpc_p, init_tpc_s, final_tpc_p, final_tpc_s,
+                init_bl_figure, final_bl_figure,
+                init_slop, init_swimming_pool, final_slop, final_swimming_pool,
+
+                init_hydro1_draft_1, init_hydro1_disp_1, init_hydro1_tpc_1, init_hydro1_lcf_1,
+                init_hydro1_draft_2, init_hydro1_disp_2, init_hydro1_tpc_2, init_hydro1_lcf_2,
+                init_hydro1_draft_mtc, init_hydro1_mtc_p50_1, init_hydro1_mtc_m50_1,
+                init_hydro1_mtc_p50_2, init_hydro1_mtc_m50_2,
+
+                init_hydro2_draft_1, init_hydro2_disp_1, init_hydro2_tpc_1, init_hydro2_lcf_1,
+                init_hydro2_draft_2, init_hydro2_disp_2, init_hydro2_tpc_2, init_hydro2_lcf_2,
+                init_hydro2_draft_mtc, init_hydro2_mtc_p50_1, init_hydro2_mtc_m50_1,
+                init_hydro2_mtc_p50_2, init_hydro2_mtc_m50_2,
+
+                final_hydro1_draft_1, final_hydro1_disp_1, final_hydro1_tpc_1, final_hydro1_lcf_1,
+                final_hydro1_draft_2, final_hydro1_disp_2, final_hydro1_tpc_2, final_hydro1_lcf_2,
+                final_hydro1_draft_mtc, final_hydro1_mtc_p50_1, final_hydro1_mtc_m50_1,
+                final_hydro1_mtc_p50_2, final_hydro1_mtc_m50_2,
+
+                final_hydro2_draft_1, final_hydro2_disp_1, final_hydro2_tpc_1, final_hydro2_lcf_1,
+                final_hydro2_draft_2, final_hydro2_disp_2, final_hydro2_tpc_2, final_hydro2_lcf_2,
+                final_hydro2_draft_mtc, final_hydro2_mtc_p50_1, final_hydro2_mtc_m50_1,
+                final_hydro2_mtc_p50_2, final_hydro2_mtc_m50_2,
+
                 year, month, continent, country, port, client, draft_report_number,
                 chief_officer, master, msl_surveyor,
+
                 status
             )
             VALUES (
                 %(general_id)s,
+
                 %(init_date)s, %(init_time_from)s, %(init_time_to)s,
+                %(init_cargo)s, %(init_port_from)s, %(init_port_to)s,
+
+                %(init_draft_fwd_port)s, %(init_draft_fwd_stb)s,
+                %(init_draft_mid_port)s, %(init_draft_mid_stb)s,
+                %(init_draft_aft_port)s, %(init_draft_aft_stb)s,
+                %(init_sg)s, %(init_ballast)s, %(init_fresh_water)s,
+                %(init_fuel_oil)s, %(init_diesel_oil)s, %(init_lub_oil)s,
+                %(init_others)s, %(init_deductions)s,
+
+                %(final_date)s, %(final_time_from)s, %(final_time_to)s,
+                %(final_draft_fwd_port)s, %(final_draft_fwd_stb)s,
+                %(final_draft_mid_port)s, %(final_draft_mid_stb)s,
+                %(final_draft_aft_port)s, %(final_draft_aft_stb)s,
+                %(final_sg)s, %(final_ballast)s, %(final_fresh_water)s,
+                %(final_fuel_oil)s, %(final_diesel_oil)s, %(final_lub_oil)s,
+                %(final_others)s, %(final_deductions)s,
+
                 %(cargo)s, %(port_from)s, %(port_to)s, %(loading)s, %(unloading)s,
+
+                %(init_draft_fwd_marks)s, %(init_draft_mid_marks)s, %(init_draft_aft_marks)s,
+                %(final_draft_fwd_marks)s, %(final_draft_mid_marks)s, %(final_draft_aft_marks)s,
+
+                %(init_lpp)s, %(final_lpp)s,
+                %(init_tpc_p)s, %(init_tpc_s)s, %(final_tpc_p)s, %(final_tpc_s)s,
+                %(init_bl_figure)s, %(final_bl_figure)s,
+                %(init_slop)s, %(init_swimming_pool)s, %(final_slop)s, %(final_swimming_pool)s,
+
+                %(init_hydro1_draft_1)s, %(init_hydro1_disp_1)s, %(init_hydro1_tpc_1)s, %(init_hydro1_lcf_1)s,
+                %(init_hydro1_draft_2)s, %(init_hydro1_disp_2)s, %(init_hydro1_tpc_2)s, %(init_hydro1_lcf_2)s,
+                %(init_hydro1_draft_mtc)s, %(init_hydro1_mtc_p50_1)s, %(init_hydro1_mtc_m50_1)s,
+                %(init_hydro1_mtc_p50_2)s, %(init_hydro1_mtc_m50_2)s,
+
+                %(init_hydro2_draft_1)s, %(init_hydro2_disp_1)s, %(init_hydro2_tpc_1)s, %(init_hydro2_lcf_1)s,
+                %(init_hydro2_draft_2)s, %(init_hydro2_disp_2)s, %(init_hydro2_tpc_2)s, %(init_hydro2_lcf_2)s,
+                %(init_hydro2_draft_mtc)s, %(init_hydro2_mtc_p50_1)s, %(init_hydro2_mtc_m50_1)s,
+                %(init_hydro2_mtc_p50_2)s, %(init_hydro2_mtc_m50_2)s,
+
+                %(final_hydro1_draft_1)s, %(final_hydro1_disp_1)s, %(final_hydro1_tpc_1)s, %(final_hydro1_lcf_1)s,
+                %(final_hydro1_draft_2)s, %(final_hydro1_disp_2)s, %(final_hydro1_tpc_2)s, %(final_hydro1_lcf_2)s,
+                %(final_hydro1_draft_mtc)s, %(final_hydro1_mtc_p50_1)s, %(final_hydro1_mtc_m50_1)s,
+                %(final_hydro1_mtc_p50_2)s, %(final_hydro1_mtc_m50_2)s,
+
+                %(final_hydro2_draft_1)s, %(final_hydro2_disp_1)s, %(final_hydro2_tpc_1)s, %(final_hydro2_lcf_1)s,
+                %(final_hydro2_draft_2)s, %(final_hydro2_disp_2)s, %(final_hydro2_tpc_2)s, %(final_hydro2_lcf_2)s,
+                %(final_hydro2_draft_mtc)s, %(final_hydro2_mtc_p50_1)s, %(final_hydro2_mtc_m50_1)s,
+                %(final_hydro2_mtc_p50_2)s, %(final_hydro2_mtc_m50_2)s,
+
                 %(year)s, %(month)s, %(continent)s, %(country)s, %(port)s, %(client)s, %(draft_report_number)s,
                 %(chief_officer)s, %(master)s, %(msl_surveyor)s,
+
                 'Pending for review'
             )
         """, draft_data)
 
         conn.commit()
-
         return {"success": True, "general_id": general_id}
 
     except IntegrityError as e:
@@ -331,7 +526,6 @@ def create_draft_survey(payload: dict, conn=Depends(get_db)):
 
     finally:
         cur.close()
-
 
 # =========================================================
 # GET ALL (JOIN)
