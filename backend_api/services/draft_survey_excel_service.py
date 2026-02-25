@@ -600,169 +600,105 @@ class DraftSurveyExcelGenerator:
 # =========================================================
 # GENERATE EXCEL (TITLE CONTROL = COORD + CONTENT SEARCH)
 # =========================================================
-def generate_draft_survey_excel(self, payload: dict, variant: str = "final") -> str:
+    def generate_draft_survey_excel(self, payload: dict, variant: str = "final") -> str:
 
-    if not os.path.exists(TEMPLATE_PATH):
-        raise FileNotFoundError(
-            f"Draft Survey template not found: {TEMPLATE_PATH}"
-        )
+        if not os.path.exists(TEMPLATE_PATH):
+            raise FileNotFoundError(
+                f"Draft Survey template not found: {TEMPLATE_PATH}"
+            )
 
-    wb = load_workbook(TEMPLATE_PATH, data_only=False)
+        wb = load_workbook(TEMPLATE_PATH, data_only=False)
 
-    # =====================================================
-    # VARIANT CONTROL (FINAL / INTERMEDIATE)
-    # =====================================================
-    try:
-
+        # =====================================================
+        # VARIANT CONTROL (FINAL / INTERMEDIATE)
+        # =====================================================
+        variant_norm = (variant or "").strip().lower()
         title_text = "FINAL DRAFT SURVEY"
-        if (variant or "").lower() == "intermediate":
+        header_text = "FINAL SURVEY"
+
+        if variant_norm == "intermediate":
             title_text = "INTERMEDIATE DRAFT SURVEY"
+            header_text = "INTERMEDIATE SURVEY"
 
+        # -------------------------------------------------
+        # MERGE-SAFE WRITER (ALWAYS WRITES TOP-LEFT OF MERGE)
+        # -------------------------------------------------
+        from openpyxl.utils.cell import coordinate_to_tuple, get_column_letter
+
+        def _set_merge_safe(ws: Worksheet, coord: str, value: str) -> None:
+            """
+            Writes to coord. If coord is inside a merged range, writes to the
+            top-left cell of that merged range, and clears the rest of the
+            cells in the merged range to avoid Excel showing stale values.
+            """
+            r, c = coordinate_to_tuple(coord)
+
+            for mr in list(ws.merged_cells.ranges):
+                min_col, min_row, max_col, max_row = mr.bounds
+                if min_row <= r <= max_row and min_col <= c <= max_col:
+
+                    # top-left of the merge
+                    tl = f"{get_column_letter(min_col)}{min_row}"
+                    ws[tl].value = value
+
+                    # clear other cells inside the merge (Excel shows top-left anyway,
+                    # but clearing avoids weird "looks unchanged" scenarios)
+                    for rr in range(min_row, max_row + 1):
+                        for cc in range(min_col, max_col + 1):
+                            cell_addr = f"{get_column_letter(cc)}{rr}"
+                            if cell_addr != tl:
+                                ws[cell_addr].value = None
+                    return
+
+            # not merged
+            ws[coord].value = value
+
+        # -------------------------------------------------
+        # FORCE TITLES ON DRAFT SHEET
+        # -------------------------------------------------
         if "Draft" in wb.sheetnames:
-
             ws_title = wb["Draft"]
 
-            from openpyxl.utils.cell import (
-                coordinate_to_tuple,
-                get_column_letter
-            )
+            # ✅ Blue title (merged) — this one you said works
+            _set_merge_safe(ws_title, "Z6", title_text)
 
-            def _set_value_merge_aware(ws: Worksheet, coord: str, value: str) -> None:
-                """
-                Escribe en coord. Si coord cae dentro de un MERGE,
-                escribe en el TOP-LEFT real del merge.
-                """
-                r, c = coordinate_to_tuple(coord)
+            # ✅ Header "FINAL SURVEY" — your template is merged AP1:AW1
+            # We force it by writing to a few coords inside that merge so it can't miss.
+            for coord in ("AP1", "AQ1", "AR1", "AS1", "AT1", "AU1", "AV1", "AW1"):
+                _set_merge_safe(ws_title, coord, header_text)
 
-                for mr in list(ws.merged_cells.ranges):
-                    min_col, min_row, max_col, max_row = mr.bounds
-                    if min_row <= r <= max_row and min_col <= c <= max_col:
-                        ws.cell(row=min_row, column=min_col).value = value
-                        return
+        # =====================================================
+        # APPLY MULTI-SHEET MAPPING
+        # =====================================================
+        payload = payload or {}
 
-                ws[coord].value = value
+        for sheet_name, config in self.EXCEL_MAPPING.items():
 
-            def _replace_text_in_area(ws: Worksheet, needle_list, value: str,
-                                      min_row: int, max_row: int,
-                                      min_col: int, max_col: int) -> bool:
-                """
-                Busca textos en un área (incluyendo merges) y los reemplaza.
-                Retorna True si reemplazó al menos uno.
-                """
-                replaced = False
-
-                # 1) Reemplazar en TOP-LEFT de cada merge dentro del área
-                for mr in list(ws.merged_cells.ranges):
-                    min_c, min_r, max_c, max_r = mr.bounds
-
-                    # intersección con área
-                    if max_r < min_row or min_r > max_row or max_c < min_col or min_c > max_col:
-                        continue
-
-                    top_left = f"{get_column_letter(min_c)}{min_r}"
-                    v = ws[top_left].value
-
-                    if isinstance(v, str):
-                        vv = v.strip().upper()
-                        if vv in needle_list:
-                            ws[top_left].value = value
-                            replaced = True
-
-                # 2) Reemplazar en celdas normales (no-merge)
-                for r in range(min_row, max_row + 1):
-                    for c in range(min_col, max_col + 1):
-                        coord = f"{get_column_letter(c)}{r}"
-
-                        # si es parte de un merge, ya lo manejamos por top-left
-                        in_merge = False
-                        for mr in list(ws.merged_cells.ranges):
-                            min_c, min_r, max_c, max_r = mr.bounds
-                            if min_r <= r <= max_r and min_c <= c <= max_c:
-                                in_merge = True
-                                break
-                        if in_merge:
-                            continue
-
-                        v = ws[coord].value
-                        if isinstance(v, str):
-                            vv = v.strip().upper()
-                            if vv in needle_list:
-                                ws[coord].value = value
-                                replaced = True
-
-                return replaced
-
-            # -------------------------------------------------
-            # 1) SIEMPRE escribe el título azul (Z6) (ya te funciona)
-            # -------------------------------------------------
-            _set_value_merge_aware(ws_title, "Z6", title_text)
-
-            # -------------------------------------------------
-            # 2) PARA "FINAL SURVEY" (AP1:AV1) NO CONFÍO EN COORD.
-            #    Lo busco por CONTENIDO y lo reemplazo.
-            # -------------------------------------------------
-            needles = {
-                "FINAL SURVEY",
-                "FINAL  SURVEY",
-                "FINAL SURVEY ",   # por si venía con espacios raros
-                " FINAL SURVEY",
-            }
-
-            # Área acotada donde está el header (fila 1 y columnas aprox. AJ..AZ)
-            # (lo dejamos un poquito amplio para no fallar por 1-2 columnas)
-            replaced = _replace_text_in_area(
-                ws=ws_title,
-                needle_list=set([n.strip().upper() for n in needles]),
-                value=("INTERMEDIATE SURVEY" if (variant or "").lower() == "intermediate" else "FINAL SURVEY"),
-                min_row=1,
-                max_row=3,
-                min_col=30,   # AD aprox
-                max_col=60    # BH aprox
-            )
-
-            # -------------------------------------------------
-            # 3) BACKUP: si por alguna razón no encontró el texto,
-            #    entonces fuerzo en todo el rango AP1:AV1 (merge-aware)
-            #    PERO también pruebo AQ1 y AR1 por si el merge inicia corrido.
-            # -------------------------------------------------
-            if not replaced:
-                for coord in ("AP1", "AQ1", "AR1", "AS1", "AT1", "AU1", "AV1"):
-                    _set_value_merge_aware(
-                        ws_title,
-                        coord,
-                        ("INTERMEDIATE SURVEY" if (variant or "").lower() == "intermediate" else "FINAL SURVEY")
-                    )
-
-    except Exception:
-        pass
-
-    # =====================================================
-    # APPLY MULTI-SHEET MAPPING
-    # =====================================================
-    for sheet_name, config in self.EXCEL_MAPPING.items():
-
-        if sheet_name not in wb.sheetnames:
-            continue
-
-        ws = wb[sheet_name]
-
-        for field, cell in config["fields"].items():
-
-            value = payload.get(field)
-
-            if value in [None, ""]:
+            if sheet_name not in wb.sheetnames:
                 continue
 
-            if field in config["date_fields"]:
-                self._safe_set_date(ws, cell, value)
-            else:
-                self._safe_set(ws, cell, value)
+            ws = wb[sheet_name]
 
-    # =====================================================
-    # SAVE TEMP FILE
-    # =====================================================
-    fd, tmp_path = tempfile.mkstemp(suffix=".xlsx")
-    os.close(fd)
-    wb.save(tmp_path)
+            date_fields = set(config.get("date_fields") or [])
+            fields_map = config.get("fields") or {}
 
-    return tmp_path
+            for field, cell in fields_map.items():
+
+                value = payload.get(field)
+
+                if value in [None, ""]:
+                    continue
+
+                if field in date_fields:
+                    self._safe_set_date(ws, cell, value)
+                else:
+                    self._safe_set(ws, cell, value)
+
+        # =====================================================
+        # SAVE TEMP FILE
+        # =====================================================
+        fd, tmp_path = tempfile.mkstemp(suffix=".xlsx")
+        os.close(fd)
+        wb.save(tmp_path)
+
+        return tmp_path
