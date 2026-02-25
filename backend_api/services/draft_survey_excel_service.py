@@ -597,95 +597,91 @@ class DraftSurveyExcelGenerator:
         ws[cell].number_format = "DD-MM-YYYY"
 
 
-def generate_draft_survey_excel(payload: dict, variant: str = "final") -> str:
-
-    if not os.path.exists(TEMPLATE_PATH):
-        raise FileNotFoundError(f"Draft Survey template not found: {TEMPLATE_PATH}")
-
-    gen = DraftSurveyExcelGenerator()
-    wb = load_workbook(TEMPLATE_PATH, data_only=False)
-
     # =========================================================
-    # VARIANT CONTROL (FINAL / INTERMEDIATE)
+    # GENERATE EXCEL (MERGE-SAFE TITLE CONTROL)
     # =========================================================
-    try:
+    def generate_draft_survey_excel(self, payload: dict, variant: str = "final") -> str:
 
-        title_text = "FINAL DRAFT SURVEY"
-        if (variant or "").lower() == "intermediate":
-            title_text = "INTERMEDIATE DRAFT SURVEY"
+        if not os.path.exists(TEMPLATE_PATH):
+            raise FileNotFoundError(
+                f"Draft Survey template not found: {TEMPLATE_PATH}"
+            )
 
-        if "Draft" in wb.sheetnames:
+        wb = load_workbook(TEMPLATE_PATH, data_only=False)
 
-            ws_title = wb["Draft"]
+        # =====================================================
+        # VARIANT CONTROL (FINAL / INTERMEDIATE)
+        # =====================================================
+        try:
 
-            # -------------------------------------------------
-            # FORCE WRITE (MERGE-SAFE, UNMERGE/REMARGE)
-            # -------------------------------------------------
-            def _force_write(ws: Worksheet, target_cell: str, value):
+            title_text = "FINAL DRAFT SURVEY"
+            if (variant or "").lower() == "intermediate":
+                title_text = "INTERMEDIATE DRAFT SURVEY"
 
-                # 1) Buscar si target_cell cae dentro de un merged range
-                hit_range = None
-                for mr in list(ws.merged_cells.ranges):
-                    # mr.bounds => (min_col, min_row, max_col, max_row)
-                    min_col, min_row, max_col, max_row = mr.bounds
-                    # Convertir target_cell a (col, row)
-                    from openpyxl.utils.cell import coordinate_to_tuple
+            if "Draft" in wb.sheetnames:
+
+                ws_title = wb["Draft"]
+
+                from openpyxl.utils.cell import coordinate_to_tuple
+
+                def _write_merge_safe(ws: Worksheet, target_cell: str, value):
+
+                    # Coordenadas reales
                     row, col = coordinate_to_tuple(target_cell)
 
-                    if (min_row <= row <= max_row) and (min_col <= col <= max_col):
-                        hit_range = str(mr)  # ejemplo: "AO1:AR1"
-                        break
+                    # Buscar si cae dentro de un merged range
+                    for mr in ws.merged_cells.ranges:
 
-                # 2) Si está dentro de un merge → UNMERGE, escribir, MERGE
-                if hit_range:
-                    ws.unmerge_cells(hit_range)
+                        min_col, min_row, max_col, max_row = mr.bounds
 
-                    # Escribir en la celda objetivo (ya no está merged)
+                        if (
+                            min_row <= row <= max_row and
+                            min_col <= col <= max_col
+                        ):
+                            # 🔥 Escribir SIEMPRE en top-left real del merge
+                            ws.cell(
+                                row=min_row,
+                                column=min_col
+                            ).value = value
+                            return
+
+                    # Si no está merged
                     ws[target_cell].value = value
 
-                    # Excel suele mostrar el valor del top-left al volver a mergear,
-                    # así que también lo ponemos.
-                    from openpyxl.utils.cell import range_boundaries, get_column_letter
-                    min_c, min_r, max_c, max_r = range_boundaries(hit_range)
-                    top_left = f"{get_column_letter(min_c)}{min_r}"
-                    ws[top_left].value = value
+                # 🔥 Forzar ambos títulos
+                _write_merge_safe(ws_title, "Z6", title_text)
+                _write_merge_safe(ws_title, "AP1", title_text)
 
-                    ws.merge_cells(hit_range)
-                    return
+        except Exception:
+            pass
 
-                # 3) Si no estaba merged → escribir normal
-                ws[target_cell].value = value
+        # =====================================================
+        # APPLY MULTI-SHEET MAPPING
+        # =====================================================
+        for sheet_name, config in self.EXCEL_MAPPING.items():
 
-            # 🔥 Forzar ambos
-            _force_write(ws_title, "Z6", title_text)
-            _force_write(ws_title, "AP1", title_text)
-
-    except Exception:
-        pass
-
-    # =========================================================
-    # APPLY MULTI-SHEET MAPPING
-    # =========================================================
-    for sheet_name, config in gen.EXCEL_MAPPING.items():
-
-        if sheet_name not in wb.sheetnames:
-            continue
-
-        ws = wb[sheet_name]
-
-        for field, cell in config["fields"].items():
-
-            value = payload.get(field)
-            if value in [None, ""]:
+            if sheet_name not in wb.sheetnames:
                 continue
 
-            if field in config["date_fields"]:
-                gen._safe_set_date(ws, cell, value)
-            else:
-                gen._safe_set(ws, cell, value)
+            ws = wb[sheet_name]
 
-    fd, tmp_path = tempfile.mkstemp(suffix=".xlsx")
-    os.close(fd)
-    wb.save(tmp_path)
+            for field, cell in config["fields"].items():
 
-    return tmp_path
+                value = payload.get(field)
+
+                if value in [None, ""]:
+                    continue
+
+                if field in config["date_fields"]:
+                    self._safe_set_date(ws, cell, value)
+                else:
+                    self._safe_set(ws, cell, value)
+
+        # =====================================================
+        # SAVE TEMP FILE
+        # =====================================================
+        fd, tmp_path = tempfile.mkstemp(suffix=".xlsx")
+        os.close(fd)
+        wb.save(tmp_path)
+
+        return tmp_path
