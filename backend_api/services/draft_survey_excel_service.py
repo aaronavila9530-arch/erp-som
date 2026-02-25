@@ -597,229 +597,292 @@ class DraftSurveyExcelGenerator:
         ws[cell].number_format = "DD-MM-YYYY"
 
 
-# =========================================================
-# VISUALIZAR DRAFT (ULTRA BLINDADO + AT1 AISLADA DEFINITIVA)
-# =========================================================
-def _visualizar_draft(self):
+    # =========================================================
+    # GENERATE EXCEL FROM TEMPLATE (PUBLIC METHOD)
+    # =========================================================
+    def generate(self, payload: dict) -> str:
 
-    # 🔒 Forzar actualización de widgets
-    self.update_idletasks()
-    self.update()
+        if not os.path.exists(TEMPLATE_PATH):
+            raise FileNotFoundError("Draft Survey template not found.")
 
-    # ==============================
-    # 1) Preguntar variante
-    # ==============================
-    variant = self._ask_draft_variant()
-    if not variant:
-        return  # cancelado
+        wb = load_workbook(TEMPLATE_PATH)
 
-    payload = self.get_payload()
+        for sheet_name, config in self.EXCEL_MAPPING.items():
 
-    # =====================================================
-    # SANITIZAR PAYLOAD COMPLETO
-    # =====================================================
-    sanitized_payload = {
-        k: self._sanitize_for_excel(v)
-        for k, v in payload.items()
-    }
+            if sheet_name not in wb.sheetnames:
+                continue
 
-    # =====================================================
-    # VALIDACIÓN MÍNIMA
-    # =====================================================
-    if not sanitized_payload.get("vessel_mv"):
-        messagebox.showwarning(
-            "Validación",
-            "Debe seleccionar un servicio antes de visualizar."
-        )
-        return
+            ws = wb[sheet_name]
 
-    # =====================================================
-    # 2) GENERAR EXCEL
-    # =====================================================
-    try:
-        from backend_api.services.draft_survey_excel_service import (
-            generate_draft_survey_excel
-        )
+            fields = config.get("fields", {})
+            date_fields = config.get("date_fields", [])
 
-        tmp_path = generate_draft_survey_excel(
-            sanitized_payload,
-            variant=variant
-        )
+            for key, cell in fields.items():
 
-        if not tmp_path:
-            raise Exception("No se generó archivo temporal.")
+                value = (payload or {}).get(key)
 
-    except Exception as e:
-        messagebox.showerror(
-            "Error",
-            f"No se pudo generar el preview:\n{e}"
-        )
-        return
+                if key in date_fields:
+                    self._safe_set_date(ws, cell, value)
+                else:
+                    self._safe_set(ws, cell, value)
 
-    # =====================================================
-    # 3) ABRIR EXCEL + CONTROL TOTAL AT1
-    # =====================================================
-    try:
-        import win32com.client
-        import pythoncom
+        tmp_dir = tempfile.mkdtemp(prefix="draft_excel_")
+        tmp_path = os.path.join(tmp_dir, "draft_survey.xlsx")
 
-        pythoncom.CoInitialize()
+        wb.save(tmp_path)
 
-        excel = win32com.client.DispatchEx("Excel.Application")
+        return tmp_path
 
-        excel.Visible = True
-        excel.DisplayAlerts = False
-        excel.ScreenUpdating = True
 
+    # =========================================================
+    # VISUALIZAR DRAFT (ULTRA BLINDADO + AT1 AISLADA DEFINITIVA)
+    # =========================================================
+    def _visualizar_draft(self):
+
+        # -----------------------------------------------------
+        # 🔒 Forzar actualización de widgets
+        # -----------------------------------------------------
         try:
-            excel.EnableEvents = False
+            self.update_idletasks()
+            self.update()
         except Exception:
             pass
 
+        # -----------------------------------------------------
+        # 1) Preguntar variante
+        # -----------------------------------------------------
         try:
-            excel.AskToUpdateLinks = False
+            variant = self._ask_draft_variant()
+            if not variant:
+                return
         except Exception:
-            pass
+            return
 
-        workbook = excel.Workbooks.Open(
-            tmp_path,
-            UpdateLinks=0,
-            ReadOnly=False
-        )
-
-        # =====================================================
-        # 🔥 DETERMINAR TÍTULO
-        # =====================================================
-        variant_norm = (variant or "").strip().lower()
-
-        if variant_norm == "intermediate":
-            title_text = "INTERMEDIATE DRAFT SURVEY"
-        else:
-            title_text = "FINAL DRAFT SURVEY"
-
-        ws = workbook.Worksheets("Draft")
-
-        # =====================================================
-        # 🔥 1️⃣ RECALCULAR PRIMERO (SI EXISTE ALGO)
-        # =====================================================
+        # -----------------------------------------------------
+        # 2) Obtener payload
+        # -----------------------------------------------------
         try:
-            excel.Calculation = -4105  # xlCalculationAutomatic
-            excel.CalculateFullRebuild()
+            payload = self.get_payload() or {}
+        except Exception as e:
+            messagebox.showerror(
+                "Error",
+                f"No se pudo obtener datos del formulario:\n{e}"
+            )
+            return
 
-            while excel.CalculationState != 0:
-                pass
+        # -----------------------------------------------------
+        # 3) Sanitizar payload completo
+        # -----------------------------------------------------
+        try:
+            sanitized_payload = {
+                k: self._sanitize_for_excel(v)
+                for k, v in payload.items()
+            }
         except Exception:
-            pass
+            sanitized_payload = payload
 
-        # =====================================================
-        # 🔥 2️⃣ AISLAR AT1 COMPLETAMENTE
-        # =====================================================
+        # -----------------------------------------------------
+        # 4) Validación mínima
+        # -----------------------------------------------------
+        if not sanitized_payload.get("vessel_mv"):
+            messagebox.showwarning(
+                "Validación",
+                "Debe seleccionar un servicio antes de visualizar."
+            )
+            return
+
+        # -----------------------------------------------------
+        # 5) Generar Excel desde template
+        # -----------------------------------------------------
         try:
-            rng_at1 = ws.Range("AT1")
+            from backend_api.services.draft_survey_excel_service import DraftSurveyExcelGenerator
 
-            # Romper cualquier fórmula
+            generator = DraftSurveyExcelGenerator()
+            tmp_path = generator.generate(sanitized_payload)
+
+            if not tmp_path or not os.path.exists(tmp_path):
+                raise Exception("No se generó archivo temporal válido.")
+
+        except Exception as e:
+            messagebox.showerror(
+                "Error",
+                f"No se pudo generar el preview:\n{e}"
+            )
+            return
+
+        # -----------------------------------------------------
+        # 6) Abrir Excel y aplicar modo blindado
+        # -----------------------------------------------------
+        try:
+            import win32com.client
+            import pythoncom
+            import time
+
+            pythoncom.CoInitialize()
+
+            excel = win32com.client.DispatchEx("Excel.Application")
+            excel.Visible = True
+            excel.DisplayAlerts = False
+            excel.ScreenUpdating = True
+
+            # Seguridad adicional
             try:
-                if rng_at1.HasFormula:
-                    rng_at1.Formula = ""
+                excel.EnableEvents = False
             except Exception:
                 pass
 
-            # Limpiar contenido previo
             try:
-                rng_at1.ClearContents()
+                excel.AskToUpdateLinks = False
             except Exception:
                 pass
 
-            # Forzar texto puro
-            rng_at1.NumberFormat = "@"
-            rng_at1.Value = title_text
+            workbook = excel.Workbooks.Open(
+                tmp_path,
+                UpdateLinks=0,
+                ReadOnly=False
+            )
 
-            # Bloquear celda individualmente
+            # -------------------------------------------------
+            # Determinar título
+            # -------------------------------------------------
+            variant_norm = (variant or "").strip().lower()
+            if variant_norm == "intermediate":
+                title_text = "INTERMEDIATE DRAFT SURVEY"
+            else:
+                title_text = "FINAL DRAFT SURVEY"
+
+            # -------------------------------------------------
+            # Validar hoja Draft
+            # -------------------------------------------------
             try:
-                rng_at1.Locked = True
+                ws = workbook.Worksheets("Draft")
+            except Exception:
+                raise Exception("La hoja 'Draft' no existe en el template.")
+
+            # -------------------------------------------------
+            # Recalcular con timeout seguro
+            # -------------------------------------------------
+            try:
+                excel.Calculation = -4105  # xlCalculationAutomatic
+                excel.CalculateFullRebuild()
+
+                timeout = 10
+                start = time.time()
+
+                while excel.CalculationState != 0:
+                    if time.time() - start > timeout:
+                        break
+                    time.sleep(0.1)
+
+            except Exception:
+                pass
+
+            # -------------------------------------------------
+            # Aislar AT1 completamente
+            # -------------------------------------------------
+            try:
+                rng_at1 = ws.Range("AT1")
+
+                try:
+                    if rng_at1.HasFormula:
+                        rng_at1.Formula = ""
+                except Exception:
+                    pass
+
+                try:
+                    rng_at1.ClearContents()
+                except Exception:
+                    pass
+
+                rng_at1.NumberFormat = "@"
+                rng_at1.Value = title_text
+
+                try:
+                    rng_at1.Locked = True
+                except Exception:
+                    pass
+
+            except Exception as e:
+                messagebox.showwarning(
+                    "Aviso",
+                    f"No se pudo forzar AT1:\n{e}"
+                )
+
+            # -------------------------------------------------
+            # Opcional: mantener Z6 sincronizada
+            # -------------------------------------------------
+            try:
+                rng_z6 = ws.Range("Z6")
+                rng_z6.NumberFormat = "@"
+                rng_z6.Value = title_text
+            except Exception:
+                pass
+
+            # -------------------------------------------------
+            # Guardar cambios
+            # -------------------------------------------------
+            try:
+                workbook.Save()
+                workbook.Saved = True
+            except Exception:
+                pass
+
+            # -------------------------------------------------
+            # Proteger estructura workbook
+            # -------------------------------------------------
+            try:
+                workbook.Protect(
+                    Password="msl_view_only",
+                    Structure=True,
+                    Windows=False
+                )
+            except Exception:
+                pass
+
+            # -------------------------------------------------
+            # Proteger cada hoja
+            # -------------------------------------------------
+            for sheet in workbook.Worksheets:
+                try:
+                    sheet.Protect(
+                        Password="msl_view_only",
+                        DrawingObjects=True,
+                        Contents=True,
+                        Scenarios=True
+                    )
+                except Exception:
+                    try:
+                        sheet.Protect(Password="msl_view_only")
+                    except Exception:
+                        pass
+
+                try:
+                    sheet.EnableSelection = 0  # xlNoSelection
+                except Exception:
+                    pass
+
+            # -------------------------------------------------
+            # Bloqueo visual UI
+            # -------------------------------------------------
+            try:
+                excel.DisplayFormulaBar = False
+            except Exception:
+                pass
+
+            try:
+                excel.ExecuteExcel4Macro('SHOW.TOOLBAR("Ribbon",False)')
+            except Exception:
+                pass
+
+            try:
+                excel.EnableEvents = True
             except Exception:
                 pass
 
         except Exception as e:
             messagebox.showwarning(
                 "Aviso",
-                f"No se pudo forzar AT1:\n{e}"
+                f"El Excel se abrió, pero no se pudo aplicar el modo bloqueado completo:\n{e}"
             )
 
-        # =====================================================
-        # 🔥 3️⃣ (OPCIONAL) MANTENER Z6 SI QUIERES
-        # =====================================================
-        try:
-            rng_z6 = ws.Range("Z6")
-            rng_z6.NumberFormat = "@"
-            rng_z6.Value = title_text
-        except Exception:
-            pass
 
-        # =====================================================
-        # GUARDAR CAMBIOS
-        # =====================================================
-        try:
-            workbook.Save()
-        except Exception:
-            pass
-
-        workbook.Saved = True
-
-        # =====================================================
-        # PROTEGER ESTRUCTURA
-        # =====================================================
-        try:
-            workbook.Protect(
-                Password="msl_view_only",
-                Structure=True,
-                Windows=False
-            )
-        except Exception:
-            pass
-
-        # =====================================================
-        # PROTEGER HOJAS
-        # =====================================================
-        for sheet in workbook.Worksheets:
-            try:
-                sheet.Protect(
-                    Password="msl_view_only",
-                    DrawingObjects=True,
-                    Contents=True,
-                    Scenarios=True
-                )
-            except Exception:
-                try:
-                    sheet.Protect(Password="msl_view_only")
-                except Exception:
-                    pass
-
-            try:
-                sheet.EnableSelection = 0  # xlNoSelection
-            except Exception:
-                pass
-
-        # =====================================================
-        # BLOQUEO VISUAL UI
-        # =====================================================
-        try:
-            excel.DisplayFormulaBar = False
-        except Exception:
-            pass
-
-        try:
-            excel.ExecuteExcel4Macro('SHOW.TOOLBAR("Ribbon",False)')
-        except Exception:
-            pass
-
-        try:
-            excel.EnableEvents = True
-        except Exception:
-            pass
-
-    except Exception as e:
-        messagebox.showwarning(
-            "Aviso",
-            f"El Excel se abrió, pero no se pudo aplicar el modo bloqueado completo:\n{e}"
-        )
