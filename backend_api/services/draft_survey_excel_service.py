@@ -611,7 +611,6 @@ def generate_draft_survey_excel(payload: dict, variant: str = "final") -> str:
     try:
 
         title_text = "FINAL DRAFT SURVEY"
-
         if (variant or "").lower() == "intermediate":
             title_text = "INTERMEDIATE DRAFT SURVEY"
 
@@ -619,24 +618,47 @@ def generate_draft_survey_excel(payload: dict, variant: str = "final") -> str:
 
             ws_title = wb["Draft"]
 
-            def _write_merge_safe(ws, target_cell, value):
-                """
-                Escribe correctamente incluso si la celda pertenece
-                a un rango merged.
-                """
-                for merged in ws.merged_cells.ranges:
-                    if target_cell in str(merged):
-                        ws.cell(
-                            row=merged.min_row,
-                            column=merged.min_col
-                        ).value = value
-                        return
+            # -------------------------------------------------
+            # FORCE WRITE (MERGE-SAFE, UNMERGE/REMARGE)
+            # -------------------------------------------------
+            def _force_write(ws: Worksheet, target_cell: str, value):
 
+                # 1) Buscar si target_cell cae dentro de un merged range
+                hit_range = None
+                for mr in list(ws.merged_cells.ranges):
+                    # mr.bounds => (min_col, min_row, max_col, max_row)
+                    min_col, min_row, max_col, max_row = mr.bounds
+                    # Convertir target_cell a (col, row)
+                    from openpyxl.utils.cell import coordinate_to_tuple
+                    row, col = coordinate_to_tuple(target_cell)
+
+                    if (min_row <= row <= max_row) and (min_col <= col <= max_col):
+                        hit_range = str(mr)  # ejemplo: "AO1:AR1"
+                        break
+
+                # 2) Si está dentro de un merge → UNMERGE, escribir, MERGE
+                if hit_range:
+                    ws.unmerge_cells(hit_range)
+
+                    # Escribir en la celda objetivo (ya no está merged)
+                    ws[target_cell].value = value
+
+                    # Excel suele mostrar el valor del top-left al volver a mergear,
+                    # así que también lo ponemos.
+                    from openpyxl.utils.cell import range_boundaries, get_column_letter
+                    min_c, min_r, max_c, max_r = range_boundaries(hit_range)
+                    top_left = f"{get_column_letter(min_c)}{min_r}"
+                    ws[top_left].value = value
+
+                    ws.merge_cells(hit_range)
+                    return
+
+                # 3) Si no estaba merged → escribir normal
                 ws[target_cell].value = value
 
-            # 🔥 Forzar escritura en ambos títulos
-            _write_merge_safe(ws_title, "Z6", title_text)
-            _write_merge_safe(ws_title, "AP1", title_text)
+            # 🔥 Forzar ambos
+            _force_write(ws_title, "Z6", title_text)
+            _force_write(ws_title, "AP1", title_text)
 
     except Exception:
         pass
@@ -654,7 +676,6 @@ def generate_draft_survey_excel(payload: dict, variant: str = "final") -> str:
         for field, cell in config["fields"].items():
 
             value = payload.get(field)
-
             if value in [None, ""]:
                 continue
 
