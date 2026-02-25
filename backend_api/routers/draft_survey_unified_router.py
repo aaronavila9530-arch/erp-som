@@ -411,92 +411,37 @@ def get_draft_survey_headers(conn=Depends(get_db)):
             pass
 
 
-# =========================================================
-# GET UNIFIED (DETAIL) — FULL PAYLOAD FOR ALL TABS
-# GET /draft-survey/unified/{draft_report_number}
-# =========================================================
-@router.get("/unified/{draft_report_number}")
-def get_draft_survey_unified(draft_report_number: str, conn=Depends(get_db)):
+@router.get("/headers")
+def get_draft_survey_headers(conn=Depends(get_db)):
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     try:
-        # -------------------------------------------------
-        # 1) GENERAL
-        # -------------------------------------------------
         cur.execute("""
-            SELECT *
+            SELECT
+                draft_report_number,
+                status,
+                year,
+                month,
+                continent,
+                country,
+                port,
+                client
             FROM general_draft_survey
-            WHERE draft_report_number = %s
-            LIMIT 1
-        """, (draft_report_number,))
-        general = cur.fetchone() or {}
+            ORDER BY draft_report_number DESC
+        """)
 
-        # -------------------------------------------------
-        # 2) DRAFT
-        # -------------------------------------------------
-        cur.execute("""
-            SELECT *
-            FROM draft_survey
-            WHERE draft_report_number = %s
-            LIMIT 1
-        """, (draft_report_number,))
-        draft = cur.fetchone() or {}
-
-        # -------------------------------------------------
-        # 3) BALLAST
-        # -------------------------------------------------
-        cur.execute("""
-            SELECT *
-            FROM draft_survey_ballast
-            WHERE draft_report_number = %s
-            LIMIT 1
-        """, (draft_report_number,))
-        ballast = cur.fetchone() or {}
-
-        # -------------------------------------------------
-        # 4) WORD REPORT
-        # -------------------------------------------------
-        cur.execute("""
-            SELECT *
-            FROM draft_survey_word_report
-            WHERE draft_report_number = %s
-            LIMIT 1
-        """, (draft_report_number,))
-        word_report = cur.fetchone() or {}
-
-        # -------------------------------------------------
-        # Unified payload (structure clara por pestaña)
-        # -------------------------------------------------
-        data = {
-            "general": general,
-            "draft": draft,
-            "ballast": ballast,
-            "word_report": word_report
-        }
-
-        # Si todo viene vacío, probablemente no existe
-        if not any([general, draft, ballast, word_report]):
-            raise HTTPException(
-                status_code=404,
-                detail="Draft report not found"
-            )
+        rows = cur.fetchall() or []
 
         return {
             "success": True,
-            "data": data
+            "data": rows
         }
-
-    except HTTPException:
-        raise
 
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"Unified fetch error: {e}"
+            detail=f"Headers fetch error: {e}"
         )
     finally:
-        try:
-            cur.close()
-        except Exception:
-            pass
+        cur.close()
