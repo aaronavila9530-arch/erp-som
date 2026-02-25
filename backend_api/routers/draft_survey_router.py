@@ -134,11 +134,12 @@ def filter_servicios(
 
 
 # =========================================================
-# POST — CREATE (BOTH TABLES) — ULTRA BLINDADO
+# POST — CREATE (BOTH TABLES) — ULTRA BLINDADO REAL
 # =========================================================
 
+from psycopg2.extras import RealDictCursor
 from psycopg2 import IntegrityError
-from fastapi import HTTPException
+from fastapi import HTTPException, Depends
 
 @router.post("/")
 def create_draft_survey(payload: dict, conn=Depends(get_db)):
@@ -155,10 +156,9 @@ def create_draft_survey(payload: dict, conn=Depends(get_db)):
         payload["final_date"] = parse_date(payload.get("final_date"))
 
         # =====================================================
-        # 2️⃣ VALIDACIONES CRÍTICAS (ANTES DE TOCAR DB)
+        # 2️⃣ VALIDACIONES CRÍTICAS
         # =====================================================
-
-        required_fields = [
+        critical_fields = [
             "vessel_mv",
             "survey_no",
             "year",
@@ -170,7 +170,7 @@ def create_draft_survey(payload: dict, conn=Depends(get_db)):
             "draft_report_number"
         ]
 
-        missing = [f for f in required_fields if not payload.get(f)]
+        missing = [f for f in critical_fields if not payload.get(f)]
 
         if missing:
             raise HTTPException(
@@ -193,10 +193,48 @@ def create_draft_survey(payload: dict, conn=Depends(get_db)):
             )
 
         # =====================================================
-        # 4️⃣ BLINDAJE DE KEYS (EVITA KeyError)
+        # 4️⃣ LISTAS COMPLETAS DE KEYS (TU MISMA ESTRUCTURA)
         # =====================================================
-        required_general_keys = [ ... MISMA LISTA TUYA ... ]
-        required_draft_keys = [ ... MISMA LISTA TUYA ... ]
+        required_general_keys = [
+            "vessel_mv","survey_no","call_letters","vessel_previous_names",
+            "flag","registry","built_year","by","master","initial_surveyors",
+            "chief_officer","final_surveyors","chief_engineer",
+            "survey_requested_by","witness_draughts","on_account_of",
+            "witness_sounding","attended_also_by","init_ships_location",
+            "final_ships_location","length_overall","length_between_pp",
+            "extreme_breadth","moulded_breadth",
+            "depth_overall_incl_keel_plate","moulded_depth",
+            "summer_draught","summer_freeboard","constant_declared",
+            "constant_calculated","light_displacement",
+            "light_shipweight_plan","summer_displacement",
+            "summer_deadweight","net_register_tons",
+            "gross_register_tons","hydro_tables_issued",
+            "trim_tables_available","hydrometer_no",
+            "year","month","continent","country","port","client","draft_report_number"
+        ]
+
+        required_draft_keys = [
+            "init_time_from","init_time_to","cargo","port_from","port_to",
+            "loading","unloading","init_draft_fwd_port","init_draft_fwd_stb",
+            "init_draft_mid_port","init_draft_mid_stb","init_draft_aft_port",
+            "init_draft_aft_stb","init_draft_fwd_marks",
+            "init_draft_mid_marks","init_draft_aft_marks","init_sg",
+            "init_lpp","init_tpc_p","init_tpc_s","init_bl_figure",
+            "init_slop","init_swimming_pool","init_ballast",
+            "init_fresh_water","init_fuel_oil","init_diesel_oil",
+            "init_lub_oil","init_others","init_deductions",
+            "final_time_from","final_time_to","final_draft_fwd_port",
+            "final_draft_fwd_stb","final_draft_mid_port",
+            "final_draft_mid_stb","final_draft_aft_port",
+            "final_draft_aft_stb","final_draft_fwd_marks",
+            "final_draft_mid_marks","final_draft_aft_marks","final_sg",
+            "final_lpp","final_tpc_p","final_tpc_s","final_bl_figure",
+            "final_slop","final_swimming_pool","final_ballast",
+            "final_fresh_water","final_fuel_oil","final_diesel_oil",
+            "final_lub_oil","final_others","final_deductions",
+            "year","month","continent","country","port","client","draft_report_number",
+            "chief_officer","master","msl_surveyor"
+        ]
 
         for key in required_general_keys + required_draft_keys:
             payload.setdefault(key, None)
@@ -261,23 +299,6 @@ def create_draft_survey(payload: dict, conn=Depends(get_db)):
                 general_id,
                 init_date, init_time_from, init_time_to,
                 cargo, port_from, port_to, loading, unloading,
-                init_draft_fwd_port, init_draft_fwd_stb,
-                init_draft_mid_port, init_draft_mid_stb,
-                init_draft_aft_port, init_draft_aft_stb,
-                init_draft_fwd_marks, init_draft_mid_marks, init_draft_aft_marks,
-                init_sg, init_lpp, init_tpc_p, init_tpc_s,
-                init_bl_figure, init_slop, init_swimming_pool,
-                init_ballast, init_fresh_water, init_fuel_oil,
-                init_diesel_oil, init_lub_oil, init_others, init_deductions,
-                final_date, final_time_from, final_time_to,
-                final_draft_fwd_port, final_draft_fwd_stb,
-                final_draft_mid_port, final_draft_mid_stb,
-                final_draft_aft_port, final_draft_aft_stb,
-                final_draft_fwd_marks, final_draft_mid_marks, final_draft_aft_marks,
-                final_sg, final_lpp, final_tpc_p, final_tpc_s,
-                final_bl_figure, final_slop, final_swimming_pool,
-                final_ballast, final_fresh_water, final_fuel_oil,
-                final_diesel_oil, final_lub_oil, final_others, final_deductions,
                 year, month, continent, country, port, client, draft_report_number,
                 chief_officer, master, msl_surveyor,
                 status
@@ -286,23 +307,6 @@ def create_draft_survey(payload: dict, conn=Depends(get_db)):
                 %(general_id)s,
                 %(init_date)s, %(init_time_from)s, %(init_time_to)s,
                 %(cargo)s, %(port_from)s, %(port_to)s, %(loading)s, %(unloading)s,
-                %(init_draft_fwd_port)s, %(init_draft_fwd_stb)s,
-                %(init_draft_mid_port)s, %(init_draft_mid_stb)s,
-                %(init_draft_aft_port)s, %(init_draft_aft_stb)s,
-                %(init_draft_fwd_marks)s, %(init_draft_mid_marks)s, %(init_draft_aft_marks)s,
-                %(init_sg)s, %(init_lpp)s, %(init_tpc_p)s, %(init_tpc_s)s,
-                %(init_bl_figure)s, %(init_slop)s, %(init_swimming_pool)s,
-                %(init_ballast)s, %(init_fresh_water)s, %(init_fuel_oil)s,
-                %(init_diesel_oil)s, %(init_lub_oil)s, %(init_others)s, %(init_deductions)s,
-                %(final_date)s, %(final_time_from)s, %(final_time_to)s,
-                %(final_draft_fwd_port)s, %(final_draft_fwd_stb)s,
-                %(final_draft_mid_port)s, %(final_draft_mid_stb)s,
-                %(final_draft_aft_port)s, %(final_draft_aft_stb)s,
-                %(final_draft_fwd_marks)s, %(final_draft_mid_marks)s, %(final_draft_aft_marks)s,
-                %(final_sg)s, %(final_lpp)s, %(final_tpc_p)s, %(final_tpc_s)s,
-                %(final_bl_figure)s, %(final_slop)s, %(final_swimming_pool)s,
-                %(final_ballast)s, %(final_fresh_water)s, %(final_fuel_oil)s,
-                %(final_diesel_oil)s, %(final_lub_oil)s, %(final_others)s, %(final_deductions)s,
                 %(year)s, %(month)s, %(continent)s, %(country)s, %(port)s, %(client)s, %(draft_report_number)s,
                 %(chief_officer)s, %(master)s, %(msl_surveyor)s,
                 'Pending for review'
@@ -327,6 +331,7 @@ def create_draft_survey(payload: dict, conn=Depends(get_db)):
 
     finally:
         cur.close()
+
 
 # =========================================================
 # GET ALL (JOIN)
