@@ -598,7 +598,7 @@ class DraftSurveyExcelGenerator:
 
 
 # =========================================================
-# GENERATE EXCEL (MERGE-SAFE TITLE CONTROL)
+# GENERATE EXCEL (TITLE CONTROL = COORD + CONTENT SEARCH)
 # =========================================================
 def generate_draft_survey_excel(self, payload: dict, variant: str = "final") -> str:
 
@@ -622,41 +622,116 @@ def generate_draft_survey_excel(self, payload: dict, variant: str = "final") -> 
 
             ws_title = wb["Draft"]
 
-            from openpyxl.utils.cell import coordinate_to_tuple
+            from openpyxl.utils.cell import (
+                coordinate_to_tuple,
+                get_column_letter
+            )
 
-            def _write_merge_safe(ws: Worksheet, target_cell: str, value):
+            def _set_value_merge_aware(ws: Worksheet, coord: str, value: str) -> None:
+                """
+                Escribe en coord. Si coord cae dentro de un MERGE,
+                escribe en el TOP-LEFT real del merge.
+                """
+                r, c = coordinate_to_tuple(coord)
 
-                # coordinate_to_tuple -> (row, col)
-                t_row, t_col = coordinate_to_tuple(target_cell)
-
-                # Buscar si cae dentro de un merged range
                 for mr in list(ws.merged_cells.ranges):
-
                     min_col, min_row, max_col, max_row = mr.bounds
-
-                    if (
-                        min_row <= t_row <= max_row and
-                        min_col <= t_col <= max_col
-                    ):
-                        # 🔥 Escribir SIEMPRE en top-left real del merge
+                    if min_row <= r <= max_row and min_col <= c <= max_col:
                         ws.cell(row=min_row, column=min_col).value = value
-
-                        # (Opcional) limpiar celdas internas del merge por higiene
-                        # No afecta lo que Excel muestra (solo muestra top-left),
-                        # pero evita residuos si el template traía algo raro.
-                        for r in range(min_row, max_row + 1):
-                            for c in range(min_col, max_col + 1):
-                                if r == min_row and c == min_col:
-                                    continue
-                                ws.cell(row=r, column=c).value = None
                         return
 
-                # Si no está merged
-                ws[target_cell].value = value
+                ws[coord].value = value
 
-            # 🔥 Forzar ambos títulos (Z6 y AP1:AV1)
-            _write_merge_safe(ws_title, "Z6", title_text)
-            _write_merge_safe(ws_title, "AP1", title_text)   # merge AP1:AV1 -> top-left AP1
+            def _replace_text_in_area(ws: Worksheet, needle_list, value: str,
+                                      min_row: int, max_row: int,
+                                      min_col: int, max_col: int) -> bool:
+                """
+                Busca textos en un área (incluyendo merges) y los reemplaza.
+                Retorna True si reemplazó al menos uno.
+                """
+                replaced = False
+
+                # 1) Reemplazar en TOP-LEFT de cada merge dentro del área
+                for mr in list(ws.merged_cells.ranges):
+                    min_c, min_r, max_c, max_r = mr.bounds
+
+                    # intersección con área
+                    if max_r < min_row or min_r > max_row or max_c < min_col or min_c > max_col:
+                        continue
+
+                    top_left = f"{get_column_letter(min_c)}{min_r}"
+                    v = ws[top_left].value
+
+                    if isinstance(v, str):
+                        vv = v.strip().upper()
+                        if vv in needle_list:
+                            ws[top_left].value = value
+                            replaced = True
+
+                # 2) Reemplazar en celdas normales (no-merge)
+                for r in range(min_row, max_row + 1):
+                    for c in range(min_col, max_col + 1):
+                        coord = f"{get_column_letter(c)}{r}"
+
+                        # si es parte de un merge, ya lo manejamos por top-left
+                        in_merge = False
+                        for mr in list(ws.merged_cells.ranges):
+                            min_c, min_r, max_c, max_r = mr.bounds
+                            if min_r <= r <= max_r and min_c <= c <= max_c:
+                                in_merge = True
+                                break
+                        if in_merge:
+                            continue
+
+                        v = ws[coord].value
+                        if isinstance(v, str):
+                            vv = v.strip().upper()
+                            if vv in needle_list:
+                                ws[coord].value = value
+                                replaced = True
+
+                return replaced
+
+            # -------------------------------------------------
+            # 1) SIEMPRE escribe el título azul (Z6) (ya te funciona)
+            # -------------------------------------------------
+            _set_value_merge_aware(ws_title, "Z6", title_text)
+
+            # -------------------------------------------------
+            # 2) PARA "FINAL SURVEY" (AP1:AV1) NO CONFÍO EN COORD.
+            #    Lo busco por CONTENIDO y lo reemplazo.
+            # -------------------------------------------------
+            needles = {
+                "FINAL SURVEY",
+                "FINAL  SURVEY",
+                "FINAL SURVEY ",   # por si venía con espacios raros
+                " FINAL SURVEY",
+            }
+
+            # Área acotada donde está el header (fila 1 y columnas aprox. AJ..AZ)
+            # (lo dejamos un poquito amplio para no fallar por 1-2 columnas)
+            replaced = _replace_text_in_area(
+                ws=ws_title,
+                needle_list=set([n.strip().upper() for n in needles]),
+                value=("INTERMEDIATE SURVEY" if (variant or "").lower() == "intermediate" else "FINAL SURVEY"),
+                min_row=1,
+                max_row=3,
+                min_col=30,   # AD aprox
+                max_col=60    # BH aprox
+            )
+
+            # -------------------------------------------------
+            # 3) BACKUP: si por alguna razón no encontró el texto,
+            #    entonces fuerzo en todo el rango AP1:AV1 (merge-aware)
+            #    PERO también pruebo AQ1 y AR1 por si el merge inicia corrido.
+            # -------------------------------------------------
+            if not replaced:
+                for coord in ("AP1", "AQ1", "AR1", "AS1", "AT1", "AU1", "AV1"):
+                    _set_value_merge_aware(
+                        ws_title,
+                        coord,
+                        ("INTERMEDIATE SURVEY" if (variant or "").lower() == "intermediate" else "FINAL SURVEY")
+                    )
 
     except Exception:
         pass
