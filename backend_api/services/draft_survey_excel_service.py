@@ -598,157 +598,219 @@ class DraftSurveyExcelGenerator:
 
 
     # =========================================================
-    # GENERATE EXCEL (AT1 ULTRA HARD FORCE + DOUBLE VERIFY)
+    # VISUALIZAR DRAFT (ULTRA BLINDADO + COM HARD FORCE AT1/Z6)
     # =========================================================
-    def generate_draft_survey_excel(self, payload: dict, variant: str = "final") -> str:
+    def _visualizar_draft(self):
 
-        if not os.path.exists(TEMPLATE_PATH):
-            raise FileNotFoundError(
-                f"Draft Survey template not found: {TEMPLATE_PATH}"
-            )
+        # 🔒 Forzar actualización de widgets
+        self.update_idletasks()
+        self.update()
 
-        payload = payload or {}
+        # ==============================
+        # 1) Preguntar variante
+        # ==============================
+        variant = self._ask_draft_variant()
+        if not variant:
+            return  # cancelado
 
-        # =====================================================
-        # VARIANT NORMALIZATION
-        # =====================================================
-        variant_norm = (variant or "").strip().lower()
-
-        title_text = "FINAL DRAFT SURVEY"
-        if variant_norm == "intermediate":
-            title_text = "INTERMEDIATE DRAFT SURVEY"
+        payload = self.get_payload()
 
         # =====================================================
-        # LOAD TEMPLATE
+        # SANITIZAR PAYLOAD COMPLETO
         # =====================================================
-        wb = load_workbook(TEMPLATE_PATH, data_only=False)
-
-        if "Draft" not in wb.sheetnames:
-            raise Exception("Sheet 'Draft' not found in template.")
-
-        ws_draft = wb["Draft"]
-
-        from openpyxl.utils.cell import coordinate_to_tuple, get_column_letter
-
-        # =====================================================
-        # MERGE SAFE SETTER (works for merged or non-merged)
-        # =====================================================
-        def _set_merge_safe(ws: Worksheet, coord: str, value: str) -> None:
-
-            r, c = coordinate_to_tuple(coord)
-
-            for mr in list(ws.merged_cells.ranges):
-                min_col, min_row, max_col, max_row = mr.bounds
-                if min_row <= r <= max_row and min_col <= c <= max_col:
-                    tl = f"{get_column_letter(min_col)}{min_row}"
-                    ws[tl].value = value
-                    return
-
-            ws[coord].value = value
-
-        # =====================================================
-        # 1️⃣ FORCE TITLES IMMEDIATELY
-        # =====================================================
-        _set_merge_safe(ws_draft, "Z6", title_text)
-
-        ws_draft["AT1"].value = str(title_text)
-        ws_draft["AT1"].data_type = "s"
-
-        # If AT1 had formula → kill it
-        if ws_draft["AT1"].value and isinstance(ws_draft["AT1"].value, str):
-            if ws_draft["AT1"].value.startswith("="):
-                ws_draft["AT1"].value = title_text
-
-        # =====================================================
-        # 2️⃣ CLEAN ANY OLD TITLES IN DRAFT SHEET
-        # =====================================================
-        needles = {
-            "FINAL DRAFT SURVEY",
-            "FINAL SURVEY",
-            "FINAL  SURVEY",
-            "FINAL  DRAFT  SURVEY",
+        sanitized_payload = {
+            k: self._sanitize_for_excel(v)
+            for k, v in payload.items()
         }
 
-        needles_upper = {n.strip().upper() for n in needles}
-
-        for row in ws_draft.iter_rows():
-            for cell in row:
-                v = cell.value
-                if isinstance(v, str) and v.strip().upper() in needles_upper:
-                    cell.value = title_text
+        # =====================================================
+        # VALIDACIÓN MÍNIMA
+        # =====================================================
+        if not sanitized_payload.get("vessel_mv"):
+            messagebox.showwarning(
+                "Validación",
+                "Debe seleccionar un servicio antes de visualizar."
+            )
+            return
 
         # =====================================================
-        # 3️⃣ APPLY FULL MAPPING
+        # 2) GENERAR EXCEL
         # =====================================================
-        for sheet_name, config in self.EXCEL_MAPPING.items():
-
-            if sheet_name not in wb.sheetnames:
-                continue
-
-            ws = wb[sheet_name]
-
-            date_fields = set(config.get("date_fields") or [])
-            fields_map = config.get("fields") or {}
-
-            for field, cell in fields_map.items():
-
-                value = payload.get(field)
-
-                if value in [None, ""]:
-                    continue
-
-                if field in date_fields:
-                    self._safe_set_date(ws, cell, value)
-                else:
-                    self._safe_set(ws, cell, value)
-
-        # =====================================================
-        # 4️⃣ HARD FORCE AGAIN (AFTER MAPPING)
-        #    NOTHING CAN OVERRIDE THIS
-        # =====================================================
-        _set_merge_safe(ws_draft, "Z6", title_text)
-
-        ws_draft["AT1"].value = str(title_text)
-        ws_draft["AT1"].data_type = "s"
-
-        # Debug marker (helps detect wrong file being opened)
-        ws_draft["AU1"].value = f"DEBUG:{title_text}:{datetime.now().strftime('%H:%M:%S')}"
-
-        # =====================================================
-        # 5️⃣ SAVE TEMP FILE
-        # =====================================================
-        fd, tmp_path = tempfile.mkstemp(suffix=".xlsx")
-        os.close(fd)
-
-        wb.save(tmp_path)
-
-        # =====================================================
-        # 6️⃣ POST-SAVE VERIFY (FILE LEVEL)
-        # =====================================================
-        wb_check = load_workbook(tmp_path, data_only=False)
-
-        if "Draft" not in wb_check.sheetnames:
-            raise Exception("Post-save verify failed: Sheet 'Draft' missing.")
-
-        ws_check = wb_check["Draft"]
-
-        got = ws_check["AT1"].value
-
-        if str(got or "").strip().upper() != title_text.strip().upper():
-            raise Exception(
-                f"AT1 mismatch after save. Got '{got}', expected '{title_text}'. "
-                "This proves the generator is not being used "
-                "or another file is being opened."
+        try:
+            from backend_api.services.draft_survey_excel_service import (
+                generate_draft_survey_excel
             )
 
-        # =====================================================
-        # 7️⃣ SECOND VERIFY (Z6)
-        # =====================================================
-        z6_got = ws_check["Z6"].value
-
-        if str(z6_got or "").strip().upper() != title_text.strip().upper():
-            raise Exception(
-                f"Z6 mismatch after save. Got '{z6_got}', expected '{title_text}'."
+            tmp_path = generate_draft_survey_excel(
+                sanitized_payload,
+                variant=variant
             )
 
-        return tmp_path
+            if not tmp_path:
+                raise Exception("No se generó archivo temporal.")
+
+        except Exception as e:
+            messagebox.showerror(
+                "Error",
+                f"No se pudo generar el preview:\n{e}"
+            )
+            return
+
+        # =====================================================
+        # 3) ABRIR EXCEL + HARD FORCE TITLES (AT1 / Z6) + BLOQUEO
+        # =====================================================
+        try:
+            import win32com.client
+            import pythoncom
+
+            pythoncom.CoInitialize()
+
+            # 🔒 Use DispatchEx para evitar "reutilizar" una instancia vieja rara
+            excel = win32com.client.DispatchEx("Excel.Application")
+
+            # Configuración segura
+            excel.Visible = True
+            excel.DisplayAlerts = False
+            excel.ScreenUpdating = True
+
+            # Evitar que Excel ejecute cosas raras al abrir
+            try:
+                excel.EnableEvents = False
+            except Exception:
+                pass
+
+            try:
+                excel.AskToUpdateLinks = False
+            except Exception:
+                pass
+
+            # 🔥 Abrir sin update links
+            workbook = excel.Workbooks.Open(
+                tmp_path,
+                UpdateLinks=0,
+                ReadOnly=False
+            )
+
+            # =====================================================
+            # 🔥 TITULO SEGÚN VARIANT (LO QUE QUIERES VER)
+            # =====================================================
+            variant_norm = (variant or "").strip().lower()
+            title_text = "FINAL DRAFT SURVEY"
+            if variant_norm == "intermediate":
+                title_text = "INTERMEDIATE DRAFT SURVEY"
+
+            # =====================================================
+            # 🔥 HARD FORCE EN EXCEL (NO OPENPYXL) — AT1 y Z6
+            # =====================================================
+            try:
+                ws = workbook.Worksheets("Draft")
+
+                # AT1 (tu caso)
+                ws.Range("AT1").NumberFormat = "@"
+                ws.Range("AT1").Value = title_text
+
+                # Z6 (merged en tu template)
+                ws.Range("Z6").NumberFormat = "@"
+                ws.Range("Z6").Value = title_text
+
+                # 🔥 Limpieza adicional: si existe "FINAL SURVEY" en fila 1, reemplazarlo
+                # (esto mata cualquier celda vecina tipo AU1/AV1 que te esté confundiendo)
+                try:
+                    used = ws.UsedRange
+                    max_col = used.Columns.Count
+
+                    for c in range(1, max_col + 1):
+                        v = ws.Cells(1, c).Value
+                        if isinstance(v, str) and v.strip().upper() == "FINAL SURVEY":
+                            ws.Cells(1, c).NumberFormat = "@"
+                            ws.Cells(1, c).Value = title_text
+                except Exception:
+                    pass
+
+            except Exception as e:
+                messagebox.showwarning(
+                    "Aviso",
+                    f"Excel abrió el archivo, pero no se pudo forzar el título en AT1/Z6:\n{e}"
+                )
+
+            # =====================================================
+            # 🔥 FORZAR RECÁLCULO COMPLETO REAL
+            # =====================================================
+            try:
+                excel.Calculation = -4105  # xlCalculationAutomatic
+                excel.CalculateFullRebuild()
+
+                # Si tienes conexiones, puedes refrescar; si no, mejor no tocar.
+                # workbook.RefreshAll()
+
+                while excel.CalculationState != 0:
+                    pass
+            except Exception:
+                pass
+
+            # Guardar cambios (en el mismo tmp)
+            try:
+                workbook.Save()
+            except Exception:
+                pass
+
+            workbook.Saved = True
+
+            # =====================================================
+            # PROTEGER ESTRUCTURA
+            # =====================================================
+            try:
+                workbook.Protect(
+                    Password="msl_view_only",
+                    Structure=True,
+                    Windows=False
+                )
+            except Exception:
+                pass
+
+            # =====================================================
+            # PROTEGER HOJAS
+            # =====================================================
+            for sheet in workbook.Worksheets:
+                try:
+                    sheet.Protect(
+                        Password="msl_view_only",
+                        DrawingObjects=True,
+                        Contents=True,
+                        Scenarios=True
+                    )
+                except Exception:
+                    try:
+                        sheet.Protect(Password="msl_view_only")
+                    except Exception:
+                        pass
+
+                try:
+                    sheet.EnableSelection = 0  # xlNoSelection
+                except Exception:
+                    pass
+
+            # =====================================================
+            # BLOQUEO VISUAL UI
+            # =====================================================
+            try:
+                excel.DisplayFormulaBar = False
+            except Exception:
+                pass
+
+            try:
+                excel.ExecuteExcel4Macro('SHOW.TOOLBAR("Ribbon",False)')
+            except Exception:
+                pass
+
+            # Rehabilitar eventos (por higiene)
+            try:
+                excel.EnableEvents = True
+            except Exception:
+                pass
+
+        except Exception as e:
+            messagebox.showwarning(
+                "Aviso",
+                f"El Excel se abrió, pero no se pudo aplicar el modo bloqueado completo:\n{e}"
+            )
