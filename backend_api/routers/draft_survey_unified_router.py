@@ -411,8 +411,8 @@ def get_draft_survey_headers(conn=Depends(get_db)):
             pass
 
 
-@router.get("/headers")
-def get_draft_survey_headers(conn=Depends(get_db)):
+@router.get("/headers-list")
+def get_draft_survey_headers_list(conn=Depends(get_db)):
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
