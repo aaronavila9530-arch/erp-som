@@ -7,6 +7,10 @@ from services.draft_survey_word_pdf_service import (
     generate_draft_survey_word_pdf
 )
 
+from services.draft_survey_word_data_service import (
+    get_draft_word_data_by_report_number
+)
+
 router = APIRouter(
     prefix="/draft-survey-word",
     tags=["Draft Survey Word PDF"]
@@ -31,12 +35,18 @@ def generate_word_pdf(
 
     try:
 
-        # 🔥 Construimos payload mínimo
-        payload = {
-            "draft_report_number": draft_report_number
-        }
+        # 🔥 TRAER TODA LA FILA
+        data = get_draft_word_data_by_report_number(
+            draft_report_number
+        )
 
-        pdf_path = generate_draft_survey_word_pdf(payload)
+        if not data:
+            raise HTTPException(
+                status_code=404,
+                detail="Draft Word record not found"
+            )
+
+        pdf_path = generate_draft_survey_word_pdf(data)
 
         file_path = Path(pdf_path)
 

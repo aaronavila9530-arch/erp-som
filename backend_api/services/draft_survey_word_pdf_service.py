@@ -59,56 +59,109 @@ def generate_draft_survey_word_pdf(data: dict) -> str:
         for key, value in data.items()
     }
 
-    # ========================================================
-    # REPLACEMENT ENGINE (ANTI-RUN SPLIT ISSUE)
-    # ========================================================
+        # ========================================================
+        # REPLACEMENT ENGINE (ANTI-RUN SPLIT + PRESERVE FORMAT)
+        # ========================================================
 
-    def replace_in_paragraph(paragraph):
+        def replace_in_paragraph(paragraph):
 
-        if not paragraph.text:
-            return
+            # 🔒 Blindaje básico
+            if not paragraph or not paragraph.runs:
+                return
 
-        full_text = paragraph.text
-        original_text = full_text
+            try:
 
-        for placeholder, value in placeholder_map.items():
-            full_text = full_text.replace(placeholder, value)
+                # Construir texto completo preservando orden
+                full_text = "".join(run.text for run in paragraph.runs)
 
-        if full_text != original_text:
-            paragraph.clear()
-            paragraph.add_run(full_text)
+                if not full_text:
+                    return
 
-    # BODY
-    for paragraph in doc.paragraphs:
-        replace_in_paragraph(paragraph)
+                # Reemplazar placeholders
+                updated_text = full_text
 
-    # TABLES
-    for table in doc.tables:
-        for row in table.rows:
-            for cell in row.cells:
-                for paragraph in cell.paragraphs:
-                    replace_in_paragraph(paragraph)
+                for placeholder, value in placeholder_map.items():
 
-    # HEADERS & FOOTERS
-    for section in doc.sections:
+                    if placeholder in updated_text:
+                        updated_text = updated_text.replace(
+                            placeholder,
+                            value if value is not None else ""
+                        )
 
-        for paragraph in section.header.paragraphs:
+                # Si nada cambió, no tocar runs
+                if updated_text == full_text:
+                    return
+
+                # Reescribir preservando formato original
+                index = 0
+
+                for run in paragraph.runs:
+
+                    original_length = len(run.text)
+
+                    if original_length == 0:
+                        continue
+
+                    slice_text = updated_text[index:index + original_length]
+
+                    run.text = slice_text
+                    index += original_length
+
+                # Si el texto nuevo es más largo que los runs originales
+                if index < len(updated_text):
+                    paragraph.runs[-1].text += updated_text[index:]
+
+            except Exception:
+                # 🔒 Nunca permitir que el PDF explote por reemplazo
+                return
+
+
+        # ========================================================
+        # BODY
+        # ========================================================
+
+        for paragraph in doc.paragraphs:
             replace_in_paragraph(paragraph)
 
-        for table in section.header.tables:
+
+        # ========================================================
+        # TABLES
+        # ========================================================
+
+        for table in doc.tables:
             for row in table.rows:
                 for cell in row.cells:
                     for paragraph in cell.paragraphs:
                         replace_in_paragraph(paragraph)
 
-        for paragraph in section.footer.paragraphs:
-            replace_in_paragraph(paragraph)
 
-        for table in section.footer.tables:
-            for row in table.rows:
-                for cell in row.cells:
-                    for paragraph in cell.paragraphs:
-                        replace_in_paragraph(paragraph)
+        # ========================================================
+        # HEADERS & FOOTERS
+        # ========================================================
+
+        for section in doc.sections:
+
+            # Header paragraphs
+            for paragraph in section.header.paragraphs:
+                replace_in_paragraph(paragraph)
+
+            # Header tables
+            for table in section.header.tables:
+                for row in table.rows:
+                    for cell in row.cells:
+                        for paragraph in cell.paragraphs:
+                            replace_in_paragraph(paragraph)
+
+            # Footer paragraphs
+            for paragraph in section.footer.paragraphs:
+                replace_in_paragraph(paragraph)
+
+            # Footer tables
+            for table in section.footer.tables:
+                for row in table.rows:
+                    for cell in row.cells:
+                        for paragraph in cell.paragraphs:
+                            replace_in_paragraph(paragraph)
 
     # ========================================================
     # SAVE TEMP DOCX
