@@ -3,9 +3,9 @@ from fastapi.responses import FileResponse
 from pathlib import Path
 import logging
 
-from services.draft_survey_word_pdf_service import generate_draft_survey_word_pdf
-from services.draft_survey_word_data_service import get_draft_word_data_by_report_number
-
+from services.draft_survey_word_pdf_service import (
+    generate_draft_survey_word_pdf
+)
 
 router = APIRouter(
     prefix="/draft-survey-word",
@@ -15,13 +15,21 @@ router = APIRouter(
 logger = logging.getLogger(__name__)
 
 
-@router.get("/generate/{draft_report_number}")
+@router.post("/generate")
 def generate_word_pdf(
-    draft_report_number: str,
+    payload: dict,
     background_tasks: BackgroundTasks
 ):
 
-    draft_report_number = str(draft_report_number or "").strip()
+    if not isinstance(payload, dict):
+        raise HTTPException(
+            status_code=422,
+            detail="Invalid payload"
+        )
+
+    draft_report_number = str(
+        payload.get("draft_report_number") or ""
+    ).strip()
 
     if not draft_report_number:
         raise HTTPException(
@@ -31,19 +39,8 @@ def generate_word_pdf(
 
     try:
 
-        # 1️⃣ SOLO TRAER TABLA WORD
-        data = get_draft_word_data_by_report_number(
-            draft_report_number
-        )
-
-        if not data:
-            raise HTTPException(
-                status_code=404,
-                detail="Draft Word record not found"
-            )
-
-        # 2️⃣ GENERAR PDF
-        pdf_path = generate_draft_survey_word_pdf(data)
+        # 🔥 GENERA PDF DIRECTAMENTE
+        pdf_path = generate_draft_survey_word_pdf(payload)
 
         file_path = Path(pdf_path)
 
@@ -53,7 +50,7 @@ def generate_word_pdf(
                 detail="Generated PDF file does not exist"
             )
 
-        # 3️⃣ CLEANUP
+        # Cleanup automático
         def cleanup(path: Path):
             try:
                 if path.exists():
