@@ -44,7 +44,7 @@ class DraftSurveyFinalPdfService:
                 pass
 
     # =========================================================
-    # PDF MERGE (pypdf / PyPDF2 fallback)
+    # PDF MERGE (ULTRA COMPATIBLE)
     # =========================================================
     def _merge_pdfs(self, pdf_paths: list[str], out_path: str) -> str:
 
@@ -55,28 +55,45 @@ class DraftSurveyFinalPdfService:
             if not p or not os.path.exists(p) or os.path.getsize(p) == 0:
                 raise RuntimeError(f"Invalid PDF for merge: {p}")
 
-        merger = None
-
+        # -----------------------------------------------------
+        # INTENTAR pypdf moderno
+        # -----------------------------------------------------
         try:
-            # pypdf (nuevo)
-            from pypdf import PdfMerger
-            merger = PdfMerger()
+            from pypdf import PdfWriter, PdfReader
+
+            writer = PdfWriter()
+
+            for path in pdf_paths:
+                reader = PdfReader(path)
+                for page in reader.pages:
+                    writer.add_page(page)
+
+            with open(out_path, "wb") as f:
+                writer.write(f)
+
+        # -----------------------------------------------------
+        # FALLBACK PyPDF2
+        # -----------------------------------------------------
         except Exception:
-            # PyPDF2 (viejo)
-            from PyPDF2 import PdfMerger
-            merger = PdfMerger()
 
-        try:
-            for p in pdf_paths:
-                merger.append(p)
-
-            merger.write(out_path)
-
-        finally:
             try:
-                merger.close()
-            except Exception:
-                pass
+                from PyPDF2 import PdfWriter, PdfReader
+
+                writer = PdfWriter()
+
+                for path in pdf_paths:
+                    reader = PdfReader(path)
+                    for page in reader.pages:
+                        writer.add_page(page)
+
+                with open(out_path, "wb") as f:
+                    writer.write(f)
+
+            except Exception as e:
+                raise RuntimeError(
+                    "No compatible PDF merge library installed "
+                    "(install pypdf>=3.x or PyPDF2)"
+                )
 
         if not os.path.exists(out_path):
             raise RuntimeError("Merged PDF was not created")
