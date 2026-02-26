@@ -1,12 +1,12 @@
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends
 from fastapi.responses import FileResponse
 from pathlib import Path
 import logging
 
+from database import get_db
 from services.draft_survey_word_pdf_service import (
     generate_draft_survey_word_pdf
 )
-
 from services.draft_survey_word_data_service import (
     get_draft_word_data_by_report_number
 )
@@ -22,7 +22,8 @@ logger = logging.getLogger(__name__)
 @router.get("/generate/{draft_report_number}")
 def generate_word_pdf(
     draft_report_number: str,
-    background_tasks: BackgroundTasks
+    background_tasks: BackgroundTasks,
+    conn=Depends(get_db)
 ):
 
     draft_report_number = str(draft_report_number or "").strip()
@@ -35,8 +36,9 @@ def generate_word_pdf(
 
     try:
 
-        # 🔥 TRAER TODA LA FILA
+        # 🔥 AQUÍ ESTÁ LA DIFERENCIA
         data = get_draft_word_data_by_report_number(
+            conn,
             draft_report_number
         )
 
@@ -78,5 +80,5 @@ def generate_word_pdf(
         logger.exception("Unexpected error generating Word PDF")
         raise HTTPException(
             status_code=500,
-            detail="Internal server error"
+            detail="Error generating Word PDF"
         )
