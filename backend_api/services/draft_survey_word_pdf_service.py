@@ -1,10 +1,5 @@
 import os
 import tempfile
-from pathlib import Path
-from typing import Dict, Optional
-
-import psycopg2
-from psycopg2.extras import RealDictCursor
 from docx import Document
 
 try:
@@ -13,150 +8,139 @@ except Exception:
     docx2pdf_convert = None
 
 
-# =========================================================
-# TEMPLATE PATH (RELATIVE TO PROJECT ROOT)
-# =========================================================
-BASE_DIR = Path(__file__).resolve().parent.parent
-TEMPLATE_PATH = BASE_DIR / "templates" / "draft_word_template.docx"
+# ============================================================
+# GENERATE DRAFT SURVEY WORD PDF (NO DB)
+# ============================================================
 
+def generate_draft_survey_word_pdf(data: dict) -> str:
 
-# =========================================================
-# SERVICE
-# =========================================================
-class DraftSurveyWordPdfService:
+    # ========================================================
+    # LOAD TEMPLATE (RELATIVE PATH - IGUAL QUE ADJUNTO)
+    # ========================================================
 
-    # =====================================================
-    # PUBLIC ENTRY
-    # =====================================================
-    def generate_pdf_by_report_number(self, draft_report_number: str) -> str:
+    base_dir = os.path.dirname(os.path.abspath(__file__))
 
-        draft_report_number = (draft_report_number or "").strip()
+    template_path = os.path.abspath(
+        os.path.join(
+            base_dir,
+            "..",
+            "templates",
+            "draft_word_template.docx"
+        )
+    )
 
-        if not draft_report_number:
-            raise ValueError("draft_report_number is required")
+    if not os.path.exists(template_path):
+        raise Exception(f"Template not found at: {template_path}")
 
-        data = self._fetch_data(draft_report_number)
+    doc = Document(template_path)
 
-        if not data:
-            raise ValueError(
-                f"No record found for draft_report_number: {draft_report_number}"
-            )
+    # ========================================================
+    # SAFE VALUE
+    # ========================================================
 
-        return self._generate_pdf_from_data(data)
+    def safe(value):
+        return "" if value is None else str(value)
 
-    # =====================================================
-    # DATABASE CONNECTION (ENVIRONMENT SAFE)
-    # =====================================================
-    def _get_connection(self):
-        try:
-            return psycopg2.connect(
-                host=os.getenv("DB_HOST"),
-                port=os.getenv("DB_PORT"),
-                database=os.getenv("DB_NAME"),
-                user=os.getenv("DB_USER"),
-                password=os.getenv("DB_PASSWORD"),
-            )
-        except Exception as e:
-            raise RuntimeError(f"Database connection error: {str(e)}")
+    # ========================================================
+    # SAFE REPLACEMENT (MISMA LÓGICA QUE TRUCK)
+    # ========================================================
 
-    # =====================================================
-    # FETCH DATA
-    # =====================================================
-    def _fetch_data(self, draft_report_number: str) -> Optional[Dict]:
+    def replace_in_paragraph(paragraph):
 
-        conn = self._get_connection()
-
-        try:
-            with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute("""
-                    SELECT *
-                    FROM draft_survey_word_report
-                    WHERE draft_report_number = %s
-                    LIMIT 1
-                """, (draft_report_number,))
-
-                row = cur.fetchone()
-                return dict(row) if row else None
-
-        finally:
-            conn.close()
-
-    # =====================================================
-    # GENERATE PDF
-    # =====================================================
-    def _generate_pdf_from_data(self, data: Dict) -> str:
-
-        if not TEMPLATE_PATH.exists():
-            raise FileNotFoundError(
-                f"Word template not found at {TEMPLATE_PATH}"
-            )
-
-        tmp_dir = Path(tempfile.mkdtemp(prefix="draft_word_"))
-        tmp_docx = tmp_dir / "filled.docx"
-        tmp_pdf = tmp_dir / "filled.pdf"
-
-        doc = Document(str(TEMPLATE_PATH))
-
-        replacements = {
-            "{" + str(k) + "}": "" if v is None else str(v)
-            for k, v in data.items()
-        }
-
-        self._replace_placeholders(doc, replacements)
-
-        doc.save(str(tmp_docx))
-
-        self._convert_to_pdf(tmp_docx, tmp_pdf)
-
-        if not tmp_pdf.exists():
-            raise RuntimeError("PDF was not created")
-
-        return str(tmp_pdf)
-
-    # =====================================================
-    # PLACEHOLDER REPLACEMENT
-    # =====================================================
-    def _replace_placeholders(self, doc: Document, replacements: Dict):
-
-        # Paragraphs
-        for paragraph in doc.paragraphs:
-            self._replace_in_paragraph(paragraph, replacements)
-
-        # Tables
-        for table in doc.tables:
-            for row in table.rows:
-                for cell in row.cells:
-                    for paragraph in cell.paragraphs:
-                        self._replace_in_paragraph(paragraph, replacements)
-
-    def _replace_in_paragraph(self, paragraph, replacements: Dict):
+        if not paragraph.runs:
+            return
 
         full_text = "".join(run.text for run in paragraph.runs)
 
-        if "{" not in full_text:
-            return
+        for key, value in data.items():
+            placeholder = f"{{{key}}}"
+            if placeholder in full_text:
+                full_text = full_text.replace(
+                    placeholder,
+                    safe(value)
+                )
 
-        for key, value in replacements.items():
-            if key in full_text:
-                full_text = full_text.replace(key, value)
+        index = 0
 
-        # Reset runs safely
-        if paragraph.runs:
-            paragraph.runs[0].text = full_text
-            for run in paragraph.runs[1:]:
-                run.text = ""
+        for run in paragraph.runs:
+            length = len(run.text)
+            if length == 0:
+                continue
 
-    # =====================================================
-    # DOCX → PDF
-    # =====================================================
-    def _convert_to_pdf(self, docx_path: Path, pdf_path: Path):
+            run.text = full_text[index:index + length]
+            index += length
 
-        if not docx2pdf_convert:
-            raise RuntimeError(
-                "docx2pdf not available. Install it and ensure Microsoft Word is installed."
-            )
+        if index < len(full_text):
+            paragraph.runs[-1].text += full_text[index:]
 
-        try:
-            docx2pdf_convert(str(docx_path), str(pdf_path.parent))
-        except Exception as e:
-            raise RuntimeError(f"Error converting to PDF: {str(e)}")
+    # ========================================================
+    # BODY
+    # ========================================================
+
+    for paragraph in doc.paragraphs:
+        replace_in_paragraph(paragraph)
+
+    # ========================================================
+    # TABLES
+    # ========================================================
+
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                for paragraph in cell.paragraphs:
+                    replace_in_paragraph(paragraph)
+
+    # ========================================================
+    # HEADERS & FOOTERS
+    # ========================================================
+
+    for section in doc.sections:
+
+        header = section.header
+        for paragraph in header.paragraphs:
+            replace_in_paragraph(paragraph)
+
+        for table in header.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    for paragraph in cell.paragraphs:
+                        replace_in_paragraph(paragraph)
+
+        footer = section.footer
+        for paragraph in footer.paragraphs:
+            replace_in_paragraph(paragraph)
+
+        for table in footer.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    for paragraph in cell.paragraphs:
+                        replace_in_paragraph(paragraph)
+
+    # ========================================================
+    # SAVE TEMP DOCX
+    # ========================================================
+
+    tmp_docx = os.path.join(
+        tempfile.gettempdir(),
+        f"{data.get('draft_report_number', 'draft_survey')}.docx"
+    )
+
+    doc.save(tmp_docx)
+
+    # ========================================================
+    # CONVERT TO PDF
+    # ========================================================
+
+    if not docx2pdf_convert:
+        raise Exception(
+            "docx2pdf not available. Install it and ensure Microsoft Word is installed."
+        )
+
+    docx2pdf_convert(tmp_docx, tempfile.gettempdir())
+
+    tmp_pdf = tmp_docx.replace(".docx", ".pdf")
+
+    if not os.path.exists(tmp_pdf):
+        raise Exception("PDF was not created.")
+
+    return tmp_pdf
