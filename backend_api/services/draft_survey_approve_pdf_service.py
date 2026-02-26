@@ -153,45 +153,108 @@ class DraftSurveyApprovePdfService:
             raise RuntimeError(f"DOCX->PDF conversion failed:\n{r.stderr}")
 
     # =========================================================
-    # EXCEL PIPELINE (ULTRA SIMPLE – SIN COM, SIN PAGESETUP)
+    # EXCEL -> PDF (USANDO MICROSOFT EXCEL INSTALADO)
     # =========================================================
     def _generate_excel_pdf_from_template(self, payload: dict) -> str:
 
+        try:
+            import pythoncom
+            import win32com.client
+        except Exception:
+            raise RuntimeError(
+                "Microsoft Excel COM (pywin32) no está disponible."
+            )
+
+        # -----------------------------------------------------
+        # 1) Generar Excel desde tu template (YA FUNCIONA)
+        # -----------------------------------------------------
         generator = DraftSurveyExcelGenerator()
         excel_path = generator.generate(payload)
 
         if not excel_path or not os.path.exists(excel_path):
             raise RuntimeError("Excel file was not generated")
 
+        # -----------------------------------------------------
+        # 2) Preparar ruta PDF temporal
+        # -----------------------------------------------------
         output_dir = tempfile.mkdtemp(prefix="draft_excel_pdf_")
+        pdf_path = os.path.join(output_dir, "draft_survey.pdf")
 
-        cmd = [
-            "soffice",
-            "--headless",
-            "--nologo",
-            "--nolockcheck",
-            "--convert-to",
-            "pdf",
-            "--outdir",
-            output_dir,
-            excel_path
-        ]
+        pythoncom.CoInitialize()
 
-        result = subprocess.run(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
-        )
+        excel = None
+        wb = None
 
-        if result.returncode != 0:
-            raise RuntimeError(
-                f"LibreOffice PDF conversion failed:\n{result.stderr}"
+        try:
+            # -------------------------------------------------
+            # 3) Abrir Excel REAL (igual que preview)
+            # -------------------------------------------------
+            excel = win32com.client.DispatchEx("Excel.Application")
+            excel.Visible = False
+            excel.DisplayAlerts = False
+
+            # Seguridad extra
+            try:
+                excel.EnableEvents = False
+            except Exception:
+                pass
+
+            try:
+                excel.AskToUpdateLinks = False
+            except Exception:
+                pass
+
+            wb = excel.Workbooks.Open(
+                excel_path,
+                UpdateLinks=0,
+                ReadOnly=False
             )
 
-        pdf_name = Path(excel_path).with_suffix(".pdf").name
-        pdf_path = os.path.join(output_dir, pdf_name)
+            # -------------------------------------------------
+            # 4) Recalcular completamente
+            # -------------------------------------------------
+            try:
+                excel.CalculateFullRebuild()
+            except Exception:
+                pass
 
+            # -------------------------------------------------
+            # 5) Exportar TODO el workbook como PDF
+            #    (Respeta exactamente el template)
+            # -------------------------------------------------
+            wb.ExportAsFixedFormat(
+                Type=0,  # xlTypePDF
+                Filename=pdf_path,
+                Quality=0,
+                IncludeDocProperties=True,
+                IgnorePrintAreas=False,
+                OpenAfterPublish=False
+            )
+
+        finally:
+            # -------------------------------------------------
+            # 6) Cierre seguro COM
+            # -------------------------------------------------
+            try:
+                if wb is not None:
+                    wb.Close(False)
+            except Exception:
+                pass
+
+            try:
+                if excel is not None:
+                    excel.Quit()
+            except Exception:
+                pass
+
+            try:
+                pythoncom.CoUninitialize()
+            except Exception:
+                pass
+
+        # -----------------------------------------------------
+        # 7) Validación final
+        # -----------------------------------------------------
         if not os.path.exists(pdf_path):
             raise RuntimeError("Excel PDF was not created")
 
