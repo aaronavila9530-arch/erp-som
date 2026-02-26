@@ -1,10 +1,11 @@
-from database import get_db
 from psycopg2.extras import RealDictCursor
 
 
-def get_draft_word_data_by_report_number(draft_report_number: str):
+def get_draft_word_data_by_report_number(
+    conn,
+    draft_report_number: str
+):
 
-    conn = get_db()
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     try:
@@ -18,4 +19,3 @@ def get_draft_word_data_by_report_number(draft_report_number: str):
 
     finally:
         cur.close()
-        conn.close()
