@@ -5,7 +5,7 @@ from typing import Dict
 import logging
 import os
 
-from services.draft_survey_word_pdf_service import DraftSurveyWordPdfService
+from services.draft_survey_word_pdf_service import generate_draft_survey_word_pdf
 
 
 router = APIRouter(
@@ -44,9 +44,7 @@ def generate_word_pdf(
         # =================================================
         # 2️⃣ GENERAR PDF DESDE SERVICE
         # =================================================
-        service = DraftSurveyWordPdfService()
-
-        pdf_path = service.generate_pdf_from_payload(payload)
+        pdf_path = generate_draft_survey_word_pdf(payload)
 
         if not pdf_path:
             raise HTTPException(
