@@ -153,7 +153,7 @@ class DraftSurveyApprovePdfService:
             raise RuntimeError(f"DOCX->PDF conversion failed:\n{r.stderr}")
 
     # =========================================================
-    # EXCEL -> PDF (VERSIÓN ESTABLE DEFINITIVA)
+    # EXCEL -> PDF (VERSIÓN DEFINITIVA ESTABLE WINDOWS)
     # =========================================================
     def _generate_excel_pdf_from_template(self, payload: dict) -> str:
 
@@ -172,37 +172,48 @@ class DraftSurveyApprovePdfService:
         if not excel_path or not os.path.exists(excel_path):
             raise RuntimeError("Excel file was not generated")
 
-        output_dir = tempfile.mkdtemp(prefix="draft_excel_pdf_")
+        # 🔥 GUARDAR EL PDF EN EL MISMO DIRECTORIO DEL EXCEL
+        output_dir = os.path.dirname(excel_path)
         pdf_path = os.path.join(output_dir, "draft_survey.pdf")
 
         pythoncom.CoInitialize()
 
         excel = None
+        workbook = None
 
         try:
             excel = win32com.client.DispatchEx("Excel.Application")
             excel.Visible = False
             excel.DisplayAlerts = False
+            excel.EnableEvents = False
 
             workbook = excel.Workbooks.Open(
-                excel_path,
+                os.path.abspath(excel_path),
                 UpdateLinks=0,
                 ReadOnly=False
             )
 
-            # 🔥 Esperar a que Excel termine de cargar
+            # Esperar a que cargue completamente
             time.sleep(1)
 
-            # 🔥 Forzar activación
             workbook.Activate()
-            excel.CalculateFullRebuild()
+
+            # Recalcular completamente
+            try:
+                excel.CalculateFullRebuild()
+            except Exception:
+                pass
 
             time.sleep(0.5)
 
-            # 🔥 Export más estable posible
-            excel.ActiveWorkbook.ExportAsFixedFormat(
-                0,          # xlTypePDF
-                pdf_path
+            # 🔥 Export directo desde el workbook (más estable)
+            workbook.ExportAsFixedFormat(
+                Type=0,  # xlTypePDF
+                Filename=os.path.abspath(pdf_path),
+                Quality=0,
+                IncludeDocProperties=True,
+                IgnorePrintAreas=False,
+                OpenAfterPublish=False
             )
 
         except Exception as e:
@@ -210,7 +221,8 @@ class DraftSurveyApprovePdfService:
 
         finally:
             try:
-                excel.ActiveWorkbook.Close(False)
+                if workbook:
+                    workbook.Close(False)
             except Exception:
                 pass
 
@@ -229,3 +241,4 @@ class DraftSurveyApprovePdfService:
             raise RuntimeError("Excel PDF was not created")
 
         return pdf_path
+
