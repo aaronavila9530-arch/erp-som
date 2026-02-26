@@ -38,12 +38,27 @@ class DraftSurveyExcelPdfService:
     ]
 
     # =========================================================
-    # MASTER MAPPING (REUSA TU LÓGICA)
-    # OJO: Aquí puedes importar/pegar tu EXCEL_MAPPING actual.
+    # MASTER MAPPING (LAZY LOAD PARA NO CRASHEAR STARTUP)
     # =========================================================
-    from services.draft_survey_excel_service import DraftSurveyExcelGenerator as _BaseGen  # reutilizamos mapping
+    EXCEL_MAPPING = None
 
-    EXCEL_MAPPING = _BaseGen.EXCEL_MAPPING
+    def _get_excel_mapping(self) -> dict:
+
+        if isinstance(self.EXCEL_MAPPING, dict) and self.EXCEL_MAPPING:
+            return self.EXCEL_MAPPING
+
+        try:
+            from services.draft_survey_excel_service import DraftSurveyExcelGenerator
+            mapping = getattr(DraftSurveyExcelGenerator, "EXCEL_MAPPING", None)
+
+            if not isinstance(mapping, dict) or not mapping:
+                raise RuntimeError("DraftSurveyExcelGenerator.EXCEL_MAPPING not found or invalid")
+
+            self.EXCEL_MAPPING = mapping
+            return self.EXCEL_MAPPING
+
+        except Exception as e:
+            raise RuntimeError(f"Failed to load EXCEL_MAPPING: {e}")
 
     # =========================================================
     # DB: FETCH (3 TABLAS) → PAYLOAD
@@ -54,12 +69,12 @@ class DraftSurveyExcelPdfService:
         if not draft_report_number:
             raise ValueError("draft_report_number is required")
 
+        if conn is None or not hasattr(conn, "cursor"):
+            raise ValueError("Invalid DB connection")
+
         cur = conn.cursor(cursor_factory=RealDictCursor)
 
         try:
-            # -----------------------------
-            # 1) draft_survey
-            # -----------------------------
             cur.execute("""
                 SELECT *
                 FROM draft_survey
@@ -68,9 +83,6 @@ class DraftSurveyExcelPdfService:
             """, (draft_report_number,))
             draft_row = cur.fetchone() or {}
 
-            # -----------------------------
-            # 2) draft_survey_ballast
-            # -----------------------------
             cur.execute("""
                 SELECT *
                 FROM draft_survey_ballast
@@ -79,9 +91,6 @@ class DraftSurveyExcelPdfService:
             """, (draft_report_number,))
             ballast_row = cur.fetchone() or {}
 
-            # -----------------------------
-            # 3) general_draft_survey
-            # -----------------------------
             cur.execute("""
                 SELECT *
                 FROM general_draft_survey
@@ -91,7 +100,10 @@ class DraftSurveyExcelPdfService:
             general_row = cur.fetchone() or {}
 
         finally:
-            cur.close()
+            try:
+                cur.close()
+            except Exception:
+                pass
 
         if not draft_row and not general_row and not ballast_row:
             return {}
@@ -101,19 +113,17 @@ class DraftSurveyExcelPdfService:
         payload.update(draft_row or {})
         payload.update(ballast_row or {})
 
-        # Normalizaciones mínimas
         payload["draft_report_number"] = draft_report_number
 
-        # Alias para Draft sheet (tu mapping usa cargo/port_from/port_to)
         if "cargo" not in payload:
             payload["cargo"] = payload.get("init_cargo") or payload.get("final_cargo")
+
         if "port_from" not in payload:
             payload["port_from"] = payload.get("init_port_from") or payload.get("port_from")
+
         if "port_to" not in payload:
             payload["port_to"] = payload.get("init_port_to") or payload.get("port_to")
 
-        # Alias para Deductions (ballast) porque tu mapping usa nombres tipo:
-        # init_FPT_sounding, init_WBT 1P_sounding, init_FW P_height, etc.
         payload.update(self._build_ballast_aliases(ballast_row or {}))
 
         return payload
@@ -122,20 +132,14 @@ class DraftSurveyExcelPdfService:
     # BALLEST: MAP KEYS DB -> TEMPLATE KEYS (TU MAPPING)
     # =========================================================
     def _build_ballast_aliases(self, row: dict) -> dict:
-        """
-        DB trae keys tipo:
-          init_fpt_sounding, init_wbt_1p_sounding, init_fw_p_height, ...
-        Template mapping usa keys tipo:
-          init_FPT_sounding, init_WBT 1P_sounding, init_FW P_height, ...
-        """
+
         out = {}
 
         def _tank_code_to_template(code: str) -> str:
-            # fpt -> FPT, apt -> APT, wbt -> WBT
-            return code.upper()
+            return str(code or "").upper()
 
         def _side_to_template(side: str) -> str:
-            return side.upper()
+            return str(side or "").upper()
 
         for k, v in (row or {}).items():
             if v is None:
@@ -143,61 +147,53 @@ class DraftSurveyExcelPdfService:
 
             key = str(k)
 
-            # ---------- FPT / APT ----------
-            # init_fpt_sounding -> init_FPT_sounding
             if key.startswith(("init_fpt_", "final_fpt_", "init_apt_", "final_apt_")):
                 parts = key.split("_")
-                prefix = parts[0]           # init/final
-                tank = parts[1]             # fpt/apt
-                rest = "_".join(parts[2:])  # sounding/volume/density
-                out[f"{prefix}_{_tank_code_to_template(tank)}_{rest}"] = v
+                if len(parts) >= 3:
+                    prefix = parts[0]
+                    tank = parts[1]
+                    rest = "_".join(parts[2:])
+                    out[f"{prefix}_{_tank_code_to_template(tank)}_{rest}"] = v
                 continue
 
-            # ---------- SLOP TANK ----------
-            # init_slop_tank_sounding -> init_SLOP TANK_sounding
             if key.startswith(("init_slop_tank_", "final_slop_tank_")):
                 parts = key.split("_")
-                prefix = parts[0]
-                rest = "_".join(parts[3:])  # sounding/volume/density
-                out[f"{prefix}_SLOP TANK_{rest}"] = v
+                if len(parts) >= 4:
+                    prefix = parts[0]
+                    rest = "_".join(parts[3:])
+                    out[f"{prefix}_SLOP TANK_{rest}"] = v
                 continue
 
-            # ---------- FW WASH ----------
-            # init_fw_wash_sounding -> init_FW WASH_sounding
             if key.startswith(("init_fw_wash_", "final_fw_wash_")):
                 parts = key.split("_")
-                prefix = parts[0]
-                rest = "_".join(parts[3:])
-                out[f"{prefix}_FW WASH_{rest}"] = v
+                if len(parts) >= 4:
+                    prefix = parts[0]
+                    rest = "_".join(parts[3:])
+                    out[f"{prefix}_FW WASH_{rest}"] = v
                 continue
 
-            # ---------- FRESH WATER HEIGHT/VOLUME ----------
-            # init_fw_p_height -> init_FW P_height
             if key.startswith(("init_fw_", "final_fw_")):
                 parts = key.split("_")
-                prefix = parts[0]          # init/final
-                fw = parts[1]              # fw
-                tank = parts[2]            # p/s/dist
-                rest = "_".join(parts[3:]) # height/volume
-                out[f"{prefix}_FW {tank.upper()}_{rest}"] = v
+                if len(parts) >= 4:
+                    prefix = parts[0]
+                    tank = parts[2]
+                    rest = "_".join(parts[3:])
+                    out[f"{prefix}_FW {str(tank).upper()}_{rest}"] = v
                 continue
 
-            # ---------- WBT 1P..20S ----------
-            # init_wbt_1p_sounding -> init_WBT 1P_sounding
             if key.startswith(("init_wbt_", "final_wbt_")):
-                # init_wbt_1p_sounding
                 parts = key.split("_")
-                prefix = parts[0]   # init/final
-                tank = parts[1]     # wbt
-                numside = parts[2]  # 1p, 10s, 20p...
-                rest = "_".join(parts[3:])  # sounding/volume/density
+                if len(parts) >= 4:
+                    prefix = parts[0]
+                    tank = parts[1]
+                    numside = parts[2]
+                    rest = "_".join(parts[3:])
 
-                # separar número y lado
-                num = "".join(ch for ch in numside if ch.isdigit())
-                side = "".join(ch for ch in numside if ch.isalpha())
+                    num = "".join(ch for ch in str(numside) if ch.isdigit())
+                    side = "".join(ch for ch in str(numside) if ch.isalpha())
 
-                if num and side:
-                    out[f"{prefix}_{_tank_code_to_template(tank)} {num}{_side_to_template(side)}_{rest}"] = v
+                    if num and side:
+                        out[f"{prefix}_{_tank_code_to_template(tank)} {num}{_side_to_template(side)}_{rest}"] = v
                 continue
 
         return out
@@ -207,45 +203,50 @@ class DraftSurveyExcelPdfService:
     # =========================================================
     def _safe_set(self, ws: Worksheet, cell: str, value):
 
-        if value in (None, ""):
-            return
-
-        # bool -> YES/NO
-        if isinstance(value, bool):
-            value = "YES" if value else "NO"
-
-        # num strings -> float/int (best effort)
         try:
-            if isinstance(value, str):
-                vv = value.strip().replace(",", ".")
-                if vv.replace(".", "", 1).isdigit():
-                    value = float(vv) if "." in vv else int(vv)
-        except Exception:
-            pass
-
-        # merged cells
-        for merged in ws.merged_cells.ranges:
-            if cell in merged:
-                ws.cell(row=merged.min_row, column=merged.min_col).value = value
+            if value in (None, ""):
                 return
 
-        ws[cell].value = value
+            if not isinstance(cell, str) or not cell.strip():
+                return
+
+            if isinstance(value, bool):
+                value = "YES" if value else "NO"
+
+            try:
+                if isinstance(value, str):
+                    vv = value.strip().replace(",", ".")
+                    if vv.replace(".", "", 1).isdigit():
+                        value = float(vv) if "." in vv else int(vv)
+            except Exception:
+                pass
+
+            for merged in ws.merged_cells.ranges:
+                if cell in merged:
+                    ws.cell(row=merged.min_row, column=merged.min_col).value = value
+                    return
+
+            ws[cell].value = value
+
+        except Exception:
+            return
 
     def _safe_set_date(self, ws: Worksheet, cell: str, value):
 
-        if not value:
-            return
-
-        parsed = None
-
         try:
+            if not value:
+                return
+
+            if not isinstance(cell, str) or not cell.strip():
+                return
+
+            parsed = None
+
             if isinstance(value, (datetime, date)):
                 parsed = value
 
             elif isinstance(value, str):
                 v = value.strip()
-
-                # si viene "02-25-2026 12:00" => cortar fecha
                 date_part = v.split(" ")[0]
 
                 date_formats = [
@@ -264,21 +265,37 @@ class DraftSurveyExcelPdfService:
                     except Exception:
                         continue
 
-        except Exception:
-            parsed = None
-
-        if not parsed:
-            return
-
-        for merged in ws.merged_cells.ranges:
-            if cell in merged:
-                c = ws.cell(row=merged.min_row, column=merged.min_col)
-                c.value = parsed
-                c.number_format = "DD-MM-YYYY"
+            if not parsed:
                 return
 
-        ws[cell].value = parsed
-        ws[cell].number_format = "DD-MM-YYYY"
+            for merged in ws.merged_cells.ranges:
+                if cell in merged:
+                    c = ws.cell(row=merged.min_row, column=merged.min_col)
+                    c.value = parsed
+                    c.number_format = "DD-MM-YYYY"
+                    return
+
+            ws[cell].value = parsed
+            ws[cell].number_format = "DD-MM-YYYY"
+
+        except Exception:
+            return
+
+    # =========================================================
+    # VALIDATE TEMPLATE + SHEETS
+    # =========================================================
+    def _validate_template(self, wb):
+
+        if not wb or not hasattr(wb, "sheetnames"):
+            raise RuntimeError("Invalid workbook loaded")
+
+        missing = [s for s in self.KEEP_SHEETS if s not in wb.sheetnames]
+
+        if missing:
+            raise RuntimeError(
+                "Template is missing required sheets: "
+                + ", ".join(missing)
+            )
 
     # =========================================================
     # GENERATE XLSX (SOLO HOJAS KEEP_SHEETS)
@@ -286,17 +303,23 @@ class DraftSurveyExcelPdfService:
     def generate_excel_by_report_number(self, conn, draft_report_number: str) -> str:
 
         if not os.path.exists(self.TEMPLATE_PATH):
-            raise FileNotFoundError(f"Draft Survey template not found: {self.TEMPLATE_PATH}")
+            raise FileNotFoundError(
+                f"Draft Survey template not found: {self.TEMPLATE_PATH}"
+            )
 
         payload = self._fetch_payload_by_report_number(conn, draft_report_number)
 
         if not payload:
-            raise RuntimeError("Draft Survey record not found for that report number")
+            raise RuntimeError(
+                "Draft Survey record not found for that report number"
+            )
 
         wb = load_workbook(self.TEMPLATE_PATH)
+        self._validate_template(wb)
 
-        # 1) Llenar según mapping
-        for sheet_name, config in (self.EXCEL_MAPPING or {}).items():
+        mapping = self._get_excel_mapping()
+
+        for sheet_name, config in (mapping or {}).items():
 
             if sheet_name not in wb.sheetnames:
                 continue
@@ -307,7 +330,6 @@ class DraftSurveyExcelPdfService:
             date_fields = set((config or {}).get("date_fields", []) or [])
 
             for key, cell in fields.items():
-
                 value = (payload or {}).get(key)
 
                 if key in date_fields:
@@ -315,19 +337,25 @@ class DraftSurveyExcelPdfService:
                 else:
                     self._safe_set(ws, cell, value)
 
-        # 2) Eliminar hojas NO requeridas (esto “mergea” a un solo PDF final)
+        # Mantener solo hojas requeridas
         for s in list(wb.sheetnames):
             if s not in self.KEEP_SHEETS:
-                wb.remove(wb[s])
+                try:
+                    wb.remove(wb[s])
+                except Exception:
+                    pass
 
-        # 3) Reordenar exactamente como KEEP_SHEETS
+        # Reordenar
         for i, name in enumerate(self.KEEP_SHEETS):
             if name in wb.sheetnames:
-                wb._sheets.insert(i, wb._sheets.pop(wb.sheetnames.index(name)))
+                try:
+                    wb._sheets.insert(i, wb._sheets.pop(wb.sheetnames.index(name)))
+                except Exception:
+                    pass
 
-        # 4) Guardar temp xlsx
         tmp_dir = tempfile.mkdtemp(prefix="draft_excel_")
         out_xlsx = os.path.join(tmp_dir, f"draft_survey_{draft_report_number}.xlsx")
+
         wb.save(out_xlsx)
 
         if not os.path.exists(out_xlsx) or os.path.getsize(out_xlsx) == 0:
@@ -364,21 +392,35 @@ class DraftSurveyExcelPdfService:
             excel_path
         ]
 
-        result = subprocess.run(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
-        )
+        try:
+            result = subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+        except FileNotFoundError:
+            raise RuntimeError(
+                "LibreOffice 'soffice' not found. Install LibreOffice in the container "
+                "or set LIBREOFFICE_PATH."
+            )
 
         if result.returncode != 0:
-            raise RuntimeError(f"LibreOffice PDF conversion failed:\n{result.stderr}")
+            raise RuntimeError(
+                f"LibreOffice PDF conversion failed:\n{result.stderr}"
+            )
 
-        pdf_name = Path(excel_path).with_suffix(".pdf").name
-        pdf_path = os.path.join(output_dir, pdf_name)
+        # Buscar PDF generado (más robusto que asumir nombre exacto)
+        pdf_files = sorted(
+            [p for p in Path(output_dir).glob("*.pdf")],
+            key=lambda p: p.stat().st_mtime,
+            reverse=True
+        )
 
-        if not os.path.exists(pdf_path):
+        if not pdf_files:
             raise RuntimeError("PDF was not created")
+
+        pdf_path = str(pdf_files[0])
 
         if os.path.getsize(pdf_path) == 0:
             raise RuntimeError("PDF was generated but is empty")

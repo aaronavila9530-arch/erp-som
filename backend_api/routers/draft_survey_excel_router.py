@@ -13,6 +13,23 @@ router = APIRouter(
 logger = logging.getLogger(__name__)
 
 
+# =========================================================
+# DIAGNOSTIC ENDPOINTS (NO ROMPEN NADA)
+# =========================================================
+@router.get("/__ping")
+def _ping_excel_router():
+    return {"ok": True, "router": "draft_survey_excel_router"}
+
+
+@router.get("/__routes")
+def _excel_routes():
+    return {"paths": [r.path for r in router.routes]}
+
+
+# =========================================================
+# GENERATE PDF
+# GET /draft-survey-excel/generate-pdf/{draft_report_number}
+# =========================================================
 @router.get("/generate-pdf/{draft_report_number}")
 def generate_draft_survey_excel_pdf(
     draft_report_number: str,
@@ -21,11 +38,17 @@ def generate_draft_survey_excel_pdf(
 
     draft_report_number = str(draft_report_number or "").strip()
     if not draft_report_number:
-        raise HTTPException(status_code=422, detail="draft_report_number is required")
+        raise HTTPException(
+            status_code=422,
+            detail="draft_report_number is required"
+        )
 
     try:
         service = DraftSurveyExcelPdfService()
-        pdf_path = service.generate_pdf_by_report_number(conn, draft_report_number)
+        pdf_path = service.generate_pdf_by_report_number(
+            conn,
+            draft_report_number
+        )
 
         return FileResponse(
             path=pdf_path,
