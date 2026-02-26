@@ -15,21 +15,13 @@ router = APIRouter(
 logger = logging.getLogger(__name__)
 
 
-@router.post("/generate")
+@router.get("/generate/{draft_report_number}")
 def generate_word_pdf(
-    payload: dict,
+    draft_report_number: str,
     background_tasks: BackgroundTasks
 ):
 
-    if not isinstance(payload, dict):
-        raise HTTPException(
-            status_code=422,
-            detail="Invalid payload"
-        )
-
-    draft_report_number = str(
-        payload.get("draft_report_number") or ""
-    ).strip()
+    draft_report_number = str(draft_report_number or "").strip()
 
     if not draft_report_number:
         raise HTTPException(
@@ -39,7 +31,11 @@ def generate_word_pdf(
 
     try:
 
-        # 🔥 GENERA PDF DIRECTAMENTE
+        # 🔥 Construimos payload mínimo
+        payload = {
+            "draft_report_number": draft_report_number
+        }
+
         pdf_path = generate_draft_survey_word_pdf(payload)
 
         file_path = Path(pdf_path)
@@ -50,7 +46,6 @@ def generate_word_pdf(
                 detail="Generated PDF file does not exist"
             )
 
-        # Cleanup automático
         def cleanup(path: Path):
             try:
                 if path.exists():
