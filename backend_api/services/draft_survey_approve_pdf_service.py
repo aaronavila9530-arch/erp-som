@@ -3,22 +3,12 @@ import shutil
 import tempfile
 import subprocess
 from pathlib import Path
-
 from docx import Document
 
-# Word->PDF (Windows: Word via docx2pdf)
 try:
     from docx2pdf import convert as docx2pdf_convert
 except Exception:
     docx2pdf_convert = None
-
-# Excel->PDF (Windows: Excel COM)
-try:
-    import pythoncom
-    import win32com.client
-except Exception:
-    pythoncom = None
-    win32com = None
 
 from services.draft_survey_excel_service import DraftSurveyExcelGenerator
 from services.pdf_merge_service import merge_pdf_list
@@ -33,12 +23,6 @@ TEMPLATE_WORD_PATH = os.path.abspath(
     )
 )
 
-# Estas hojas van en Landscape (las demás Portrait)
-LANDSCAPE_SHEETS = {
-    "ECE DRAUGHT SURVEY CODE   Draught survey report",
-    "ECE DRAUGHT SURVEY CODE D2",
-}
-
 
 class DraftSurveyApprovePdfService:
 
@@ -48,13 +32,13 @@ class DraftSurveyApprovePdfService:
     def generate_final_pdf(self, word_payload: dict, excel_payload: dict) -> str:
 
         word_pdf = self._generate_word_pdf_from_template(word_payload)
-        excel_pdfs = self._generate_excel_sheet_pdfs(excel_payload)
+        excel_pdf = self._generate_excel_pdf_from_template(excel_payload)
 
-        final_pdf = merge_pdf_list([word_pdf] + excel_pdfs)
+        final_pdf = merge_pdf_list([word_pdf, excel_pdf])
         return final_pdf
 
     # =========================================================
-    # WORD PIPELINE (FORMATO 100% PRESERVADO)
+    # WORD PIPELINE (FORMATO 100% RESPETADO)
     # =========================================================
     def _generate_word_pdf_from_template(self, payload: dict) -> str:
 
@@ -90,7 +74,6 @@ class DraftSurveyApprovePdfService:
         return repl
 
     def _replace_in_document(self, doc: Document, repl: dict):
-
         for p in doc.paragraphs:
             self._replace_in_paragraph_safe(p, repl)
 
@@ -101,7 +84,6 @@ class DraftSurveyApprovePdfService:
                         self._replace_in_paragraph_safe(p, repl)
 
     def _replace_in_container(self, container, repl: dict):
-
         for p in container.paragraphs:
             self._replace_in_paragraph_safe(p, repl)
 
@@ -112,18 +94,12 @@ class DraftSurveyApprovePdfService:
                         self._replace_in_paragraph_safe(p, repl)
 
     def _replace_in_paragraph_safe(self, paragraph, repl: dict):
-        """
-        Reemplazo ultra-seguro:
-        - No reconstruye estilos
-        - Respeta fuente/tamaño/negrita/colores
-        - Maneja placeholders fragmentados en múltiples runs
-        """
         if not paragraph.runs:
             return
 
         full_text = "".join(run.text for run in paragraph.runs)
 
-        if "{" not in full_text or "}" not in full_text:
+        if "{" not in full_text:
             return
 
         changed = False
@@ -135,20 +111,17 @@ class DraftSurveyApprovePdfService:
         if not changed:
             return
 
-        # Reasignar texto conservando estructura de runs original
         idx = 0
         for run in paragraph.runs:
             length = len(run.text)
             run.text = full_text[idx: idx + length]
             idx += length
 
-        # Si sobra texto, añadirlo al último run (mantiene formato final)
         if idx < len(full_text):
             paragraph.runs[-1].text += full_text[idx:]
 
     def _convert_docx_to_pdf(self, docx_path: str, pdf_path: str):
 
-        # Windows: docx2pdf usa Microsoft Word (respeta formatos)
         if docx2pdf_convert:
             out_dir = os.path.dirname(pdf_path)
             os.makedirs(out_dir, exist_ok=True)
@@ -161,7 +134,6 @@ class DraftSurveyApprovePdfService:
                 shutil.move(gen_path, pdf_path)
             return
 
-        # Fallback: LibreOffice soffice (si existe en PATH)
         out_dir = os.path.dirname(pdf_path)
         os.makedirs(out_dir, exist_ok=True)
 
@@ -180,28 +152,10 @@ class DraftSurveyApprovePdfService:
         if r.returncode != 0:
             raise RuntimeError(f"DOCX->PDF conversion failed:\n{r.stderr}")
 
-        gen_path = str(Path(docx_path).with_suffix(".pdf"))
-        if os.path.exists(gen_path) and gen_path != pdf_path:
-            shutil.move(gen_path, pdf_path)
-
     # =========================================================
-    # EXCEL PIPELINE (LANDSCAPE CONTROLADO + SIEMPRE PÁGINA 1)
+    # EXCEL PIPELINE (ULTRA SIMPLE – SIN COM, SIN PAGESETUP)
     # =========================================================
-    def _generate_excel_sheet_pdfs(self, payload: dict) -> list:
-        """
-        Reglas:
-        - Genera excel con openpyxl (tu servicio)
-        - Abre con Excel COM (Windows)
-        - Aplica orientación:
-            - LANDSCAPE_SHEETS -> Landscape
-            - resto -> Portrait
-        - Fuerza PrintArea imprimible (aunque haya fórmulas/números)
-        - Exporta SIEMPRE página 1 de cada hoja a un PDF individual
-        - Devuelve lista de PDFs para merge
-        """
-
-        if pythoncom is None or win32com is None:
-            raise RuntimeError("pywin32 not installed (win32com/pythoncom not available).")
+    def _generate_excel_pdf_from_template(self, payload: dict) -> str:
 
         generator = DraftSurveyExcelGenerator()
         excel_path = generator.generate(payload)
@@ -209,156 +163,36 @@ class DraftSurveyApprovePdfService:
         if not excel_path or not os.path.exists(excel_path):
             raise RuntimeError("Excel file was not generated")
 
-        out_dir = tempfile.mkdtemp(prefix="draft_excel_pdf_")
-        pdfs = []
+        output_dir = tempfile.mkdtemp(prefix="draft_excel_pdf_")
 
-        # Constantes COM (evita depender de win32.constants)
-        xlTypePDF = 0
-        xlPortrait = 1
-        xlLandscape = 2
-        xlQualityStandard = 0
+        cmd = [
+            "soffice",
+            "--headless",
+            "--nologo",
+            "--nolockcheck",
+            "--convert-to",
+            "pdf",
+            "--outdir",
+            output_dir,
+            excel_path
+        ]
 
-        pythoncom.CoInitialize()
-        excel = None
-        wb = None
+        result = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
 
-        try:
-            excel = win32com.client.DispatchEx("Excel.Application")
-            excel.Visible = False
-            excel.DisplayAlerts = False
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"LibreOffice PDF conversion failed:\n{result.stderr}"
+            )
 
-            # Blindaje para COM
-            try:
-                excel.EnableEvents = False
-            except Exception:
-                pass
+        pdf_name = Path(excel_path).with_suffix(".pdf").name
+        pdf_path = os.path.join(output_dir, pdf_name)
 
-            try:
-                excel.AskToUpdateLinks = False
-            except Exception:
-                pass
+        if not os.path.exists(pdf_path):
+            raise RuntimeError("Excel PDF was not created")
 
-            try:
-                excel.Calculation = -4105  # xlCalculationAutomatic
-            except Exception:
-                pass
-
-            wb = excel.Workbooks.Open(excel_path, UpdateLinks=0, ReadOnly=True)
-
-            # Recalcular antes de exportar (no “importa” fórmulas; solo que imprima consistente)
-            try:
-                excel.CalculateFullRebuild()
-                while getattr(excel, "CalculationState", 0) != 0:
-                    pass
-            except Exception:
-                pass
-
-            for ws in wb.Worksheets:
-                sheet_name = ws.Name
-
-                # -----------------------------
-                # 1) PageSetup: orientación
-                # -----------------------------
-                try:
-                    if sheet_name in LANDSCAPE_SHEETS:
-                        ws.PageSetup.Orientation = xlLandscape
-                    else:
-                        ws.PageSetup.Orientation = xlPortrait
-                except Exception:
-                    pass
-
-                # -----------------------------
-                # 2) Fit 1 página de ancho (alto libre)
-                # -----------------------------
-                try:
-                    ws.PageSetup.Zoom = False
-                    ws.PageSetup.FitToPagesWide = 1
-                    ws.PageSetup.FitToPagesTall = 0  # alto libre (evita recortes raros)
-                    ws.PageSetup.CenterHorizontally = True
-                except Exception:
-                    pass
-
-                # -----------------------------
-                # 3) Forzar PrintArea imprimible SIEMPRE
-                #    (evita E_INVALIDARG con From/To)
-                # -----------------------------
-                try:
-                    used = ws.UsedRange
-                    # Address puede venir como $A$1:$K$60; perfecto para PrintArea
-                    addr = used.Address
-
-                    # Si la hoja está “vacía” (UsedRange a veces devuelve A1), igual imprimimos A1
-                    # para garantizar que exista página 1.
-                    if not addr:
-                        addr = "$A$1"
-
-                    ws.PageSetup.PrintArea = addr
-                except Exception:
-                    # Último fallback: A1 siempre
-                    try:
-                        ws.PageSetup.PrintArea = "$A$1"
-                    except Exception:
-                        pass
-
-                # -----------------------------
-                # 4) Exportar SIEMPRE página 1
-                # -----------------------------
-                pdf_path = os.path.join(out_dir, f"{self._safe_filename(sheet_name)}.pdf")
-
-                try:
-                    ws.ExportAsFixedFormat(
-                        Type=xlTypePDF,
-                        Filename=pdf_path,
-                        Quality=xlQualityStandard,
-                        IncludeDocProperties=True,
-                        IgnorePrintAreas=False,  # usamos PrintArea definido arriba
-                        From=1,
-                        To=1,
-                        OpenAfterPublish=False
-                    )
-                except Exception:
-                    # Fallback ultra: si Excel sigue llorando, exporta igual ignorando PrintArea
-                    # (pero manteniendo From/To=1)
-                    ws.ExportAsFixedFormat(
-                        Type=xlTypePDF,
-                        Filename=pdf_path,
-                        Quality=xlQualityStandard,
-                        IncludeDocProperties=True,
-                        IgnorePrintAreas=True,
-                        From=1,
-                        To=1,
-                        OpenAfterPublish=False
-                    )
-
-                if os.path.exists(pdf_path):
-                    pdfs.append(pdf_path)
-
-        finally:
-            try:
-                if wb is not None:
-                    wb.Close(False)
-            except Exception:
-                pass
-
-            try:
-                if excel is not None:
-                    excel.Quit()
-            except Exception:
-                pass
-
-            try:
-                pythoncom.CoUninitialize()
-            except Exception:
-                pass
-
-        if not pdfs:
-            raise RuntimeError("No sheet PDFs were created from Excel")
-
-        return pdfs
-
-    def _safe_filename(self, name: str) -> str:
-        bad = '<>:"/\\|?*'
-        for ch in bad:
-            name = name.replace(ch, "_")
-        return name.strip()[:120]
-
+        return pdf_path
