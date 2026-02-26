@@ -153,81 +153,121 @@ class DraftSurveyApprovePdfService:
             raise RuntimeError(f"DOCX->PDF conversion failed:\n{r.stderr}")
 
     # =========================================================
-    # EXCEL -> PDF (VERSIÓN DEFINITIVA ESTABLE WINDOWS)
+    # EXCEL -> PDF (WINDOWS EXCEL COM) — ULTRA BLINDADO
     # =========================================================
     def _generate_excel_pdf_from_template(self, payload: dict) -> str:
+        import os
+        import tempfile
+        import time
 
         try:
             import pythoncom
             import win32com.client
-            import time
-        except Exception:
+        except Exception as e:
             raise RuntimeError(
-                "Microsoft Excel COM (pywin32) no está disponible."
+                f"Microsoft Excel COM (pywin32) no está disponible: {e}"
             )
 
+        # 1) Generar Excel temporal (tu servicio)
         generator = DraftSurveyExcelGenerator()
-        excel_path = generator.generate(payload)
+        excel_path = generator.generate(payload or {})
 
-        if not excel_path or not os.path.exists(excel_path):
-            raise RuntimeError("Excel file was not generated")
+        if not excel_path or not isinstance(excel_path, str):
+            raise RuntimeError("Excel path inválido (generator.generate devolvió vacío).")
 
-        # 🔥 GUARDAR EL PDF EN EL MISMO DIRECTORIO DEL EXCEL
-        output_dir = os.path.dirname(excel_path)
-        pdf_path = os.path.join(output_dir, "draft_survey.pdf")
+        excel_path = os.path.abspath(excel_path)
+
+        if not os.path.exists(excel_path):
+            raise RuntimeError(f"Excel file was not generated: {excel_path}")
+
+        # 2) Output PDF (en carpeta temporal aparte, garantizada)
+        out_dir = tempfile.mkdtemp(prefix="draft_excel_pdf_")
+        pdf_path = os.path.abspath(os.path.join(out_dir, "draft_survey.pdf"))
+
+        # Helpers locales (blindaje total)
+        def _wait_for_file(path: str, timeout_sec: int = 25) -> bool:
+            start = time.time()
+            while time.time() - start < timeout_sec:
+                if os.path.exists(path):
+                    try:
+                        if os.path.getsize(path) > 0:
+                            return True
+                    except Exception:
+                        pass
+                time.sleep(0.2)
+            return False
 
         pythoncom.CoInitialize()
-
         excel = None
         workbook = None
+
+        # Constantes COM (sin depender de win32.constants)
+        xlTypePDF = 0
+        xlQualityStandard = 0
 
         try:
             excel = win32com.client.DispatchEx("Excel.Application")
             excel.Visible = False
             excel.DisplayAlerts = False
-            excel.EnableEvents = False
 
+            # Blindaje (evita prompts/eventos/links)
+            try:
+                excel.EnableEvents = False
+            except Exception:
+                pass
+
+            try:
+                excel.AskToUpdateLinks = False
+            except Exception:
+                pass
+
+            # Abrir workbook
             workbook = excel.Workbooks.Open(
-                os.path.abspath(excel_path),
+                excel_path,
                 UpdateLinks=0,
                 ReadOnly=False
             )
 
-            # Esperar a que cargue completamente
-            time.sleep(1)
-
-            workbook.Activate()
-
-            # Recalcular completamente
+            # Recalcular (por consistencia de impresión)
             try:
-                excel.CalculateFullRebuild()
+                excel.Calculation = -4105  # xlCalculationAutomatic
             except Exception:
                 pass
 
-            time.sleep(0.5)
+            try:
+                excel.CalculateFullRebuild()
+                # Espera corta a cálculo (sin loop infinito)
+                t0 = time.time()
+                while getattr(excel, "CalculationState", 0) != 0:
+                    if time.time() - t0 > 10:
+                        break
+                    time.sleep(0.1)
+            except Exception:
+                pass
 
-            # 🔥 Export directo desde el workbook (más estable)
-            workbook.ExportAsFixedFormat(
-                Type=0,  # xlTypePDF
-                Filename=os.path.abspath(pdf_path),
-                Quality=0,
-                IncludeDocProperties=True,
-                IgnorePrintAreas=False,
-                OpenAfterPublish=False
-            )
-
-        except Exception as e:
-            raise RuntimeError(f"Excel COM PDF export failed:\n{e}")
+            # Export PDF (workbook completo)
+            try:
+                workbook.ExportAsFixedFormat(
+                    Type=xlTypePDF,
+                    Filename=pdf_path,
+                    Quality=xlQualityStandard,
+                    IncludeDocProperties=True,
+                    IgnorePrintAreas=False,
+                    OpenAfterPublish=False
+                )
+            except Exception as e:
+                raise RuntimeError(f"Excel ExportAsFixedFormat falló: {e}")
 
         finally:
+            # Cerrar workbook / excel SIEMPRE
             try:
-                if workbook:
+                if workbook is not None:
                     workbook.Close(False)
             except Exception:
                 pass
 
             try:
-                if excel:
+                if excel is not None:
                     excel.Quit()
             except Exception:
                 pass
@@ -237,8 +277,8 @@ class DraftSurveyApprovePdfService:
             except Exception:
                 pass
 
-        if not os.path.exists(pdf_path):
-            raise RuntimeError("Excel PDF was not created")
+        # 3) Validación final real (esperar que el PDF exista y tenga tamaño)
+        if not _wait_for_file(pdf_path, timeout_sec=25):
+            raise RuntimeError(f"Excel PDF was not created or is empty: {pdf_path}")
 
         return pdf_path
-
