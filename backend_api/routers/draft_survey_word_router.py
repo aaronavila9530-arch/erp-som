@@ -1,11 +1,10 @@
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse
 from pathlib import Path
-from typing import Dict
 import logging
-import os
 
 from services.draft_survey_word_pdf_service import generate_draft_survey_word_pdf
+from services.draft_survey_unified_service import get_full_draft_survey_by_report_number
 
 
 router = APIRouter(
@@ -17,44 +16,46 @@ logger = logging.getLogger(__name__)
 
 
 # =========================================================
-# GENERATE WORD PDF FROM PAYLOAD (NO DB)
+# GENERATE WORD PDF FROM DB (ERP FLOW)
 # =========================================================
-@router.post("/generate")
-def generate_word_pdf(
-    payload: Dict,
+@router.get("/generate/{draft_report_number}")
+def generate_word_pdf_from_db(
+    draft_report_number: str,
     background_tasks: BackgroundTasks
 ):
 
-    # =====================================================
-    # 1️⃣ VALIDACIÓN PAYLOAD
-    # =====================================================
-    if not isinstance(payload, dict):
-        raise HTTPException(
-            status_code=422,
-            detail="Invalid payload format"
-        )
-
-    if not payload:
-        raise HTTPException(
-            status_code=422,
-            detail="Payload cannot be empty"
-        )
-
-    draft_report_number = str(
-        payload.get("draft_report_number") or ""
-    ).strip()
+    draft_report_number = str(draft_report_number or "").strip()
 
     if not draft_report_number:
         raise HTTPException(
             status_code=422,
-            detail="draft_report_number is required in payload"
+            detail="draft_report_number is required"
         )
 
     try:
         # =================================================
-        # 2️⃣ GENERAR PDF DESDE SERVICE
+        # 1️⃣ GET FULL MERGED DATA FROM DB
         # =================================================
-        pdf_path = generate_draft_survey_word_pdf(payload)
+        data = get_full_draft_survey_by_report_number(
+            draft_report_number
+        )
+
+        if not data:
+            raise HTTPException(
+                status_code=404,
+                detail="Draft Survey not found"
+            )
+
+        if not isinstance(data, dict):
+            raise HTTPException(
+                status_code=500,
+                detail="Invalid data structure from unified service"
+            )
+
+        # =================================================
+        # 2️⃣ GENERATE PDF
+        # =================================================
+        pdf_path = generate_draft_survey_word_pdf(data)
 
         if not pdf_path:
             raise HTTPException(
@@ -64,9 +65,6 @@ def generate_word_pdf(
 
         file_path = Path(pdf_path)
 
-        # =================================================
-        # 3️⃣ VALIDAR EXISTENCIA
-        # =================================================
         if not file_path.exists():
             raise HTTPException(
                 status_code=500,
@@ -80,7 +78,7 @@ def generate_word_pdf(
             )
 
         # =================================================
-        # 4️⃣ LIMPIEZA AUTOMÁTICA (TEMP FILES)
+        # 3️⃣ CLEANUP TEMP FILES
         # =================================================
         def cleanup_files(path: Path):
             try:
@@ -99,7 +97,7 @@ def generate_word_pdf(
         background_tasks.add_task(cleanup_files, file_path)
 
         # =================================================
-        # 5️⃣ RESPUESTA SEGURA
+        # 4️⃣ RETURN FILE
         # =================================================
         return FileResponse(
             path=str(file_path),
@@ -117,14 +115,7 @@ def generate_word_pdf(
             detail="Word template not found"
         )
 
-    except ValueError as ve:
-        logger.warning(f"Validation error: {ve}")
-        raise HTTPException(
-            status_code=400,
-            detail=str(ve)
-        )
-
-    except Exception as e:
+    except Exception:
         logger.exception("Unexpected error generating Word PDF")
         raise HTTPException(
             status_code=500,

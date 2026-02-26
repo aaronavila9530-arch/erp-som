@@ -6,20 +6,27 @@ from docx import Document
 
 
 # ============================================================
-# GENERATE DRAFT SURVEY WORD PDF (LIBREOFFICE VERSION)
+# GENERATE DRAFT SURVEY WORD PDF (ERP VERSION - BLINDADO)
 # ============================================================
 
 def generate_draft_survey_word_pdf(data: dict) -> str:
 
     # ========================================================
-    # VALIDACIONES
+    # VALIDACIÓN
     # ========================================================
 
     if not isinstance(data, dict):
         raise ValueError("Invalid payload. Expected dict.")
 
+    draft_report_number = str(
+        data.get("draft_report_number") or ""
+    ).strip()
+
+    if not draft_report_number:
+        raise ValueError("draft_report_number is required")
+
     # ========================================================
-    # TEMPLATE PATH (RELATIVE — SAFE FOR RAILWAY & EXE)
+    # TEMPLATE PATH
     # ========================================================
 
     base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -38,52 +45,38 @@ def generate_draft_survey_word_pdf(data: dict) -> str:
             f"Template not found at: {template_path}"
         )
 
-    # ========================================================
-    # LOAD DOCUMENT
-    # ========================================================
-
     doc = Document(template_path)
 
     def safe(value):
         return "" if value is None else str(value)
 
     # ========================================================
-    # SAFE REPLACEMENT (FORMATO PRESERVADO)
+    # 🔥 FLATTEN PLACEHOLDER MAP
+    # ========================================================
+
+    placeholder_map = {
+        f"{{{key}}}": safe(value)
+        for key, value in data.items()
+    }
+
+    # ========================================================
+    # REPLACEMENT ENGINE (ANTI-RUN SPLIT ISSUE)
     # ========================================================
 
     def replace_in_paragraph(paragraph):
 
-        if not paragraph.runs:
+        if not paragraph.text:
             return
 
-        full_text = "".join(run.text for run in paragraph.runs)
+        full_text = paragraph.text
+        original_text = full_text
 
-        modified = False
+        for placeholder, value in placeholder_map.items():
+            full_text = full_text.replace(placeholder, value)
 
-        for key, value in data.items():
-            placeholder = f"{{{key}}}"
-            if placeholder in full_text:
-                full_text = full_text.replace(
-                    placeholder,
-                    safe(value)
-                )
-                modified = True
-
-        if not modified:
-            return
-
-        index = 0
-
-        for run in paragraph.runs:
-            length = len(run.text)
-            if length == 0:
-                continue
-
-            run.text = full_text[index:index + length]
-            index += length
-
-        if index < len(full_text):
-            paragraph.runs[-1].text += full_text[index:]
+        if full_text != original_text:
+            paragraph.clear()
+            paragraph.add_run(full_text)
 
     # BODY
     for paragraph in doc.paragraphs:
@@ -121,19 +114,24 @@ def generate_draft_survey_word_pdf(data: dict) -> str:
     # SAVE TEMP DOCX
     # ========================================================
 
-    fd, temp_docx = tempfile.mkstemp(suffix=".docx")
-    os.close(fd)
+    temp_docx = os.path.join(
+        tempfile.gettempdir(),
+        f"{draft_report_number}.docx"
+    )
+
     doc.save(temp_docx)
 
     # ========================================================
-    # CONVERT USING LIBREOFFICE (HEADLESS)
+    # LIBREOFFICE EXECUTABLE DETECTION
     # ========================================================
+
+    soffice_path = os.getenv("LIBREOFFICE_PATH", "soffice")
 
     output_dir = tempfile.mkdtemp(prefix="draft_word_pdf_")
     libre_profile = tempfile.mkdtemp(prefix="lo_profile_")
 
     cmd = [
-        "soffice",
+        soffice_path,
         "--headless",
         "--nologo",
         "--nodefault",
@@ -160,8 +158,10 @@ def generate_draft_survey_word_pdf(data: dict) -> str:
             f"LibreOffice PDF conversion failed:\n{result.stderr}"
         )
 
-    pdf_name = Path(temp_docx).with_suffix(".pdf").name
-    pdf_path = os.path.join(output_dir, pdf_name)
+    pdf_path = os.path.join(
+        output_dir,
+        f"{draft_report_number}.pdf"
+    )
 
     if not os.path.exists(pdf_path):
         raise RuntimeError("PDF was not created")
