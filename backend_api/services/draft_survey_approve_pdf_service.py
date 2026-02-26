@@ -2,7 +2,9 @@ import os
 import shutil
 import tempfile
 import subprocess
+import time
 from pathlib import Path
+
 from docx import Document
 
 try:
@@ -12,6 +14,21 @@ except Exception:
 
 from services.draft_survey_excel_service import DraftSurveyExcelGenerator
 from services.pdf_merge_service import merge_pdf_list
+
+
+# =========================================================
+# TEMPLATE PATH (SAFE FOR PYINSTALLER)
+# =========================================================
+def _resource_path(relative_path: str) -> str:
+    """
+    Devuelve path correcto incluso si está empaquetado.
+    """
+    try:
+        base_path = getattr(sys, "_MEIPASS", os.path.dirname(__file__))
+    except Exception:
+        base_path = os.path.dirname(__file__)
+
+    return os.path.abspath(os.path.join(base_path, relative_path))
 
 
 TEMPLATE_WORD_PATH = os.path.abspath(
@@ -24,29 +41,39 @@ TEMPLATE_WORD_PATH = os.path.abspath(
 )
 
 
+# =========================================================
+# SERVICE
+# =========================================================
 class DraftSurveyApprovePdfService:
 
-    # =========================================================
+    # =====================================================
     # PUBLIC
-    # =========================================================
+    # =====================================================
     def generate_final_pdf(self, word_payload: dict, excel_payload: dict) -> str:
 
         word_pdf = self._generate_word_pdf_from_template(word_payload)
         excel_pdf = self._generate_excel_pdf_from_template(excel_payload)
 
         final_pdf = merge_pdf_list([word_pdf, excel_pdf])
+
+        if not final_pdf or not os.path.exists(final_pdf):
+            raise RuntimeError("Final merged PDF was not created.")
+
         return final_pdf
 
-    # =========================================================
-    # WORD PIPELINE (FORMATO 100% RESPETADO)
-    # =========================================================
+    # =====================================================
+    # WORD PIPELINE
+    # =====================================================
     def _generate_word_pdf_from_template(self, payload: dict) -> str:
 
         if not os.path.exists(TEMPLATE_WORD_PATH):
-            raise FileNotFoundError(f"Word template not found: {TEMPLATE_WORD_PATH}")
+            raise FileNotFoundError(
+                f"Word template not found: {TEMPLATE_WORD_PATH}"
+            )
 
         out_dir = tempfile.mkdtemp(prefix="draft_word_")
         tmp_docx = os.path.join(out_dir, "draft_word_filled.docx")
+        tmp_pdf = os.path.join(out_dir, "draft_word_filled.pdf")
 
         doc = Document(TEMPLATE_WORD_PATH)
         replacements = self._build_replacements(payload)
@@ -59,11 +86,10 @@ class DraftSurveyApprovePdfService:
 
         doc.save(tmp_docx)
 
-        tmp_pdf = os.path.join(out_dir, "draft_word_filled.pdf")
         self._convert_docx_to_pdf(tmp_docx, tmp_pdf)
 
         if not os.path.exists(tmp_pdf):
-            raise RuntimeError("Word PDF was not created")
+            raise RuntimeError("Word PDF was not created.")
 
         return tmp_pdf
 
@@ -122,21 +148,24 @@ class DraftSurveyApprovePdfService:
 
     def _convert_docx_to_pdf(self, docx_path: str, pdf_path: str):
 
-        if docx2pdf_convert:
-            out_dir = os.path.dirname(pdf_path)
-            os.makedirs(out_dir, exist_ok=True)
-            docx2pdf_convert(docx_path, out_dir)
-
-            generated = Path(docx_path).with_suffix(".pdf").name
-            gen_path = os.path.join(out_dir, generated)
-
-            if os.path.exists(gen_path) and gen_path != pdf_path:
-                shutil.move(gen_path, pdf_path)
-            return
-
         out_dir = os.path.dirname(pdf_path)
         os.makedirs(out_dir, exist_ok=True)
 
+        # PRIORIDAD: docx2pdf (Windows Word)
+        if docx2pdf_convert:
+            try:
+                docx2pdf_convert(docx_path, out_dir)
+                generated = Path(docx_path).with_suffix(".pdf").name
+                gen_path = os.path.join(out_dir, generated)
+
+                if os.path.exists(gen_path) and gen_path != pdf_path:
+                    shutil.move(gen_path, pdf_path)
+
+                return
+            except Exception as e:
+                raise RuntimeError(f"docx2pdf conversion failed: {e}")
+
+        # FALLBACK: LibreOffice
         cmd = [
             "soffice",
             "--headless",
@@ -147,53 +176,49 @@ class DraftSurveyApprovePdfService:
             docx_path
         ]
 
-        r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        r = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
 
         if r.returncode != 0:
-            raise RuntimeError(f"DOCX->PDF conversion failed:\n{r.stderr}")
+            raise RuntimeError(
+                f"DOCX->PDF conversion failed:\n{r.stderr}"
+            )
 
-    # =========================================================
-    # EXCEL -> PDF (WINDOWS EXCEL COM) — ULTRA BLINDADO
-    # =========================================================
+    # =====================================================
+    # EXCEL -> PDF (ULTRA BLINDADO)
+    # =====================================================
     def _generate_excel_pdf_from_template(self, payload: dict) -> str:
-        import os
-        import tempfile
-        import time
 
         try:
             import pythoncom
             import win32com.client
         except Exception as e:
             raise RuntimeError(
-                f"Microsoft Excel COM (pywin32) no está disponible: {e}"
+                f"Microsoft Excel COM (pywin32) no disponible: {e}"
             )
 
-        # 1) Generar Excel temporal (tu servicio)
         generator = DraftSurveyExcelGenerator()
         excel_path = generator.generate(payload or {})
 
-        if not excel_path or not isinstance(excel_path, str):
-            raise RuntimeError("Excel path inválido (generator.generate devolvió vacío).")
+        if not excel_path or not os.path.exists(excel_path):
+            raise RuntimeError(
+                f"Excel file was not generated: {excel_path}"
+            )
 
-        excel_path = os.path.abspath(excel_path)
-
-        if not os.path.exists(excel_path):
-            raise RuntimeError(f"Excel file was not generated: {excel_path}")
-
-        # 2) Output PDF (en carpeta temporal aparte, garantizada)
         out_dir = tempfile.mkdtemp(prefix="draft_excel_pdf_")
-        pdf_path = os.path.abspath(os.path.join(out_dir, "draft_survey.pdf"))
+        pdf_path = os.path.abspath(
+            os.path.join(out_dir, "draft_survey.pdf")
+        )
 
-        # Helpers locales (blindaje total)
         def _wait_for_file(path: str, timeout_sec: int = 25) -> bool:
             start = time.time()
             while time.time() - start < timeout_sec:
-                if os.path.exists(path):
-                    try:
-                        if os.path.getsize(path) > 0:
-                            return True
-                    except Exception:
-                        pass
+                if os.path.exists(path) and os.path.getsize(path) > 0:
+                    return True
                 time.sleep(0.2)
             return False
 
@@ -201,73 +226,46 @@ class DraftSurveyApprovePdfService:
         excel = None
         workbook = None
 
-        # Constantes COM (sin depender de win32.constants)
-        xlTypePDF = 0
-        xlQualityStandard = 0
-
         try:
             excel = win32com.client.DispatchEx("Excel.Application")
             excel.Visible = False
             excel.DisplayAlerts = False
 
-            # Blindaje (evita prompts/eventos/links)
             try:
                 excel.EnableEvents = False
-            except Exception:
-                pass
-
-            try:
                 excel.AskToUpdateLinks = False
             except Exception:
                 pass
 
-            # Abrir workbook
             workbook = excel.Workbooks.Open(
                 excel_path,
                 UpdateLinks=0,
                 ReadOnly=False
             )
 
-            # Recalcular (por consistencia de impresión)
-            try:
-                excel.Calculation = -4105  # xlCalculationAutomatic
-            except Exception:
-                pass
-
             try:
                 excel.CalculateFullRebuild()
-                # Espera corta a cálculo (sin loop infinito)
-                t0 = time.time()
-                while getattr(excel, "CalculationState", 0) != 0:
-                    if time.time() - t0 > 10:
-                        break
-                    time.sleep(0.1)
             except Exception:
                 pass
 
-            # Export PDF (workbook completo)
-            try:
-                workbook.ExportAsFixedFormat(
-                    Type=xlTypePDF,
-                    Filename=pdf_path,
-                    Quality=xlQualityStandard,
-                    IncludeDocProperties=True,
-                    IgnorePrintAreas=False,
-                    OpenAfterPublish=False
-                )
-            except Exception as e:
-                raise RuntimeError(f"Excel ExportAsFixedFormat falló: {e}")
+            workbook.ExportAsFixedFormat(
+                Type=0,
+                Filename=pdf_path,
+                Quality=0,
+                IncludeDocProperties=True,
+                IgnorePrintAreas=False,
+                OpenAfterPublish=False
+            )
 
         finally:
-            # Cerrar workbook / excel SIEMPRE
             try:
-                if workbook is not None:
+                if workbook:
                     workbook.Close(False)
             except Exception:
                 pass
 
             try:
-                if excel is not None:
+                if excel:
                     excel.Quit()
             except Exception:
                 pass
@@ -277,8 +275,9 @@ class DraftSurveyApprovePdfService:
             except Exception:
                 pass
 
-        # 3) Validación final real (esperar que el PDF exista y tenga tamaño)
-        if not _wait_for_file(pdf_path, timeout_sec=25):
-            raise RuntimeError(f"Excel PDF was not created or is empty: {pdf_path}")
+        if not _wait_for_file(pdf_path):
+            raise RuntimeError(
+                f"Excel PDF was not created: {pdf_path}"
+            )
 
         return pdf_path
