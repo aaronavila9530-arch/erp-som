@@ -82,3 +82,53 @@ def generate_word_pdf(
             status_code=500,
             detail="Error generating Word PDF"
         )
+
+
+
+@router.get("/presentation/{draft_report_number}")
+def generate_draft_survey_presentation(
+    draft_report_number: str,
+    conn=Depends(get_db)
+):
+
+    from services.draft_survey_presentation_service import \
+        generate_draft_survey_presentation_pdf
+    from fastapi.responses import FileResponse
+    from psycopg2.extras import RealDictCursor
+
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+
+    try:
+
+        cur.execute("""
+            SELECT
+                draft_report_number,
+                word_vessel,
+                word_grt,
+                word_nrt,
+                word_survey_requested_by,
+                word_port,
+                word_country,
+                word_commenced
+            FROM draft_survey_word_report
+            WHERE draft_report_number = %s
+        """, (draft_report_number,))
+
+        row = cur.fetchone()
+
+        if not row:
+            raise HTTPException(
+                status_code=404,
+                detail="Draft Survey Word report not found"
+            )
+
+        pdf_path = generate_draft_survey_presentation_pdf(row)
+
+        return FileResponse(
+            pdf_path,
+            filename=f"Presentation_{draft_report_number}.pdf",
+            media_type="application/pdf"
+        )
+
+    finally:
+        cur.close()
