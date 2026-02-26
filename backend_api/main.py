@@ -70,6 +70,7 @@ from routers.draft_survey_unified_router import router as draft_survey_unified_r
 from routers.draft_survey_headers_router import router as draft_survey_headers_router
 from routers.draft_survey_word_router import router as draft_survey_word_router
 from routers.draft_survey_excel_router import router as draft_survey_excel_router
+from routers.draft_survey_final_router import router as draft_survey_final_router
 
 # Comercial
 from routers.comercial import router as comercial_router
@@ -219,6 +220,7 @@ app.include_router(draft_survey_unified_router)
 app.include_router(draft_survey_headers_router)
 app.include_router(draft_survey_word_router)
 app.include_router(draft_survey_excel_router)
+app.include_router(draft_survey_final_router)
 
 app.include_router(comercial_router)
 app.include_router(comercial_clients_analytics_router)
