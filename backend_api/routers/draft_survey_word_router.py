@@ -4,7 +4,7 @@ from pathlib import Path
 import logging
 
 from services.draft_survey_word_pdf_service import generate_draft_survey_word_pdf
-from services.draft_survey_unified_service import get_full_draft_survey_by_report_number
+from services.draft_survey_word_data_service import get_draft_word_data_by_report_number
 
 
 router = APIRouter(
@@ -15,11 +15,8 @@ router = APIRouter(
 logger = logging.getLogger(__name__)
 
 
-# =========================================================
-# GENERATE WORD PDF FROM DB (ERP FLOW)
-# =========================================================
 @router.get("/generate/{draft_report_number}")
-def generate_word_pdf_from_db(
+def generate_word_pdf(
     draft_report_number: str,
     background_tasks: BackgroundTasks
 ):
@@ -33,35 +30,20 @@ def generate_word_pdf_from_db(
         )
 
     try:
-        # =================================================
-        # 1️⃣ GET FULL MERGED DATA FROM DB
-        # =================================================
-        data = get_full_draft_survey_by_report_number(
+
+        # 1️⃣ SOLO TRAER TABLA WORD
+        data = get_draft_word_data_by_report_number(
             draft_report_number
         )
 
         if not data:
             raise HTTPException(
                 status_code=404,
-                detail="Draft Survey not found"
+                detail="Draft Word record not found"
             )
 
-        if not isinstance(data, dict):
-            raise HTTPException(
-                status_code=500,
-                detail="Invalid data structure from unified service"
-            )
-
-        # =================================================
-        # 2️⃣ GENERATE PDF
-        # =================================================
+        # 2️⃣ GENERAR PDF
         pdf_path = generate_draft_survey_word_pdf(data)
-
-        if not pdf_path:
-            raise HTTPException(
-                status_code=500,
-                detail="Service did not return a file path"
-            )
 
         file_path = Path(pdf_path)
 
@@ -71,34 +53,16 @@ def generate_word_pdf_from_db(
                 detail="Generated PDF file does not exist"
             )
 
-        if file_path.stat().st_size == 0:
-            raise HTTPException(
-                status_code=500,
-                detail="Generated PDF file is empty"
-            )
-
-        # =================================================
-        # 3️⃣ CLEANUP TEMP FILES
-        # =================================================
-        def cleanup_files(path: Path):
+        # 3️⃣ CLEANUP
+        def cleanup(path: Path):
             try:
                 if path.exists():
                     path.unlink()
-
-                parent = path.parent
-                if parent.exists():
-                    try:
-                        parent.rmdir()
-                    except Exception:
-                        pass
             except Exception:
                 pass
 
-        background_tasks.add_task(cleanup_files, file_path)
+        background_tasks.add_task(cleanup, file_path)
 
-        # =================================================
-        # 4️⃣ RETURN FILE
-        # =================================================
         return FileResponse(
             path=str(file_path),
             media_type="application/pdf",
@@ -108,16 +72,9 @@ def generate_word_pdf_from_db(
     except HTTPException:
         raise
 
-    except FileNotFoundError as fnf:
-        logger.error(f"Template missing: {fnf}")
-        raise HTTPException(
-            status_code=500,
-            detail="Word template not found"
-        )
-
     except Exception:
         logger.exception("Unexpected error generating Word PDF")
         raise HTTPException(
             status_code=500,
-            detail="Internal server error generating Word PDF"
+            detail="Internal server error"
         )
