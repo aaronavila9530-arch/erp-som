@@ -29,12 +29,14 @@ class DraftSurveyExcelPdfService:
 
     # =========================================================
     # SOLO HOJAS A INCLUIR (EN ORDEN)
+    # (Según tu template real: 'Draught survey report' y 'ECE ... D2' son separadas)
     # =========================================================
     KEEP_SHEETS = [
         "General",
         "Draft",
         "ECE DRAUGHT SURVEY CODE",
-        "Draught survey report ECE DRAUGHT SURVEY CODE D2",
+        "Draught survey report",
+        "ECE DRAUGHT SURVEY CODE D2",
     ]
 
     # =========================================================
