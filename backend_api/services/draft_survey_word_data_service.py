@@ -11,7 +11,7 @@ def get_draft_word_data_by_report_number(
     try:
         cur.execute("""
             SELECT *
-            FROM draft_survey_word_reports
+            FROM draft_survey_word_report
             WHERE draft_report_number = %s
         """, (draft_report_number,))
 
