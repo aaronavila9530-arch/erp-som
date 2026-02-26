@@ -34,26 +34,37 @@ class DraftSurveyWordPdfService:
         return self._generate_pdf_from_data(data)
 
     # =====================================================
-    # FETCH DATA
+    # FETCH DATA (DIRECT CONNECTION - NO DEPENDS)
     # =====================================================
     def _fetch_data(self, draft_report_number: str) -> dict:
 
-        conn = get_db()
-        cur = conn.cursor(cursor_factory=RealDictCursor)
+        import psycopg2
+        from psycopg2.extras import RealDictCursor
 
-        cur.execute("""
-            SELECT *
-            FROM draft_survey_word_report
-            WHERE draft_report_number = %s
-            LIMIT 1
-        """, (draft_report_number,))
+        conn = psycopg2.connect(
+            host="tramway.proxy.rlwy.net",
+            port=15258,
+            database="railway",
+            user="postgres",
+            password="IrPzbLzKJFQtUnMlBKcHLHcLIAqagHCT"
+        )
 
-        row = cur.fetchone()
+        try:
+            cur = conn.cursor(cursor_factory=RealDictCursor)
 
-        cur.close()
-        conn.close()
+            cur.execute("""
+                SELECT *
+                FROM draft_survey_word_report
+                WHERE draft_report_number = %s
+                LIMIT 1
+            """, (draft_report_number,))
 
-        return dict(row) if row else None
+            row = cur.fetchone()
+
+            return dict(row) if row else None
+
+        finally:
+            conn.close()
 
     # =====================================================
     # GENERATE PDF
