@@ -132,6 +132,6 @@ class DraftSurveyFinalPdfService:
         out_path = os.path.join(out_dir, f"{draft_report_number}_FINAL.pdf")
 
         return self._merge_pdfs(
-            pdf_paths=[excel_pdf_path, word_pdf_path],
+            pdf_paths=[word_pdf_path, excel_pdf_path], 
             out_path=out_path
         )
