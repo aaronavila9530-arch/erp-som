@@ -40,6 +40,16 @@ def generate_word_pdf(
             detail="Payload cannot be empty"
         )
 
+    draft_report_number = str(
+        payload.get("draft_report_number") or ""
+    ).strip()
+
+    if not draft_report_number:
+        raise HTTPException(
+            status_code=422,
+            detail="draft_report_number is required in payload"
+        )
+
     try:
         # =================================================
         # 2️⃣ GENERAR PDF DESDE SERVICE
@@ -63,15 +73,20 @@ def generate_word_pdf(
                 detail="Generated PDF file does not exist"
             )
 
+        if file_path.stat().st_size == 0:
+            raise HTTPException(
+                status_code=500,
+                detail="Generated PDF file is empty"
+            )
+
         # =================================================
-        # 4️⃣ LIMPIEZA AUTOMÁTICA (TEMP FILE)
+        # 4️⃣ LIMPIEZA AUTOMÁTICA (TEMP FILES)
         # =================================================
-        def cleanup_file(path: Path):
+        def cleanup_files(path: Path):
             try:
                 if path.exists():
                     path.unlink()
 
-                # borrar carpeta temporal si está vacía
                 parent = path.parent
                 if parent.exists():
                     try:
@@ -81,7 +96,7 @@ def generate_word_pdf(
             except Exception:
                 pass
 
-        background_tasks.add_task(cleanup_file, file_path)
+        background_tasks.add_task(cleanup_files, file_path)
 
         # =================================================
         # 5️⃣ RESPUESTA SEGURA
@@ -89,7 +104,7 @@ def generate_word_pdf(
         return FileResponse(
             path=str(file_path),
             media_type="application/pdf",
-            filename="draft_word.pdf"
+            filename=f"{draft_report_number}_WORD.pdf"
         )
 
     except HTTPException:
@@ -113,5 +128,5 @@ def generate_word_pdf(
         logger.exception("Unexpected error generating Word PDF")
         raise HTTPException(
             status_code=500,
-            detail=f"Internal server error: {str(e)}"
+            detail="Internal server error generating Word PDF"
         )

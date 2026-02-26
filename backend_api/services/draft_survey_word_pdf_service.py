@@ -1,21 +1,25 @@
 import os
 import tempfile
+import subprocess
+from pathlib import Path
 from docx import Document
-
-try:
-    from docx2pdf import convert as docx2pdf_convert
-except Exception:
-    docx2pdf_convert = None
 
 
 # ============================================================
-# GENERATE DRAFT SURVEY WORD PDF (NO DB)
+# GENERATE DRAFT SURVEY WORD PDF (LIBREOFFICE VERSION)
 # ============================================================
 
 def generate_draft_survey_word_pdf(data: dict) -> str:
 
     # ========================================================
-    # LOAD TEMPLATE (RELATIVE PATH - IGUAL QUE ADJUNTO)
+    # VALIDACIONES
+    # ========================================================
+
+    if not isinstance(data, dict):
+        raise ValueError("Invalid payload. Expected dict.")
+
+    # ========================================================
+    # TEMPLATE PATH (RELATIVE — SAFE FOR RAILWAY & EXE)
     # ========================================================
 
     base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -30,19 +34,21 @@ def generate_draft_survey_word_pdf(data: dict) -> str:
     )
 
     if not os.path.exists(template_path):
-        raise Exception(f"Template not found at: {template_path}")
+        raise FileNotFoundError(
+            f"Template not found at: {template_path}"
+        )
+
+    # ========================================================
+    # LOAD DOCUMENT
+    # ========================================================
 
     doc = Document(template_path)
-
-    # ========================================================
-    # SAFE VALUE
-    # ========================================================
 
     def safe(value):
         return "" if value is None else str(value)
 
     # ========================================================
-    # SAFE REPLACEMENT (MISMA LÓGICA QUE TRUCK)
+    # SAFE REPLACEMENT (FORMATO PRESERVADO)
     # ========================================================
 
     def replace_in_paragraph(paragraph):
@@ -52,6 +58,8 @@ def generate_draft_survey_word_pdf(data: dict) -> str:
 
         full_text = "".join(run.text for run in paragraph.runs)
 
+        modified = False
+
         for key, value in data.items():
             placeholder = f"{{{key}}}"
             if placeholder in full_text:
@@ -59,6 +67,10 @@ def generate_draft_survey_word_pdf(data: dict) -> str:
                     placeholder,
                     safe(value)
                 )
+                modified = True
+
+        if not modified:
+            return
 
         index = 0
 
@@ -73,44 +85,33 @@ def generate_draft_survey_word_pdf(data: dict) -> str:
         if index < len(full_text):
             paragraph.runs[-1].text += full_text[index:]
 
-    # ========================================================
     # BODY
-    # ========================================================
-
     for paragraph in doc.paragraphs:
         replace_in_paragraph(paragraph)
 
-    # ========================================================
     # TABLES
-    # ========================================================
-
     for table in doc.tables:
         for row in table.rows:
             for cell in row.cells:
                 for paragraph in cell.paragraphs:
                     replace_in_paragraph(paragraph)
 
-    # ========================================================
     # HEADERS & FOOTERS
-    # ========================================================
-
     for section in doc.sections:
 
-        header = section.header
-        for paragraph in header.paragraphs:
+        for paragraph in section.header.paragraphs:
             replace_in_paragraph(paragraph)
 
-        for table in header.tables:
+        for table in section.header.tables:
             for row in table.rows:
                 for cell in row.cells:
                     for paragraph in cell.paragraphs:
                         replace_in_paragraph(paragraph)
 
-        footer = section.footer
-        for paragraph in footer.paragraphs:
+        for paragraph in section.footer.paragraphs:
             replace_in_paragraph(paragraph)
 
-        for table in footer.tables:
+        for table in section.footer.tables:
             for row in table.rows:
                 for cell in row.cells:
                     for paragraph in cell.paragraphs:
@@ -120,27 +121,52 @@ def generate_draft_survey_word_pdf(data: dict) -> str:
     # SAVE TEMP DOCX
     # ========================================================
 
-    tmp_docx = os.path.join(
-        tempfile.gettempdir(),
-        f"{data.get('draft_report_number', 'draft_survey')}.docx"
+    fd, temp_docx = tempfile.mkstemp(suffix=".docx")
+    os.close(fd)
+    doc.save(temp_docx)
+
+    # ========================================================
+    # CONVERT USING LIBREOFFICE (HEADLESS)
+    # ========================================================
+
+    output_dir = tempfile.mkdtemp(prefix="draft_word_pdf_")
+    libre_profile = tempfile.mkdtemp(prefix="lo_profile_")
+
+    cmd = [
+        "soffice",
+        "--headless",
+        "--nologo",
+        "--nodefault",
+        "--nolockcheck",
+        "--nofirststartwizard",
+        "--norestore",
+        f"-env:UserInstallation=file://{libre_profile}",
+        "--convert-to",
+        "pdf:writer_pdf_Export",
+        "--outdir",
+        output_dir,
+        temp_docx
+    ]
+
+    result = subprocess.run(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True
     )
 
-    doc.save(tmp_docx)
-
-    # ========================================================
-    # CONVERT TO PDF
-    # ========================================================
-
-    if not docx2pdf_convert:
-        raise Exception(
-            "docx2pdf not available. Install it and ensure Microsoft Word is installed."
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"LibreOffice PDF conversion failed:\n{result.stderr}"
         )
 
-    docx2pdf_convert(tmp_docx, tempfile.gettempdir())
+    pdf_name = Path(temp_docx).with_suffix(".pdf").name
+    pdf_path = os.path.join(output_dir, pdf_name)
 
-    tmp_pdf = tmp_docx.replace(".docx", ".pdf")
+    if not os.path.exists(pdf_path):
+        raise RuntimeError("PDF was not created")
 
-    if not os.path.exists(tmp_pdf):
-        raise Exception("PDF was not created.")
+    if os.path.getsize(pdf_path) == 0:
+        raise RuntimeError("PDF was generated but is empty")
 
-    return tmp_pdf
+    return pdf_path
