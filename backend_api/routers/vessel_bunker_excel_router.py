@@ -7,7 +7,7 @@ import os
 
 from database import get_db
 from services.vessel_bunker_excel_service import VesselBunkerExcelGenerator
-from services.vessel_bunker_excel_service import VesselBunkerExcelService
+from services.vessel_bunker_excel_pdf_service import VesselBunkerExcelPdfService
 
 
 router = APIRouter(
@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 # =========================================================
 # GENERATE EXCEL BY REPORT ID
+# (NO TOCADO — FUNCIONA PERFECTO)
 # =========================================================
 @router.get("/generate/{report_id}")
 def generate_vessel_bunker_excel(report_id: int, conn=Depends(get_db)):
@@ -70,27 +71,60 @@ def generate_vessel_bunker_excel(report_id: int, conn=Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-
-
+# =========================================================
+# GENERATE FINAL PDF (3 SHEETS MERGED)
+# =========================================================
 @router.get("/generate-pdf/{report_id}")
 def generate_vessel_bunker_pdf(report_id: int, conn=Depends(get_db)):
 
-    try:
-        # 1️⃣ Generar Excel
-        excel_service = VesselBunkerExcelService()
-        excel_path = excel_service.generate_excel_by_report_id(conn, report_id)
+    cur = conn.cursor(cursor_factory=RealDictCursor)
 
-        # 2️⃣ Generar PDF Final (3 hojas merge)
+    try:
+        # -------------------------------------------------
+        # 1️⃣ VALIDAR QUE EXISTA
+        # -------------------------------------------------
+        cur.execute(
+            "SELECT * FROM vessel_bunker_reports WHERE id=%s",
+            (report_id,)
+        )
+
+        row = cur.fetchone()
+
+        if not row:
+            raise HTTPException(status_code=404, detail="Report not found")
+
+        payload = dict(row)
+
+        # -------------------------------------------------
+        # 2️⃣ GENERAR EXCEL BASE
+        # -------------------------------------------------
+        generator = VesselBunkerExcelGenerator()
+        excel_path = generator.generate(payload)
+
+        if not excel_path or not os.path.exists(excel_path):
+            raise HTTPException(status_code=500, detail="Excel generation failed")
+
+        # -------------------------------------------------
+        # 3️⃣ GENERAR PDF FINAL (3 HOJAS)
+        # -------------------------------------------------
         pdf_service = VesselBunkerExcelPdfService()
         pdf_path = pdf_service.generate_pdf_from_excel(excel_path)
 
+        if not pdf_path or not os.path.exists(pdf_path):
+            raise HTTPException(status_code=500, detail="PDF generation failed")
+
+        # -------------------------------------------------
+        # 4️⃣ DEVOLVER PDF
+        # -------------------------------------------------
         return FileResponse(
             path=pdf_path,
             media_type="application/pdf",
             filename=f"Vessel_Bunker_{report_id}.pdf"
         )
 
+    except HTTPException:
+        raise
+
     except Exception as e:
+        logger.exception("Error generating bunker final PDF")
         raise HTTPException(status_code=500, detail=str(e))
-
-
