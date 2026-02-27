@@ -7,6 +7,7 @@ import os
 
 from database import get_db
 from services.vessel_bunker_excel_service import VesselBunkerExcelGenerator
+from services.vessel_bunker_excel_service import VesselBunkerExcelService
 
 
 router = APIRouter(
