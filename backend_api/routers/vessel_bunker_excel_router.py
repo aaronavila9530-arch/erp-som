@@ -67,3 +67,29 @@ def generate_vessel_bunker_excel(report_id: int, conn=Depends(get_db)):
     except Exception as e:
         logger.exception("Error generating bunker Excel")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+
+
+@router.get("/generate-pdf/{report_id}")
+def generate_vessel_bunker_pdf(report_id: int, conn=Depends(get_db)):
+
+    try:
+        # 1️⃣ Generar Excel
+        excel_service = VesselBunkerExcelService()
+        excel_path = excel_service.generate_excel_by_report_id(conn, report_id)
+
+        # 2️⃣ Generar PDF Final (3 hojas merge)
+        pdf_service = VesselBunkerExcelPdfService()
+        pdf_path = pdf_service.generate_pdf_from_excel(excel_path)
+
+        return FileResponse(
+            path=pdf_path,
+            media_type="application/pdf",
+            filename=f"Vessel_Bunker_{report_id}.pdf"
+        )
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
