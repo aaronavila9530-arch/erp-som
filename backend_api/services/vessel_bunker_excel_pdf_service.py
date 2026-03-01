@@ -25,59 +25,29 @@ class VesselBunkerExcelPdfService:
         if not os.path.exists(excel_path):
             raise FileNotFoundError(f"Excel file not found: {excel_path}")
 
-        # 🔥 PASO 1 — CONGELAR FÓRMULAS CON VALORES CACHEADOS
-        self._freeze_formulas_with_cached_values(excel_path)
-
-        # 🔥 PASO 2 — PREPARAR IMPRESIÓN
+        # 🔥 SOLO PREPARAR IMPRESIÓN (NO TOCAR FÓRMULAS)
         self._prepare_print(excel_path)
 
-        # 🔥 PASO 3 — CONVERTIR
         return self._convert_excel_to_pdf(excel_path)
 
     # =========================================================
-    # FREEZE FORMULAS
-    # =========================================================
-    def _freeze_formulas_with_cached_values(self, excel_path: str):
-
-        wb_values = load_workbook(excel_path, data_only=True)
-        wb_formulas = load_workbook(excel_path)
-
-        for sheet_name in self.REQUIRED_SHEETS_ORDER:
-
-            if sheet_name not in wb_formulas.sheetnames:
-                continue
-
-            ws_values = wb_values[sheet_name]
-            ws_formulas = wb_formulas[sheet_name]
-
-            for row in ws_formulas.iter_rows():
-                for cell in row:
-                    if cell.data_type == "f":
-                        cached_value = ws_values[cell.coordinate].value
-
-                        # 🔥 FORZAR VALOR SI EXISTE
-                        if cached_value is not None:
-                            cell.value = cached_value
-                        else:
-                            # si no hay valor cacheado, dejar 0 en vez de #NAME?
-                            cell.value = 0
-
-        wb_formulas.save(excel_path)
-        wb_formulas.close()
-        wb_values.close()
-
-    # =========================================================
-    # PREPARE PRINT
+    # PREPARE PRINT (SCALE INDIVIDUAL)
     # =========================================================
     def _prepare_print(self, excel_path: str):
 
         wb = load_workbook(excel_path)
 
-        # eliminar hojas no necesarias
+        # 🔥 ELIMINAR HOJAS NO REQUERIDAS
         for sheet in list(wb.sheetnames):
             if sheet not in self.REQUIRED_SHEETS_ORDER:
                 wb.remove(wb[sheet])
 
+        # 🔥 REORDENAR
+        for i, name in enumerate(self.REQUIRED_SHEETS_ORDER):
+            if name in wb.sheetnames:
+                wb._sheets.insert(i, wb._sheets.pop(wb.sheetnames.index(name)))
+
+        # 🔥 CONFIGURAR CADA HOJA CON SCALE DIFERENTE
         for ws in wb.worksheets:
 
             max_row = ws.max_row
@@ -88,8 +58,13 @@ class VesselBunkerExcelPdfService:
 
             ws.page_setup.orientation = ws.ORIENTATION_PORTRAIT
             ws.page_setup.fitToWidth = 1
-            ws.page_setup.fitToHeight = 1
-            ws.page_setup.scale = 70
+            ws.page_setup.fitToHeight = False
+
+            # 🔥 SCALE INDIVIDUAL
+            if ws.title == "CERTIFICATE":
+                ws.page_setup.scale = 70
+            else:
+                ws.page_setup.scale = 80
 
             ws.page_margins = PageMargins(
                 left=0.15,
@@ -99,6 +74,9 @@ class VesselBunkerExcelPdfService:
                 header=0.1,
                 footer=0.1
             )
+
+            ws.page_setup.horizontalCentered = False
+            ws.page_setup.verticalCentered = False
 
         wb.save(excel_path)
         wb.close()
