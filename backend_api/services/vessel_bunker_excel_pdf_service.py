@@ -25,42 +25,42 @@ class VesselBunkerExcelPdfService:
         if not os.path.exists(excel_path):
             raise FileNotFoundError(f"Excel file not found: {excel_path}")
 
-        # 🔥 SOLO PREPARAR IMPRESIÓN (NO TOCAR FÓRMULAS)
         self._prepare_print(excel_path)
 
         return self._convert_excel_to_pdf(excel_path)
 
     # =========================================================
-    # PREPARE PRINT (SCALE INDIVIDUAL)
+    # PREPARE PRINT
     # =========================================================
     def _prepare_print(self, excel_path: str):
 
         wb = load_workbook(excel_path)
 
-        # 🔥 ELIMINAR HOJAS NO REQUERIDAS
+        # Eliminar hojas no necesarias
         for sheet in list(wb.sheetnames):
             if sheet not in self.REQUIRED_SHEETS_ORDER:
                 wb.remove(wb[sheet])
 
-        # 🔥 REORDENAR
+        # Reordenar
         for i, name in enumerate(self.REQUIRED_SHEETS_ORDER):
             if name in wb.sheetnames:
                 wb._sheets.insert(i, wb._sheets.pop(wb.sheetnames.index(name)))
 
-        # 🔥 CONFIGURAR CADA HOJA CON SCALE DIFERENTE
         for ws in wb.worksheets:
 
             max_row = ws.max_row
             max_col = ws.max_column
-
             last_cell = ws.cell(row=max_row, column=max_col).coordinate
+
             ws.print_area = f"A1:{last_cell}"
 
             ws.page_setup.orientation = ws.ORIENTATION_PORTRAIT
-            ws.page_setup.fitToWidth = 1
-            ws.page_setup.fitToHeight = False
 
-            # 🔥 SCALE INDIVIDUAL
+            # 🔥 SOLO 1 PÁGINA
+            ws.page_setup.fitToWidth = 1
+            ws.page_setup.fitToHeight = 1
+
+            # Scale individual (solo si no usas fitToHeight)
             if ws.title == "CERTIFICATE":
                 ws.page_setup.scale = 70
             else:
@@ -74,9 +74,6 @@ class VesselBunkerExcelPdfService:
                 header=0.1,
                 footer=0.1
             )
-
-            ws.page_setup.horizontalCentered = False
-            ws.page_setup.verticalCentered = False
 
         wb.save(excel_path)
         wb.close()
