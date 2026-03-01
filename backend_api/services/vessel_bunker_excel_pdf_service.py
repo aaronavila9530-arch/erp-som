@@ -2,8 +2,11 @@ import os
 import tempfile
 import subprocess
 from pathlib import Path
+from psycopg2.extras import RealDictCursor
 from openpyxl import load_workbook
 from openpyxl.worksheet.page import PageMargins
+
+from services.vessel_bunker_excel_service import VesselBunkerExcelGenerator
 
 
 class VesselBunkerExcelPdfService:
@@ -14,80 +17,145 @@ class VesselBunkerExcelPdfService:
         "LOG BOOK FIGURES"
     ]
 
-    # =========================================================
-    # MAIN
-    # =========================================================
-    def generate_pdf_from_excel(self, excel_path: str) -> str:
-
-        if not excel_path:
-            raise ValueError("Excel path is empty.")
-
-        if not os.path.exists(excel_path):
-            raise FileNotFoundError(f"Excel file not found: {excel_path}")
-
-        self._prepare_print(excel_path)
-
-        return self._convert_excel_to_pdf(excel_path)
+    SCALE_MAP = {
+        "CERTIFICATE": 70,
+        "CALCULATIONS": 80,
+        "LOG BOOK FIGURES": 80
+    }
 
     # =========================================================
-    # PREPARE PRINT
+    # MAIN ENTRY — BUILD EXCEL FIRST
+    # =========================================================
+    def generate_pdf_by_report_id(self, conn, report_id: int) -> str:
+
+        if not report_id:
+            raise ValueError("report_id is required")
+
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+
+        try:
+            # -------------------------------------------------
+            # 1️⃣ OBTENER DATOS
+            # -------------------------------------------------
+            cur.execute(
+                "SELECT * FROM vessel_bunker_reports WHERE id=%s",
+                (report_id,)
+            )
+            row = cur.fetchone()
+
+            if not row:
+                raise Exception("Vessel bunker report not found")
+
+            payload = dict(row)
+
+            # -------------------------------------------------
+            # 2️⃣ GENERAR EXCEL COMPLETO
+            # -------------------------------------------------
+            generator = VesselBunkerExcelGenerator()
+            excel_path = generator.generate(payload)
+
+            if not excel_path or not os.path.exists(excel_path):
+                raise Exception("Excel generation failed")
+
+            # -------------------------------------------------
+            # 3️⃣ PREPARAR IMPRESIÓN
+            # -------------------------------------------------
+            self._prepare_print(excel_path)
+
+            # -------------------------------------------------
+            # 4️⃣ CONVERTIR A PDF
+            # -------------------------------------------------
+            return self._convert_excel_to_pdf(excel_path)
+
+        finally:
+            cur.close()
+
+    # =========================================================
+    # PREPARE PRINT (NO ELIMINA DATA FROM DB)
     # =========================================================
     def _prepare_print(self, excel_path: str):
 
+        if not os.path.exists(excel_path):
+            raise FileNotFoundError("Excel file not found for print preparation")
+
         wb = load_workbook(excel_path)
 
-        # Eliminar hojas no necesarias
-        for sheet in list(wb.sheetnames):
-            if sheet not in self.REQUIRED_SHEETS_ORDER:
-                wb.remove(wb[sheet])
+        try:
+            # -------------------------------------------------
+            # VALIDAR QUE EXISTAN LAS HOJAS REQUERIDAS
+            # -------------------------------------------------
+            for sheet_name in self.REQUIRED_SHEETS_ORDER:
+                if sheet_name not in wb.sheetnames:
+                    raise Exception(f"Required sheet '{sheet_name}' not found in workbook")
 
-        # Reordenar
-        for i, name in enumerate(self.REQUIRED_SHEETS_ORDER):
-            if name in wb.sheetnames:
-                wb._sheets.insert(i, wb._sheets.pop(wb.sheetnames.index(name)))
+            # -------------------------------------------------
+            # OCULTAR SOLO LAS NO REQUERIDAS (NO BORRAR)
+            # -------------------------------------------------
+            for ws in wb.worksheets:
+                if ws.title not in self.REQUIRED_SHEETS_ORDER:
+                    ws.sheet_state = "hidden"
+                else:
+                    ws.sheet_state = "visible"
 
-        for ws in wb.worksheets:
+            # -------------------------------------------------
+            # REORDENAR: visibles primero
+            # -------------------------------------------------
+            visible = [wb[s] for s in self.REQUIRED_SHEETS_ORDER]
+            hidden = [wb[s] for s in wb.sheetnames if s not in self.REQUIRED_SHEETS_ORDER]
+            wb._sheets = visible + hidden
 
-            max_row = ws.max_row
-            max_col = ws.max_column
-            last_cell = ws.cell(row=max_row, column=max_col).coordinate
+            # -------------------------------------------------
+            # CONFIGURAR IMPRESIÓN
+            # -------------------------------------------------
+            for ws in visible:
 
-            ws.print_area = f"A1:{last_cell}"
+                max_row = max(ws.max_row, 1)
+                max_col = max(ws.max_column, 1)
+                last_cell = ws.cell(row=max_row, column=max_col).coordinate
 
-            ws.page_setup.orientation = ws.ORIENTATION_PORTRAIT
+                ws.print_area = f"A1:{last_cell}"
 
-            # 🔥 SOLO 1 PÁGINA
-            ws.page_setup.fitToWidth = 1
-            ws.page_setup.fitToHeight = 1
+                ws.page_setup.orientation = ws.ORIENTATION_PORTRAIT
+                ws.page_setup.fitToWidth = 1
+                ws.page_setup.fitToHeight = 1
 
-            # Scale individual (solo si no usas fitToHeight)
-            if ws.title == "CERTIFICATE":
-                ws.page_setup.scale = 70
-            else:
-                ws.page_setup.scale = 80
+                ws.page_setup.scale = self.SCALE_MAP.get(ws.title, 80)
 
-            ws.page_margins = PageMargins(
-                left=0.15,
-                right=0.15,
-                top=0.25,
-                bottom=0.25,
-                header=0.1,
-                footer=0.1
-            )
+                ws.page_margins = PageMargins(
+                    left=0.15,
+                    right=0.15,
+                    top=0.25,
+                    bottom=0.25,
+                    header=0.1,
+                    footer=0.1
+                )
 
-        wb.save(excel_path)
-        wb.close()
+                ws.page_setup.horizontalCentered = False
+                ws.page_setup.verticalCentered = False
+
+            wb.save(excel_path)
+
+        finally:
+            wb.close()
 
     # =========================================================
     # CONVERT
     # =========================================================
     def _convert_excel_to_pdf(self, excel_path: str) -> str:
 
+        if not os.path.exists(excel_path):
+            raise FileNotFoundError("Excel file not found for conversion")
+
         output_dir = tempfile.mkdtemp(prefix="bunker_pdf_")
 
         command = [
             "soffice",
             "--headless",
+            "--nologo",
+            "--nodefault",
+            "--nolockcheck",
+            "--nofirststartwizard",
+            "--norestore",
             "--convert-to",
             "pdf",
             excel_path,
@@ -103,11 +171,11 @@ class VesselBunkerExcelPdfService:
         )
 
         if result.returncode != 0:
-            raise RuntimeError(result.stderr)
+            raise RuntimeError(f"LibreOffice conversion failed:\n{result.stderr}")
 
         pdf_files = list(Path(output_dir).glob("*.pdf"))
 
         if not pdf_files:
-            raise RuntimeError("PDF not created.")
+            raise RuntimeError("PDF was not created by LibreOffice")
 
         return str(pdf_files[0])
