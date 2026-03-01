@@ -45,8 +45,8 @@ class VesselBunkerExcelPdfService:
         if not pdf_path or not os.path.exists(pdf_path):
             raise RuntimeError("PDF generation failed")
 
-        # ✅ SOLO: remover páginas en blanco inyectadas por LibreOffice
-        self._remove_blank_pages_inplace(pdf_path)
+        # ✅ SOLO: reimprimir/exportar solo hojas 1, 3 y 4 (PDF pages 1-based)
+        self._keep_only_pages_inplace(pdf_path, keep_pages_1based=[1, 3, 4])
 
         return pdf_path
 
@@ -239,46 +239,61 @@ class VesselBunkerExcelPdfService:
             return
 
     # =========================================================
-    # ✅ REMOVE BLANK PAGES (LibreOffice injected)
+    # ✅ KEEP ONLY SELECTED PAGES (1-based) — e.g., [1,3,4]
     # =========================================================
-    def _remove_blank_pages_inplace(self, pdf_path: str):
+    def _keep_only_pages_inplace(self, pdf_path: str, keep_pages_1based: list):
         """
-        Removes truly blank pages injected by LibreOffice during XLSX->PDF conversion.
-        Keeps pages that have text; drops pages with effectively no text.
+        Re-genera el PDF dejando únicamente las páginas indicadas (1-based).
+        Ej: [1,3,4] -> conserva páginas 1, 3 y 4; elimina el resto.
         """
 
         try:
+            if not pdf_path or not os.path.exists(pdf_path):
+                return
+
+            if not isinstance(keep_pages_1based, list) or not keep_pages_1based:
+                return
+
             reader = PdfReader(pdf_path)
-            if len(reader.pages) <= 1:
+            total = len(reader.pages)
+
+            if total <= 0:
+                return
+
+            # Convertir a índices 0-based válidos y únicos, preservando orden
+            keep_zero = []
+            seen = set()
+            for p in keep_pages_1based:
+                try:
+                    p_int = int(p)
+                except Exception:
+                    continue
+
+                idx = p_int - 1  # 1-based -> 0-based
+                if idx < 0 or idx >= total:
+                    continue
+                if idx in seen:
+                    continue
+                seen.add(idx)
+                keep_zero.append(idx)
+
+            # Si no quedó ninguna válida, no tocar el PDF
+            if not keep_zero:
                 return
 
             writer = PdfWriter()
+            for idx in keep_zero:
+                writer.add_page(reader.pages[idx])
 
-            for page in reader.pages:
-                txt = ""
-                try:
-                    txt = (page.extract_text() or "").strip()
-                except Exception:
-                    txt = ""
-
-                # Heurística conservadora: si no hay texto, se considera "blank"
-                if txt == "":
-                    continue
-
-                writer.add_page(page)
-
-            # Si por algún motivo todo quedó vacío, no destruir el PDF original
-            if len(writer.pages) == 0:
-                return
-
-            tmp_out = pdf_path + ".cleaned.tmp"
+            # Guardar reemplazando el original (in-place)
+            tmp_out = pdf_path + ".pages.tmp"
             with open(tmp_out, "wb") as f:
                 writer.write(f)
 
             os.replace(tmp_out, pdf_path)
 
         except Exception:
-            # Nunca bloquear generación por limpieza
+            # Nunca bloquear el flujo por este post-proceso
             return
 
     # =========================================================
