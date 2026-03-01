@@ -22,9 +22,6 @@ class VesselBunkerExcelGenerator:
     # ORDEN = FILAS EN LA HOJA "Data from DB"
     # =========================================================
     COLUMN_ORDER = [
-        # ===========================
-        # CORE INFO
-        # ===========================
         "id",
         "bunker_cert_no",
         "ship_name",
@@ -138,7 +135,7 @@ class VesselBunkerExcelGenerator:
 
         ws = wb["Data from DB"]
 
-        start_row = 2  # B2 hacia abajo
+        start_row = 2
 
         for idx, field_name in enumerate(self.COLUMN_ORDER):
 
@@ -160,14 +157,34 @@ class VesselBunkerExcelGenerator:
     # GENERATE PREVIEW (NO DB — VISUALIZAR DESDE FORM)
     # =========================================================
     def generate_preview(self, payload: dict) -> str:
-        """
-        Genera el Excel usando los datos actuales del form.
-        No consulta base de datos.
-        Usa exactamente la misma lógica que generate().
-        """
 
         if not isinstance(payload, dict):
             raise ValueError("Invalid payload for preview.")
 
-        # 🔥 Reutiliza la misma lógica exacta
         return self.generate(payload)
+
+
+# =========================================================
+# SERVICE WRAPPER (🔥 ESTO ERA LO QUE FALTABA)
+# =========================================================
+class VesselBunkerExcelService:
+    """
+    Wrapper service requerido por el router.
+    No toca DB.
+    Solo usa el generator.
+    """
+
+    def __init__(self):
+        self.generator = VesselBunkerExcelGenerator()
+
+    def generate_excel_from_payload(self, payload: dict) -> str:
+
+        if not isinstance(payload, dict):
+            raise ValueError("Invalid payload for Excel preview")
+
+        file_path = self.generator.generate_preview(payload)
+
+        if not file_path or not os.path.exists(file_path):
+            raise Exception("Excel file was not generated")
+
+        return file_path
