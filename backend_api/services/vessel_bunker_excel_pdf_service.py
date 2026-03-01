@@ -15,7 +15,7 @@ class VesselBunkerExcelPdfService:
     ]
 
     # =========================================================
-    # MAIN ENTRY
+    # MAIN
     # =========================================================
     def generate_pdf_from_excel(self, excel_path: str) -> str:
 
@@ -25,74 +25,72 @@ class VesselBunkerExcelPdfService:
         if not os.path.exists(excel_path):
             raise FileNotFoundError(f"Excel file not found: {excel_path}")
 
-        # 🔥 PASO 1 — PREPARAR EXCEL COMPLETAMENTE
-        self._prepare_excel_for_pdf(excel_path)
+        # 🔥 PASO 1 — CONGELAR FÓRMULAS CON VALORES CACHEADOS
+        self._freeze_formulas_with_cached_values(excel_path)
 
-        # 🔥 PASO 2 — CONVERTIR A PDF
-        pdf_path = self._convert_excel_to_pdf(excel_path)
+        # 🔥 PASO 2 — PREPARAR IMPRESIÓN
+        self._prepare_print(excel_path)
 
-        if not pdf_path or not os.path.exists(pdf_path):
-            raise RuntimeError("PDF conversion failed.")
-
-        return pdf_path
+        # 🔥 PASO 3 — CONVERTIR
+        return self._convert_excel_to_pdf(excel_path)
 
     # =========================================================
-    # PREPARE EXCEL
+    # FREEZE FORMULAS
     # =========================================================
-    def _prepare_excel_for_pdf(self, excel_path: str):
+    def _freeze_formulas_with_cached_values(self, excel_path: str):
+
+        wb_values = load_workbook(excel_path, data_only=True)
+        wb_formulas = load_workbook(excel_path)
+
+        for sheet_name in self.REQUIRED_SHEETS_ORDER:
+
+            if sheet_name not in wb_formulas.sheetnames:
+                continue
+
+            ws_values = wb_values[sheet_name]
+            ws_formulas = wb_formulas[sheet_name]
+
+            for row in ws_formulas.iter_rows():
+                for cell in row:
+                    if cell.data_type == "f":
+                        cached_value = ws_values[cell.coordinate].value
+
+                        # 🔥 FORZAR VALOR SI EXISTE
+                        if cached_value is not None:
+                            cell.value = cached_value
+                        else:
+                            # si no hay valor cacheado, dejar 0 en vez de #NAME?
+                            cell.value = 0
+
+        wb_formulas.save(excel_path)
+        wb_formulas.close()
+        wb_values.close()
+
+    # =========================================================
+    # PREPARE PRINT
+    # =========================================================
+    def _prepare_print(self, excel_path: str):
 
         wb = load_workbook(excel_path)
 
-        # 🔥 FORZAR RECÁLCULO AL ABRIR
-        wb.calculation.fullCalcOnLoad = True
-        wb.calculation.forceFullCalc = True
-
-        # 🔥 ELIMINAR HOJAS NO REQUERIDAS
+        # eliminar hojas no necesarias
         for sheet in list(wb.sheetnames):
             if sheet not in self.REQUIRED_SHEETS_ORDER:
                 wb.remove(wb[sheet])
 
-        # 🔥 REORDENAR
-        for i, name in enumerate(self.REQUIRED_SHEETS_ORDER):
-            if name in wb.sheetnames:
-                wb._sheets.insert(i, wb._sheets.pop(wb.sheetnames.index(name)))
+        for ws in wb.worksheets:
 
-        # 🔥 CONFIGURAR CADA HOJA
-        for sheet_name in self.REQUIRED_SHEETS_ORDER:
-
-            ws = wb[sheet_name]
-
-            # --------------------------------------------------
-            # CONSTRUIR PRINT AREA DESDE A1 HASTA ÚLTIMA CELDA
-            # --------------------------------------------------
             max_row = ws.max_row
             max_col = ws.max_column
-
-            if max_row < 1:
-                max_row = 1
-            if max_col < 1:
-                max_col = 1
 
             last_cell = ws.cell(row=max_row, column=max_col).coordinate
             ws.print_area = f"A1:{last_cell}"
 
-            # --------------------------------------------------
-            # ORIENTACIÓN VERTICAL
-            # --------------------------------------------------
             ws.page_setup.orientation = ws.ORIENTATION_PORTRAIT
-
-            # --------------------------------------------------
-            # 🔥 FORZAR A 1 SOLA PÁGINA
-            # --------------------------------------------------
             ws.page_setup.fitToWidth = 1
             ws.page_setup.fitToHeight = 1
+            ws.page_setup.scale = 70
 
-            # 🔥 ESCALA REDUCIDA LIGERAMENTE
-            ws.page_setup.scale = 85  # puedes probar 80 si aún divide
-
-            # --------------------------------------------------
-            # MÁRGENES MÍNIMOS
-            # --------------------------------------------------
             ws.page_margins = PageMargins(
                 left=0.15,
                 right=0.15,
@@ -101,10 +99,6 @@ class VesselBunkerExcelPdfService:
                 header=0.1,
                 footer=0.1
             )
-
-            # NO centrar horizontalmente
-            ws.page_setup.horizontalCentered = False
-            ws.page_setup.verticalCentered = False
 
         wb.save(excel_path)
         wb.close()
@@ -119,11 +113,6 @@ class VesselBunkerExcelPdfService:
         command = [
             "soffice",
             "--headless",
-            "--nologo",
-            "--nodefault",
-            "--nolockcheck",
-            "--nofirststartwizard",
-            "--norestore",
             "--convert-to",
             "pdf",
             excel_path,
@@ -139,13 +128,11 @@ class VesselBunkerExcelPdfService:
         )
 
         if result.returncode != 0:
-            raise RuntimeError(
-                f"LibreOffice conversion failed:\n{result.stderr}"
-            )
+            raise RuntimeError(result.stderr)
 
         pdf_files = list(Path(output_dir).glob("*.pdf"))
 
         if not pdf_files:
-            raise RuntimeError("PDF was not created.")
+            raise RuntimeError("PDF not created.")
 
         return str(pdf_files[0])
