@@ -25,10 +25,10 @@ class VesselBunkerExcelPdfService:
         if not os.path.exists(excel_path):
             raise FileNotFoundError(f"Excel file not found: {excel_path}")
 
-        # 1️⃣ Preparar workbook profesionalmente
-        self._prepare_workbook_for_pdf(excel_path)
+        # 🔥 PASO 1 — PREPARAR EXCEL COMPLETAMENTE
+        self._prepare_excel_for_pdf(excel_path)
 
-        # 2️⃣ Convertir a PDF
+        # 🔥 PASO 2 — CONVERTIR A PDF
         pdf_path = self._convert_excel_to_pdf(excel_path)
 
         if not pdf_path or not os.path.exists(pdf_path):
@@ -37,17 +37,17 @@ class VesselBunkerExcelPdfService:
         return pdf_path
 
     # =========================================================
-    # PREPARE WORKBOOK (KEEP FORMULAS + FORCE RECALC)
+    # PREPARE EXCEL
     # =========================================================
-    def _prepare_workbook_for_pdf(self, excel_path: str):
+    def _prepare_excel_for_pdf(self, excel_path: str):
 
         wb = load_workbook(excel_path)
 
-        # 🔥 FORZAR RECALCULO EN LIBREOFFICE
+        # 🔥 FORZAR RECÁLCULO AL ABRIR
         wb.calculation.fullCalcOnLoad = True
         wb.calculation.forceFullCalc = True
 
-        # 🔥 ELIMINAR HOJAS QUE NO NECESITAS
+        # 🔥 ELIMINAR HOJAS NO REQUERIDAS
         for sheet in list(wb.sheetnames):
             if sheet not in self.REQUIRED_SHEETS_ORDER:
                 wb.remove(wb[sheet])
@@ -60,15 +60,11 @@ class VesselBunkerExcelPdfService:
         # 🔥 CONFIGURAR CADA HOJA
         for sheet_name in self.REQUIRED_SHEETS_ORDER:
 
-            if sheet_name not in wb.sheetnames:
-                continue
-
             ws = wb[sheet_name]
 
-            # ----------------------------------------------
-            # CONSTRUIR PRINT AREA RESPETANDO DISEÑO
-            # ----------------------------------------------
-
+            # --------------------------------------------------
+            # CONSTRUIR PRINT AREA DESDE A1 HASTA ÚLTIMA CELDA
+            # --------------------------------------------------
             max_row = ws.max_row
             max_col = ws.max_column
 
@@ -78,32 +74,35 @@ class VesselBunkerExcelPdfService:
                 max_col = 1
 
             last_cell = ws.cell(row=max_row, column=max_col).coordinate
-
-            # Desde A1 hasta última celda real
             ws.print_area = f"A1:{last_cell}"
 
-            # ----------------------------------------------
+            # --------------------------------------------------
             # ORIENTACIÓN VERTICAL
-            # ----------------------------------------------
+            # --------------------------------------------------
             ws.page_setup.orientation = ws.ORIENTATION_PORTRAIT
-            ws.page_setup.fitToWidth = 1
-            ws.page_setup.fitToHeight = False
 
-            # ----------------------------------------------
-            # MÁRGENES MÍNIMOS PARA ALINEAR IZQUIERDA
-            # ----------------------------------------------
+            # --------------------------------------------------
+            # 🔥 FORZAR A 1 SOLA PÁGINA
+            # --------------------------------------------------
+            ws.page_setup.fitToWidth = 1
+            ws.page_setup.fitToHeight = 1
+
+            # 🔥 ESCALA REDUCIDA LIGERAMENTE
+            ws.page_setup.scale = 85  # puedes probar 80 si aún divide
+
+            # --------------------------------------------------
+            # MÁRGENES MÍNIMOS
+            # --------------------------------------------------
             ws.page_margins = PageMargins(
-                left=0.2,
-                right=0.2,
-                top=0.3,
-                bottom=0.3,
+                left=0.15,
+                right=0.15,
+                top=0.25,
+                bottom=0.25,
                 header=0.1,
                 footer=0.1
             )
 
-            # ----------------------------------------------
-            # CENTRADO SOLO HORIZONTAL (DESACTIVADO)
-            # ----------------------------------------------
+            # NO centrar horizontalmente
             ws.page_setup.horizontalCentered = False
             ws.page_setup.verticalCentered = False
 
@@ -111,7 +110,7 @@ class VesselBunkerExcelPdfService:
         wb.close()
 
     # =========================================================
-    # CONVERT USING LIBREOFFICE
+    # CONVERT
     # =========================================================
     def _convert_excel_to_pdf(self, excel_path: str) -> str:
 
