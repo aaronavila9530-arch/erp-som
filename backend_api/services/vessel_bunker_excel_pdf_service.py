@@ -3,6 +3,7 @@ import tempfile
 import subprocess
 from pathlib import Path
 from openpyxl import load_workbook
+from openpyxl.worksheet.page import PageMargins
 
 
 class VesselBunkerExcelPdfService:
@@ -24,8 +25,8 @@ class VesselBunkerExcelPdfService:
         if not os.path.exists(excel_path):
             raise FileNotFoundError(f"Excel file not found: {excel_path}")
 
-        # 1️⃣ Reemplazar fórmulas por valores
-        self._freeze_formulas_to_values(excel_path)
+        # 1️⃣ Preparar workbook profesionalmente
+        self._prepare_workbook_for_pdf(excel_path)
 
         # 2️⃣ Convertir a PDF
         pdf_path = self._convert_excel_to_pdf(excel_path)
@@ -36,31 +37,78 @@ class VesselBunkerExcelPdfService:
         return pdf_path
 
     # =========================================================
-    # FREEZE FORMULAS
+    # PREPARE WORKBOOK (KEEP FORMULAS + FORCE RECALC)
     # =========================================================
-    def _freeze_formulas_to_values(self, excel_path: str):
+    def _prepare_workbook_for_pdf(self, excel_path: str):
 
-        wb_values = load_workbook(excel_path, data_only=True)
-        wb_formulas = load_workbook(excel_path)
+        wb = load_workbook(excel_path)
 
+        # 🔥 FORZAR RECALCULO EN LIBREOFFICE
+        wb.calculation.fullCalcOnLoad = True
+        wb.calculation.forceFullCalc = True
+
+        # 🔥 ELIMINAR HOJAS QUE NO NECESITAS
+        for sheet in list(wb.sheetnames):
+            if sheet not in self.REQUIRED_SHEETS_ORDER:
+                wb.remove(wb[sheet])
+
+        # 🔥 REORDENAR
+        for i, name in enumerate(self.REQUIRED_SHEETS_ORDER):
+            if name in wb.sheetnames:
+                wb._sheets.insert(i, wb._sheets.pop(wb.sheetnames.index(name)))
+
+        # 🔥 CONFIGURAR CADA HOJA
         for sheet_name in self.REQUIRED_SHEETS_ORDER:
 
-            if sheet_name not in wb_formulas.sheetnames:
+            if sheet_name not in wb.sheetnames:
                 continue
 
-            ws_values = wb_values[sheet_name]
-            ws_formulas = wb_formulas[sheet_name]
+            ws = wb[sheet_name]
 
-            for row in ws_formulas.iter_rows():
-                for cell in row:
+            # ----------------------------------------------
+            # CONSTRUIR PRINT AREA RESPETANDO DISEÑO
+            # ----------------------------------------------
 
-                    if cell.data_type == "f":
-                        value = ws_values[cell.coordinate].value
-                        cell.value = value
+            max_row = ws.max_row
+            max_col = ws.max_column
 
-        wb_formulas.save(excel_path)
-        wb_formulas.close()
-        wb_values.close()
+            if max_row < 1:
+                max_row = 1
+            if max_col < 1:
+                max_col = 1
+
+            last_cell = ws.cell(row=max_row, column=max_col).coordinate
+
+            # Desde A1 hasta última celda real
+            ws.print_area = f"A1:{last_cell}"
+
+            # ----------------------------------------------
+            # ORIENTACIÓN VERTICAL
+            # ----------------------------------------------
+            ws.page_setup.orientation = ws.ORIENTATION_PORTRAIT
+            ws.page_setup.fitToWidth = 1
+            ws.page_setup.fitToHeight = False
+
+            # ----------------------------------------------
+            # MÁRGENES MÍNIMOS PARA ALINEAR IZQUIERDA
+            # ----------------------------------------------
+            ws.page_margins = PageMargins(
+                left=0.2,
+                right=0.2,
+                top=0.3,
+                bottom=0.3,
+                header=0.1,
+                footer=0.1
+            )
+
+            # ----------------------------------------------
+            # CENTRADO SOLO HORIZONTAL (DESACTIVADO)
+            # ----------------------------------------------
+            ws.page_setup.horizontalCentered = False
+            ws.page_setup.verticalCentered = False
+
+        wb.save(excel_path)
+        wb.close()
 
     # =========================================================
     # CONVERT USING LIBREOFFICE
@@ -73,7 +121,10 @@ class VesselBunkerExcelPdfService:
             "soffice",
             "--headless",
             "--nologo",
+            "--nodefault",
+            "--nolockcheck",
             "--nofirststartwizard",
+            "--norestore",
             "--convert-to",
             "pdf",
             excel_path,
@@ -81,21 +132,21 @@ class VesselBunkerExcelPdfService:
             output_dir
         ]
 
-        try:
-            subprocess.run(
-                command,
-                check=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE
-            )
-        except subprocess.CalledProcessError as e:
-            raise RuntimeError(
-                f"LibreOffice conversion failed:\n{e.stderr.decode(errors='ignore')}"
-            )
-
-        pdf_path = os.path.join(
-            output_dir,
-            f"{Path(excel_path).stem}.pdf"
+        result = subprocess.run(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
         )
 
-        return pdf_path
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"LibreOffice conversion failed:\n{result.stderr}"
+            )
+
+        pdf_files = list(Path(output_dir).glob("*.pdf"))
+
+        if not pdf_files:
+            raise RuntimeError("PDF was not created.")
+
+        return str(pdf_files[0])
