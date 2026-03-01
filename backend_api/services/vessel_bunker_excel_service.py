@@ -53,13 +53,9 @@ class VesselBunkerExcelGenerator:
         "draft_aft",
         "trim",
         "list",
-
-        # ==================================
-        # TANKS / TOTALS / LOG / CONSUMPTION
-        # ==================================
     ]
 
-    # Agregamos dinámicamente tanques VLSFO 1–20
+    # VLSFO 1–20
     for i in range(1, 21):
         COLUMN_ORDER.extend([
             f"vlsfo_tank_{i}_name",
@@ -94,9 +90,7 @@ class VesselBunkerExcelGenerator:
             f"bunker_figure_{i}_lsmgo",
         ])
 
-    # ==================================
     # EXTRA FIELDS
-    # ==================================
     COLUMN_ORDER.extend([
         "antecedent_arrived_dt",
         "antecedent_survey_date_from",
@@ -116,11 +110,9 @@ class VesselBunkerExcelGenerator:
         if value in [None, ""]:
             return
 
-        # Booleanos
         if isinstance(value, bool):
             value = "YES" if value else "NO"
 
-        # Intentar convertir numérico
         try:
             if isinstance(value, str):
                 v = value.replace(",", ".")
@@ -132,7 +124,7 @@ class VesselBunkerExcelGenerator:
         ws[cell].value = value
 
     # =========================================================
-    # GENERATE
+    # GENERATE (OFICIAL)
     # =========================================================
     def generate(self, payload: dict) -> str:
 
@@ -163,3 +155,19 @@ class VesselBunkerExcelGenerator:
         wb.save(tmp_path)
 
         return tmp_path
+
+    # =========================================================
+    # GENERATE PREVIEW (NO DB — VISUALIZAR DESDE FORM)
+    # =========================================================
+    def generate_preview(self, payload: dict) -> str:
+        """
+        Genera el Excel usando los datos actuales del form.
+        No consulta base de datos.
+        Usa exactamente la misma lógica que generate().
+        """
+
+        if not isinstance(payload, dict):
+            raise ValueError("Invalid payload for preview.")
+
+        # 🔥 Reutiliza la misma lógica exacta
+        return self.generate(payload)

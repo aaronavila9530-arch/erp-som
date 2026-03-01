@@ -74,6 +74,7 @@ from routers.draft_survey_final_router import router as draft_survey_final_route
 from routers.vessel_bunker_reports_router import router as vessel_bunker_reports_router
 from routers.vessel_bunker_excel_router import router as vessel_bunker_excel_router
 from routers.vessel_bunker_presentation_router import router as vessel_bunker_presentation_router
+from routers.vessel_bunker_preview_router import router as vessel_bunker_preview_router
 
 # Comercial
 from routers.comercial import router as comercial_router
@@ -227,6 +228,7 @@ app.include_router(draft_survey_final_router)
 app.include_router(vessel_bunker_reports_router)
 app.include_router(vessel_bunker_excel_router)
 app.include_router(vessel_bunker_presentation_router)
+app.include_router(vessel_bunker_preview_router)
 
 app.include_router(comercial_router)
 app.include_router(comercial_clients_analytics_router)
