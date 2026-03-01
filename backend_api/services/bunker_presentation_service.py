@@ -2,6 +2,7 @@ import os
 import tempfile
 import subprocess
 from typing import Dict
+from datetime import datetime
 from docx import Document
 
 
@@ -95,7 +96,21 @@ def generate_bunker_presentation_pdf(data: dict) -> str:
         )
 
     # -------------------------------------------------
-    # NORMALIZE DATES (si vienen con hora)
+    # DATE FORMATTER → January 13 2026
+    # -------------------------------------------------
+    def format_long_date(value):
+        if not value:
+            return ""
+
+        try:
+            s = str(value).split(" ")[0]
+            dt = datetime.strptime(s, "%Y-%m-%d")
+            return dt.strftime("%B %d %Y")
+        except Exception:
+            return str(value)
+
+    # -------------------------------------------------
+    # NORMAL DATE (fallback raw yyyy-mm-dd)
     # -------------------------------------------------
     def norm_date(v):
         if not v:
@@ -104,35 +119,52 @@ def generate_bunker_presentation_pdf(data: dict) -> str:
         return s.split(" ")[0] if " " in s else s
 
     # -------------------------------------------------
+    # CERTIFICATE FORMAT (replace _ with space + uppercase)
+    # -------------------------------------------------
+    def format_certificate(v):
+        if not v:
+            return ""
+        return str(v).replace("_", " ").upper()
+
+    # -------------------------------------------------
+    # SAFE VALUE
+    # -------------------------------------------------
+    def safe_str(v):
+        return str(v) if v is not None else ""
+
+    # -------------------------------------------------
     # PLACEHOLDERS MAP
-    # ✅ ESTAS SON LAS LLAVES {} QUE TIENEN QUE EXISTIR EN EL DOCX
     # -------------------------------------------------
     placeholders = {
 
-        # Identificadores principales (recomendado)
-        "{bunker_cert_no}": str(data.get("bunker_cert_no") or ""),
-        "{ship_name}": str(data.get("ship_name") or ""),
-        "{report_date}": norm_date(data.get("report_date")),
+        # Identificadores principales
+        "{bunker_cert_no}": safe_str(data.get("bunker_cert_no")),
+        "{ship_name}": safe_str(data.get("ship_name")),
 
-        # Datos típicos del certificado
-        "{port_of_registry}": str(data.get("port_of_registry") or ""),
-        "{gross_tonnage}": str(data.get("gross_tonnage") or ""),
-        "{certificate}": str(data.get("certificate") or ""),
-        "{report_category}": str(data.get("report_category") or ""),
+        # Fecha principal en formato largo
+        "{report_date}": format_long_date(data.get("report_date")),
+
+        # Certificado con _ reemplazado
+        "{certificate}": format_certificate(data.get("certificate")),
+
+        # Datos técnicos
+        "{gross_tonnage}": safe_str(data.get("gross_tonnage")),
+        "{port_of_registry}": safe_str(data.get("port_of_registry")),
+        "{report_category}": safe_str(data.get("report_category")),
 
         # Cliente / ubicación
-        "{client}": str(data.get("client") or ""),
-        "{port}": str(data.get("port") or ""),
-        "{country}": str(data.get("country") or ""),
+        "{client}": safe_str(data.get("client")),
+        "{port}": safe_str(data.get("port")),
+        "{country}": safe_str(data.get("country")),
 
-        # Fechas operativas
-        "{berthing_date}": norm_date(data.get("berthing_date")),
-        "{commenced_date}": norm_date(data.get("commenced_date")),
+        # Fechas operativas en formato largo
+        "{berthing_date}": format_long_date(data.get("berthing_date")),
+        "{commenced_date}": format_long_date(data.get("commenced_date")),
 
-        # DSLOP (si aplica)
-        "{dslop_date}": norm_date(data.get("dslop_date")),
-        "{dslop_port}": str(data.get("dslop_port") or ""),
-        "{dslop_country}": str(data.get("dslop_country") or ""),
+        # DSLOP
+        "{dslop_date}": format_long_date(data.get("dslop_date")),
+        "{dslop_port}": safe_str(data.get("dslop_port")),
+        "{dslop_country}": safe_str(data.get("dslop_country")),
     }
 
     # -------------------------------------------------
