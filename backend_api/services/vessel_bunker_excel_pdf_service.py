@@ -4,6 +4,7 @@ import subprocess
 from pathlib import Path
 
 from openpyxl import load_workbook
+from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.page import PageMargins
 
 
@@ -89,10 +90,17 @@ class VesselBunkerExcelPdfService:
                     current_pa = None
 
                 if not current_pa or "#N/A" in str(current_pa):
-                    max_row = max(ws.max_row or 1, 1)
-                    max_col = max(ws.max_column or 1, 1)
-                    last_cell = ws.cell(row=max_row, column=max_col).coordinate
-                    self._safe_set_print_area(wb, ws, f"A1:{last_cell}")
+                    # 🔥 FIX: do NOT use ws.max_row/max_column (can include formatted/empty rows)
+                    # Instead detect last REAL cell with value so CERTIFICATE doesn't create blank page 2.
+                    area = self._calc_real_print_area(ws)
+                    self._safe_set_print_area(wb, ws, area)
+
+                # 🔥 Ensure no manual page breaks force an extra blank page
+                try:
+                    ws.row_breaks = []
+                    ws.col_breaks = []
+                except Exception:
+                    pass
 
                 # --- Page setup: 1 page only ---
                 ws.page_setup.orientation = ws.ORIENTATION_PORTRAIT
@@ -119,6 +127,36 @@ class VesselBunkerExcelPdfService:
 
         finally:
             wb.close()
+
+    # =========================================================
+    # Compute print area based on REAL content (values only)
+    # =========================================================
+    def _calc_real_print_area(self, ws) -> str:
+        """
+        Returns an A1:?? range based on the last cell that truly has a value.
+        This prevents "phantom" rows/cols (formatting/old content) from expanding print area
+        and creating a blank second page (common on CERTIFICATE templates).
+        """
+        last_row = 1
+        last_col = 1
+
+        for row in ws.iter_rows():
+            for cell in row:
+                v = cell.value
+                if v is None:
+                    continue
+                if isinstance(v, str) and v.strip() == "":
+                    continue
+
+                if cell.row > last_row:
+                    last_row = cell.row
+                if cell.column > last_col:
+                    last_col = cell.column
+
+        col_letter = get_column_letter(max(1, last_col))
+        last_row = max(1, last_row)
+
+        return f"A1:{col_letter}{last_row}"
 
     # =========================================================
     # Remove/repair invalid Print_Area defined name (#N/A)
