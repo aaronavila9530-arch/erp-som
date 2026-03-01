@@ -7,6 +7,9 @@ from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.page import PageMargins
 
+# ✅ SOLO TOCADO PARA QUITAR HOJAS EN BLANCO EN EL PDF
+from pypdf import PdfReader, PdfWriter
+
 
 class VesselBunkerExcelPdfService:
 
@@ -41,6 +44,9 @@ class VesselBunkerExcelPdfService:
 
         if not pdf_path or not os.path.exists(pdf_path):
             raise RuntimeError("PDF generation failed")
+
+        # ✅ SOLO: remover páginas en blanco inyectadas por LibreOffice
+        self._remove_blank_pages_inplace(pdf_path)
 
         return pdf_path
 
@@ -230,6 +236,49 @@ class VesselBunkerExcelPdfService:
             ws.print_area = area
         except Exception:
             # As a fallback, don't block PDF generation
+            return
+
+    # =========================================================
+    # ✅ REMOVE BLANK PAGES (LibreOffice injected)
+    # =========================================================
+    def _remove_blank_pages_inplace(self, pdf_path: str):
+        """
+        Removes truly blank pages injected by LibreOffice during XLSX->PDF conversion.
+        Keeps pages that have text; drops pages with effectively no text.
+        """
+
+        try:
+            reader = PdfReader(pdf_path)
+            if len(reader.pages) <= 1:
+                return
+
+            writer = PdfWriter()
+
+            for page in reader.pages:
+                txt = ""
+                try:
+                    txt = (page.extract_text() or "").strip()
+                except Exception:
+                    txt = ""
+
+                # Heurística conservadora: si no hay texto, se considera "blank"
+                if txt == "":
+                    continue
+
+                writer.add_page(page)
+
+            # Si por algún motivo todo quedó vacío, no destruir el PDF original
+            if len(writer.pages) == 0:
+                return
+
+            tmp_out = pdf_path + ".cleaned.tmp"
+            with open(tmp_out, "wb") as f:
+                writer.write(f)
+
+            os.replace(tmp_out, pdf_path)
+
+        except Exception:
+            # Nunca bloquear generación por limpieza
             return
 
     # =========================================================
