@@ -105,7 +105,7 @@ class VesselBunkerExcelPdfService:
                 # --- Page setup: 1 page only ---
                 ws.page_setup.orientation = ws.ORIENTATION_PORTRAIT
                 ws.page_setup.fitToWidth = 1
-                ws.page_setup.fitToHeight = 1  # 🔥 forces ONLY page 1
+                ws.page_setup.fitToHeight = False  # 🔥 forces ONLY page 1
 
                 # Scale per sheet (Excel uses either fitTo* or scale; we keep both set)
                 ws.page_setup.scale = int(self.SCALE_MAP.get(ws.title, 80))
