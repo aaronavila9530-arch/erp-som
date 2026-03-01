@@ -1,14 +1,11 @@
 import os
 import tempfile
+import subprocess
 from pathlib import Path
-import win32com.client
+from openpyxl import load_workbook
 
 
 class VesselBunkerExcelPdfService:
-    """
-    Genera PDF usando Excel real (NO LibreOffice)
-    Respeta print_area, márgenes, fórmulas y layout exacto.
-    """
 
     REQUIRED_SHEETS_ORDER = [
         "CERTIFICATE",
@@ -27,61 +24,78 @@ class VesselBunkerExcelPdfService:
         if not os.path.exists(excel_path):
             raise FileNotFoundError(f"Excel file not found: {excel_path}")
 
+        # 1️⃣ Reemplazar fórmulas por valores
+        self._freeze_formulas_to_values(excel_path)
+
+        # 2️⃣ Convertir a PDF
+        pdf_path = self._convert_excel_to_pdf(excel_path)
+
+        if not pdf_path or not os.path.exists(pdf_path):
+            raise RuntimeError("PDF conversion failed.")
+
+        return pdf_path
+
+    # =========================================================
+    # FREEZE FORMULAS
+    # =========================================================
+    def _freeze_formulas_to_values(self, excel_path: str):
+
+        wb_values = load_workbook(excel_path, data_only=True)
+        wb_formulas = load_workbook(excel_path)
+
+        for sheet_name in self.REQUIRED_SHEETS_ORDER:
+
+            if sheet_name not in wb_formulas.sheetnames:
+                continue
+
+            ws_values = wb_values[sheet_name]
+            ws_formulas = wb_formulas[sheet_name]
+
+            for row in ws_formulas.iter_rows():
+                for cell in row:
+
+                    if cell.data_type == "f":
+                        value = ws_values[cell.coordinate].value
+                        cell.value = value
+
+        wb_formulas.save(excel_path)
+        wb_formulas.close()
+        wb_values.close()
+
+    # =========================================================
+    # CONVERT USING LIBREOFFICE
+    # =========================================================
+    def _convert_excel_to_pdf(self, excel_path: str) -> str:
+
         output_dir = tempfile.mkdtemp(prefix="bunker_pdf_")
+
+        command = [
+            "soffice",
+            "--headless",
+            "--nologo",
+            "--nofirststartwizard",
+            "--convert-to",
+            "pdf",
+            excel_path,
+            "--outdir",
+            output_dir
+        ]
+
+        try:
+            subprocess.run(
+                command,
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(
+                f"LibreOffice conversion failed:\n{e.stderr.decode(errors='ignore')}"
+            )
+
         pdf_path = os.path.join(
             output_dir,
             f"{Path(excel_path).stem}.pdf"
         )
-
-        excel = None
-        workbook = None
-
-        try:
-            excel = win32com.client.Dispatch("Excel.Application")
-            excel.Visible = False
-            excel.DisplayAlerts = False
-
-            workbook = excel.Workbooks.Open(os.path.abspath(excel_path))
-
-            # 🔥 FORZAR RECALCULO COMPLETO
-            excel.CalculateFull()
-            workbook.RefreshAll()
-
-            # 🔥 SOLO EXPORTAR LAS 3 HOJAS
-            sheets = workbook.Sheets
-
-            sheet_indexes = []
-
-            for i in range(1, sheets.Count + 1):
-                name = sheets(i).Name
-                if name in self.REQUIRED_SHEETS_ORDER:
-                    sheet_indexes.append(i)
-
-            if not sheet_indexes:
-                raise ValueError("Required sheets not found in workbook.")
-
-            workbook.WorkSheets(sheet_indexes).Select()
-
-            # 🔥 EXPORTAR COMO PDF USANDO MOTOR EXCEL
-            workbook.ActiveSheet.ExportAsFixedFormat(
-                0,  # 0 = PDF
-                pdf_path,
-                Quality=0,
-                IncludeDocProperties=True,
-                IgnorePrintAreas=False,
-                OpenAfterPublish=False
-            )
-
-        except Exception as e:
-            raise RuntimeError(f"Excel PDF export failed: {str(e)}")
-
-        finally:
-            if workbook:
-                workbook.Close(False)
-            if excel:
-                excel.Quit()
-
-        if not os.path.exists(pdf_path):
-            raise RuntimeError("PDF file was not created.")
 
         return pdf_path
