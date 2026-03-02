@@ -1,6 +1,6 @@
 import os
 import tempfile
-from datetime import datetime
+from datetime import datetime, date
 from docx import Document
 
 
@@ -85,12 +85,16 @@ class VesselCargoConditionWordService:
         if value is None:
             return ""
 
+        # Native datetime/date from psycopg2
+        if isinstance(value, (datetime, date)):
+            return value.strftime("%B %d %Y")
+
         if isinstance(value, str):
             value = value.strip()
 
-            # Detect yyyy-mm-dd
+            # Try ISO date (yyyy-mm-dd or yyyy-mm-dd HH:MM:SS)
             try:
-                dt = datetime.strptime(value, "%Y-%m-%d")
+                dt = datetime.strptime(value[:10], "%Y-%m-%d")
                 return dt.strftime("%B %d %Y")
             except Exception:
                 pass
@@ -159,29 +163,29 @@ class VesselCargoConditionWordService:
                             )
 
     # =========================================================
-    # SPLIT-RUN SAFE REPLACEMENT
+    # SPLIT-RUN SAFE REPLACEMENT (NO FORMAT DESTRUCTION)
     # =========================================================
     def _replace_in_paragraph_full(self, paragraph, placeholders: dict):
 
-        if not paragraph.text:
+        if not paragraph.runs:
             return
 
-        text = paragraph.text
-        replaced = False
+        full_text = "".join(run.text for run in paragraph.runs)
+        new_text = full_text
 
         for placeholder, value in placeholders.items():
-            if placeholder in text:
-                text = text.replace(placeholder, value)
-                replaced = True
+            if placeholder in new_text:
+                new_text = new_text.replace(placeholder, value)
 
-        if replaced:
-            for run in paragraph.runs:
-                run.text = ""
+        if new_text == full_text:
+            return
 
-            if paragraph.runs:
-                paragraph.runs[0].text = text
-            else:
-                paragraph.add_run(text)
+        # Preserve formatting of first run only
+        paragraph.runs[0].text = new_text
+
+        # Clear remaining runs without removing paragraph structure
+        for run in paragraph.runs[1:]:
+            run.text = ""
 
     # =========================================================
     # REMOVE NULL BULLET LINES
