@@ -197,3 +197,5 @@ class VesselCargoConditionWordService:
         p = paragraph._element
         p.getparent().remove(p)
         paragraph._p = paragraph._element = None
+
+
