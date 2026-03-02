@@ -7,13 +7,16 @@ from psycopg2 import sql
 # =========================================================
 DATABASE_URL = "postgresql://postgres:IrPzbLzKJFQtUnMlBKcHLHcLIAqagHCT@tramway.proxy.rlwy.net:15258/railway"
 TABLE_NAME = "vessel_cargo_condition_surveys"
-COLUMN_NAME = "link_picture"
+COLUMN_NAME = "cargo_type"
 
 
 # =========================================================
 # MAIN
 # =========================================================
 def main():
+    conn = None
+    cur = None
+
     try:
         print("🔌 Connecting to database...")
         conn = psycopg2.connect(DATABASE_URL)
@@ -48,12 +51,17 @@ def main():
             conn.commit()
             print("✅ Column created successfully.")
 
-        cur.close()
-        conn.close()
-        print("🔒 Connection closed.")
-
     except Exception as e:
+        if conn:
+            conn.rollback()
         print("❌ ERROR:", str(e))
+
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
+        print("🔒 Connection closed.")
 
 
 if __name__ == "__main__":

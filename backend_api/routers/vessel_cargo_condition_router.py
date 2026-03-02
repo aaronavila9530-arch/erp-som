@@ -1,6 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException
 from datetime import datetime
 from typing import Dict, Any
+import os
+
+from fastapi.responses import FileResponse
+from services.vessel_cargo_condition_word_service import (
+    VesselCargoConditionWordService
+)
 
 from database import get_db
 
@@ -16,13 +22,6 @@ TABLE_NAME = "vessel_cargo_condition_surveys"
 # UTIL
 # =========================================================
 def normalize_status(incoming_status: str | None) -> str:
-    """
-    POST rules:
-    - Always start as Pending for review
-    - If frontend explicitly sends Approved → Approved
-    - If sends Rejected → Rejected
-    """
-
     if not incoming_status:
         return "Pending for review"
 
@@ -39,8 +38,7 @@ def normalize_status(incoming_status: str | None) -> str:
 
 def build_full_column_list():
     """
-    Returns ordered list of all columns except id/created_at/updated_at
-    aligned 1:1 with DB structure.
+    Ordered exactly as DB structure (except id/created_at/updated_at)
     """
 
     base_columns = [
@@ -70,20 +68,19 @@ def build_full_column_list():
             f"time_{i}_minute"
         ])
 
-    # Bullets 10 each
+    # Bullets
     sections = ["narrative", "findings", "remarks", "conclusion"]
 
     for sec in sections:
         for n in range(1, 11):
             base_columns.append(f"{sec}_{n}")
 
-    # 🔹 NEW FIELD
-    base_columns.append("link_picture")
-
     # Status + review metadata
     base_columns.extend([
         "status",
-        "sent_to_review_at"
+        "sent_to_review_at",
+        "link_picture",
+        "cargo_type"  # <-- NUEVO (alineado al final según DB)
     ])
 
     return base_columns
@@ -103,18 +100,14 @@ def create_vessel_cargo_condition(payload: Dict[str, Any], conn=Depends(get_db))
     try:
         payload = payload or {}
 
-        # --------------------------------------------
         # STATUS LOGIC
-        # --------------------------------------------
         final_status = normalize_status(payload.get("status"))
         payload["status"] = final_status
 
         if final_status in ["Pending for review", "Approved", "Rejected"]:
             payload["sent_to_review_at"] = datetime.utcnow()
 
-        # --------------------------------------------
-        # Ensure all columns exist in payload
-        # --------------------------------------------
+        # Ensure all columns exist
         for col in ALL_COLUMNS:
             payload.setdefault(col, None)
 
@@ -132,10 +125,7 @@ def create_vessel_cargo_condition(payload: Dict[str, Any], conn=Depends(get_db))
 
         conn.commit()
 
-        return {
-            "success": True,
-            "id": new_id
-        }
+        return {"success": True, "id": new_id}
 
     except Exception as e:
         conn.rollback()
@@ -162,14 +152,37 @@ def get_all_vessel_cargo_condition(conn=Depends(get_db)):
 
         result = [dict(zip(columns, row)) for row in rows]
 
-        return {
-            "success": True,
-            "data": result
-        }
+        return {"success": True, "data": result}
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+# =========================================================
+# GENERATE WORD
+# GET /vessel-cargo-condition-surveys/word/{id}
+# =========================================================
+@router.get("/word/{record_id}")
+def generate_cargo_condition_word(
+    record_id: int,
+    conn=Depends(get_db)
+):
+
+    try:
+        service = VesselCargoConditionWordService()
+
+        file_path = service.generate_word_by_id(
+            conn,
+            record_id
+        )
+
+        return FileResponse(
+            path=file_path,
+            filename=os.path.basename(file_path),
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        )
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # =========================================================
 # GET BY ID
@@ -193,10 +206,7 @@ def get_vessel_cargo_condition(record_id: int, conn=Depends(get_db)):
 
         columns = [desc[0] for desc in cur.description]
 
-        return {
-            "success": True,
-            "data": dict(zip(columns, row))
-        }
+        return {"success": True, "data": dict(zip(columns, row))}
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -217,9 +227,7 @@ def update_vessel_cargo_condition(
     try:
         payload = payload or {}
 
-        # --------------------------------------------
         # STATUS UPDATE LOGIC
-        # --------------------------------------------
         if "status" in payload:
             final_status = normalize_status(payload.get("status"))
             payload["status"] = final_status
@@ -227,9 +235,7 @@ def update_vessel_cargo_condition(
             if final_status in ["Approved", "Rejected"]:
                 payload["sent_to_review_at"] = datetime.utcnow()
 
-        # --------------------------------------------
         # Ensure all columns exist
-        # --------------------------------------------
         for col in ALL_COLUMNS:
             payload.setdefault(col, None)
 
@@ -257,3 +263,6 @@ def update_vessel_cargo_condition(
     except Exception as e:
         conn.rollback()
         raise HTTPException(status_code=500, detail=str(e))
+
+
+
