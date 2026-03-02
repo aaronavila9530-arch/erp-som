@@ -213,7 +213,7 @@ def get_vessel_cargo_condition(record_id: int, conn=Depends(get_db)):
 
 
 # =========================================================
-# PUT (FULL UPDATE)
+# PUT (SAFE PARTIAL UPDATE)
 # =========================================================
 @router.put("/{record_id}")
 def update_vessel_cargo_condition(
@@ -227,7 +227,12 @@ def update_vessel_cargo_condition(
     try:
         payload = payload or {}
 
+        if not payload:
+            raise HTTPException(status_code=400, detail="Empty payload")
+
+        # --------------------------------------------
         # STATUS UPDATE LOGIC
+        # --------------------------------------------
         if "status" in payload:
             final_status = normalize_status(payload.get("status"))
             payload["status"] = final_status
@@ -235,11 +240,17 @@ def update_vessel_cargo_condition(
             if final_status in ["Approved", "Rejected"]:
                 payload["sent_to_review_at"] = datetime.utcnow()
 
-        # Ensure all columns exist
-        for col in ALL_COLUMNS:
-            payload.setdefault(col, None)
+        # --------------------------------------------
+        # ONLY allow updating known columns (anti-bug)
+        # --------------------------------------------
+        allowed = set(ALL_COLUMNS)
+        safe_payload = {k: v for k, v in payload.items() if k in allowed}
 
-        set_clause = ", ".join([f"{col}=%s" for col in ALL_COLUMNS])
+        if not safe_payload:
+            raise HTTPException(status_code=400, detail="No valid fields to update")
+
+        set_clause = ", ".join([f"{k}=%s" for k in safe_payload.keys()])
+        values = list(safe_payload.values())
 
         update_sql = f"""
             UPDATE {TABLE_NAME}
@@ -248,10 +259,9 @@ def update_vessel_cargo_condition(
             WHERE id = %s
         """
 
-        cur.execute(
-            update_sql,
-            [payload[col] for col in ALL_COLUMNS] + [record_id]
-        )
+        values.append(record_id)
+
+        cur.execute(update_sql, values)
 
         if cur.rowcount == 0:
             raise HTTPException(status_code=404, detail="Not found")
@@ -263,6 +273,3 @@ def update_vessel_cargo_condition(
     except Exception as e:
         conn.rollback()
         raise HTTPException(status_code=500, detail=str(e))
-
-
-

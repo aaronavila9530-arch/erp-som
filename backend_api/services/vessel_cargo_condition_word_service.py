@@ -26,10 +26,10 @@ class VesselCargoConditionWordService:
 
         doc = Document(template_path)
 
-        # 🔥 1️⃣ REMOVE NULL BULLET LINES FIRST
+        # 1️⃣ REMOVE NULL BULLET LINES FIRST
         self._remove_null_paragraphs(doc, data)
 
-        # 🔥 2️⃣ THEN REPLACE VALUES
+        # 2️⃣ REPLACE ALL PLACEHOLDERS (SPLIT-RUN SAFE)
         self._replace_placeholders(doc, data)
 
         output_path = self._build_output_path(data)
@@ -87,7 +87,7 @@ class VesselCargoConditionWordService:
         return str(value)
 
     # =========================================================
-    # CORE REPLACEMENT ENGINE (FORMAT SAFE)
+    # REPLACE PLACEHOLDERS (SPLIT-RUN SAFE)
     # =========================================================
     def _replace_placeholders(self, doc: Document, data: dict):
 
@@ -96,36 +96,99 @@ class VesselCargoConditionWordService:
             for key, value in data.items()
         }
 
-        # Replace in paragraphs
+        # Paragraphs
         for paragraph in doc.paragraphs:
-            self._replace_in_paragraph(paragraph, placeholders)
+            self._replace_in_paragraph_full(paragraph, placeholders)
 
-        # Replace in tables
+        # Tables
         for table in doc.tables:
             for row in table.rows:
                 for cell in row.cells:
                     for paragraph in cell.paragraphs:
-                        self._replace_in_paragraph(paragraph, placeholders)
+                        self._replace_in_paragraph_full(paragraph, placeholders)
 
     # =========================================================
-    # RUN-LEVEL SAFE REPLACEMENT
+    # FULL PARAGRAPH REPLACEMENT (RUN SPLIT SAFE)
     # =========================================================
-    def _replace_in_paragraph(self, paragraph, placeholders: dict):
+    def _replace_in_paragraph_full(self, paragraph, placeholders: dict):
 
-        for run in paragraph.runs:
-            if not run.text:
-                continue
+        if not paragraph.text:
+            return
 
-            original_text = run.text
+        original_text = paragraph.text
+        new_text = original_text
 
-            for placeholder, value in placeholders.items():
-                if placeholder in original_text:
-                    original_text = original_text.replace(
-                        placeholder,
-                        value
-                    )
+        replaced = False
 
-            run.text = original_text
+        for placeholder, value in placeholders.items():
+            if placeholder in new_text:
+                new_text = new_text.replace(placeholder, value)
+                replaced = True
+
+        if replaced:
+            # Clear all runs safely
+            for run in paragraph.runs:
+                run.text = ""
+
+            # Insert replaced text in first run
+            if paragraph.runs:
+                paragraph.runs[0].text = new_text
+            else:
+                paragraph.add_run(new_text)
+
+    # =========================================================
+    # REMOVE BULLET PARAGRAPHS IF VALUE IS NULL
+    # =========================================================
+    def _remove_null_paragraphs(self, doc: Document, data: dict):
+
+        bullet_prefixes = (
+            "narrative_",
+            "findings_",
+            "remarks_",
+            "conclusion_"
+        )
+
+        null_placeholders = {
+            f"{{{key}}}"
+            for key, value in data.items()
+            if value is None and key.startswith(bullet_prefixes)
+        }
+
+        # Remove in body
+        for paragraph in list(doc.paragraphs):
+            self._remove_if_contains_null(paragraph, null_placeholders)
+
+        # Remove in tables
+        for table in doc.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    for paragraph in list(cell.paragraphs):
+                        self._remove_if_contains_null(
+                            paragraph,
+                            null_placeholders
+                        )
+
+    # =========================================================
+    # CHECK AND DELETE PARAGRAPH
+    # =========================================================
+    def _remove_if_contains_null(self, paragraph, null_placeholders):
+
+        if not paragraph.text:
+            return
+
+        for placeholder in null_placeholders:
+            if placeholder in paragraph.text:
+                self._delete_paragraph(paragraph)
+                return
+
+    # =========================================================
+    # SAFE DELETE PARAGRAPH
+    # =========================================================
+    def _delete_paragraph(self, paragraph):
+
+        p = paragraph._element
+        p.getparent().remove(p)
+        paragraph._p = paragraph._element = None
 
     # =========================================================
     # OUTPUT PATH
@@ -142,60 +205,3 @@ class VesselCargoConditionWordService:
             temp_dir,
             f"{safe_name}_CARGO_CONDITION.docx"
         )
-
-
-    # =========================================================
-    # REMOVE PARAGRAPHS IF PLACEHOLDER VALUE IS NULL
-    # =========================================================
-    # =========================================================
-    # REMOVE PARAGRAPHS IF BULLET PLACEHOLDER IS NULL
-    # =========================================================
-    def _remove_null_paragraphs(self, doc: Document, data: dict):
-
-        # Solo afectar secciones dinámicas
-        bullet_prefixes = (
-            "narrative_",
-            "findings_",
-            "remarks_",
-            "conclusion_"
-        )
-
-        null_placeholders = {
-            f"{{{key}}}"
-            for key, value in data.items()
-            if value is None and key.startswith(bullet_prefixes)
-        }
-
-        # Remove from normal paragraphs
-        for paragraph in list(doc.paragraphs):
-            self._remove_if_contains_null(paragraph, null_placeholders)
-
-        # Remove from tables
-        for table in doc.tables:
-            for row in table.rows:
-                for cell in row.cells:
-                    for paragraph in list(cell.paragraphs):
-                        self._remove_if_contains_null(
-                            paragraph,
-                            null_placeholders
-                        )
-
-
-    def _remove_if_contains_null(self, paragraph, null_placeholders):
-
-        if not paragraph.text:
-            return
-
-        for placeholder in null_placeholders:
-            if placeholder in paragraph.text:
-                self._delete_paragraph(paragraph)
-                return
-
-
-    def _delete_paragraph(self, paragraph):
-
-        p = paragraph._element
-        p.getparent().remove(p)
-        paragraph._p = paragraph._element = None
-
-
