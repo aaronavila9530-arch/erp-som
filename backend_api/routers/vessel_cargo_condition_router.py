@@ -22,6 +22,7 @@ def normalize_status(incoming_status: str | None) -> str:
     - If frontend explicitly sends Approved → Approved
     - If sends Rejected → Rejected
     """
+
     if not incoming_status:
         return "Pending for review"
 
@@ -76,6 +77,10 @@ def build_full_column_list():
         for n in range(1, 11):
             base_columns.append(f"{sec}_{n}")
 
+    # 🔹 NEW FIELD
+    base_columns.append("link_picture")
+
+    # Status + review metadata
     base_columns.extend([
         "status",
         "sent_to_review_at"
@@ -127,7 +132,10 @@ def create_vessel_cargo_condition(payload: Dict[str, Any], conn=Depends(get_db))
 
         conn.commit()
 
-        return {"success": True, "id": new_id}
+        return {
+            "success": True,
+            "id": new_id
+        }
 
     except Exception as e:
         conn.rollback()
@@ -154,7 +162,10 @@ def get_all_vessel_cargo_condition(conn=Depends(get_db)):
 
         result = [dict(zip(columns, row)) for row in rows]
 
-        return {"success": True, "data": result}
+        return {
+            "success": True,
+            "data": result
+        }
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -182,7 +193,10 @@ def get_vessel_cargo_condition(record_id: int, conn=Depends(get_db)):
 
         columns = [desc[0] for desc in cur.description]
 
-        return {"success": True, "data": dict(zip(columns, row))}
+        return {
+            "success": True,
+            "data": dict(zip(columns, row))
+        }
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -192,7 +206,11 @@ def get_vessel_cargo_condition(record_id: int, conn=Depends(get_db)):
 # PUT (FULL UPDATE)
 # =========================================================
 @router.put("/{record_id}")
-def update_vessel_cargo_condition(record_id: int, payload: Dict[str, Any], conn=Depends(get_db)):
+def update_vessel_cargo_condition(
+    record_id: int,
+    payload: Dict[str, Any],
+    conn=Depends(get_db)
+):
 
     cur = conn.cursor()
 
@@ -224,8 +242,10 @@ def update_vessel_cargo_condition(record_id: int, payload: Dict[str, Any], conn=
             WHERE id = %s
         """
 
-        cur.execute(update_sql,
-                    [payload[col] for col in ALL_COLUMNS] + [record_id])
+        cur.execute(
+            update_sql,
+            [payload[col] for col in ALL_COLUMNS] + [record_id]
+        )
 
         if cur.rowcount == 0:
             raise HTTPException(status_code=404, detail="Not found")
