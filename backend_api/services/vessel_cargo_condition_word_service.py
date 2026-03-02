@@ -27,10 +27,10 @@ class VesselCargoConditionWordService:
 
         doc = Document(template_path)
 
-        # 1️⃣ REMOVE NULL BULLET LINES FIRST
+        # REMOVE NULL BULLET LINES FIRST
         self._remove_null_paragraphs(doc, data)
 
-        # 2️⃣ REPLACE PLACEHOLDERS (BODY + TABLES + HEADER + FOOTER)
+        # REPLACE PLACEHOLDERS EVERYWHERE
         self._replace_placeholders_everywhere(doc, data)
 
         output_path = self._build_output_path(data)
@@ -85,14 +85,11 @@ class VesselCargoConditionWordService:
         if value is None:
             return ""
 
-        # Native datetime/date from psycopg2
         if isinstance(value, (datetime, date)):
             return value.strftime("%B %d %Y")
 
         if isinstance(value, str):
             value = value.strip()
-
-            # Try ISO date (yyyy-mm-dd or yyyy-mm-dd HH:MM:SS)
             try:
                 dt = datetime.strptime(value[:10], "%Y-%m-%d")
                 return dt.strftime("%B %d %Y")
@@ -111,80 +108,66 @@ class VesselCargoConditionWordService:
             for key, value in data.items()
         }
 
-        # BODY PARAGRAPHS
+        # BODY
         for paragraph in doc.paragraphs:
-            self._replace_in_paragraph_full(paragraph, placeholders)
+            self._replace_in_paragraph_safe(paragraph, placeholders)
 
         # TABLES
         for table in doc.tables:
             for row in table.rows:
                 for cell in row.cells:
                     for paragraph in cell.paragraphs:
-                        self._replace_in_paragraph_full(
-                            paragraph,
-                            placeholders
-                        )
+                        self._replace_in_paragraph_safe(paragraph, placeholders)
 
         # HEADERS & FOOTERS
         for section in doc.sections:
 
-            # Header
-            header = section.header
-            for paragraph in header.paragraphs:
-                self._replace_in_paragraph_full(
-                    paragraph,
-                    placeholders
-                )
+            for paragraph in section.header.paragraphs:
+                self._replace_in_paragraph_safe(paragraph, placeholders)
 
-            for table in header.tables:
+            for table in section.header.tables:
                 for row in table.rows:
                     for cell in row.cells:
                         for paragraph in cell.paragraphs:
-                            self._replace_in_paragraph_full(
-                                paragraph,
-                                placeholders
-                            )
+                            self._replace_in_paragraph_safe(paragraph, placeholders)
 
-            # Footer
-            footer = section.footer
-            for paragraph in footer.paragraphs:
-                self._replace_in_paragraph_full(
-                    paragraph,
-                    placeholders
-                )
+            for paragraph in section.footer.paragraphs:
+                self._replace_in_paragraph_safe(paragraph, placeholders)
 
-            for table in footer.tables:
+            for table in section.footer.tables:
                 for row in table.rows:
                     for cell in row.cells:
                         for paragraph in cell.paragraphs:
-                            self._replace_in_paragraph_full(
-                                paragraph,
-                                placeholders
-                            )
+                            self._replace_in_paragraph_safe(paragraph, placeholders)
 
     # =========================================================
-    # SPLIT-RUN SAFE REPLACEMENT (PRESERVA FORMATO HEADER)
+    # SAFE MULTI-RUN REPLACEMENT (NO FORMAT LOSS)
     # =========================================================
-    def _replace_in_paragraph_full(self, paragraph, placeholders: dict):
+    def _replace_in_paragraph_safe(self, paragraph, placeholders: dict):
 
         if not paragraph.runs:
             return
 
-        for run in paragraph.runs:
-            original_text = run.text
+        full_text = "".join(run.text for run in paragraph.runs)
 
-            if not original_text:
+        for placeholder, value in placeholders.items():
+
+            if placeholder not in full_text:
                 continue
 
-            new_text = original_text
+            # Replace in full string
+            new_text = full_text.replace(placeholder, value)
 
-            for placeholder, value in placeholders.items():
-                if placeholder in new_text:
-                    new_text = new_text.replace(placeholder, value)
+            # Now rebuild WITHOUT destroying first run format
+            first_run = paragraph.runs[0]
+            first_run.text = new_text
 
-            # Solo modificar si cambió
-            if new_text != original_text:
-                run.text = new_text
+            # Clear remaining runs
+            for run in paragraph.runs[1:]:
+                run.text = ""
+
+            # Update full_text reference
+            full_text = new_text
 
     # =========================================================
     # REMOVE NULL BULLET LINES
@@ -204,22 +187,14 @@ class VesselCargoConditionWordService:
             if value is None and key.startswith(bullet_prefixes)
         }
 
-        # Body
         for paragraph in list(doc.paragraphs):
-            self._remove_if_contains_null(
-                paragraph,
-                null_placeholders
-            )
+            self._remove_if_contains_null(paragraph, null_placeholders)
 
-        # Tables
         for table in doc.tables:
             for row in table.rows:
                 for cell in row.cells:
                     for paragraph in list(cell.paragraphs):
-                        self._remove_if_contains_null(
-                            paragraph,
-                            null_placeholders
-                        )
+                        self._remove_if_contains_null(paragraph, null_placeholders)
 
     # =========================================================
     # REMOVE IF CONTAINS NULL PLACEHOLDER
@@ -258,4 +233,3 @@ class VesselCargoConditionWordService:
             temp_dir,
             f"{safe_name}_CARGO_CONDITION.docx"
         )
-
