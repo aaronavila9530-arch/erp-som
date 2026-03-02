@@ -66,6 +66,21 @@ def load_grain_sampling_prompt() -> str:
         return f.read().strip()
 
 
+
+# =========================================================
+# CARGO CONDITION PROMPT LOADER
+# =========================================================
+def load_cargo_condition_prompt() -> str:
+    base_path = os.path.dirname(__file__)
+    prompt_path = os.path.join(base_path, "maritime_cargo_condition.prompt.txt")
+
+    if not os.path.exists(prompt_path):
+        raise FileNotFoundError("Cargo condition prompt file not found.")
+
+    with open(prompt_path, "r", encoding="utf-8") as f:
+        return f.read().strip()
+
+
 # =========================================================
 # CONTAINER AI LOGIC
 # =========================================================
@@ -232,3 +247,60 @@ def improve_truck_supervision_text(
 
     return output_text.strip()
 
+
+# =========================================================
+# CARGO CONDITION AI LOGIC (BILINGUAL + PRECAUTION SAFE)
+# =========================================================
+def improve_cargo_condition_text(
+    user_text: str,
+    vessel: Optional[str],
+    port: Optional[str],
+    section: Optional[str],
+    language: str = "ES"
+) -> str:
+
+    if not user_text or not user_text.strip():
+        raise ValueError("El texto de entrada está vacío.")
+
+    client = _get_openai_client()
+
+    language = (language or "ES").upper()
+    if language not in ("ES", "EN"):
+        language = "ES"
+
+    base_prompt = load_cargo_condition_prompt()
+
+    # 🔹 Instrucción dinámica por idioma
+    if language == "EN":
+        language_instruction = (
+            "\n\nIMPORTANT: Rewrite strictly in professional maritime English. "
+            "Maintain neutral surveyor tone."
+        )
+    else:
+        language_instruction = (
+            "\n\nIMPORTANTE: Reescribe estrictamente en español técnico profesional marítimo. "
+            "Mantén tono formal de surveyor."
+        )
+
+    prompt = (
+        base_prompt
+        .replace("{{vessel}}", vessel or "N/A")
+        .replace("{{port}}", port or "N/A")
+        .replace("{{section}}", section or "narrative")
+        .replace("{{user_text}}", user_text.strip())
+        + language_instruction
+    )
+
+    response = client.responses.create(
+        model="gpt-4o-mini",
+        input=prompt,
+        temperature=0.15,
+        max_output_tokens=900
+    )
+
+    output_text = getattr(response, "output_text", None)
+
+    if not output_text or not output_text.strip():
+        raise RuntimeError("La IA devolvió una respuesta vacía.")
+
+    return output_text.strip()

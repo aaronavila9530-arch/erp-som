@@ -2,7 +2,8 @@ from fastapi import APIRouter, HTTPException
 from ai.maritime_ai import (
     improve_container_text,
     improve_truck_supervision_text,
-    improve_grain_sampling_text
+    improve_grain_sampling_text,
+    improve_cargo_condition_text
 )
 
 router = APIRouter(
@@ -127,4 +128,87 @@ def improve_truck(payload: dict):
         raise HTTPException(
             status_code=500,
             detail=f"AI truck improvement failed: {str(e)}"
+        )
+
+
+
+# =========================================================
+# CARGO CONDITION AI (SINGLE OR MULTI BLOCK)
+# =========================================================
+@router.post("/improve/cargo-condition")
+def improve_cargo_condition(payload: dict):
+
+    try:
+        language = (payload.get("language") or "ES").upper()
+        if language not in ("ES", "EN"):
+            language = "ES"
+
+        vessel = payload.get("vessel")
+        port = payload.get("port")
+        section = payload.get("section")
+
+        # -----------------------------------------------------
+        # CASE 1: MULTIPLE ITEMS (BULLETS)
+        # -----------------------------------------------------
+        items = payload.get("items")
+
+        if isinstance(items, list) and items:
+
+            improved_items = []
+
+            for item in items:
+                text = (item or "").strip()
+                if not text:
+                    improved_items.append("")
+                    continue
+
+                result = improve_cargo_condition_text(
+                    user_text=text,
+                    vessel=vessel,
+                    port=port,
+                    section=section,
+                    language=language
+                )
+
+                improved_items.append(result)
+
+            return {
+                "success": True,
+                "language": language,
+                "items": improved_items
+            }
+
+        # -----------------------------------------------------
+        # CASE 2: SINGLE TEXT
+        # -----------------------------------------------------
+        user_text = (payload.get("text") or "").strip()
+
+        if not user_text:
+            raise HTTPException(
+                status_code=400,
+                detail="Text or items are required"
+            )
+
+        result = improve_cargo_condition_text(
+            user_text=user_text,
+            vessel=vessel,
+            port=port,
+            section=section,
+            language=language
+        )
+
+        return {
+            "success": True,
+            "language": language,
+            "text": result
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        print("❌ AI CARGO CONDITION ERROR:", repr(e))
+        raise HTTPException(
+            status_code=500,
+            detail="AI cargo condition improvement failed."
         )
