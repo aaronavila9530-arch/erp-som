@@ -259,3 +259,4 @@ class VesselCargoConditionWordService:
             temp_dir,
             f"{safe_name}_CARGO_CONDITION.docx"
         )
+
