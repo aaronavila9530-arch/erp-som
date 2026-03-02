@@ -163,29 +163,28 @@ class VesselCargoConditionWordService:
                             )
 
     # =========================================================
-    # SPLIT-RUN SAFE REPLACEMENT (NO FORMAT DESTRUCTION)
+    # SPLIT-RUN SAFE REPLACEMENT (PRESERVA FORMATO HEADER)
     # =========================================================
     def _replace_in_paragraph_full(self, paragraph, placeholders: dict):
 
         if not paragraph.runs:
             return
 
-        full_text = "".join(run.text for run in paragraph.runs)
-        new_text = full_text
+        for run in paragraph.runs:
+            original_text = run.text
 
-        for placeholder, value in placeholders.items():
-            if placeholder in new_text:
-                new_text = new_text.replace(placeholder, value)
+            if not original_text:
+                continue
 
-        if new_text == full_text:
-            return
+            new_text = original_text
 
-        # Preserve formatting of first run only
-        paragraph.runs[0].text = new_text
+            for placeholder, value in placeholders.items():
+                if placeholder in new_text:
+                    new_text = new_text.replace(placeholder, value)
 
-        # Clear remaining runs without removing paragraph structure
-        for run in paragraph.runs[1:]:
-            run.text = ""
+            # Solo modificar si cambió
+            if new_text != original_text:
+                run.text = new_text
 
     # =========================================================
     # REMOVE NULL BULLET LINES
