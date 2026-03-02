@@ -27,10 +27,7 @@ class VesselCargoConditionWordService:
 
         doc = Document(template_path)
 
-        # REMOVE NULL BULLET LINES FIRST
         self._remove_null_paragraphs(doc, data)
-
-        # REPLACE PLACEHOLDERS EVERYWHERE
         self._replace_placeholders_everywhere(doc, data)
 
         output_path = self._build_output_path(data)
@@ -58,7 +55,6 @@ class VesselCargoConditionWordService:
             return None
 
         columns = [desc[0] for desc in cur.description]
-
         return dict(zip(columns, row))
 
     # =========================================================
@@ -99,75 +95,71 @@ class VesselCargoConditionWordService:
         return str(value)
 
     # =========================================================
-    # REPLACE EVERYWHERE
+    # REPLACE EVERYWHERE (MISMA LÓGICA QUE TRUCK SUPERVISION)
     # =========================================================
     def _replace_placeholders_everywhere(self, doc: Document, data: dict):
 
-        placeholders = {
-            f"{{{key}}}": self._safe(value)
-            for key, value in data.items()
-        }
+        def replace_in_paragraph(paragraph):
+
+            if not paragraph.runs:
+                return
+
+            full_text = "".join(run.text for run in paragraph.runs)
+
+            for key, value in data.items():
+                placeholder = f"{{{key}}}"
+                if placeholder in full_text:
+                    full_text = full_text.replace(
+                        placeholder,
+                        self._safe(value)
+                    )
+
+            index = 0
+
+            for run in paragraph.runs:
+                length = len(run.text)
+                if length == 0:
+                    continue
+
+                run.text = full_text[index:index + length]
+                index += length
+
+            if index < len(full_text):
+                paragraph.runs[-1].text += full_text[index:]
 
         # BODY
         for paragraph in doc.paragraphs:
-            self._replace_in_paragraph_safe(paragraph, placeholders)
+            replace_in_paragraph(paragraph)
 
         # TABLES
         for table in doc.tables:
             for row in table.rows:
                 for cell in row.cells:
                     for paragraph in cell.paragraphs:
-                        self._replace_in_paragraph_safe(paragraph, placeholders)
+                        replace_in_paragraph(paragraph)
 
         # HEADERS & FOOTERS
         for section in doc.sections:
 
-            for paragraph in section.header.paragraphs:
-                self._replace_in_paragraph_safe(paragraph, placeholders)
+            header = section.header
+            for paragraph in header.paragraphs:
+                replace_in_paragraph(paragraph)
 
-            for table in section.header.tables:
+            for table in header.tables:
                 for row in table.rows:
                     for cell in row.cells:
                         for paragraph in cell.paragraphs:
-                            self._replace_in_paragraph_safe(paragraph, placeholders)
+                            replace_in_paragraph(paragraph)
 
-            for paragraph in section.footer.paragraphs:
-                self._replace_in_paragraph_safe(paragraph, placeholders)
+            footer = section.footer
+            for paragraph in footer.paragraphs:
+                replace_in_paragraph(paragraph)
 
-            for table in section.footer.tables:
+            for table in footer.tables:
                 for row in table.rows:
                     for cell in row.cells:
                         for paragraph in cell.paragraphs:
-                            self._replace_in_paragraph_safe(paragraph, placeholders)
-
-    # =========================================================
-    # SAFE MULTI-RUN REPLACEMENT (NO FORMAT LOSS)
-    # =========================================================
-    def _replace_in_paragraph_safe(self, paragraph, placeholders: dict):
-
-        if not paragraph.runs:
-            return
-
-        full_text = "".join(run.text for run in paragraph.runs)
-
-        for placeholder, value in placeholders.items():
-
-            if placeholder not in full_text:
-                continue
-
-            # Replace in full string
-            new_text = full_text.replace(placeholder, value)
-
-            # Now rebuild WITHOUT destroying first run format
-            first_run = paragraph.runs[0]
-            first_run.text = new_text
-
-            # Clear remaining runs
-            for run in paragraph.runs[1:]:
-                run.text = ""
-
-            # Update full_text reference
-            full_text = new_text
+                            replace_in_paragraph(paragraph)
 
     # =========================================================
     # REMOVE NULL BULLET LINES
@@ -196,9 +188,6 @@ class VesselCargoConditionWordService:
                     for paragraph in list(cell.paragraphs):
                         self._remove_if_contains_null(paragraph, null_placeholders)
 
-    # =========================================================
-    # REMOVE IF CONTAINS NULL PLACEHOLDER
-    # =========================================================
     def _remove_if_contains_null(self, paragraph, null_placeholders):
 
         if not paragraph.text:
@@ -209,9 +198,6 @@ class VesselCargoConditionWordService:
                 self._delete_paragraph(paragraph)
                 return
 
-    # =========================================================
-    # SAFE DELETE
-    # =========================================================
     def _delete_paragraph(self, paragraph):
 
         p = paragraph._element
