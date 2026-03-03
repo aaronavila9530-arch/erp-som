@@ -15,6 +15,13 @@ router = APIRouter(
     tags=["Vessel Cargo Condition Surveys"]
 )
 
+
+from services.vessel_cargo_condition_presentation_word_service import (
+    VesselCargoConditionPresentationWordService
+)
+
+
+
 TABLE_NAME = "vessel_cargo_condition_surveys"
 
 
@@ -52,6 +59,14 @@ def build_full_column_list():
         "requested_by",
         "master",
         "chief_officer",
+
+        # ---- THE VESSEL (NUEVO) ----
+        "vessel_port_registry_flag",
+        "vessel_grt",
+        "vessel_nrt",
+        "vessel_imo_no",
+        "vessel_year_build",
+
         "arrival_date",
         "arrival_hour",
         "arrival_minute",
@@ -80,7 +95,7 @@ def build_full_column_list():
         "status",
         "sent_to_review_at",
         "link_picture",
-        "cargo_type"  # <-- NUEVO (alineado al final según DB)
+        "cargo_type"
     ])
 
     return base_columns
@@ -100,14 +115,12 @@ def create_vessel_cargo_condition(payload: Dict[str, Any], conn=Depends(get_db))
     try:
         payload = payload or {}
 
-        # STATUS LOGIC
         final_status = normalize_status(payload.get("status"))
         payload["status"] = final_status
 
         if final_status in ["Pending for review", "Approved", "Rejected"]:
             payload["sent_to_review_at"] = datetime.utcnow()
 
-        # Ensure all columns exist
         for col in ALL_COLUMNS:
             payload.setdefault(col, None)
 
@@ -157,9 +170,9 @@ def get_all_vessel_cargo_condition(conn=Depends(get_db)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
 # =========================================================
 # GENERATE WORD
-# GET /vessel-cargo-condition-surveys/word/{id}
 # =========================================================
 @router.get("/word/{record_id}")
 def generate_cargo_condition_word(
@@ -179,6 +192,33 @@ def generate_cargo_condition_word(
             path=file_path,
             filename=os.path.basename(file_path),
             media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        )
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# =========================================================
+# GENERATE PRESENTATION PDF
+# GET /vessel-cargo-condition-surveys/presentation/{id}
+# =========================================================
+@router.get("/presentation/{record_id}")
+def generate_cargo_condition_presentation_pdf(
+    record_id: int,
+    conn=Depends(get_db)
+):
+
+    try:
+        service = VesselCargoConditionPresentationWordService()
+
+        file_path = service.generate_pdf_by_id(
+            conn,
+            record_id
+        )
+
+        return FileResponse(
+            path=file_path,
+            filename=os.path.basename(file_path),
+            media_type="application/pdf"
         )
 
     except Exception as e:
@@ -213,7 +253,7 @@ def get_vessel_cargo_condition(record_id: int, conn=Depends(get_db)):
 
 
 # =========================================================
-# PUT (SAFE PARTIAL UPDATE)
+# PUT
 # =========================================================
 @router.put("/{record_id}")
 def update_vessel_cargo_condition(
@@ -230,9 +270,6 @@ def update_vessel_cargo_condition(
         if not payload:
             raise HTTPException(status_code=400, detail="Empty payload")
 
-        # --------------------------------------------
-        # STATUS UPDATE LOGIC
-        # --------------------------------------------
         if "status" in payload:
             final_status = normalize_status(payload.get("status"))
             payload["status"] = final_status
@@ -240,9 +277,6 @@ def update_vessel_cargo_condition(
             if final_status in ["Approved", "Rejected"]:
                 payload["sent_to_review_at"] = datetime.utcnow()
 
-        # --------------------------------------------
-        # ONLY allow updating known columns (anti-bug)
-        # --------------------------------------------
         allowed = set(ALL_COLUMNS)
         safe_payload = {k: v for k, v in payload.items() if k in allowed}
 
@@ -273,3 +307,6 @@ def update_vessel_cargo_condition(
     except Exception as e:
         conn.rollback()
         raise HTTPException(status_code=500, detail=str(e))
+
+
+
