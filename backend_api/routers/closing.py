@@ -1180,26 +1180,26 @@ from psycopg2.extras import RealDictCursor
 from datetime import datetime
 from security.auth import get_current_user
 
+
 @router.post("/fs/post")
 def post_financial_statements(
     payload: dict,
     conn=Depends(get_db),
-    current_user=Depends(get_current_user)  # 👈 usuario logeado
+    current_user=Depends(get_current_user)
 ):
     """
     Posteo de Estados Financieros Finales
 
     Payload esperado:
     {
-        company_code: "MSL MARINE SURVEYORS AND LOGISTICS GROUP SRL",
-        fiscal_year: 2025,
-        period: 12,
-        ledger: "0L"   # opcional
+        company_code: "MSL-CR",
+        fiscal_year: 2026,
+        period: 2,
+        ledger: "0L"
     }
     """
 
     required_fields = ["company_code", "fiscal_year", "period"]
-
     for f in required_fields:
         if f not in payload:
             raise HTTPException(400, f"Missing field: {f}")
@@ -1209,14 +1209,14 @@ def post_financial_statements(
     period = int(payload["period"])
     ledger = payload.get("ledger", "0L")
 
-    # ✅ Usuario autenticado
     posted_by = current_user["usuario"]
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     try:
+
         # ----------------------------------------------------
-        # 1️⃣ Validar estado de cierre (lock fuerte)
+        # 1️⃣ VALIDAR ESTADO DEL PERÍODO (LOCK FUERTE)
         # ----------------------------------------------------
         cur.execute("""
             SELECT *
@@ -1249,7 +1249,7 @@ def post_financial_statements(
             )
 
         # ----------------------------------------------------
-        # 2️⃣ Obtener TB_POST (obligatorio)
+        # 2️⃣ OBTENER TB_POST (FUENTE OBLIGATORIA)
         # ----------------------------------------------------
         cur.execute("""
             SELECT id
@@ -1269,35 +1269,32 @@ def post_financial_statements(
         if not tb_batch:
             raise HTTPException(
                 400,
-                "No se encontró TB_POST posteado. No se pueden postear EEFF."
+                "No se encontró TB_POST posteado."
             )
 
         tb_batch_id = tb_batch["id"]
 
         # ----------------------------------------------------
-        # 3️⃣ Calcular Activo / Pasivo / Patrimonio (desde TB)
+        # 3️⃣ CALCULAR ACTIVO / PASIVO / PATRIMONIO
+        # NORMALIZACIÓN CORRECTA DE SIGNOS
         # ----------------------------------------------------
         cur.execute("""
             SELECT
-                COALESCE(SUM(CASE WHEN account_code LIKE '1%%' THEN balance ELSE 0 END), 0) AS activos_signed,
-                COALESCE(SUM(CASE WHEN account_code LIKE '2%%' THEN balance ELSE 0 END), 0) AS pasivos_signed,
-                COALESCE(SUM(CASE WHEN account_code LIKE '3%%' THEN balance ELSE 0 END), 0) AS patrimonio_signed
+                COALESCE(SUM(CASE WHEN account_code LIKE '1%%' THEN balance ELSE 0 END), 0) AS activos_raw,
+                COALESCE(SUM(CASE WHEN account_code LIKE '2%%' THEN balance ELSE 0 END), 0) AS pasivos_raw,
+                COALESCE(SUM(CASE WHEN account_code LIKE '3%%' THEN balance ELSE 0 END), 0) AS patrimonio_raw
             FROM closing_batch_lines
             WHERE batch_id = %s
         """, (tb_batch_id,))
 
         bg = cur.fetchone() or {}
 
-        activos_signed = float(bg["activos_signed"] or 0)
-        pasivos_signed = float(bg["pasivos_signed"] or 0)        # negativo
-        patrimonio_signed = float(bg["patrimonio_signed"] or 0)  # negativo
-
-        activos = activos_signed
-        pasivos = -pasivos_signed
-        patrimonio = -patrimonio_signed
+        activos = abs(float(bg["activos_raw"] or 0))
+        pasivos = abs(float(bg["pasivos_raw"] or 0))
+        patrimonio = abs(float(bg["patrimonio_raw"] or 0))
 
         # ----------------------------------------------------
-        # 4️⃣ Incorporar efecto del CLOSE_PNL (RESULT → Equity)
+        # 4️⃣ INCORPORAR EFECTO DEL CLOSE_PNL (RESULT → EQUITY)
         # ----------------------------------------------------
         cur.execute("""
             SELECT id
@@ -1317,7 +1314,7 @@ def post_financial_statements(
 
         if pnl_batch:
             cur.execute("""
-                SELECT COALESCE(SUM(debit - credit), 0) AS effect
+                SELECT COALESCE(SUM(balance), 0) AS effect
                 FROM closing_batch_lines
                 WHERE batch_id = %s
                   AND source_type = 'PNL'
@@ -1327,26 +1324,30 @@ def post_financial_statements(
             pnl_row = cur.fetchone() or {}
             pnl_effect = float(pnl_row["effect"] or 0)
 
-            # Invertir signo para patrimonio positivo
-            patrimonio += (-pnl_effect)
+            # Ajuste directo al patrimonio
+            patrimonio = round(patrimonio + pnl_effect, 2)
 
         # ----------------------------------------------------
-        # 5️⃣ Validación Balance General
+        # 5️⃣ VALIDACIÓN FINAL DEL BALANCE GENERAL
         # ----------------------------------------------------
+        activos = round(activos, 2)
+        pasivos = round(pasivos, 2)
+        patrimonio = round(patrimonio, 2)
+
         diff = round(activos - (pasivos + patrimonio), 2)
 
         if diff != 0:
             raise HTTPException(
                 400,
-                f"El Balance General no cuadra. "
-                f"Activo={activos:.2f}, "
-                f"Pasivo={pasivos:.2f}, "
-                f"Patrimonio={patrimonio:.2f}, "
+                f"Balance no cuadra. "
+                f"Activo={activos:.2f} | "
+                f"Pasivo={pasivos:.2f} | "
+                f"Patrimonio={patrimonio:.2f} | "
                 f"Diferencia={diff:.2f}"
             )
 
         # ----------------------------------------------------
-        # 6️⃣ Crear batch FS_FINAL
+        # 6️⃣ CREAR BATCH FS_FINAL
         # ----------------------------------------------------
         batch_code = (
             f"FS-{fiscal_year}-{period:02d}-"
@@ -1386,7 +1387,7 @@ def post_financial_statements(
         fs_batch_id = cur.fetchone()["id"]
 
         # ----------------------------------------------------
-        # 7️⃣ Actualizar closing_status
+        # 7️⃣ ACTUALIZAR CLOSING_STATUS
         # ----------------------------------------------------
         cur.execute("""
             UPDATE closing_status
@@ -1403,9 +1404,9 @@ def post_financial_statements(
             "message": "Estados Financieros Finales posteados correctamente.",
             "batch_id": fs_batch_id,
             "batch_code": batch_code,
-            "activo": round(activos, 2),
-            "pasivo": round(pasivos, 2),
-            "patrimonio": round(patrimonio, 2),
+            "activo": activos,
+            "pasivo": pasivos,
+            "patrimonio": patrimonio,
             "pnl_effect_in_equity": round(pnl_effect, 2),
             "posted_by": posted_by
         }
@@ -1420,7 +1421,6 @@ def post_financial_statements(
             500,
             f"Error posteando Estados Financieros: {e}"
         )
-
 
 # ============================================================
 # POST /closing/fy/open
