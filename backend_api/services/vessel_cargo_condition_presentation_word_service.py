@@ -1,6 +1,7 @@
 import os
 import tempfile
 import subprocess
+from datetime import datetime
 from docx import Document
 
 
@@ -25,17 +26,11 @@ class VesselCargoConditionPresentationWordService:
                 f"Template not found: {template_path}"
             )
 
-        # -----------------------------------------------------
-        # LOAD TEMPLATE
-        # -----------------------------------------------------
         doc = Document(template_path)
 
-        # Replace placeholders (split-run safe)
+        # Replace placeholders (split-run safe + date normalization)
         self._replace_placeholders(doc, data)
 
-        # -----------------------------------------------------
-        # SAVE TEMP DOCX
-        # -----------------------------------------------------
         temp_dir = tempfile.mkdtemp()
 
         docx_path = os.path.join(
@@ -50,9 +45,6 @@ class VesselCargoConditionPresentationWordService:
 
         doc.save(docx_path)
 
-        # -----------------------------------------------------
-        # CONVERT TO PDF (LibreOffice headless)
-        # -----------------------------------------------------
         self._convert_to_pdf(docx_path, temp_dir)
 
         if not os.path.exists(pdf_path):
@@ -122,30 +114,57 @@ class VesselCargoConditionPresentationWordService:
         )
 
     # =========================================================
-    # PLACEHOLDER REPLACER (RUN-SAFE)
+    # DATE NORMALIZER (ISO → LONG ENGLISH)
+    # =========================================================
+    def _format_date_long_english(self, value):
+
+        if not value:
+            return ""
+
+        value = str(value).strip()
+
+        try:
+            # Detect ISO yyyy-mm-dd
+            dt = datetime.strptime(value, "%Y-%m-%d")
+            return dt.strftime("%B %d %Y")
+        except Exception:
+            return value
+
+    # =========================================================
+    # SAFE VALUE FORMATTER
+    # =========================================================
+    def _safe_value(self, key, value):
+
+        if value is None:
+            return ""
+
+        # Auto-detect date fields
+        if key.endswith("_date") or key in ["service_start_date"]:
+            return self._format_date_long_english(value)
+
+        return str(value)
+
+    # =========================================================
+    # PLACEHOLDER REPLACER (RUN-SAFE + DATE SAFE)
     # =========================================================
     def _replace_placeholders(self, doc, data: dict):
 
-        def safe(value):
-            return "" if value is None else str(value)
-
         for paragraph in doc.paragraphs:
-            self._replace_in_paragraph(paragraph, data, safe)
+            self._replace_in_paragraph(paragraph, data)
 
         for table in doc.tables:
             for row in table.rows:
                 for cell in row.cells:
                     for paragraph in cell.paragraphs:
-                        self._replace_in_paragraph(paragraph, data, safe)
+                        self._replace_in_paragraph(paragraph, data)
 
-        # Headers / Footers
         for section in doc.sections:
             for paragraph in section.header.paragraphs:
-                self._replace_in_paragraph(paragraph, data, safe)
+                self._replace_in_paragraph(paragraph, data)
             for paragraph in section.footer.paragraphs:
-                self._replace_in_paragraph(paragraph, data, safe)
+                self._replace_in_paragraph(paragraph, data)
 
-    def _replace_in_paragraph(self, paragraph, data, safe):
+    def _replace_in_paragraph(self, paragraph, data):
 
         if not paragraph.text:
             return
@@ -154,10 +173,12 @@ class VesselCargoConditionPresentationWordService:
 
         for key, value in data.items():
             placeholder = f"{{{key}}}"
+
             if placeholder in full_text:
+                formatted_value = self._safe_value(key, value)
                 full_text = full_text.replace(
                     placeholder,
-                    safe(value)
+                    formatted_value
                 )
 
         for run in paragraph.runs:
