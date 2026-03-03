@@ -1427,16 +1427,11 @@ def post_financial_statements(
 # Apertura automática de nuevo ejercicio fiscal (carryforward)
 # ============================================================
 
-from fastapi import HTTPException, Depends
-from psycopg2.extras import RealDictCursor
-from datetime import datetime
-from security.auth import get_current_user
-
 @router.post("/fy/open")
 def open_new_fiscal_year(
     payload: dict,
     conn=Depends(get_db),
-    current_user=Depends(get_current_user)  # 👈 usuario autenticado
+    current_user=Depends(get_current_user)
 ):
     """
     Apertura automática de nuevo ejercicio fiscal.
@@ -1454,42 +1449,43 @@ def open_new_fiscal_year(
     if not company:
         raise HTTPException(400, "Missing field: company_code")
 
-    # ✅ Usuario real del sistema
     posted_by = current_user["usuario"]
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     try:
         # ----------------------------------------------------
-        # 1️⃣ Obtener ÚLTIMO ejercicio fiscal cerrado (FS_FINAL)
+        # 1️⃣ Obtener último período completamente cerrado
+        # (usamos closing_status como fuente de verdad)
         # ----------------------------------------------------
         cur.execute("""
-            SELECT
-                cb.id          AS fs_batch_id,
-                cb.fiscal_year AS source_year
-            FROM closing_batches cb
-            WHERE cb.company_code = %s
-              AND cb.ledger = %s
-              AND cb.batch_type = 'FS_FINAL'
-              AND cb.status = 'POSTED'
-            ORDER BY cb.fiscal_year DESC, cb.posted_at DESC
+            SELECT *
+            FROM closing_status
+            WHERE company_code = %s
+              AND ledger = %s
+              AND period_closed = TRUE
+              AND gl_closed = TRUE
+              AND tb_closed = TRUE
+              AND pnl_closed = TRUE
+              AND fs_closed = TRUE
+            ORDER BY fiscal_year DESC, period DESC
             LIMIT 1
             FOR UPDATE
         """, (company, ledger))
 
-        fs = cur.fetchone()
+        status = cur.fetchone()
 
-        if not fs:
+        if not status:
             raise HTTPException(
                 400,
-                "No existe un ejercicio fiscal cerrado (FS_FINAL)."
+                "No existe un período completamente cerrado (FS)."
             )
 
-        source_year = fs["source_year"]
+        source_year = status["fiscal_year"]
         new_year = source_year + 1
 
         # ----------------------------------------------------
-        # 2️⃣ Validar que el nuevo ejercicio NO exista
+        # 2️⃣ Verificar que no exista ya el nuevo ejercicio
         # ----------------------------------------------------
         cur.execute("""
             SELECT 1
@@ -1507,7 +1503,32 @@ def open_new_fiscal_year(
             )
 
         # ----------------------------------------------------
-        # 3️⃣ Crear batch OPEN_FY
+        # 3️⃣ Obtener batch FS_FINAL fuente
+        # ----------------------------------------------------
+        cur.execute("""
+            SELECT id
+            FROM closing_batches
+            WHERE company_code = %s
+              AND fiscal_year = %s
+              AND ledger = %s
+              AND batch_type = 'FS_FINAL'
+              AND status = 'POSTED'
+            ORDER BY posted_at DESC
+            LIMIT 1
+        """, (company, source_year, ledger))
+
+        fs_batch = cur.fetchone()
+
+        if not fs_batch:
+            raise HTTPException(
+                500,
+                "Inconsistencia: fs_closed=TRUE pero no existe batch FS_FINAL."
+            )
+
+        fs_batch_id = fs_batch["id"]
+
+        # ----------------------------------------------------
+        # 4️⃣ Crear batch OPEN_FY
         # ----------------------------------------------------
         batch_code = (
             f"OPEN-{new_year}-"
@@ -1540,7 +1561,7 @@ def open_new_fiscal_year(
             company,
             new_year,
             ledger,
-            fs["fs_batch_id"],
+            fs_batch_id,
             f"Apertura ejercicio fiscal {new_year}",
             posted_by
         ))
@@ -1548,7 +1569,7 @@ def open_new_fiscal_year(
         open_batch_id = cur.fetchone()["id"]
 
         # ----------------------------------------------------
-        # 4️⃣ Carryforward de cuentas de balance (1xxx,2xxx,3xxx)
+        # 5️⃣ Carryforward cuentas de balance (1xxx,2xxx,3xxx)
         # ----------------------------------------------------
         cur.execute("""
             SELECT
@@ -1563,13 +1584,15 @@ def open_new_fiscal_year(
                  OR account_code LIKE '2%%'
                  OR account_code LIKE '3%%'
               )
-        """, (fs["fs_batch_id"],))
+        """, (fs_batch_id,))
 
         rows = cur.fetchall() or []
 
         for r in rows:
-            debit = r["balance"] if r["balance"] > 0 else 0
-            credit = abs(r["balance"]) if r["balance"] < 0 else 0
+            balance = float(r["balance"] or 0)
+
+            debit = balance if balance > 0 else 0
+            credit = abs(balance) if balance < 0 else 0
 
             cur.execute("""
                 INSERT INTO closing_batch_lines (
@@ -1594,12 +1617,12 @@ def open_new_fiscal_year(
                 r["account_name"],
                 debit,
                 credit,
-                r["balance"],
+                balance,
                 r["currency"]
             ))
 
         # ----------------------------------------------------
-        # 5️⃣ Crear closing_status del nuevo ejercicio
+        # 6️⃣ Crear closing_status del nuevo ejercicio
         # ----------------------------------------------------
         cur.execute("""
             INSERT INTO closing_status (
@@ -1607,6 +1630,12 @@ def open_new_fiscal_year(
                 fiscal_year,
                 period,
                 ledger,
+                period_closed,
+                gl_closed,
+                tb_closed,
+                pnl_closed,
+                equity_closed,
+                fs_closed,
                 fy_opened,
                 created_at,
                 updated_at,
@@ -1614,7 +1643,14 @@ def open_new_fiscal_year(
             )
             VALUES (
                 %s, %s, 1, %s,
-                TRUE, NOW(), NOW(), %s
+                FALSE,
+                FALSE,
+                FALSE,
+                FALSE,
+                FALSE,
+                FALSE,
+                TRUE,
+                NOW(), NOW(), %s
             )
         """, (
             company,
