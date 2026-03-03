@@ -46,6 +46,7 @@ class ServicioCreate(BaseModel):
     surveyor: str
     honorarios: float | None = None
     costo_operativo: float | None = None
+    costo_tarjetas: float | None = None   # 👈 AGREGAR
     fecha_inicio: str    # "YYYY-MM-DD"
     hora_inicio: str     # "HH:MM"
 
@@ -61,14 +62,14 @@ def add_servicio(data: ServicioCreate):
             tipo, estado, num_informe,
             buque_contenedor, cliente, contacto, detalle,
             continente, pais, puerto,
-            operacion, surveyor, honorarios, costo_operativo,
+            operacion, surveyor, honorarios, costo_operativo, costo_tarjetas,
             fecha_inicio, hora_inicio
         )
         VALUES (
             %(tipo)s, 'Confirmado', '',
             %(buque_contenedor)s, %(cliente)s, %(contacto)s, %(detalle)s,
             %(continente)s, %(pais)s, %(puerto)s,
-            %(operacion)s, %(surveyor)s, %(honorarios)s, %(costo_operativo)s,
+            %(operacion)s, %(surveyor)s, %(honorarios)s, %(costo_operativo)s, %(costo_tarjetas)s,
             %(fecha_inicio)s, %(hora_inicio)s
         )
         RETURNING consec;
@@ -80,7 +81,6 @@ def add_servicio(data: ServicioCreate):
         return {"status": "OK", "msg": "Servicio creado", "consec": new_id}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
 
 
 
@@ -153,13 +153,6 @@ def listar_servicios(
 
     # --------------------------------------------------------
     # AÑO — LÓGICA ERP-SOM (CORREGIDA Y BLINDADA)
-    #
-    # • SIN filtros explícitos:
-    #     - Con informe → num_informe (año actual)
-    #     - Sin informe → fecha_inicio (año actual)
-    #
-    # • CON filtro year explícito:
-    #     - Usar num_informe (respeta UI)
     # --------------------------------------------------------
     if year is None and status is None and surveyor is None:
         year_actual = datetime.now().year
@@ -214,7 +207,7 @@ def listar_servicios(
             consec, tipo, estado, num_informe,
             buque_contenedor, cliente, contacto, detalle,
             continente, pais, puerto,
-            operacion, surveyor, honorarios, costo_operativo,
+            operacion, surveyor, honorarios, costo_operativo, costo_tarjetas,
             fecha_inicio, hora_inicio,
             fecha_fin, hora_fin, demoras, duracion,
             factura, valor_factura, fecha_factura,
@@ -243,7 +236,7 @@ def listar_servicios(
         "consec", "tipo", "estado", "num_informe",
         "buque_contenedor", "cliente", "contacto", "detalle",
         "continente", "pais", "puerto",
-        "operacion", "surveyor", "honorarios", "costo_operativo",
+        "operacion", "surveyor", "honorarios", "costo_operativo", "costo_tarjetas",
         "fecha_inicio", "hora_inicio",
         "fecha_fin", "hora_fin", "demoras", "duracion",
         "factura", "valor_factura", "fecha_factura",
@@ -274,7 +267,7 @@ def get_servicio(consec: int):
             consec, tipo, estado, num_informe,
             buque_contenedor, cliente, contacto, detalle,
             continente, pais, puerto,
-            operacion, surveyor, honorarios, costo_operativo,
+            operacion, surveyor, honorarios, costo_operativo, costo_tarjetas,
             fecha_inicio, hora_inicio,
             fecha_fin, hora_fin, demoras, duracion,
             factura, valor_factura, fecha_factura,
@@ -292,7 +285,7 @@ def get_servicio(consec: int):
         "consec", "tipo", "estado", "num_informe",
         "buque_contenedor", "cliente", "contacto", "detalle",
         "continente", "pais", "puerto",
-        "operacion", "surveyor", "honorarios", "costo_operativo",
+        "operacion", "surveyor", "honorarios", "costo_operativo", "costo_tarjetas",
         "fecha_inicio", "hora_inicio",
         "fecha_fin", "hora_fin", "demoras", "duracion",
         "factura", "valor_factura", "fecha_factura",
@@ -521,6 +514,7 @@ def editar_servicio(consec: int, data: dict):
                 surveyor = %(surveyor)s,
                 honorarios = %(honorarios)s,
                 costo_operativo = %(costo_operativo)s,
+                costo_tarjetas = %(costo_tarjetas)s,
                 fecha_inicio = %(fecha_inicio)s,
                 hora_inicio = %(hora_inicio)s
             WHERE consec = %(consec)s
@@ -530,6 +524,7 @@ def editar_servicio(consec: int, data: dict):
             "surveyor": data.get("surveyor"),
             "honorarios": data.get("honorarios"),
             "costo_operativo": data.get("costo_operativo"),
+            "costo_tarjetas": data.get("costo_tarjetas"),
             "fecha_inicio": data.get("fecha_inicio"),
             "hora_inicio": data.get("hora_inicio"),
             "consec": consec
