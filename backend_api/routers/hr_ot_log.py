@@ -219,10 +219,9 @@ def list_ot_logs(
     page_size: int = 50,
     usuario: str | None = None,
     tipo: str | None = None,
+    estado: str | None = None,
     year: int | None = None,
     month: int | None = None,
-    user=Depends(get_current_user),
-    conn=Depends(get_db)
 ):
     rol = _normalize_rol(user, conn)
     is_admin = rol in ("admin", "master")
@@ -243,6 +242,10 @@ def list_ot_logs(
     if tipo:
         where.append("tipo = %s")
         params.append(tipo.upper())
+
+    if estado:
+        where.append("estado = %s")
+        params.append(estado.upper())
 
     if year:
         where.append("EXTRACT(YEAR FROM created_at) = %s")
