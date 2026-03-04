@@ -32,15 +32,22 @@ def require_permission(module: str, action: str):
 
 # ============================================================
 # GET /accounting-lines
-# Libro Diario – líneas contables REALES
+# Libro Diario – líneas contables REALES (ERP-SOM BLINDADO)
 # ============================================================
 @router.get("")
-def get_accounting_lines(conn=Depends(get_db)):
+def get_accounting_lines(
+    account_code: str | None = Query(None),
+    conn=Depends(get_db)
+):
     """
     Retorna líneas contables DIRECTAMENTE desde accounting_lines.
-    NO agrupa
-    NO calcula
-    NO inventa
+
+    Filosofía ERP-SOM:
+    • NO agrupa
+    • NO calcula
+    • NO inventa
+
+    Solo permite filtros opcionales seguros.
     """
 
     if not conn:
@@ -49,7 +56,11 @@ def get_accounting_lines(conn=Depends(get_db)):
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     try:
-        cur.execute("""
+
+        # ----------------------------------------------------
+        # BASE QUERY
+        # ----------------------------------------------------
+        sql = """
             SELECT
                 al.id              AS line_id,
                 al.entry_id,
@@ -60,13 +71,49 @@ def get_accounting_lines(conn=Depends(get_db)):
                 al.line_description,
                 al.created_at
             FROM accounting_lines al
+        """
+
+        filtros = []
+        params = []
+
+        # ----------------------------------------------------
+        # FILTRO CUENTA (jerárquico)
+        # ejemplo: 1.1.02 → trae 1.1.02.01, 1.1.02.02 etc
+        # ----------------------------------------------------
+        if account_code:
+            account_code = account_code.strip()
+
+            if account_code:
+                filtros.append("al.account_code LIKE %s")
+                params.append(f"{account_code}%")
+
+        # ----------------------------------------------------
+        # WHERE DINÁMICO
+        # ----------------------------------------------------
+        if filtros:
+            sql += " WHERE " + " AND ".join(filtros)
+
+        # ----------------------------------------------------
+        # ORDER ERP-SOM
+        # ----------------------------------------------------
+        sql += """
             ORDER BY
                 al.created_at,
                 al.entry_id,
                 al.id
-        """)
+        """
 
-        return cur.fetchall()
+        cur.execute(sql, params)
+
+        rows = cur.fetchall()
+
+        return rows
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error leyendo accounting_lines: {repr(e)}"
+        )
+
+    finally:
+        cur.close()
