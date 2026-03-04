@@ -2,7 +2,8 @@ from fastapi import (
     APIRouter,
     Depends,
     HTTPException,
-    Header
+    Header,
+    Query
 )
 from psycopg2.extras import RealDictCursor
 
