@@ -178,6 +178,7 @@ def calcular_payroll(
     """, (usuario,))
 
     emp = cur.fetchone()
+
     if not emp:
         raise HTTPException(404, "Empleado no encontrado")
 
@@ -189,14 +190,14 @@ def calcular_payroll(
         FROM hr_ot_log
         WHERE usuario = %s
           AND estado = 'APROBADO'
-          AND EXTRACT(YEAR FROM fecha_inicio) = %s
-          AND EXTRACT(MONTH FROM fecha_inicio) = %s
+          AND EXTRACT(YEAR FROM created_at) = %s
+          AND EXTRACT(MONTH FROM created_at) = %s
     """, (usuario, year, month))
 
     horas_registradas = float(cur.fetchone()["total"] or 0)
 
-    salario_base = float(emp["salario"])
-    jornada = emp["jornada"].upper()
+    salario_base = float(emp["salario"] or 0)
+    jornada = (emp["jornada"] or "").upper()
 
     horas_ot = 0.0
     pago_horas_extra = 0.0
@@ -209,21 +210,20 @@ def calcular_payroll(
 
         salario_diario = salario_base / 30
         salario_hora = salario_diario / 8
-        base_fraccionada = salario_hora / 12
-        valor_hora_extra = (base_fraccionada * 8) * 1.5
+
+        valor_hora_extra = salario_hora * 1.5
 
         horas_ot = horas_registradas
         pago_horas_extra = round(valor_hora_extra * horas_ot, 2)
+
         salario_bruto += pago_horas_extra
 
-    elif jornada == "HORAS":
+    elif jornada != "COMPLETA" and horas_registradas > 0:
 
-        horas_contratadas = emp["horas_contratadas"] or 0
+        horas_ot = horas_registradas
+        pago_horas_extra = round(horas_ot * 3000, 2)
 
-        if horas_registradas > horas_contratadas:
-            horas_ot = round(horas_registradas - horas_contratadas, 2)
-        else:
-            horas_ot = 0.0
+        salario_bruto += pago_horas_extra
 
     # --------------------------------------------------------
     # DEDUCCIONES Y RENTA (SOBRE SALARIO BRUTO)
