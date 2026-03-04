@@ -53,7 +53,7 @@ def comercial_board(
     """
     Reglas operativas ERP-SOM:
 
-    Confirmado / Buque por confirmar
+    Confirmado / En Operación
         → SOLO año actual automáticamente
 
     Finalizado
@@ -123,7 +123,7 @@ def comercial_board(
     # ---------------------------------------------------------
     # ESTADOS
     # ---------------------------------------------------------
-    estados_confirmacion = {"confirmado", "buque por confirmar"}
+    estados_confirmacion = {"confirmado", "en operación"}
 
     if estados:
 
