@@ -42,7 +42,9 @@ def servicios_analytics_by_servicio(
     puerto: Optional[str] = Query(None),
     conn=Depends(get_db)
 ):
+
     from datetime import datetime
+
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     current_year = datetime.now().year
@@ -89,69 +91,75 @@ def servicios_analytics_by_servicio(
     # =====================================================
     sql = f"""
         SELECT
+
             TRIM(s.operacion) AS servicio,
 
-            -- 🔹 QUARTER CALCULADO DESDE fecha_inicio
             'Q' || EXTRACT(QUARTER FROM s.fecha_inicio::date) AS quarter,
 
             COUNT(s.consec) AS cantidad_servicios,
 
-            SUM(COALESCE(s.valor_factura, 0)) AS revenue_bruto_total,
+            SUM(COALESCE(s.valor_factura,0)) AS revenue_bruto_total,
 
             SUM(
                 CASE
                     WHEN UPPER(TRIM(s.pais)) = 'COSTA RICA'
-                    THEN COALESCE(s.valor_factura, 0) / 1.13
-                    ELSE COALESCE(s.valor_factura, 0)
+                    THEN COALESCE(s.valor_factura,0) / 1.13
+                    ELSE COALESCE(s.valor_factura,0)
                 END
             ) AS revenue_neto_total,
 
             SUM(
-                COALESCE(s.honorarios, 0) +
-                COALESCE(s.costo_operativo, 0)
+                COALESCE(s.honorarios,0) +
+                COALESCE(s.costo_operativo,0) +
+                COALESCE(s.costo_tarjetas,0)
             ) AS costo_total,
 
             SUM(
                 CASE
                     WHEN UPPER(TRIM(s.pais)) = 'COSTA RICA'
-                    THEN COALESCE(s.valor_factura, 0) / 1.13
-                    ELSE COALESCE(s.valor_factura, 0)
+                    THEN COALESCE(s.valor_factura,0) / 1.13
+                    ELSE COALESCE(s.valor_factura,0)
                 END
             )
-            - SUM(
-                COALESCE(s.honorarios, 0) +
-                COALESCE(s.costo_operativo, 0)
+            -
+            SUM(
+                COALESCE(s.honorarios,0) +
+                COALESCE(s.costo_operativo,0) +
+                COALESCE(s.costo_tarjetas,0)
             ) AS margen_neto,
 
             CASE
                 WHEN SUM(
                     CASE
                         WHEN UPPER(TRIM(s.pais)) = 'COSTA RICA'
-                        THEN COALESCE(s.valor_factura, 0) / 1.13
-                        ELSE COALESCE(s.valor_factura, 0)
+                        THEN COALESCE(s.valor_factura,0) / 1.13
+                        ELSE COALESCE(s.valor_factura,0)
                     END
-                ) = 0 THEN 0
+                ) = 0
+                THEN 0
                 ELSE ROUND(
                     (
                         (
                             SUM(
                                 CASE
                                     WHEN UPPER(TRIM(s.pais)) = 'COSTA RICA'
-                                    THEN COALESCE(s.valor_factura, 0) / 1.13
-                                    ELSE COALESCE(s.valor_factura, 0)
+                                    THEN COALESCE(s.valor_factura,0) / 1.13
+                                    ELSE COALESCE(s.valor_factura,0)
                                 END
                             )
-                            - SUM(
-                                COALESCE(s.honorarios, 0) +
-                                COALESCE(s.costo_operativo, 0)
+                            -
+                            SUM(
+                                COALESCE(s.honorarios,0) +
+                                COALESCE(s.costo_operativo,0) +
+                                COALESCE(s.costo_tarjetas,0)
                             )
                         )
                         /
                         SUM(
                             CASE
                                 WHEN UPPER(TRIM(s.pais)) = 'COSTA RICA'
-                                THEN COALESCE(s.valor_factura, 0) / 1.13
-                                ELSE COALESCE(s.valor_factura, 0)
+                                THEN COALESCE(s.valor_factura,0) / 1.13
+                                ELSE COALESCE(s.valor_factura,0)
                             END
                         )
                     ) * 100,
@@ -161,6 +169,7 @@ def servicios_analytics_by_servicio(
 
         FROM servicios s
         WHERE {where_clause}
+
         GROUP BY
             TRIM(s.operacion),
             EXTRACT(QUARTER FROM s.fecha_inicio::date)
@@ -328,7 +337,9 @@ def costos_por_surveyor(
     year_to: Optional[int] = Query(None),
     conn=Depends(get_db)
 ):
+
     from datetime import datetime
+
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     current_year = datetime.now().year
@@ -336,8 +347,10 @@ def costos_por_surveyor(
     # ---------------- NORMALIZACIÓN AÑOS ----------------
     if year_from and not year_to:
         year_to = year_from
+
     if year_to and not year_from:
         year_from = year_to
+
     if not year_from and not year_to:
         year_from = year_to = current_year
 
@@ -369,6 +382,7 @@ def costos_por_surveyor(
     ]
 
     params = [year_from, year_to]
+
     where_clause = " AND ".join(filtros)
 
     # ---------------- QUARTERS DISPONIBLES ----------------
@@ -379,18 +393,30 @@ def costos_por_surveyor(
         WHERE {where_clause}
         ORDER BY quarter;
     """
+
     cur.execute(sql_quarters, tuple(params))
+
     available_quarters = [r["quarter"] for r in cur.fetchall()]
 
     # ---------------- COSTOS POR SURVEYOR ----------------
     sql = f"""
         SELECT
+
             UPPER(TRIM(s.surveyor)) AS surveyor,
+
             COUNT(*) AS total_servicios,
 
             SUM(COALESCE(s.honorarios, 0)) AS honorarios_total,
+
             SUM(COALESCE(s.costo_operativo, 0)) AS costo_operativo_total,
-            SUM(COALESCE(s.honorarios, 0) + COALESCE(s.costo_operativo, 0)) AS costo_total,
+
+            SUM(COALESCE(s.costo_tarjetas, 0)) AS costo_tarjetas_total,
+
+            SUM(
+                COALESCE(s.honorarios, 0)
+                + COALESCE(s.costo_operativo, 0)
+                + COALESCE(s.costo_tarjetas, 0)
+            ) AS costo_total,
 
             SUM(COALESCE(s.valor_factura, 0)) AS revenue_bruto_total,
 
@@ -403,13 +429,18 @@ def costos_por_surveyor(
             ) AS revenue_neto_total
 
         FROM servicios s
+
         WHERE {where_clause}
+
         GROUP BY UPPER(TRIM(s.surveyor))
+
         ORDER BY honorarios_total DESC;
     """
 
     cur.execute(sql, tuple(params))
+
     data = cur.fetchall()
+
     cur.close()
 
     return {
@@ -445,6 +476,7 @@ def servicios_por_ubicacion(
     """
 
     from datetime import datetime
+
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     current_year = datetime.now().year
@@ -454,8 +486,10 @@ def servicios_por_ubicacion(
     # =====================================================
     if year_from and not year_to:
         year_to = year_from
+
     if year_to and not year_from:
         year_from = year_to
+
     if not year_from and not year_to:
         year_from = year_to = current_year
 
@@ -496,10 +530,11 @@ def servicios_por_ubicacion(
     ]
 
     params = [year_from, year_to]
+
     where_clause = " AND ".join(filtros)
 
     # =====================================================
-    # QUARTERS DISPONIBLES (DINÁMICOS)
+    # QUARTERS DISPONIBLES
     # =====================================================
     sql_quarters = f"""
         SELECT DISTINCT
@@ -510,6 +545,7 @@ def servicios_por_ubicacion(
     """
 
     cur.execute(sql_quarters, tuple(params))
+
     available_quarters = [r["quarter"] for r in cur.fetchall()]
 
     # =====================================================
@@ -517,65 +553,69 @@ def servicios_por_ubicacion(
     # =====================================================
     sql = f"""
         SELECT
+
             UPPER(TRIM(s.continente)) AS continente,
             UPPER(TRIM(s.pais))       AS pais,
             UPPER(TRIM(s.puerto))     AS puerto,
 
-            -- VOLUMEN
             COUNT(s.consec) AS total_servicios,
 
-            -- FACTURACIÓN
-            SUM(COALESCE(s.valor_factura, 0)) AS revenue_bruto_total,
+            SUM(COALESCE(s.valor_factura,0)) AS revenue_bruto_total,
 
             SUM(
                 CASE
                     WHEN UPPER(TRIM(s.pais)) = 'COSTA RICA'
-                    THEN COALESCE(s.valor_factura, 0) / 1.13
-                    ELSE COALESCE(s.valor_factura, 0)
+                    THEN COALESCE(s.valor_factura,0) / 1.13
+                    ELSE COALESCE(s.valor_factura,0)
                 END
             ) AS revenue_neto_total,
 
-            -- IVA
             SUM(
                 CASE
                     WHEN UPPER(TRIM(s.pais)) = 'COSTA RICA'
-                    THEN COALESCE(s.valor_factura, 0)
-                         - (COALESCE(s.valor_factura, 0) / 1.13)
+                    THEN COALESCE(s.valor_factura,0)
+                         - (COALESCE(s.valor_factura,0) / 1.13)
                     ELSE 0
                 END
             ) AS iva_total,
 
             -- COSTOS
-            SUM(COALESCE(s.honorarios, 0))      AS honorarios_total,
-            SUM(COALESCE(s.costo_operativo, 0)) AS costo_operativo_total,
+            SUM(COALESCE(s.honorarios,0))      AS honorarios_total,
+            SUM(COALESCE(s.costo_operativo,0)) AS costo_operativo_total,
+            SUM(COALESCE(s.costo_tarjetas,0))  AS costo_tarjetas_total,
+
             SUM(
-                COALESCE(s.honorarios, 0) +
-                COALESCE(s.costo_operativo, 0)
+                COALESCE(s.honorarios,0)
+                + COALESCE(s.costo_operativo,0)
+                + COALESCE(s.costo_tarjetas,0)
             ) AS costo_total,
 
             -- MÁRGENES
             SUM(
                 CASE
                     WHEN UPPER(TRIM(s.pais)) = 'COSTA RICA'
-                    THEN COALESCE(s.valor_factura, 0) / 1.13
-                    ELSE COALESCE(s.valor_factura, 0)
+                    THEN COALESCE(s.valor_factura,0) / 1.13
+                    ELSE COALESCE(s.valor_factura,0)
                 END
             )
-            - SUM(COALESCE(s.costo_operativo, 0)) AS margen_bruto,
+            - SUM(COALESCE(s.costo_operativo,0)) AS margen_bruto,
 
             SUM(
                 CASE
                     WHEN UPPER(TRIM(s.pais)) = 'COSTA RICA'
-                    THEN COALESCE(s.valor_factura, 0) / 1.13
-                    ELSE COALESCE(s.valor_factura, 0)
+                    THEN COALESCE(s.valor_factura,0) / 1.13
+                    ELSE COALESCE(s.valor_factura,0)
                 END
             )
-            - SUM(
-                COALESCE(s.honorarios, 0) +
-                COALESCE(s.costo_operativo, 0)
+            -
+            SUM(
+                COALESCE(s.honorarios,0)
+                + COALESCE(s.costo_operativo,0)
+                + COALESCE(s.costo_tarjetas,0)
             ) AS margen_neto
 
         FROM servicios s
+
         WHERE {where_clause}
 
         GROUP BY
@@ -587,12 +627,11 @@ def servicios_por_ubicacion(
     """
 
     cur.execute(sql, tuple(params))
+
     data = cur.fetchall()
+
     cur.close()
 
-    # =====================================================
-    # RESPONSE
-    # =====================================================
     return {
         "filters": {
             "year_from": year_from,
@@ -621,25 +660,15 @@ def servicios_kpis_ejecutivos(
     operacion: Optional[str] = Query(None),
     conn=Depends(get_db)
 ):
-    """
-    KPIs ejecutivos para análisis de servicios.
-
-    Reglas:
-    • Sin años → año actual
-    • Un año → año exacto
-    • Ambos → rango real
-    • KPIs sobre servicios FINALIZADOS
-    • Revenue neto de IVA (Costa Rica 13%)
-    • Quarter calculado desde fecha_inicio (Q1–Q4)
-    """
 
     from datetime import datetime
+
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     current_year = datetime.now().year
 
     # =====================================================
-    # NORMALIZACIÓN DE AÑOS (CRÍTICO)
+    # NORMALIZACIÓN DE AÑOS
     # =====================================================
     if year_from and not year_to:
         year_to = year_from
@@ -651,7 +680,7 @@ def servicios_kpis_ejecutivos(
         year_from = year_to = current_year
 
     # =====================================================
-    # FILTROS BASE (REALMENTE BLINDADOS)
+    # FILTROS BASE
     # =====================================================
     filtros = [
         "UPPER(TRIM(s.estado)) = 'FINALIZADO'",
@@ -685,7 +714,7 @@ def servicios_kpis_ejecutivos(
     where_clause = " AND ".join(filtros)
 
     # =====================================================
-    # QUARTERS DISPONIBLES (DESDE SERVICIOS)
+    # QUARTERS DISPONIBLES
     # =====================================================
     sql_quarters = f"""
         SELECT DISTINCT
@@ -696,6 +725,7 @@ def servicios_kpis_ejecutivos(
     """
 
     cur.execute(sql_quarters, params)
+
     available_quarters = [r["quarter"] for r in cur.fetchall()]
 
     # =====================================================
@@ -703,74 +733,92 @@ def servicios_kpis_ejecutivos(
     # =====================================================
     sql = f"""
         WITH base AS (
+
             SELECT
+
                 UPPER(TRIM(s.operacion)) AS operacion,
 
-                -- FACTURACIÓN
-                SUM(COALESCE(s.valor_factura, 0)) AS revenue_bruto,
+                SUM(COALESCE(s.valor_factura,0)) AS revenue_bruto,
 
                 SUM(
                     CASE
                         WHEN UPPER(TRIM(s.pais)) = 'COSTA RICA'
-                        THEN COALESCE(s.valor_factura, 0) / 1.13
-                        ELSE COALESCE(s.valor_factura, 0)
+                        THEN COALESCE(s.valor_factura,0) / 1.13
+                        ELSE COALESCE(s.valor_factura,0)
                     END
                 ) AS revenue_neto,
 
-                -- IVA
                 SUM(
                     CASE
                         WHEN UPPER(TRIM(s.pais)) = 'COSTA RICA'
-                        THEN COALESCE(s.valor_factura, 0)
-                             - (COALESCE(s.valor_factura, 0) / 1.13)
+                        THEN COALESCE(s.valor_factura,0)
+                             - (COALESCE(s.valor_factura,0) / 1.13)
                         ELSE 0
                     END
                 ) AS iva_total,
 
-                -- COSTOS
-                SUM(COALESCE(s.honorarios, 0))      AS honorarios,
-                SUM(COALESCE(s.costo_operativo, 0)) AS costos_operativos,
-
-                -- MÁRGENES
-                SUM(
-                    CASE
-                        WHEN UPPER(TRIM(s.pais)) = 'COSTA RICA'
-                        THEN COALESCE(s.valor_factura, 0) / 1.13
-                        ELSE COALESCE(s.valor_factura, 0)
-                    END
-                )
-                - SUM(COALESCE(s.costo_operativo, 0)) AS margen_bruto,
+                SUM(COALESCE(s.honorarios,0)) AS honorarios,
+                SUM(COALESCE(s.costo_operativo,0)) AS costos_operativos,
+                SUM(COALESCE(s.costo_tarjetas,0)) AS costo_tarjetas,
 
                 SUM(
                     CASE
                         WHEN UPPER(TRIM(s.pais)) = 'COSTA RICA'
-                        THEN COALESCE(s.valor_factura, 0) / 1.13
-                        ELSE COALESCE(s.valor_factura, 0)
+                        THEN COALESCE(s.valor_factura,0) / 1.13
+                        ELSE COALESCE(s.valor_factura,0)
                     END
                 )
-                - SUM(
-                    COALESCE(s.honorarios, 0)
-                    + COALESCE(s.costo_operativo, 0)
+                - SUM(COALESCE(s.costo_operativo,0)) AS margen_bruto,
+
+                SUM(
+                    CASE
+                        WHEN UPPER(TRIM(s.pais)) = 'COSTA RICA'
+                        THEN COALESCE(s.valor_factura,0) / 1.13
+                        ELSE COALESCE(s.valor_factura,0)
+                    END
+                )
+                -
+                SUM(
+                    COALESCE(s.honorarios,0)
+                    + COALESCE(s.costo_operativo,0)
+                    + COALESCE(s.costo_tarjetas,0)
                 ) AS margen_neto
 
             FROM servicios s
             WHERE {where_clause}
+
             GROUP BY UPPER(TRIM(s.operacion))
+
         ),
+
         resumen AS (
+
             SELECT
+
                 COUNT(*) AS total_servicios,
 
-                COALESCE(SUM(revenue_bruto), 0) AS revenue_bruto_total,
-                COALESCE(SUM(revenue_neto), 0) AS revenue_neto_total,
-                COALESCE(SUM(iva_total), 0) AS iva_total,
+                COALESCE(SUM(revenue_bruto),0) AS revenue_bruto_total,
+                COALESCE(SUM(revenue_neto),0) AS revenue_neto_total,
+                COALESCE(SUM(iva_total),0) AS iva_total,
 
-                COALESCE(SUM(honorarios + costos_operativos), 0) AS costos_totales,
-                COALESCE(SUM(margen_bruto), 0) AS margen_bruto_total,
-                COALESCE(SUM(margen_neto), 0) AS margen_neto_total
+                COALESCE(
+                    SUM(
+                        honorarios
+                        + costos_operativos
+                        + costo_tarjetas
+                    ),
+                    0
+                ) AS costos_totales,
+
+                COALESCE(SUM(margen_bruto),0) AS margen_bruto_total,
+                COALESCE(SUM(margen_neto),0) AS margen_neto_total
+
             FROM base
+
         )
+
         SELECT
+
             r.*,
 
             ROUND(
@@ -798,11 +846,13 @@ def servicios_kpis_ejecutivos(
     """
 
     cur.execute(sql, params)
+
     kpis = cur.fetchone() or {}
+
     cur.close()
 
     # =====================================================
-    # RESPONSE (BLINDADO A None)
+    # RESPONSE
     # =====================================================
     def _n(v):
         return round(v or 0, 2)

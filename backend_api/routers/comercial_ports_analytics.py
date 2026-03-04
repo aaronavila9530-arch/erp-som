@@ -51,6 +51,7 @@ def comercial_ports_kpis(
     pais: Optional[str] = Query(None),
     conn=Depends(get_db)
 ):
+
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     filtros = ["s.fecha_inicio IS NOT NULL"]
@@ -93,7 +94,8 @@ def comercial_ports_kpis(
             )                                                AS facturacion_neta,
 
             SUM(COALESCE(s.honorarios,0))                    AS honorarios,
-            SUM(COALESCE(s.costo_operativo,0))               AS costos_operativos
+            SUM(COALESCE(s.costo_operativo,0))               AS costos_operativos,
+            SUM(COALESCE(s.costo_tarjetas,0))                AS costo_tarjetas
 
         FROM servicios s
         WHERE {where_sql};
@@ -106,22 +108,42 @@ def comercial_ports_kpis(
     fact = float(r["facturacion_neta"] or 0)
     honorarios = float(r["honorarios"] or 0)
     costos_op = float(r["costos_operativos"] or 0)
+    costo_tarjetas = float(r["costo_tarjetas"] or 0)
 
-    margen_bruto = fact - honorarios
-    margen_neto = fact - (honorarios + costos_op)
+    # --------------------------------------------------------
+    # MÁRGENES CORREGIDOS
+    # --------------------------------------------------------
+
+    margen_bruto = fact - (honorarios + costo_tarjetas)
+
+    margen_neto = fact - (
+        honorarios
+        + costos_op
+        + costo_tarjetas
+    )
+
+    costos_totales = honorarios + costos_op + costo_tarjetas
 
     return {
         "clientes": r["clientes"],
         "paises": r["paises"],
         "puertos": r["puertos"],
-        "facturacion": round(fact, 2),
-        "costos": round(honorarios + costos_op, 2),
-        "margen_bruto": round(margen_bruto, 2),
-        "margen_neto": round(margen_neto, 2),
-        "rentabilidad": round(margen_neto, 2),
-        "rentabilidad_pct": round((margen_neto / fact * 100) if fact else 0, 2)
-    }
 
+        "facturacion": round(fact, 2),
+
+        "costos": round(costos_totales, 2),
+
+        "margen_bruto": round(margen_bruto, 2),
+
+        "margen_neto": round(margen_neto, 2),
+
+        "rentabilidad": round(margen_neto, 2),
+
+        "rentabilidad_pct": round(
+            (margen_neto / fact * 100) if fact else 0,
+            2
+        )
+    }
 
 # ============================================================
 # GET /comercial/analytics/puertos
@@ -138,6 +160,7 @@ def comercial_ports_analytics(
     pais: Optional[str] = Query(None),
     conn=Depends(get_db)
 ):
+
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     filtros = ["s.fecha_inicio IS NOT NULL"]
@@ -171,67 +194,91 @@ def comercial_ports_analytics(
                 s.continente,
                 s.pais,
                 s.puerto,
+
                 CASE
                     WHEN s.pais = 'Costa Rica'
                     THEN s.valor_factura / 1.13
                     ELSE s.valor_factura
                 END AS facturacion_neta,
-                COALESCE(s.honorarios,0) AS honorarios,
-                COALESCE(s.costo_operativo,0) AS costo_operativo
+
+                COALESCE(s.honorarios,0)        AS honorarios,
+                COALESCE(s.costo_operativo,0)   AS costo_operativo,
+                COALESCE(s.costo_tarjetas,0)    AS costo_tarjetas
+
             FROM servicios s
             WHERE {where_sql}
         ),
+
         agg AS (
             SELECT
                 continente,
                 pais,
                 puerto,
+
                 COUNT(*) AS total_operaciones,
+
                 SUM(facturacion_neta) AS facturacion_neta,
-                SUM(honorarios) AS honorarios,
-                SUM(costo_operativo) AS costo_operativo
+                SUM(honorarios)       AS honorarios,
+                SUM(costo_operativo)  AS costo_operativo,
+                SUM(costo_tarjetas)   AS costo_tarjetas
+
             FROM base
             GROUP BY continente, pais, puerto
         ),
+
         ranked AS (
             SELECT *,
                 SUM(facturacion_neta) OVER () AS total_global,
                 SUM(facturacion_neta) OVER (ORDER BY facturacion_neta DESC) AS acumulado
             FROM agg
         )
+
         SELECT
             continente,
             pais,
             puerto,
+
             total_operaciones,
+
             ROUND(
                 total_operaciones::numeric
                 / NULLIF(SUM(total_operaciones) OVER (PARTITION BY pais), 0),
                 2
             ) AS frecuencia,
+
             ROUND(facturacion_neta, 2) AS facturacion_neta,
+
             ROUND(
                 facturacion_neta / NULLIF(total_operaciones,0),
                 2
             ) AS ticket_promedio,
+
             ROUND(
-                facturacion_neta - honorarios,
+                facturacion_neta
+                - (honorarios + costo_tarjetas),
                 2
             ) AS margen_bruto,
+
             ROUND(
-                facturacion_neta - (honorarios + costo_operativo),
+                facturacion_neta
+                - (honorarios + costo_operativo + costo_tarjetas),
                 2
             ) AS margen_neto,
+
             (acumulado / total_global <= 0.8) AS is_pareto_80
+
         FROM ranked
         ORDER BY facturacion_neta DESC;
     """
 
     cur.execute(sql, params)
     rows = cur.fetchall()
+
     cur.close()
 
-    return {"data": rows}
+    return {
+        "data": rows
+    }
 
 
 @router.get(

@@ -49,6 +49,7 @@ def comercial_client_view(
     servicio: Optional[str] = Query(None),
     conn=Depends(get_db)
 ):
+
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     # --------------------------------------------------------
@@ -57,9 +58,11 @@ def comercial_client_view(
     if year_from or year_to:
         y_start = date(year_from or year_to, 1, 1)
         y_end = date((year_to or year_from) + 1, 1, 1)
+
     elif year:
         y_start = date(year, 1, 1)
         y_end = date(year + 1, 1, 1)
+
     else:
         current_year = date.today().year
         y_start = date(current_year, 1, 1)
@@ -69,6 +72,7 @@ def comercial_client_view(
     # FILTROS OPCIONALES
     # --------------------------------------------------------
     filtros = []
+
     params = {
         "y_start": y_start,
         "y_end": y_end
@@ -91,6 +95,7 @@ def comercial_client_view(
     # --------------------------------------------------------
     sql = f"""
         WITH base AS (
+
             SELECT
                 s.cliente,
                 s.operacion                       AS servicios,
@@ -99,59 +104,81 @@ def comercial_client_view(
                 s.fecha_inicio,
                 s.fecha_fin,
                 s.factura,
-                COALESCE(s.valor_factura, 0)     AS valor_factura,
-                COALESCE(s.costo_operativo, 0)   AS costo_operativo,
-                COALESCE(s.honorarios, 0)        AS honorarios,
+
+                COALESCE(s.valor_factura, 0)      AS valor_factura,
+                COALESCE(s.costo_operativo, 0)    AS costo_operativo,
+                COALESCE(s.honorarios, 0)         AS honorarios,
+                COALESCE(s.costo_tarjetas, 0)     AS costo_tarjetas,
+
                 cli.pais,
-                COALESCE(ca.comision, 0)         AS comision_bancaria,
+
+                COALESCE(ca.comision, 0)          AS comision_bancaria,
+
                 CASE
                     WHEN cli.pais = 'Costa Rica'
                     THEN s.valor_factura - (s.valor_factura / 1.13)
                     ELSE 0
-                END                               AS iva
+                END                                AS iva
+
             FROM servicios s
+
             LEFT JOIN cliente cli
                 ON cli.nombrejuridico = s.cliente
+
             LEFT JOIN cash_app ca
                 ON ca.numero_documento = s.factura
+
             WHERE
                 s.fecha_inicio >= %(y_start)s
                 AND s.fecha_inicio < %(y_end)s
                 {filtros_sql}
         )
+
         SELECT
             cliente,
             servicios,
             buque_contenedor,
+
             COUNT(*)                           AS frecuencia,
             tipo_mas_frecuente,
+
             MIN(fecha_inicio)                  AS fecha_inicio,
             MAX(fecha_fin)                     AS fecha_fin,
+
             factura,
+
             SUM(valor_factura)                 AS valor_facturado,
             SUM(costo_operativo)               AS costo_operativo,
             SUM(honorarios)                    AS honorarios,
+            SUM(costo_tarjetas)                AS costo_tarjetas,
             SUM(iva)                           AS iva,
             SUM(comision_bancaria)             AS comision_bancaria,
+
             (
                 SUM(valor_factura)
                 - SUM(costo_operativo)
                 - SUM(honorarios)
+                - SUM(costo_tarjetas)
             )                                  AS margen_bruto,
+
             (
                 SUM(valor_factura)
                 - SUM(costo_operativo)
                 - SUM(honorarios)
+                - SUM(costo_tarjetas)
                 - SUM(comision_bancaria)
                 - SUM(iva)
             )                                  AS margen_neto
+
         FROM base
+
         GROUP BY
             cliente,
             servicios,
             buque_contenedor,
             tipo_mas_frecuente,
             factura
+
         ORDER BY valor_facturado DESC;
     """
 
@@ -192,6 +219,7 @@ def comercial_client_view(
     total_costs = sum(
         (r["costo_operativo"] or 0)
         + (r["honorarios"] or 0)
+        + (r["costo_tarjetas"] or 0)
         + (r["iva"] or 0)
         + (r["comision_bancaria"] or 0)
         for r in rows
@@ -205,12 +233,16 @@ def comercial_client_view(
         "servicios": total_services,
         "facturado": round(total_fact, 2),
         "costos": round(total_costs, 2),
+
         "ticket_promedio": round(
             (total_fact / total_services), 2
         ) if total_services else 0,
+
         "margen_bruto": round(gross_margin, 2),
         "margen_neto": round(net_margin, 2),
+
         "rentabilidad_monto": round(net_margin, 2),
+
         "rentabilidad_pct": round(
             (net_margin / total_fact) * 100, 2
         ) if total_fact else 0
@@ -225,6 +257,7 @@ def comercial_client_view(
         FROM servicios
         ORDER BY year DESC
     """)
+
     years = [r["year"] for r in cur.fetchall()]
 
     cur.close()
