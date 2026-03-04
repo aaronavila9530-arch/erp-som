@@ -1200,6 +1200,7 @@ def post_financial_statements(
     """
 
     required_fields = ["company_code", "fiscal_year", "period"]
+
     for f in required_fields:
         if f not in payload:
             raise HTTPException(400, f"Missing field: {f}")
@@ -1216,7 +1217,7 @@ def post_financial_statements(
     try:
 
         # ----------------------------------------------------
-        # 1️⃣ VALIDAR ESTADO DEL PERÍODO (LOCK FUERTE)
+        # 1️⃣ VALIDAR ESTADO DEL PERÍODO
         # ----------------------------------------------------
         cur.execute("""
             SELECT *
@@ -1233,7 +1234,7 @@ def post_financial_statements(
         if not status:
             raise HTTPException(
                 404,
-                "No existe closing_status para ese período/ledger."
+                "No existe closing_status para ese período."
             )
 
         if not status.get("pnl_closed"):
@@ -1249,7 +1250,7 @@ def post_financial_statements(
             )
 
         # ----------------------------------------------------
-        # 2️⃣ OBTENER TB_POST (FUENTE OBLIGATORIA)
+        # 2️⃣ OBTENER TB_POST (FUENTE DEL BALANCE)
         # ----------------------------------------------------
         cur.execute("""
             SELECT id
@@ -1276,25 +1277,27 @@ def post_financial_statements(
 
         # ----------------------------------------------------
         # 3️⃣ CALCULAR ACTIVO / PASIVO / PATRIMONIO
-        # NORMALIZACIÓN CORRECTA DE SIGNOS
+        # NORMALIZACIÓN CONTABLE CORRECTA
         # ----------------------------------------------------
         cur.execute("""
             SELECT
-                COALESCE(SUM(CASE WHEN account_code LIKE '1%%' THEN balance ELSE 0 END), 0) AS activos_raw,
-                COALESCE(SUM(CASE WHEN account_code LIKE '2%%' THEN balance ELSE 0 END), 0) AS pasivos_raw,
-                COALESCE(SUM(CASE WHEN account_code LIKE '3%%' THEN balance ELSE 0 END), 0) AS patrimonio_raw
+                COALESCE(SUM(CASE WHEN account_code LIKE '1%%' THEN balance ELSE 0 END),0) AS activos_raw,
+                COALESCE(SUM(CASE WHEN account_code LIKE '2%%' THEN balance ELSE 0 END),0) AS pasivos_raw,
+                COALESCE(SUM(CASE WHEN account_code LIKE '3%%' THEN balance ELSE 0 END),0) AS patrimonio_raw
             FROM closing_batch_lines
             WHERE batch_id = %s
         """, (tb_batch_id,))
 
         bg = cur.fetchone() or {}
 
-        activos = abs(float(bg["activos_raw"] or 0))
-        pasivos = abs(float(bg["pasivos_raw"] or 0))
-        patrimonio = abs(float(bg["patrimonio_raw"] or 0))
+        activos = float(bg.get("activos_raw") or 0)
+
+        # Pasivos y patrimonio normalmente vienen negativos en contabilidad
+        pasivos = float(bg.get("pasivos_raw") or 0) * -1
+        patrimonio = float(bg.get("patrimonio_raw") or 0) * -1
 
         # ----------------------------------------------------
-        # 4️⃣ INCORPORAR EFECTO DEL CLOSE_PNL (RESULT → EQUITY)
+        # 4️⃣ INCORPORAR RESULTADO DEL CIERRE P&L
         # ----------------------------------------------------
         cur.execute("""
             SELECT id
@@ -1310,11 +1313,13 @@ def post_financial_statements(
         """, (company, fiscal_year, period, ledger))
 
         pnl_batch = cur.fetchone()
+
         pnl_effect = 0.0
 
         if pnl_batch:
+
             cur.execute("""
-                SELECT COALESCE(SUM(balance), 0) AS effect
+                SELECT COALESCE(SUM(balance),0) AS effect
                 FROM closing_batch_lines
                 WHERE batch_id = %s
                   AND source_type = 'PNL'
@@ -1322,13 +1327,14 @@ def post_financial_statements(
             """, (pnl_batch["id"],))
 
             pnl_row = cur.fetchone() or {}
-            pnl_effect = float(pnl_row["effect"] or 0)
 
-            # Ajuste directo al patrimonio
-            patrimonio = round(patrimonio + pnl_effect, 2)
+            pnl_effect = float(pnl_row.get("effect") or 0)
+
+            # El resultado afecta patrimonio
+            patrimonio = patrimonio - pnl_effect
 
         # ----------------------------------------------------
-        # 5️⃣ VALIDACIÓN FINAL DEL BALANCE GENERAL
+        # 5️⃣ REDONDEO CONTABLE
         # ----------------------------------------------------
         activos = round(activos, 2)
         pasivos = round(pasivos, 2)
@@ -1336,6 +1342,9 @@ def post_financial_statements(
 
         diff = round(activos - (pasivos + patrimonio), 2)
 
+        # ----------------------------------------------------
+        # 6️⃣ VALIDACIÓN FINAL DEL BALANCE
+        # ----------------------------------------------------
         if diff != 0:
             raise HTTPException(
                 400,
@@ -1347,7 +1356,7 @@ def post_financial_statements(
             )
 
         # ----------------------------------------------------
-        # 6️⃣ CREAR BATCH FS_FINAL
+        # 7️⃣ CREAR BATCH FS_FINAL
         # ----------------------------------------------------
         batch_code = (
             f"FS-{fiscal_year}-{period:02d}-"
@@ -1387,7 +1396,7 @@ def post_financial_statements(
         fs_batch_id = cur.fetchone()["id"]
 
         # ----------------------------------------------------
-        # 7️⃣ ACTUALIZAR CLOSING_STATUS
+        # 8️⃣ ACTUALIZAR ESTADO DE CIERRE
         # ----------------------------------------------------
         cur.execute("""
             UPDATE closing_status
