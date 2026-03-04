@@ -222,6 +222,8 @@ def list_ot_logs(
     estado: str | None = None,
     year: int | None = None,
     month: int | None = None,
+    user=Depends(get_current_user),
+    conn=Depends(get_db)
 ):
     rol = _normalize_rol(user, conn)
     is_admin = rol in ("admin", "master")
