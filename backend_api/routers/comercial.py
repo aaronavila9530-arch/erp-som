@@ -156,7 +156,7 @@ def comercial_board(
         FROM servicios
         WHERE {where_sql}
         ORDER BY fecha_inicio DESC
-        LIMIT 500
+        LIMIT 500000
     """
 
     cur.execute(sql, params)
