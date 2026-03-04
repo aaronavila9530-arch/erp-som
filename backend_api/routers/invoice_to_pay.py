@@ -42,19 +42,19 @@ def require_permission(module: str, action: str):
 # ============================================================
 def _sync_servicios_to_itp(cur):
     """
-    Sincroniza honorarios desde servicios hacia Invoice To Pay.
+    Sincroniza obligaciones desde servicios hacia Invoice To Pay.
 
     Reglas:
     - INSERTA si no existe
     - ACTUALIZA solo si:
         • origin = 'SERVICIOS'
-        • status = 'PENDING'
-        • balance = total
-        • honorarios cambiaron
+        • status = 'PENDING' o 'PARTIAL'
+        • el monto cambió
+    - Respeta pagos parciales recalculando balance
     """
 
     # ============================================================
-    # 1️⃣ INSERTAR NUEVAS OBLIGACIONES
+    # 1️⃣ INSERTAR HONORARIOS (SURVEYOR_FEE)
     # ============================================================
     cur.execute("""
         INSERT INTO payment_obligations (
@@ -107,18 +107,70 @@ def _sync_servicios_to_itp(cur):
                 FROM payment_obligations po
                 WHERE po.service_id = s.consec
                   AND po.origin = 'SERVICIOS'
+                  AND po.obligation_type = 'SURVEYOR_FEE'
             )
     """)
 
     # ============================================================
-    # 2️⃣ ACTUALIZAR HONORARIOS MODIFICADOS (BLINDADO)
+    # 2️⃣ INSERTAR COSTO TARJETAS (CARD_PROCESSING)
     # ============================================================
-    # Regla robusta:
-    # - Si origin=SERVICIOS y NO está PAID/VOID, permitimos actualizar TOTAL.
-    # - Si hubo pagos parciales: mantenemos el "pagado" y recalculamos balance.
-    #   pagado = (po.total - po.balance)
-    #   nuevo_balance = max(nuevo_total - pagado, 0)
-    # - Si estaba PENDING sin pagos: balance = nuevo_total
+    cur.execute("""
+        INSERT INTO payment_obligations (
+            record_type,
+            payee_type,
+            payee_name,
+            obligation_type,
+            reference,
+            vessel,
+            country,
+            operation,
+            service_id,
+            issue_date,
+            due_date,
+            currency,
+            total,
+            balance,
+            status,
+            origin,
+            notes,
+            created_at
+        )
+        SELECT
+            'OBLIGATION',
+            'SUPPLIER',
+            'CARD PROCESSOR',
+            'CARD_PROCESSING',
+            s.consec,
+            s.buque_contenedor,
+            s.pais,
+            s.operacion,
+            s.consec,
+            s.fecha_fin,
+            (s.fecha_fin + INTERVAL '15 days'),
+            'USD',
+            s.costo_tarjetas,
+            s.costo_tarjetas,
+            'PENDING',
+            'SERVICIOS',
+            'Costo tarjetas - ' || COALESCE(s.detalle,''),
+            NOW()
+        FROM servicios s
+        WHERE
+            s.costo_tarjetas IS NOT NULL
+            AND s.costo_tarjetas > 0
+            AND s.fecha_fin IS NOT NULL
+            AND NOT EXISTS (
+                SELECT 1
+                FROM payment_obligations po
+                WHERE po.service_id = s.consec
+                  AND po.origin = 'SERVICIOS'
+                  AND po.obligation_type = 'CARD_PROCESSING'
+            )
+    """)
+
+    # ============================================================
+    # 3️⃣ ACTUALIZAR HONORARIOS MODIFICADOS
+    # ============================================================
     cur.execute("""
         UPDATE payment_obligations po
         SET
@@ -139,10 +191,40 @@ def _sync_servicios_to_itp(cur):
         WHERE
             po.service_id = s.consec
             AND po.origin = 'SERVICIOS'
+            AND po.obligation_type = 'SURVEYOR_FEE'
             AND s.honorarios IS NOT NULL
             AND s.honorarios > 0
             AND po.status IN ('PENDING', 'PARTIAL')
             AND po.total IS DISTINCT FROM s.honorarios
+    """)
+
+    # ============================================================
+    # 4️⃣ ACTUALIZAR COSTO TARJETAS MODIFICADO
+    # ============================================================
+    cur.execute("""
+        UPDATE payment_obligations po
+        SET
+            total = s.costo_tarjetas,
+            balance = GREATEST(
+                s.costo_tarjetas - (po.total - po.balance),
+                0
+            ),
+            vessel = COALESCE(s.buque_contenedor, po.vessel),
+            country = COALESCE(s.pais, po.country),
+            operation = COALESCE(s.operacion, po.operation),
+            issue_date = COALESCE(s.fecha_fin, po.issue_date),
+            due_date = COALESCE((s.fecha_fin + INTERVAL '15 days'), po.due_date),
+            notes = 'Costo tarjetas - ' || COALESCE(s.detalle,''),
+            updated_at = NOW()
+        FROM servicios s
+        WHERE
+            po.service_id = s.consec
+            AND po.origin = 'SERVICIOS'
+            AND po.obligation_type = 'CARD_PROCESSING'
+            AND s.costo_tarjetas IS NOT NULL
+            AND s.costo_tarjetas > 0
+            AND po.status IN ('PENDING', 'PARTIAL')
+            AND po.total IS DISTINCT FROM s.costo_tarjetas
     """)
 
 @router.get("/search")
