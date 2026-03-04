@@ -70,6 +70,16 @@ def listar_eventos(
             e.status,
 
             -- =============================================
+            -- PAYLOAD ORIGINAL (PARA DETALLE DE SOLICITUD)
+            -- =============================================
+            e.payload,
+
+            -- =============================================
+            -- DIAS DE VACACIONES CALCULADOS
+            -- =============================================
+            e.vacaciones,
+
+            -- =============================================
             -- CAMPOS CLAVE PARA LA TABLA
             -- =============================================
             e.comentario_solicitud,
@@ -97,7 +107,19 @@ def listar_eventos(
         """
         cur.execute(base_sql)
 
-    return cur.fetchall()
+    rows = cur.fetchall()
+
+    # ---------------------------------------------------------
+    # BLINDAJE FINAL (evita nulls que rompan frontend)
+    # ---------------------------------------------------------
+    for r in rows:
+        if r.get("payload") is None:
+            r["payload"] = {}
+
+        if r.get("vacaciones") is None:
+            r["vacaciones"] = 0
+
+    return rows
 
 
 # ============================================================
