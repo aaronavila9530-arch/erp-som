@@ -124,13 +124,21 @@ def calcular_payroll(
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     # --------------------------------------------------------
-    # VALIDAR PERÍODO (SOLO MES EN CURSO)
+    # VALIDAR PERÍODO (SOLO MES CERRADO / MES ANTERIOR)
     # --------------------------------------------------------
     hoy = date.today()
-    if year != hoy.year or month != hoy.month:
+
+    if hoy.month == 1:
+        allowed_month = 12
+        allowed_year = hoy.year - 1
+    else:
+        allowed_month = hoy.month - 1
+        allowed_year = hoy.year
+
+    if year != allowed_year or month != allowed_month:
         raise HTTPException(
             400,
-            "Solo se permite generar la planilla del mes en curso"
+            f"Solo se permite generar la planilla del período cerrado: {allowed_month}/{allowed_year}"
         )
 
     # --------------------------------------------------------
