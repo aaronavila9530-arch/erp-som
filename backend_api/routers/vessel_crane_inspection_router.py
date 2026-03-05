@@ -78,11 +78,6 @@ def _expand_dynamic_bullets(payload: dict):
         payload[f"conclusion_{i+1}"] = conclusions[i] if i < len(conclusions) else None
 
 
-# ============================================================
-# CREATE
-# POST /vessel-crane-inspection
-# ============================================================
-
 @router.post("")
 def create_crane_inspection(payload: dict, conn=Depends(get_db)):
 
@@ -91,13 +86,13 @@ def create_crane_inspection(payload: dict, conn=Depends(get_db)):
         payload = payload or {}
 
         # ----------------------------------------------------
-        # EXPAND BULLETS (recommendation_1, crane1_remark_1...)
+        # EXPAND BULLETS
         # ----------------------------------------------------
 
         _expand_dynamic_bullets(payload)
 
         # ----------------------------------------------------
-        # REMOVE ORIGINAL LISTS (Postgres cannot insert lists)
+        # REMOVE ORIGINAL LISTS
         # ----------------------------------------------------
 
         for key in [
@@ -112,6 +107,15 @@ def create_crane_inspection(payload: dict, conn=Depends(get_db)):
             payload.pop(key, None)
 
         # ----------------------------------------------------
+        # CLEAN EMPTY STRINGS
+        # ----------------------------------------------------
+
+        for k, v in list(payload.items()):
+
+            if v == "":
+                payload[k] = None
+
+        # ----------------------------------------------------
         # META
         # ----------------------------------------------------
 
@@ -120,7 +124,21 @@ def create_crane_inspection(payload: dict, conn=Depends(get_db)):
         payload["updated_at"] = datetime.utcnow()
 
         # ----------------------------------------------------
-        # BUILD INSERT
+        # VALID TABLE COLUMNS
+        # ----------------------------------------------------
+
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+
+        cur.execute("""
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_name = 'vessel_crane_inspection_reports'
+        """)
+
+        valid_columns = {r["column_name"] for r in cur.fetchall()}
+
+        # ----------------------------------------------------
+        # FILTER PAYLOAD
         # ----------------------------------------------------
 
         columns = []
@@ -129,9 +147,16 @@ def create_crane_inspection(payload: dict, conn=Depends(get_db)):
 
         for k, v in payload.items():
 
+            if k not in valid_columns:
+                continue
+
             columns.append(k)
             values.append(v)
             placeholders.append("%s")
+
+        # ----------------------------------------------------
+        # INSERT
+        # ----------------------------------------------------
 
         query = f"""
         INSERT INTO vessel_crane_inspection_reports
@@ -139,8 +164,6 @@ def create_crane_inspection(payload: dict, conn=Depends(get_db)):
         VALUES ({",".join(placeholders)})
         RETURNING id
         """
-
-        cur = conn.cursor(cursor_factory=RealDictCursor)
 
         cur.execute(query, values)
 
@@ -157,7 +180,10 @@ def create_crane_inspection(payload: dict, conn=Depends(get_db)):
 
         conn.rollback()
 
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
 
 
 # ============================================================
