@@ -90,17 +90,45 @@ def create_crane_inspection(payload: dict, conn=Depends(get_db)):
 
         payload = payload or {}
 
+        # ----------------------------------------------------
+        # EXPAND BULLETS (recommendation_1, crane1_remark_1...)
+        # ----------------------------------------------------
+
         _expand_dynamic_bullets(payload)
+
+        # ----------------------------------------------------
+        # REMOVE ORIGINAL LISTS (Postgres cannot insert lists)
+        # ----------------------------------------------------
+
+        for key in [
+            "recommendations",
+            "grabs_condition",
+            "conclusion",
+            "crane1_remarks",
+            "crane2_remarks",
+            "crane3_remarks",
+            "crane4_remarks"
+        ]:
+            payload.pop(key, None)
+
+        # ----------------------------------------------------
+        # META
+        # ----------------------------------------------------
 
         payload["status"] = "pending for review"
         payload["created_at"] = datetime.utcnow()
         payload["updated_at"] = datetime.utcnow()
+
+        # ----------------------------------------------------
+        # BUILD INSERT
+        # ----------------------------------------------------
 
         columns = []
         values = []
         placeholders = []
 
         for k, v in payload.items():
+
             columns.append(k)
             values.append(v)
             placeholders.append("%s")
