@@ -77,6 +77,8 @@ from routers.vessel_bunker_presentation_router import router as vessel_bunker_pr
 from routers.vessel_bunker_preview_router import router as vessel_bunker_preview_router
 from routers.vessel_cargo_condition_router import router as vessel_cargo_condition_router
 from routers.vessel_crane_inspection_router import router as crane_router
+from routers.vessel_crane_inspection_reports_router import router as crane_router
+
 
 # Comercial
 from routers.comercial import router as comercial_router
@@ -232,6 +234,7 @@ app.include_router(vessel_bunker_excel_router)
 app.include_router(vessel_bunker_presentation_router)
 app.include_router(vessel_bunker_preview_router)
 app.include_router(vessel_cargo_condition_router)
+app.include_router(crane_router)
 app.include_router(crane_router)
 
 app.include_router(comercial_router)
