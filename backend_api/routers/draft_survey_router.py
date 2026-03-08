@@ -2,6 +2,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from psycopg2.extras import RealDictCursor
 from datetime import datetime
 from database import get_db  # ← usa tu get_db existente
+from psycopg2 import IntegrityError
+
+from fastapi.responses import FileResponse
 
 router = APIRouter(
     prefix="/draft-survey",
@@ -27,6 +30,42 @@ def parse_date(value):
 def safe(payload, key):
     v = payload.get(key)
     return v if v not in ["", None] else None
+
+# =========================================================
+# NORMALIZE NUMERIC VALUES (comma -> dot for PostgreSQL)
+# =========================================================
+
+def normalize_numeric(v):
+
+    if v is None:
+        return None
+
+    if isinstance(v, str):
+
+        vv = v.strip()
+
+        if vv == "":
+            return None
+
+        # quitar separadores de miles comunes
+        vv = vv.replace(" ", "")
+
+        # si hay coma y punto asumimos formato europeo
+        if "," in vv and "." in vv:
+            if vv.rfind(",") > vv.rfind("."):
+                vv = vv.replace(".", "").replace(",", ".")
+            else:
+                vv = vv.replace(",", "")
+
+        else:
+            vv = vv.replace(",", ".")
+
+        try:
+            return float(vv)
+        except Exception:
+            return vv
+
+    return v
 
 
 # =========================================================
@@ -163,6 +202,12 @@ def create_draft_survey(payload: dict, conn=Depends(get_db)):
             return v
 
         payload = {k: _clean_value(v) for k, v in payload.items() if isinstance(k, str)}
+
+        # =====================================================
+        # NORMALIZE NUMERIC VALUES
+        # =====================================================
+        for k, v in payload.items():
+            payload[k] = normalize_numeric(v)
 
         payload["init_date"] = parse_date(payload.get("init_date"))
         payload["final_date"] = parse_date(payload.get("final_date"))
@@ -513,6 +558,12 @@ def update_draft_survey(general_id: int, payload: dict, conn=Depends(get_db)):
         # NORMALIZACIONES
         # ===============================
         payload = payload or {}
+
+        # =====================================================
+        # NORMALIZE NUMERIC VALUES
+        # =====================================================
+        for k, v in payload.items():
+            payload[k] = normalize_numeric(v)
 
         payload["init_date"] = parse_date(payload.get("init_date"))
         payload["final_date"] = parse_date(payload.get("final_date"))
