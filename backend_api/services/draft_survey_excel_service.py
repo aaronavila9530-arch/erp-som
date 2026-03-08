@@ -886,3 +886,14 @@ class DraftSurveyExcelGenerator:
             )
 
 
+
+# =========================================================
+# BACKWARD COMPATIBILITY
+# =========================================================
+
+def generate_draft_survey_excel(payload: dict):
+    """
+    Wrapper para compatibilidad con imports antiguos.
+    """
+    generator = DraftSurveyExcelGenerator()
+    return generator.generate(payload or {})
