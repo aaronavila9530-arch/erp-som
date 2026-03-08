@@ -7,6 +7,29 @@ from fastapi import APIRouter, Depends, HTTPException
 from psycopg2.extras import RealDictCursor
 from database import get_db
 
+
+def normalize_numeric(v):
+
+    if v is None:
+        return None
+
+    if isinstance(v, str):
+
+        vv = v.strip()
+
+        if vv == "":
+            return None
+
+        vv = vv.replace(",", ".")
+
+        try:
+            return float(vv)
+        except:
+            return vv
+
+    return v
+
+
 router = APIRouter(
     prefix="/draft-survey-extra",
     tags=["Draft Survey Extra"]
@@ -51,24 +74,37 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
 
         # =====================================================
         # 2️⃣ NORMALIZAR KEYS + LIMPIAR STRINGS VACÍOS
-        #    (NO EXIGIR QUE VENGAN TODOS LOS CAMPOS)
+        #    + NORMALIZAR NÚMEROS (coma -> punto)
         # =====================================================
+
         normalized = {}
 
         for k, v in payload.items():
+
             if not isinstance(k, str):
                 continue
 
             new_key = k.lower().strip().replace(" ", "_")
 
-            # 🔒 Si viene "" o "None" -> None (evita 400 por tipos / constraints)
+            # limpiar vacíos
             if v is None:
-                normalized[new_key] = None
+                value = None
+
             elif isinstance(v, str):
                 vv = v.strip()
-                normalized[new_key] = None if vv in ("", "none", "null") else vv
+
+                if vv.lower() in ("", "none", "null"):
+                    value = None
+                else:
+                    value = vv
+
             else:
-                normalized[new_key] = v
+                value = v
+
+            # 🔵 normalizar números (coma decimal → punto)
+            value = normalize_numeric(value)
+
+            normalized[new_key] = value
 
         # Asegurar metadata keys aunque no vengan
         for m in metadata_keys:
@@ -267,10 +303,31 @@ def update_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
         normalized = {}
 
         for k, v in payload.items():
+
             if not isinstance(k, str):
                 continue
+
             new_key = k.lower().strip().replace(" ", "_")
-            normalized[new_key] = v
+
+            # limpiar vacíos
+            if v is None:
+                value = None
+
+            elif isinstance(v, str):
+                vv = v.strip()
+
+                if vv.lower() in ("", "none", "null"):
+                    value = None
+                else:
+                    value = vv
+
+            else:
+                value = v
+
+            # normalizar números (coma decimal → punto)
+            value = normalize_numeric(value)
+
+            normalized[new_key] = value
 
         normalized["draft_survey_id"] = draft_survey_id
         normalized["status"] = normalized.get("status", "Approved")
