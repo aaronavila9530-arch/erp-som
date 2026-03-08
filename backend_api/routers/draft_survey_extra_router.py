@@ -433,7 +433,7 @@ def create_word(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
         ]
 
         # =====================================================
-        # 🔒 METADATA (NO OBLIGATORIA AQUÍ) — SOLO COPIAR SI VIENE
+        # 🔒 METADATA
         # =====================================================
         metadata_fields = [
             "year", "month", "continent", "country",
@@ -441,59 +441,90 @@ def create_word(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
         ]
 
         # =====================================================
-        # 1️⃣ RESOLVER draft_survey.id REAL DESDE general_id (PATH)
-        #    (MISMA LÓGICA QUE BALLAST PARA NO REVENTAR)
+        # 🔧 NORMALIZADOR NUMÉRICO ULTRA BLINDADO
+        # =====================================================
+        def normalize_numeric(v):
+
+            if v is None:
+                return None
+
+            if isinstance(v, str):
+
+                vv = v.strip()
+
+                if vv.lower() in ("", "none", "null", "empty"):
+                    return None
+
+                # eliminar separador miles
+                vv = vv.replace(",", "")
+
+                try:
+                    return float(vv)
+                except:
+                    return vv
+
+            return v
+
+        # =====================================================
+        # 🔧 LIMPIEZA GENERAL DE VALORES
+        # =====================================================
+        def _clean_value(v):
+
+            if v is None:
+                return None
+
+            if isinstance(v, str):
+
+                vv = v.strip()
+
+                if vv.lower() in ("", "none", "null", "empty"):
+                    return None
+
+                return normalize_numeric(vv)
+
+            return normalize_numeric(v)
+
+        # =====================================================
+        # 1️⃣ RESOLVER draft_survey.id REAL
         # =====================================================
         cur.execute(
             "SELECT id FROM draft_survey WHERE general_id = %s",
             (draft_survey_id,)
         )
+
         row = cur.fetchone()
 
         if row:
             real_draft_id = row[0]
         else:
-            # fallback: si te pasan el draft_survey.id directo
             real_draft_id = draft_survey_id
 
         # =====================================================
-        # 2️⃣ NORMALIZAR + LIMPIAR VACÍOS (ANTI-400)
+        # 2️⃣ LIMPIAR PAYLOAD
         # =====================================================
-        def _clean_value(v):
-            if v is None:
-                return None
-            if isinstance(v, str):
-                vv = v.strip()
-                return None if vv.lower() in ("", "none", "null") else vv
-            return v
-
         cleaned = {}
 
-        # Word fields
         for field in expected_fields:
             cleaned[field] = _clean_value(payload.get(field))
 
-        # Metadata fields (no obligar)
         for field in metadata_fields:
             cleaned[field] = _clean_value(payload.get(field))
 
         cleaned["draft_survey_id"] = real_draft_id
-
-        # Status controlado
         cleaned["status"] = _clean_value(payload.get("status")) or "Pending for review"
 
         # =====================================================
-        # 3️⃣ UPSERT: SI YA EXISTE WORD PARA ESE draft -> UPDATE
-        #    (evita 400 por unique constraint / duplicados)
+        # 3️⃣ UPSERT
         # =====================================================
         cur.execute(
             "SELECT id FROM draft_survey_word_report WHERE draft_survey_id = %s",
             (real_draft_id,)
         )
+
         exists = cur.fetchone()
 
         if exists:
-            # UPDATE dinámico de todos los campos editables
+
             set_parts = []
 
             for col in expected_fields + metadata_fields:
@@ -507,10 +538,11 @@ def create_word(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
                     status = %(status)s
                 WHERE draft_survey_id = %(draft_survey_id)s
             """
+
             cur.execute(update_sql, cleaned)
 
         else:
-            # INSERT 1:1
+
             insert_sql = """
                 INSERT INTO draft_survey_word_report (
                     draft_survey_id,
@@ -561,6 +593,7 @@ def create_word(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
                     %(status)s
                 )
             """
+
             cur.execute(insert_sql, cleaned)
 
         conn.commit()
