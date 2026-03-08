@@ -93,7 +93,7 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
             elif isinstance(v, str):
                 vv = v.strip()
 
-                if vv.lower() in ("", "none", "null"):
+                if vv.lower() in ("", "none", "null", "empty"):
                     value = None
                 else:
                     value = vv
@@ -316,7 +316,7 @@ def update_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
             elif isinstance(v, str):
                 vv = v.strip()
 
-                if vv.lower() in ("", "none", "null"):
+                if vv.lower() in ("", "none", "null", "empty"):
                     value = None
                 else:
                     value = vv
