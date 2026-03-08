@@ -891,10 +891,24 @@ class DraftSurveyExcelGenerator:
 # BACKWARD COMPATIBILITY
 # =========================================================
 
-def generate_draft_survey_excel(payload: dict, **kwargs):
+def generate_draft_survey_excel(*args, **kwargs):
     """
     Wrapper para compatibilidad con imports antiguos.
-    Acepta argumentos extra como `variant` sin romper.
+    Soporta llamadas como:
+        generate_draft_survey_excel(payload)
+        generate_draft_survey_excel(payload, variant="FINAL")
+        generate_draft_survey_excel(payload=..., variant=...)
     """
+
+    payload = None
+
+    # Caso 1: payload viene como primer argumento
+    if args:
+        payload = args[0]
+
+    # Caso 2: payload viene como keyword
+    if payload is None:
+        payload = kwargs.get("payload")
+
     generator = DraftSurveyExcelGenerator()
     return generator.generate(payload or {})
