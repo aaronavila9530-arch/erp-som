@@ -458,6 +458,9 @@ def create_word(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
                 # eliminar separador miles
                 vv = vv.replace(",", "")
 
+	        # eliminar espacios internos
+                vv = vv.replace(" ", "")
+
                 try:
                     return float(vv)
                 except:
