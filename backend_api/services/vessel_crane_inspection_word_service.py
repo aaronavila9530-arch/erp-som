@@ -126,38 +126,43 @@ class VesselCraneInspectionWordService:
 
 
     # =========================================================
-    # REPLACE PLACEHOLDERS (ULTRA SAFE)
+    # REPLACE PLACEHOLDERS SAFELY (RUN SAFE - HEADER SAFE)
     # =========================================================
 
     def _replace_placeholders_everywhere(self, doc: Document, data: dict):
 
         def replace_in_paragraph(paragraph):
 
-            if not paragraph.text:
+            if not paragraph.runs:
                 return
 
-            text = paragraph.text
-
-            replaced = False
+            full_text = "".join(run.text for run in paragraph.runs)
 
             for key, value in data.items():
 
-                safe_val = self._safe(value)
-
                 for placeholder in self._placeholders(key):
 
-                    if placeholder in text:
-                        text = text.replace(placeholder, safe_val)
-                        replaced = True
+                    if placeholder in full_text:
 
-            if replaced:
+                        full_text = full_text.replace(
+                            placeholder,
+                            self._safe(value)
+                        )
 
-                # Clear paragraph safely
-                for run in paragraph.runs:
-                    run.text = ""
+            index = 0
 
-                # Rebuild paragraph with one run
-                paragraph.runs[0].text = text
+            for run in paragraph.runs:
+
+                length = len(run.text)
+
+                if length == 0:
+                    continue
+
+                run.text = full_text[index:index + length]
+                index += length
+
+            if index < len(full_text):
+                paragraph.runs[-1].text += full_text[index:]
 
 
         # BODY
