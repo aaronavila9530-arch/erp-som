@@ -331,17 +331,50 @@ def get_crane_inspection(report_id: int, conn=Depends(get_db)):
         row = cur.fetchone()
 
         if not row:
+
             raise HTTPException(
                 status_code=404,
-                detail="Report not found"
+                detail="Crane inspection report not found."
             )
 
         record = dict(row)
 
-        # normalizar valores
-        for k, v in record.items():
-            if v is None:
-                record[k] = None
+        # ====================================================
+        # SAFE NORMALIZATION (JSON SAFE)
+        # ====================================================
+
+        from decimal import Decimal
+        from datetime import datetime, date
+
+        for key, value in record.items():
+
+            # NULL stays NULL
+            if value is None:
+                record[key] = None
+                continue
+
+            # Decimal → float
+            if isinstance(value, Decimal):
+                record[key] = float(value)
+                continue
+
+            # datetime → ISO
+            if isinstance(value, datetime):
+                record[key] = value.strftime("%Y-%m-%d %H:%M:%S")
+                continue
+
+            # date → ISO
+            if isinstance(value, date):
+                record[key] = value.strftime("%Y-%m-%d")
+                continue
+
+            # fallback → string
+            if not isinstance(value, (str, int, float, bool)):
+                record[key] = str(value)
+
+        # ====================================================
+        # RESPONSE
+        # ====================================================
 
         return {
             "success": True,
@@ -353,7 +386,7 @@ def get_crane_inspection(report_id: int, conn=Depends(get_db)):
 
     except Exception as e:
 
-        raise HTTPException(
-            status_code=500,
-            detail=str(e)
-        )
+        return {
+            "success": False,
+            "error": str(e)
+        }
