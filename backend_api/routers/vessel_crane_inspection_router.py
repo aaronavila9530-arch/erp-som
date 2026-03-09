@@ -34,6 +34,15 @@ CHECKLIST_ITEMS = [
 ]
 
 
+def _clean(value):
+    """
+    Normaliza valores para evitar problemas JSON.
+    """
+    if value in ("", "None", None):
+        return None
+    return value
+
+
 def _expand_dynamic_bullets(payload: dict):
 
     # ---------------------------------------------------------
@@ -44,9 +53,13 @@ def _expand_dynamic_bullets(payload: dict):
 
         remarks = payload.get(f"crane{crane}_remarks") or []
 
-        for i in range(10):
-            payload[f"crane{crane}_remark_{i+1}"] = remarks[i] if i < len(remarks) else None
+        if not isinstance(remarks, list):
+            remarks = []
 
+        for i in range(10):
+
+            value = remarks[i] if i < len(remarks) else None
+            payload[f"crane{crane}_remark_{i+1}"] = _clean(value)
 
     # ---------------------------------------------------------
     # RECOMMENDATIONS
@@ -54,9 +67,13 @@ def _expand_dynamic_bullets(payload: dict):
 
     recs = payload.get("recommendations") or []
 
-    for i in range(10):
-        payload[f"recommendation_{i+1}"] = recs[i] if i < len(recs) else None
+    if not isinstance(recs, list):
+        recs = []
 
+    for i in range(10):
+
+        value = recs[i] if i < len(recs) else None
+        payload[f"recommendation_{i+1}"] = _clean(value)
 
     # ---------------------------------------------------------
     # GRABS CONDITION
@@ -64,9 +81,13 @@ def _expand_dynamic_bullets(payload: dict):
 
     grabs = payload.get("grabs_condition") or []
 
-    for i in range(10):
-        payload[f"grabs_condition_{i+1}"] = grabs[i] if i < len(grabs) else None
+    if not isinstance(grabs, list):
+        grabs = []
 
+    for i in range(10):
+
+        value = grabs[i] if i < len(grabs) else None
+        payload[f"grabs_condition_{i+1}"] = _clean(value)
 
     # ---------------------------------------------------------
     # CONCLUSION
@@ -74,8 +95,13 @@ def _expand_dynamic_bullets(payload: dict):
 
     conclusions = payload.get("conclusion") or []
 
+    if not isinstance(conclusions, list):
+        conclusions = []
+
     for i in range(20):
-        payload[f"conclusion_{i+1}"] = conclusions[i] if i < len(conclusions) else None
+
+        value = conclusions[i] if i < len(conclusions) else None
+        payload[f"conclusion_{i+1}"] = _clean(value)
 
 
 # ============================================================
@@ -236,28 +262,49 @@ def update_crane_inspection(report_id: int, payload: dict, conn=Depends(get_db))
 @router.get("")
 def get_crane_inspections(conn=Depends(get_db)):
 
-    cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
 
-    cur.execute("""
-        SELECT
-            id,
-            report_number,
-            vessel,
-            port,
-            country,
-            report_date,
-            status,
-            created_at
-        FROM vessel_crane_inspection_reports
-        ORDER BY created_at DESC
-    """)
+        cur = conn.cursor(cursor_factory=RealDictCursor)
 
-    rows = cur.fetchall()
+        cur.execute("""
+            SELECT
+                id,
+                report_number,
+                vessel,
+                port,
+                country,
+                report_date,
+                status,
+                created_at
+            FROM vessel_crane_inspection_reports
+            ORDER BY created_at DESC
+        """)
 
-    return {
-        "success": True,
-        "data": rows
-    }
+        rows = cur.fetchall() or []
+
+        data = []
+
+        for row in rows:
+
+            record = dict(row)
+
+            for k, v in record.items():
+                if v is None:
+                    record[k] = None
+
+            data.append(record)
+
+        return {
+            "success": True,
+            "data": data
+        }
+
+    except Exception as e:
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
 
 
 # ============================================================
@@ -268,23 +315,45 @@ def get_crane_inspections(conn=Depends(get_db)):
 @router.get("/{report_id}")
 def get_crane_inspection(report_id: int, conn=Depends(get_db)):
 
-    cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
 
-    cur.execute(
-        """
-        SELECT *
-        FROM vessel_crane_inspection_reports
-        WHERE id=%s
-        """,
-        (report_id,)
-    )
+        cur = conn.cursor(cursor_factory=RealDictCursor)
 
-    row = cur.fetchone()
+        cur.execute(
+            """
+            SELECT *
+            FROM vessel_crane_inspection_reports
+            WHERE id = %s
+            """,
+            (report_id,)
+        )
 
-    if not row:
-        raise HTTPException(status_code=404, detail="Report not found")
+        row = cur.fetchone()
 
-    return {
-        "success": True,
-        "data": row
-    }
+        if not row:
+            raise HTTPException(
+                status_code=404,
+                detail="Report not found"
+            )
+
+        record = dict(row)
+
+        # normalizar valores
+        for k, v in record.items():
+            if v is None:
+                record[k] = None
+
+        return {
+            "success": True,
+            "data": record
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
