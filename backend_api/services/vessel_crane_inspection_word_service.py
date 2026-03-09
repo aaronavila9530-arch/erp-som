@@ -89,7 +89,7 @@ class VesselCraneInspectionWordService:
 
 
     # =========================================================
-    # SAFE VALUE (DATE LONG ENGLISH)
+    # SAFE VALUE
     # =========================================================
 
     def _safe(self, value):
@@ -126,42 +126,39 @@ class VesselCraneInspectionWordService:
 
 
     # =========================================================
-    # REPLACE PLACEHOLDERS SAFELY (RUN SAFE)
+    # REPLACE PLACEHOLDERS (ULTRA SAFE)
     # =========================================================
 
     def _replace_placeholders_everywhere(self, doc: Document, data: dict):
 
         def replace_in_paragraph(paragraph):
 
-            if not paragraph.runs:
+            if not paragraph.text:
                 return
 
-            full_text = "".join(run.text for run in paragraph.runs)
+            text = paragraph.text
+
+            replaced = False
 
             for key, value in data.items():
 
+                safe_val = self._safe(value)
+
                 for placeholder in self._placeholders(key):
 
-                    if placeholder in full_text:
-                        full_text = full_text.replace(
-                            placeholder,
-                            self._safe(value)
-                        )
+                    if placeholder in text:
+                        text = text.replace(placeholder, safe_val)
+                        replaced = True
 
-            index = 0
+            if replaced:
 
-            for run in paragraph.runs:
+                # Clear paragraph safely
+                for run in paragraph.runs:
+                    run.text = ""
 
-                length = len(run.text)
+                # Rebuild paragraph with one run
+                paragraph.runs[0].text = text
 
-                if length == 0:
-                    continue
-
-                run.text = full_text[index:index + length]
-                index += length
-
-            if index < len(full_text):
-                paragraph.runs[-1].text += full_text[index:]
 
         # BODY
         for paragraph in doc.paragraphs:
@@ -201,7 +198,7 @@ class VesselCraneInspectionWordService:
 
 
     # =========================================================
-    # REMOVE NULL BULLETS (AUTO-DETECT)
+    # REMOVE NULL BULLETS
     # =========================================================
 
     def _remove_null_paragraphs(self, doc: Document, data: dict):
