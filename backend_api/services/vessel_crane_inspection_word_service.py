@@ -260,7 +260,6 @@ class VesselCraneInspectionWordService:
         p.getparent().remove(p)
         paragraph._p = paragraph._element = None
 
-
     # =========================================================
     # OUTPUT PATH
     # =========================================================
