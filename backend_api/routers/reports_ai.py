@@ -212,3 +212,54 @@ def improve_cargo_condition(payload: dict):
             status_code=500,
             detail="AI cargo condition improvement failed."
         )
+
+# =========================================================
+# Crane inspection IA
+# =========================================================
+
+@router.post("/improve/crane-inspection")
+def improve_crane_inspection(payload: dict):
+
+    try:
+
+        language = (payload.get("language") or "EN").upper()
+        if language not in ("ES", "EN"):
+            language = "EN"
+
+        vessel = payload.get("vessel")
+        port = payload.get("port")
+        section = payload.get("section")
+
+        items = payload.get("items")
+
+        if isinstance(items, list):
+
+            improved = []
+
+            for item in items:
+
+                result = improve_crane_inspection_text(
+                    user_text=item,
+                    vessel=vessel,
+                    port=port,
+                    section=section,
+                    language=language
+                )
+
+                improved.append(result)
+
+            return {
+                "success": True,
+                "items": improved
+            }
+
+        raise HTTPException(status_code=400, detail="Items required")
+
+    except Exception as e:
+
+        print("❌ AI CRANE INSPECTION ERROR:", repr(e))
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )

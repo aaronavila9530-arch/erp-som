@@ -304,3 +304,45 @@ def improve_cargo_condition_text(
         raise RuntimeError("La IA devolvió una respuesta vacía.")
 
     return output_text.strip()
+
+
+
+def improve_crane_inspection_text(
+    user_text: str,
+    vessel: Optional[str],
+    port: Optional[str],
+    section: Optional[str],
+    language: str = "EN"
+) -> str:
+
+    if not user_text or not user_text.strip():
+        raise ValueError("Input text is empty")
+
+    client = _get_openai_client()
+
+    language = (language or "EN").upper()
+
+    base_prompt = load_crane_inspection_prompt()
+
+    prompt = (
+        base_prompt
+        .replace("{{vessel}}", vessel or "N/A")
+        .replace("{{port}}", port or "N/A")
+        .replace("{{section}}", section or "remarks")
+        .replace("{{language}}", language)
+        .replace("{{user_text}}", user_text.strip())
+    )
+
+    response = client.responses.create(
+        model="gpt-4o-mini",
+        input=prompt,
+        temperature=0.15,
+        max_output_tokens=900
+    )
+
+    output_text = getattr(response, "output_text", None)
+
+    if not output_text:
+        raise RuntimeError("AI returned empty response")
+
+    return output_text.strip()
