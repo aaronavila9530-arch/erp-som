@@ -146,10 +146,16 @@ def create_crane_inspection(payload: dict, conn=Depends(get_db)):
                 payload[k] = None
 
         # ----------------------------------------------------
+        # FORCE STATUS (CLIENT CANNOT OVERRIDE)
+        # ----------------------------------------------------
+
+        payload.pop("status", None)
+        payload["status"] = "Pending for review"
+
+        # ----------------------------------------------------
         # META
         # ----------------------------------------------------
 
-        payload["status"] = "Pending for review"
         payload["created_at"] = datetime.utcnow()
         payload["updated_at"] = datetime.utcnow()
 

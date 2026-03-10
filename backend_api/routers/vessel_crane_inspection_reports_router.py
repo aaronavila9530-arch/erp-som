@@ -3,6 +3,11 @@ from fastapi.responses import FileResponse
 from psycopg2.extras import RealDictCursor
 from datetime import datetime
 
+import os
+import tempfile
+import subprocess
+from docx import Document
+
 from database import get_db
 
 from services.vessel_crane_inspection_word_service import (
@@ -154,7 +159,7 @@ def get_full_crane_inspection(
 
 
 # =========================================================
-# GENERATE WORD
+# GENERATE WORD (NO SE MODIFICA)
 # =========================================================
 
 @router.get("/{record_id}/generate-word")
@@ -174,6 +179,61 @@ def generate_crane_inspection_word(
             path,
             filename=f"Crane_Inspection_{record_id}.docx",
             media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        )
+
+    except Exception as e:
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
+
+
+# =========================================================
+# GENERATE PRESENTATION PDF (NUEVO)
+# =========================================================
+
+@router.get("/{record_id}/presentation")
+def generate_crane_inspection_presentation(
+        record_id: int,
+        conn=Depends(get_db)
+):
+
+    try:
+
+        # -----------------------------------------
+        # SERVICE
+        # -----------------------------------------
+
+        from services.vessel_crane_inspection_presentation_word_service import (
+            VesselCraneInspectionPresentationWordService
+        )
+
+        presentation_service = VesselCraneInspectionPresentationWordService()
+
+        # -----------------------------------------
+        # GENERATE PDF
+        # -----------------------------------------
+
+        pdf_path = presentation_service.generate_pdf_by_id(
+            conn,
+            record_id
+        )
+
+        if not os.path.exists(pdf_path):
+
+            raise RuntimeError(
+                "PDF generation failed"
+            )
+
+        # -----------------------------------------
+        # RETURN FILE
+        # -----------------------------------------
+
+        return FileResponse(
+            pdf_path,
+            filename=f"Crane_Inspection_Presentation_{record_id}.pdf",
+            media_type="application/pdf"
         )
 
     except Exception as e:
