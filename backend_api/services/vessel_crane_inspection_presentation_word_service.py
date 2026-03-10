@@ -9,6 +9,7 @@ class VesselCraneInspectionPresentationWordService:
 
     TEMPLATE_NAME = "presentation_crane_inspection.docx"
 
+
     # =========================================================
     # MAIN
     # =========================================================
