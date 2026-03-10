@@ -4,7 +4,8 @@ from ai.maritime_ai import (
     improve_truck_supervision_text,
     improve_grain_sampling_text,
     improve_cargo_condition_text,
-    improve_crane_inspection_text
+    improve_crane_inspection_text,
+    improve_vessel_condition_text
 )
 
 router = APIRouter(
@@ -263,4 +264,96 @@ def improve_crane_inspection(payload: dict):
         raise HTTPException(
             status_code=500,
             detail=str(e)
+        )
+
+
+
+# =========================================================
+# VESSEL CONDITION SURVEY AI
+# =========================================================
+@router.post("/improve/vessel-condition")
+def improve_vessel_condition(payload: dict):
+
+    try:
+
+        language = (payload.get("language") or "EN").upper()
+
+        if language not in ("ES", "EN"):
+            language = "EN"
+
+        vessel = payload.get("vessel")
+        port = payload.get("port")
+        report_type = payload.get("report_type")
+        section = payload.get("section")
+
+        # -----------------------------------------------------
+        # CASE 1 — MULTIPLE BULLETS
+        # -----------------------------------------------------
+        items = payload.get("items")
+
+        if isinstance(items, list):
+
+            improved = []
+
+            for item in items:
+
+                text = (item or "").strip()
+
+                if not text:
+                    improved.append("")
+                    continue
+
+                result = improve_vessel_condition_text(
+                    user_text=text,
+                    vessel=vessel,
+                    port=port,
+                    report_type=report_type,
+                    section=section,
+                    language=language
+                )
+
+                improved.append(result)
+
+            return {
+                "success": True,
+                "language": language,
+                "items": improved
+            }
+
+        # -----------------------------------------------------
+        # CASE 2 — SINGLE TEXT
+        # -----------------------------------------------------
+        user_text = (payload.get("text") or "").strip()
+
+        if not user_text:
+            raise HTTPException(
+                status_code=400,
+                detail="Text or items are required"
+            )
+
+        result = improve_vessel_condition_text(
+            user_text=user_text,
+            vessel=vessel,
+            port=port,
+            report_type=report_type,
+            section=section,
+            language=language
+        )
+
+        return {
+            "success": True,
+            "language": language,
+            "text": result
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+
+        print("❌ AI VESSEL CONDITION ERROR:", repr(e))
+
+        raise HTTPException(
+            status_code=500,
+            detail="AI vessel condition improvement failed."
         )
