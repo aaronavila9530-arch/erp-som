@@ -78,15 +78,20 @@ class VesselCraneInspectionPresentationWordService:
     # =========================================================
     # TEMPLATE PATH
     # =========================================================
-
     def _get_template_path(self):
 
-        base = r"C:\Users\Aaron Avila\Documents\ERP-SOM\backend_api\templates"
+        base_dir = os.path.dirname(os.path.abspath(__file__))
 
-        return os.path.join(
-            base,
-            self.TEMPLATE_NAME
+        template_path = os.path.abspath(
+            os.path.join(
+                base_dir,
+                "..",
+                "templates",
+                self.TEMPLATE_NAME
+            )
         )
+
+        return template_path
 
     # =========================================================
     # GET DATA
