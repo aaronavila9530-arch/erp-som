@@ -131,10 +131,9 @@ class VistaServicios(tk.Frame):
         # BOTONES PASTEL CON COLORES DEFINIDOS
         # =======================================================
         botones = [
-            ("Por Confirmar",    "#F7D08A", self.marcar_por_confirmar),
-            ("Confirmado",       "#A8D5B5", self.marcar_confirmado),
+            ("Generar Consecutivo","#A8D5B5", self.marcar_confirmado),
             ("Editar servicio",  "#86A9D9", self.editar_servicio),
-            ("Generar Informe",  "#C9B7D9", self.generar_informe),
+            ("Finalizar Servicio", "#C9B7D9", self.finalizar_servicio),
             ("Ver",              "#CDE0F7", self.ver_servicio),
             ("Demoras",          "#F7D08A", self.ver_demoras),
             ("Cancelar",         "#D99A9A", self.cancelar_servicio),
@@ -167,7 +166,7 @@ class VistaServicios(tk.Frame):
         menu.add_command(label="Exportar a Excel", command=self.export_excel)
         export_btn["menu"] = menu
         export_btn.pack(side="left", padx=5)
-
+					    
     # =====================================================================
     # TABLA
     # =====================================================================
@@ -181,7 +180,7 @@ class VistaServicios(tk.Frame):
         self.columnas = [
             "consec","tipo","estado","num_informe","buque_contenedor","cliente",
             "contacto","detalle","continente","pais","puerto","operacion","surveyor",
-            "honorarios","costo_operativo","fecha_inicio","hora_inicio","fecha_fin",
+            "honorarios","costo_operativo","costo_tarjetas","fecha_inicio","hora_inicio","fecha_fin",
             "hora_fin","demoras","duracion","factura","valor_factura","fecha_factura",
             "terminos_pago","fecha_vencimiento","dias_vencido"
         ]
@@ -200,6 +199,14 @@ class VistaServicios(tk.Frame):
 
         # Crear tabla
         self.table = ttk.Treeview(frame, columns=all_columns, show="headings", height=20)
+
+        # =============================================================
+        # TAG PARA FILAS CON COSTOS FALTANTES
+        # =============================================================
+        self.table.tag_configure(
+            "costos_faltantes",
+            background="#FFD6D6"  # rojo pastel
+        )
 
         # Dibujar SOLO las columnas visibles
         for col in self.columnas:
@@ -287,6 +294,7 @@ class VistaServicios(tk.Frame):
     # CARGAR DATOS
     # =====================================================================
     def load_data(self):
+
         params = {"page": self.page, "page_size": self.page_size}
         params.update(self.filtros)
 
@@ -299,13 +307,44 @@ class VistaServicios(tk.Frame):
         self.total_items = resp.get("total", 0)
         data = resp.get("data", [])
 
-        # Limpiar tabla
+        # ============================================================
+        # ALERTA SERVICIOS EN OPERACIÓN SIN COSTOS
+        # ============================================================
+        servicios_incompletos = []
+
+        for r in data:
+
+            estado = str(r.get("estado") or "").strip()
+
+            honorarios = float(r.get("honorarios") or 0)
+            costo_operativo = float(r.get("costo_operativo") or 0)
+            costo_tarjetas = float(r.get("costo_tarjetas") or 0)
+
+            if estado == "En Operación":
+
+                if honorarios == 0 or costo_operativo == 0 or costo_tarjetas == 0:
+                    servicios_incompletos.append(r.get("consec"))
+
+        if servicios_incompletos:
+
+            messagebox.showwarning(
+                "Servicios incompletos",
+                "Existen servicios en estado 'En Operación' con valores faltantes en:\n\n"
+                "• Honorarios\n"
+                "• Costo Operativo\n"
+                "• Costo Tarjetas\n\n"
+                "Por favor complételos antes de continuar."
+            )
+
+        # ============================================================
+        # LIMPIAR TABLA
+        # ============================================================
         self.table.delete(*self.table.get_children())
 
         for idx, row in enumerate(data, start=1):
 
             # ============================================================
-            # 🔢 CALCULAR CAMPOS UI DE FACTURA (AQUÍ ESTABA EL ERROR)
+            # CALCULAR CAMPOS UI DE FACTURA
             # ============================================================
             (
                 fecha_factura_ui,
@@ -343,44 +382,58 @@ class VistaServicios(tk.Frame):
 
                 values.append(val)
 
-            self.table.insert("", "end", values=values)
+            # ============================================================
+            # DETECTAR COSTOS EN 0 O VACÍOS SOLO EN OPERACIÓN
+            # ============================================================
+            estado = str(row.get("estado") or "").strip()
+
+            honorarios = float(row.get("honorarios") or 0)
+            costo_operativo = float(row.get("costo_operativo") or 0)
+            costo_tarjetas = float(row.get("costo_tarjetas") or 0)
+
+            if estado == "En Operación" and honorarios == 0 and costo_operativo == 0 and costo_tarjetas == 0:
+                self.table.insert(
+                    "",
+                    "end",
+                    values=values,
+                    tags=("costos_faltantes",)
+                )
+            else:
+                self.table.insert(
+                    "",
+                    "end",
+                    values=values
+                )
 
         self.lbl_page.config(text=f"Página {self.page}")
 
         # ============================================================
-        # KPIs — LÓGICA CORRECTA
+        # KPIs
         # ============================================================
 
-        # Operaciones = total líneas
         total_operaciones = len(data)
 
-        # Confirmados
         total_confirmados = len([
             r for r in data if r.get("estado") == "Confirmado"
         ])
 
-        # Cancelados
         total_cancelados = len([
             r for r in data if r.get("estado") == "Cancelado"
         ])
 
-        # Servicios = Confirmados + Finalizados
         total_servicios = len([
             r for r in data
             if r.get("estado") in ("Confirmado", "Finalizado")
         ])
 
-        # Países únicos
         paises_unicos = {
             r.get("pais") for r in data if r.get("pais")
         }
 
-        # Facturado
         total_facturado = sum(
             float(r.get("valor_factura") or 0) for r in data
         )
 
-        # Actualizar KPIs
         self.kpi_operaciones.config(text=str(total_operaciones))
         self.kpi_confirmados.config(text=str(total_confirmados))
         self.kpi_cancelados.config(text=str(total_cancelados))
@@ -510,50 +563,55 @@ class VistaServicios(tk.Frame):
         for row in self.table.get_children():
             self.table.selection_add(row)
 
-
     # ============================================================
-    # Por Confirmar
+    # GENERAR CONSECUTIVO (antes Confirmar)
     # ============================================================
-
-    def marcar_por_confirmar(self):
-        item = self.table.focus()
-        if not item:
-            messagebox.showwarning("Sin selección", "Debe seleccionar un servicio.")
-            return
-
-        valores = self.table.item(item, "values")
-        idx_consec_real = self.table["columns"].index("_consec_real")
-        consec = valores[idx_consec_real]
-
-        from api_client import marcar_por_confirmar_api
-
-        respuesta = marcar_por_confirmar_api(consec)
-
-        if respuesta.get("status") == "ok":
-            messagebox.showinfo("Estado actualizado", "Buque por confirmar.")
-            self.refresh()
-        else:
-            error = respuesta.get("error", "Error desconocido")
-            messagebox.showerror("Error", f"No se pudo actualizar:\n{error}")
-
-    # ============================================================
-    # Boton confirmar servicio
-    # ============================================================
-
-
     def marcar_confirmado(self):
+
         item = self.table.focus()
         if not item:
-            messagebox.showwarning("Sin selección", "Debe seleccionar un servicio.")
+            messagebox.showwarning(
+                "Sin selección",
+                "Debe seleccionar un servicio."
+            )
             return
 
         valores = self.table.item(item, "values")
-        idx_consec_real = self.table["columns"].index("_consec_real")
-        consec = valores[idx_consec_real]
 
-        from Modulos.Servicios.Popup_servicios.popup_confirmar_servicio import PopupConfirmarServicio
+        try:
+            idx_consec_real = self.table["columns"].index("_consec_real")
+            consec = valores[idx_consec_real]
+        except (ValueError, IndexError):
+            messagebox.showerror(
+                "Error crítico",
+                "No se pudo determinar el consecutivo real."
+            )
+            return
 
-        PopupConfirmarServicio(self, consec, valores, callback=self.refresh)
+        if not consec:
+            messagebox.showerror(
+                "Error crítico",
+                "El consecutivo está vacío."
+            )
+            return
+
+        try:
+            consec = int(consec)
+        except (TypeError, ValueError):
+            messagebox.showerror(
+                "Error crítico",
+                f"Consecutivo inválido: {consec}"
+            )
+            return
+
+        from Modulos.Servicios.Popup_servicios.popup_generar_consecutivo import PopupGenerarConsecutivo
+
+        PopupGenerarConsecutivo(
+            self,
+            consec,
+            valores,
+            callback=self.refresh
+        )
 
 
     # ============================================================
@@ -600,9 +658,10 @@ class VistaServicios(tk.Frame):
         PopupEditarServicio(self, consec, on_success=self.refresh)
 
     # ============================================================
-    # GENERAR INFORME
+    # FINALIZAR SERVICIO
     # ============================================================
-    def generar_informe(self):
+
+    def finalizar_servicio(self):
         item = self.table.focus()
         if not item:
             messagebox.showwarning(
@@ -613,34 +672,25 @@ class VistaServicios(tk.Frame):
 
         valores = self.table.item(item, "values")
 
-        try:
-            idx_consec_real = self.table["columns"].index("_consec_real")
-            consec = valores[idx_consec_real]
-        except (ValueError, IndexError):
+        idx_consec_real = self.table["columns"].index("_consec_real")
+        consec = valores[idx_consec_real]
+
+        idx_honorarios = self.table["columns"].index("honorarios")
+        idx_costos = self.table["columns"].index("costo_operativo")
+
+        honorarios = valores[idx_honorarios]
+        costos = valores[idx_costos]
+
+        # 🔴 VALIDACIÓN OBLIGATORIA
+        if not honorarios or not costos:
             messagebox.showerror(
-                "Error crítico",
-                "No se pudo determinar el consecutivo real del servicio."
+                "Datos incompletos",
+                "Debe ingresar Honorarios y Costo Operativo antes de finalizar."
             )
             return
 
-        if not consec:
-            messagebox.showerror(
-                "Error crítico",
-                "El consecutivo del servicio está vacío."
-            )
-            return
-
-        try:
-            consec = int(consec)
-        except (TypeError, ValueError):
-            messagebox.showerror(
-                "Error crítico",
-                f"Consecutivo inválido: {consec}"
-            )
-            return
-
-        from Modulos.Servicios.Popup_servicios.popup_generar_informe import PopupGenerarInforme
-        PopupGenerarInforme(self, consec)
+        from Modulos.Servicios.Popup_servicios.popup_finalizar_servicio import PopupFinalizarServicio
+        PopupFinalizarServicio(self, consec, on_success=self.refresh)
 
     # ============================================================
     # POPUP: VER SERVICIO (Versión real, no placeholder)
@@ -774,7 +824,6 @@ class VistaServicios(tk.Frame):
 
             for col in columnas_totales:
 
-                # 🔑 CLAVE: preservar consec real
                 if col == "_consec_real":
                     valores.append(item.get("consec"))
 
@@ -787,7 +836,28 @@ class VistaServicios(tk.Frame):
                 else:
                     valores.append(item.get(col, ""))
 
-            self.table.insert("", "end", values=valores)
+            # ============================================================
+            # DETECTAR COSTOS FALTANTES (MISMA LÓGICA QUE load_data)
+            # ============================================================
+            estado = str(item.get("estado") or "").strip()
+
+            honorarios = float(item.get("honorarios") or 0)
+            costo_operativo = float(item.get("costo_operativo") or 0)
+            costo_tarjetas = float(item.get("costo_tarjetas") or 0)
+
+            if estado == "En Operación" and honorarios == 0 and costo_operativo == 0 and costo_tarjetas == 0:
+                self.table.insert(
+                    "",
+                    "end",
+                    values=valores,
+                    tags=("costos_faltantes",)
+                )
+            else:
+                self.table.insert(
+                    "",
+                    "end",
+                    values=valores
+                )
 
         # 4. Página
         if hasattr(self, "label_pagina"):

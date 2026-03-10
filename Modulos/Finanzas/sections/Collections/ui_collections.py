@@ -86,7 +86,7 @@ class CollectionsUI(tk.Frame):
         ttk.Combobox(
             row,
             textvariable=self.estado,
-            values=["", "PENDIENTE_PAGO", "PAGADA", "DISPUTADA", "WRITE_OFF"],
+            values=["", "EMITIDA", "PENDIENTE_PAGO", "PAGADA", "DISPUTADA", "WRITE_OFF"],
             width=15,
             state="readonly"
         ).pack(side="left", padx=5)
@@ -136,7 +136,6 @@ class CollectionsUI(tk.Frame):
                 r = requests.get(
                     f"{BASE_URL}/collections/search",
                     params={
-                        "cliente": "ALL",
                         "page": page,
                         "page_size": page_size
                     },
@@ -201,7 +200,7 @@ class CollectionsUI(tk.Frame):
         }
 
         if self.cliente.get() and self.cliente.get() != "ALL":
-            filtros["nombre_cliente"] = self.cliente.get()
+            filtros["cliente"] = self.cliente.get()
 
         if not self.tabla:
             self._crear_tabla()

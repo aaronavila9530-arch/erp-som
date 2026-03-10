@@ -1,7 +1,9 @@
 import requests
 from typing import Optional
 from datetime import datetime
-
+from session_context import get_user, get_rol
+import os
+import tempfile
 
 BASE_URL = "https://api-som-fastapi-production-e66d.up.railway.app"
 TIMEOUT = 30
@@ -53,17 +55,7 @@ def get_serviciosmd_api():
     resp = api_request("GET", url).json()
     return [s["nombre"] for s in resp.get("data", [])]
 
-# ============================================================
-# SURVEYORS
-# ============================================================
-def get_surveyores_api():
-    url = f"{BASE_URL}/surveyores?page=1&page_size=500"
-    resp = api_request("GET", url).json()
-    return resp.get("data", [])
 
-def get_surveyores_nombres_api():
-    resp = get_surveyores_api()
-    return [s["nombre"] for s in resp]
 
 # ============================================================
 # AGREGAR SERVICIO
@@ -98,6 +90,142 @@ def get_paises_cpp_api(continente):
     except Exception as e:
         print("❌ Error API países CPP:", e)
         return []
+
+# ------------------------------------------------------------
+# LISTAR SERVICIOS (CON FILTROS AÑO / STATUS / SURVEYOR)
+# GET /servicios
+# ------------------------------------------------------------
+def get_servicios_api(
+    page: int = 1,
+    page_size: int = 50,
+    year: int | None = None,
+    status: str | None = None,
+    surveyor: str | None = None
+):
+    """
+    Lista servicios con filtros opcionales.
+
+    - year: int (ej: 2025) → últimos 4 dígitos de num_informe
+    - status: str (ej: 'Confirmado', 'Finalizado', 'Cancelado')
+    - surveyor: str (ej: 'Juan Pérez')
+    - Ningún filtro se aplica si no viene explícito
+    """
+
+    params = {
+        "page": page,
+        "page_size": page_size
+    }
+
+    # ----------------------------
+    # AÑO
+    # ----------------------------
+    if year is not None:
+        params["year"] = year
+
+    # ----------------------------
+    # STATUS
+    # ----------------------------
+    if status:
+        status_clean = status.strip()
+        if status_clean.upper() != "TODOS":
+            params["status"] = status_clean
+
+    # ----------------------------
+    # SURVEYOR
+    # ----------------------------
+    if surveyor:
+        surveyor_clean = surveyor.strip()
+        if surveyor_clean:
+            params["surveyor"] = surveyor_clean
+
+    resp = api_request(
+        "GET",
+        f"{BASE_URL}/servicios",
+        params=params,
+        timeout=20
+    )
+
+    resp.raise_for_status()
+    return resp.json()
+
+
+# ============================================================
+# FILTROS DINÁMICOS — SERVICIOS
+# GET /servicios/_meta/filtros
+# ============================================================
+def get_filtros_servicios_api():
+    resp = api_request(
+        "GET",
+        f"{BASE_URL}/servicios/_meta/filtros",
+        timeout=15
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+# ============================================================
+# SURVEYORS (CATÁLOGO MAESTRO – USADO EN POPUP SERVICIO)
+# ============================================================
+def get_surveyores_api():
+    """
+    Retorna SOLO surveyores únicos (por nombre)
+    para poblar el ComboBox de +Servicio.
+    """
+    resp = api_request(
+        "GET",
+        f"{BASE_URL}/surveyores?page=1&page_size=500",
+        timeout=15
+    )
+    resp.raise_for_status()
+
+    rows = resp.json().get("data", [])
+
+    # --------------------------------------------
+    # DEDUPLICAR POR NOMBRE (CATÁLOGO MAESTRO)
+    # --------------------------------------------
+    surveyores_unicos = sorted(
+        {r["nombre"].strip() for r in rows if r.get("nombre")}
+    )
+
+    return surveyores_unicos
+
+# ============================================================
+# SURVEYORS (FULL ROWS PARA VLOOKUP HONORARIOS)
+# ============================================================
+def get_surveyores_full_api():
+    """
+    Retorna la data COMPLETA de surveyores (lista de dicts),
+    necesaria para hacer VLOOKUP (operacion + honorario + moneda).
+    """
+    resp = api_request(
+        "GET",
+        f"{BASE_URL}/surveyores?page=1&page_size=500",
+        timeout=15
+    )
+    resp.raise_for_status()
+    return resp.json().get("data", [])
+
+
+def get_surveyores_display_api():
+    """
+    Retorna lista de strings únicos para poblar el combobox,
+    pero con un display UNICO por surveyor (incluye código).
+    """
+    rows = get_surveyores_full_api()
+
+    display_set = set()
+    for r in rows:
+        nombre = (r.get("nombre") or "").strip()
+        apellidos = (r.get("apellidos") or "").strip()
+        codigo = (r.get("codigo") or "").strip()
+
+        base = " ".join([nombre, apellidos]).strip() or nombre or codigo
+        display = f"{base} ({codigo})" if codigo else base
+
+        if display:
+            display_set.add(display)
+
+    return sorted(display_set)
 
 
 # ============================================================
@@ -180,34 +308,40 @@ def cancelar_servicio_api(consec, data):
     except Exception as e:
         return {"status": "error", "error": str(e)}
 
-
 # ============================================================
-# Marcar Por Confirmar
-# ============================================================
-def marcar_por_confirmar_api(consec):
-    try:
-        url = f"{BASE_URL}/servicios/por_confirmar/{consec}"
-        r = api_request("PUT", url, timeout=15)
-        return r.json()
-    except Exception as e:
-        return {"status": "error", "error": str(e)}
-
-
-# ============================================================
-# Marcar confirmado
+# CONFIRMAR SERVICIO + GENERAR CONSECUTIVO
 # ============================================================
 
 def confirmar_servicio_api(consec, fecha, hora):
+
     url = f"{BASE_URL}/servicios/confirmar/{consec}"
+
     payload = {
         "fecha_inicio": fecha,
         "hora_inicio": hora
     }
+
     try:
-        resp = api_request("PUT", url, json=payload, timeout=15)
+        resp = api_request(
+            "PUT",
+            url,
+            json=payload,
+            timeout=15
+        )
+
+        if resp.status_code != 200:
+            return {
+                "status": "error",
+                "error": resp.text
+            }
+
         return resp.json()
+
     except Exception as e:
-        return {"status": "error", "error": str(e)}
+        return {
+            "status": "error",
+            "error": str(e)
+        }
 
 # ============================================================
 # Demoras
@@ -351,15 +485,20 @@ def calcular_duracion_api(consec: int):
 
 
 # ============================================================
-# GENERAR / CONFIRMAR INFORME
+# FINALIZAR SERVICIO (ANTES generar_informe)
 # ============================================================
-def confirmar_informe_api(consec):
+
+def finalizar_servicio_api(consec):
+
     url = f"{BASE_URL}/servicios/generar_informe/{consec}"
 
     try:
-        resp = api_request("PUT", url, timeout=15)
+        resp = api_request(
+            "PUT",
+            url,
+            timeout=15
+        )
 
-        # Backend siempre debe devolver JSON
         if resp.status_code != 200:
             return {
                 "status": "error",
@@ -373,13 +512,6 @@ def confirmar_informe_api(consec):
             "status": "error",
             "error": str(e)
         }
-
-def generar_informe_api(consec):
-    return api_request(
-        "PUT",
-        f"{BASE_URL}/servicios/generar_informe/{consec}",
-        timeout=15
-    ).json()
 
 # ============================================================
 # BILLING — OBTENER FACTURA POR NÚMERO (PREVIEW)
@@ -846,15 +978,22 @@ def post_invoice_to_pay_apply_payment_api(data: dict):
         "payment_date": "YYYY-MM-DD"
     }
     """
+
     try:
         r = api_request(
             "POST",
             f"{BASE_URL}/invoice-to-pay/apply-payment",
-            json=data,
+            params={
+                "obligation_id": data.get("obligation_id"),
+                "amount": data.get("amount"),
+                "payment_date": data.get("payment_date")
+            },
             timeout=15
         )
+
         r.raise_for_status()
         return r.json()
+
     except Exception as e:
         return {
             "status": "error",
@@ -1128,6 +1267,15 @@ def post_accounting_sync_itp_api():
     r.raise_for_status()
     return r.json()
 
+# ============================================================
+# ACCOUNTING - SYNC PAYROL (HHRR)
+# ============================================================
+
+def post_accounting_sync_payroll_api():
+    return api_request(
+        "POST",
+        f"{BASE_URL}/accounting/sync/payroll"
+    )
 
 
 
@@ -1509,30 +1657,6 @@ def get_accounting_lines_api():
     return r.json()
 
 
-def _headers():
-    role = get_user_role()
-
-    if not role:
-        raise Exception("Rol de usuario no definido")
-
-    return {
-        "X-User-Role": role
-    }
-
-def api_request(method: str, url: str, **kwargs):
-    """
-    Wrapper central para TODAS las llamadas HTTP
-    Inyecta X-User-Role automáticamente
-    """
-    headers = kwargs.pop("headers", {})
-    headers.update(_headers())
-
-    return requests.request(
-        method=method,
-        url=url,
-        headers=headers,
-        **kwargs
-    )
 
 # ============================================================
 # INVOICING — FACTURA ELECTRÓNICA XML (ANTICIPADA)
@@ -1640,7 +1764,8 @@ def post_invoicing_anticipada_xml_api(
             "nombre_cliente": str(nombre_cliente)
         }
 
-        r = requests.post(
+        r = api_request(
+            "POST",
             f"{BASE_URL}/invoicing/anticipada/xml",
             data=data,
             files=files,
@@ -1711,7 +1836,8 @@ def post_factura_electronica_xml_api(servicio_id: int, xml_path: str):
             "servicio_id": servicio_id
         }
 
-        r = requests.post(
+        r = api_request(
+            "POST",
             f"{BASE_URL}/factura/electronica",
             files=files,
             data=data,
@@ -1755,7 +1881,8 @@ def sync_collections_from_invoicing_api():
     Sincroniza facturas desde invoicing hacia collections.
     Inserta solo FACTURAS EMITIDAS no existentes en collections.
     """
-    r = requests.post(
+    r = api_request(
+        "POST",
         f"{BASE_URL}/collections/sync-from-invoicing",
         timeout=30
     )
@@ -1769,7 +1896,8 @@ def aplicar_pago_api(payload: dict):
     POST /collections/pago
     Registra el pago en cash_app (y aplica contra collections si existe).
     """
-    r = requests.post(
+    r = api_request(
+        "POST",
         f"{BASE_URL}/collections/pago",
         json=payload,
         timeout=20
@@ -1778,10 +1906,5614 @@ def aplicar_pago_api(payload: dict):
     return r.json()
 
 def aplicar_nota_credito_api(payload: dict):
-    r = requests.post(
+    r = api_request(
+        "POST",
         f"{BASE_URL}/collections/aplicar-nota-credito",
         json=payload,
         timeout=20
     )
     r.raise_for_status()
     return r.json()
+
+
+
+
+def get_version_info():
+    """
+    Cliente de versión BLINDADO.
+
+    • Nunca rompe el ERP
+    • Nunca bloquea login
+    • Payload inválido = NO UPDATE
+    """
+
+    try:
+        r = requests.get(
+            f"{BASE_URL}/version",
+            timeout=5
+        )
+        r.raise_for_status()
+
+        data = r.json()
+
+        # ------------------------------
+        # Validación mínima del payload
+        # ------------------------------
+        latest = data.get("latest_version")
+
+        if not latest:
+            return False, {}
+
+        return True, data
+
+    except Exception:
+        return False, {}
+
+def verify_identity_api(data):
+    r = requests.post(f"{BASE_URL}/auth/reset/verify-identity", json=data, timeout=10)
+    r.raise_for_status()
+    return r.json()
+
+def verify_totp_api(data):
+    r = requests.post(f"{BASE_URL}/auth/reset/verify-totp", json=data, timeout=10)
+    r.raise_for_status()
+    return r.json()
+
+def set_password_api(data):
+    r = requests.post(f"{BASE_URL}/auth/reset/set-password", json=data, timeout=10)
+    r.raise_for_status()
+    return r.json()
+
+
+# ============================================================
+# CORE REQUEST WRAPPER
+# ============================================================
+
+def _headers():
+    usuario = get_user()
+    rol = get_rol()
+
+    if not usuario:
+        raise Exception("Usuario no autenticado")
+
+    rol = (rol or "").strip().lower()
+
+    return {
+        "X-User": usuario,
+        "X-Role": rol,            # legacy (lo usan otros endpoints)
+        "X-User-Role": rol        # ✅ requerido por /comercial/board (evita 422)
+    }
+
+# ============================================================
+# IA INFORMES
+# ============================================================
+
+def api_request(method: str, url: str, **kwargs):
+    headers = kwargs.pop("headers", {})
+    headers.update(_headers())
+
+    # ======================================================
+    # NORMALIZAR URL (BLINDAJE TOTAL)
+    # ======================================================
+    if not url.startswith("http://") and not url.startswith("https://"):
+        if not url.startswith("/"):
+            url = f"/{url}"
+        url = f"{BASE_URL}{url}"
+
+    return requests.request(
+        method=method,
+        url=url,
+        headers=headers,
+        **kwargs
+    )
+
+# ============================================================
+# HHRR — EVENTS (API REAL)
+# ============================================================
+
+def hr_create_event(data: dict):
+    resp = api_request(
+        "POST",
+        f"{BASE_URL}/hr/events/",
+        json=data,
+        timeout=15
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+def hr_list_events(event_type=None, status=None, empleado_id=None):
+    params = {}
+
+    if event_type:
+        params["event_type"] = event_type
+    if status:
+        params["status"] = status
+    if empleado_id:
+        params["empleado_id"] = empleado_id
+
+    resp = api_request(
+        "GET",
+        f"{BASE_URL}/hr/events/",
+        params=params,
+        timeout=15
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+def hr_update_event_status(event_id, status, approved_by):
+    resp = api_request(
+        "POST",
+        f"{BASE_URL}/hr/events/{event_id}/status",
+        json={
+            "status": status,
+            "approved_by": approved_by
+        },
+        timeout=15
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+# ============================================================
+# HHRR — OT LOG (API REAL)
+# ============================================================
+
+def hr_create_ot_log(data: dict):
+    resp = api_request(
+        "POST",
+        f"{BASE_URL}/hr/ot-log/",
+        json=data,
+        timeout=15
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+# =========================================================
+# HR — LIST OT LOGS
+# =========================================================
+def hr_list_ot_logs(
+    page=1,
+    page_size=50,
+    usuario=None,
+    tipo=None,
+    estado=None
+):
+
+    try:
+
+        # -------------------------------------------------
+        # SANITIZE PAGINATION
+        # -------------------------------------------------
+        try:
+            page = int(page)
+        except Exception:
+            page = 1
+
+        try:
+            page_size = int(page_size)
+        except Exception:
+            page_size = 50
+
+        if page < 1:
+            page = 1
+
+        if page_size < 1:
+            page_size = 50
+
+        if page_size > 500:
+            page_size = 500
+
+        # -------------------------------------------------
+        # BUILD PARAMS
+        # -------------------------------------------------
+        params = {
+            "page": page,
+            "page_size": page_size
+        }
+
+        if usuario:
+            params["usuario"] = str(usuario).strip()
+
+        if tipo:
+            params["tipo"] = str(tipo).strip()
+
+        if estado:
+            params["estado"] = str(estado).strip()
+
+        # -------------------------------------------------
+        # API CALL (USANDO WRAPPER AUTENTICADO)
+        # -------------------------------------------------
+        response = api_request(
+            "GET",
+            f"{BASE_URL}/hr/ot-log",
+            params=params,
+            timeout=30
+        )
+
+        # -------------------------------------------------
+        # STATUS VALIDATION
+        # -------------------------------------------------
+        if response.status_code != 200:
+            raise Exception(
+                f"HTTP {response.status_code} - {response.text}"
+            )
+
+        # -------------------------------------------------
+        # PARSE RESPONSE
+        # -------------------------------------------------
+        try:
+            data = response.json()
+        except Exception:
+            raise Exception("Invalid JSON response from server")
+
+        # -------------------------------------------------
+        # HARDEN RESPONSE STRUCTURE
+        # -------------------------------------------------
+        if not isinstance(data, dict):
+            raise Exception("Invalid response structure")
+
+        if "data" not in data or not isinstance(data["data"], list):
+            data["data"] = []
+
+        if "total" not in data:
+            data["total"] = len(data["data"])
+
+        return data
+
+    # -------------------------------------------------
+    # NETWORK ERRORS
+    # -------------------------------------------------
+    except requests.exceptions.Timeout:
+        raise Exception("Server timeout")
+
+    except requests.exceptions.ConnectionError:
+        raise Exception("Cannot connect to server")
+
+    except requests.exceptions.RequestException as e:
+        raise Exception(f"Connection error: {str(e)}")
+
+    # -------------------------------------------------
+    # GENERIC ERRORS
+    # -------------------------------------------------
+    except Exception as e:
+        raise Exception(str(e))
+
+
+
+
+
+def hr_delete_ot_log(log_id: int):
+    resp = api_request(
+        "DELETE",
+        f"{BASE_URL}/hr/ot-log/{log_id}",
+        timeout=15
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+def hr_update_ot_status(log_id: int, estado: str):
+    resp = api_request(
+        "PUT",
+        f"{BASE_URL}/hr/ot-log/{log_id}/estado",
+        json={"estado": estado},
+        timeout=15
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+def hr_get_my_summary(year=None, month=None):
+    params = {}
+    if year is not None:
+        params["year"] = year
+    if month is not None:
+        params["month"] = month
+
+    resp = api_request(
+        "GET",
+        f"{BASE_URL}/hr/ot-log/me/summary",
+        params=params,
+        timeout=15
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+# ============================================================
+# ALIASES LEGACY — UI EXISTENTE (NO BORRAR)
+# ============================================================
+
+def listar_eventos_hr(*args, **kwargs):
+    return hr_list_events(*args, **kwargs)
+
+def actualizar_estado_evento_hr(event_id, status, approved_by):
+    return hr_update_event_status(
+        event_id=event_id,
+        status=status,
+        approved_by=approved_by
+    )
+
+# OT LOG
+def crear_ot_log(data: dict):
+    return hr_create_ot_log(data)
+
+def listar_ot_logs(*args, **kwargs):
+    return hr_list_ot_logs(*args, **kwargs)
+
+
+# ============================================================
+# HHRR — PAYROLL
+# ============================================================
+
+# ------------------------------------------------------------
+# 1️⃣ LISTAR EMPLEADOS PARA PAYROLL (TABLA BASE)
+# GET /hr/payroll/employees
+# ------------------------------------------------------------
+def hr_list_payroll_employees():
+    """
+    Retorna empleados ACTIVOS con data fija para la tabla Payroll.
+    """
+    resp = api_request(
+        "GET",
+        f"{BASE_URL}/hr/payroll/employees",
+        timeout=15
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+# ------------------------------------------------------------
+# 2️⃣ PREVIEW / CÁLCULO DE PLANILLA (NO GUARDA)
+# GET /hr/payroll/calculate
+# ------------------------------------------------------------
+def hr_calculate_payroll(
+    usuario: str,
+    year: int,
+    month: int
+):
+    """
+    Calcula planilla del empleado para un mes específico.
+    NO guarda datos.
+    """
+    params = {
+        "usuario": usuario,
+        "year": year,
+        "month": month
+    }
+
+    resp = api_request(
+        "GET",
+        f"{BASE_URL}/hr/payroll/calculate",
+        params=params,
+        timeout=15
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+# ------------------------------------------------------------
+# 3️⃣ CONFIRMAR / POSTEAR PLANILLA
+# PUT /hr/payroll/post
+# ------------------------------------------------------------
+def hr_post_payroll(payload: dict):
+    """
+    Confirma la planilla del mes (resultado del preview).
+
+    payload esperado:
+    {
+        usuario: str,
+        year: int,
+        month: int,
+        salario_neto: float,
+        pdf_path: str   # URL lógica (/hr/payroll/files/...)
+    }
+    """
+
+
+
+# ------------------------------------------------------------
+# 4️⃣ (FUTURO) LISTAR PLANILLAS GENERADAS
+# GET /hr/payroll/runs
+# ------------------------------------------------------------
+def hr_list_payroll_runs(
+    year: int | None = None,
+    month: int | None = None,
+    usuario: str | None = None
+):
+    """
+    Historial de planillas confirmadas.
+    (Preparado para cuando exista el endpoint)
+    """
+    params = {}
+
+    if year is not None:
+        params["year"] = year
+    if month is not None:
+        params["month"] = month
+    if usuario:
+        params["usuario"] = usuario
+
+    resp = api_request(
+        "GET",
+        f"{BASE_URL}/hr/payroll/runs",
+        params=params,
+        timeout=15
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+# ------------------------------------------------------------
+# 3️⃣ CONFIRMAR / POSTEAR PLANILLA
+# PUT /hr/payroll/post
+# ------------------------------------------------------------
+def hr_post_payroll(payload: dict):
+    """
+    Confirma la planilla del mes (resultado del preview).
+
+    payload esperado:
+    {
+        usuario: str,
+        year: int,
+        month: int,
+        salario_neto: float,
+        pdf_path: str
+    }
+    """
+    resp = api_request(
+        "PUT",
+        f"{BASE_URL}/hr/payroll/post",
+        json=payload,
+        timeout=15
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+# ============================================================
+# LISTAR COLILLAS DE PAGO (PAGINADO + FILTROS)
+# GET /hr/payroll/payslips
+# ============================================================
+def get_payslips_api(
+    page: int = 1,
+    page_size: int = 20,
+    year: int | None = None,
+    month: int | None = None
+):
+    """
+    Obtiene colillas de pago según permisos del usuario autenticado.
+
+    Reglas (en backend):
+    - employee → solo sus colillas
+    - admin / master → todas
+
+    Filtros opcionales:
+    - year  (int, ej: 2026)
+    - month (int, 1-12)
+    """
+
+    params = {
+        "page": page,
+        "page_size": page_size
+    }
+
+    # ----------------------------
+    # AÑO
+    # ----------------------------
+    if year is not None:
+        params["year"] = year
+
+    # ----------------------------
+    # MES
+    # ----------------------------
+    if month is not None:
+        params["month"] = month
+
+    resp = api_request(
+        "GET",
+        f"{BASE_URL}/hr/payroll/payslips",
+        params=params,
+        timeout=20
+    )
+
+    resp.raise_for_status()
+    return resp.json()
+
+
+
+# ============================================================
+# PAYROLL — DESCARGAR COLILLA (RECONSTRUCCIÓN ON-DEMAND)
+# ============================================================
+
+def hr_download_payslip_pdf(
+    year: int,
+    month: int,
+    usuario: str | None = None,
+    timeout: int = 30
+):
+    """
+    Descarga la colilla de pago reconstruida en tiempo real.
+    
+    - Employee: descarga solo la suya
+    - Admin/Master: puede indicar usuario
+    """
+
+    params = {}
+    if usuario:
+        params["usuario"] = usuario
+
+    resp = api_request(
+        "GET",
+        f"{BASE_URL}/hr/payroll/payslips/{year}/{month}/pdf",
+        params=params,
+        stream=True,
+        timeout=timeout
+    )
+
+    resp.raise_for_status()
+    return resp
+
+
+
+# ============================================================
+# HHRR — LISTAR SOLICITUDES
+# GET /hr/events
+# ============================================================
+def listar_eventos_hr():
+    """
+    - user        → solo sus solicitudes
+    - admin/master → todas
+    """
+    resp = api_request(
+        "GET",
+        f"{BASE_URL}/hr/events/"
+    )
+
+    resp.raise_for_status()
+    return resp.json()
+
+
+# ============================================================
+# HHRR — CREAR SOLICITUD
+# POST /hr/events
+# ============================================================
+def crear_evento_hr(
+    event_type: str,
+    payload: dict,
+    event_date: str | None = None
+):
+    """
+    event_type:
+        - VACACIONES
+        - CONSTANCIA_SALARIAL
+        - CONSTANCIA_LABORAL
+        - INCAPACIDAD
+        - LICENCIA
+
+    payload: dict dinámico según tipo
+    event_date: YYYY-MM-DD (opcional)
+    """
+
+    if not event_type:
+        raise ValueError("event_type requerido")
+
+    if payload is not None and not isinstance(payload, dict):
+        raise ValueError("payload debe ser dict")
+
+    data = {
+        "event_type": event_type,
+        "payload": payload or {}
+    }
+
+    if event_date:
+        data["event_date"] = event_date
+
+    resp = api_request(
+        "POST",
+        f"{BASE_URL}/hr/events/",
+        json=data,
+        timeout=15
+    )
+
+    resp.raise_for_status()
+    return resp.json()
+
+
+# ============================================================
+# HHRR — APROBAR SOLICITUD
+# PATCH /hr/events/{id}/approve
+# ============================================================
+def aprobar_evento_hr(event_id: int, comentario: str | None = None):
+    """
+    Solo admin / master
+    comentario es opcional
+    """
+    if not event_id:
+        raise ValueError("event_id requerido")
+
+    data = {}
+    if comentario:
+        data["comentario"] = comentario
+
+    resp = api_request(
+        "PATCH",
+        f"{BASE_URL}/hr/events/{event_id}/approve",
+        json=data,
+        timeout=15
+    )
+
+    resp.raise_for_status()
+    return resp.json()
+
+
+# ============================================================
+# HHRR — RECHAZAR SOLICITUD
+# PATCH /hr/events/{id}/reject
+# ============================================================
+def rechazar_evento_hr(event_id: int, comentario: str):
+    """
+    Solo admin / master
+    """
+    if not comentario:
+        raise ValueError("comentario requerido")
+
+    data = {
+        "comentario": comentario
+    }
+
+    resp = api_request(
+        "PATCH",
+        f"{BASE_URL}/hr/events/{event_id}/reject",
+        json=data,
+        timeout=15
+    )
+
+    resp.raise_for_status()
+    return resp.json()
+
+
+# ============================================================
+# HHRR — VACACIONES DISPONIBLES
+# GET /hr/events/vacaciones/disponibles
+# ============================================================
+def obtener_vacaciones_disponibles():
+    resp = api_request(
+        "GET",
+        f"{BASE_URL}/hr/events/vacaciones/disponibles",
+        timeout=15
+    )
+
+    resp.raise_for_status()
+    return resp.json()
+
+
+# ============================================================
+# HHRR — EMPLEADOS
+# ============================================================
+
+def hr_listar_empleados(
+    page: int = 1,
+    page_size: int = 50,
+    nombre: str | None = None,
+    codigo: str | None = None,
+    estado: str | None = None,
+    usuario: str | None = None
+):
+    """
+    Lista empleados (ADMIN / MASTER)
+    Lazy + paginado + filtros
+    """
+
+    params = {
+        "page": page,
+        "page_size": page_size
+    }
+
+    if nombre:
+        params["nombre"] = nombre
+
+    if codigo:
+        params["codigo"] = codigo
+
+    if estado:
+        params["estado"] = estado
+
+    if usuario:
+        params["usuario"] = usuario
+
+    resp = api_request(
+        "GET",
+        f"{BASE_URL}/hr/employees",
+        params=params
+    )
+
+    resp.raise_for_status()
+    return resp.json()
+
+
+def hr_crear_empleado(payload: dict):
+    """
+    Crea un nuevo empleado
+    """
+
+    resp = api_request(
+        "POST",
+        f"{BASE_URL}/hr/employees",
+        json=payload
+    )
+
+    resp.raise_for_status()
+    return resp.json()
+
+
+
+def hr_actualizar_empleado(empleado_id: int, payload: dict):
+    """
+    Actualiza datos de un empleado
+    """
+
+    resp = api_request(
+        "PUT",
+        f"{BASE_URL}/hr/employees/{empleado_id}",
+        json=payload
+    )
+
+    resp.raise_for_status()
+    return resp.json()
+
+
+# ============================================================
+# NOTICIAS — HHRR
+# ============================================================
+
+def hr_publicar_noticias(
+    noticia_1: str | None = None,
+    noticia_2: str | None = None,
+    noticia_3: str | None = None,
+    noticia_4: str | None = None,
+    noticia_5: str | None = None,
+):
+    """
+    Publica un bloque de noticias.
+    Requiere rol: admin / master
+    """
+
+    payload = {
+        "noticia_1": noticia_1,
+        "noticia_2": noticia_2,
+        "noticia_3": noticia_3,
+        "noticia_4": noticia_4,
+        "noticia_5": noticia_5,
+    }
+
+    resp = api_request(
+        "POST",
+        f"{BASE_URL}/noticias",
+        json=payload,
+        timeout=15
+    )
+
+    resp.raise_for_status()
+    return resp.json()
+
+
+def hr_obtener_ultima_noticia():
+    """
+    Retorna el último bloque de noticias publicado.
+    Acceso: cualquier usuario autenticado
+    """
+
+    resp = api_request(
+        "GET",
+        f"{BASE_URL}/noticias/latest",
+        timeout=15
+    )
+
+    resp.raise_for_status()
+    return resp.json()
+
+# ============================================================
+# HHRR — POLÍTICAS DE LA EMPRESA
+# ============================================================
+
+def listar_politicas_hr(
+    categoria: str | None = None,
+    solo_activas: bool = True
+):
+    """
+    GET /hr/policies
+
+    Acceso:
+    - employee
+    - admin
+    - master
+    """
+
+    params = {
+        "solo_activas": solo_activas
+    }
+
+    if categoria:
+        params["categoria"] = categoria
+
+    resp = api_request(
+        "GET",
+        f"{BASE_URL}/hr/policies",
+        params=params,
+        timeout=15
+    )
+
+    resp.raise_for_status()
+    return resp.json()
+
+
+def crear_politica_hr(payload: dict):
+    """
+    POST /hr/policies
+
+    Acceso:
+    - admin / master
+    """
+
+    resp = api_request(
+        "POST",
+        f"{BASE_URL}/hr/policies",
+        json=payload,
+        timeout=15
+    )
+
+    resp.raise_for_status()
+    return resp.json()
+
+
+def actualizar_politica_hr(policy_id: int, payload: dict):
+    """
+    PUT /hr/policies/{policy_id}
+
+    Acceso:
+    - admin / master
+    """
+
+    resp = api_request(
+        "PUT",
+        f"{BASE_URL}/hr/policies/{policy_id}",
+        json=payload,
+        timeout=15
+    )
+
+    resp.raise_for_status()
+    return resp.json()
+
+
+def eliminar_politica_hr(policy_id: int):
+    """
+    DELETE /hr/policies/{policy_id}
+    (Soft delete)
+
+    Acceso:
+    - admin / master
+    """
+
+    resp = api_request(
+        "DELETE",
+        f"{BASE_URL}/hr/policies/{policy_id}",
+        timeout=15
+    )
+
+    resp.raise_for_status()
+    return resp.json()
+
+
+# ============================================================
+# COMERCIAL — BOARD
+# ============================================================
+def get_comercial_board_api(
+    cliente=None,
+    continente=None,
+    pais=None,
+    puerto=None,
+    surveyor=None,
+    estados=None,
+    year=None,              # 👈 AÑADIDO
+    fecha_desde=None,
+    fecha_hasta=None
+):
+    """
+    Llama al endpoint /comercial/board
+    Retorna SIEMPRE list[dict]
+    """
+
+    params = {}
+
+    def _clean(v):
+        if v is None:
+            return None
+        s = str(v).strip()
+        return s if s else None
+
+    cliente = _clean(cliente)
+    continente = _clean(continente)
+    pais = _clean(pais)
+    puerto = _clean(puerto)
+    surveyor = _clean(surveyor)
+    fecha_desde = _clean(fecha_desde)
+    fecha_hasta = _clean(fecha_hasta)
+
+    if cliente:
+        params["cliente"] = cliente
+    if continente:
+        params["continente"] = continente
+    if pais:
+        params["pais"] = pais
+    if puerto:
+        params["puerto"] = puerto
+    if surveyor:
+        params["surveyor"] = surveyor
+
+    # estados → List[str] para FastAPI
+    if estados:
+        if isinstance(estados, (list, tuple)):
+            estados_norm = [str(e).strip() for e in estados if str(e).strip()]
+            if estados_norm:
+                params["estados"] = estados_norm
+        else:
+            s = str(estados).strip()
+            if s:
+                params["estados"] = [s]
+
+    # 👇 AÑO
+    if year is not None:
+        params["year"] = int(year)
+
+    if fecha_desde:
+        params["fecha_desde"] = fecha_desde
+    if fecha_hasta:
+        params["fecha_hasta"] = fecha_hasta
+
+    # URL absoluta blindada
+    url = f"{BASE_URL}/comercial/board"
+    if url.startswith("/"):
+        url = f"{BASE_URL}{url}"
+
+    resp = api_request(
+        "GET",
+        url,
+        params=params,
+        timeout=20
+    )
+
+    if resp.status_code >= 400:
+        try:
+            j = resp.json()
+            detail = j.get("detail") or j.get("error") or j
+        except Exception:
+            detail = resp.text
+        raise Exception(f"{resp.status_code} → {detail}")
+
+    try:
+        data = resp.json()
+    except Exception:
+        return []
+
+    if isinstance(data, list):
+        return [r for r in data if isinstance(r, dict)]
+
+    if isinstance(data, dict):
+        maybe = data.get("data")
+        if isinstance(maybe, list):
+            return [r for r in maybe if isinstance(r, dict)]
+        return []
+
+    return []
+
+
+
+
+# ============================================================
+# COMERCIAL — CLIENT VIEW (ANALYTICS)
+# ============================================================
+def get_comercial_client_view_api(
+    year=None,
+    year_from=None,
+    year_to=None,
+    cliente=None,
+    servicio=None
+):
+    """
+    GET /comercial/client-view
+    Analítica comercial por Cliente / Servicio
+    """
+
+    params = {}
+
+    # ---------------- AÑOS ----------------
+    if year is not None:
+        try:
+            params["year"] = int(year)
+        except Exception:
+            pass
+
+    if year_from is not None:
+        try:
+            params["year_from"] = int(year_from)
+        except Exception:
+            pass
+
+    if year_to is not None:
+        try:
+            params["year_to"] = int(year_to)
+        except Exception:
+            pass
+
+    # ---------------- FILTROS ----------------
+    if cliente:
+        cliente = str(cliente).strip()
+        if cliente:
+            params["cliente"] = cliente
+
+    if servicio:
+        servicio = str(servicio).strip()
+        if servicio:
+            params["servicio"] = servicio
+
+    # ---------------- REQUEST ----------------
+    resp = api_request(
+        "GET",
+        f"{BASE_URL}/comercial/client-view",
+        params=params,
+        timeout=30
+    )
+
+    # ---------------- ERRORES ----------------
+    if resp.status_code >= 400:
+        try:
+            detail = resp.json()
+        except Exception:
+            detail = resp.text
+        raise Exception(f"{resp.status_code} → {detail}")
+
+    # ---------------- PARSEO ----------------
+    payload = resp.json() or {}
+
+    return {
+        "year_applied": payload.get("year_applied"),
+        "available_years": payload.get("available_years", []),
+        "kpis": payload.get("kpis", {}),
+        "data": payload.get("data", [])
+    }
+
+
+# ============================================================
+# COMERCIAL — CLIENTES (DETALLE / LISTADO)
+# ============================================================
+def get_comercial_clientes_api(
+    id: int | None = None,
+    codigo: str | None = None,
+    nombre: str | None = None
+):
+    """
+    GET /comercial/clientes
+    Detalle de clientes para Analytics Comercial
+    """
+
+    params = {}
+
+    # ---------------- FILTROS ----------------
+    if id is not None:
+        try:
+            params["id"] = int(id)
+        except Exception:
+            pass
+
+    if codigo:
+        codigo = str(codigo).strip()
+        if codigo:
+            params["codigo"] = codigo
+
+    if nombre:
+        nombre = str(nombre).strip()
+        if nombre:
+            params["nombre"] = nombre
+
+    # ---------------- REQUEST ----------------
+    resp = api_request(
+        "GET",
+        f"{BASE_URL}/comercial/clientes",
+        params=params,
+        timeout=30
+    )
+
+    # ---------------- ERRORES ----------------
+    if resp.status_code >= 400:
+        try:
+            detail = resp.json()
+        except Exception:
+            detail = resp.text
+        raise Exception(f"{resp.status_code} → {detail}")
+
+    # ---------------- PARSEO ----------------
+    payload = resp.json() or {}
+
+    return {
+        "total": payload.get("total", 0),
+        "data": payload.get("data", [])
+    }
+
+
+# ============================================================
+# COMERCIAL — ANALYTICS / PUERTOS (TABLA + PARETO)
+# ============================================================
+def get_comercial_ports_analytics_api(
+    year_from: int | None = None,
+    year_to: int | None = None,
+    clientes: list[str] | None = None,
+    continente: str | None = None,
+    pais: str | None = None
+):
+    """
+    GET /comercial/analytics/puertos
+    Analítica comercial por puerto (tabla, frecuencia, pareto, márgenes)
+    """
+
+    params = {}
+
+    # ---------------- AÑOS ----------------
+    if year_from is not None:
+        try:
+            params["year_from"] = int(year_from)
+        except Exception:
+            pass
+
+    if year_to is not None:
+        try:
+            params["year_to"] = int(year_to)
+        except Exception:
+            pass
+
+    # ---------------- FILTROS ----------------
+    if clientes:
+        if isinstance(clientes, (list, tuple)):
+            clientes_clean = [
+                str(c).strip()
+                for c in clientes
+                if str(c).strip()
+            ]
+            if clientes_clean:
+                params["clientes"] = clientes_clean
+
+    if continente:
+        continente = str(continente).strip()
+        if continente:
+            params["continente"] = continente
+
+    if pais:
+        pais = str(pais).strip()
+        if pais:
+            params["pais"] = pais
+
+    # ---------------- REQUEST ----------------
+    resp = api_request(
+        "GET",
+        f"{BASE_URL}/comercial/analytics/puertos",
+        params=params,
+        timeout=30
+    )
+
+    # ---------------- ERRORES ----------------
+    if resp.status_code >= 400:
+        try:
+            detail = resp.json()
+        except Exception:
+            detail = resp.text
+        raise Exception(f"{resp.status_code} → {detail}")
+
+    # ---------------- PARSEO ----------------
+    payload = resp.json()
+
+    if not isinstance(payload, dict):
+        return {"data": []}
+
+    return {
+        "data": payload.get("data", [])
+    }
+
+
+
+# ============================================================
+# COMERCIAL — ANALYTICS / PUERTOS / KPIs
+# ============================================================
+def get_comercial_ports_kpis_api(
+    year_from: int | None = None,
+    year_to: int | None = None,
+    clientes: list[str] | None = None,
+    continente: str | None = None,
+    pais: str | None = None
+):
+    """
+    GET /comercial/analytics/puertos/kpis
+    KPIs agregados comerciales (backend-only logic)
+    """
+
+    params = {}
+
+    # ---------------- AÑOS ----------------
+    if year_from is not None:
+        try:
+            params["year_from"] = int(year_from)
+        except Exception:
+            pass
+
+    if year_to is not None:
+        try:
+            params["year_to"] = int(year_to)
+        except Exception:
+            pass
+
+    # ---------------- FILTROS ----------------
+    if clientes:
+        if isinstance(clientes, (list, tuple)):
+            clientes_clean = [
+                str(c).strip()
+                for c in clientes
+                if str(c).strip()
+            ]
+            if clientes_clean:
+                params["clientes"] = clientes_clean
+
+    if continente:
+        continente = str(continente).strip()
+        if continente:
+            params["continente"] = continente
+
+    if pais:
+        pais = str(pais).strip()
+        if pais:
+            params["pais"] = pais
+
+    # ---------------- REQUEST ----------------
+    resp = api_request(
+        "GET",
+        f"{BASE_URL}/comercial/analytics/puertos/kpis",
+        params=params,
+        timeout=30
+    )
+
+    # ---------------- ERRORES ----------------
+    if resp.status_code >= 400:
+        try:
+            detail = resp.json()
+        except Exception:
+            detail = resp.text
+        raise Exception(f"{resp.status_code} → {detail}")
+
+    # ---------------- PARSEO ----------------
+    payload = resp.json()
+
+    if not isinstance(payload, dict):
+        return {
+            "clientes": 0,
+            "paises": 0,
+            "puertos": 0,
+            "facturacion": 0.0,
+            "costos": 0.0,
+            "margen_bruto": 0.0,
+            "margen_neto": 0.0,
+            "rentabilidad": 0.0,
+            "rentabilidad_pct": 0.0
+        }
+
+    return {
+        "clientes": payload.get("clientes", 0),
+        "paises": payload.get("paises", 0),
+        "puertos": payload.get("puertos", 0),
+        "facturacion": float(payload.get("facturacion", 0) or 0),
+        "costos": float(payload.get("costos", 0) or 0),
+        "margen_bruto": float(payload.get("margen_bruto", 0) or 0),
+        "margen_neto": float(payload.get("margen_neto", 0) or 0),
+        "rentabilidad": float(payload.get("rentabilidad", 0) or 0),
+        "rentabilidad_pct": float(payload.get("rentabilidad_pct", 0) or 0),
+    }
+
+
+# ============================================================
+# COMERCIAL — ANALYTICS / PUERTOS / FILTROS
+# ============================================================
+def get_comercial_ports_filters_api():
+    """
+    GET /comercial/analytics/puertos/filtros
+    Años (desde fecha_inicio) y clientes para combobox
+    """
+
+    resp = api_request(
+        "GET",
+        f"{BASE_URL}/comercial/analytics/puertos/filtros",
+        timeout=30
+    )
+
+    if resp.status_code >= 400:
+        try:
+            detail = resp.json()
+        except Exception:
+            detail = resp.text
+        raise Exception(f"{resp.status_code} → {detail}")
+
+    payload = resp.json()
+
+    if not isinstance(payload, dict):
+        return {
+            "years": [],
+            "clientes": []
+        }
+
+    return {
+        "years": payload.get("years", []),
+        "clientes": payload.get("clientes", [])
+    }
+
+
+# ============================================================
+# COMERCIAL — PORTS COVERAGE ANALYTICS API CLIENT
+# ============================================================
+
+def get_comercial_ports_coverage_api(
+    year_from=None,
+    year_to=None,
+    cliente=None,
+    min_ops=3
+):
+    """
+    Obtiene análisis de cobertura de puertos:
+    - Sin operación
+    - Operación mínima
+    - Operación activa
+
+    Driver: continentes_paises_puertos
+    Fuente: servicios
+    """
+
+    params = {}
+
+    if year_from:
+        params["year_from"] = year_from
+
+    if year_to:
+        params["year_to"] = year_to
+
+    if cliente:
+        params["cliente"] = cliente
+
+    if min_ops is not None:
+        params["min_ops"] = min_ops
+
+    resp = api_request(
+        "GET",
+        f"{BASE_URL}/comercial/ports-coverage",
+        params=params,
+        timeout=30
+    )
+
+    if resp.status_code >= 400:
+        try:
+            detail = resp.json()
+        except Exception:
+            detail = resp.text
+        raise Exception(f"{resp.status_code} → {detail}")
+
+    return resp.json()
+
+# ============================================================
+# HELPERS — NORMALIZACIÓN DE PARAMS
+# ============================================================
+
+def _safe_int(v):
+    try:
+        return int(v)
+    except Exception:
+        return None
+
+
+def _safe_str(v):
+    if v is None:
+        return None
+    v = str(v).strip()
+    return v if v else None
+
+
+# ============================================================
+# COMERCIAL — SERVICIOS ANALYTICS POR SERVICIO
+# ============================================================
+def get_comercial_servicios_by_servicio_api(
+    year_from=None,
+    year_to=None,
+    quarter=None,
+    continente=None,
+    pais=None,
+    puerto=None
+):
+    """
+    Rentabilidad por servicio (operacion)
+    • Backend controla años (default / exacto / rango)
+    • Quarter es opcional (Q1–Q4)
+    """
+
+    params = {}
+
+    # ---------------- AÑOS ----------------
+    yf = _safe_int(year_from)
+    yt = _safe_int(year_to)
+
+    if yf is not None:
+        params["year_from"] = yf
+    if yt is not None:
+        params["year_to"] = yt
+
+    # ---------------- QUARTER ----------------
+    q = _safe_str(quarter)
+    if q:
+        params["quarter"] = q
+
+    # ---------------- GEO ----------------
+    c = _safe_str(continente)
+    p = _safe_str(pais)
+    pt = _safe_str(puerto)
+
+    if c:
+        params["continente"] = c
+    if p:
+        params["pais"] = p
+    if pt:
+        params["puerto"] = pt
+
+    resp = api_request(
+        "GET",
+        f"{BASE_URL}/comercial/analytics/servicios/by-servicio",
+        params=params,
+        timeout=TIMEOUT
+    )
+
+    resp.raise_for_status()
+    return resp.json()
+
+
+# ============================================================
+# COMERCIAL — SERVICIOS NO OFRECIDOS
+# ============================================================
+def get_comercial_servicios_no_ofrecidos_api(
+    year_from=None,
+    year_to=None,
+    quarter=None,
+    continente=None,
+    pais=None,
+    puerto=None
+):
+    """
+    Servicios del catálogo NO ejecutados
+    (por año / rango / quarter)
+    """
+
+    params = {}
+
+    yf = _safe_int(year_from)
+    yt = _safe_int(year_to)
+
+    if yf is not None:
+        params["year_from"] = yf
+    if yt is not None:
+        params["year_to"] = yt
+
+    q = _safe_str(quarter)
+    if q:
+        params["quarter"] = q
+
+    c = _safe_str(continente)
+    p = _safe_str(pais)
+    pt = _safe_str(puerto)
+
+    if c:
+        params["continente"] = c
+    if p:
+        params["pais"] = p
+    if pt:
+        params["puerto"] = pt
+
+    resp = api_request(
+        "GET",
+        f"{BASE_URL}/comercial/analytics/servicios/not-offered",
+        params=params,
+        timeout=TIMEOUT
+    )
+
+    resp.raise_for_status()
+    return resp.json()
+
+
+# ============================================================
+# COMERCIAL — COSTOS POR SURVEYOR
+# ============================================================
+def get_comercial_costos_por_surveyor_api(
+    year_from=None,
+    year_to=None
+):
+    """
+    Costos y rentabilidad por surveyor
+    • Backend aplica fecha híbrida (fecha_inicio / num_informe)
+    """
+
+    params = {}
+
+    yf = _safe_int(year_from)
+    yt = _safe_int(year_to)
+
+    if yf is not None:
+        params["year_from"] = yf
+
+    if yt is not None:
+        params["year_to"] = yt
+
+    resp = api_request(
+        "GET",
+        f"{BASE_URL}/comercial/analytics/servicios/costos-por-surveyor",
+        params=params,
+        timeout=TIMEOUT
+    )
+
+    resp.raise_for_status()
+    return resp.json()
+
+
+# ============================================================
+# COMERCIAL — SERVICIOS POR UBICACIÓN
+# ============================================================
+def get_comercial_servicios_por_ubicacion_api(
+    year_from=None,
+    year_to=None
+):
+    """
+    Servicios por continente / país / puerto
+    • Backend aplica fecha híbrida (fecha_inicio / num_informe)
+    """
+
+    params = {}
+
+    yf = _safe_int(year_from)
+    yt = _safe_int(year_to)
+
+    if yf is not None:
+        params["year_from"] = yf
+
+    if yt is not None:
+        params["year_to"] = yt
+
+    resp = api_request(
+        "GET",
+        f"{BASE_URL}/comercial/analytics/servicios/por-ubicacion",
+        params=params,
+        timeout=TIMEOUT
+    )
+
+    resp.raise_for_status()
+    return resp.json()
+
+
+# ============================================================
+# COMERCIAL — KPIs EJECUTIVOS
+# ============================================================
+def get_comercial_servicios_kpis_api(
+    year_from=None,
+    year_to=None,
+    continente=None,
+    pais=None,
+    puerto=None,
+    operacion=None
+):
+    """
+    KPIs ejecutivos de servicios
+    """
+
+    params = {}
+
+    yf = _safe_int(year_from)
+    yt = _safe_int(year_to)
+
+    if yf is not None:
+        params["year_from"] = yf
+    if yt is not None:
+        params["year_to"] = yt
+
+    c = _safe_str(continente)
+    p = _safe_str(pais)
+    pt = _safe_str(puerto)
+    op = _safe_str(operacion)
+
+    if c:
+        params["continente"] = c
+    if p:
+        params["pais"] = p
+    if pt:
+        params["puerto"] = pt
+    if op:
+        params["operacion"] = op
+
+    resp = api_request(
+        "GET",
+        f"{BASE_URL}/comercial/analytics/servicios/kpis",
+        params=params,
+        timeout=TIMEOUT
+    )
+
+    resp.raise_for_status()
+    return resp.json()
+
+
+# ============================================================
+# COMERCIAL — COSTOS SURVEYOR PARETO
+# ============================================================
+def get_comercial_costos_surveyor_pareto_api(
+    year=None,
+    operacion=None
+):
+    """
+    Pareto 80/20 de honorarios por surveyor
+    """
+
+    params = {}
+
+    y = _safe_int(year)
+    if y:
+        params["year"] = y
+
+    op = _safe_str(operacion)
+    if op:
+        params["operacion"] = op
+
+    resp = api_request(
+        "GET",
+        f"{BASE_URL}/comercial/analytics/servicios/costos-surveyor-pareto",
+        params=params,
+        timeout=TIMEOUT
+    )
+
+    resp.raise_for_status()
+    return resp.json()
+
+
+
+# ============================================================
+# COMERCIAL — SERVICIOS NO OFRECIDOS
+# ============================================================
+def get_comercial_servicios_no_ofrecidos_api(
+    year_from=None,
+    year_to=None,
+    quarter=None,
+    continente=None,
+    pais=None,
+    puerto=None
+):
+    """
+    Servicios del catálogo NO ejecutados en el período
+    • Quarter opcional
+    """
+
+    params = {}
+
+    yf = _safe_int(year_from)
+    yt = _safe_int(year_to)
+    q = _safe_str(quarter)
+
+    if yf is not None:
+        params["year_from"] = yf
+    if yt is not None:
+        params["year_to"] = yt
+    if q:
+        params["quarter"] = q
+
+    c = _safe_str(continente)
+    p = _safe_str(pais)
+    pt = _safe_str(puerto)
+
+    if c:
+        params["continente"] = c
+    if p:
+        params["pais"] = p
+    if pt:
+        params["puerto"] = pt
+
+    resp = api_request(
+        "GET",
+        f"{BASE_URL}/comercial/analytics/servicios/not-offered",
+        params=params,
+        timeout=TIMEOUT
+    )
+
+    resp.raise_for_status()
+    return resp.json()
+
+
+
+# ============================================================
+# COMERCIAL — COSTOS POR SURVEYOR
+# ============================================================
+def get_comercial_costos_por_surveyor_api(
+    year_from=None,
+    year_to=None,
+    quarter=None
+):
+    """
+    Costos y rentabilidad por surveyor
+    • Quarter opcional
+    """
+
+    params = {}
+
+    yf = _safe_int(year_from)
+    yt = _safe_int(year_to)
+    q = _safe_str(quarter)
+
+    if yf is not None:
+        params["year_from"] = yf
+    if yt is not None:
+        params["year_to"] = yt
+    if q:
+        params["quarter"] = q
+
+    resp = api_request(
+        "GET",
+        f"{BASE_URL}/comercial/analytics/servicios/costos-por-surveyor",
+        params=params,
+        timeout=TIMEOUT
+    )
+
+    resp.raise_for_status()
+    return resp.json()
+
+
+# ============================================================
+# COMERCIAL — SERVICIOS POR UBICACIÓN
+# ============================================================
+def get_comercial_servicios_por_ubicacion_api(
+    year_from=None,
+    year_to=None,
+    quarter=None
+):
+    """
+    Servicios por continente / país / puerto
+    • Quarter opcional
+    """
+
+    params = {}
+
+    yf = _safe_int(year_from)
+    yt = _safe_int(year_to)
+    q = _safe_str(quarter)
+
+    if yf is not None:
+        params["year_from"] = yf
+    if yt is not None:
+        params["year_to"] = yt
+    if q:
+        params["quarter"] = q
+
+    resp = api_request(
+        "GET",
+        f"{BASE_URL}/comercial/analytics/servicios/por-ubicacion",
+        params=params,
+        timeout=TIMEOUT
+    )
+
+    resp.raise_for_status()
+    return resp.json()
+
+
+# ============================================================
+# COMERCIAL — KPIs EJECUTIVOS
+# ============================================================
+def get_comercial_servicios_kpis_api(
+    year_from=None,
+    year_to=None,
+    quarter=None,
+    continente=None,
+    pais=None,
+    puerto=None,
+    operacion=None
+):
+    """
+    KPIs ejecutivos de servicios
+    • Quarter opcional
+    """
+
+    params = {}
+
+    yf = _safe_int(year_from)
+    yt = _safe_int(year_to)
+    q = _safe_str(quarter)
+
+    if yf is not None:
+        params["year_from"] = yf
+    if yt is not None:
+        params["year_to"] = yt
+    if q:
+        params["quarter"] = q
+
+    c = _safe_str(continente)
+    p = _safe_str(pais)
+    pt = _safe_str(puerto)
+    op = _safe_str(operacion)
+
+    if c:
+        params["continente"] = c
+    if p:
+        params["pais"] = p
+    if pt:
+        params["puerto"] = pt
+    if op:
+        params["operacion"] = op
+
+    resp = api_request(
+        "GET",
+        f"{BASE_URL}/comercial/analytics/servicios/kpis",
+        params=params,
+        timeout=TIMEOUT
+    )
+
+    resp.raise_for_status()
+    return resp.json()
+
+
+# ============================================================
+# COMERCIAL — COSTOS SURVEYOR PARETO
+# ============================================================
+def get_comercial_costos_surveyor_pareto_api(
+    year=None,
+    quarter=None,
+    operacion=None
+):
+    """
+    Pareto 80/20 de honorarios por surveyor
+    • Quarter opcional
+    """
+
+    params = {}
+
+    y = _safe_int(year)
+    q = _safe_str(quarter)
+    op = _safe_str(operacion)
+
+    if y:
+        params["year"] = y
+    if q:
+        params["quarter"] = q
+    if op:
+        params["operacion"] = op
+
+    resp = api_request(
+        "GET",
+        f"{BASE_URL}/comercial/analytics/servicios/costos-surveyor-pareto",
+        params=params,
+        timeout=TIMEOUT
+    )
+
+    resp.raise_for_status()
+    return resp.json()
+
+
+
+
+# ============================================================
+# COMERCIAL — PRECIOS (SERVICIOS)
+# ============================================================
+
+# ------------------------------------------------------------
+# META — DESPLEGABLES (SERVICIOS / CLIENTES / UBICACIONES)
+# GET /comercial/precios/meta
+# ------------------------------------------------------------
+def get_comercial_precios_meta_api():
+    """
+    Retorna data base para popup de precios:
+    - servicios (serviciosmd)
+    - clientes (cliente)
+    - ubicaciones (continentes / paises / puertos)
+    """
+    resp = api_request(
+        "GET",
+        f"{BASE_URL}/comercial/precios/meta",
+        timeout=15
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+# ------------------------------------------------------------
+# LISTAR PRECIOS
+# GET /comercial/precios
+# ------------------------------------------------------------
+def get_comercial_precios_api():
+    """
+    Lista todos los precios configurados
+    """
+    resp = api_request(
+        "GET",
+        f"{BASE_URL}/comercial/precios",
+        timeout=15
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+# ------------------------------------------------------------
+# CREAR PRECIO
+# POST /comercial/precios
+# ------------------------------------------------------------
+def post_comercial_precio_api(data: dict):
+    """
+    data esperado:
+    {
+        servicio: str,
+        cliente: str,
+        continente: str | None,
+        pais: str | None,
+        puerto: str | None,
+        precio: float
+    }
+    """
+    resp = api_request(
+        "POST",
+        f"{BASE_URL}/comercial/precios",
+        json=data,
+        timeout=15
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+# ------------------------------------------------------------
+# ACTUALIZAR PRECIO
+# PUT /comercial/precios/{precio_id}
+# ------------------------------------------------------------
+def put_comercial_precio_api(precio_id: int, data: dict):
+    """
+    data puede incluir:
+    {
+        servicio?,
+        cliente?,
+        continente?,
+        pais?,
+        puerto?,
+        precio?,
+        activo?
+    }
+    """
+    resp = api_request(
+        "PUT",
+        f"{BASE_URL}/comercial/precios/{precio_id}",
+        json=data,
+        timeout=15
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+# ------------------------------------------------------------
+# ELIMINAR PRECIO
+# DELETE /comercial/precios/{precio_id}
+# ------------------------------------------------------------
+def delete_comercial_precio_api(precio_id: int):
+    """
+    Elimina un precio por ID
+    """
+    resp = api_request(
+        "DELETE",
+        f"{BASE_URL}/comercial/precios/{precio_id}",
+        timeout=15
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+
+# ============================================================
+# COMERCIAL — COTIZACIONES
+# ============================================================
+
+# ------------------------------------------------------------
+# META — DESPLEGABLES + PRECIOS
+# GET /comercial/cotizaciones/meta
+# ------------------------------------------------------------
+def get_comercial_cotizaciones_meta_api():
+    """
+    Retorna data base para popup de cotizaciones:
+    - clientes
+    - servicios
+    - ubicaciones
+    - precios activos
+    """
+    resp = api_request(
+        "GET",
+        f"{BASE_URL}/comercial/cotizaciones/meta",
+        timeout=15
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+# ------------------------------------------------------------
+# LISTAR COTIZACIONES
+# GET /comercial/cotizaciones
+# ------------------------------------------------------------
+def get_comercial_cotizaciones_api():
+    """
+    Lista todas las cotizaciones
+    """
+    resp = api_request(
+        "GET",
+        f"{BASE_URL}/comercial/cotizaciones",
+        timeout=15
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+# ------------------------------------------------------------
+# Conscutivo Cotizaciones
+# 
+# ------------------------------------------------------------
+
+def get_comercial_next_quotation_number_api():
+    """
+    Obtiene el siguiente quotation_number desde backend
+    Ej: Quotation 00001
+    """
+    resp = api_request(
+        "GET",
+        f"{BASE_URL}/comercial/cotizaciones/next-quotation-number",
+        timeout=15
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+
+# ------------------------------------------------------------
+# CREAR COTIZACIÓN
+# POST /comercial/cotizaciones
+# ------------------------------------------------------------
+def post_comercial_cotizacion_api(data: dict):
+    """
+    data esperado (ALINEADO A public.cotizaciones):
+
+    {
+        cliente: str,
+        servicio?: str,
+        continente?: str,
+        pais?: str,
+        puerto?: str,
+        precio?: float,
+        idioma?: 'ES' | 'EN',
+        validez?: int,
+        status?: str,
+
+        servicio_1?: str,
+        precio_1?: float,
+        servicio_2?: str,
+        precio_2?: float,
+        servicio_3?: str,
+        precio_3?: float,
+        servicio_4?: str,
+        precio_4?: float
+    }
+    """
+    resp = api_request(
+        "POST",
+        f"{BASE_URL}/comercial/cotizaciones",
+        json=data,
+        timeout=15
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+# ------------------------------------------------------------
+# ACTUALIZAR COTIZACIÓN
+# PUT /comercial/cotizaciones/{id}
+# ------------------------------------------------------------
+def put_comercial_cotizacion_api(cotizacion_id: int, data: dict):
+    """
+    Actualiza una cotización existente.
+
+    Ejemplos:
+    - Aprobar: {"status": "APROBADO"}
+    - Cancelar: {"status": "CANCELADO", "razon_cancelacion": "..."}
+    """
+
+    if not isinstance(data, dict) or not data:
+        raise ValueError("Debe enviar al menos un campo a actualizar")
+
+    resp = api_request(
+        "PUT",
+        f"{BASE_URL}/comercial/cotizaciones/{cotizacion_id}",
+        json=data,
+        timeout=15
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+# ------------------------------------------------------------
+# APROBAR COTIZACIÓN
+# ------------------------------------------------------------
+def aprobar_comercial_cotizacion_api(cotizacion_id: int):
+    return put_comercial_cotizacion_api(
+        cotizacion_id,
+        {
+            "status": "APROBADO"
+        }
+    )
+
+
+# ------------------------------------------------------------
+# CANCELAR COTIZACIÓN
+# ------------------------------------------------------------
+def cancelar_comercial_cotizacion_api(
+    cotizacion_id: int,
+    razon_cancelacion: str
+):
+    if not razon_cancelacion:
+        raise ValueError("Debe indicar la razón de cancelación")
+
+    return put_comercial_cotizacion_api(
+        cotizacion_id,
+        {
+            "status": "CANCELADO",
+            "razon_cancelacion": razon_cancelacion
+        }
+    )
+
+
+
+# ------------------------------------------------------------
+# ELIMINAR COTIZACIÓN
+# DELETE /comercial/cotizaciones/{id}
+# ------------------------------------------------------------
+def delete_comercial_cotizacion_api(cotizacion_id: int):
+    """
+    Elimina una cotización
+    """
+    resp = api_request(
+        "DELETE",
+        f"{BASE_URL}/comercial/cotizaciones/{cotizacion_id}",
+        timeout=15
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+# ------------------------------------------------------------
+# KPIs COTIZACIONES COMERCIALES
+# GET /comercial/cotizaciones/kpis
+# ------------------------------------------------------------
+def get_comercial_cotizaciones_kpis_api(
+    year: int | None = None,
+    cliente: str | None = None,
+    servicio: str | None = None,
+    pais: str | None = None,
+    puerto: str | None = None,
+    status: str | None = None
+):
+    params = {}
+
+    if year:
+        params["year"] = year
+    if cliente:
+        params["cliente"] = cliente
+    if servicio:
+        params["servicio"] = servicio
+    if pais:
+        params["pais"] = pais
+    if puerto:
+        params["puerto"] = puerto
+    if status:
+        params["status"] = status
+
+    resp = api_request(
+        "GET",
+        f"{BASE_URL}/comercial/cotizaciones/kpis",
+        params=params,
+        timeout=15
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+
+# ============================================================
+# CONTAINER REPORTS
+# ============================================================
+
+def get_container_reports_list_api():
+    """
+    GET /container-reports/list
+    Lista de Container Reports (tabla Informes)
+    """
+    url = f"{BASE_URL}/container-reports/list"
+    return api_request("GET", url).json()
+
+
+def get_container_report_by_id_api(report_id: int):
+    """
+    GET /container-reports/{id}
+    """
+    url = f"{BASE_URL}/container-reports/{report_id}"
+    return api_request("GET", url).json()
+
+
+# ============================================================
+# CONTAINER REPORT — CREATE
+# ============================================================
+
+def create_container_report_api(payload: dict, user: str = None):
+    """
+    POST /container-reports
+    Crea un Container Report y garantiza respuesta JSON válida
+    """
+
+    if not isinstance(payload, dict):
+        raise ValueError("payload debe ser dict")
+
+    data = payload.copy()
+
+    # --------------------------------------------------
+    # Defaults controlados desde frontend
+    # --------------------------------------------------
+    data["status"] = data.get("status") or "draft"
+
+    if user:
+        data["user"] = user
+
+    # --------------------------------------------------
+    # REQUEST (IMPORTANTE: usar endpoint relativo)
+    # --------------------------------------------------
+    resp = api_request(
+        "POST",
+        "/container-reports",
+        json=data,
+        timeout=25
+    )
+
+    # --------------------------------------------------
+    # VALIDACIÓN RESPUESTA
+    # --------------------------------------------------
+    if resp is None:
+        raise Exception("No response from server")
+
+    if resp.status_code not in (200, 201):
+        raise Exception(
+            f"Backend error ({resp.status_code}): {resp.text}"
+        )
+
+    # --------------------------------------------------
+    # JSON SEGURO
+    # --------------------------------------------------
+    try:
+        result = resp.json()
+
+        if not isinstance(result, dict):
+            raise Exception("Respuesta inválida del backend")
+
+        return result
+
+    except Exception:
+        raise Exception(
+            "Invalid JSON response from backend:\n"
+            f"{resp.text}"
+        )
+
+
+def update_container_report_api(report_id: int, payload: dict):
+    """
+    PUT /container-reports/{id}
+    """
+    url = f"{BASE_URL}/container-reports/{report_id}"
+    return api_request("PUT", url, json=payload).json()
+
+
+def delete_container_report_api(report_id: int):
+    """
+    DELETE /container-reports/{id}
+    """
+    url = f"{BASE_URL}/container-reports/{report_id}"
+    return api_request("DELETE", url).json()
+
+
+# ============================================================
+# INFORMES — CONTAINER REPORTS
+# ============================================================
+
+def get_container_report_excel_api(report_id: int):
+    """
+    Descarga el Excel del Container Report usando template backend.
+    Endpoint:
+        GET /container-reports/{report_id}/excel
+    Retorna:
+        requests.Response (stream binario)
+    """
+    if not report_id:
+        raise ValueError("report_id is required")
+
+    url = f"{BASE_URL}/container-reports/{report_id}/excel"
+
+    # ⚠️ No usamos api_request aquí porque necesitamos el stream binario
+    resp = requests.get(
+        url,
+        headers={
+            "Authorization": f"Bearer {get_user()}",
+        },
+        timeout=TIMEOUT,
+        stream=True
+    )
+
+    if resp.status_code != 200:
+        raise Exception(
+            f"Error downloading Excel ({resp.status_code}): {resp.text}"
+        )
+
+    return resp
+
+# ============================================================
+# CONTAINER REPORTS — FILTROS BASE (CLIENTES / AÑOS)
+# ============================================================
+
+def get_container_report_filters_api():
+    """
+    Obtiene filtros base desde servicios
+    (SOLO servicios con num_informe):
+    - clientes
+    - anios
+    """
+
+    url = "/container-reports/filters"
+
+    try:
+        resp = api_request("GET", url)
+
+        if not resp or resp.status_code != 200:
+            return {
+                "clientes": [],
+                "anios": []
+            }
+
+        data = resp.json() or {}
+
+        return {
+            "clientes": data.get("clientes", []),
+            "anios": data.get("anios", [])
+        }
+
+    except Exception:
+        return {
+            "clientes": [],
+            "anios": []
+        }
+
+
+# ============================================================
+# CONTAINER REPORTS — MESES DISPONIBLES
+# ============================================================
+
+def get_container_report_months_api(
+    cliente: str,
+    anio: int
+):
+    """
+    Retorna meses reales disponibles según:
+    - cliente
+    - año
+    """
+
+    if not all([cliente, anio]):
+        return []
+
+    url = "/container-reports/filters/months"
+
+    params = {
+        "cliente": cliente.strip(),
+        "anio": int(anio)
+    }
+
+    try:
+        resp = api_request("GET", url, params=params)
+
+        if not resp or resp.status_code != 200:
+            return []
+
+        data = resp.json() or {}
+
+        return data.get("meses", [])
+
+    except Exception:
+        return []
+
+
+# ============================================================
+# CONTAINER REPORTS — VESSELS / CONTAINERS DISPONIBLES
+# ============================================================
+
+def get_container_report_vessels_api(
+    cliente: str,
+    anio: int,
+    mes: int
+):
+    """
+    Retorna buques / contenedores reales según:
+    - cliente
+    - año
+    - mes
+    """
+
+    if not all([cliente, anio, mes]):
+        return []
+
+    url = "/container-reports/filters/vessels"
+
+    params = {
+        "cliente": cliente.strip(),
+        "anio": int(anio),
+        "mes": int(mes)
+    }
+
+    try:
+        resp = api_request("GET", url, params=params)
+
+        if not resp or resp.status_code != 200:
+            return []
+
+        data = resp.json() or {}
+
+        return data.get("buques_contenedor", [])
+
+    except Exception:
+        return []
+
+
+# ============================================================
+# CONTAINER REPORTS — INFORMES POR SERVICIO
+# ============================================================
+
+def get_container_reports_by_servicio_api(
+    cliente: str,
+    buque_contenedor: str,
+    anio: int,
+    mes: int
+):
+    """
+    Retorna SOLO servicios con num_informe
+    filtrados por:
+    - cliente
+    - buque / contenedor
+    - año
+    - mes
+    """
+
+    if not all([cliente, buque_contenedor, anio, mes]):
+        return {"total": 0, "data": []}
+
+    url = "/container-reports/informes"
+
+    params = {
+        "cliente": cliente.strip(),
+        "buque_contenedor": buque_contenedor.strip(),
+        "anio": int(anio),
+        "mes": int(mes)
+    }
+
+    try:
+        resp = api_request("GET", url, params=params)
+
+        if not resp or resp.status_code != 200:
+            return {"total": 0, "data": []}
+
+        data = resp.json() or {}
+
+        return {
+            "total": data.get("total", 0),
+            "data": data.get("data", [])
+        }
+
+    except Exception:
+        return {"total": 0, "data": []}
+
+
+def generate_container_report_pdf_api(report_id: int):
+    """
+    POST /container-reports/{report_id}/generate-pdf
+    DEVUELVE UN PDF (NO JSON)
+    """
+    url = f"/container-reports/{report_id}/generate-pdf"
+    return api_request(
+        "POST",
+        url,
+        stream=True   # 🔴 CRÍTICO
+    )
+
+
+
+# ============================================================
+# CONTAINER REPORTS — STATUS DISPONIBLES
+# ============================================================
+
+def get_container_report_statuses_api():
+    """
+    GET /container-reports/statuses
+
+    Retorna los status reales disponibles en container_reports.status
+    Incluye 'All' para no filtrar.
+    """
+
+    url = "/container-reports/statuses"
+
+    try:
+        resp = api_request("GET", url)
+
+        if not resp or resp.status_code != 200:
+            return ["All"]
+
+        data = resp.json() or {}
+
+        statuses = data.get("data", [])
+        if not statuses:
+            return ["All"]
+
+        return statuses
+
+    except Exception:
+        return ["All"]
+
+
+# ============================================================
+# Descargar PDF DE EXCEL A PDF
+# ============================================================
+
+def download_container_report_pdf_api(report_id: int):
+    url = f"/container-reports/{report_id}/download-pdf"
+    return api_request(
+        "GET",
+        url,
+        stream=True   # 🔴 ESTO ES CRÍTICO
+    )
+
+
+# ============================================================
+# PRESENTACIÓN CONTENEDORES
+# ============================================================
+
+def get_container_presentation_data_api(container_report_id):
+    return api_request(
+        "get",
+        f"/container-presentation/{container_report_id}"
+    )
+
+
+def generate_container_presentation_pdf_api(report_id: int):
+    return api_request(
+        "GET",
+        f"/container-presentation-pdf/{report_id}/presentation",
+        stream=True
+    )
+
+
+def generate_container_unified_pdf_api(report_id: int):
+    return api_request(
+        "GET",
+        f"/container-presentation-pdf/{report_id}/unified",
+        stream=True
+    )
+
+
+# ============================================================
+# PROYECTOS CÁLCULO — API CLIENT (BLINDADO)
+# ============================================================
+
+# ============================================================
+# CREATE — CREAR PROYECTO / CALCULO (MULTI-LINE)
+# ============================================================
+def create_proyecto_calculo_api(payload: dict):
+    """
+    POST /proyectos-calculo
+    payload DEBE incluir:
+      - nombre_proyecto: str
+      - personal_costos: list[float]
+    """
+    if not isinstance(payload, dict):
+        raise ValueError("payload debe ser dict")
+
+    if not payload.get("nombre_proyecto"):
+        raise ValueError("nombre_proyecto es requerido")
+
+    if not isinstance(payload.get("personal_costos"), list):
+        raise ValueError("personal_costos debe ser lista")
+
+    url = "/proyectos-calculo"
+
+    resp = api_request(
+        "POST",
+        url,
+        json=payload,
+        timeout=20
+    )
+
+    if resp is None:
+        raise Exception("No response from server")
+
+    if resp.status_code >= 400:
+        try:
+            detail = resp.json().get("detail") or resp.json()
+        except Exception:
+            detail = resp.text
+        raise Exception(f"{resp.status_code} → {detail}")
+
+    try:
+        return resp.json()
+    except Exception:
+        raise Exception(f"Invalid JSON response: {resp.text}")
+
+
+# ============================================================
+# LIST — LISTAR PROYECTOS
+# ============================================================
+def get_proyectos_calculo_api():
+    """
+    GET /proyectos-calculo
+    Retorna:
+      { total: int, data: [ proyectos agrupados ] }
+    """
+    url = "/proyectos-calculo"
+
+    resp = api_request(
+        "GET",
+        url,
+        timeout=15
+    )
+
+    if resp is None:
+        return {"total": 0, "data": []}
+
+    if resp.status_code >= 400:
+        try:
+            detail = resp.json().get("detail") or resp.json()
+        except Exception:
+            detail = resp.text
+        return {
+            "total": 0,
+            "data": [],
+            "error": f"{resp.status_code} → {detail}"
+        }
+
+    try:
+        return resp.json()
+    except Exception:
+        return {
+            "total": 0,
+            "data": [],
+            "error": f"Invalid JSON response: {resp.text}"
+        }
+
+
+# ============================================================
+# GET — OBTENER PROYECTO POR NOMBRE
+# ============================================================
+def get_proyecto_calculo_by_nombre_api(nombre_proyecto: str):
+    """
+    GET /proyectos-calculo/{nombre_proyecto}
+    Retorna:
+      {
+        data: {
+          header: {...},
+          personas: [...]
+        }
+      }
+    """
+    if not nombre_proyecto:
+        raise ValueError("nombre_proyecto requerido")
+
+    url = f"/proyectos-calculo/{nombre_proyecto}"
+
+    resp = api_request(
+        "GET",
+        url,
+        timeout=15
+    )
+
+    if resp is None:
+        raise Exception("No response from server")
+
+    if resp.status_code >= 400:
+        try:
+            detail = resp.json().get("detail") or resp.json()
+        except Exception:
+            detail = resp.text
+        raise Exception(f"{resp.status_code} → {detail}")
+
+    try:
+        return resp.json()
+    except Exception:
+        raise Exception(f"Invalid JSON response: {resp.text}")
+
+
+# ============================================================
+# UPDATE — ACTUALIZAR PROYECTO (POR NOMBRE)
+# ============================================================
+def update_proyecto_calculo_api(nombre_proyecto: str, payload: dict):
+    """
+    PUT /proyectos-calculo/{nombre_proyecto}
+    Actualiza TODAS las filas del proyecto
+    """
+    if not nombre_proyecto:
+        raise ValueError("nombre_proyecto requerido")
+
+    if not isinstance(payload, dict) or not payload:
+        raise ValueError("payload debe ser dict no vacío")
+
+    url = f"/proyectos-calculo/{nombre_proyecto}"
+
+    resp = api_request(
+        "PUT",
+        url,
+        json=payload,
+        timeout=20
+    )
+
+    if resp is None:
+        raise Exception("No response from server")
+
+    if resp.status_code >= 400:
+        try:
+            detail = resp.json().get("detail") or resp.json()
+        except Exception:
+            detail = resp.text
+        raise Exception(f"{resp.status_code} → {detail}")
+
+    try:
+        return resp.json()
+    except Exception:
+        raise Exception(f"Invalid JSON response: {resp.text}")
+
+
+# ============================================================
+# DELETE — ELIMINAR PROYECTO (POR NOMBRE)
+# ============================================================
+def delete_proyecto_calculo_api(nombre_proyecto: str):
+    """
+    DELETE /proyectos-calculo/{nombre_proyecto}
+    Elimina TODAS las filas del proyecto
+    """
+    if not nombre_proyecto:
+        raise ValueError("nombre_proyecto requerido")
+
+    url = f"/proyectos-calculo/{nombre_proyecto}"
+
+    resp = api_request(
+        "DELETE",
+        url,
+        timeout=15
+    )
+
+    if resp is None:
+        raise Exception("No response from server")
+
+    if resp.status_code >= 400:
+        try:
+            detail = resp.json().get("detail") or resp.json()
+        except Exception:
+            detail = resp.text
+        raise Exception(f"{resp.status_code} → {detail}")
+
+    try:
+        return resp.json()
+    except Exception:
+        # DELETE puede no devolver body
+        return {"success": True}
+
+
+# ============================================================
+# VESSEL REPORTS — GRAIN SAMPLING (API CLIENT ALIGNED)
+# ============================================================
+
+
+
+
+# ============================================================
+# INTERNAL RESPONSE HANDLER (HARDENED)
+# ============================================================
+
+def _handle_response(resp):
+
+    if resp is None:
+        raise Exception("No response from server")
+
+    if resp.status_code == 404:
+        return None
+
+    if resp.status_code not in (200, 201):
+        try:
+            detail = resp.json().get("detail")
+        except Exception:
+            detail = resp.text
+        raise Exception(f"{resp.status_code} → {detail}")
+
+    try:
+        return resp.json()
+    except Exception:
+        raise Exception("Invalid JSON response from server")
+
+
+# ============================================================
+# CREATE — 1:1 WITH CURRENT FRONTEND (BLINDADO)
+# ============================================================
+
+def create_vessel_grain_sampling_api(payload: dict):
+    """
+    POST /vessel-grain-sampling
+
+    Payload aligned 100% with GrainSamplingVesselForm
+    Backend additionally updates:
+        servicios.status_informe = 'Created'
+        (based on cert_no == num_informe)
+    """
+
+    # --------------------------------------------------------
+    # VALIDACIÓN DE PAYLOAD
+    # --------------------------------------------------------
+    if not isinstance(payload, dict):
+        raise ValueError("payload must be dict")
+
+    required_fields = [
+        "cert_no",
+        "place_date",
+        "vessel_name",
+        "requested_by",
+    ]
+
+    for field in required_fields:
+        if not payload.get(field):
+            raise ValueError(f"Missing required field: {field}")
+
+    # --------------------------------------------------------
+    # REQUEST
+    # --------------------------------------------------------
+    resp = api_request(
+        "POST",
+        "/vessel-grain-sampling",
+        json=payload,
+        timeout=25
+    )
+
+    # --------------------------------------------------------
+    # BLINDAJE DE RESPUESTA
+    # --------------------------------------------------------
+    if resp is None:
+        raise Exception("No response from server")
+
+    if resp.status_code != 200:
+        raise Exception(
+            f"Backend error ({resp.status_code}): {resp.text}"
+        )
+
+    # --------------------------------------------------------
+    # JSON SEGURO
+    # --------------------------------------------------------
+    try:
+        data = resp.json()
+    except Exception:
+        raise Exception(
+            "Invalid JSON response from backend:\n"
+            f"{resp.text}"
+        )
+
+    # --------------------------------------------------------
+    # VALIDACIÓN LÓGICA
+    # --------------------------------------------------------
+    if not isinstance(data, dict):
+        raise Exception("Invalid response structure from backend")
+
+    if not data.get("success"):
+        raise Exception(data.get("detail", "Unknown backend error"))
+
+    return data
+
+
+# ============================================================
+# LIST — GRID VIEW
+# ============================================================
+
+def get_vessel_grain_sampling_list_api():
+    """
+    GET /vessel-grain-sampling
+
+    Devuelve:
+    {
+        success: bool,
+        count: int,
+        data: list
+    }
+    """
+
+    resp = api_request(
+        "GET",
+        "/vessel-grain-sampling",
+        timeout=15
+    )
+
+    try:
+        data = _handle_response(resp)
+
+        # Hardening defensivo
+        if not isinstance(data, dict):
+            return {"success": False, "count": 0, "data": []}
+
+        data.setdefault("success", False)
+        data.setdefault("count", 0)
+        data.setdefault("data", [])
+
+        return data
+
+    except Exception:
+        return {
+            "success": False,
+            "count": 0,
+            "data": []
+        }
+
+
+# ============================================================
+# GET BY ID — FULL REPORT
+# ============================================================
+
+def get_vessel_grain_sampling_by_id_api(report_id: int):
+    """
+    GET /vessel-grain-sampling/{id}
+
+    Devuelve:
+    {
+        success: bool,
+        data: {...}
+    }
+    """
+
+    if not report_id:
+        raise ValueError("report_id requerido")
+
+    resp = api_request(
+        "GET",
+        f"/vessel-grain-sampling/{report_id}",
+        timeout=15
+    )
+
+    data = _handle_response(resp)
+
+    # Hardening
+    if not isinstance(data, dict) or "data" not in data:
+        raise ValueError("Respuesta inválida del servidor")
+
+    return data
+
+
+# ============================================================
+# UPDATE — FULL UPDATE
+# ============================================================
+
+def update_vessel_grain_sampling_api(report_id: int, payload: dict):
+    """
+    PUT /vessel-grain-sampling/{id}
+
+    Payload debe estar alineado con:
+    {
+        cert_no,
+        place_date,
+        vessel_name,
+        requested_by,
+        captain,
+        chief_officer,
+        arrival_buoy_time,
+        nor_tendered_time,
+        holds_opening_time,
+        sampling_start_time,
+        sampling_end_time,
+        products,
+        products_total,
+        supervision,
+        conclusion
+    }
+    """
+
+    if not report_id:
+        raise ValueError("report_id requerido")
+
+    if not isinstance(payload, dict):
+        raise ValueError("payload debe ser dict")
+
+    resp = api_request(
+        "PUT",
+        f"/vessel-grain-sampling/{report_id}",
+        json=payload,
+        timeout=25
+    )
+
+    return _handle_response(resp)
+
+
+# ============================================================
+# DELETE
+# ============================================================
+
+def delete_vessel_grain_sampling_api(report_id: int):
+    """
+    DELETE /vessel-grain-sampling/{id}
+    """
+
+    if not report_id:
+        raise ValueError("report_id requerido")
+
+    resp = api_request(
+        "DELETE",
+        f"/vessel-grain-sampling/{report_id}",
+        timeout=15
+    )
+
+    return _handle_response(resp)
+
+
+# ============================================================
+# AI — GRAIN SAMPLING IMPROVE (BILINGUAL SUPPORTED)
+# ============================================================
+
+def improve_grain_sampling_api(
+    text: str,
+    vessel: str | None = None,
+    location: str | None = None,
+    product: str | None = None,
+    authority: str | None = None,
+    language: str = "ES"   # 🔥 NUEVO
+):
+    """
+    POST /reports/ai/improve/grain
+
+    Mejora narrativa de reporte de muestreo de granos.
+    Soporta idioma:
+        - "ES" → Español
+        - "EN" → English
+    """
+
+    if not text or not text.strip():
+        raise ValueError("text es requerido")
+
+    # 🔒 Normalización de idioma
+    language = (language or "ES").upper()
+    if language not in ("ES", "EN"):
+        language = "ES"
+
+    payload = {
+        "text": text.strip(),
+        "vessel": vessel,
+        "location": location,
+        "product": product,
+        "authority": authority,
+        "language": language,  # 🔥 NUEVO
+    }
+
+    resp = api_request(
+        "POST",
+        "/reports/ai/improve/grain",
+        json=payload,
+        timeout=30  # ligeramente mayor para IA
+    )
+
+    if resp is None:
+        raise Exception("No response from server")
+
+    if resp.status_code != 200:
+        try:
+            detail = resp.json().get("detail")
+        except Exception:
+            detail = resp.text
+        raise Exception(f"{resp.status_code} → {detail}")
+
+    try:
+        data = resp.json()
+        return data.get("text", "").strip()
+    except Exception:
+        raise Exception("Invalid JSON response from AI service")
+
+# ============================================================
+# SERVICES SELECTOR — GRAIN SAMPLING (DYNAMIC + YEAR/MONTH)
+# ============================================================
+
+def get_services_for_grain_sampling_api(
+    continente: str | None = None,
+    pais: str | None = None,
+    puerto: str | None = None,
+    cliente: str | None = None,
+    buque: str | None = None,
+    operacion: str | None = None,
+    year: int | None = None,
+    month: int | None = None
+):
+    """
+    GET /vessel-grain-sampling/services-selector
+
+    Soporta:
+    - Filtros dinámicos simultáneos
+    - Filtro por año (fecha_inicio)
+    - Filtro por mes (fecha_inicio)
+    - Filtro por operacion (reemplaza estado)
+
+    Retorna:
+    {
+        success: bool,
+        count: int,
+        data: [...],
+        filters: {
+            continentes: [],
+            paises: [],
+            puertos: [],
+            clientes: [],
+            buques: [],
+            operaciones: [],
+            years: [],
+            months: []
+        }
+    }
+    """
+
+    params = {}
+
+    # =====================================================
+    # FILTROS BASE
+    # =====================================================
+    if continente:
+        params["continente"] = continente
+
+    if pais:
+        params["pais"] = pais
+
+    if puerto:
+        params["puerto"] = puerto
+
+    if cliente:
+        params["cliente"] = cliente
+
+    if buque:
+        params["buque"] = buque
+
+    if operacion:
+        params["operacion"] = operacion
+
+    # =====================================================
+    # FILTRO AÑO / MES
+    # =====================================================
+    if year is not None:
+        params["year"] = int(year)
+
+    if month is not None:
+        params["month"] = int(month)
+
+    # =====================================================
+    # REQUEST
+    # =====================================================
+    resp = api_request(
+        "GET",
+        "/vessel-grain-sampling/services-selector",
+        params=params,
+        timeout=15
+    )
+
+    # =====================================================
+    # BLINDAJE
+    # =====================================================
+    if resp is None:
+        return {
+            "success": False,
+            "count": 0,
+            "data": [],
+            "filters": {}
+        }
+
+    if resp.status_code != 200:
+        try:
+            detail = resp.json().get("detail")
+        except Exception:
+            detail = resp.text
+
+        raise Exception(f"{resp.status_code} → {detail}")
+
+    data = resp.json()
+
+    return {
+        "success": data.get("success", False),
+        "count": data.get("count", 0),
+        "data": data.get("data", []),
+        "filters": data.get("filters", {})
+    }
+
+
+
+# ============================================================
+# STATUS INFORMES — LIST (GRID)
+# ============================================================
+
+def get_status_informes_api(
+    status=None,
+    continente=None,
+    pais=None,
+    puerto=None,
+    operacion=None,
+    year=None,
+    month=None
+):
+    """
+    GET /status-informes
+
+    Devuelve:
+    {
+        success: bool,
+        count: int,
+        data: list
+    }
+    """
+
+    params = {}
+
+    # -------------------------------
+    # Normalización segura
+    # -------------------------------
+    if status:
+        params["status"] = status.strip()
+
+    if continente:
+        params["continente"] = continente.strip()
+
+    if pais:
+        params["pais"] = pais.strip()
+
+    if puerto:
+        params["puerto"] = puerto.strip()
+
+    if operacion:
+        params["operacion"] = operacion.strip()
+
+    # Year / Month deben ser INT
+    try:
+        if year:
+            params["year"] = int(year)
+    except Exception:
+        pass
+
+    try:
+        if month:
+            params["month"] = int(month)
+    except Exception:
+        pass
+
+    # -------------------------------
+    # Request
+    # -------------------------------
+    resp = api_request(
+        "GET",
+        "/status-informes",
+        params=params,
+        timeout=15
+    )
+
+    if resp is None:
+        return {"success": False, "count": 0, "data": []}
+
+    if resp.status_code != 200:
+        return {
+            "success": False,
+            "count": 0,
+            "data": []
+        }
+
+    # -------------------------------
+    # JSON seguro
+    # -------------------------------
+    try:
+        data = resp.json()
+
+        if not isinstance(data, dict):
+            return {"success": False, "count": 0, "data": []}
+
+        return {
+            "success": data.get("success", False),
+            "count": data.get("count", 0),
+            "data": data.get("data", [])
+        }
+
+    except Exception:
+        return {
+            "success": False,
+            "count": 0,
+            "data": []
+        }
+
+
+# ============================================================
+# STATUS INFORMES — AVAILABLE STATUSES (COMBOBOX)
+# ============================================================
+
+def get_status_informes_statuses_api():
+    """
+    GET /status-informes/statuses
+
+    Devuelve:
+    {
+        success: bool,
+        data: [list of statuses]
+    }
+    """
+
+    resp = api_request(
+        "GET",
+        "/status-informes/statuses",
+        timeout=10
+    )
+
+    if resp is None:
+        return []
+
+    if resp.status_code != 200:
+        return []
+
+    try:
+        data = resp.json()
+
+        if not isinstance(data, dict):
+            return []
+
+        return data.get("data", []) or []
+
+    except Exception:
+        return []
+
+
+# ============================================================
+# STATUS INFORMES — UPDATE STATUS
+# ============================================================
+
+def update_status_informe_api(consec: int, new_status: str):
+    """
+    PUT /status-informes/{consec}
+    """
+
+    if not consec:
+        raise ValueError("consec requerido")
+
+    if not new_status:
+        raise ValueError("new_status requerido")
+
+    resp = api_request(
+        "PUT",
+        f"/status-informes/{consec}",
+        json={"status_informe": new_status},
+        timeout=15
+    )
+
+    if resp is None:
+        raise Exception("No response from backend")
+
+    if resp.status_code != 200:
+        raise Exception(
+            f"Backend error ({resp.status_code}): {resp.text}"
+        )
+
+    try:
+        return resp.json()
+    except Exception:
+        raise Exception(
+            "Invalid JSON response from backend:\n"
+            f"{resp.text}"
+        )
+
+
+
+# ============================================================
+# APPROVE + GET PDF
+# ============================================================
+
+def approve_vessel_grain_sampling_api(report_id: int):
+
+    resp = api_request(
+        "PUT",
+        f"{BASE_URL}/vessel-grain-sampling/{report_id}/approve",
+        timeout=60,
+        stream=True
+    )
+
+    if resp.status_code != 200:
+        raise Exception(resp.text)
+
+    return resp
+
+
+# ============================================================
+# GENERATE WORD
+# ============================================================
+
+def generate_grain_sampling_word_api(report_id: int):
+
+    resp = api_request(
+        "POST",
+        f"{BASE_URL}/vessel-grain-sampling/{report_id}/generate-word",
+        timeout=60,
+        stream=True
+    )
+
+    if resp.status_code != 200:
+        raise Exception(resp.text)
+
+    return resp
+
+
+# =========================================================
+# GENERATE VESSEL PRESENTATION PDF
+# =========================================================
+def generate_vessel_presentation_pdf_api(report_id: int):
+
+    import requests
+
+    url = f"{BASE_URL}/vessel-grain-sampling/{report_id}/presentation-pdf"
+
+    try:
+        response = requests.post(
+            url,
+            timeout=60,
+            stream=True
+        )
+
+        # 🔴 Si backend devuelve error HTTP
+        if response.status_code != 200:
+            return {
+                "success": False,
+                "error": f"HTTP {response.status_code}: {response.text}"
+            }
+
+        return response
+
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+# =========================================================
+# GET VESSEL PRESENTATION DATA
+# =========================================================
+def get_vessel_presentation_data_api(report_id: int):
+
+    import requests
+
+    url = f"{BASE_URL}/vessel-grain-sampling/{report_id}/presentation-data"
+
+    try:
+        response = requests.get(url, timeout=15)
+
+        if response.status_code != 200:
+            return {
+                "success": False,
+                "error": f"HTTP {response.status_code}: {response.text}"
+            }
+
+        return response.json()
+
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+
+# =========================================================
+# GENERATE VESSEL UNIFIED PDF
+# =========================================================
+def generate_vessel_unified_pdf_api(report_id: int):
+    """
+    Llama al endpoint:
+    POST /vessel-grain-sampling/{id}/unified-pdf
+    Devuelve stream del PDF unificado
+    """
+
+    import requests
+
+    url = f"{BASE_URL}/vessel-grain-sampling/{report_id}/unified-pdf"
+
+    try:
+        response = requests.post(
+            url,
+            stream=True,
+            timeout=120  # tiempo suficiente para generar ambos PDFs
+        )
+
+        return response
+
+    except Exception as e:
+        return {
+            "error": f"Unified PDF API error: {str(e)}"
+        }
+
+
+
+
+
+
+# =========================================================
+# VESSEL TRUCK SUPERVISION API
+# =========================================================
+
+
+def create_vessel_truck_supervision_api(data: dict):
+    """
+    POST /vessel-truck-supervision/
+    """
+    response = api_request(
+        "POST",
+        "/vessel-truck-supervision/",
+        json=data
+    )
+
+    if not response.ok:
+        raise Exception(response.text)
+
+    return response.json()
+
+
+def get_vessel_truck_supervision_list_api():
+    """
+    GET /vessel-truck-supervision/
+    """
+    response = api_request(
+        "GET",
+        "/vessel-truck-supervision/"
+    )
+
+    if not response.ok:
+        raise Exception(response.text)
+
+    return response.json()
+
+
+def get_vessel_truck_supervision_by_id_api(report_id: int):
+    """
+    GET /vessel-truck-supervision/{id}
+    """
+    response = api_request(
+        "GET",
+        f"/vessel-truck-supervision/{report_id}"
+    )
+
+    if not response.ok:
+        raise Exception(response.text)
+
+    return response.json()
+
+
+def update_vessel_truck_supervision_api(report_id: int, data: dict):
+    """
+    PUT /vessel-truck-supervision/{id}
+    """
+    response = api_request(
+        "PUT",
+        f"/vessel-truck-supervision/{report_id}",
+        json=data
+    )
+
+    if not response.ok:
+        raise Exception(response.text)
+
+    return response.json()
+
+
+# =========================================================
+# VESSEL TRUCK SUPERVISION - SERVICIOS FILTER
+# =========================================================
+
+def filter_servicios_vessel_truck_api(filters: dict):
+    """
+    GET /vessel-truck-supervision/servicios-filter
+
+    Retorna:
+    {
+        "filters": {...},
+        "data": [...],
+        "count": int
+    }
+    """
+
+    try:
+        # -----------------------------------------------------
+        # LIMPIAR FILTROS VACÍOS
+        # -----------------------------------------------------
+        clean_filters = {
+            k: v for k, v in filters.items()
+            if v not in [None, "", []]
+        }
+
+        # -----------------------------------------------------
+        # NORMALIZAR TIPOS
+        # -----------------------------------------------------
+        if "anio" in clean_filters:
+            try:
+                clean_filters["anio"] = int(clean_filters["anio"])
+            except:
+                del clean_filters["anio"]
+
+        if "mes" in clean_filters:
+            try:
+                clean_filters["mes"] = int(clean_filters["mes"])
+            except:
+                del clean_filters["mes"]
+
+        # -----------------------------------------------------
+        # REQUEST
+        # -----------------------------------------------------
+        response = api_request(
+            "GET",
+            "/vessel-truck-supervision/servicios-filter",
+            params=clean_filters
+        )
+
+        if not response.ok:
+            try:
+                error_json = response.json()
+                raise Exception(error_json.get("detail", response.text))
+            except:
+                raise Exception(response.text)
+
+        data = response.json()
+
+        # -----------------------------------------------------
+        # VALIDAR ESTRUCTURA
+        # -----------------------------------------------------
+        if not isinstance(data, dict):
+            raise Exception("Respuesta inválida del servidor.")
+
+        if "filters" not in data:
+            data["filters"] = {}
+
+        if "data" not in data:
+            data["data"] = []
+
+        if "count" not in data:
+            data["count"] = len(data["data"])
+
+        return data
+
+    except Exception as e:
+        raise Exception(f"Error consultando servicios: {str(e)}")
+
+
+
+# =========================================================
+# TRUCK SUPERVISION AI
+# =========================================================
+def improve_truck_supervision_api(payload: dict):
+    """
+    POST /reports/ai/improve/truck
+    """
+
+    response = api_request(
+        "POST",
+        "/reports/ai/improve/truck",
+        json=payload
+    )
+
+    if not response.ok:
+        raise Exception(response.text)
+
+    return response.json()
+
+
+
+# =========================================================
+# TRUCK SUPERVISION Approve generar PDF
+# =========================================================
+
+
+def approve_vessel_truck_supervision_api(report_id: int):
+
+    try:
+        url = f"{BASE_URL}/vessel-truck-supervision/{report_id}/approve"
+
+        response = requests.post(url)
+
+        if response.status_code != 200:
+            return {
+                "success": False,
+                "message": response.json().get("detail", "Unknown error")
+            }
+
+        return {
+            "success": True,
+            "file_bytes": response.content
+        }
+
+    except Exception as e:
+        return {
+            "success": False,
+            "message": str(e)
+        }
+
+
+def get_vessel_truck_supervision_by_id_api(report_id: int):
+    """
+    Obtiene datos del reporte vessel truck supervision
+    """
+
+    try:
+        url = f"{BASE_URL}/vessel-truck-supervision/{report_id}"
+        response = requests.get(url)
+
+        if response.status_code != 200:
+            return {
+                "success": False,
+                "error": response.json().get("detail", "Unknown error")
+            }
+
+        return response.json()
+
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+
+def generate_truck_presentation_pdf_api(report_id: int):
+    """
+    Genera PDF de presentación Truck Supervision
+    Devuelve response streaming
+    """
+
+    try:
+        url = f"{BASE_URL}/vessel-truck-supervision/{report_id}/presentation"
+
+        response = requests.get(
+            url,
+            stream=True
+        )
+
+        return response
+
+    except Exception as e:
+        return {
+            "error": str(e)
+        }
+
+
+
+def generate_truck_unified_pdf_api(report_id: int):
+    """
+    Genera PDF unificado:
+    Presentation + Report + Attachments
+    Devuelve response streaming
+    """
+
+    try:
+        url = f"{BASE_URL}/vessel-truck-supervision/{report_id}/unified"
+
+        response = requests.get(
+            url,
+            stream=True
+        )
+
+        return response
+
+    except Exception as e:
+        return {
+            "error": str(e)
+        }
+
+
+
+
+
+
+# =========================================================
+# DRAFT SURVEY — FILTER SERVICIOS
+# =========================================================
+
+def filter_servicios_draft_api(
+    year=None,
+    month=None,
+    continente=None,
+    pais=None,
+    puerto=None,
+    operacion=None
+):
+    """
+    Llama a:
+    GET /draft-survey/servicios/filter
+    """
+
+    try:
+        params = {}
+
+        if year:
+            params["year"] = year
+        if month:
+            params["month"] = month
+        if continente:
+            params["continente"] = continente
+        if pais:
+            params["pais"] = pais
+        if puerto:
+            params["puerto"] = puerto
+        if operacion:
+            params["operacion"] = operacion
+
+        response = requests.get(
+            f"{BASE_URL}/draft-survey/servicios/filter",
+            params=params,
+            timeout=30
+        )
+
+        return response.json()
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+# =========================================================
+# DRAFT SURVEY — CREATE
+# =========================================================
+def create_draft_survey_api(payload: dict):
+    """
+    POST /draft-survey/
+    Retorna el JSON del backend (incluye general_id) para no romper el form.
+    En error retorna {"success": False, "error": "...", "detail": "...", "status_code": n}
+    """
+
+    if payload is None:
+        payload = {}
+
+    if not isinstance(payload, dict):
+        return {
+            "success": False,
+            "error": "payload inválido (debe ser dict)",
+            "detail": None,
+            "status_code": None
+        }
+
+    url = f"{BASE_URL}/draft-survey/"
+
+    try:
+        response = requests.post(
+            url,
+            json=payload,
+            headers={
+                "Accept": "application/json",
+                "Content-Type": "application/json"
+            },
+            timeout=(10, 60)
+        )
+
+        status = response.status_code
+
+        # Intentar parsear JSON siempre
+        try:
+            data = response.json()
+        except ValueError:
+            data = None
+
+        # HTTP error
+        if not response.ok:
+            backend_msg = None
+            if isinstance(data, dict):
+                backend_msg = data.get("detail") or data.get("error") or data.get("message")
+
+            return {
+                "success": False,
+                "error": backend_msg or f"HTTP {status}",
+                "detail": response.text if response.text else data,
+                "status_code": status
+            }
+
+        # ✅ Éxito: devolver exactamente lo que manda el backend
+        # (tu UI necesita general_id aquí)
+        if isinstance(data, dict):
+            return data
+
+        # Si backend devolvió algo raro (list/None)
+        return {
+            "success": False,
+            "error": "Respuesta inesperada del backend (no es JSON dict)",
+            "detail": data,
+            "status_code": status
+        }
+
+    except requests.exceptions.Timeout:
+        return {
+            "success": False,
+            "error": "Timeout al conectar/leer respuesta del backend",
+            "detail": None,
+            "status_code": None
+        }
+
+    except requests.exceptions.ConnectionError:
+        return {
+            "success": False,
+            "error": "No se pudo conectar al backend (ConnectionError)",
+            "detail": None,
+            "status_code": None
+        }
+
+    except requests.RequestException as e:
+        return {
+            "success": False,
+            "error": f"RequestException: {str(e)}",
+            "detail": None,
+            "status_code": None
+        }
+
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Error inesperado: {str(e)}",
+            "detail": None,
+            "status_code": None
+        }
+
+# =========================================================
+# DRAFT SURVEY — LIST ALL
+# =========================================================
+
+def list_draft_surveys_api():
+    """
+    GET /draft-survey/
+    """
+
+    try:
+        response = requests.get(
+            f"{BASE_URL}/draft-survey/",
+            timeout=30
+        )
+
+        if response.status_code != 200:
+            return {
+                "success": False,
+                "error": f"HTTP {response.status_code}",
+                "detail": response.text
+            }
+
+        return response.json()
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+# =========================================================
+# DRAFT SURVEY — GET BY ID
+# =========================================================
+
+def get_draft_survey_by_id_api(general_id: int):
+    """
+    GET /draft-survey/{general_id}
+    """
+
+    try:
+        response = requests.get(
+            f"{BASE_URL}/draft-survey/{general_id}",
+            timeout=30
+        )
+
+        if response.status_code == 404:
+            return {"success": False, "error": "Not found"}
+
+        if response.status_code != 200:
+            return {
+                "success": False,
+                "error": f"HTTP {response.status_code}",
+                "detail": response.text
+            }
+
+        return response.json()
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+# =========================================================
+# DRAFT SURVEY — UPDATE
+# =========================================================
+
+def update_draft_survey_api(general_id: int, payload: dict):
+    """
+    PUT /draft-survey/{general_id}
+
+    Si payload incluye:
+        "status": "Approved"
+    entonces el backend actualizará a Approved.
+    """
+
+    try:
+        response = requests.put(
+            f"{BASE_URL}/draft-survey/{general_id}",
+            json=payload,
+            timeout=60
+        )
+
+        if response.status_code != 200:
+            return {
+                "success": False,
+                "error": f"HTTP {response.status_code}",
+                "detail": response.text
+            }
+
+        return response.json()
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+
+# =========================================================
+# preview excel draft survey
+# =========================================================
+
+def preview_draft_survey_excel_api(payload: dict):
+    """
+    POST /draft-survey/preview/excel
+    Retorna bytes del XLSX si ok, si no retorna {"success": False, "error": "..."}
+    """
+    try:
+        response = requests.post(
+            f"{BASE_URL}/draft-survey/preview/excel",
+            json=payload,
+            timeout=60
+        )
+
+        if response.status_code != 200:
+            try:
+                return {"success": False, "error": response.json().get("detail")}
+            except Exception:
+                return {"success": False, "error": response.text}
+
+        return {"success": True, "content": response.content}
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+
+# =========================================================
+# BALLAST — CREATE
+# POST /draft-survey-extra/ballast/{draft_survey_id}
+# =========================================================
+def create_draft_survey_ballast_api(draft_survey_id: int, payload: dict):
+    """
+    Crea/guarda Ballast para un Draft Survey.
+
+    Retorna SIEMPRE un dict con:
+      - success: bool
+      - data: dict | list | None
+      - error: str | None
+      - status_code: int | None
+    """
+
+    # -------------------------
+    # Validaciones rápidas
+    # -------------------------
+    if not isinstance(draft_survey_id, int) or draft_survey_id <= 0:
+        return {
+            "success": False,
+            "data": None,
+            "error": "draft_survey_id inválido (debe ser int > 0)",
+            "status_code": None
+        }
+
+    if payload is None:
+        payload = {}
+
+    if not isinstance(payload, dict):
+        return {
+            "success": False,
+            "data": None,
+            "error": "payload inválido (debe ser dict)",
+            "status_code": None
+        }
+
+    url = f"{BASE_URL}/draft-survey-extra/ballast/{draft_survey_id}"
+
+    # -------------------------
+    # Request
+    # -------------------------
+    try:
+        response = requests.post(
+            url,
+            json=payload,
+            headers={
+                "Accept": "application/json",
+                "Content-Type": "application/json"
+            },
+            timeout=(10, 60)  # (connect, read)
+        )
+
+        status = response.status_code
+
+        # Intentar parsear JSON (aunque venga error)
+        try:
+            data = response.json()
+        except ValueError:
+            data = None
+
+        # Si HTTP no fue OK
+        if not response.ok:
+            # Si backend ya manda {detail: "..."} o {error: "..."} lo aprovechamos
+            backend_msg = None
+            if isinstance(data, dict):
+                backend_msg = data.get("detail") or data.get("error") or data.get("message")
+
+            return {
+                "success": False,
+                "data": data,
+                "error": backend_msg or f"HTTP {status} al crear ballast",
+                "status_code": status
+            }
+
+        # OK
+        return {
+            "success": True,
+            "data": data,
+            "error": None,
+            "status_code": status
+        }
+
+    except requests.exceptions.Timeout:
+        return {
+            "success": False,
+            "data": None,
+            "error": "Timeout al conectar/leer respuesta del backend",
+            "status_code": None
+        }
+
+    except requests.exceptions.ConnectionError:
+        return {
+            "success": False,
+            "data": None,
+            "error": "No se pudo conectar al backend (ConnectionError)",
+            "status_code": None
+        }
+
+    except requests.RequestException as e:
+        return {
+            "success": False,
+            "data": None,
+            "error": f"RequestException: {str(e)}",
+            "status_code": None
+        }
+
+    except Exception as e:
+        return {
+            "success": False,
+            "data": None,
+            "error": f"Error inesperado: {str(e)}",
+            "status_code": None
+        }
+
+
+# =========================================================
+# BALLAST — GET
+# GET /draft-survey-extra/ballast/{draft_survey_id}
+# =========================================================
+
+def get_draft_survey_ballast_api(draft_survey_id: int):
+
+    try:
+        response = requests.get(
+            f"{BASE_URL}/draft-survey-extra/ballast/{draft_survey_id}",
+            timeout=30
+        )
+        return response.json()
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+# =========================================================
+# BALLAST — UPDATE
+# PUT /draft-survey-extra/ballast/{draft_survey_id}
+# =========================================================
+
+def update_draft_survey_ballast_api(draft_survey_id: int, payload: dict):
+
+    try:
+        response = requests.put(
+            f"{BASE_URL}/draft-survey-extra/ballast/{draft_survey_id}",
+            json=payload,
+            timeout=60
+        )
+        return response.json()
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+
+# =========================================================
+# WORD REPORT — CREATE
+# POST /draft-survey-extra/word/{draft_survey_id}
+# =========================================================
+
+def create_draft_survey_word_api(draft_survey_id: int, payload: dict):
+
+    try:
+        payload = payload or {}
+
+        def _clean_value(v):
+            if v is None:
+                return None
+            if isinstance(v, str):
+                vv = v.strip()
+                if vv == "":
+                    return None
+                if vv.lower() in ("none", "null"):
+                    return None
+                return vv
+            return v
+
+        cleaned = {}
+        for k, v in payload.items():
+            if not isinstance(k, str):
+                continue
+            cleaned[k] = _clean_value(v)
+
+        response = requests.post(
+            f"{BASE_URL}/draft-survey-extra/word/{draft_survey_id}",
+            json=cleaned,
+            timeout=60
+        )
+
+        # -------------------------------------------------
+        # 🔒 SI NO ES 2xx, DEVOLVER ERROR "REAL" (NO JSON ROTO)
+        # -------------------------------------------------
+        if not (200 <= response.status_code < 300):
+            try:
+                err_json = response.json()
+                return {
+                    "success": False,
+                    "status_code": response.status_code,
+                    "error": err_json.get("detail", err_json)
+                }
+            except Exception:
+                return {
+                    "success": False,
+                    "status_code": response.status_code,
+                    "error": response.text
+                }
+
+        # 2xx
+        try:
+            return response.json()
+        except Exception:
+            return {"success": True}
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+
+# =========================================================
+# DRAFT SURVEY — CASCADE FILTERS
+# GET /draft-survey-filters/
+# =========================================================
+
+def get_draft_survey_filters_api(
+    continent=None,
+    country=None,
+    year=None,
+    month=None,
+    port=None,
+    client=None
+):
+
+    try:
+
+        params = {}
+
+        if continent:
+            params["continent"] = continent
+
+        if country:
+            params["country"] = country
+
+        if year:
+            params["year"] = year
+
+        if month:
+            params["month"] = month
+
+        if port:
+            params["port"] = port
+
+        if client:
+            params["client"] = client
+
+        response = requests.get(
+            f"{BASE_URL}/draft-survey-filters/",
+            params=params,
+            timeout=60
+        )
+
+        return response.json()
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+
+# =========================================================
+# get draft unified
+# 
+# =========================================================
+
+def get_full_draft_survey_api(draft_report_number: str):
+
+    try:
+        import requests
+
+        url = f"{BASE_URL}/draft-survey/unified/{draft_report_number}"
+
+        response = requests.get(url)
+
+        if response.status_code != 200:
+            raise Exception(response.text)
+
+        return response.json().get("data")
+
+    except Exception as e:
+        print("GET FULL DRAFT ERROR:", e)
+        return None
+
+
+# =========================================================
+# put draft unified
+# 
+# =========================================================
+
+def update_full_draft_survey_api(draft_report_number: str, payload: dict):
+
+    try:
+        import requests
+
+        url = f"{BASE_URL}/draft-survey/unified/{draft_report_number}"
+
+        response = requests.put(url, json=payload)
+
+        if response.status_code != 200:
+            raise Exception(response.text)
+
+        return response.json()
+
+    except Exception as e:
+        print("UPDATE FULL DRAFT ERROR:", e)
+        raise
+
+# =========================================================
+# post draft unified
+# 
+# =========================================================
+
+def create_full_draft_survey_api(payload: dict):
+
+    try:
+        import requests
+
+        url = f"{BASE_URL}/draft-survey/unified"
+
+        response = requests.post(url, json=payload)
+
+        if response.status_code != 200:
+            raise Exception(response.text)
+
+        return response.json()
+
+    except Exception as e:
+        print("CREATE FULL DRAFT ERROR:", e)
+        raise
+
+
+# =========================================================
+# UPDATE WORD REPORT
+# =========================================================
+
+def update_draft_survey_word_api(draft_survey_id: int, payload: dict):
+    """
+    PUT /word/{draft_survey_id}
+
+    Actualiza completamente el Word Report asociado al draft_survey_id.
+    Bloquea si está Approved.
+    """
+
+    import requests
+
+    url = f"{API_BASE_URL}/word/{draft_survey_id}"
+
+    try:
+        response = requests.put(
+            url,
+            json=payload,
+            timeout=30
+        )
+
+        response.raise_for_status()
+
+        return response.json()
+
+    except requests.exceptions.HTTPError as e:
+        try:
+            detail = response.json().get("detail", str(e))
+        except Exception:
+            detail = str(e)
+        raise Exception(f"Error updating Word Report: {detail}")
+
+    except requests.exceptions.RequestException as e:
+        raise Exception(f"Connection error updating Word Report: {str(e)}")
+
+
+
+
+
+
+
+
+
+
+
+def get_draft_survey_headers_api():
+
+    try:
+        import requests
+
+        url = f"{BASE_URL}/draft-survey-headers/"
+
+        response = requests.get(url, timeout=60)
+
+        if response.status_code != 200:
+            return {
+                "success": False,
+                "message": response.text
+            }
+
+        return response.json()
+
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"GET HEADERS ERROR: {e}"
+        }
+
+
+
+
+
+def get_full_draft_survey_api(draft_report_number: str):
+
+    try:
+        import requests
+
+        url = f"{BASE_URL}/draft-survey/unified/{draft_report_number}"
+
+        response = requests.get(url, timeout=60)
+
+        if response.status_code == 404:
+            return {
+                "success": False,
+                "message": "Draft report not found"
+            }
+
+        if response.status_code != 200:
+            return {
+                "success": False,
+                "message": response.text
+            }
+
+        return response.json()
+
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"GET UNIFIED ERROR: {e}"
+        }
+
+
+
+
+# =========================================================
+# GENERATE WORD PDF (GET BY REPORT NUMBER - ERP VERSION)
+# =========================================================
+def generate_draft_survey_word_pdf_api(draft_report_number: str):
+
+    # -----------------------------------------------------
+    # 1️⃣ VALIDACIÓN
+    # -----------------------------------------------------
+    draft_report_number = str(draft_report_number or "").strip()
+
+    if not draft_report_number:
+        return {
+            "success": False,
+            "message": "draft_report_number is required"
+        }
+
+    try:
+        url = f"{BASE_URL}/draft-survey-word/generate/{draft_report_number}"
+
+        response = requests.get(
+            url,
+            timeout=180  # LibreOffice puede tardar
+        )
+
+        # -------------------------------------------------
+        # 2️⃣ HTTP ERROR
+        # -------------------------------------------------
+        if response.status_code != 200:
+
+            try:
+                error_detail = response.json().get("detail")
+            except Exception:
+                error_detail = response.text
+
+            return {
+                "success": False,
+                "message": error_detail or "Error generating Word PDF"
+            }
+
+        # -------------------------------------------------
+        # 3️⃣ VALIDAR CONTENIDO
+        # -------------------------------------------------
+        if not response.content:
+            return {
+                "success": False,
+                "message": "Backend returned empty PDF content"
+            }
+
+        return {
+            "success": True,
+            "content": response.content
+        }
+
+    except requests.exceptions.Timeout:
+        return {
+            "success": False,
+            "message": "Backend timeout during PDF generation"
+        }
+
+    except requests.exceptions.ConnectionError:
+        return {
+            "success": False,
+            "message": "Cannot connect to backend. Is FastAPI running?"
+        }
+
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"Unexpected error: {str(e)}"
+        }
+
+
+
+# =========================================================
+# DRAFT SURVEY — GENERATE EXCEL PDF
+# GET /draft-survey-excel/generate-pdf/{draft_report_number}
+# =========================================================
+
+def generate_draft_survey_excel_pdf_api(draft_report_number: str):
+
+    draft_report_number = str(draft_report_number or "").strip()
+
+    if not draft_report_number:
+        return {
+            "success": False,
+            "error": "draft_report_number is required"
+        }
+
+    try:
+
+        response = requests.get(
+            f"{BASE_URL}/draft-survey-excel/generate-pdf/{draft_report_number}",
+            timeout=120
+        )
+
+        # ---------------------------------------
+        # ERROR RESPONSES
+        # ---------------------------------------
+        if response.status_code != 200:
+
+            try:
+                detail = response.json().get("detail")
+            except Exception:
+                detail = response.text
+
+            return {
+                "success": False,
+                "error": detail or "Server error"
+            }
+
+        # ---------------------------------------
+        # SUCCESS
+        # ---------------------------------------
+        return {
+            "success": True,
+            "content": response.content,  # PDF bytes
+            "filename": f"{draft_report_number}_DRAFT_SURVEY.pdf"
+        }
+
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+
+def generate_draft_survey_final_pdf_api(draft_report_number: str):
+
+    draft_report_number = str(draft_report_number or "").strip()
+
+    if not draft_report_number:
+        return {"success": False, "error": "draft_report_number is required"}
+
+    try:
+        r = requests.get(
+            f"{BASE_URL}/draft-survey-final/generate/{draft_report_number}",
+            timeout=180
+        )
+
+        if r.status_code != 200:
+            try:
+                detail = r.json().get("detail")
+            except Exception:
+                detail = r.text
+
+            return {"success": False, "error": detail or "Server error"}
+
+        return {
+            "success": True,
+            "content": r.content,
+            "filename": f"{draft_report_number}_FINAL.pdf"
+        }
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+
+
+def generate_draft_survey_presentation_pdf_api(draft_report_number):
+
+    import requests
+
+    try:
+        response = requests.get(
+            f"{BASE_URL}/draft-survey-word/presentation/{draft_report_number}",
+            timeout=120,
+            stream=True
+        )
+
+        return response
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+
+def generate_draft_survey_unified_pdf_api(draft_report_number):
+
+    import requests
+
+    try:
+        response = requests.get(
+            f"{BASE_URL}/draft-survey-final/unified/{draft_report_number}",
+            timeout=180,
+            stream=True
+        )
+
+        return response
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+# =========================================================
+# INTERNAL: SAFE JSON
+# =========================================================
+def _safe_json_response(response):
+    try:
+        return response.json()
+    except Exception:
+        return {
+            "success": False,
+            "error": f"HTTP {response.status_code}",
+            "detail": response.text
+        }
+
+
+# =========================================================
+# CREATE
+# POST /vessel-bunker-reports/
+# =========================================================
+def create_vessel_bunker_report_api(payload: dict):
+
+    try:
+        response = requests.post(
+            f"{BASE_URL}/vessel-bunker-reports/",
+            json=(payload or {}),
+            timeout=60
+        )
+
+        if response.status_code != 200:
+            return {
+                "success": False,
+                "error": f"HTTP {response.status_code}",
+                "detail": response.text
+            }
+
+        return _safe_json_response(response)
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+# =========================================================
+# UPDATE (FULL PUT)
+# PUT /vessel-bunker-reports/{id}
+# =========================================================
+def update_vessel_bunker_report_api(report_id: int, payload: dict):
+
+    try:
+        response = requests.put(
+            f"{BASE_URL}/vessel-bunker-reports/{int(report_id)}",
+            json=(payload or {}),
+            timeout=60
+        )
+
+        if response.status_code != 200:
+            return {
+                "success": False,
+                "error": f"HTTP {response.status_code}",
+                "detail": response.text
+            }
+
+        return _safe_json_response(response)
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+# =========================================================
+# GET BY ID
+# GET /vessel-bunker-reports/{id}
+# =========================================================
+def get_vessel_bunker_report_api(report_id: int):
+
+    try:
+        response = requests.get(
+            f"{BASE_URL}/vessel-bunker-reports/{int(report_id)}",
+            timeout=60
+        )
+
+        if response.status_code != 200:
+            return {
+                "success": False,
+                "error": f"HTTP {response.status_code}",
+                "detail": response.text
+            }
+
+        return _safe_json_response(response)
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+# =========================================================
+# GET ALL (PAGINADO + BUSQUEDA)
+# GET /vessel-bunker-reports/?limit=..&offset=..&q=..
+# =========================================================
+def get_all_vessel_bunker_reports_api(limit: int = 200, offset: int = 0, q: str = None):
+
+    try:
+        params = {
+            "limit": int(limit or 200),
+            "offset": int(offset or 0),
+        }
+        if q is not None and str(q).strip() != "":
+            params["q"] = str(q).strip()
+
+        response = requests.get(
+            f"{BASE_URL}/vessel-bunker-reports/",
+            params=params,
+            timeout=60
+        )
+
+        if response.status_code != 200:
+            return {
+                "success": False,
+                "error": f"HTTP {response.status_code}",
+                "detail": response.text
+            }
+
+        return _safe_json_response(response)
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+
+
+# =========================================================
+# VESSEL BUNKER — GENERATE EXCEL
+# =========================================================
+def generate_vessel_bunker_excel_api(report_id: int):
+
+    try:
+        response = requests.get(
+            f"{BASE_URL}/vessel-bunker-excel/generate/{report_id}",
+            timeout=120
+        )
+
+        if response.status_code != 200:
+            return {
+                "success": False,
+                "error": f"HTTP {response.status_code}",
+                "detail": response.text
+            }
+
+        return {
+            "success": True,
+            "content": response.content
+        }
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+
+# =========================================================
+# VESSEL BUNKER — GENERATE FINAL PDF (3 SHEETS MERGED)
+# GET /vessel-bunker-excel/generate-pdf/{report_id}
+# =========================================================
+
+def generate_vessel_bunker_pdf_api(report_id: int):
+
+    try:
+        response = requests.get(
+            f"{BASE_URL}/vessel-bunker-excel/generate-pdf/{report_id}",
+            timeout=180  # Excel + LibreOffice pueden tardar
+        )
+
+        if response.status_code != 200:
+            return {
+                "success": False,
+                "error": f"HTTP {response.status_code}",
+                "detail": response.text
+            }
+
+        return {
+            "success": True,
+            "content": response.content  # 🔥 PDF binario
+        }
+
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+
+# =========================================================
+# VESSEL BUNKER — PRESENTATION PDF
+# GET /vessel-bunker-reports/presentation/{report_id}
+# =========================================================
+
+def get_vessel_bunker_presentation_pdf(report_id: int):
+
+    try:
+        response = requests.get(
+            f"{BASE_URL}/vessel-bunker-reports/presentation/{int(report_id)}",
+            timeout=120,
+            stream=True
+        )
+
+        if response.status_code != 200:
+            return {
+                "success": False,
+                "error": f"HTTP {response.status_code}",
+                "detail": response.text
+            }
+
+        return {
+            "success": True,
+            "content": response.content
+        }
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+
+# =========================================================
+# PREVIEW EXCEL (NO DB)
+# POST /vessel-bunker-preview/excel
+# =========================================================
+def preview_vessel_bunker_excel_api(payload: dict):
+
+    try:
+        response = requests.post(
+            f"{BASE_URL}/vessel-bunker-preview/excel",
+            json=payload,
+            timeout=120
+        )
+
+        if response.status_code != 200:
+            return {
+                "success": False,
+                "error": f"HTTP {response.status_code}",
+                "detail": response.text
+            }
+
+        return {
+            "success": True,
+            "content": response.content
+        }
+
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+# =========================================================
+# CARGO CONDITION — AI IMPROVE
+# POST /reports/ai/improve/cargo-condition
+# =========================================================
+
+def improve_cargo_condition_ai_api(
+    section: str,
+    language: str,
+    vessel: str = None,
+    port: str = None,
+    text: str = None,
+    items: list = None
+):
+    """
+    Llama al endpoint AI para mejorar Cargo Condition.
+
+    Soporta:
+    - text (str)
+    - items (list[str])
+    """
+
+    try:
+        # -----------------------------------------------------
+        # VALIDACIONES BÁSICAS
+        # -----------------------------------------------------
+        if not section:
+            return {
+                "success": False,
+                "error": "Section is required"
+            }
+
+        language = (language or "ES").upper()
+        if language not in ("ES", "EN"):
+            language = "ES"
+
+        # -----------------------------------------------------
+        # PAYLOAD BASE
+        # -----------------------------------------------------
+        payload = {
+            "section": section,
+            "language": language,
+            "vessel": vessel,
+            "port": port
+        }
+
+        # -----------------------------------------------------
+        # MULTI BULLET MODE
+        # -----------------------------------------------------
+        if isinstance(items, list) and items:
+            payload["items"] = items
+
+        # -----------------------------------------------------
+        # SINGLE TEXT MODE
+        # -----------------------------------------------------
+        elif text and text.strip():
+            payload["text"] = text.strip()
+
+        else:
+            return {
+                "success": False,
+                "error": "Text or items required"
+            }
+
+        # -----------------------------------------------------
+        # REQUEST
+        # -----------------------------------------------------
+        response = requests.post(
+            f"{BASE_URL}/reports/ai/improve/cargo-condition",
+            json=payload,
+            timeout=90
+        )
+
+        # -----------------------------------------------------
+        # HTTP ERROR HANDLING
+        # -----------------------------------------------------
+        if response.status_code != 200:
+            return {
+                "success": False,
+                "error": f"HTTP {response.status_code}",
+                "detail": response.text
+            }
+
+        data = response.json()
+
+        # -----------------------------------------------------
+        # NORMALIZACIÓN DEFENSIVA
+        # -----------------------------------------------------
+        return {
+            "success": data.get("success", False),
+            "language": data.get("language"),
+            "text": data.get("text"),
+            "items": data.get("items")
+        }
+
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+
+# =========================================================
+# VESSEL CARGO CONDITION SURVEYS
+# =========================================================
+
+
+# ---------------------------------------------------------
+# CREATE
+# POST /vessel-cargo-condition-surveys/
+# ---------------------------------------------------------
+def create_vessel_cargo_condition_api(payload: dict):
+
+    try:
+        response = requests.post(
+            f"{BASE_URL}/vessel-cargo-condition-surveys/",
+            json=(payload or {}),
+            timeout=60
+        )
+
+        if response.status_code != 200:
+            return {
+                "success": False,
+                "error": f"HTTP {response.status_code}",
+                "detail": response.text
+            }
+
+        return response.json()
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+# ---------------------------------------------------------
+# GET ALL
+# GET /vessel-cargo-condition-surveys/
+# ---------------------------------------------------------
+def get_all_vessel_cargo_condition_api():
+
+    try:
+        response = requests.get(
+            f"{BASE_URL}/vessel-cargo-condition-surveys/",
+            timeout=60
+        )
+
+        if response.status_code != 200:
+            return {
+                "success": False,
+                "error": f"HTTP {response.status_code}",
+                "detail": response.text
+            }
+
+        return response.json()
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+# ---------------------------------------------------------
+# GET BY ID
+# GET /vessel-cargo-condition-surveys/{id}
+# ---------------------------------------------------------
+def get_vessel_cargo_condition_by_id_api(record_id: int):
+
+    try:
+        response = requests.get(
+            f"{BASE_URL}/vessel-cargo-condition-surveys/{int(record_id)}",
+            timeout=60
+        )
+
+        if response.status_code != 200:
+            return {
+                "success": False,
+                "error": f"HTTP {response.status_code}",
+                "detail": response.text
+            }
+
+        return response.json()
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+# ---------------------------------------------------------
+# UPDATE (FULL PUT)
+# PUT /vessel-cargo-condition-surveys/{id}
+# ---------------------------------------------------------
+def update_vessel_cargo_condition_api(record_id: int, payload: dict):
+
+    try:
+        response = requests.put(
+            f"{BASE_URL}/vessel-cargo-condition-surveys/{int(record_id)}",
+            json=(payload or {}),
+            timeout=60
+        )
+
+        if response.status_code != 200:
+            return {
+                "success": False,
+                "error": f"HTTP {response.status_code}",
+                "detail": response.text
+            }
+
+        return response.json()
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+
+# =========================================================
+# WORD — GENERATE CARGO CONDITION
+# GET /vessel-cargo-condition-surveys/word/{id}
+# =========================================================
+def generate_vessel_cargo_condition_word_api(record_id: int, save_path: str):
+
+    try:
+        response = requests.get(
+            f"{BASE_URL}/vessel-cargo-condition-surveys/word/{int(record_id)}",
+            timeout=120,
+            stream=True
+        )
+
+        if response.status_code != 200:
+            return {
+                "success": False,
+                "error": f"HTTP {response.status_code}",
+                "detail": response.text
+            }
+
+        # Guardar archivo en disco
+        with open(save_path, "wb") as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                if chunk:
+                    f.write(chunk)
+
+        return {
+            "success": True,
+            "path": save_path
+        }
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+# =========================================================
+# PRESENTATION PDF — DOWNLOAD
+# GET /vessel-cargo-condition-surveys/presentation/{id}
+# =========================================================
+
+def download_vessel_cargo_condition_presentation_pdf(record_id: int):
+
+    try:
+        response = requests.get(
+            f"{BASE_URL}/vessel-cargo-condition-surveys/presentation/{int(record_id)}",
+            timeout=120,
+            stream=True
+        )
+
+        if response.status_code != 200:
+            return {
+                "success": False,
+                "error": f"HTTP {response.status_code}",
+                "detail": response.text
+            }
+
+        return {
+            "success": True,
+            "content": response.content
+        }
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+
+# ============================================================
+# SAFE JSON RESPONSE
+# ============================================================
+
+def _safe_json_response(response):
+    try:
+        return response.json()
+    except Exception:
+        return {
+            "success": False,
+            "error": "Invalid JSON response",
+            "detail": response.text
+        }
+
+
+# ============================================================
+# CREATE CRANE INSPECTION
+# POST /vessel-crane-inspection
+# ============================================================
+
+def create_crane_inspection_api(payload: dict):
+
+    try:
+
+        response = requests.post(
+            f"{BASE_URL}/vessel-crane-inspection",
+            json=(payload or {}),
+            timeout=60
+        )
+
+        if response.status_code != 200:
+            return {
+                "success": False,
+                "error": f"HTTP {response.status_code}",
+                "detail": response.text
+            }
+
+        return _safe_json_response(response)
+
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+# ============================================================
+# UPDATE CRANE INSPECTION
+# PUT /vessel-crane-inspection/{id}
+# ============================================================
+
+def update_crane_inspection_api(report_id: int, payload: dict):
+
+    try:
+
+        response = requests.put(
+            f"{BASE_URL}/vessel-crane-inspection/{int(report_id)}",
+            json=(payload or {}),
+            timeout=60
+        )
+
+        if response.status_code != 200:
+            return {
+                "success": False,
+                "error": f"HTTP {response.status_code}",
+                "detail": response.text
+            }
+
+        return _safe_json_response(response)
+
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+# ============================================================
+# APPROVE CRANE INSPECTION
+# PUT /vessel-crane-inspection/{id}
+# ============================================================
+
+def approve_crane_inspection_api(report_id: int):
+
+    try:
+
+        payload = {
+            "approve": True
+        }
+
+        response = requests.put(
+            f"{BASE_URL}/vessel-crane-inspection/{int(report_id)}",
+            json=payload,
+            timeout=60
+        )
+
+        if response.status_code != 200:
+            return {
+                "success": False,
+                "error": f"HTTP {response.status_code}",
+                "detail": response.text
+            }
+
+        return _safe_json_response(response)
+
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+# ============================================================
+# GET LIST
+# GET /vessel-crane-inspection
+# ============================================================
+
+def get_crane_inspections_api():
+
+    try:
+
+        response = requests.get(
+            f"{BASE_URL}/vessel-crane-inspection",
+            timeout=60
+        )
+
+        if response.status_code != 200:
+            return {
+                "success": False,
+                "error": f"HTTP {response.status_code}",
+                "detail": response.text
+            }
+
+        return _safe_json_response(response)
+
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+# ============================================================
+# GET ONE
+# GET /vessel-crane-inspection/{id}
+# ============================================================
+
+def get_crane_inspection_api(report_id: int):
+
+    try:
+
+        if not report_id:
+            return {
+                "success": False,
+                "error": "Invalid report ID"
+            }
+
+        url = f"{BASE_URL}/vessel-crane-inspection/{int(report_id)}"
+
+        response = requests.get(
+            url,
+            timeout=60
+        )
+
+        # ----------------------------------------------------
+        # HTTP ERROR
+        # ----------------------------------------------------
+
+        if response.status_code != 200:
+
+            return {
+                "success": False,
+                "error": f"HTTP {response.status_code}",
+                "detail": response.text
+            }
+
+        # ----------------------------------------------------
+        # SAFE JSON PARSE
+        # ----------------------------------------------------
+
+        try:
+
+            data = response.json()
+
+        except Exception:
+
+            return {
+                "success": False,
+                "error": "Invalid JSON response",
+                "detail": response.text
+            }
+
+        # ----------------------------------------------------
+        # NORMALIZE RESPONSE
+        # ----------------------------------------------------
+
+        if not isinstance(data, dict):
+
+            return {
+                "success": False,
+                "error": "Invalid API format",
+                "detail": data
+            }
+
+        # si backend ya trae success
+        if "success" in data:
+            return data
+
+        # fallback (por si backend devuelve solo objeto)
+        return {
+            "success": True,
+            "data": data
+        }
+
+    except requests.exceptions.Timeout:
+
+        return {
+            "success": False,
+            "error": "Request timeout while loading crane inspection report"
+        }
+
+    except Exception as e:
+
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+# =========================================================
+# GENERATE CRANE INSPECTION WORD
+# =========================================================
+
+def generate_crane_inspection_word_api(record_id):
+
+    try:
+
+        url = f"{BASE_URL}/vessel-crane-inspection-reports/{record_id}/generate-word"
+
+        r = requests.get(
+            url,
+            headers=_headers(),
+            timeout=120
+        )
+
+        if r.status_code != 200:
+
+            return {
+                "success": False,
+                "error": r.text
+            }
+
+        return {
+            "success": True,
+            "file_bytes": r.content
+        }
+
+    except Exception as e:
+
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+# =========================================================
+# CRANE INSPECTION PRESENTATION PDF
+# =========================================================
+
+def generate_crane_inspection_presentation_api(record_id: int):
+
+    try:
+
+        url = f"{BASE_URL}/vessel-crane-inspection-reports/{record_id}/presentation"
+
+        response = requests.get(
+            url,
+            headers=_headers(),
+            stream=True
+        )
+
+        if response.status_code != 200:
+
+            raise Exception(response.text)
+
+        temp_dir = tempfile.mkdtemp()
+
+        pdf_path = os.path.join(
+            temp_dir,
+            f"Crane_Inspection_Presentation_{record_id}.pdf"
+        )
+
+        with open(pdf_path, "wb") as f:
+
+            for chunk in response.iter_content(chunk_size=8192):
+                f.write(chunk)
+
+        return pdf_path
+
+    except Exception as e:
+
+        raise RuntimeError(str(e))
+
+
+
+# =========================================================
+# AI CRANE INSPECTION
+# =========================================================
+
+def improve_crane_inspection_ai_api(section, language, vessel, port, items):
+
+    try:
+
+        url = f"{BASE_URL}/reports/ai/improve/crane-inspection"
+
+        payload = {
+            "section": section,
+            "language": language,
+            "vessel": vessel,
+            "port": port,
+            "items": items
+        }
+
+        response = requests.post(
+            url,
+            headers=_headers(),
+            json=payload,
+            timeout=60
+        )
+
+        # -------------------------------------------------
+        # HTTP ERROR
+        # -------------------------------------------------
+
+        if response.status_code != 200:
+
+            try:
+                error = response.json()
+                msg = error.get("detail") or error
+            except Exception:
+                msg = response.text
+
+            return {
+                "success": False,
+                "error": msg
+            }
+
+        # -------------------------------------------------
+        # PARSE RESPONSE
+        # -------------------------------------------------
+
+        data = response.json()
+
+        if not isinstance(data, dict):
+
+            return {
+                "success": False,
+                "error": "Invalid AI response"
+            }
+
+        return {
+            "success": bool(data.get("success")),
+            "items": data.get("items", []),
+            "error": data.get("error")
+        }
+
+    except Exception as e:
+
+        return {
+            "success": False,
+            "error": str(e)
+        }

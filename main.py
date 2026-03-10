@@ -3,21 +3,32 @@
 # Ventana Principal + Menú Lateral + Router de Módulos
 # ============================================================
 
+import os
+import sys
+import ctypes
 import tkinter as tk
 from tkinter import messagebox
-import sys
-import os
-import ctypes
 
-
+from resource_utils import resource_path
 from splash_screen import SplashScreen
-from backend_api.rbac_service import has_permission
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BACKEND_DIR = os.path.join(BASE_DIR, "backend_api")
+
+if BACKEND_DIR not in sys.path:
+    sys.path.insert(0, BACKEND_DIR)
+
+# ============================================================
+# Asegurar raíz del proyecto en sys.path
+# ============================================================
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
 
 # ============================================================
 # VERSION DEL ERP
 # ============================================================
 APP_NAME = "ERP-SOM"
-APP_VERSION = "1.0.0"
+from version import APP_VERSION
 
 # ============================================================
 # Colores Corporativos
@@ -25,35 +36,14 @@ APP_VERSION = "1.0.0"
 COLOR_MENU = "#003A75"
 COLOR_BG = "white"
 
-# ============================================================
-# IMPORTS OPCIONALES (NO BLOQUEAN ARRANQUE)
-# ============================================================
-try:
-    from version_utils import compare_versions
-    from api_client_version import get_version_info
-    VERSION_CHECK_AVAILABLE = True
-except ModuleNotFoundError:
-    VERSION_CHECK_AVAILABLE = False
-    print("⚠ version_utils no disponible — chequeo de versión desactivado")
 
 # ============================================================
 # Windows App ID (Taskbar / Alt+Tab)
 # ============================================================
-ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
-    "MSLTECH.ERPSOM.Desktop"
-)
-
-# ============================================================
-# Helper para rutas (PyInstaller compatible)
-# ============================================================
-def resource_path(relative_path):
-    try:
-        base_path = sys._MEIPASS
-    except Exception:
-        base_path = os.path.abspath(".")
-
-    return os.path.join(base_path, relative_path)
-
+if os.name == "nt":
+    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+        "MSLTECH.ERPSOM.Desktop"
+    )
 
 # ============================================================
 # Clase Ventana Principal ERP-SOM
@@ -79,7 +69,6 @@ class MainApp(tk.Frame):
         self._build_menu_lateral()
         self._build_content_area()
 
-        # Usuario activo
         tk.Label(
             self.menu_frame,
             text=f"{self.usuario}\n({self.rol})",
@@ -89,12 +78,7 @@ class MainApp(tk.Frame):
             justify="center"
         ).pack(pady=(5, 15))
 
-        # Cargar Dashboard por defecto
         self.cambiar_modulo("Dashboard")
-
-        # Chequeo de versión (solo si existe)
-        if VERSION_CHECK_AVAILABLE:
-            self.parent.after(500, self.check_version)
 
     # --------------------------------------------------------
     # Menú lateral (RBAC)
@@ -113,18 +97,18 @@ class MainApp(tk.Frame):
             command=self.toggle_menu
         ).pack(pady=10)
 
-        # ----------------------------------------------------
-        # DEFINICIÓN DE MÓDULOS Y PERMISOS
-        # ----------------------------------------------------
         modules_config = [
             ("Dashboard", "dashboard"),
             ("Master Data", "master_data"),
             ("Servicios", "servicios"),
             ("Finanzas", "finanzas"),
+            ("HHRR", "hhrre"),
+            ("Comercial", "comercial"),
+            ("Informes", "informes"),
         ]
 
         for label, module_code in modules_config:
-            if has_permission(self.rol, module_code, "view"):
+            if self._has_permission(module_code, "view"):
                 tk.Button(
                     self.menu_frame,
                     text=label,
@@ -152,7 +136,7 @@ class MainApp(tk.Frame):
         self.content.pack(side="right", fill="both", expand=True)
 
     # --------------------------------------------------------
-    # Router de módulos (PROTEGIDO POR RBAC)
+    # Router de módulos
     # --------------------------------------------------------
     def cambiar_modulo(self, modulo):
 
@@ -160,12 +144,15 @@ class MainApp(tk.Frame):
             "Dashboard": "dashboard",
             "Master Data": "master_data",
             "Servicios": "servicios",
-            "Finanzas": "finanzas"
+            "Finanzas": "finanzas",
+            "HHRR": "hhrre",
+            "Comercial": "comercial",
+            "Informes": "informes",
         }
 
         module_code = module_map.get(modulo)
 
-        if module_code and not has_permission(self.rol, module_code, "view"):
+        if module_code and not self._has_permission(module_code, "view"):
             messagebox.showerror(
                 "Acceso denegado",
                 "No tienes permisos para acceder a este módulo.",
@@ -178,17 +165,13 @@ class MainApp(tk.Frame):
 
         if modulo == "Dashboard":
             from Modulos.Dashboard.ui_dashboard import DashboardUI
-            DashboardUI(
-                self.content,
-                go_back_callback=self.mostrar_menu
-            ).pack(fill="both", expand=True)
+            DashboardUI(self.content, go_back_callback=self.mostrar_menu)\
+                .pack(fill="both", expand=True)
 
         elif modulo == "Master Data":
             from Modulos.MasterData.ui_masterdata import MasterDataUI
-            MasterDataUI(
-                self.content,
-                go_back_callback=self.mostrar_menu
-            ).pack(fill="both", expand=True)
+            MasterDataUI(self.content, go_back_callback=self.mostrar_menu)\
+                .pack(fill="both", expand=True)
 
         elif modulo == "Servicios":
             from Modulos.Servicios.ui_servicios import ServiciosUI
@@ -196,13 +179,45 @@ class MainApp(tk.Frame):
 
         elif modulo == "Finanzas":
             from Modulos.Finanzas.ui_finanzas import FinanzasUI
-            FinanzasUI(
-                self.content,
+            FinanzasUI(self.content, on_back=self.mostrar_menu)\
+                .pack(fill="both", expand=True)
+
+        elif modulo == "HHRR":
+            from Modulos.HHRR.ui_hhrre import HHRRUI
+            HHRRUI(
+                parent=self.content,
+                usuario=self.usuario,
+                rol=self.rol,
+                empleado_id=None,
                 on_back=self.mostrar_menu
             ).pack(fill="both", expand=True)
 
+        elif modulo == "Informes":
+            from Modulos.Informes.informes_home_ui import InformesHomeUI
+            InformesHomeUI(
+                parent=self.content,
+                usuario=self.usuario,
+                rol=self.rol,
+                callbacks={
+                    "open_report_selector": self._open_report_selector,
+                    "fetch_reports": self._fetch_reports,
+                    "preview_report": self._preview_report,
+                    "edit_report": self._edit_report,
+                    "submit_report": self._submit_report,
+                    "generate_report_doc": self._generate_report_doc,
+                }
+            ).pack(fill="both", expand=True)
+
+        elif modulo == "Comercial":
+            from Modulos.Comercial.comercial_home_ui import ComercialHomeUI
+            ComercialHomeUI(
+                parent=self.content,
+                usuario=self.usuario,
+                rol=self.rol
+            ).pack(fill="both", expand=True)
+
     # --------------------------------------------------------
-    # Mostrar / Ocultar menú
+    # Utilidades generales
     # --------------------------------------------------------
     def toggle_menu(self):
         if self.menu_visible:
@@ -224,9 +239,6 @@ class MainApp(tk.Frame):
             if hasattr(self, "btn_show"):
                 self.btn_show.destroy()
 
-    # --------------------------------------------------------
-    # Cerrar ERP
-    # --------------------------------------------------------
     def on_close(self):
         if messagebox.askyesno(
             "Confirmar salida",
@@ -236,42 +248,85 @@ class MainApp(tk.Frame):
             self.parent.destroy()
             sys.exit(0)
 
-    # --------------------------------------------------------
-    # Volver al Dashboard
-    # --------------------------------------------------------
     def mostrar_menu(self):
         self.cambiar_modulo("Dashboard")
 
+    # =========================================================
+    # INFORMES — callbacks
+    # =========================================================
+    def _open_report_selector(self):
+        from Modulos.Informes.report_type_selector import ReportTypeSelector
+        for w in self.content.winfo_children():
+            w.destroy()
+        ReportTypeSelector(
+            parent=self.content,
+            on_container_report=self._open_container_report_form,
+            on_back=lambda: self.cambiar_modulo("Informes")
+        ).pack(fill="both", expand=True)
+
+    def _open_container_report_form(self):
+        from Modulos.Informes.container_report_form import ContainerReportForm
+        for w in self.content.winfo_children():
+            w.destroy()
+        ContainerReportForm(
+            parent=self.content,
+            usuario=self.usuario,
+            rol=self.rol,
+            on_back=lambda: self._open_report_selector()
+        ).pack(fill="both", expand=True)
+
+    def _fetch_reports(self):
+        return []
+
+    def _preview_report(self, report_id):
+        pass
+
+    def _edit_report(self, report_id):
+        pass
+
+    def _submit_report(self, report_id):
+        pass
+
+    def _generate_report_doc(self, report_id):
+        pass
+
+
+
     # --------------------------------------------------------
-    # Chequeo de versión (opcional)
+    # RBAC LOCAL (SOLO VISUAL — SEGURIDAD REAL EN BACKEND)
     # --------------------------------------------------------
-    def check_version(self):
-        ok, data = get_version_info()
-        if not ok:
-            return
+    def _has_permission(self, module_code: str, action: str) -> bool:
+        """
+        Control visual de permisos basado en rol.
+        La seguridad real se valida en backend.
+        """
 
-        latest = data.get("latest_version")
-        force = data.get("force_update", False)
-        message = data.get("message", "")
+        # Master / Admin → acceso total
+        if self.rol.lower() in ("master", "admin"):
+            return True
 
-        if compare_versions(APP_VERSION, latest) >= 0:
-            return
+        # Ejemplo básico de roles
+        role_permissions = {
+            "user": {
+                "dashboard": ["view"],
+                "servicios": ["view"],
+                "informes": ["view"],
+            },
+            "finance": {
+                "dashboard": ["view"],
+                "finanzas": ["view"],
+                "informes": ["view"],
+            },
+            "hr": {
+                "dashboard": ["view"],
+                "hhrre": ["view"],
+            }
+        }
 
-        if force:
-            messagebox.showwarning(
-                "Actualización obligatoria",
-                message or "Debe actualizar el sistema para continuar."
-            )
-            self.on_close()
-        else:
-            from update_window import UpdateWindow
-            UpdateWindow(
-                self.parent,
-                current_version=APP_VERSION,
-                latest_version=latest,
-                message=message,
-                download_url=data.get("download_url")
-            )
+        allowed = role_permissions.get(self.rol.lower(), {})
+        actions = allowed.get(module_code, [])
+
+        return action in actions
 
 
 # ============================================================

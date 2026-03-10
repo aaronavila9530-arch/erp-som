@@ -1,23 +1,24 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
-import psycopg2
 from datetime import date
+import requests
 
-
-DB_URL = "postgresql://postgres:LjjyuIUsTSCdiwPVHSSwtIYPOsRQytGX@shortline.proxy.rlwy.net:50018/railway"
+from api_client import BASE_URL
 
 
 class PopupApplyPayment(tk.Toplevel):
 
     def __init__(self, parent, obligation_data, on_success=None):
         super().__init__(parent)
+
         self.parent = parent
         self.on_success = on_success
-        self.obligation = obligation_data
+        self.obligation = obligation_data or {}
 
         self.title("Apply Payment")
         self.geometry("420x420")
         self.resizable(False, False)
+        self.transient(parent)
         self.grab_set()
 
         self._build_ui()
@@ -27,16 +28,24 @@ class PopupApplyPayment(tk.Toplevel):
     # ============================================================
     def _build_ui(self):
 
-        tk.Label(self, text="Apply Payment", font=("Segoe UI", 14, "bold")).pack(pady=10)
+        tk.Label(
+            self,
+            text="Apply Payment",
+            font=("Segoe UI", 14, "bold")
+        ).pack(pady=10)
 
         frm = tk.Frame(self)
         frm.pack(fill="x", padx=20)
 
         # ---- Info
-        self._row(frm, "Payee:", self.obligation["payee"])
-        self._row(frm, "Reference:", self.obligation["reference"])
-        self._row(frm, "Currency:", self.obligation["currency"])
-        self._row(frm, "Outstanding Balance:", f"{self.obligation['balance']:.2f}")
+        self._row(frm, "Payee:", self.obligation.get("payee", ""))
+        self._row(frm, "Reference:", self.obligation.get("reference", ""))
+        self._row(frm, "Currency:", self.obligation.get("currency", ""))
+        self._row(
+            frm,
+            "Outstanding Balance:",
+            f"{float(self.obligation.get('balance', 0) or 0):.2f}"
+        )
 
         ttk.Separator(self).pack(fill="x", pady=10)
 
@@ -51,11 +60,6 @@ class PopupApplyPayment(tk.Toplevel):
         self.ent_date.insert(0, date.today().isoformat())
         self.ent_date.grid(row=5, column=1, sticky="ew", pady=5)
 
-        # ---- Reference
-        tk.Label(frm, text="Payment Reference").grid(row=6, column=0, sticky="w", pady=5)
-        self.ent_ref = ttk.Entry(frm)
-        self.ent_ref.grid(row=6, column=1, sticky="ew", pady=5)
-
         frm.columnconfigure(1, weight=1)
 
         ttk.Separator(self).pack(fill="x", pady=10)
@@ -64,8 +68,17 @@ class PopupApplyPayment(tk.Toplevel):
         btn_frame = tk.Frame(self)
         btn_frame.pack(fill="x", padx=20, pady=10)
 
-        ttk.Button(btn_frame, text="Apply Payment", command=self._apply_payment).pack(side="right")
-        ttk.Button(btn_frame, text="Cancel", command=self.destroy).pack(side="right", padx=5)
+        ttk.Button(
+            btn_frame,
+            text="Apply Payment",
+            command=self._apply_payment
+        ).pack(side="right")
+
+        ttk.Button(
+            btn_frame,
+            text="Cancel",
+            command=self.destroy
+        ).pack(side="right", padx=5)
 
     # ============================================================
     # HELPERS
@@ -73,62 +86,93 @@ class PopupApplyPayment(tk.Toplevel):
     def _row(self, parent, label, value):
         r = parent.grid_size()[1]
         tk.Label(parent, text=label).grid(row=r, column=0, sticky="w", pady=2)
-        tk.Label(parent, text=value, font=("Segoe UI", 9, "bold")).grid(row=r, column=1, sticky="w", pady=2)
+        tk.Label(
+            parent,
+            text=value,
+            font=("Segoe UI", 9, "bold")
+        ).grid(row=r, column=1, sticky="w", pady=2)
 
     # ============================================================
-    # APPLY PAYMENT
+    # APPLY PAYMENT (100% ALINEADO CON ROUTER)
     # ============================================================
     def _apply_payment(self):
 
+        # ---------------- VALIDAR ID ----------------
+        obligation_id = self.obligation.get("id")
+        if not obligation_id:
+            messagebox.showerror("Error", "Invalid obligation ID.")
+            return
+
+        # ---------------- VALIDAR MONTO ----------------
         try:
             amount = float(self.ent_amount.get())
-        except ValueError:
+        except Exception:
             messagebox.showerror("Error", "Invalid payment amount.")
             return
 
-        balance = self.obligation["balance"]
+        balance = float(self.obligation.get("balance", 0) or 0)
 
         if amount <= 0:
-            messagebox.showerror("Error", "Payment amount must be greater than zero.")
+            messagebox.showerror(
+                "Error",
+                "Payment amount must be greater than zero."
+            )
             return
 
         if amount > balance:
-            messagebox.showerror("Error", "Payment amount cannot exceed outstanding balance.")
+            messagebox.showerror(
+                "Error",
+                "Payment amount cannot exceed outstanding balance."
+            )
             return
 
-        new_balance = balance - amount
-        new_status = "PAID" if new_balance == 0 else "PARTIAL"
+        # ---------------- VALIDAR FECHA ----------------
+        payment_date = self.ent_date.get().strip()
+        if not payment_date:
+            messagebox.showerror("Error", "Payment date is required.")
+            return
 
+        # ---------------- LLAMAR API ----------------
         try:
-            conn = psycopg2.connect(DB_URL)
-            cur = conn.cursor()
+            response = requests.post(
+                f"{BASE_URL}/invoice-to-pay/apply-payment",
+                params={
+                    "obligation_id": int(obligation_id),
+                    "amount": float(amount),
+                    "payment_date": payment_date
+                },
+                timeout=20
+            )
 
-            cur.execute("""
-                UPDATE payment_obligations
-                SET
-                    balance = %s,
-                    status = %s,
-                    last_payment_date = %s,
-                    updated_at = NOW()
-                WHERE id = %s
-            """, (
-                new_balance,
-                new_status,
-                self.ent_date.get(),
-                self.obligation["id"]
-            ))
+            # Mostrar error real del backend si existe
+            if response.status_code != 200:
+                try:
+                    detail = response.json().get("detail")
+                except Exception:
+                    detail = response.text
 
-            conn.commit()
+                messagebox.showerror(
+                    "Error",
+                    f"Backend error:\n{detail}"
+                )
+                return
+
+            data = response.json()
 
         except Exception as e:
-            conn.rollback()
-            messagebox.showerror("Error", f"Could not apply payment:\n{e}")
+            messagebox.showerror(
+                "Error",
+                f"Connection error:\n{e}"
+            )
             return
 
-        finally:
-            conn.close()
-
-        messagebox.showinfo("Success", "Payment applied successfully.")
+        # ---------------- SUCCESS ----------------
+        messagebox.showinfo(
+            "Success",
+            f"Payment applied successfully.\n\n"
+            f"New Balance: {data.get('new_balance')}\n"
+            f"Status: {data.get('status')}"
+        )
 
         if self.on_success:
             self.on_success()

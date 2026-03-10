@@ -67,7 +67,7 @@ class TablaCollections(tk.Frame):
         cols = (
             "codigo_cliente", "nombre_cliente",
             "tipo_factura", "tipo_documento", "numero_documento",
-            "fecha_emision", "fecha_vencimiento", "aging",
+            "fecha_emision", "dias_credito", "fecha_vencimiento", "aging",
             "moneda",
             "total_factura", "saldo_pendiente",
             "num_informe", "buque", "operacion", "periodo",
@@ -103,13 +103,40 @@ class TablaCollections(tk.Frame):
         table_frame.grid_rowconfigure(0, weight=1)
         table_frame.grid_columnconfigure(0, weight=1)
 
-        pag = tk.Frame(self)
-        pag.pack(fill="x", pady=5)
+        # ================= PAGINACIÓN =================
+        pag = tk.Frame(self, height=48)
+        pag.pack(fill="x", side="bottom")
+        pag.pack_propagate(False)
 
-        ttk.Button(pag, text="◀", command=self._prev).pack(side="left")
-        self.lbl_page = tk.Label(pag, text="Página 1")
-        self.lbl_page.pack(side="left", padx=10)
-        ttk.Button(pag, text="▶", command=self._next).pack(side="left")
+        ttk.Button(
+                pag,
+                text="◀ Anterior",
+                width=14,
+                command=self._prev
+        ).pack(side="left", padx=6, pady=4, fill="y", expand=True)
+
+        self.lbl_page = tk.Label(
+                pag,
+                text="Página 1",
+                font=("Segoe UI", 10),
+                anchor="center"
+        )
+        self.lbl_page.pack(side="left", padx=12, fill="y", expand=True)
+
+        ttk.Button(
+                pag,
+                text="Siguiente ▶",
+                width=14,
+                command=self._next
+        ).pack(side="left", padx=6, pady=4, fill="y", expand=True)
+
+
+        # ================= ESTILOS DE FILAS =================
+        self.tree.tag_configure(
+            "overdue",
+            background="#FADADD"  # rojo pastel
+        )
+
 
     # ============================================================
     # DATA
@@ -143,28 +170,71 @@ class TablaCollections(tk.Frame):
         data.sort(key=lambda x: int(x.get("aging_dias") or 0), reverse=True)
 
         for row in data:
-            self.tree.insert("", "end", values=(
-                row.get("codigo_cliente"),
-                row.get("nombre_cliente"),
-                row.get("tipo_factura"),
-                row.get("tipo_documento"),
-                row.get("numero_documento"),
-                row.get("fecha_emision"),
-                row.get("fecha_vencimiento"),
-                row.get("aging_dias"),
-                row.get("moneda"),
-                row.get("total"),
-                row.get("saldo_pendiente"),
-                row.get("num_informe"),
-                row.get("buque_contenedor"),
-                row.get("operacion"),
-                row.get("periodo_operacion"),
-                row.get("estado_factura"),
-                row.get("disputada")
-            ))
+
+            aging = int(row.get("aging_dias") or 0)
+
+            tag = ()
+            if aging > 1:
+                tag = ("overdue",)
+
+            self.tree.insert(
+                "",
+                "end",
+                values=(
+                    row.get("codigo_cliente"),
+                    row.get("nombre_cliente"),
+                    row.get("tipo_factura"),
+                    row.get("tipo_documento"),
+                    row.get("numero_documento"),
+                    row.get("fecha_emision"),
+                    row.get("dias_credito"),
+                    row.get("fecha_vencimiento"),
+                    row.get("aging_dias"),
+                    row.get("moneda"),
+                    row.get("total"),
+                    row.get("saldo_pendiente"),
+                    row.get("num_informe"),
+                    row.get("buque_contenedor"),
+                    row.get("operacion"),
+                    row.get("periodo_operacion"),
+                    row.get("estado_factura"),
+                    row.get("disputada")
+                ),
+                tags=tag
+            )
 
         total_pages = max(1, (self.total_items + self.page_size - 1) // self.page_size)
         self.lbl_page.config(text=f"Página {self.page} de {total_pages}")
+
+        # ============================================================
+        # KPIs — SOLO LO MOSTRADO EN PANTALLA
+        # ============================================================
+        total_ar = 0.0
+        current = 0.0
+        overdue = 0.0
+        over_90 = 0.0
+
+        for row in data:
+            saldo = float(row.get("saldo_pendiente") or 0)
+            aging = int(row.get("aging_dias") or 0)
+
+            total_ar += saldo
+
+            if aging < 1:
+                current += saldo
+            else:
+                overdue += saldo
+
+            if aging > 90:
+                over_90 += saldo
+
+        if on_kpis:
+            on_kpis({
+                "total_ar": total_ar,
+                "current": current,
+                "overdue": overdue,
+                "over_90": over_90
+            })
 
     # ============================================================
     # ESTADO DE CUENTA  ✅ ÚNICO MÉTODO MODIFICADO
@@ -187,14 +257,15 @@ class TablaCollections(tk.Frame):
                 "tipo_documento": v[3],
                 "numero_documento": v[4],
                 "fecha_emision": v[5],
-                "fecha_vencimiento": v[6],
-                "aging_dias": v[7],
-                "total": v[9],
-                "saldo_pendiente": v[10],
-                "num_informe": v[11],
-                "buque_contenedor": v[12],
-                "operacion": v[13],
-                "estado_factura": v[15]
+                "dias_credito": v[6],
+                "fecha_vencimiento": v[7],
+                "aging_dias": v[8],
+                "total": v[10],
+                "saldo_pendiente": v[11],
+                "num_informe": v[12],
+                "buque_contenedor": v[13],
+                "operacion": v[14],
+                "estado_factura": v[16]
             })
 
         nombre_cliente = facturas[0]["nombre_cliente"]
@@ -275,11 +346,196 @@ class TablaCollections(tk.Frame):
     # RESTO DEL ARCHIVO (SIN CAMBIOS)
     # ============================================================
 
-    def _ver_factura(self): ...
-    def _disputar(self): ...
-    def _pago(self): ...
-    def _next(self): ...
-    def _prev(self): ...
-    def _export_csv(self): ...
-    def _export_excel(self): ...
-    def _export_pdf(self): ...
+    def _ver_factura(self):
+
+        selected = self.tree.selection()
+        if not selected:
+            messagebox.showwarning("Atención", "Seleccione una factura")
+            return
+
+        row = self.tree.item(selected[0])["values"]
+
+        tipo_factura = row[2]          # ELECTRONICA / MANUAL
+        tipo_documento = row[3]        # FACTURA / NOTA_CREDITO
+        numero_documento = row[4]
+
+        if tipo_documento != "FACTURA":
+            messagebox.showinfo(
+                "Información",
+                "Solo es posible visualizar Facturas"
+            )
+            return
+
+        # ================= FACTURA ELECTRÓNICA =================
+        if tipo_factura == "ELECTRONICA":
+            messagebox.showinfo(
+                "Factura electrónica",
+                "Para ver la factura electrónica debe dirigirse a GTI."
+            )
+            return
+
+        # ================= FACTURA MANUAL =================
+        pdf_path = f"/tmp/pdf/Factura_{numero_documento}.pdf"
+
+        try:
+            import os
+            import webbrowser
+
+            if not os.path.exists(pdf_path):
+                raise FileNotFoundError(f"No se encontró el archivo:\n{pdf_path}")
+
+            webbrowser.open(pdf_path)
+
+        except Exception as e:
+            messagebox.showerror(
+                "Error",
+                f"No se pudo abrir la factura\n\n{e}"
+            )
+
+    def _disputar(self):
+
+        selected = self.tree.selection()
+        if not selected:
+            messagebox.showwarning("Atención", "Seleccione una factura")
+            return
+
+        row = self.tree.item(selected[0])["values"]
+
+        tipo_documento = row[3]
+
+        if tipo_documento != "FACTURA":
+            messagebox.showwarning(
+                "No permitido",
+                "Solo se pueden disputar Facturas"
+            )
+            return
+
+        PopupDisputa(
+            self,
+            row_data=row,
+            on_success=lambda: self._load_data()
+        )
+
+    def _pago(self):
+
+        selected = self.tree.selection()
+        if not selected:
+            messagebox.showwarning("Atención", "Seleccione una factura")
+            return
+
+        row = self.tree.item(selected[0])["values"]
+
+        tipo_documento = row[3]
+        estado = row[16]
+
+        if tipo_documento != "FACTURA":
+            messagebox.showwarning(
+                "No permitido",
+                "Solo se puede aplicar pago a Facturas"
+            )
+            return
+
+        if estado not in ("PENDIENTE", "VENCIDA", "PENDIENTE_PAGO"):
+            messagebox.showwarning(
+                "No permitido",
+                "La factura no tiene saldo pendiente"
+            )
+            return
+
+        PopupPago(
+            self,
+            row_data=row,
+            on_success=lambda: self._load_data()
+        )
+
+    def _next(self):
+
+        total_pages = max(
+            1,
+            (self.total_items + self.page_size - 1) // self.page_size
+        )
+
+        if self.page < total_pages:
+            self.page += 1
+            self._load_data()
+
+    def _prev(self):
+
+        if self.page > 1:
+            self.page -= 1
+            self._load_data()
+
+    def _export_csv(self):
+
+        if not self.tree.get_children():
+            messagebox.showwarning("Exportar", "No hay datos para exportar")
+            return
+
+        path = filedialog.asksaveasfilename(
+            defaultextension=".csv",
+            filetypes=[("CSV", "*.csv")]
+        )
+        if not path:
+            return
+
+        headers = self.tree["columns"]
+
+        try:
+            with open(path, mode="w", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                writer.writerow(headers)
+
+                for item in self.tree.get_children():
+                    writer.writerow(self.tree.item(item)["values"])
+
+            messagebox.showinfo(
+                "Exportar",
+                "Archivo CSV generado correctamente"
+            )
+
+        except Exception as e:
+            messagebox.showerror("Error", str(e))
+
+    def _export_excel(self):
+
+        if not self.tree.get_children():
+            messagebox.showwarning("Exportar", "No hay datos para exportar")
+            return
+
+        path = filedialog.asksaveasfilename(
+            defaultextension=".xlsx",
+            filetypes=[("Excel", "*.xlsx")]
+        )
+        if not path:
+            return
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Collections"
+
+        headers = self.tree["columns"]
+        ws.append(headers)
+
+        for item in self.tree.get_children():
+            ws.append(self.tree.item(item)["values"])
+
+        try:
+            wb.save(path)
+            messagebox.showinfo(
+                "Exportar",
+                "Archivo Excel generado correctamente"
+            )
+        except Exception as e:
+            messagebox.showerror("Error", str(e))
+
+    def _export_pdf(self):
+
+        if not self.tree.get_children():
+            messagebox.showwarning(
+                "Exportar PDF",
+                "No hay información cargada para generar el PDF"
+            )
+            return
+
+        # Reutiliza exactamente el mismo flujo
+        self._estado_cuenta()

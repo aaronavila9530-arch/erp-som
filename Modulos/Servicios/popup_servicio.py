@@ -7,8 +7,9 @@ from api_client import (
     get_clientes_api,
     get_continentes_cpp_api,
     get_paises_cpp_api,
-    get_puertos_cpp_api,   # ← AÑADIR ESTA
-    get_surveyores_api,
+    get_puertos_cpp_api,
+    get_surveyores_full_api,
+    get_surveyores_display_api,
     get_serviciosmd_api
 )
 
@@ -68,10 +69,24 @@ class PopupServicio(tk.Toplevel):
         self.cmb_puerto = ttk.Combobox(self, state="readonly")
         self.cmb_puerto.grid(row=7, column=1, padx=pad, pady=pad)
 
-        # Operación y Surveyor
-        ttk.Label(self, text="Operación:", background="white").grid(row=8, column=0, padx=pad, pady=pad, sticky="w")
-        self.cmb_operacion = ttk.Combobox(self, state="readonly")
-        self.cmb_operacion.grid(row=8, column=1, padx=pad, pady=pad)
+        # ---------------------------------------------------
+        # Hacer que la columna 1 se estire (mejor UX en combos)
+        # ---------------------------------------------------
+        self.grid_columnconfigure(1, weight=1)
+
+        ttk.Label(self, text="Operación:", background="white").grid(
+            row=8, column=0, padx=pad, pady=pad, sticky="w"
+        )
+
+        # ✅ width en caracteres + sticky="ew" para que se expanda
+        self.cmb_operacion = ttk.Combobox(
+            self,
+            state="readonly",
+            width=45
+        )
+        self.cmb_operacion.grid(
+            row=8, column=1, padx=pad, pady=pad, sticky="ew"
+        )
         self.cmb_operacion.bind("<<ComboboxSelected>>", self.autofill_honorarios)
 
         ttk.Label(self, text="Surveyor:", background="white").grid(row=9, column=0, padx=pad, pady=pad, sticky="w")
@@ -83,7 +98,7 @@ class PopupServicio(tk.Toplevel):
         ttk.Label(self, text="Honorarios:", background="white").grid(
             row=10, column=0, padx=pad, pady=pad, sticky="w"
         )
-        self.honorarios = ttk.Entry(self)
+        self.honorarios = ttk.Entry(self, state="readonly")
         self.honorarios.grid(row=10, column=1, padx=pad, pady=pad)
 
         # COSTO OPERATIVO (manual)
@@ -202,12 +217,38 @@ class PopupServicio(tk.Toplevel):
             print("❌ Error cargando operaciones:", e)
 
         # -----------------------------
-        # SURVEYORS
+        # SURVEYORS (1 POR PERSONA + VLOOKUP POR OPERACIÓN)
         # -----------------------------
         try:
-            surveyores = get_surveyores_api()
-            self.surveyores_data = surveyores  # Guardar para autofill
-            self.cmb_surveyor.config(values=[s["nombre"] for s in surveyores])
+            rows = get_surveyores_full_api()
+            self.surveyores_rows = rows
+
+            self._surveyor_rows_by_key = {}
+            display_set = set()
+
+            for r in rows:
+                nombre = (r.get("nombre") or "").strip()
+                apellidos = (r.get("apellidos") or "").strip()
+
+                if not nombre:
+                    continue
+
+                # 🔑 CLAVE POR PERSONA
+                key = " ".join([nombre, apellidos]).strip().lower()
+                display = " ".join([nombre, apellidos]).strip()
+
+                if key not in self._surveyor_rows_by_key:
+                    self._surveyor_rows_by_key[key] = []
+                    display_set.add(display)
+
+                self._surveyor_rows_by_key[key].append(r)
+
+            self._surveyor_key_by_display = {
+                disp: disp.lower() for disp in display_set
+            }
+
+            self.cmb_surveyor.config(values=sorted(display_set))
+
         except Exception as e:
             print("❌ Error cargando surveyores:", e)
 
@@ -297,48 +338,53 @@ class PopupServicio(tk.Toplevel):
             print("❌ Error cargando puertos:", e)
 
     # ============================================================
-    # AUTOLLENAR HONORARIOS (operación + surveyor)
+    # AUTOLLENAR HONORARIOS (VLOOKUP: surveyor_key + operacion)
     # ============================================================
     def autofill_honorarios(self, *_):
-        if not hasattr(self, "surveyores_data"):
+
+        if not hasattr(self, "_surveyor_rows_by_key"):
             return
 
         oper = self.cmb_operacion.get().strip()
-        surv = self.cmb_surveyor.get().strip()
+        surv_display = self.cmb_surveyor.get().strip()
 
-        if not oper or not surv:
+        # limpiar si falta algo
+        if not oper or not surv_display:
+            self.honorarios.config(state="normal")
+            self.honorarios.delete(0, tk.END)
+            self.honorarios.config(state="readonly")
             return
 
-        for s in self.surveyores_data:
+        # 1) Resolver key desde display seleccionado
+        key = None
+        if hasattr(self, "_surveyor_key_by_display"):
+            key = self._surveyor_key_by_display.get(surv_display)
 
-            if not isinstance(s, dict):
-                continue
+        if not key:
+            self.honorarios.config(state="normal")
+            self.honorarios.delete(0, tk.END)
+            self.honorarios.config(state="readonly")
+            return
 
-            nombre = (
-                s.get("nombre")
-                or s.get("Nombre")
-                or s.get("surveyor")
-                or ""
-            )
+        rows = self._surveyor_rows_by_key.get(key, [])
+        oper_norm = oper.strip().lower()
 
-            operacion = (
-                s.get("operacion")
-                or s.get("Operacion")
-                or ""
-            )
+        # 2) Buscar fila por operación
+        for r in rows:
+            op_row = (r.get("operacion") or "").strip().lower()
+            if op_row == oper_norm:
+                honorario = r.get("honorario") or 0
 
-            if nombre == surv and operacion == oper:
-                honorario = (
-                    s.get("honorario")
-                    or s.get("Honorario")
-                    or 0
-                )
+                self.honorarios.config(state="normal")
                 self.honorarios.delete(0, tk.END)
                 self.honorarios.insert(0, str(honorario))
+                self.honorarios.config(state="readonly")
                 return
 
-        # Si no encontró coincidencia → limpiar SOLO honorarios
+        # 3) Si no existe esa operación para ese surveyor → limpiar
+        self.honorarios.config(state="normal")
         self.honorarios.delete(0, tk.END)
+        self.honorarios.config(state="readonly")
 
 
     # ============================================================
@@ -412,3 +458,6 @@ class PopupServicio(tk.Toplevel):
             self.destroy()
         else:
             messagebox.showerror("Error API", resp)
+
+
+

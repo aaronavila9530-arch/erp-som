@@ -102,6 +102,7 @@ class TablaSurveyoresUI(BasePaginatedTable):
         codigo = self._get_codigo()
         if not codigo:
             return
+
         try:
             url = f"{BASE_URL}/surveyores/{codigo}"
             r = requests.get(url, timeout=10)
@@ -112,23 +113,47 @@ class TablaSurveyoresUI(BasePaginatedTable):
 
         data = r.json()
 
-        popup = tk.Toplevel(self)
+        popup = PopupSurveyor(
+            self,
+            codigo=codigo,
+            lista_operaciones=[],
+            lista_puertos=[]
+        )
+
         popup.title(f"Ver Surveyor — {codigo}")
-        popup.geometry("550x650")
-        popup.configure(bg="white")
-        popup.resizable(False, False)
 
-        for i, (key, label) in enumerate(self.columns):
-            tk.Label(popup, text=f"{label}:", bg="white").grid(
-                row=i, column=0, padx=10, pady=4, sticky="e"
-            )
+        # 🔹 Cargar datos
+        popup.nombre.set(data.get("nombre", ""))
+        popup.apellidos.set(data.get("apellidos", ""))
+        popup.estado_civil.set(data.get("estado_civil", ""))
+        popup.genero.set(data.get("genero", ""))
+        popup.nacionalidad.set(data.get("nacionalidad", ""))
 
-            entry = tk.Entry(popup, width=40, relief="flat", bg="#F2F2F2")
-            entry.grid(row=i, column=1, padx=10, pady=4, sticky="w")
-            entry.insert(0, data.get(key, ""))
-            entry.config(state="readonly",
-                         readonlybackground="#F2F2F2",
-                         foreground="black")
+        popup.prefijo.set(data.get("prefijo", ""))
+        popup.telefono.set(data.get("telefono", ""))
+        popup.provincia.set(data.get("provincia", ""))
+        popup.canton.set(data.get("canton", ""))
+        popup.distrito.set(data.get("distrito", ""))
+        popup.direccion.set(data.get("direccion", ""))
+
+        popup.jornada.set(data.get("jornada", ""))
+        popup.operacion.set(data.get("operacion", ""))
+        popup.honorario.set(data.get("honorario", ""))
+        popup.frecuencia_pago.set(data.get("pago", ""))
+        popup.banco.set(data.get("banco", ""))
+        popup.cuenta_iban.set(data.get("cuenta_iban", ""))
+        popup.moneda.set(data.get("moneda", ""))
+        popup.swift.set(data.get("swift", ""))
+        popup.uid.set(data.get("uid", ""))
+
+        popup.enfermedades.set(data.get("enfermedades", ""))
+        popup.contacto_emergencia.set(data.get("contacto_emergencia", ""))
+        popup.telefono_emergencia.set(data.get("telefono_emergencia", ""))
+        popup.puerto.set(data.get("puerto", ""))
+
+        # 🔹 Deshabilitar todo (modo solo lectura)
+        self._disable_widgets_recursive(popup)
+
 
     # ==========================================================
     # EDITAR
@@ -175,6 +200,15 @@ class TablaSurveyoresUI(BasePaginatedTable):
                 messagebox.showerror("Error API", r.text)
         except Exception as e:
             messagebox.showerror("Error API", str(e))
+
+
+    def _disable_widgets_recursive(self, widget):
+        for child in widget.winfo_children():
+            try:
+                child.configure(state="disabled")
+            except:
+                pass
+            self._disable_widgets_recursive(child)
 
     # ==========================================================
     # ELIMINAR

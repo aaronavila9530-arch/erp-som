@@ -1,45 +1,40 @@
-import bcrypt
-from backend_api.database import get_conn
-from totp_service import validate_totp
+import requests
+from api_client import BASE_URL
 
 
 # =====================================================
-# PASO 1 — VERIFICAR IDENTIDAD (usuario + nombre + apellido)
+# PASO 1 — VERIFICAR IDENTIDAD
+# (usuario + nombre + apellido + email)
 # =====================================================
-def verify_identity(usuario: str, nombre: str, apellido: str):
+def verify_identity(usuario: str, nombre: str, apellido: str, email: str):
     """
-    Verifica que el usuario exista y que nombre / apellido hagan match.
-    Si es correcto, habilita el paso TOTP.
+    Llama al backend para verificar identidad
     """
 
-    conn = get_conn()
+    payload = {
+        "usuario": usuario.strip(),
+        "nombre": nombre.strip(),
+        "apellido": apellido.strip(),
+        "email": email.strip()
+    }
+
     try:
-        cur = conn.cursor()
+        r = requests.post(
+            f"{BASE_URL}/auth/reset/verify-identity",
+            json=payload,
+            timeout=10
+        )
+        r.raise_for_status()
+        return True, r.json()
 
-        cur.execute("""
-            SELECT id
-            FROM usuarios
-            WHERE usuario=%s
-              AND LOWER(first_name)=LOWER(%s)
-              AND LOWER(last_name)=LOWER(%s)
-              AND activo=TRUE
-        """, (usuario, nombre.strip(), apellido.strip()))
+    except requests.HTTPError as e:
+        try:
+            return False, r.json()
+        except Exception:
+            return False, {"error": str(e)}
 
-        if not cur.fetchone():
-            return False, {"error": "Datos no coinciden"}
-
-        cur.execute("""
-            UPDATE usuarios
-            SET reset_step='IDENTITY_OK'
-            WHERE usuario=%s
-        """, (usuario,))
-        conn.commit()
-
-        return True, {"step": "TOTP_REQUIRED"}
-
-    finally:
-        cur.close()
-        conn.close()
+    except Exception as e:
+        return False, {"error": str(e)}
 
 
 # =====================================================
@@ -47,38 +42,31 @@ def verify_identity(usuario: str, nombre: str, apellido: str):
 # =====================================================
 def verify_reset_totp(usuario: str, codigo: str):
     """
-    Verifica el código de Microsoft Authenticator
+    Llama al backend para validar TOTP
     """
 
-    if not validate_totp(usuario, codigo.strip()):
-        return False, {"error": "Código inválido"}
+    payload = {
+        "usuario": usuario.strip(),
+        "codigo": codigo.strip()
+    }
 
-    conn = get_conn()
     try:
-        cur = conn.cursor()
+        r = requests.post(
+            f"{BASE_URL}/auth/reset/verify-totp",
+            json=payload,
+            timeout=10
+        )
+        r.raise_for_status()
+        return True, r.json()
 
-        cur.execute("""
-            SELECT reset_step
-            FROM usuarios
-            WHERE usuario=%s
-        """, (usuario,))
-        row = cur.fetchone()
+    except requests.HTTPError as e:
+        try:
+            return False, r.json()
+        except Exception:
+            return False, {"error": str(e)}
 
-        if not row or row[0] != "IDENTITY_OK":
-            return False, {"error": "Flujo inválido"}
-
-        cur.execute("""
-            UPDATE usuarios
-            SET reset_step='TOTP_OK'
-            WHERE usuario=%s
-        """, (usuario,))
-        conn.commit()
-
-        return True, {"step": "RESET_ALLOWED"}
-
-    finally:
-        cur.close()
-        conn.close()
+    except Exception as e:
+        return False, {"error": str(e)}
 
 
 # =====================================================
@@ -86,42 +74,28 @@ def verify_reset_totp(usuario: str, codigo: str):
 # =====================================================
 def reset_password_final(usuario: str, new_password: str):
     """
-    Cambia la contraseña definitivamente
+    Envía la nueva contraseña al backend (bcrypt se hace en API)
     """
 
-    if len(new_password) < 8:
-        return False, {"error": "La contraseña debe tener al menos 8 caracteres"}
+    payload = {
+        "usuario": usuario.strip(),
+        "password": new_password
+    }
 
-    hashed = bcrypt.hashpw(
-        new_password.encode(),
-        bcrypt.gensalt()
-    ).decode()
-
-    conn = get_conn()
     try:
-        cur = conn.cursor()
+        r = requests.post(
+            f"{BASE_URL}/auth/reset/set-password",
+            json=payload,
+            timeout=10
+        )
+        r.raise_for_status()
+        return True, r.json()
 
-        cur.execute("""
-            SELECT reset_step
-            FROM usuarios
-            WHERE usuario=%s
-        """, (usuario,))
-        row = cur.fetchone()
+    except requests.HTTPError as e:
+        try:
+            return False, r.json()
+        except Exception:
+            return False, {"error": str(e)}
 
-        if not row or row[0] != "TOTP_OK":
-            return False, {"error": "No autorizado"}
-
-        cur.execute("""
-            UPDATE usuarios
-            SET pass_hash=%s,
-                pass_temp=FALSE,
-                reset_step=NULL
-            WHERE usuario=%s
-        """, (hashed, usuario))
-        conn.commit()
-
-        return True, {"message": "Contraseña actualizada"}
-
-    finally:
-        cur.close()
-        conn.close()
+    except Exception as e:
+        return False, {"error": str(e)}

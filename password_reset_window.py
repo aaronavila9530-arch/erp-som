@@ -1,10 +1,10 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-from password_reset import (
-    verify_identity,
-    verify_reset_totp,
-    reset_password_final
+from api_client import (
+    verify_identity_api,
+    verify_totp_api,
+    set_password_api
 )
 
 
@@ -13,11 +13,10 @@ class PasswordResetWindow(tk.Toplevel):
     def __init__(self, parent):
         super().__init__(parent)
         self.parent = parent
-
         self.usuario = None
 
         self.title("Recuperar contraseña")
-        self.geometry("360x320")
+        self.geometry("360x360")
         self.resizable(False, False)
         self.transient(parent)
         self.grab_set()
@@ -43,6 +42,7 @@ class PasswordResetWindow(tk.Toplevel):
         self._field("Usuario")
         self._field("Nombre")
         self._field("Apellido")
+        self._field("Email")
 
         ttk.Button(
             self.container,
@@ -51,17 +51,24 @@ class PasswordResetWindow(tk.Toplevel):
         ).pack(pady=20)
 
     def _verify_identity(self):
-        usuario = self.fields["Usuario"].get().strip()
-        nombre = self.fields["Nombre"].get().strip()
-        apellido = self.fields["Apellido"].get().strip()
+        payload = {
+            "usuario": self.fields["Usuario"].get().strip(),
+            "nombre": self.fields["Nombre"].get().strip(),
+            "apellido": self.fields["Apellido"].get().strip(),
+            "email": self.fields["Email"].get().strip()
+        }
 
-        ok, data = verify_identity(usuario, nombre, apellido)
-
-        if not ok:
-            messagebox.showerror("Error", data["error"], parent=self)
+        try:
+            resp = verify_identity_api(payload)
+        except Exception as e:
+            messagebox.showerror("Error", str(e), parent=self)
             return
 
-        self.usuario = usuario
+        if not resp.get("ok"):
+            messagebox.showerror("Error", resp.get("error"), parent=self)
+            return
+
+        self.usuario = payload["usuario"]
         self._step_totp()
 
     # =====================================================
@@ -91,12 +98,19 @@ class PasswordResetWindow(tk.Toplevel):
         ).pack(pady=20)
 
     def _verify_totp(self):
-        codigo = self.fields["Código"].get().strip()
+        payload = {
+            "usuario": self.usuario,
+            "codigo": self.fields["Código"].get().strip()
+        }
 
-        ok, data = verify_reset_totp(self.usuario, codigo)
+        try:
+            resp = verify_totp_api(payload)
+        except Exception as e:
+            messagebox.showerror("Error", str(e), parent=self)
+            return
 
-        if not ok:
-            messagebox.showerror("Error", data["error"], parent=self)
+        if not resp.get("ok"):
+            messagebox.showerror("Error", resp.get("error"), parent=self)
             return
 
         self._step_new_password()
@@ -130,10 +144,19 @@ class PasswordResetWindow(tk.Toplevel):
             messagebox.showerror("Error", "Las contraseñas no coinciden", parent=self)
             return
 
-        ok, data = reset_password_final(self.usuario, p1)
+        payload = {
+            "usuario": self.usuario,
+            "password": p1
+        }
 
-        if not ok:
-            messagebox.showerror("Error", data["error"], parent=self)
+        try:
+            resp = set_password_api(payload)
+        except Exception as e:
+            messagebox.showerror("Error", str(e), parent=self)
+            return
+
+        if not resp.get("ok"):
+            messagebox.showerror("Error", resp.get("error"), parent=self)
             return
 
         messagebox.showinfo(

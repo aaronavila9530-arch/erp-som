@@ -94,9 +94,6 @@ def confirmar_registro_totp(usuario: str, codigo: str):
 # VALIDAR TOTP — LOGIN / RESET PASSWORD
 # =====================================================
 def validar_totp_login(usuario: str, codigo: str):
-    """
-    Valida el código TOTP durante login normal
-    """
 
     if not codigo or not codigo.strip():
         return False, {"error": "Código requerido"}
@@ -106,7 +103,6 @@ def validar_totp_login(usuario: str, codigo: str):
     if not ok:
         return False, {"error": "Código inválido"}
 
-    # Login completo → devolver rol
     conn = get_conn()
     try:
         cur = conn.cursor()
@@ -122,7 +118,6 @@ def validar_totp_login(usuario: str, codigo: str):
 
         rol = row[0]
 
-        # Registrar último login (opcional pero recomendado)
         cur.execute("""
             UPDATE usuarios
             SET last_login=%s
@@ -132,7 +127,8 @@ def validar_totp_login(usuario: str, codigo: str):
 
         return True, {
             "usuario": usuario,
-            "rol": rol
+            "rol": rol,
+            "token": "LOCAL_SESSION"
         }
 
     finally:

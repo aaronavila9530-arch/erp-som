@@ -4,6 +4,8 @@ import requests
 
 from api_client import BASE_URL
 from Modulos.Finanzas.sections.credit_hold.PopupEditarCreditoCliente import PopupEditarCreditoCliente
+from Modulos.Finanzas.sections.credit_hold.ui_credit_control_popup import CreditControlPopup
+
 
 
 

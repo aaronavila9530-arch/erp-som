@@ -142,8 +142,23 @@ class PopupClosingWizard(tk.Toplevel):
 
         steps_map[step_index]()
 
+        # --------------------------------------------
+        # Control dinámico botones navegación
+        # --------------------------------------------
+
+        # Botón Anterior
         self.btn_prev["state"] = "normal" if step_index > 0 else "disabled"
-        self.btn_next["state"] = "normal" if step_index > 0 and step_index < len(self.steps) - 1 else "disabled"
+
+        # Botón Siguiente
+        if step_index == 0:
+            # En Step 0 depende del estado del período
+            self.btn_next["state"] = "normal" if self.period_closed else "disabled"
+
+        elif step_index < len(self.steps) - 1:
+            self.btn_next["state"] = "normal"
+
+        else:
+            self.btn_next["state"] = "disabled"
 
 
     def _next_step(self):
@@ -176,11 +191,18 @@ class PopupClosingWizard(tk.Toplevel):
         # Cargar estado REAL desde backend
         self._load_period_status()
 
-        # Habilitar / deshabilitar botón según estado del período
+        # --------------------------------------------
+        # Lógica inteligente de avance
+        # --------------------------------------------
         if self.period_closed:
             self.btn_close_period.config(state="disabled")
+
+            # 👉 PERMITIR AVANZAR SI YA ESTÁ CERRADO
+            self.btn_next.config(state="normal")
+
         else:
             self.btn_close_period.config(state="normal")
+            self.btn_next.config(state="disabled")
 
 
 
@@ -482,6 +504,7 @@ class PopupClosingWizard(tk.Toplevel):
     # EEFF – PREVIEW
     # ==========================================================
     def _do_fs_preview(self):
+
         try:
             self._validate_period()
         except ValueError as e:
@@ -495,6 +518,9 @@ class PopupClosingWizard(tk.Toplevel):
             )
             return
 
+        # ------------------------------------------------------
+        # Obtener TB
+        # ------------------------------------------------------
         tb = post_closing_tb_preview_api(
             company_code=self.company_code,
             fiscal_year=self.fiscal_year,
@@ -513,38 +539,82 @@ class PopupClosingWizard(tk.Toplevel):
         ingresos = []
         gastos = []
 
+        # ------------------------------------------------------
+        # CLASIFICACIÓN CONTABLE CORRECTA
+        # ------------------------------------------------------
         for r in rows:
-            debe = float(r.get("debit", 0))
-            haber = float(r.get("credit", 0))
-            saldo = debe - haber
-            code = r["account_code"]
 
+            try:
+                debe = float(r.get("debit", 0) or 0)
+                haber = float(r.get("credit", 0) or 0)
+            except Exception:
+                debe = 0.0
+                haber = 0.0
+
+            code = str(r.get("account_code", "")).strip()
+            name = r.get("account_name", "")
+
+            # ---------------- ACTIVO ----------------
             if code.startswith("1"):
-                activos.append((r["account_name"], saldo))
-            elif code.startswith("2"):
-                pasivos.append((r["account_name"], abs(saldo)))
-            elif code.startswith("3"):
-                patrimonio.append((r["account_name"], abs(saldo)))
-            elif code.startswith("4"):
-                ingresos.append((r["account_name"], abs(saldo)))
-            elif code.startswith("5"):
-                gastos.append((r["account_name"], abs(saldo)))
+                saldo = debe - haber
+                activos.append((name, saldo))
 
+            # ---------------- PASIVO ----------------
+            elif code.startswith("2"):
+                saldo = haber - debe
+                pasivos.append((name, saldo))
+
+            # ---------------- PATRIMONIO ----------------
+            elif code.startswith("3"):
+                saldo = haber - debe
+                patrimonio.append((name, saldo))
+
+            # ---------------- INGRESOS ----------------
+            elif code.startswith("4"):
+                saldo = haber - debe
+                ingresos.append((name, saldo))
+
+            # ---------------- GASTOS ----------------
+            elif code.startswith("5"):
+                saldo = debe - haber
+                gastos.append((name, saldo))
+
+        # ------------------------------------------------------
+        # RESULTADO DEL PERIODO
+        # ------------------------------------------------------
         total_ing = sum(v for _, v in ingresos)
         total_gas = sum(v for _, v in gastos)
 
         utilidad = total_ing - total_gas
-        isr = round(utilidad * 0.30, 2)
+
+        # ISR solo si hay utilidad
+        if utilidad > 0:
+            isr = round(utilidad * 0.30, 2)
+        else:
+            isr = 0.0
+
         utilidad_neta = utilidad - isr
 
-        pasivos.append(("Impuesto sobre la renta por pagar", isr))
+        # Registrar impuesto como pasivo
+        if isr > 0:
+            pasivos.append(("Impuesto sobre la renta por pagar", isr))
 
+        # ------------------------------------------------------
+        # PREVIEW ESTADO DE RESULTADOS
+        # ------------------------------------------------------
         self._render_pnl_preview(
-            ingresos, gastos,
-            total_ing, total_gas,
-            utilidad, isr, utilidad_neta
+            ingresos,
+            gastos,
+            total_ing,
+            total_gas,
+            utilidad,
+            isr,
+            utilidad_neta
         )
 
+        # ------------------------------------------------------
+        # BALANCE GENERAL
+        # ------------------------------------------------------
         total_act = sum(v for _, v in activos)
         total_pas = sum(v for _, v in pasivos)
         total_pat = sum(v for _, v in patrimonio) + utilidad_neta
@@ -552,20 +622,31 @@ class PopupClosingWizard(tk.Toplevel):
         diff = round(total_act - (total_pas + total_pat), 2)
 
         self._render_bs_preview(
-            activos, pasivos, patrimonio,
+            activos,
+            pasivos,
+            patrimonio,
             utilidad_neta,
-            total_act, total_pas, total_pat,
+            total_act,
+            total_pas,
+            total_pat,
             diff
         )
 
+        # ------------------------------------------------------
+        # FLUJO DE EFECTIVO
+        # ------------------------------------------------------
         self._render_cf_preview(utilidad, rows)
 
+        # ------------------------------------------------------
+        # VALIDACIÓN FINAL
+        # ------------------------------------------------------
         if diff == 0:
             self.fs_can_post = True
             self.btn_post_fs.config(state="normal")
         else:
             self.fs_can_post = False
             self.btn_post_fs.config(state="disabled")
+
     # ==========================================================
     # RENDER – ESTADO DE RESULTADOS
     # ==========================================================
@@ -683,22 +764,53 @@ class PopupClosingWizard(tk.Toplevel):
         ttk.Separator(frame).pack(fill="x", pady=5)
         return frame
 
+    # ==========================================================
+    # Determinar período cerrable automáticamente
+    # ==========================================================
+    def _get_last_closed_period(self):
+        """
+        Devuelve el último período completamente finalizado.
+        - Si el mes actual NO ha terminado → usa mes anterior
+        - Si es el último día del mes → permite mes actual
+        - Maneja cambio de año correctamente
+        """
+
+        from calendar import monthrange
+
+        today = date.today()
+        last_day_of_month = monthrange(today.year, today.month)[1]
+
+        # Si aún no termina el mes actual → usar mes anterior
+        if today.day < last_day_of_month:
+
+            if today.month == 1:
+                return today.year - 1, 12
+            else:
+                return today.year, today.month - 1
+
+        # Si es el último día → se puede cerrar el mes actual
+        return today.year, today.month
+
+
+
     def _period_selector(self, parent):
         frm = tk.Frame(parent, bg="white")
         frm.pack(anchor="w", pady=10)
 
-        # -----------------------------
-        # Año y período AUTOMÁTICOS
-        # -----------------------------
-        self.var_year = tk.IntVar(value=date.today().year)
-        self.var_period = tk.IntVar(value=date.today().month)
+        # --------------------------------------------
+        # Determinar automáticamente período cerrable
+        # --------------------------------------------
+        year, period = self._get_last_closed_period()
+
+        self.var_year = tk.IntVar(value=year)
+        self.var_period = tk.IntVar(value=period)
 
         ttk.Label(frm, text="Año:").grid(row=0, column=0, padx=5)
         ttk.Entry(
             frm,
             textvariable=self.var_year,
             width=8,
-            state="readonly"   # 🔒 NO editable
+            state="readonly"
         ).grid(row=0, column=1)
 
         ttk.Label(frm, text="Periodo:").grid(row=0, column=2, padx=5)
@@ -706,20 +818,54 @@ class PopupClosingWizard(tk.Toplevel):
             frm,
             textvariable=self.var_period,
             width=5,
-            state="readonly"   # 🔒 NO editable
+            state="readonly"
         ).grid(row=0, column=3)
 
-        # -----------------------------
-        # Sincronizar variables internas
-        # -----------------------------
-        self.fiscal_year = self.var_year.get()
-        self.period = self.var_period.get()
+        # --------------------------------------------
+        # Sincronizar variables internas del wizard
+        # --------------------------------------------
+        self.fiscal_year = year
+        self.period = period
 
-        # -----------------------------
+        # --------------------------------------------
         # Cargar estado REAL del período
-        # -----------------------------
+        # --------------------------------------------
         if hasattr(self, "lbl_status"):
             self._load_period_status()
+
+
+    # ==========================================================
+    # VALIDACIÓN DE PERÍODO
+    # ==========================================================
+    def _validate_period(self):
+        """
+        Valida que el período seleccionado sea válido y cerrable.
+        Previene:
+        - Periodo vacío
+        - Periodo futuro
+        - Periodo inconsistente con la lógica automática
+        """
+
+        if not self.fiscal_year or not self.period:
+            raise ValueError("Año fiscal o período no definido.")
+
+        # Obtener último período realmente cerrable
+        last_year, last_period = self._get_last_closed_period()
+
+        # Si el período seleccionado es mayor al cerrable → bloquear
+        if (self.fiscal_year, self.period) > (last_year, last_period):
+            raise ValueError(
+                f"No se puede operar el período {self.period}/{self.fiscal_year}.\n"
+                f"El último período cerrable es {last_period}/{last_year}."
+            )
+
+        # Validar rango lógico
+        if self.period < 1 or self.period > 12:
+            raise ValueError("El período debe estar entre 1 y 12.")
+
+        return True
+
+
 
     def _preview_box(self, parent):
         txt = tk.Text(parent, height=18, wrap="none")

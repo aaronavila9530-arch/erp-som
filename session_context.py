@@ -1,14 +1,25 @@
 # session_context.py
 
-CURRENT_USER_ROLE = None
-CURRENT_USER = None
+_session = {
+    "usuario": None,
+    "rol": None,
+    "token": None
+}
 
 
-def set_user_context(usuario: str, rol: str):
-    global CURRENT_USER, CURRENT_USER_ROLE
-    CURRENT_USER = usuario
-    CURRENT_USER_ROLE = rol
+def set_user_context(usuario, rol, token=None):
+    _session["usuario"] = usuario
+    _session["rol"] = rol
+    _session["token"] = token
 
 
-def get_user_role():
-    return CURRENT_USER_ROLE
+def get_token():
+    return _session.get("token")
+
+
+def get_user():
+    return _session.get("usuario")
+
+
+def get_rol():
+    return _session.get("rol")

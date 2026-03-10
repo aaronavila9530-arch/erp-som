@@ -196,6 +196,12 @@ class AccountingUI(tk.Frame):
         actions_menu.add_separator()
 
         actions_menu.add_command(
+            label="Asiento manual",
+            command=self._open_manual_entry
+        )
+
+
+        actions_menu.add_command(
             label="✏️ Ajustar asiento",
             command=self._adjust_selected_entry
         )
@@ -392,12 +398,14 @@ class AccountingUI(tk.Frame):
             from api_client import (
                 post_accounting_sync_collections_api,
                 post_accounting_sync_cash_app_api,
-                post_accounting_sync_itp_api
+                post_accounting_sync_itp_api,
+                post_accounting_sync_payroll_api 
             )
 
             post_accounting_sync_collections_api()
             post_accounting_sync_cash_app_api()
             post_accounting_sync_itp_api()
+            post_accounting_sync_payroll_api() 
 
         except Exception as e:
             messagebox.showerror(
@@ -565,6 +573,32 @@ class AccountingUI(tk.Frame):
     # ============================================================
     # ACTIONS — ASIENTOS
     # ============================================================
+
+    # ============================================================
+    # ASIENTO MANUAL
+    # ============================================================
+    def _open_manual_entry(self):
+        """
+        Abre el popup para crear un asiento contable manual.
+        """
+
+        try:
+
+            from Modulos.Finanzas.sections.Accounting.popups.popup_manual_entry import PopupManualEntry
+
+            PopupManualEntry(
+                self,
+                on_success=lambda: self.event_generate("<<ReloadAccounting>>")
+            )
+
+        except Exception as e:
+
+            messagebox.showerror(
+                "Asiento manual",
+                f"Error abriendo popup:\n{str(e)}"
+            )
+
+
     def _adjust_selected_entry(self):
         """
         Abre popup de ajuste del asiento seleccionado.

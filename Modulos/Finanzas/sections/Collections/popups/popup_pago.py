@@ -197,14 +197,55 @@ class PopupPago(tk.Toplevel):
             codigo_cliente = str(self.row[0]).strip()
             nombre_cliente = str(self.row[1]).strip()
 
-            if self.saldo <= 0:
+            # ====================================================
+            # 🔥 VALIDAR SALDO REAL DESDE BACKEND (NO TREEVIEW)
+            # ====================================================
+            r = api_request(
+                "GET",
+                f"{BASE_URL}/collections/search",
+                params={
+                    "cliente": codigo_cliente,
+                    "page": 1,
+                    "page_size": 200
+                },
+                timeout=15
+            )
+            r.raise_for_status()
+
+            data = r.json().get("data", []) or []
+
+            factura_actual = next(
+                (
+                    f for f in data
+                    if str(f.get("numero_documento")).strip().lstrip("0")
+                    == numero_factura.lstrip("0")
+                ),
+                None
+            )
+
+            if not factura_actual:
+                raise ValueError("Factura no encontrada")
+
+            saldo_real = float(factura_actual.get("saldo_pendiente") or 0)
+
+            if saldo_real <= 0:
                 raise ValueError("La factura no tiene saldo pendiente")
+
+            # Actualizamos saldo interno con valor real
+            self.saldo = saldo_real
 
             # ===================== PAGO =====================
             if self.tipo.get() == "PAGO":
 
-                monto = float(self.monto.get())
-                comision = float(self.comision.get())
+                try:
+                    monto = float(self.monto.get())
+                except Exception:
+                    raise ValueError("Monto inválido")
+
+                try:
+                    comision = float(self.comision.get())
+                except Exception:
+                    comision = 0.0
 
                 if monto <= 0:
                     raise ValueError("El monto debe ser mayor a cero")
@@ -228,10 +269,14 @@ class PopupPago(tk.Toplevel):
 
             # ===================== NOTA DE CRÉDITO =====================
             else:
+
                 if not self.nc_var.get():
                     raise ValueError("Seleccione una Nota de Crédito")
 
                 idx = self.cbo_nc.current()
+                if idx < 0:
+                    raise ValueError("Nota de Crédito inválida")
+
                 nc = self.notas_credito[idx]
 
                 payload = {
@@ -243,7 +288,10 @@ class PopupPago(tk.Toplevel):
 
                 aplicar_nota_credito_api(payload)
 
-            messagebox.showinfo("OK", "Aplicación registrada correctamente")
+            messagebox.showinfo(
+                "OK",
+                "Aplicación registrada correctamente"
+            )
 
             if self.on_success:
                 self.on_success()
