@@ -29,16 +29,16 @@ class VesselCraneInspectionPresentationWordService:
         doc = Document(template_path)
 
         # -----------------------------------------------------
-        # FORMAT DATA (DATES → LONG ENGLISH)
+        # FORMAT DATES
         # -----------------------------------------------------
 
         data = self._format_dates(data)
 
         # -----------------------------------------------------
-        # REPLACE PLACEHOLDERS
+        # REPLACE PLACEHOLDERS (ROBUST)
         # -----------------------------------------------------
 
-        self._replace_all(doc, data)
+        self._replace_everywhere(doc, data)
 
         # -----------------------------------------------------
         # TEMP FILES
@@ -69,37 +69,31 @@ class VesselCraneInspectionPresentationWordService:
 
         return pdf_path
 
+
     # =========================================================
     # CONVERT DOCX → PDF
     # =========================================================
+
     def _convert_to_pdf(self, docx_path: str, output_dir: str):
 
-        try:
+        subprocess.run(
+            [
+                "soffice",
+                "--headless",
+                "--convert-to",
+                "pdf",
+                "--outdir",
+                output_dir,
+                docx_path
+            ],
+            check=True
+        )
 
-            subprocess.run(
-                [
-                    "soffice",
-                    "--headless",
-                    "--convert-to",
-                    "pdf",
-                    "--outdir",
-                    output_dir,
-                    docx_path
-                ],
-                check=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE
-            )
-
-        except Exception as e:
-
-            raise RuntimeError(
-                f"LibreOffice conversion failed: {e}"
-            )
 
     # =========================================================
     # TEMPLATE PATH
     # =========================================================
+
     def _get_template_path(self):
 
         base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -113,9 +107,11 @@ class VesselCraneInspectionPresentationWordService:
             )
         )
 
+
     # =========================================================
     # GET DATA
     # =========================================================
+
     def _get_data(self, conn, record_id):
 
         cur = conn.cursor()
@@ -138,9 +134,11 @@ class VesselCraneInspectionPresentationWordService:
 
         return dict(zip(columns, row))
 
+
     # =========================================================
-    # FORMAT DATES → LONG ENGLISH
+    # FORMAT DATES
     # =========================================================
+
     def _format_dates(self, data):
 
         formatted = {}
@@ -154,48 +152,56 @@ class VesselCraneInspectionPresentationWordService:
 
         return formatted
 
-    # =========================================================
-    # REPLACE PLACEHOLDERS
-    # =========================================================
-    def _replace_all(self, doc, data):
 
+    # =========================================================
+    # REPLACE EVERYWHERE
+    # =========================================================
+
+    def _replace_everywhere(self, doc, data):
+
+        # paragraphs
         for p in doc.paragraphs:
-            self._replace_runs(p, data)
+            self._replace_paragraph(p, data)
 
+        # tables
         for table in doc.tables:
             for row in table.rows:
                 for cell in row.cells:
                     for p in cell.paragraphs:
-                        self._replace_runs(p, data)
+                        self._replace_paragraph(p, data)
 
+        # headers / footers
         for section in doc.sections:
+
             for p in section.header.paragraphs:
-                self._replace_runs(p, data)
+                self._replace_paragraph(p, data)
+
             for p in section.footer.paragraphs:
-                self._replace_runs(p, data)
+                self._replace_paragraph(p, data)
 
 
     # =========================================================
-    # SAFE RUN REPLACEMENT
+    # PARAGRAPH SAFE REPLACEMENT
     # =========================================================
-    def _replace_runs(self, paragraph, data):
 
-        if not paragraph.runs:
-            return
+    def _replace_paragraph(self, paragraph, data):
 
-        for run in paragraph.runs:
+        full_text = "".join(run.text for run in paragraph.runs)
 
-            text = run.text
+        replaced = full_text
 
-            for key, value in data.items():
+        for key, value in data.items():
 
-                placeholder = "{{" + key + "}}"
+            placeholder = "{" + key + "}"
 
-                if placeholder in text:
+            replaced = replaced.replace(
+                placeholder,
+                "" if value is None else str(value)
+            )
 
-                    text = text.replace(
-                        placeholder,
-                        "" if value is None else str(value)
-                    )
+        if replaced != full_text:
 
-            run.text = text
+            paragraph.runs[0].text = replaced
+
+            for i in range(1, len(paragraph.runs)):
+                paragraph.runs[i].text = ""
