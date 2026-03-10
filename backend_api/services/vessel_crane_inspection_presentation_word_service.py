@@ -174,6 +174,7 @@ class VesselCraneInspectionPresentationWordService:
             for p in section.footer.paragraphs:
                 self._replace_runs(p, data)
 
+
     # =========================================================
     # SAFE RUN REPLACEMENT
     # =========================================================
