@@ -3,7 +3,8 @@ from ai.maritime_ai import (
     improve_container_text,
     improve_truck_supervision_text,
     improve_grain_sampling_text,
-    improve_cargo_condition_text
+    improve_cargo_condition_text,
+    improve_crane_inspection_text
 )
 
 router = APIRouter(
