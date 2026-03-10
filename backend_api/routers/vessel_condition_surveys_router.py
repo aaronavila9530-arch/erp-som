@@ -233,3 +233,43 @@ def get_vessel_condition_survey(report_number: str, conn=Depends(get_db)):
             status_code=500,
             detail=str(e)
         )
+
+
+
+# =========================================================
+# GET ALL
+# =========================================================
+
+@router.get("")
+def get_all_vessel_condition_surveys(conn=Depends(get_db)):
+
+    try:
+
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+
+        cur.execute("""
+            SELECT
+                id,
+                report_number,
+                vessel,
+                port,
+                country,
+                service_start_date,
+                status
+            FROM vessel_condition_surveys
+            ORDER BY id DESC
+        """)
+
+        rows = cur.fetchall() or []
+
+        return {
+            "success": True,
+            "data": rows
+        }
+
+    except Exception as e:
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
