@@ -306,6 +306,26 @@ def improve_cargo_condition_text(
     return output_text.strip()
 
 
+# =========================================================
+# CRANE INSPECTION PROMPT LOADER
+# =========================================================
+def load_crane_inspection_prompt() -> str:
+
+    base_path = os.path.dirname(__file__)
+
+    prompt_path = os.path.join(
+        base_path,
+        "maritime_crane_inspection.prompt.txt"
+    )
+
+    if not os.path.exists(prompt_path):
+        raise FileNotFoundError(
+            "Crane inspection prompt file not found."
+        )
+
+    with open(prompt_path, "r", encoding="utf-8") as f:
+        return f.read().strip()
+
 
 def improve_crane_inspection_text(
     user_text: str,
