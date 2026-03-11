@@ -48,29 +48,87 @@ def _parse_root(root) -> dict:
         raise ValueError("Documento electrónico no soportado")
 
     # --------------------------------------------------------
-    # Helpers SIN namespace
+    # Helpers robustos (ignoran namespace)
     # --------------------------------------------------------
     def get_text(tag_name, default=None):
+
         el = root.find(f".//{{*}}{tag_name}")
+
         if el is None or el.text is None:
             return default
-        return el.text.strip()
 
-    def get_float(tag_name, default=0.0):
-        try:
-            return float(get_text(tag_name))
-        except (TypeError, ValueError):
+        value = el.text.strip()
+
+        if value == "":
             return default
 
+        return value
+
+
+    def get_float(tag_name, default=0.0):
+
+        txt = get_text(tag_name)
+
+        if txt is None:
+            return default
+
+        try:
+            return float(txt)
+        except Exception:
+            return default
+
+
+    # --------------------------------------------------------
+    # Fecha
+    # --------------------------------------------------------
     fecha_raw = get_text("FechaEmision")
+
     fecha_emision = None
+
     if fecha_raw:
+
         try:
             fecha_emision = datetime.fromisoformat(
                 fecha_raw.replace("Z", "")
             ).date()
+
         except Exception:
-            fecha_emision = fecha_raw[:10]
+
+            try:
+                fecha_emision = fecha_raw[:10]
+            except Exception:
+                fecha_emision = None
+
+
+    # --------------------------------------------------------
+    # Moneda (maneja estructura Hacienda)
+    # --------------------------------------------------------
+    moneda = get_text("CodigoMoneda")
+
+    if moneda is None:
+        moneda = root.findtext(".//{*}CodigoTipoMoneda/{*}CodigoMoneda")
+
+    if moneda is None:
+        moneda = "CRC"
+
+
+    # --------------------------------------------------------
+    # Total factura
+    # --------------------------------------------------------
+    total = get_float("TotalComprobante")
+
+    if total == 0:
+
+        resumen = root.find(".//{*}ResumenFactura")
+
+        if resumen is not None:
+            try:
+                txt = resumen.findtext(".//{*}TotalComprobante")
+                if txt:
+                    total = float(txt)
+            except Exception:
+                pass
+
 
     data = {
         "tipo_documento": tipo,
@@ -78,31 +136,87 @@ def _parse_root(root) -> dict:
         "numero_documento": get_text("NumeroConsecutivo"),
         "fecha_emision": fecha_emision,
         "termino_pago": get_text("PlazoCredito") or get_text("CondicionVenta"),
-        "moneda": get_text("CodigoMoneda", "CRC"),
-        "total": get_float("TotalComprobante"),
+        "moneda": moneda,
+        "total": total,
         "detalles": []
     }
 
-    for linea in root.findall(".//{*}LineaDetalle"):
+
+    # --------------------------------------------------------
+    # LINEAS DETALLE (soporta múltiples líneas)
+    # --------------------------------------------------------
+    lineas = root.findall(".//{*}LineaDetalle")
+
+    for linea in lineas:
 
         def lt(tag, default=None):
+
             el = linea.find(f".//{{*}}{tag}")
+
             if el is None or el.text is None:
                 return default
-            return el.text.strip()
 
-        def lf(tag, default=0.0):
-            try:
-                return float(lt(tag))
-            except (TypeError, ValueError):
+            val = el.text.strip()
+
+            if val == "":
                 return default
 
+            return val
+
+
+        def lf(tag, default=0.0):
+
+            txt = lt(tag)
+
+            if txt is None:
+                return default
+
+            try:
+                return float(txt)
+            except Exception:
+                return default
+
+
+        cantidad = lf("Cantidad")
+        precio_unitario = lf("PrecioUnitario")
+
+        impuesto = lf("Monto")
+
+        total_linea = lf("MontoTotalLinea")
+
+        # ----------------------------------------------------
+        # FALLBACK si TotalLinea no viene
+        # ----------------------------------------------------
+        if total_linea == 0:
+
+            subtotal = lf("SubTotal")
+
+            if subtotal != 0:
+                total_linea = subtotal + impuesto
+
+            elif cantidad != 0 and precio_unitario != 0:
+                total_linea = cantidad * precio_unitario + impuesto
+
+
         data["detalles"].append({
+
             "descripcion": lt("Detalle", ""),
-            "cantidad": lf("Cantidad"),
-            "precio_unitario": lf("PrecioUnitario"),
-            "impuesto": lf("Monto"),
-            "total_linea": lf("MontoTotalLinea")
+            "cantidad": cantidad,
+            "precio_unitario": precio_unitario,
+            "impuesto": impuesto,
+            "total_linea": total_linea
+
         })
+
+
+    # --------------------------------------------------------
+    # Si no vino TotalComprobante lo calculamos
+    # --------------------------------------------------------
+    if data["total"] == 0 and data["detalles"]:
+
+        data["total"] = sum(
+            d.get("total_linea", 0) for d in data["detalles"]
+        )
+
 
     return data
