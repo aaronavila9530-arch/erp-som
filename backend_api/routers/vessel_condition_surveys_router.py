@@ -1,13 +1,20 @@
 from fastapi import APIRouter, Depends, HTTPException
 from psycopg2.extras import RealDictCursor
 from datetime import datetime
+from fastapi.responses import FileResponse
 
 from database import get_db
+
+from services.vessel_condition_survey_word_service import (
+    VesselConditionSurveyWordService
+)
 
 router = APIRouter(
     prefix="/vessel-condition-surveys",
     tags=["Vessel Condition Surveys"]
 )
+
+word_service = VesselConditionSurveyWordService()
 
 # =========================================================
 # HELPERS
@@ -266,6 +273,37 @@ def get_all_vessel_condition_surveys(conn=Depends(get_db)):
             "success": True,
             "data": rows
         }
+
+    except Exception as e:
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
+
+
+# =========================================================
+# GENERATE WORD REPORT
+# =========================================================
+
+@router.get("/word/{record_id}")
+def generate_vessel_condition_word(record_id: int, conn=Depends(get_db)):
+
+    try:
+
+        file_path = word_service.generate_word_by_id(conn, record_id)
+
+        if not file_path:
+            raise HTTPException(
+                status_code=404,
+                detail="Report not found"
+            )
+
+        return FileResponse(
+            file_path,
+            filename=file_path.split("\\")[-1],
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        )
 
     except Exception as e:
 
