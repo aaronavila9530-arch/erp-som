@@ -301,3 +301,45 @@ def get_port_captancy_report(report_number: str, conn=Depends(get_db)):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+
+# =========================================================
+# GET ALL - TABLE SEARCH
+# =========================================================
+
+@router.get("")
+def get_all_port_captancy_reports(conn=Depends(get_db)):
+
+    try:
+
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+
+            cur.execute(
+                f"""
+                SELECT
+                    id,
+                    report_number,
+                    vessel,
+                    port,
+                    country,
+                    arrival_date,
+                    status
+                FROM {TABLE_NAME}
+                ORDER BY id DESC
+                """
+            )
+
+            rows = cur.fetchall()
+
+            return {
+                "success": True,
+                "data": rows
+            }
+
+    except Exception as e:
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
