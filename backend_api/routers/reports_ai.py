@@ -5,7 +5,8 @@ from ai.maritime_ai import (
     improve_grain_sampling_text,
     improve_cargo_condition_text,
     improve_crane_inspection_text,
-    improve_vessel_condition_text
+    improve_vessel_condition_text,
+    improve_port_captancy_text
 )
 
 router = APIRouter(
@@ -356,4 +357,65 @@ def improve_vessel_condition(payload: dict):
         raise HTTPException(
             status_code=500,
             detail="AI vessel condition improvement failed."
+        )
+
+
+# =========================================================
+# PORT CAPTANCY AI
+# =========================================================
+@router.post("/improve/port-captancy")
+def improve_port_captancy(payload: dict):
+
+    try:
+
+        language = (payload.get("language") or "EN").upper()
+
+        if language not in ("ES","EN"):
+            language = "EN"
+
+        vessel = payload.get("vessel")
+        port = payload.get("port")
+        operation = payload.get("operation")
+        section = payload.get("section")
+
+        items = payload.get("items")
+
+        if isinstance(items, list):
+
+            improved = []
+
+            for item in items:
+
+                text = (item or "").strip()
+
+                if not text:
+                    improved.append("")
+                    continue
+
+                result = improve_port_captancy_text(
+                    user_text=text,
+                    vessel=vessel,
+                    port=port,
+                    operation=operation,
+                    section=section,
+                    language=language
+                )
+
+                improved.append(result)
+
+            return {
+                "success": True,
+                "language": language,
+                "items": improved
+            }
+
+        raise HTTPException(status_code=400, detail="Items required")
+
+    except Exception as e:
+
+        print("❌ AI PORT CAPTANCY ERROR:", repr(e))
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
         )

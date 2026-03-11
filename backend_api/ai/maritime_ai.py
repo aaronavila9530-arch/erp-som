@@ -422,3 +422,59 @@ def improve_vessel_condition_text(
 
     return output_text.strip()
 
+
+# =========================================================
+# PORT CAPTANCY AI
+# =========================================================
+def improve_port_captancy_text(
+    user_text: str,
+    vessel: Optional[str],
+    port: Optional[str],
+    operation: Optional[str],
+    section: Optional[str],
+    language: str = "EN"
+) -> str:
+
+    if not user_text or not user_text.strip():
+        raise ValueError("Input text is empty")
+
+    client = _get_openai_client()
+
+    language = (language or "EN").upper()
+
+    base_path = os.path.dirname(__file__)
+
+    prompt_path = os.path.join(
+        base_path,
+        "maritime_port_captancy.prompt.txt"
+    )
+
+    if not os.path.exists(prompt_path):
+        raise FileNotFoundError("Port captancy prompt file not found.")
+
+    with open(prompt_path, "r", encoding="utf-8") as f:
+        base_prompt = f.read().strip()
+
+    prompt = (
+        base_prompt
+        .replace("{{vessel}}", vessel or "N/A")
+        .replace("{{port}}", port or "N/A")
+        .replace("{{operation}}", operation or "Port Operation")
+        .replace("{{section}}", section or "operation_summary")
+        .replace("{{language}}", language)
+        .replace("{{user_text}}", user_text.strip())
+    )
+
+    response = client.responses.create(
+        model="gpt-4o-mini",
+        input=prompt,
+        temperature=0.15,
+        max_output_tokens=900
+    )
+
+    output_text = getattr(response, "output_text", None)
+
+    if not output_text:
+        raise RuntimeError("AI returned empty response")
+
+    return output_text.strip()
