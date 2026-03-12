@@ -9,12 +9,17 @@ from services.vessel_condition_survey_word_service import (
     VesselConditionSurveyWordService
 )
 
+from services.vessel_condition_survey_presentation_service import (
+    VesselConditionSurveyPresentationService
+)
+
 router = APIRouter(
     prefix="/vessel-condition-surveys",
     tags=["Vessel Condition Surveys"]
 )
 
 word_service = VesselConditionSurveyWordService()
+presentation_service = VesselConditionSurveyPresentationService()
 
 # =========================================================
 # HELPERS
@@ -303,6 +308,37 @@ def generate_vessel_condition_word(record_id: int, conn=Depends(get_db)):
             file_path,
             filename=file_path.split("\\")[-1],
             media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        )
+
+    except Exception as e:
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
+
+
+# =========================================================
+# GENERATE PRESENTATION PDF
+# =========================================================
+
+@router.get("/presentation/{record_id}")
+def generate_vessel_condition_presentation(record_id: int, conn=Depends(get_db)):
+
+    try:
+
+        file_path = presentation_service.generate_pdf_by_id(conn, record_id)
+
+        if not file_path:
+            raise HTTPException(
+                status_code=404,
+                detail="Presentation not generated"
+            )
+
+        return FileResponse(
+            file_path,
+            filename=file_path.split("\\")[-1],
+            media_type="application/pdf"
         )
 
     except Exception as e:
