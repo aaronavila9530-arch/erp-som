@@ -9,6 +9,10 @@ from services.port_captancy_word_service import (
     PortCaptancyWordService
 )
 
+from services.port_captancy_presentation_service import (
+    PortCaptancyPresentationService
+)
+
 
 router = APIRouter(
     prefix="/port-captancy-reports",
@@ -21,7 +25,7 @@ router = APIRouter(
 # =========================================================
 
 word_service = PortCaptancyWordService()
-
+presentation_service = PortCaptancyPresentationService()
 
 # =========================================================
 # TABLE / ALLOWED FIELDS
@@ -377,3 +381,42 @@ def generate_port_captancy_word(record_id: int, conn=Depends(get_db)):
             status_code=500,
             detail=str(e)
         )
+
+
+# =========================================================
+# GENERATE PRESENTATION PDF
+# =========================================================
+
+@router.get("/presentation/{record_id}")
+def generate_port_captancy_presentation(record_id: int, conn=Depends(get_db)):
+
+    try:
+
+        file_path = presentation_service.generate_pdf_by_id(
+            conn,
+            record_id
+        )
+
+        if not file_path:
+
+            raise HTTPException(
+                status_code=404,
+                detail="Presentation not generated"
+            )
+
+        import os
+
+        return FileResponse(
+            file_path,
+            filename=os.path.basename(file_path),
+            media_type="application/pdf"
+        )
+
+    except Exception as e:
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
+
+
