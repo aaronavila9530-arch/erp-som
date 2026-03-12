@@ -354,6 +354,47 @@ def get_all_port_captancy_reports(conn=Depends(get_db)):
             detail=str(e)
         )
 
+# =========================================================
+# GET BY ID (PARA POPUPS)
+# =========================================================
+
+@router.get("/id/{record_id}")
+def get_port_captancy_report_by_id(record_id: int, conn=Depends(get_db)):
+
+    try:
+
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+
+            cur.execute(
+                f"""
+                SELECT *
+                FROM {TABLE_NAME}
+                WHERE id = %s
+                """,
+                (record_id,)
+            )
+
+            row = cur.fetchone()
+
+            if not row:
+
+                return {
+                    "success": False,
+                    "error": "Report not found"
+                }
+
+            return {
+                "success": True,
+                "data": row
+            }
+
+    except Exception as e:
+
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
 
 # =========================================================
 # WORD EXPORT
