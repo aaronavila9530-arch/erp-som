@@ -19,39 +19,70 @@ def create_weight_certificate(payload: dict, conn=Depends(get_db)):
 
     try:
 
-        payload = payload or {}
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
 
-        payload["created_at"] = datetime.utcnow()
-        payload["updated_at"] = datetime.utcnow()
-
-        # status SIEMPRE Pending for review
-        payload["status"] = "Pending for review"
-
-        columns = []
-        values = []
-        params = []
-
-        for k, v in payload.items():
-
-            columns.append(k)
-            values.append("%s")
-            params.append(v)
-
-        query = f"""
-        INSERT INTO weight_certificates
-        ({",".join(columns)})
-        VALUES ({",".join(values)})
+        query = """
+        INSERT INTO weight_certificates (
+            report_number,
+            continent,
+            country,
+            port,
+            operation,
+            vessel,
+            voyage,
+            commodity,
+            bl_figure,
+            cargo_hold,
+            shipper,
+            consignee,
+            terminal,
+            loading_port,
+            weight_determination,
+            date,
+            quantity,
+            remarks,
+            created_at,
+            updated_at,
+            status
+        )
+        VALUES (
+            %s,%s,%s,%s,%s,
+            %s,%s,%s,%s,%s,
+            %s,%s,%s,%s,%s,
+            %s,%s,%s,
+            NOW(),NOW(),
+            'Pending for review'
+        )
         RETURNING *
         """
 
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-
-        cursor.execute(query, params)
+        cursor.execute(
+            query,
+            (
+                payload.get("report_number"),
+                payload.get("continent"),
+                payload.get("country"),
+                payload.get("port"),
+                payload.get("operation"),
+                payload.get("vessel"),
+                payload.get("voyage"),
+                payload.get("commodity"),
+                payload.get("bl_figure"),
+                payload.get("cargo_hold"),
+                payload.get("shipper"),
+                payload.get("consignee"),
+                payload.get("terminal"),
+                payload.get("loading_port"),
+                payload.get("weight_determination"),
+                payload.get("date"),
+                payload.get("quantity"),
+                payload.get("remarks"),
+            )
+        )
 
         row = cursor.fetchone()
 
         conn.commit()
-
         cursor.close()
 
         return row
