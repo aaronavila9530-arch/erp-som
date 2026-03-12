@@ -1,14 +1,26 @@
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse
 from psycopg2.extras import RealDictCursor
 from datetime import datetime
 
 from database import get_db
+
+from services.port_captancy_word_service import (
+    PortCaptancyWordService
+)
 
 
 router = APIRouter(
     prefix="/port-captancy-reports",
     tags=["Port Captancy Reports"]
 )
+
+
+# =========================================================
+# WORD SERVICE
+# =========================================================
+
+word_service = PortCaptancyWordService()
 
 
 # =========================================================
@@ -105,13 +117,11 @@ def _resolve_status_for_update(payload: dict, current_status: str | None) -> str
     if action == "reject":
         return "Rejected"
 
-    # si no vino approve/reject, mantener actual
     return current_status
 
 
 # =========================================================
 # POST - CREATE
-# SIEMPRE status = Pending for review
 # =========================================================
 
 @router.post("")
@@ -183,9 +193,7 @@ def create_port_captancy_report(payload: dict, conn=Depends(get_db)):
 
 
 # =========================================================
-# PUT - UPDATE BY REPORT NUMBER
-# Actualiza TODO el form
-# Si viene approve/reject => status Approved / Rejected
+# PUT - UPDATE
 # =========================================================
 
 @router.put("/{report_number}")
@@ -265,8 +273,7 @@ def update_port_captancy_report(report_number: str, payload: dict, conn=Depends(
 
 
 # =========================================================
-# GET - BY REPORT NUMBER
-# Devuelve TODO el registro para reconstruir el form
+# GET BY REPORT NUMBER
 # =========================================================
 
 @router.get("/{report_number}")
@@ -303,9 +310,8 @@ def get_port_captancy_report(report_number: str, conn=Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-
 # =========================================================
-# GET ALL - TABLE SEARCH
+# GET ALL
 # =========================================================
 
 @router.get("")
@@ -336,6 +342,34 @@ def get_all_port_captancy_reports(conn=Depends(get_db)):
                 "success": True,
                 "data": rows
             }
+
+    except Exception as e:
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
+
+
+# =========================================================
+# WORD EXPORT
+# =========================================================
+
+@router.get("/{record_id}/word")
+def generate_port_captancy_word(record_id: int, conn=Depends(get_db)):
+
+    try:
+
+        file_path = word_service.generate_word_by_id(
+            conn,
+            record_id
+        )
+
+        return FileResponse(
+            file_path,
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            filename="port_captancy_report.docx"
+        )
 
     except Exception as e:
 
