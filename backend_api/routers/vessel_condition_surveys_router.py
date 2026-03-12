@@ -270,14 +270,19 @@ def get_vessel_condition_survey_by_id(record_id: int, conn=Depends(get_db)):
         row = cur.fetchone()
 
         if not row:
-            raise HTTPException(
-                status_code=404,
-                detail="Report not found"
-            )
+
+            return {
+                "success": False,
+                "error": "Report not found"
+            }
 
         row = dict(row)
 
-        row = _collapse_dynamic_bullets(row)
+        try:
+            row = _collapse_dynamic_bullets(row)
+        except Exception:
+            # evita crash si faltan columnas
+            pass
 
         return {
             "success": True,
@@ -286,10 +291,10 @@ def get_vessel_condition_survey_by_id(record_id: int, conn=Depends(get_db)):
 
     except Exception as e:
 
-        raise HTTPException(
-            status_code=500,
-            detail=str(e)
-        )
+        return {
+            "success": False,
+            "error": str(e)
+        }
 
 
 # =========================================================
