@@ -366,6 +366,44 @@ def generate_vessel_condition_word(record_id: int, conn=Depends(get_db)):
             detail=str(e)
         )
 
+@router.get("/by-id/{report_id}")
+def get_vessel_condition_by_id(report_id: int, conn=Depends(get_db)):
+
+    try:
+
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+
+        cur.execute(
+            """
+            SELECT *
+            FROM vessel_condition_surveys
+            WHERE id = %s
+            """,
+            (report_id,)
+        )
+
+        row = cur.fetchone()
+
+        if not row:
+            raise HTTPException(
+                status_code=404,
+                detail="Report not found"
+            )
+
+        record = dict(row)
+
+        return {
+            "success": True,
+            "data": record
+        }
+
+    except Exception as e:
+
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
 
 # =========================================================
 # GENERATE PRESENTATION PDF
