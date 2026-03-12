@@ -4,10 +4,19 @@ from datetime import datetime
 
 from database import get_db
 
+# ================================
+# NUEVO SERVICE
+# ================================
+from services.weight_certificate_word_service import (
+    WeightCertificateWordService
+)
+
 router = APIRouter(
     prefix="/weight-certificates",
     tags=["Weight Certificates"]
 )
+
+word_service = WeightCertificateWordService()
 
 
 # =========================================================
@@ -226,3 +235,67 @@ def get_weight_certificate(record_id: int, conn=Depends(get_db)):
         )
 
     return row
+
+
+# =========================================================
+# GENERATE WORD REPORT
+# =========================================================
+
+@router.get("/{record_id}/word")
+def generate_weight_certificate_word(record_id: int, conn=Depends(get_db)):
+
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+    cursor.execute(
+        """
+        SELECT *
+        FROM weight_certificates
+        WHERE id=%s
+        """,
+        (record_id,)
+    )
+
+    data = cursor.fetchone()
+
+    cursor.close()
+
+    if not data:
+
+        raise HTTPException(
+            status_code=404,
+            detail="Record not found"
+        )
+
+    return word_service.generate_word(data)
+
+
+# =========================================================
+# GENERATE PDF REPORT
+# =========================================================
+
+@router.get("/{record_id}/pdf")
+def generate_weight_certificate_pdf(record_id: int, conn=Depends(get_db)):
+
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+    cursor.execute(
+        """
+        SELECT *
+        FROM weight_certificates
+        WHERE id=%s
+        """,
+        (record_id,)
+    )
+
+    data = cursor.fetchone()
+
+    cursor.close()
+
+    if not data:
+
+        raise HTTPException(
+            status_code=404,
+            detail="Record not found"
+        )
+
+    return word_service.generate_pdf(data)
