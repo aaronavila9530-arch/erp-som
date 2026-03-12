@@ -96,7 +96,17 @@ class PortCaptancyWordService:
             return ""
 
         if isinstance(value, (datetime, date)):
-            return value.strftime("%B %d %Y")
+            return value.strftime("%B %d, %Y")
+
+        if isinstance(value, str):
+
+            value = value.strip()
+
+            try:
+                dt = datetime.strptime(value[:10], "%Y-%m-%d")
+                return dt.strftime("%B %d, %Y")
+            except:
+                pass
 
         return str(value)
 
