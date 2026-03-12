@@ -247,6 +247,50 @@ def get_vessel_condition_survey(report_number: str, conn=Depends(get_db)):
         )
 
 
+# =========================================================
+# GET BY ID (PARA POPUPS)
+# =========================================================
+
+@router.get("/id/{record_id}")
+def get_vessel_condition_survey_by_id(record_id: int, conn=Depends(get_db)):
+
+    try:
+
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+
+        cur.execute(
+            """
+            SELECT *
+            FROM vessel_condition_surveys
+            WHERE id = %s
+            """,
+            (record_id,)
+        )
+
+        row = cur.fetchone()
+
+        if not row:
+            raise HTTPException(
+                status_code=404,
+                detail="Report not found"
+            )
+
+        row = dict(row)
+
+        row = _collapse_dynamic_bullets(row)
+
+        return {
+            "success": True,
+            "data": row
+        }
+
+    except Exception as e:
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
+
 
 # =========================================================
 # GET ALL
