@@ -118,3 +118,13 @@ class VesselHoldsInspectionExcelService:
         pdf_file = self._excel_layout_to_pdf(excel_file)
 
         return pdf_file
+
+
+    # =========================================================
+    # PUBLIC EXCEL GENERATOR
+    # =========================================================
+    def generate_excel(self, data: dict):
+
+        excel_file = self._build_excel(data)
+
+        return str(excel_file)
