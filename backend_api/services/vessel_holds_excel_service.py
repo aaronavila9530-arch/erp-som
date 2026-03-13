@@ -1,18 +1,18 @@
 import os
 from pathlib import Path
 from openpyxl import load_workbook
-import win32com.client
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
 
 
 class VesselHoldsInspectionExcelService:
 
     # =========================================================
-    # TEMPLATE PATH (RELATIVE SAFE)
+    # TEMPLATE PATH
     # =========================================================
     def _get_template_path(self):
 
         base_dir = Path(__file__).resolve().parent.parent
-
         template_path = base_dir / "templates" / "holds_inspection_certificate.xlsx"
 
         if not template_path.exists():
@@ -29,9 +29,6 @@ class VesselHoldsInspectionExcelService:
         template_path = self._get_template_path()
 
         wb = load_workbook(template_path)
-
-        if "data" not in wb.sheetnames:
-            raise Exception("Sheet 'data' not found in template.")
 
         ws = wb["data"]
 
@@ -68,43 +65,47 @@ class VesselHoldsInspectionExcelService:
         for idx, value in enumerate(ordered_values, start=1):
             ws.cell(row=idx, column=2, value=value)
 
-        excel_path = Path.cwd() / f"holds_inspection_certificate_{data.get('id')}.xlsx"
+        temp_excel = Path.cwd() / f"holds_inspection_certificate_{data.get('id')}.xlsx"
 
-        wb.save(excel_path)
+        wb.save(temp_excel)
 
-        return excel_path
+        return temp_excel
 
 
     # =========================================================
-    # EXCEL → PDF (ONLY CERTIFICATE SHEET)
+    # GENERATE PDF FROM CERTIFICATE SHEET
     # =========================================================
-    def _excel_to_pdf(self, excel_path):
+    def _excel_layout_to_pdf(self, excel_path):
+
+        wb = load_workbook(excel_path, data_only=True)
+
+        if "VESSEL HOLDS INSPECTION CERTIFI" not in wb.sheetnames:
+            raise Exception("Certificate sheet not found.")
+
+        ws = wb["VESSEL HOLDS INSPECTION CERTIFI"]
 
         pdf_path = str(excel_path).replace(".xlsx", ".pdf")
 
-        excel = win32com.client.Dispatch("Excel.Application")
-        excel.Visible = False
+        c = canvas.Canvas(pdf_path, pagesize=A4)
 
-        wb = excel.Workbooks.Open(str(excel_path))
+        y = 800
 
-        try:
+        for row in ws.iter_rows(values_only=True):
 
-            sheet = wb.Worksheets("VESSEL HOLDS INSPECTION CERTIFI")
+            line = " ".join([str(v) for v in row if v is not None])
 
-        except Exception:
-            wb.Close(False)
-            excel.Quit()
-            raise Exception("Sheet 'VESSEL HOLDS INSPECTION CERTIFI' not found.")
+            if line.strip():
+                c.drawString(50, y, line)
+                y -= 18
 
-        sheet.ExportAsFixedFormat(
-            0,  # PDF
-            pdf_path
-        )
+                if y < 50:
+                    c.showPage()
+                    y = 800
 
-        wb.Close(False)
-        excel.Quit()
+        c.save()
 
         return pdf_path
+
 
 
     # =========================================================
@@ -112,10 +113,8 @@ class VesselHoldsInspectionExcelService:
     # =========================================================
     def generate_pdf(self, data: dict):
 
-        # 1) build excel
         excel_file = self._build_excel(data)
 
-        # 2) convert to pdf (certificate sheet only)
-        pdf_file = self._excel_to_pdf(excel_file)
+        pdf_file = self._excel_layout_to_pdf(excel_file)
 
         return pdf_file
