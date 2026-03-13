@@ -312,3 +312,4 @@ def update_sealing_certificate(record_id: int, payload: Dict[str, Any]):
 
         if conn:
             conn.close()
+
