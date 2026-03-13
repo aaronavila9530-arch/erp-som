@@ -1,8 +1,11 @@
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse
 from psycopg2.extras import RealDictCursor
 from datetime import datetime
 from typing import Dict, Any
 import psycopg2
+
+from services.sealing_certificate_excel_service import SealingCertificateExcelService
 
 
 # =========================================================
@@ -13,6 +16,8 @@ router = APIRouter(
     prefix="/sealing-certificates",
     tags=["Sealing Certificates"]
 )
+
+excel_service = SealingCertificateExcelService()
 
 
 # =========================================================
@@ -304,6 +309,116 @@ def update_sealing_certificate(record_id: int, payload: Dict[str, Any]):
             conn.rollback()
 
         raise HTTPException(status_code=500, detail=str(e))
+
+    finally:
+
+        if cursor:
+            cursor.close()
+
+        if conn:
+            conn.close()
+
+
+# =========================================================
+# GENERATE EXCEL
+# =========================================================
+
+@router.get("/{record_id}/excel")
+def generate_sealing_excel(record_id: int):
+
+    conn = None
+    cursor = None
+
+    try:
+
+        conn = get_conn()
+
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        cursor.execute("""
+            SELECT *
+            FROM sealing_certificates
+            WHERE id = %s
+        """, (record_id,))
+
+        row = cursor.fetchone()
+
+        if not row:
+
+            raise HTTPException(
+                status_code=404,
+                detail="Record not found"
+            )
+
+        file_path = excel_service.generate_excel(row)
+
+        return FileResponse(
+            path=file_path,
+            filename=f"sealing_certificate_{record_id}.xlsx",
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
+    except Exception as e:
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
+
+    finally:
+
+        if cursor:
+            cursor.close()
+
+        if conn:
+            conn.close()
+
+
+# =========================================================
+# GENERATE PDF
+# =========================================================
+
+@router.get("/{record_id}/pdf")
+def generate_sealing_pdf(record_id: int):
+
+    conn = None
+    cursor = None
+
+    try:
+
+        conn = get_conn()
+
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        cursor.execute("""
+            SELECT *
+            FROM sealing_certificates
+            WHERE id = %s
+        """, (record_id,))
+
+        row = cursor.fetchone()
+
+        if not row:
+
+            raise HTTPException(
+                status_code=404,
+                detail="Record not found"
+            )
+
+        file_path = excel_service.generate_pdf(row)
+
+        return FileResponse(
+            path=file_path,
+            filename=f"sealing_certificate_{record_id}.pdf",
+            media_type="application/pdf"
+        )
+
+    except Exception as e:
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
 
     finally:
 
