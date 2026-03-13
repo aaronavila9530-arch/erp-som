@@ -11,6 +11,31 @@ router = APIRouter(
 
 
 # =========================================================
+# HELPER → MAP HOLDS
+# =========================================================
+
+def normalize_payload(payload: dict):
+
+    payload = payload or {}
+
+    # Convertir holds[] a columnas
+    holds = payload.pop("holds", None)
+
+    if holds and isinstance(holds, list):
+
+        for h in holds:
+
+            hold_num = h.get("hold")
+            seal = h.get("seal")
+
+            if hold_num and 1 <= hold_num <= 10:
+
+                payload[f"hold_{hold_num}_seal"] = seal
+
+    return payload
+
+
+# =========================================================
 # CREATE
 # =========================================================
 
@@ -19,12 +44,10 @@ def create_sampling_certificate(payload: dict, conn=Depends(get_db)):
 
     try:
 
-        payload = payload or {}
+        payload = normalize_payload(payload)
 
         payload["created_at"] = datetime.utcnow()
         payload["updated_at"] = datetime.utcnow()
-
-        # STATUS DEFAULT
         payload["status"] = "Pending for review"
 
         columns = []
@@ -47,7 +70,6 @@ def create_sampling_certificate(payload: dict, conn=Depends(get_db)):
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
 
             cur.execute(query, params)
-
             record = cur.fetchone()
 
         conn.commit()
@@ -71,7 +93,7 @@ def update_sampling_certificate(record_id: int, payload: dict, conn=Depends(get_
 
     try:
 
-        payload = payload or {}
+        payload = normalize_payload(payload)
 
         payload["updated_at"] = datetime.utcnow()
 
