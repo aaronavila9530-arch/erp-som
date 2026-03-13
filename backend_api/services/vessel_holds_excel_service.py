@@ -1,29 +1,41 @@
 import os
+from pathlib import Path
 from openpyxl import load_workbook
+from reportlab.pdfgen import canvas
 
 
 class VesselHoldsInspectionExcelService:
 
-    TEMPLATE_PATH = r"C:\Users\Aaron Avila\Documents\ERP-SOM\backend_api\templates\holds_inspection_certificate.xlsx"
+    # =========================================================
+    # TEMPLATE PATH (RELATIVE SAFE)
+    # =========================================================
+
+    def _get_template_path(self):
+
+        base_dir = Path(__file__).resolve().parent.parent
+
+        template_path = base_dir / "templates" / "holds_inspection_certificate.xlsx"
+
+        if not template_path.exists():
+            raise Exception("Excel template not found.")
+
+        return template_path
+
 
     # =========================================================
     # GENERATE EXCEL
     # =========================================================
+
     def generate_excel(self, data: dict):
 
-        if not os.path.exists(self.TEMPLATE_PATH):
-            raise Exception("Excel template not found.")
+        template_path = self._get_template_path()
 
-        wb = load_workbook(self.TEMPLATE_PATH)
+        wb = load_workbook(template_path)
 
         if "data" not in wb.sheetnames:
             raise Exception("Sheet 'data' not found in template.")
 
         ws = wb["data"]
-
-        # =====================================================
-        # ORDER (COLUMN A)
-        # =====================================================
 
         ordered_values = [
 
@@ -55,23 +67,43 @@ class VesselHoldsInspectionExcelService:
 
         ]
 
-        # =====================================================
-        # WRITE COLUMN B (FROM B1 DOWN)
-        # =====================================================
-
         for idx, value in enumerate(ordered_values, start=1):
 
             ws.cell(row=idx, column=2, value=value)
 
-        # =====================================================
-        # SAVE TEMP FILE
-        # =====================================================
-
-        output_path = os.path.join(
-            os.getcwd(),
-            f"holds_inspection_certificate_{data.get('id')}.xlsx"
-        )
+        output_path = Path.cwd() / f"holds_inspection_certificate_{data.get('id')}.xlsx"
 
         wb.save(output_path)
 
-        return output_path
+        return str(output_path)
+
+
+    # =========================================================
+    # GENERATE PDF (FROM DATA)
+    # =========================================================
+
+    def generate_pdf(self, data: dict):
+
+        pdf_path = Path.cwd() / f"holds_inspection_certificate_{data.get('id')}.pdf"
+
+        c = canvas.Canvas(str(pdf_path))
+
+        y = 800
+
+        c.setFont("Helvetica", 11)
+
+        for key, value in data.items():
+
+            line = f"{key}: {value}"
+
+            c.drawString(50, y, line)
+
+            y -= 20
+
+            if y < 50:
+                c.showPage()
+                y = 800
+
+        c.save()
+
+        return str(pdf_path)
