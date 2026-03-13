@@ -22,7 +22,10 @@ DATABASE_URL = "postgresql://postgres:IrPzbLzKJFQtUnMlBKcHLHcLIAqagHCT@tramway.p
 
 
 def get_conn():
-    return psycopg2.connect(DATABASE_URL)
+    try:
+        return psycopg2.connect(DATABASE_URL)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database connection error: {str(e)}")
 
 
 # =========================================================
@@ -31,6 +34,9 @@ def get_conn():
 
 @router.get("/")
 def get_all_sealing_certificates():
+
+    conn = None
+    cursor = None
 
     try:
 
@@ -45,17 +51,22 @@ def get_all_sealing_certificates():
 
         rows = cursor.fetchall()
 
-        cursor.close()
-        conn.close()
+        if rows is None:
+            rows = []
 
         return rows
 
     except Exception as e:
 
-        raise HTTPException(
-            status_code=500,
-            detail=str(e)
-        )
+        raise HTTPException(status_code=500, detail=str(e))
+
+    finally:
+
+        if cursor:
+            cursor.close()
+
+        if conn:
+            conn.close()
 
 
 # =========================================================
@@ -64,6 +75,9 @@ def get_all_sealing_certificates():
 
 @router.get("/{record_id}")
 def get_sealing_certificate(record_id: int):
+
+    conn = None
+    cursor = None
 
     try:
 
@@ -78,9 +92,6 @@ def get_sealing_certificate(record_id: int):
 
         row = cursor.fetchone()
 
-        cursor.close()
-        conn.close()
-
         if not row:
             raise HTTPException(
                 status_code=404,
@@ -89,12 +100,20 @@ def get_sealing_certificate(record_id: int):
 
         return row
 
+    except HTTPException:
+        raise
+
     except Exception as e:
 
-        raise HTTPException(
-            status_code=500,
-            detail=str(e)
-        )
+        raise HTTPException(status_code=500, detail=str(e))
+
+    finally:
+
+        if cursor:
+            cursor.close()
+
+        if conn:
+            conn.close()
 
 
 # =========================================================
@@ -104,7 +123,16 @@ def get_sealing_certificate(record_id: int):
 @router.post("/")
 def create_sealing_certificate(payload: Dict[str, Any]):
 
+    conn = None
+    cursor = None
+
     try:
+
+        if not isinstance(payload, dict):
+            raise HTTPException(
+                status_code=400,
+                detail="Payload must be a dictionary"
+            )
 
         conn = get_conn()
         cursor = conn.cursor()
@@ -206,20 +234,28 @@ def create_sealing_certificate(payload: Dict[str, Any]):
 
         conn.commit()
 
-        cursor.close()
-        conn.close()
-
         return {
             "message": "Sealing Certificate created",
-            "id": new_id
+            "id": int(new_id)
         }
+
+    except HTTPException:
+        raise
 
     except Exception as e:
 
-        raise HTTPException(
-            status_code=500,
-            detail=str(e)
-        )
+        if conn:
+            conn.rollback()
+
+        raise HTTPException(status_code=500, detail=str(e))
+
+    finally:
+
+        if cursor:
+            cursor.close()
+
+        if conn:
+            conn.close()
 
 
 # =========================================================
@@ -229,7 +265,16 @@ def create_sealing_certificate(payload: Dict[str, Any]):
 @router.put("/{record_id}")
 def update_sealing_certificate(record_id: int, payload: Dict[str, Any]):
 
+    conn = None
+    cursor = None
+
     try:
+
+        if not isinstance(payload, dict):
+            raise HTTPException(
+                status_code=400,
+                detail="Payload must be a dictionary"
+            )
 
         status_action = payload.get("status")
 
@@ -240,6 +285,9 @@ def update_sealing_certificate(record_id: int, payload: Dict[str, Any]):
 
         elif status_action == "Reject":
             new_status = "Rejected"
+
+        payload["status"] = new_status
+        payload["id"] = record_id
 
         conn = get_conn()
         cursor = conn.cursor()
@@ -287,24 +335,33 @@ def update_sealing_certificate(record_id: int, payload: Dict[str, Any]):
                 closing_date = %(closing_date)s,
                 closing_time = %(closing_time)s,
 
-                status = %s
+                status = %(status)s
 
-            WHERE id = %s
-        """, (*payload.values(), new_status, record_id))
+            WHERE id = %(id)s
+        """, payload)
 
         conn.commit()
 
-        cursor.close()
-        conn.close()
-
         return {
             "message": "Sealing Certificate updated",
-            "status": new_status
+            "status": new_status,
+            "id": record_id
         }
+
+    except HTTPException:
+        raise
 
     except Exception as e:
 
-        raise HTTPException(
-            status_code=500,
-            detail=str(e)
-        )
+        if conn:
+            conn.rollback()
+
+        raise HTTPException(status_code=500, detail=str(e))
+
+    finally:
+
+        if cursor:
+            cursor.close()
+
+        if conn:
+            conn.close()
