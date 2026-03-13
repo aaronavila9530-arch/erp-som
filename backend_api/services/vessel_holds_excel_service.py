@@ -1,8 +1,8 @@
 import os
+import tempfile
+import subprocess
 from pathlib import Path
 from openpyxl import load_workbook
-from reportlab.lib.pagesizes import A4
-from reportlab.pdfgen import canvas
 
 
 class VesselHoldsInspectionExcelService:
@@ -13,118 +13,157 @@ class VesselHoldsInspectionExcelService:
     def _get_template_path(self):
 
         base_dir = Path(__file__).resolve().parent.parent
+
         template_path = base_dir / "templates" / "holds_inspection_certificate.xlsx"
 
         if not template_path.exists():
-            raise Exception("Excel template not found.")
+            raise FileNotFoundError(
+                f"Excel template not found: {template_path}"
+            )
 
         return template_path
 
 
     # =========================================================
-    # BUILD EXCEL (INSERT DATA)
+    # BUILD EXCEL (INSERT DATA FROM DB)
     # =========================================================
-    def _build_excel(self, data: dict):
+    def _build_excel(self, data: dict) -> str:
 
         template_path = self._get_template_path()
 
         wb = load_workbook(template_path)
 
-        ws = wb["data"]
+        try:
 
-        ordered_values = [
+            if "data" not in wb.sheetnames:
+                raise Exception("Sheet 'data' not found in template")
 
-            data.get("id"),
-            data.get("report_number"),
-            data.get("port"),
-            data.get("country"),
-            data.get("vessel"),
-            data.get("voyage"),
-            data.get("load_port"),
-            data.get("place"),
-            data.get("installation"),
-            data.get("product"),
-            data.get("date"),
-            data.get("inspection_time"),
-            data.get("vessel_holds"),
-            data.get("vessel_holds_status"),
-            data.get("cargo_holds"),
-            data.get("accepted_time"),
-            data.get("place_location"),
-            data.get("place_date"),
-            data.get("hose_test_start"),
-            data.get("hose_test_end"),
-            data.get("remarks"),
-            data.get("created_at"),
-            data.get("updated_at"),
-            data.get("status"),
-            data.get("master_chief_officer")
+            ws = wb["data"]
 
+            ordered_values = [
+
+                data.get("id"),
+                data.get("report_number"),
+                data.get("port"),
+                data.get("country"),
+                data.get("vessel"),
+                data.get("voyage"),
+                data.get("load_port"),
+                data.get("place"),
+                data.get("installation"),
+                data.get("product"),
+                data.get("date"),
+                data.get("inspection_time"),
+                data.get("vessel_holds"),
+                data.get("vessel_holds_status"),
+                data.get("cargo_holds"),
+                data.get("accepted_time"),
+                data.get("place_location"),
+                data.get("place_date"),
+                data.get("hose_test_start"),
+                data.get("hose_test_end"),
+                data.get("remarks"),
+                data.get("created_at"),
+                data.get("updated_at"),
+                data.get("status"),
+                data.get("master_chief_officer")
+
+            ]
+
+            for idx, value in enumerate(ordered_values, start=1):
+
+                ws.cell(row=idx, column=2, value=value)
+
+            tmp_dir = tempfile.mkdtemp(prefix="holds_excel_")
+
+            excel_path = os.path.join(
+                tmp_dir,
+                f"holds_inspection_certificate_{data.get('id')}.xlsx"
+            )
+
+            wb.save(excel_path)
+
+            return excel_path
+
+        finally:
+            wb.close()
+
+
+    # =========================================================
+    # CONVERT EXCEL → PDF (LibreOffice)
+    # =========================================================
+    def _convert_excel_to_pdf(self, excel_path: str) -> str:
+
+        if not excel_path or not os.path.exists(excel_path):
+            raise FileNotFoundError("Excel file not found for PDF conversion")
+
+        output_dir = tempfile.mkdtemp(prefix="holds_pdf_")
+
+        command = [
+            "soffice",
+            "--headless",
+            "--nologo",
+            "--nodefault",
+            "--nolockcheck",
+            "--nofirststartwizard",
+            "--norestore",
+            "--convert-to",
+            "pdf",
+            excel_path,
+            "--outdir",
+            output_dir
         ]
 
-        for idx, value in enumerate(ordered_values, start=1):
-            ws.cell(row=idx, column=2, value=value)
+        result = subprocess.run(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
 
-        temp_excel = Path.cwd() / f"holds_inspection_certificate_{data.get('id')}.xlsx"
+        if result.returncode != 0:
 
-        wb.save(temp_excel)
+            raise RuntimeError(
+                f"LibreOffice conversion failed:\n{result.stderr or result.stdout}"
+            )
 
-        return temp_excel
+        pdf_files = list(Path(output_dir).glob("*.pdf"))
+
+        if not pdf_files:
+            raise RuntimeError("PDF file was not generated")
+
+        return str(pdf_files[0])
 
 
     # =========================================================
-    # GENERATE PDF FROM CERTIFICATE SHEET
+    # PUBLIC — GENERATE PDF
     # =========================================================
-    def _excel_layout_to_pdf(self, excel_path):
+    def generate_pdf(self, data: dict) -> str:
 
-        wb = load_workbook(excel_path, data_only=True)
+        if not isinstance(data, dict):
+            raise ValueError("Invalid payload for PDF generation")
 
-        if "VESSEL HOLDS INSPECTION CERTIFI" not in wb.sheetnames:
-            raise Exception("Certificate sheet not found.")
+        excel_path = self._build_excel(data)
 
-        ws = wb["VESSEL HOLDS INSPECTION CERTIFI"]
+        pdf_path = self._convert_excel_to_pdf(excel_path)
 
-        pdf_path = str(excel_path).replace(".xlsx", ".pdf")
-
-        c = canvas.Canvas(pdf_path, pagesize=A4)
-
-        y = 800
-
-        for row in ws.iter_rows(values_only=True):
-
-            line = " ".join([str(v) for v in row if v is not None])
-
-            if line.strip():
-                c.drawString(50, y, line)
-                y -= 18
-
-                if y < 50:
-                    c.showPage()
-                    y = 800
-
-        c.save()
+        if not pdf_path or not os.path.exists(pdf_path):
+            raise RuntimeError("PDF generation failed")
 
         return pdf_path
 
 
-
     # =========================================================
-    # PUBLIC METHOD
+    # PUBLIC — GENERATE EXCEL
     # =========================================================
-    def generate_pdf(self, data: dict):
+    def generate_excel(self, data: dict) -> str:
 
-        excel_file = self._build_excel(data)
+        if not isinstance(data, dict):
+            raise ValueError("Invalid payload for Excel generation")
 
-        pdf_file = self._excel_layout_to_pdf(excel_file)
+        excel_path = self._build_excel(data)
 
-        return pdf_file
+        if not excel_path or not os.path.exists(excel_path):
+            raise RuntimeError("Excel generation failed")
 
-
-    # =========================================================
-    # PUBLIC EXCEL GENERATOR
-    # =========================================================
-    def generate_excel(self, data: dict):
-
-        excel_file = self._build_excel(data)
-
-        return str(excel_file)
+        return excel_path
