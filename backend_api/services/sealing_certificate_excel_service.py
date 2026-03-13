@@ -1,86 +1,221 @@
-# =========================================================
-# GENERATE EXCEL
-# =========================================================
+import os
+import tempfile
+import subprocess
+from pathlib import Path
+from openpyxl import load_workbook
 
-@router.get("/{record_id}/excel")
-def generate_sampling_excel(record_id: int, conn=Depends(get_db)):
 
-    try:
+class SealingCertificateExcelService:
 
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+    # =========================================================
+    # TEMPLATE PATH
+    # =========================================================
+    def _get_template_path(self):
 
-            cur.execute("""
+        base_dir = Path(__file__).resolve().parent.parent
 
-                SELECT *
-                FROM sampling_certificates
-                WHERE id=%s
+        template_path = base_dir / "templates" / "sealing_certificate_template.xlsx"
 
-            """, (record_id,))
-
-            row = cur.fetchone()
-
-        if not row:
-
-            raise HTTPException(
-                status_code=404,
-                detail="Record not found"
+        if not template_path.exists():
+            raise FileNotFoundError(
+                f"Excel template not found: {template_path}"
             )
 
-        file_path = excel_service.generate_excel(row)
-
-        return FileResponse(
-            path=file_path,
-            filename=f"sampling_certificate_{record_id}.xlsx",
-            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-
-    except Exception as e:
-
-        raise HTTPException(
-            status_code=500,
-            detail=str(e)
-        )
+        return template_path
 
 
-# =========================================================
-# GENERATE PDF
-# =========================================================
+    # =========================================================
+    # BUILD EXCEL (INSERT DATA FROM DB)
+    # =========================================================
+    def _build_excel(self, data: dict) -> str:
 
-@router.get("/{record_id}/pdf")
-def generate_sampling_pdf(record_id: int, conn=Depends(get_db)):
+        template_path = self._get_template_path()
 
-    try:
+        wb = load_workbook(template_path)
 
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        try:
 
-            cur.execute("""
+            if "data" not in wb.sheetnames:
+                raise Exception("Sheet 'data' not found in template")
 
-                SELECT *
-                FROM sampling_certificates
-                WHERE id=%s
+            ws = wb["data"]
 
-            """, (record_id,))
+            ordered_values = [
 
-            row = cur.fetchone()
+                data.get("id"),
+                data.get("report_no"),
+                data.get("port"),
+                data.get("country"),
+                data.get("customer"),
+                data.get("certificate_no"),
+                data.get("vessel"),
+                data.get("date"),
+                data.get("location"),
+                data.get("cargo"),
 
-        if not row:
+                data.get("hold_1_fwd_escape"),
+                data.get("hold_1_fwd_aft_hatch"),
+                data.get("hold_1_aft_escape"),
 
-            raise HTTPException(
-                status_code=404,
-                detail="Record not found"
+                data.get("hold_2_fwd_escape"),
+                data.get("hold_2_fwd_aft_hatch"),
+                data.get("hold_2_aft_escape"),
+
+                data.get("hold_3_fwd_escape"),
+                data.get("hold_3_fwd_aft_hatch"),
+                data.get("hold_3_aft_escape"),
+
+                data.get("hold_4_fwd_escape"),
+                data.get("hold_4_fwd_aft_hatch"),
+                data.get("hold_4_aft_escape"),
+
+                data.get("hold_5_fwd_escape"),
+                data.get("hold_5_fwd_aft_hatch"),
+                data.get("hold_5_aft_escape"),
+
+                data.get("hold_6_fwd_escape"),
+                data.get("hold_6_fwd_aft_hatch"),
+                data.get("hold_6_aft_escape"),
+
+                data.get("remarks"),
+                data.get("chief_officer"),
+                data.get("closing_date"),
+                data.get("closing_time"),
+                data.get("created_at"),
+                data.get("status")
+
+            ]
+
+            # B1 hacia abajo
+            for idx, value in enumerate(ordered_values, start=1):
+
+                ws.cell(row=idx, column=2, value=value)
+
+            tmp_dir = tempfile.mkdtemp(prefix="sealing_excel_")
+
+            excel_path = os.path.join(
+                tmp_dir,
+                f"sealing_certificate_{data.get('id')}.xlsx"
             )
 
-        file_path = excel_service.generate_pdf(row)
+            wb.save(excel_path)
 
-        return FileResponse(
-            path=file_path,
-            filename=f"sampling_certificate_{record_id}.pdf",
-            media_type="application/pdf"
+            return excel_path
+
+        finally:
+            wb.close()
+
+
+    # =========================================================
+    # CONVERT EXCEL → PDF (LibreOffice)
+    # =========================================================
+    def _convert_excel_to_pdf(self, excel_path: str) -> str:
+
+        if not excel_path or not os.path.exists(excel_path):
+            raise FileNotFoundError("Excel file not found for PDF conversion")
+
+        output_dir = tempfile.mkdtemp(prefix="sealing_pdf_")
+
+        command = [
+            "soffice",
+            "--headless",
+            "--nologo",
+            "--nodefault",
+            "--nolockcheck",
+            "--nofirststartwizard",
+            "--norestore",
+            "--convert-to",
+            "pdf",
+            excel_path,
+            "--outdir",
+            output_dir
+        ]
+
+        result = subprocess.run(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
         )
 
-    except Exception as e:
+        if result.returncode != 0:
 
-        raise HTTPException(
-            status_code=500,
-            detail=str(e)
-        )
+            raise RuntimeError(
+                f"LibreOffice conversion failed:\n{result.stderr or result.stdout}"
+            )
+
+        pdf_files = list(Path(output_dir).glob("*.pdf"))
+
+        if not pdf_files:
+            raise RuntimeError("PDF file was not generated")
+
+        return str(pdf_files[0])
+
+
+    # =========================================================
+    # PUBLIC — GENERATE EXCEL
+    # =========================================================
+    def generate_excel(self, data: dict) -> str:
+
+        if not isinstance(data, dict):
+            raise ValueError("Invalid payload for Excel generation")
+
+        excel_path = self._build_excel(data)
+
+        if not excel_path or not os.path.exists(excel_path):
+            raise RuntimeError("Excel generation failed")
+
+        return excel_path
+
+
+    # =========================================================
+    # PUBLIC — GENERATE PDF
+    # =========================================================
+    def generate_pdf(self, data: dict) -> str:
+
+        if not isinstance(data, dict):
+            raise ValueError("Invalid payload for PDF generation")
+
+        excel_path = self._build_excel(data)
+
+        # preparar impresión
+        self._prepare_print(excel_path)
+
+        pdf_path = self._convert_excel_to_pdf(excel_path)
+
+        if not pdf_path or not os.path.exists(pdf_path):
+            raise RuntimeError("PDF generation failed")
+
+        return pdf_path
+
+
+    # =========================================================
+    # PREPARE PRINT (ONLY SEALING CERTIFICATE SHEET)
+    # =========================================================
+    def _prepare_print(self, excel_path: str):
+
+        wb = load_workbook(excel_path)
+
+        try:
+
+            if "SEALING CERTIFICATE" not in wb.sheetnames:
+                raise Exception("Sheet 'SEALING CERTIFICATE' not found")
+
+            for ws in wb.worksheets:
+
+                if ws.title == "SEALING CERTIFICATE":
+
+                    ws.sheet_state = "visible"
+                    wb.active = wb.index(ws)
+
+                    ws.print_area = "A1:K60"
+
+                else:
+                    ws.sheet_state = "hidden"
+
+            wb.calculation.fullCalcOnLoad = True
+
+            wb.save(excel_path)
+
+        finally:
+            wb.close()
