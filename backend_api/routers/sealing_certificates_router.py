@@ -117,146 +117,54 @@ def get_sealing_certificate(record_id: int):
 
 
 # =========================================================
-# POST
+# CREATE
 # =========================================================
 
-@router.post("/")
-def create_sealing_certificate(payload: Dict[str, Any]):
-
-    conn = None
-    cursor = None
+@router.post("")
+def create_sealing_certificate(payload: dict, conn=Depends(get_db)):
 
     try:
 
-        if not isinstance(payload, dict):
-            raise HTTPException(
-                status_code=400,
-                detail="Payload must be a dictionary"
-            )
+        payload = payload or {}
 
-        conn = get_conn()
-        cursor = conn.cursor()
+        payload["created_at"] = datetime.utcnow()
+        payload["status"] = "Pending for review"
 
-        cursor.execute("""
-            INSERT INTO sealing_certificates (
+        columns = []
+        values = []
+        params = []
 
-                report_no,
-                port,
-                country,
-                customer,
+        for k, v in payload.items():
 
-                certificate_no,
-                vessel,
-                date,
-                location,
-                cargo,
+            columns.append(k)
+            values.append("%s")
+            params.append(v)
 
-                hold_1_fwd_escape,
-                hold_1_fwd_aft_hatch,
-                hold_1_aft_escape,
-
-                hold_2_fwd_escape,
-                hold_2_fwd_aft_hatch,
-                hold_2_aft_escape,
-
-                hold_3_fwd_escape,
-                hold_3_fwd_aft_hatch,
-                hold_3_aft_escape,
-
-                hold_4_fwd_escape,
-                hold_4_fwd_aft_hatch,
-                hold_4_aft_escape,
-
-                hold_5_fwd_escape,
-                hold_5_fwd_aft_hatch,
-                hold_5_aft_escape,
-
-                hold_6_fwd_escape,
-                hold_6_fwd_aft_hatch,
-                hold_6_aft_escape,
-
-                remarks,
-                chief_officer,
-                closing_date,
-                closing_time,
-
-                status
-
-            ) VALUES (
-
-                %(report_no)s,
-                %(port)s,
-                %(country)s,
-                %(customer)s,
-
-                %(certificate_no)s,
-                %(vessel)s,
-                %(date)s,
-                %(location)s,
-                %(cargo)s,
-
-                %(hold_1_fwd_escape)s,
-                %(hold_1_fwd_aft_hatch)s,
-                %(hold_1_aft_escape)s,
-
-                %(hold_2_fwd_escape)s,
-                %(hold_2_fwd_aft_hatch)s,
-                %(hold_2_aft_escape)s,
-
-                %(hold_3_fwd_escape)s,
-                %(hold_3_fwd_aft_hatch)s,
-                %(hold_3_aft_escape)s,
-
-                %(hold_4_fwd_escape)s,
-                %(hold_4_fwd_aft_hatch)s,
-                %(hold_4_aft_escape)s,
-
-                %(hold_5_fwd_escape)s,
-                %(hold_5_fwd_aft_hatch)s,
-                %(hold_5_aft_escape)s,
-
-                %(hold_6_fwd_escape)s,
-                %(hold_6_fwd_aft_hatch)s,
-                %(hold_6_aft_escape)s,
-
-                %(remarks)s,
-                %(chief_officer)s,
-                %(closing_date)s,
-                %(closing_time)s,
-
-                'Pending for review'
-
-            )
+        query = f"""
+            INSERT INTO sealing_certificates
+            ({",".join(columns)})
+            VALUES ({",".join(values)})
             RETURNING id
-        """, payload)
+        """
 
-        new_id = cursor.fetchone()[0]
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+
+            cur.execute(query, params)
+
+            record = cur.fetchone()
 
         conn.commit()
 
-        return {
-            "message": "Sealing Certificate created",
-            "id": int(new_id)
-        }
-
-    except HTTPException:
-        raise
+        return record
 
     except Exception as e:
 
-        if conn:
-            conn.rollback()
+        conn.rollback()
 
-        raise HTTPException(status_code=500, detail=str(e))
-
-    finally:
-
-        if cursor:
-            cursor.close()
-
-        if conn:
-            conn.close()
-
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
 
 # =========================================================
 # PUT
