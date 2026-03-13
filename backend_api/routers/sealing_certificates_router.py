@@ -1,8 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
 from psycopg2.extras import RealDictCursor
 from datetime import datetime
-
-from database import get_db
+from typing import Dict, Any
+import psycopg2
 
 
 # =========================================================
@@ -23,17 +23,22 @@ DATABASE_URL = "postgresql://postgres:IrPzbLzKJFQtUnMlBKcHLHcLIAqagHCT@tramway.p
 
 
 def get_conn():
+
     try:
         return psycopg2.connect(DATABASE_URL)
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Database connection error: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Database connection error: {str(e)}"
+        )
 
 
 # =========================================================
 # GET ALL
 # =========================================================
 
-@router.get("/")
+@router.get("")
 def get_all_sealing_certificates():
 
     conn = None
@@ -42,7 +47,8 @@ def get_all_sealing_certificates():
     try:
 
         conn = get_conn()
-        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
 
         cursor.execute("""
             SELECT *
@@ -52,10 +58,7 @@ def get_all_sealing_certificates():
 
         rows = cursor.fetchall()
 
-        if rows is None:
-            rows = []
-
-        return rows
+        return rows or []
 
     except Exception as e:
 
@@ -83,7 +86,8 @@ def get_sealing_certificate(record_id: int):
     try:
 
         conn = get_conn()
-        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
 
         cursor.execute("""
             SELECT *
@@ -94,6 +98,7 @@ def get_sealing_certificate(record_id: int):
         row = cursor.fetchone()
 
         if not row:
+
             raise HTTPException(
                 status_code=404,
                 detail="Sealing Certificate not found"
@@ -122,11 +127,21 @@ def get_sealing_certificate(record_id: int):
 # =========================================================
 
 @router.post("")
-def create_sealing_certificate(payload: dict, conn=Depends(get_db)):
+def create_sealing_certificate(payload: Dict[str, Any]):
+
+    conn = None
+    cursor = None
 
     try:
 
-        payload = payload or {}
+        if not isinstance(payload, dict):
+
+            raise HTTPException(
+                status_code=400,
+                detail="Payload must be a dictionary"
+            )
+
+        payload = payload.copy()
 
         payload["created_at"] = datetime.utcnow()
         payload["status"] = "Pending for review"
@@ -148,29 +163,46 @@ def create_sealing_certificate(payload: dict, conn=Depends(get_db)):
             RETURNING id
         """
 
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        conn = get_conn()
 
-            cur.execute(query, params)
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
 
-            record = cur.fetchone()
+        cursor.execute(query, params)
+
+        record = cursor.fetchone()
 
         conn.commit()
 
+        if not record:
+
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to create sealing certificate"
+            )
+
         return record
+
+    except HTTPException:
+        raise
 
     except Exception as e:
 
-        conn.rollback()
+        if conn:
+            conn.rollback()
 
-        raise HTTPException(
-            status_code=500,
-            detail=str(e)
-        )
+        raise HTTPException(status_code=500, detail=str(e))
 
+    finally:
+
+        if cursor:
+            cursor.close()
+
+        if conn:
+            conn.close()
 
 
 # =========================================================
-# PUT
+# UPDATE
 # =========================================================
 
 @router.put("/{record_id}")
@@ -182,6 +214,7 @@ def update_sealing_certificate(record_id: int, payload: Dict[str, Any]):
     try:
 
         if not isinstance(payload, dict):
+
             raise HTTPException(
                 status_code=400,
                 detail="Payload must be a dictionary"
@@ -192,15 +225,18 @@ def update_sealing_certificate(record_id: int, payload: Dict[str, Any]):
         new_status = "Pending for review"
 
         if status_action == "Approve":
+
             new_status = "Approved"
 
         elif status_action == "Reject":
+
             new_status = "Rejected"
 
         payload["status"] = new_status
         payload["id"] = record_id
 
         conn = get_conn()
+
         cursor = conn.cursor()
 
         cursor.execute("""
