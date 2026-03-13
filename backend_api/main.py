@@ -84,6 +84,7 @@ from routers.weight_certificates_router import router as weight_certificates_rou
 from routers.vessel_holds_inspection_certificates_router import router as vessel_holds_inspection_certificates_router
 from routers.sampling_certificates_router import router as sampling_certificates_router
 from routers.sealing_certificates_router import router as sealing_certificates_router
+from routers.lashing_certificates_router import router as lashing_certificates_router
 
 # Comercial
 from routers.comercial import router as comercial_router
@@ -249,6 +250,7 @@ app.include_router(
 )
 app.include_router(sampling_certificates_router)
 app.include_router(sealing_certificates_router)
+app.include_router(lashing_certificates_router)
 
 app.include_router(comercial_router)
 app.include_router(comercial_clients_analytics_router)
