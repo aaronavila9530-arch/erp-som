@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 from openpyxl import load_workbook
-from reportlab.pdfgen import canvas
+import win32com.client
 
 
 class VesselHoldsInspectionExcelService:
@@ -9,7 +9,6 @@ class VesselHoldsInspectionExcelService:
     # =========================================================
     # TEMPLATE PATH (RELATIVE SAFE)
     # =========================================================
-
     def _get_template_path(self):
 
         base_dir = Path(__file__).resolve().parent.parent
@@ -23,10 +22,9 @@ class VesselHoldsInspectionExcelService:
 
 
     # =========================================================
-    # GENERATE EXCEL
+    # BUILD EXCEL (INSERT DATA)
     # =========================================================
-
-    def generate_excel(self, data: dict):
+    def _build_excel(self, data: dict):
 
         template_path = self._get_template_path()
 
@@ -68,42 +66,56 @@ class VesselHoldsInspectionExcelService:
         ]
 
         for idx, value in enumerate(ordered_values, start=1):
-
             ws.cell(row=idx, column=2, value=value)
 
-        output_path = Path.cwd() / f"holds_inspection_certificate_{data.get('id')}.xlsx"
+        excel_path = Path.cwd() / f"holds_inspection_certificate_{data.get('id')}.xlsx"
 
-        wb.save(output_path)
+        wb.save(excel_path)
 
-        return str(output_path)
+        return excel_path
 
 
     # =========================================================
-    # GENERATE PDF (FROM DATA)
+    # EXCEL → PDF (ONLY CERTIFICATE SHEET)
     # =========================================================
+    def _excel_to_pdf(self, excel_path):
 
+        pdf_path = str(excel_path).replace(".xlsx", ".pdf")
+
+        excel = win32com.client.Dispatch("Excel.Application")
+        excel.Visible = False
+
+        wb = excel.Workbooks.Open(str(excel_path))
+
+        try:
+
+            sheet = wb.Worksheets("VESSEL HOLDS INSPECTION CERTIFI")
+
+        except Exception:
+            wb.Close(False)
+            excel.Quit()
+            raise Exception("Sheet 'VESSEL HOLDS INSPECTION CERTIFI' not found.")
+
+        sheet.ExportAsFixedFormat(
+            0,  # PDF
+            pdf_path
+        )
+
+        wb.Close(False)
+        excel.Quit()
+
+        return pdf_path
+
+
+    # =========================================================
+    # PUBLIC METHOD
+    # =========================================================
     def generate_pdf(self, data: dict):
 
-        pdf_path = Path.cwd() / f"holds_inspection_certificate_{data.get('id')}.pdf"
+        # 1) build excel
+        excel_file = self._build_excel(data)
 
-        c = canvas.Canvas(str(pdf_path))
+        # 2) convert to pdf (certificate sheet only)
+        pdf_file = self._excel_to_pdf(excel_file)
 
-        y = 800
-
-        c.setFont("Helvetica", 11)
-
-        for key, value in data.items():
-
-            line = f"{key}: {value}"
-
-            c.drawString(50, y, line)
-
-            y -= 20
-
-            if y < 50:
-                c.showPage()
-                y = 800
-
-        c.save()
-
-        return str(pdf_path)
+        return pdf_file
