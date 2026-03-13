@@ -296,3 +296,50 @@ def generate_vessel_holds_excel(record_id: int, conn=Depends(get_db)):
             status_code=500,
             detail=str(e)
         )
+
+
+# =========================================================
+# GENERATE PDF
+# =========================================================
+
+@router.get("/{record_id}/pdf")
+def generate_vessel_holds_pdf(record_id: int, conn=Depends(get_db)):
+
+    try:
+
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+
+            cur.execute("""
+
+                SELECT *
+                FROM vessel_holds_inspection_certificates
+                WHERE id=%s
+
+            """, (record_id,))
+
+            row = cur.fetchone()
+
+        if not row:
+
+            raise HTTPException(
+                status_code=404,
+                detail="Record not found"
+            )
+
+        file_path = excel_service.generate_pdf(row)
+
+        return FileResponse(
+            path=file_path,
+            filename=f"holds_inspection_certificate_{record_id}.pdf",
+            media_type="application/pdf"
+        )
+
+    except Exception as e:
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
+
+
+
