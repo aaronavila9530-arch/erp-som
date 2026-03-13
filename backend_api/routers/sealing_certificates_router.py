@@ -166,6 +166,8 @@ def create_sealing_certificate(payload: dict, conn=Depends(get_db)):
             detail=str(e)
         )
 
+
+
 # =========================================================
 # PUT
 # =========================================================
