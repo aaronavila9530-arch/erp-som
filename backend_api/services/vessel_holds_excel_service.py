@@ -145,13 +145,15 @@ class VesselHoldsInspectionExcelService:
 
         excel_path = self._build_excel(data)
 
+        # 🔴 PREPARE SHEET BEFORE EXPORT
+        self._prepare_print(excel_path)
+
         pdf_path = self._convert_excel_to_pdf(excel_path)
 
         if not pdf_path or not os.path.exists(pdf_path):
             raise RuntimeError("PDF generation failed")
 
         return pdf_path
-
 
     # =========================================================
     # PUBLIC — GENERATE EXCEL
@@ -167,3 +169,35 @@ class VesselHoldsInspectionExcelService:
             raise RuntimeError("Excel generation failed")
 
         return excel_path
+
+
+    # =========================================================
+    # PREPARE PRINT (ONLY CERTIFICATE SHEET)
+    # =========================================================
+    def _prepare_print(self, excel_path: str):
+
+        wb = load_workbook(excel_path)
+
+        try:
+
+            if "VESSEL HOLDS INSPECTION CERTIFI" not in wb.sheetnames:
+                raise Exception("Certificate sheet not found")
+
+            for ws in wb.worksheets:
+
+                if ws.title == "VESSEL HOLDS INSPECTION CERTIFI":
+                    ws.sheet_state = "visible"
+                    wb.active = wb.index(ws)
+
+                    # fuerza area de impresion
+                    ws.print_area = "A1:K60"
+
+                else:
+                    ws.sheet_state = "hidden"
+
+            wb.calculation.fullCalcOnLoad = True
+
+            wb.save(excel_path)
+
+        finally:
+            wb.close()
