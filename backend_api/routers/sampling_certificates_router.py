@@ -1,24 +1,19 @@
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import FileResponse
 from psycopg2.extras import RealDictCursor
 from datetime import datetime
 
 from database import get_db
-
-# Tus servicios de generación
-from services.pdf_merge_service import PDFMergeService
 
 router = APIRouter(
     prefix="/sampling-certificates",
     tags=["Sampling Certificates"]
 )
 
-excel_service = PDFMergeService()
-
 
 # =========================================================
 # CREATE
 # =========================================================
+
 @router.post("")
 def create_sampling_certificate(payload: dict, conn=Depends(get_db)):
 
@@ -29,7 +24,7 @@ def create_sampling_certificate(payload: dict, conn=Depends(get_db)):
         payload["created_at"] = datetime.utcnow()
         payload["updated_at"] = datetime.utcnow()
 
-        # status siempre Pending for review
+        # STATUS DEFAULT
         payload["status"] = "Pending for review"
 
         columns = []
@@ -70,6 +65,7 @@ def create_sampling_certificate(payload: dict, conn=Depends(get_db)):
 # =========================================================
 # UPDATE
 # =========================================================
+
 @router.put("/{record_id}")
 def update_sampling_certificate(record_id: int, payload: dict, conn=Depends(get_db)):
 
@@ -79,7 +75,6 @@ def update_sampling_certificate(record_id: int, payload: dict, conn=Depends(get_
 
         payload["updated_at"] = datetime.utcnow()
 
-        # lógica de status
         status = payload.get("status")
 
         if status:
@@ -125,6 +120,7 @@ def update_sampling_certificate(record_id: int, payload: dict, conn=Depends(get_
 # =========================================================
 # GET ALL
 # =========================================================
+
 @router.get("")
 def get_sampling_certificates(conn=Depends(get_db)):
 
@@ -133,11 +129,9 @@ def get_sampling_certificates(conn=Depends(get_db)):
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
 
             cur.execute("""
-
                 SELECT *
                 FROM sampling_certificates
                 ORDER BY id DESC
-
             """)
 
             rows = cur.fetchall()
@@ -155,6 +149,7 @@ def get_sampling_certificates(conn=Depends(get_db)):
 # =========================================================
 # GET BY ID
 # =========================================================
+
 @router.get("/{record_id}")
 def get_sampling_certificate(record_id: int, conn=Depends(get_db)):
 
@@ -163,11 +158,9 @@ def get_sampling_certificate(record_id: int, conn=Depends(get_db)):
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
 
             cur.execute("""
-
                 SELECT *
                 FROM sampling_certificates
                 WHERE id=%s
-
             """, (record_id,))
 
             row = cur.fetchone()
@@ -190,7 +183,7 @@ def get_sampling_certificate(record_id: int, conn=Depends(get_db)):
 
 
 # =========================================================
-# GENERATE EXCEL
+# GENERATE EXCEL (placeholder)
 # =========================================================
 
 @router.get("/{record_id}/excel")
@@ -203,7 +196,7 @@ def generate_sampling_excel(record_id: int):
 
 
 # =========================================================
-# GENERATE PDF
+# GENERATE PDF (placeholder)
 # =========================================================
 
 @router.get("/{record_id}/pdf")
