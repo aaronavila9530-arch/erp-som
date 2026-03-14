@@ -101,7 +101,16 @@ def get_lashing_certificate(record_id: int):
 @router.post("/")
 def create_lashing_certificate(payload: dict):
 
+    conn = None
+    cur = None
+
     try:
+
+        if not isinstance(payload, dict):
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid payload format"
+            )
 
         conn = get_conn()
         cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -144,17 +153,38 @@ def create_lashing_certificate(payload: dict):
             RETURNING id
         """, payload)
 
-        new_id = cur.fetchone()
+        result = cur.fetchone()
+
+        if not result or "id" not in result:
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to retrieve inserted ID"
+            )
 
         conn.commit()
 
-        cur.close()
-        conn.close()
+        return {"id": result["id"]}
 
-        return new_id
+    except HTTPException:
+        raise
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+
+        if conn:
+            conn.rollback()
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
+
+    finally:
+
+        if cur:
+            cur.close()
+
+        if conn:
+            conn.close()
 
 
 # =========================================================
