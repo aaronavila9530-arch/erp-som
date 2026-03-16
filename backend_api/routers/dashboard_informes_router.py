@@ -33,6 +33,7 @@ def dashboard_informes_filtros(
         anio_final = anio if anio else datetime.now().year
 
         query = """
+
         WITH base AS (
 
             SELECT
@@ -97,12 +98,13 @@ def dashboard_informes_filtros(
             (SELECT json_agg(DISTINCT tipo) FROM base_final)
 
         )
+
         """
 
         cursor.execute(query,(anio_final,anio_final,anio_final,anio_final))
         result = cursor.fetchone()
 
-        return result[0]
+        return result[0] if result else {}
 
     except Exception as e:
 
@@ -150,19 +152,56 @@ def dashboard_informes_resumen(
 
         informes_union AS (
 
-            SELECT report_number AS num_informe,created_at,'Weight Certificate' tipo FROM weight_certificates
-            UNION ALL SELECT cert_no,created_at,'Truck Supervision' FROM vessel_truck_supervision_reports
-            UNION ALL SELECT report_number,created_at,'Holds Inspection' FROM vessel_holds_inspection_certificates
-            UNION ALL SELECT cert_no,created_at,'Grain Sampling' FROM vessel_grain_sampling_reports
-            UNION ALL SELECT report_number,created_at,'Crane Inspection' FROM vessel_crane_inspection_reports
-            UNION ALL SELECT report_number,created_at,'Condition Survey' FROM vessel_condition_surveys
-            UNION ALL SELECT report_number,created_at,'Cargo Condition' FROM vessel_cargo_condition_surveys
-            UNION ALL SELECT bunker_cert_no,created_at,'Bunker Survey' FROM vessel_bunker_reports
-            UNION ALL SELECT report_no,created_at,'Sealing Certificate' FROM sealing_certificates
-            UNION ALL SELECT report_no,created_at,'Sampling Certificate' FROM sampling_certificates
-            UNION ALL SELECT report_number,created_at,'Port Captancy' FROM port_captancy_reports
-            UNION ALL SELECT report_no,created_at,'Lashing Certificate' FROM lashing_certificates
-            UNION ALL SELECT draft_report_number,created_at,'Draft Survey' FROM draft_survey
+            SELECT report_number AS num_informe, weight_certificates.created_at, 'Weight Certificate' tipo
+            FROM weight_certificates
+
+            UNION ALL
+            SELECT cert_no, vessel_truck_supervision_reports.created_at,'Truck Supervision'
+            FROM vessel_truck_supervision_reports
+
+            UNION ALL
+            SELECT report_number, vessel_holds_inspection_certificates.created_at,'Holds Inspection'
+            FROM vessel_holds_inspection_certificates
+
+            UNION ALL
+            SELECT cert_no, vessel_grain_sampling_reports.created_at,'Grain Sampling'
+            FROM vessel_grain_sampling_reports
+
+            UNION ALL
+            SELECT report_number, vessel_crane_inspection_reports.created_at,'Crane Inspection'
+            FROM vessel_crane_inspection_reports
+
+            UNION ALL
+            SELECT report_number, vessel_condition_surveys.created_at,'Condition Survey'
+            FROM vessel_condition_surveys
+
+            UNION ALL
+            SELECT report_number, vessel_cargo_condition_surveys.created_at,'Cargo Condition'
+            FROM vessel_cargo_condition_surveys
+
+            UNION ALL
+            SELECT bunker_cert_no, vessel_bunker_reports.created_at,'Bunker Survey'
+            FROM vessel_bunker_reports
+
+            UNION ALL
+            SELECT report_no, sealing_certificates.created_at,'Sealing Certificate'
+            FROM sealing_certificates
+
+            UNION ALL
+            SELECT report_no, sampling_certificates.created_at,'Sampling Certificate'
+            FROM sampling_certificates
+
+            UNION ALL
+            SELECT report_number, port_captancy_reports.created_at,'Port Captancy'
+            FROM port_captancy_reports
+
+            UNION ALL
+            SELECT report_no, NULL::timestamp,'Lashing Certificate'
+            FROM lashing_certificates
+
+            UNION ALL
+            SELECT draft_report_number, NULL::timestamp,'Draft Survey'
+            FROM draft_survey
 
         ),
 
@@ -171,8 +210,12 @@ def dashboard_informes_resumen(
             SELECT
                 s.*,
                 i.tipo,
-                i.created_at fecha_informe,
-                EXTRACT(EPOCH FROM (i.created_at - s.fecha_fin))/3600 horas_para_informe
+                i.created_at AS fecha_informe,
+                CASE
+                    WHEN i.created_at IS NULL THEN NULL
+                    ELSE EXTRACT(EPOCH FROM (i.created_at - s.fecha_fin))/3600
+                END AS horas_para_informe
+
             FROM servicios_base s
             LEFT JOIN informes_union i
             ON s.num_informe=i.num_informe
@@ -197,63 +240,63 @@ def dashboard_informes_resumen(
             'kpis', json_build_object(
 
                 'tiempo_promedio_horas',
-                (SELECT AVG(horas_para_informe) FROM filtrada),
+                COALESCE((SELECT AVG(horas_para_informe) FROM filtrada),0),
 
                 'total_informes',
-                (SELECT COUNT(*) FROM filtrada),
+                COALESCE((SELECT COUNT(*) FROM filtrada),0),
 
                 'clientes_con_informes',
-                (SELECT COUNT(DISTINCT cliente) FROM filtrada),
+                COALESCE((SELECT COUNT(DISTINCT cliente) FROM filtrada),0),
 
                 'puertos_con_informes',
-                (SELECT COUNT(DISTINCT puerto) FROM filtrada)
+                COALESCE((SELECT COUNT(DISTINCT puerto) FROM filtrada),0)
 
             ),
 
             'informes_por_tipo',
-            (SELECT json_agg(t)
+            COALESCE((SELECT json_agg(t)
              FROM (
                 SELECT tipo,COUNT(*) total
                 FROM filtrada
                 GROUP BY tipo
                 ORDER BY total DESC
-             ) t),
+             ) t),'[]'::json),
 
             'informes_por_pais',
-            (SELECT json_agg(t)
+            COALESCE((SELECT json_agg(t)
              FROM (
                 SELECT pais,COUNT(*) total
                 FROM filtrada
                 GROUP BY pais
                 ORDER BY total DESC
-             ) t),
+             ) t),'[]'::json),
 
             'informes_por_puerto',
-            (SELECT json_agg(t)
+            COALESCE((SELECT json_agg(t)
              FROM (
                 SELECT puerto,COUNT(*) total
                 FROM filtrada
                 GROUP BY puerto
                 ORDER BY total DESC
-             ) t),
+             ) t),'[]'::json),
 
             'informes_por_cliente',
-            (SELECT json_agg(t)
+            COALESCE((SELECT json_agg(t)
              FROM (
                 SELECT cliente,COUNT(*) total
                 FROM filtrada
                 GROUP BY cliente
                 ORDER BY total DESC
-             ) t),
+             ) t),'[]'::json),
 
             'tiempo_por_operacion',
-            (SELECT json_agg(t)
+            COALESCE((SELECT json_agg(t)
              FROM (
                 SELECT operacion,
                        AVG(horas_para_informe) horas_promedio
                 FROM filtrada
                 GROUP BY operacion
-             ) t)
+             ) t),'[]'::json)
 
         )
 
@@ -271,7 +314,7 @@ def dashboard_informes_resumen(
         cursor.execute(query,params)
         result = cursor.fetchone()
 
-        return result[0]
+        return result[0] if result else {}
 
     except Exception as e:
 
