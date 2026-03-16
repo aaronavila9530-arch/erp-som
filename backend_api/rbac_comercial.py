@@ -1,4 +1,6 @@
 import psycopg2
+from psycopg2.extras import execute_batch
+
 
 DATABASE_URL = (
     "postgresql://postgres:"
@@ -12,7 +14,7 @@ DATABASE_URL = (
 PERMISSIONS = [
 
     # =================================================
-    # MASTER — ACCESO TOTAL
+    # MASTER — ACCESO TOTAL GLOBAL
     # =================================================
     ("master", "*", "*", True),
 
@@ -35,7 +37,7 @@ PERMISSIONS = [
     ("admin", "comercial", "export", True),
 
     # =================================================
-    # USER — VISUALIZACIÓN / OPERACIÓN BÁSICA
+    # USER — SOLO VISUALIZACIÓN DEL HOME COMERCIAL
     # =================================================
     ("user", "comercial", "view", True),
     ("user", "comercial", "board", True),
@@ -53,7 +55,7 @@ PERMISSIONS = [
     ("user", "comercial", "export", False),
 
     # =================================================
-    # CONSULTOR — ANÁLISIS / EVOLUCIÓN COMERCIAL
+    # CONSULTOR — ANÁLISIS COMERCIAL
     # =================================================
     ("consultor", "comercial", "view", True),
     ("consultor", "comercial", "board", True),
@@ -74,31 +76,62 @@ PERMISSIONS = [
 
 
 def main():
-    conn = psycopg2.connect(DATABASE_URL)
-    cur = conn.cursor()
 
-    print("🔐 Normalizando e insertando permisos RBAC — COMERCIAL")
+    conn = None
 
-    for role, module, action, allowed in PERMISSIONS:
-        role_norm = role.strip().lower()
-        module_norm = module.strip().lower()
-        action_norm = action.strip().lower()
+    try:
 
-        cur.execute(
+        print("🔐 Conectando a PostgreSQL...")
+
+        conn = psycopg2.connect(DATABASE_URL)
+        cur = conn.cursor()
+
+        print("🔐 Normalizando permisos RBAC — COMERCIAL")
+
+        records = []
+
+        for role, module, action, allowed in PERMISSIONS:
+
+            role_norm = role.strip().lower()
+            module_norm = module.strip().lower()
+            action_norm = action.strip().lower()
+
+            records.append(
+                (role_norm, module_norm, action_norm, allowed)
+            )
+
+        execute_batch(
+            cur,
             """
             INSERT INTO rbac_permissions (role_code, module, action, allowed)
             VALUES (%s, %s, %s, %s)
             ON CONFLICT (role_code, module, action)
-            DO UPDATE SET allowed = EXCLUDED.allowed
+            DO UPDATE SET
+                allowed = EXCLUDED.allowed,
+                created_at = NOW()
             """,
-            (role_norm, module_norm, action_norm, allowed)
+            records
         )
 
-    conn.commit()
-    cur.close()
-    conn.close()
+        conn.commit()
 
-    print("✅ Permisos COMERCIAL normalizados y actualizados correctamente.")
+        print("✅ Permisos RBAC COMERCIAL actualizados correctamente")
+        print(f"📊 Permisos procesados: {len(records)}")
+
+    except Exception as e:
+
+        if conn:
+            conn.rollback()
+
+        print("❌ Error actualizando RBAC COMERCIAL")
+        print(str(e))
+
+    finally:
+
+        if conn:
+            conn.close()
+
+        print("🔒 Conexión cerrada")
 
 
 if __name__ == "__main__":

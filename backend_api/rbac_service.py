@@ -1,58 +1,129 @@
 """
 RBAC — CLIENT SIDE (ERP-SOM)
-⚠️ IMPORTANTE:
-Este archivo NO consulta la base de datos.
-El control REAL de permisos se hace en el BACKEND (FastAPI).
 
-Aquí solo se usa para:
-• Mostrar / ocultar opciones de UI
-• Evitar crashes en cliente
+⚠️ IMPORTANTE
+Este archivo NUNCA consulta la base de datos.
+
+El control REAL de seguridad se hace en el BACKEND
+mediante:
+
+• require_permission
+• RBAC
+• autenticación
+
+Este módulo SOLO controla:
+
+• Mostrar / ocultar botones
 • UX coherente
+• Evitar crashes en cliente
 
-El backend seguirá devolviendo 401 / 403 si el usuario
-intenta acceder a algo no permitido.
+Si el cliente intenta ejecutar algo indebido,
+el backend devolverá 401 / 403.
 """
 
 
-def has_permission(role_code: str, module: str, action: str) -> bool:
+def has_permission(
+    role_code: str,
+    module: str,
+    action: str,
+    username: str | None = None
+) -> bool:
     """
-    Cliente Tkinter:
-    Siempre devuelve True para evitar bloqueos por DB.
+    Control visual RBAC cliente.
 
-    La validación REAL se hace en el backend mediante:
-    - require_permission
-    - JWT
-    - RBAC en FastAPI
+    Prioridad:
+
+    1️⃣ Overrides por usuario
+    2️⃣ Reglas por rol
+    3️⃣ Fallback seguro
     """
 
-    # Normalizar
     role = (role_code or "").lower()
     module = (module or "").lower()
     action = (action or "").lower()
+    username = (username or "").lower()
 
-    # ==============================
-    # CONTROL VISUAL BÁSICO (OPCIONAL)
-    # ==============================
-    # Puedes afinar esto si quieres ocultar botones por rol,
-    # pero NUNCA conectarse a DB aquí.
+    # ======================================================
+    # MASTER → TODO
+    # ======================================================
 
     if role == "master":
         return True
 
-    if role == "admin":
-        return True
+    # ======================================================
+    # OVERRIDES POR USUARIO (UI)
+    # ======================================================
 
-    if role == "consultor":
-        # Consultor: solo lectura / revisión
-        if action in ("view", "reports", "payroll", "generate"):
-            return True
+    USER_OVERRIDES = {
+
+        # Surveyor
+        "surveyor": {
+
+            "comercial": ["view"],
+            "hhrre": ["view"],
+            "informes": ["view", "create", "edit", "submit"]
+
+        },
+
+        # Contabilidad
+        "accountant": {
+
+            "finanzas": ["view", "create", "edit"],
+            "dashboard": ["view"]
+
+        }
+
+    }
+
+    if username in USER_OVERRIDES:
+
+        modules = USER_OVERRIDES[username]
+
+        if module in modules:
+            return action in modules[module]
+
         return False
 
-    if role == "user":
-        # Empleado: autogestión
-        if action in ("view", "create", "edit", "ot_log"):
-            return True
-        return False
+    # ======================================================
+    # REGLAS POR ROL
+    # ======================================================
 
-    # Rol desconocido → bloquear UI
+    ROLE_RULES = {
+
+        "admin": {
+            "*": ["*"]
+        },
+
+        "consultor": {
+            "*": ["view", "reports", "generate"]
+        },
+
+        "user": {
+            "*": ["view", "create", "edit", "ot_log"]
+        }
+
+    }
+
+    if role in ROLE_RULES:
+
+        rules = ROLE_RULES[role]
+
+        # comodín módulo
+        if "*" in rules:
+
+            actions = rules["*"]
+
+            if "*" in actions:
+                return True
+
+            return action in actions
+
+        # módulo específico
+        if module in rules:
+            return action in rules[module]
+
+    # ======================================================
+    # FALLBACK SEGURO
+    # ======================================================
+
     return False
