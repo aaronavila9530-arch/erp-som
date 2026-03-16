@@ -1,11 +1,9 @@
 # ============================================================
 # ERP-SOM
-# Dashboard Servicios Router (Advanced Analytics)
+# Dashboard Servicios Router (psycopg2 compatible)
 # ============================================================
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
-from sqlalchemy import text
 from database import get_db
 
 
@@ -16,19 +14,17 @@ router = APIRouter(
 
 
 # ============================================================
-# DASHBOARD SERVICIOS (ADVANCED)
+# DASHBOARD SERVICIOS
 # ============================================================
 
 @router.get("/servicios")
-def get_dashboard_servicios(db: Session = Depends(get_db)):
+def get_dashboard_servicios(db = Depends(get_db)):
 
     try:
 
-        # ====================================================
-        # DATASET BASE
-        # ====================================================
+        cursor = db.cursor()
 
-        query = text("""
+        query = """
 
         WITH base AS (
             SELECT
@@ -47,9 +43,6 @@ def get_dashboard_servicios(db: Session = Depends(get_db)):
 
         SELECT json_build_object(
 
-        -- ===================================================
-        -- SERVICIOS POR PAIS
-        -- ===================================================
         'servicios_por_pais', (
             SELECT json_agg(t)
             FROM (
@@ -61,9 +54,6 @@ def get_dashboard_servicios(db: Session = Depends(get_db)):
             ) t
         ),
 
-        -- ===================================================
-        -- SERVICIOS POR OPERACION
-        -- ===================================================
         'servicios_por_operacion', (
             SELECT json_agg(t)
             FROM (
@@ -75,9 +65,6 @@ def get_dashboard_servicios(db: Session = Depends(get_db)):
             ) t
         ),
 
-        -- ===================================================
-        -- FACTURACION POR PAIS
-        -- ===================================================
         'facturacion_por_pais', (
             SELECT json_agg(t)
             FROM (
@@ -89,9 +76,6 @@ def get_dashboard_servicios(db: Session = Depends(get_db)):
             ) t
         ),
 
-        -- ===================================================
-        -- FACTURACION POR TIPO
-        -- ===================================================
         'facturacion_por_tipo', (
             SELECT json_agg(t)
             FROM (
@@ -103,9 +87,6 @@ def get_dashboard_servicios(db: Session = Depends(get_db)):
             ) t
         ),
 
-        -- ===================================================
-        -- TOP PUERTOS
-        -- ===================================================
         'top_puertos', (
             SELECT json_agg(t)
             FROM (
@@ -118,9 +99,6 @@ def get_dashboard_servicios(db: Session = Depends(get_db)):
             ) t
         ),
 
-        -- ===================================================
-        -- REVENUE MENSUAL
-        -- ===================================================
         'revenue_mensual', (
             SELECT json_agg(t)
             FROM (
@@ -134,9 +112,6 @@ def get_dashboard_servicios(db: Session = Depends(get_db)):
             ) t
         ),
 
-        -- ===================================================
-        -- PROFIT POR SURVEYOR
-        -- ===================================================
         'profit_por_surveyor', (
             SELECT json_agg(t)
             FROM (
@@ -150,9 +125,6 @@ def get_dashboard_servicios(db: Session = Depends(get_db)):
             ) t
         ),
 
-        -- ===================================================
-        -- CLIENTES MAS RENTABLES
-        -- ===================================================
         'clientes_top', (
             SELECT json_agg(t)
             FROM (
@@ -167,16 +139,18 @@ def get_dashboard_servicios(db: Session = Depends(get_db)):
             ) t
         )
 
-        ) AS dashboard
+        )
 
-        """)
+        """
 
-        result = db.execute(query).fetchone()
+        cursor.execute(query)
+
+        result = cursor.fetchone()
 
         if not result:
             return {}
 
-        return result.dashboard
+        return result[0]
 
     except Exception as e:
 
