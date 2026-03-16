@@ -94,6 +94,9 @@ from routers.comercial_servicios_analytics import router as comercial_servicios_
 from routers.servicios_precios import router as servicios_precios_router
 from routers.cotizaciones import router as cotizaciones_router
 
+#Dashboards
+from routers.dashboard_servicios_router import router as dashboard_servicios_router
+
 
 # ============================================================
 # CONFIGURACIÓN FASTAPI
@@ -258,6 +261,8 @@ app.include_router(comercial_ports_analytics_router)
 app.include_router(comercial_servicios_analytics_router)
 app.include_router(servicios_precios_router)
 app.include_router(cotizaciones_router)
+
+app.include_router(dashboard_servicios_router)
 
 
 # ============================================================
