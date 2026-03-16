@@ -147,12 +147,12 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
                         values.append(f"%({col})s")
 
         # ---------------------------
-        # FRESH WATER
+        # FRESH WATER (DINÁMICO 1 → 20)
         # ---------------------------
         for phase in ["init", "final"]:
-            for fw in ["fw_p", "fw_s", "fw_dist"]:
+            for i in range(1, 21):
                 for field in ["height", "volume"]:
-                    col = f"{phase}_{fw}_{field}"
+                    col = f"{phase}_fw_{i}_{field}"
                     columns.append(col)
                     values.append(f"%({col})s")
 
@@ -188,7 +188,6 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
         # =====================================================
         # 🔒 (OPCIONAL) EVITAR DUPLICADOS: si ya existe para ese draft
         #     -> update en vez de reventar por unique constraint
-        #     (NO CAMBIA TU UX, SOLO EVITA 400/500)
         # =====================================================
         try:
             cur.execute(
@@ -200,7 +199,7 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
             exists = None
 
         if exists:
-            # Si ya existe registro ballast, hacemos UPDATE dinámico
+            # UPDATE dinámico
             set_parts = []
             for col in columns:
                 if col in ("draft_survey_id", "status"):
@@ -216,8 +215,9 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
                 WHERE draft_survey_id = %(draft_survey_id)s
             """
             cur.execute(update_sql, normalized)
+
         else:
-            # Insert normal
+            # INSERT normal
             cur.execute(sql, normalized)
 
         conn.commit()
@@ -255,6 +255,23 @@ def get_ballast(draft_survey_id: int, conn=Depends(get_db)):
 
         if not row:
             raise HTTPException(status_code=404, detail="Not found")
+
+        # =====================================================
+        # 🔧 NORMALIZAR FRESH WATER DINÁMICO (1 → 20)
+        # =====================================================
+        # No altera estructura existente, solo asegura que
+        # las claves FW existan aunque vengan NULL
+        for phase in ["init", "final"]:
+            for i in range(1, 21):
+
+                h_key = f"{phase}_fw_{i}_height"
+                v_key = f"{phase}_fw_{i}_volume"
+
+                if h_key not in row:
+                    row[h_key] = None
+
+                if v_key not in row:
+                    row[v_key] = None
 
         return {"success": True, "data": row}
 
@@ -352,11 +369,11 @@ def update_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
                         col = f"{phase}_wbt_{i}{side}_{field}"
                         set_clauses.append(f"{col}=%({col})s")
 
-        # -------- FRESH WATER --------
+        # -------- FRESH WATER (DINÁMICO 1 → 20) --------
         for phase in ["init", "final"]:
-            for fw in ["fw_p", "fw_s", "fw_dist"]:
+            for i in range(1, 21):
                 for field in ["height", "volume"]:
-                    col = f"{phase}_{fw}_{field}"
+                    col = f"{phase}_fw_{i}_{field}"
                     set_clauses.append(f"{col}=%({col})s")
 
         # -------- METADATA --------
