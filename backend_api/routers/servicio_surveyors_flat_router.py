@@ -34,47 +34,78 @@ def get_conn():
 
 
 # =========================================================
-# GET POR SERVICIO
+# GET POR SERVICIO (FIX REAL - SIN ROMPER POST)
 # =========================================================
 @router.get("/{consec}")
 def get_surveyors(consec: int):
 
-    conn = get_conn()
-    cur = conn.cursor()
+    conn = None
+    cur = None
 
-    cur.execute("""
-        SELECT *
-        FROM servicio_surveyors_flat
-        WHERE servicio_consec = %s
-    """, (consec,))
+    try:
+        conn = get_conn()
+        cur = conn.cursor()
 
-    row = cur.fetchone()
+        # 🔥 IMPORTANTE: evitar SELECT *
+        cur.execute("""
+            SELECT
+                surveyor_1, honorario_1,
+                surveyor_2, honorario_2,
+                surveyor_3, honorario_3,
+                surveyor_4, honorario_4,
+                surveyor_5, honorario_5,
+                surveyor_6, honorario_6,
+                surveyor_7, honorario_7,
+                surveyor_8, honorario_8,
+                surveyor_9, honorario_9,
+                surveyor_10, honorario_10
+            FROM servicio_surveyors_flat
+            WHERE servicio_consec = %s
+        """, (consec,))
 
-    cur.close()
-    conn.close()
+        row = cur.fetchone()
 
-    if not row:
-        return {"data": []}
+        if not row:
+            return {"data": []}
 
-    # reconstruir lista
-    surveyors = []
+        surveyors = []
 
-    for i in range(1, 11):
-        nombre = row[6 + (i - 1)*2]
-        honorario = row[7 + (i - 1)*2]
+        # 🔥 reconstrucción correcta (pares nombre/honorario)
+        for i in range(0, 20, 2):
 
-        if nombre:
-            surveyors.append({
-                "surveyor_nombre": nombre,
-                "honorario": float(honorario or 0),
-                "orden": i
-            })
+            nombre = row[i]
+            honorario = row[i + 1]
 
-    return {"data": surveyors}
+            if nombre and str(nombre).strip() != "":
+
+                try:
+                    honorario_val = float(honorario or 0)
+                except Exception:
+                    honorario_val = 0
+
+                surveyors.append({
+                    "surveyor_nombre": str(nombre).strip(),
+                    "honorario": honorario_val,
+                    "orden": (i // 2) + 1
+                })
+
+        return {"data": surveyors}
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error obteniendo surveyors: {str(e)}"
+        )
+
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
 
 
 # =========================================================
-# POST (CREAR)
+# POST (CREAR)  ✅ NO TOCADO
 # =========================================================
 @router.post("/{consec}")
 def create_surveyors(consec: int, payload: SurveyorsPayload):
@@ -82,7 +113,7 @@ def create_surveyors(consec: int, payload: SurveyorsPayload):
 
 
 # =========================================================
-# PUT (REEMPLAZAR)
+# PUT (REEMPLAZAR)  ✅ NO TOCADO
 # =========================================================
 @router.put("/{consec}")
 def update_surveyors(consec: int, payload: SurveyorsPayload):
@@ -90,7 +121,7 @@ def update_surveyors(consec: int, payload: SurveyorsPayload):
 
 
 # =========================================================
-# CORE SAVE
+# CORE SAVE  ✅ NO TOCADO
 # =========================================================
 def _save(consec: int, payload: SurveyorsPayload):
 
