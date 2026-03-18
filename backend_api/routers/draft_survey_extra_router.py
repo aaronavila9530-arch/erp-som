@@ -232,9 +232,8 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
 
 
 # ---------------------------------------------------------
-# GET BALLAST
+# GET BALLAST — FIX RECONSTRUCCIÓN FW
 # ---------------------------------------------------------
-
 @router.get("/ballast/{draft_survey_id}")
 def get_ballast(draft_survey_id: int, conn=Depends(get_db)):
 
@@ -253,23 +252,52 @@ def get_ballast(draft_survey_id: int, conn=Depends(get_db)):
             raise HTTPException(status_code=404, detail="Not found")
 
         # =====================================================
-        # 🔧 NORMALIZAR FRESH WATER DINÁMICO (1 → 20)
+        # 🔥 RECONSTRUIR FRESH WATER
         # =====================================================
-        # No altera estructura existente, solo asegura que
-        # las claves FW existan aunque vengan NULL
+        fresh_water = {
+            "init": [],
+            "final": []
+        }
+
         for phase in ["init", "final"]:
             for i in range(1, 21):
 
-                h_key = f"{phase}_fw_{i}_height"
-                v_key = f"{phase}_fw_{i}_volume"
+                name = row.get(f"{phase}_fw_{i}_name")
+                height = row.get(f"{phase}_fw_{i}_height")
+                sounding = row.get(f"{phase}_fw_{i}_sounding")
+                volume = row.get(f"{phase}_fw_{i}_volume")
+                density = row.get(f"{phase}_fw_{i}_density")
+                total = row.get(f"{phase}_fw_{i}_total")
 
-                if h_key not in row:
-                    row[h_key] = None
+                # 🔥 SOLO AGREGAR SI HAY DATA REAL
+                if any([name, height, sounding, volume, density, total]):
 
-                if v_key not in row:
-                    row[v_key] = None
+                    fresh_water[phase].append({
+                        "tank_name": name,
+                        "height": height,
+                        "sounding": sounding,
+                        "volume": volume,
+                        "density": density,
+                        "total": total
+                    })
 
-        return {"success": True, "data": row}
+        # =====================================================
+        # 🔥 TOTAL FW
+        # =====================================================
+        totals_fw = {
+            "init": row.get("init_total_fresh_water"),
+            "final": row.get("final_total_fresh_water")
+        }
+
+        # =====================================================
+        # 🔥 RESPUESTA FINAL
+        # =====================================================
+        return {
+            "success": True,
+            "data": row,
+            "fresh_water": fresh_water,
+            "fresh_water_totals": totals_fw
+        }
 
     finally:
         cur.close()
