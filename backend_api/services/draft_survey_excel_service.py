@@ -401,7 +401,7 @@ class DraftSurveyExcelGenerator:
 
 
     # =========================================================
-    # GENERATE EXCEL FROM TEMPLATE (PUBLIC METHOD)
+    # GENERATE EXCEL FROM TEMPLATE (PUBLIC METHOD) — BLINDADO
     # =========================================================
     def generate(self, payload: dict) -> str:
 
@@ -410,6 +410,9 @@ class DraftSurveyExcelGenerator:
 
         wb = load_workbook(TEMPLATE_PATH)
 
+        # =====================================================
+        # 1) FILL STATIC MAPPING
+        # =====================================================
         for sheet_name, config in self.EXCEL_MAPPING.items():
 
             if sheet_name not in wb.sheetnames:
@@ -430,121 +433,9 @@ class DraftSurveyExcelGenerator:
                     self._safe_set(ws, cell, value)
 
         # =====================================================
-        # DEDUCTIONS — DYNAMIC BALLAST + FRESH WATER
-        # =====================================================
-        try:
-            if "Deductions" in wb.sheetnames:
-                ws = wb["Deductions"]
-
-                # -------------------------------------------------
-                # HELPERS
-                # -------------------------------------------------
-                def _get_list(*possible_keys):
-                    for key in possible_keys:
-                        value = (payload or {}).get(key)
-                        if isinstance(value, list):
-                            return value
-                    return []
-
-                def _fill_vertical_block(items, start_row, col_name, col_height, col_sounding, col_volume, col_density):
-                    for i, item in enumerate((items or [])[:20]):
-                        row = start_row + i
-                        item = item or {}
-
-                        self._safe_set(ws, f"{col_name}{row}", item.get("name"))
-                        self._safe_set(ws, f"{col_height}{row}", item.get("height"))
-                        self._safe_set(ws, f"{col_sounding}{row}", item.get("sounding"))
-                        self._safe_set(ws, f"{col_volume}{row}", item.get("volume"))
-                        self._safe_set(ws, f"{col_density}{row}", item.get("density"))
-
-                # -------------------------------------------------
-                # BALLAST INITIAL
-                # A11 name / D11 height / G11 sounding / J11 volume / M11 density
-                # -------------------------------------------------
-                ballast_initial = _get_list(
-                    "ballast_initial",
-                    "init_ballast_tanks",
-                    "initial_ballast",
-                    "ballast_init"
-                )
-                _fill_vertical_block(
-                    items=ballast_initial,
-                    start_row=11,
-                    col_name="A",
-                    col_height="D",
-                    col_sounding="G",
-                    col_volume="J",
-                    col_density="M"
-                )
-
-                # -------------------------------------------------
-                # BALLAST FINAL
-                # T11 name / W11 height / Z11 sounding / AC11 volume / AF11 density
-                # -------------------------------------------------
-                ballast_final = _get_list(
-                    "ballast_final",
-                    "final_ballast_tanks",
-                    "final_ballast",
-                    "ballast_final"
-                )
-                _fill_vertical_block(
-                    items=ballast_final,
-                    start_row=11,
-                    col_name="T",
-                    col_height="W",
-                    col_sounding="Z",
-                    col_volume="AC",
-                    col_density="AF"
-                )
-
-                # -------------------------------------------------
-                # FRESH WATER INITIAL
-                # A47 name / D47 height / G47 sounding / J47 volume / M47 density
-                # -------------------------------------------------
-                fresh_water_initial = _get_list(
-                    "fresh_water_initial",
-                    "init_fresh_water_tanks",
-                    "initial_fresh_water",
-                    "fresh_water_init"
-                )
-                _fill_vertical_block(
-                    items=fresh_water_initial,
-                    start_row=47,
-                    col_name="A",
-                    col_height="D",
-                    col_sounding="G",
-                    col_volume="J",
-                    col_density="M"
-                )
-
-                # -------------------------------------------------
-                # FRESH WATER FINAL
-                # T47 name / W47 height / Z47 sounding / AC47 volume / AF47 density
-                # -------------------------------------------------
-                fresh_water_final = _get_list(
-                    "fresh_water_final",
-                    "final_fresh_water_tanks",
-                    "final_fresh_water",
-                    "fresh_water_final"
-                )
-                _fill_vertical_block(
-                    items=fresh_water_final,
-                    start_row=47,
-                    col_name="T",
-                    col_height="W",
-                    col_sounding="Z",
-                    col_volume="AC",
-                    col_density="AF"
-                )
-
-        except Exception:
-            pass
-
-        tmp_dir = tempfile.mkdtemp(prefix="draft_excel_")
-        tmp_path = os.path.join(tmp_dir, "draft_survey.xlsx")
-
-        # =====================================================
-        # DEDUCTIONS — DYNAMIC BALLAST + FRESH WATER (BLINDADO)
+        # 2) DEDUCTIONS — DYNAMIC (ALINEADO CON FRONTEND)
+        # payload["ballast"]["init"/"final"]
+        # payload["fresh_water"]["init"/"final"]
         # =====================================================
         try:
             if "Deductions" in wb.sheetnames:
@@ -553,11 +444,17 @@ class DraftSurveyExcelGenerator:
                 # -------------------------------------------------
                 # HELPERS
                 # -------------------------------------------------
-                def _get_list(*keys):
-                    for k in keys:
-                        v = (payload or {}).get(k)
-                        if isinstance(v, list):
-                            return v
+                def _get_nested_list(section_key, phase_key):
+                    section = (payload or {}).get(section_key)
+
+                    if not isinstance(section, dict):
+                        return []
+
+                    items = section.get(phase_key)
+
+                    if isinstance(items, list):
+                        return items
+
                     return []
 
                 def _clear_block(start_row, cols, max_rows=20):
@@ -574,7 +471,7 @@ class DraftSurveyExcelGenerator:
                         row = start_row + i
                         item = item or {}
 
-                        self._safe_set(ws_ded, f"{col_name}{row}", item.get("name"))
+                        self._safe_set(ws_ded, f"{col_name}{row}", item.get("tank_name"))
                         self._safe_set(ws_ded, f"{col_height}{row}", item.get("height"))
                         self._safe_set(ws_ded, f"{col_sounding}{row}", item.get("sounding"))
                         self._safe_set(ws_ded, f"{col_volume}{row}", item.get("volume"))
@@ -582,14 +479,12 @@ class DraftSurveyExcelGenerator:
 
                 # -------------------------------------------------
                 # BALLAST INITIAL
+                # A11 / D11 / G11 / J11 / M11
                 # -------------------------------------------------
-                ballast_initial = _get_list(
-                    "ballast_initial",
-                    "init_ballast_tanks",
-                    "initial_ballast"
-                )
+                ballast_initial = _get_nested_list("ballast", "init")
 
                 _clear_block(11, ["A", "D", "G", "J", "M"])
+
                 _fill_block(
                     ballast_initial,
                     11,
@@ -598,14 +493,12 @@ class DraftSurveyExcelGenerator:
 
                 # -------------------------------------------------
                 # BALLAST FINAL
+                # T11 / W11 / Z11 / AC11 / AF11
                 # -------------------------------------------------
-                ballast_final = _get_list(
-                    "ballast_final",
-                    "final_ballast_tanks",
-                    "final_ballast"
-                )
+                ballast_final = _get_nested_list("ballast", "final")
 
                 _clear_block(11, ["T", "W", "Z", "AC", "AF"])
+
                 _fill_block(
                     ballast_final,
                     11,
@@ -614,14 +507,12 @@ class DraftSurveyExcelGenerator:
 
                 # -------------------------------------------------
                 # FRESH WATER INITIAL
+                # A47 / D47 / G47 / J47 / M47
                 # -------------------------------------------------
-                fw_initial = _get_list(
-                    "fresh_water_initial",
-                    "init_fresh_water_tanks",
-                    "initial_fresh_water"
-                )
+                fw_initial = _get_nested_list("fresh_water", "init")
 
                 _clear_block(47, ["A", "D", "G", "J", "M"])
+
                 _fill_block(
                     fw_initial,
                     47,
@@ -630,22 +521,26 @@ class DraftSurveyExcelGenerator:
 
                 # -------------------------------------------------
                 # FRESH WATER FINAL
+                # T47 / W47 / Z47 / AC47 / AF47
                 # -------------------------------------------------
-                fw_final = _get_list(
-                    "fresh_water_final",
-                    "final_fresh_water_tanks",
-                    "final_fresh_water"
-                )
+                fw_final = _get_nested_list("fresh_water", "final")
 
                 _clear_block(47, ["T", "W", "Z", "AC", "AF"])
+
                 _fill_block(
                     fw_final,
                     47,
                     "T", "W", "Z", "AC", "AF"
                 )
 
-        except Exception:
-            pass
+        except Exception as e:
+            print("ERROR DEDUCTIONS:", e)
+
+        # =====================================================
+        # 3) SAVE TEMP FILE
+        # =====================================================
+        tmp_dir = tempfile.mkdtemp(prefix="draft_excel_")
+        tmp_path = os.path.join(tmp_dir, "draft_survey.xlsx")
 
         wb.save(tmp_path)
 
