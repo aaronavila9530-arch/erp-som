@@ -36,7 +36,7 @@ router = APIRouter(
 )
 
 # =========================================================
-# POST — BALLAST (CREATE) — ULTRA BLINDADO / NO EXIGE CAMPOS
+# POST — BALLAST (CREATE) — ULTRA BLINDADO / FIX FRESH WATER
 # =========================================================
 @router.post("/ballast/{draft_survey_id}")
 def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
@@ -46,17 +46,13 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
     try:
         payload = payload or {}
 
-        # =====================================================
-        # 🔒 METADATA (NO OBLIGATORIA AQUÍ) — NORMALIZAR VACÍOS
-        # =====================================================
         metadata_keys = [
             "year", "month", "continent", "country",
             "port", "client", "draft_report_number"
         ]
 
         # =====================================================
-        # 1️⃣ RESOLVER draft_survey.id REAL DESDE general_id
-        #     (TU RUTA RECIBE general_id EN EL PATH)
+        # 1️⃣ RESOLVER draft real
         # =====================================================
         cur.execute(
             "SELECT id FROM draft_survey WHERE general_id = %s",
@@ -73,11 +69,32 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
         real_draft_id = row[0]
 
         # =====================================================
-        # 2️⃣ NORMALIZAR KEYS + LIMPIAR STRINGS VACÍOS
-        #    + NORMALIZAR NÚMEROS (coma -> punto)
+        # 2️⃣ NORMALIZAR PAYLOAD
         # =====================================================
-
         normalized = {}
+
+        def clean_value(v):
+            if v is None:
+                return None
+
+            if isinstance(v, str):
+                vv = v.strip()
+
+                if vv.lower() in ("", "none", "null"):
+                    return None
+
+                # permitir Empty / Gauge
+                if vv.lower() in ("empty", "gauge"):
+                    return vv.upper()
+
+                vv = vv.replace(",", ".")
+
+                try:
+                    return str(float(vv))
+                except Exception:
+                    return vv
+
+            return v
 
         for k, v in payload.items():
 
@@ -85,49 +102,48 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
                 continue
 
             new_key = k.lower().strip().replace(" ", "_")
+            normalized[new_key] = clean_value(v)
 
-            # limpiar vacíos
-            if v is None:
-                value = None
-
-            elif isinstance(v, str):
-                vv = v.strip()
-
-                if vv.lower() in ("", "none", "null", "empty"):
-                    value = None
-                else:
-                    value = vv
-
-            else:
-                value = v
-
-            # 🔵 normalizar números (coma decimal → punto)
-            value = normalize_numeric(value)
-
-            normalized[new_key] = value
-
-        # Asegurar metadata keys aunque no vengan
+        # asegurar metadata
         for m in metadata_keys:
-            if m not in normalized:
-                normalized[m] = None
-            else:
-                # Normalizar metadata si venía vacío
-                mv = normalized.get(m)
-                if isinstance(mv, str):
-                    mvv = mv.strip()
-                    normalized[m] = None if mvv in ("", "none", "null") else mvv
+            normalized.setdefault(m, None)
 
         normalized["draft_survey_id"] = real_draft_id
 
         # =====================================================
-        # 3️⃣ ARMAR SQL DINÁMICO (20 TANQUES) — NO EXIGE VALORES
+        # 3️⃣ MAPEO FRESH WATER A COLUMNAS FIJAS
+        # =====================================================
+        for phase in ["init", "final"]:
+            for i in range(1, 21):
+
+                h = normalized.get(f"{phase}_fw_{i}_height")
+                v = normalized.get(f"{phase}_fw_{i}_volume")
+
+                if h is None and v is None:
+                    continue
+
+                name = f"fw_{i}"
+
+                # lógica simple: 1=P, 2=S, 3=DIST
+                if i == 1:
+                    normalized[f"{phase}_fw_p_height"] = h
+                    normalized[f"{phase}_fw_p_volume"] = v
+
+                elif i == 2:
+                    normalized[f"{phase}_fw_s_height"] = h
+                    normalized[f"{phase}_fw_s_volume"] = v
+
+                elif i == 3:
+                    normalized[f"{phase}_fw_dist_height"] = h
+                    normalized[f"{phase}_fw_dist_volume"] = v
+
+        # =====================================================
+        # 4️⃣ SQL DINÁMICO
         # =====================================================
         columns = ["draft_survey_id"]
         values = ["%(draft_survey_id)s"]
 
-        # ---------------------------
         # FPT / APT / SLOP
-        # ---------------------------
         for phase in ["init", "final"]:
             for base in ["fpt", "apt", "slop_tank"]:
                 for field in ["sounding", "volume", "density"]:
@@ -135,9 +151,7 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
                     columns.append(col)
                     values.append(f"%({col})s")
 
-        # ---------------------------
-        # WBT 1 → 20
-        # ---------------------------
+        # WBT
         for phase in ["init", "final"]:
             for i in range(1, 21):
                 for side in ["p", "s"]:
@@ -146,9 +160,7 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
                         columns.append(col)
                         values.append(f"%({col})s")
 
-        # ---------------------------
-        # FRESH WATER (DINÁMICO 1 → 20)
-        # ---------------------------
+        # FRESH WATER DINÁMICO
         for phase in ["init", "final"]:
             for i in range(1, 21):
                 for field in ["height", "volume"]:
@@ -156,14 +168,19 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
                     columns.append(col)
                     values.append(f"%({col})s")
 
-        # ---------------------------
+        # 🔥 FRESH WATER FIJO (CRÍTICO)
+        for phase in ["init", "final"]:
+            for fw in ["fw_p", "fw_s", "fw_dist"]:
+                for field in ["height", "volume"]:
+                    col = f"{phase}_{fw}_{field}"
+                    columns.append(col)
+                    values.append(f"%({col})s")
+
         # METADATA
-        # ---------------------------
         for m in metadata_keys:
             columns.append(m)
             values.append(f"%({m})s")
 
-        # STATUS
         columns.append("status")
         values.append("'Pending for review'")
 
@@ -177,29 +194,25 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
         """
 
         # =====================================================
-        # 🔒 RELLENAR FALTANTES CON None (NO EXIGE QUE VENGAN)
+        # 5️⃣ RELLENO NULL SAFE
         # =====================================================
         import re
         keys = re.findall(r"%\((.*?)\)s", sql)
+
         for k in keys:
-            if k not in normalized:
-                normalized[k] = None
+            normalized.setdefault(k, None)
 
         # =====================================================
-        # 🔒 (OPCIONAL) EVITAR DUPLICADOS: si ya existe para ese draft
-        #     -> update en vez de reventar por unique constraint
+        # 6️⃣ UPSERT
         # =====================================================
-        try:
-            cur.execute(
-                "SELECT id FROM draft_survey_ballast WHERE draft_survey_id = %s",
-                (real_draft_id,)
-            )
-            exists = cur.fetchone()
-        except Exception:
-            exists = None
+        cur.execute(
+            "SELECT id FROM draft_survey_ballast WHERE draft_survey_id = %s",
+            (real_draft_id,)
+        )
+        exists = cur.fetchone()
 
         if exists:
-            # UPDATE dinámico
+
             set_parts = []
             for col in columns:
                 if col in ("draft_survey_id", "status"):
@@ -214,14 +227,18 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
                     status = 'Pending for review'
                 WHERE draft_survey_id = %(draft_survey_id)s
             """
+
             cur.execute(update_sql, normalized)
 
         else:
-            # INSERT normal
             cur.execute(sql, normalized)
 
         conn.commit()
-        return {"success": True, "draft_survey_id": real_draft_id}
+
+        return {
+            "success": True,
+            "draft_survey_id": real_draft_id
+        }
 
     except HTTPException:
         conn.rollback()
@@ -233,7 +250,6 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
 
     finally:
         cur.close()
-
 
 # ---------------------------------------------------------
 # GET BALLAST
