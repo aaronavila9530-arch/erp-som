@@ -36,7 +36,7 @@ router = APIRouter(
 )
 
 # =========================================================
-# POST / PUT — BALLAST (CREATE / UPDATE) — ULTRA BLINDADO
+# POST / PUT — BALLAST (CREATE / UPDATE) — ULTRA BLINDADO PRO
 # =========================================================
 @router.post("/ballast/{draft_survey_id}")
 def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
@@ -47,89 +47,92 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
         payload = payload or {}
 
         # =====================================================
-        # 1) RESOLVER ID REAL DE draft_survey
-        #    El path recibe general_id, no necesariamente id real
+        # 1) RESOLVER ID REAL
         # =====================================================
-        cur.execute(
-            """
-            SELECT id
-            FROM draft_survey
-            WHERE general_id = %s
-            """,
-            (draft_survey_id,)
-        )
+        cur.execute("""
+            SELECT id FROM draft_survey WHERE general_id = %s
+        """, (draft_survey_id,))
         row = cur.fetchone()
 
-        # fallback: por si alguna vez mandan el id real
         if not row:
-            cur.execute(
-                """
-                SELECT id
-                FROM draft_survey
-                WHERE id = %s
-                """,
-                (draft_survey_id,)
-            )
+            cur.execute("""
+                SELECT id FROM draft_survey WHERE id = %s
+            """, (draft_survey_id,))
             row = cur.fetchone()
 
         if not row:
             conn.rollback()
             raise HTTPException(
                 status_code=404,
-                detail=f"No existe draft_survey con general_id/id = {draft_survey_id}"
+                detail=f"No existe draft_survey con id/general_id = {draft_survey_id}"
             )
 
-        real_draft_survey_id = row[0]
+        real_id = row[0]
 
         # =====================================================
-        # 2) OBTENER COLUMNAS REALES DE LA TABLA BALLAST
-        #    Para no reventar si el payload trae campos extra
+        # 2) COLUMNAS REALES
         # =====================================================
-        cur.execute(
-            """
+        cur.execute("""
             SELECT column_name
             FROM information_schema.columns
             WHERE table_schema = 'public'
               AND table_name = 'draft_survey_ballast'
-            ORDER BY ordinal_position
-            """
-        )
-        ballast_columns_rows = cur.fetchall()
-        ballast_columns = {r[0] for r in ballast_columns_rows}
+        """)
+        cols = {r[0] for r in cur.fetchall()}
 
-        if not ballast_columns:
+        if not cols:
             conn.rollback()
             raise HTTPException(
                 status_code=500,
-                detail="La tabla public.draft_survey_ballast no existe o no tiene columnas."
+                detail="Tabla draft_survey_ballast inválida"
             )
 
         # =====================================================
-        # 3) NORMALIZAR PAYLOAD
+        # 3) HELPERS
+        # =====================================================
+        def clean(v):
+
+            if v is None:
+                return None
+
+            if isinstance(v, str):
+                v = v.strip()
+
+                if v == "":
+                    return None
+
+                # normalizar coma decimal
+                v = v.replace(",", ".")
+
+                # intentar número
+                try:
+                    return float(v)
+                except Exception:
+                    return v  # texto tipo "EMPTY", "GAUGE"
+
+            return v
+
+        # =====================================================
+        # 4) LIMPIAR PAYLOAD
         # =====================================================
         clean_payload = {}
+        ignored_keys = []
 
         for k, v in payload.items():
+
             key = str(k).strip()
 
-            # ignorar claves vacías
             if not key:
                 continue
 
-            # solo columnas existentes en la tabla
-            if key not in ballast_columns:
+            if key not in cols:
+                ignored_keys.append(key)
                 continue
 
-            # normalizar strings vacíos
-            if isinstance(v, str):
-                v = v.strip()
-                if v == "":
-                    v = None
-
-            clean_payload[key] = v
+            clean_payload[key] = clean(v)
 
         # =====================================================
-        # 4) FORZAR FK CORRECTA SI EXISTE ESA COLUMNA
+        # 5) FK
         # =====================================================
         fk_candidates = [
             "draft_survey_id",
@@ -138,111 +141,107 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
             "draftsurvey"
         ]
 
-        fk_col = None
-        for candidate in fk_candidates:
-            if candidate in ballast_columns:
-                fk_col = candidate
-                break
+        fk_col = next((c for c in fk_candidates if c in cols), None)
 
         if not fk_col:
             conn.rollback()
             raise HTTPException(
                 status_code=500,
-                detail=(
-                    "La tabla draft_survey_ballast no tiene una columna FK válida "
-                    "(esperada: draft_survey_id o similar)."
-                )
+                detail="No existe FK válida en draft_survey_ballast"
             )
 
-        clean_payload[fk_col] = real_draft_survey_id
+        clean_payload[fk_col] = real_id
 
         # =====================================================
-        # 5) BUSCAR SI YA EXISTE REGISTRO DE BALLAST
-        #    (1 ballast por draft_survey)
+        # 🔥 6) FALLBACK JSON (CRÍTICO)
+        # Si no hay columnas válidas → guardamos TODO como JSON
         # =====================================================
-        cur.execute(
-            f"""
+        if len(clean_payload) <= 1:  # solo FK
+
+            if "raw_payload" in cols:
+                clean_payload["raw_payload"] = payload
+
+            elif "ballast_json" in cols:
+                clean_payload["ballast_json"] = payload
+
+            else:
+                # DEBUG FUERTE
+                print("⚠️ TODOS LOS CAMPOS IGNORADOS")
+                print("IGNORED:", ignored_keys[:10])
+
+        # =====================================================
+        # DEBUG (TE VA A SALVAR HORAS)
+        # =====================================================
+        print("------ BALLAST DEBUG ------")
+        print("REAL ID:", real_id)
+        print("CLEAN FIELDS:", len(clean_payload))
+        print("IGNORED:", len(ignored_keys))
+        print("---------------------------")
+
+        # =====================================================
+        # 7) UPSERT
+        # =====================================================
+        cur.execute(f"""
             SELECT id
             FROM draft_survey_ballast
             WHERE {fk_col} = %s
-            ORDER BY id DESC
             LIMIT 1
-            """,
-            (real_draft_survey_id,)
-        )
+        """, (real_id,))
         existing = cur.fetchone()
 
-        # =====================================================
-        # 6) SI SOLO VIENE LA FK, IGUAL INSERTA/ACTUALIZA
-        # =====================================================
+        fields = [k for k in clean_payload.keys() if k != "id"]
+
         if existing:
             ballast_id = existing[0]
 
-            update_fields = [
-                c for c in clean_payload.keys()
-                if c != "id"
-            ]
+            if fields:
+                set_clause = ", ".join([f"{c} = %s" for c in fields])
+                values = [clean_payload[c] for c in fields] + [ballast_id]
 
-            if update_fields:
-                set_clause = ", ".join([f"{c} = %s" for c in update_fields])
-                values = [clean_payload[c] for c in update_fields]
-                values.append(ballast_id)
-
-                cur.execute(
-                    f"""
+                cur.execute(f"""
                     UPDATE draft_survey_ballast
                     SET {set_clause}
                     WHERE id = %s
                     RETURNING id
-                    """,
-                    values
-                )
+                """, values)
 
-                updated = cur.fetchone()
-                ballast_id = updated[0] if updated else ballast_id
+                ballast_id = cur.fetchone()[0]
 
             conn.commit()
 
             return {
                 "status": "ok",
                 "action": "updated",
-                "draft_survey_id": real_draft_survey_id,
                 "ballast_id": ballast_id,
-                "saved_fields": list(clean_payload.keys())
+                "saved_fields": fields,
+                "ignored_fields": len(ignored_keys)
             }
 
         else:
-            insert_fields = [
-                c for c in clean_payload.keys()
-                if c != "id"
-            ]
+            if not fields:
+                fields = [fk_col]
+                clean_payload[fk_col] = real_id
 
-            if not insert_fields:
-                insert_fields = [fk_col]
-                clean_payload[fk_col] = real_draft_survey_id
+            cols_sql = ", ".join(fields)
+            vals_sql = ", ".join(["%s"] * len(fields))
+            values = [clean_payload[c] for c in fields]
 
-            columns_sql = ", ".join(insert_fields)
-            placeholders_sql = ", ".join(["%s"] * len(insert_fields))
-            values = [clean_payload[c] for c in insert_fields]
-
-            cur.execute(
-                f"""
-                INSERT INTO draft_survey_ballast ({columns_sql})
-                VALUES ({placeholders_sql})
+            cur.execute(f"""
+                INSERT INTO draft_survey_ballast ({cols_sql})
+                VALUES ({vals_sql})
                 RETURNING id
-                """,
-                values
-            )
-            inserted = cur.fetchone()
+            """, values)
+
+            ballast_id = cur.fetchone()[0]
 
             conn.commit()
 
             return {
                 "status": "ok",
                 "action": "created",
-                "draft_survey_id": real_draft_survey_id,
-                "ballast_id": inserted[0] if inserted else None,
-                "saved_fields": insert_fields
+                "ballast_id": ballast_id,
+                "saved_fields": fields,
+                "ignored_fields": len(ignored_keys)
             }
 
     except HTTPException:
