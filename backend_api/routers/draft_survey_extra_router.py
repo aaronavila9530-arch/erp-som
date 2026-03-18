@@ -231,76 +231,67 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
         cur.close()
 
 
-# ---------------------------------------------------------
-# GET BALLAST — FIX RECONSTRUCCIÓN FW
-# ---------------------------------------------------------
-@router.get("/ballast/{draft_survey_id}")
-def get_ballast(draft_survey_id: int, conn=Depends(get_db)):
+    # ---------------------------------------------------------
+    # GET BALLAST — FIX RECONSTRUCCIÓN FW (BLINDADO)
+    # ---------------------------------------------------------
+    @router.get("/ballast/{draft_survey_id}")
+    def get_ballast(draft_survey_id: int, conn=Depends(get_db)):
 
-    cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur = conn.cursor(cursor_factory=RealDictCursor)
 
-    try:
-        cur.execute("""
-            SELECT *
-            FROM draft_survey_ballast
-            WHERE draft_survey_id=%s
-        """, (draft_survey_id,))
+        try:
+            cur.execute("""
+                SELECT *
+                FROM draft_survey_ballast
+                WHERE draft_survey_id=%s
+            """, (draft_survey_id,))
 
-        row = cur.fetchone()
+            row = cur.fetchone()
 
-        if not row:
-            raise HTTPException(status_code=404, detail="Not found")
+            if not row:
+                raise HTTPException(status_code=404, detail="Not found")
 
-        # =====================================================
-        # 🔥 RECONSTRUIR FRESH WATER
-        # =====================================================
-        fresh_water = {
-            "init": [],
-            "final": []
-        }
+            # =====================================================
+            # 🟢 FRESH WATER — ESTRUCTURA PLANA (COMPATIBLE FRONT)
+            # =====================================================
+            fresh_water = {}
 
-        for phase in ["init", "final"]:
-            for i in range(1, 21):
+            for phase in ["init", "final"]:
+                for i in range(1, 21):
 
-                name = row.get(f"{phase}_fw_{i}_name")
-                height = row.get(f"{phase}_fw_{i}_height")
-                sounding = row.get(f"{phase}_fw_{i}_sounding")
-                volume = row.get(f"{phase}_fw_{i}_volume")
-                density = row.get(f"{phase}_fw_{i}_density")
-                total = row.get(f"{phase}_fw_{i}_total")
+                    fresh_water[f"{phase}_fw_{i}_name"] = row.get(f"{phase}_fw_{i}_name")
+                    fresh_water[f"{phase}_fw_{i}_height"] = row.get(f"{phase}_fw_{i}_height")
+                    fresh_water[f"{phase}_fw_{i}_sounding"] = row.get(f"{phase}_fw_{i}_sounding")
+                    fresh_water[f"{phase}_fw_{i}_volume"] = row.get(f"{phase}_fw_{i}_volume")
+                    fresh_water[f"{phase}_fw_{i}_density"] = row.get(f"{phase}_fw_{i}_density")
+                    fresh_water[f"{phase}_fw_{i}_total"] = row.get(f"{phase}_fw_{i}_total")
 
-                # 🔥 SOLO AGREGAR SI HAY DATA REAL
-                if any([name, height, sounding, volume, density, total]):
+            # =====================================================
+            # 🔢 TOTAL FW
+            # =====================================================
+            totals_fw = {
+                "init_total_fresh_water": row.get("init_total_fresh_water"),
+                "final_total_fresh_water": row.get("final_total_fresh_water")
+            }
 
-                    fresh_water[phase].append({
-                        "tank_name": name,
-                        "height": height,
-                        "sounding": sounding,
-                        "volume": volume,
-                        "density": density,
-                        "total": total
-                    })
+            # =====================================================
+            # 🔥 RESPUESTA FINAL (BLINDADA)
+            # =====================================================
+            return {
+                "success": True,
 
-        # =====================================================
-        # 🔥 TOTAL FW
-        # =====================================================
-        totals_fw = {
-            "init": row.get("init_total_fresh_water"),
-            "final": row.get("final_total_fresh_water")
-        }
+                # 🔹 DATA ORIGINAL (para compatibilidad legacy)
+                "data": row,
 
-        # =====================================================
-        # 🔥 RESPUESTA FINAL
-        # =====================================================
-        return {
-            "success": True,
-            "data": row,
-            "fresh_water": fresh_water,
-            "fresh_water_totals": totals_fw
-        }
+                # 🔹 FW listo para UI dinámica
+                "fresh_water": fresh_water,
 
-    finally:
-        cur.close()
+                # 🔹 Totales
+                "fresh_water_totals": totals_fw
+            }
+
+        finally:
+            cur.close()
 
 # ---------------------------------------------------------
 # PUT BALLAST (FULL UPDATE - DINÁMICO HASTA 20 TANQUES)
