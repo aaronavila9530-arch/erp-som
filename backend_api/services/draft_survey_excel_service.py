@@ -302,203 +302,6 @@ class DraftSurveyExcelGenerator:
             "date_fields": [],
             "fields": {
 
-                # =====================================================
-                # INITIAL BALLAST (SOUNDING + VOLUME + DENSITY)
-                # =====================================================
-
-                "init_FPT_sounding": "G11",
-                "init_FPT_volume": "J11",
-                "init_FPT_density": "M11",
-
-                "init_WBT 1P_sounding": "G12",
-                "init_WBT 1P_volume": "J12",
-                "init_WBT 1P_density": "M12",
-
-                "init_WBT 1S_sounding": "G13",
-                "init_WBT 1S_volume": "J13",
-                "init_WBT 1S_density": "M13",
-
-                "init_WBT 2P_sounding": "G14",
-                "init_WBT 2P_volume": "J14",
-                "init_WBT 2P_density": "M14",
-
-                "init_WBT 2S_sounding": "G15",
-                "init_WBT 2S_volume": "J15",
-                "init_WBT 2S_density": "M15",
-
-                "init_WBT 3P_sounding": "G16",
-                "init_WBT 3P_volume": "J16",
-                "init_WBT 3P_density": "M16",
-
-                "init_WBT 3S_sounding": "G17",
-                "init_WBT 3S_volume": "J17",
-                "init_WBT 3S_density": "M17",
-
-                "init_WBT 4P_sounding": "G18",
-                "init_WBT 4P_volume": "J18",
-                "init_WBT 4P_density": "M18",
-
-                "init_WBT 4S_sounding": "G19",
-                "init_WBT 4S_volume": "J19",
-                "init_WBT 4S_density": "M19",
-
-                "init_WBT 5P_sounding": "G20",
-                "init_WBT 5P_volume": "J20",
-                "init_WBT 5P_density": "M20",
-
-                "init_WBT 5S_sounding": "G21",
-                "init_WBT 5S_volume": "J21",
-                "init_WBT 5S_density": "M21",
-
-                "init_APT_sounding": "G22",
-                "init_APT_volume": "J22",
-                "init_APT_density": "M22",
-
-                "init_SLOP TANK_sounding": "G23",
-                "init_SLOP TANK_volume": "J23",
-                "init_SLOP TANK_density": "M23",
-
-                "init_FW WASH_sounding": "G24",
-                "init_FW WASH_volume": "J24",
-                "init_FW WASH_density": "M24",
-
-                # --------- TANQUES 15–20 (AJUSTAR NOMBRES SEGÚN TEMPLATE) ---------
-
-                "init_WBT 6P_sounding": "G25",
-                "init_WBT 6P_volume": "J25",
-                "init_WBT 6P_density": "M25",
-
-                "init_WBT 6S_sounding": "G26",
-                "init_WBT 6S_volume": "J26",
-                "init_WBT 6S_density": "M26",
-
-                "init_WBT 7P_sounding": "G27",
-                "init_WBT 7P_volume": "J27",
-                "init_WBT 7P_density": "M27",
-
-                "init_WBT 7S_sounding": "G28",
-                "init_WBT 7S_volume": "J28",
-                "init_WBT 7S_density": "M28",
-
-                "init_WBT 8P_sounding": "G29",
-                "init_WBT 8P_volume": "J29",
-                "init_WBT 8P_density": "M29",
-
-                "init_WBT 8S_sounding": "G30",
-                "init_WBT 8S_volume": "J30",
-                "init_WBT 8S_density": "M30",
-
-                # =====================================================
-                # INITIAL FRESH WATER (HEIGHT + VOLUME)
-                # =====================================================
-
-                "init_FW P_height": "D47",
-                "init_FW P_volume": "J47",
-
-                "init_FW S_height": "D48",
-                "init_FW S_volume": "J48",
-
-                "init_FW DIST_height": "D49",
-                "init_FW DIST_volume": "J49",
-
-                # =====================================================
-                # FINAL BALLAST (SOUNDING + VOLUME + DENSITY)
-                # =====================================================
-
-                "final_FPT_sounding": "W11",
-                "final_FPT_volume": "Z11",
-                "final_FPT_density": "AC11",
-
-                "final_WBT 1P_sounding": "W12",
-                "final_WBT 1P_volume": "Z12",
-                "final_WBT 1P_density": "AC12",
-
-                "final_WBT 1S_sounding": "W13",
-                "final_WBT 1S_volume": "Z13",
-                "final_WBT 1S_density": "AC13",
-
-                "final_WBT 2P_sounding": "W14",
-                "final_WBT 2P_volume": "Z14",
-                "final_WBT 2P_density": "AC14",
-
-                "final_WBT 2S_sounding": "W15",
-                "final_WBT 2S_volume": "Z15",
-                "final_WBT 2S_density": "AC15",
-
-                "final_WBT 3P_sounding": "W16",
-                "final_WBT 3P_volume": "Z16",
-                "final_WBT 3P_density": "AC16",
-
-                "final_WBT 3S_sounding": "W17",
-                "final_WBT 3S_volume": "Z17",
-                "final_WBT 3S_density": "AC17",
-
-                "final_WBT 4P_sounding": "W18",
-                "final_WBT 4P_volume": "Z18",
-                "final_WBT 4P_density": "AC18",
-
-                "final_WBT 4S_sounding": "W19",
-                "final_WBT 4S_volume": "Z19",
-                "final_WBT 4S_density": "AC19",
-
-                "final_WBT 5P_sounding": "W20",
-                "final_WBT 5P_volume": "Z20",
-                "final_WBT 5P_density": "AC20",
-
-                "final_WBT 5S_sounding": "W21",
-                "final_WBT 5S_volume": "Z21",
-                "final_WBT 5S_density": "AC21",
-
-                "final_APT_sounding": "W22",
-                "final_APT_volume": "Z22",
-                "final_APT_density": "AC22",
-
-                "final_SLOP TANK_sounding": "W23",
-                "final_SLOP TANK_volume": "Z23",
-                "final_SLOP TANK_density": "AC23",
-
-                "final_FW WASH_sounding": "W24",
-                "final_FW WASH_volume": "Z24",
-                "final_FW WASH_density": "AC24",
-
-                # --------- TANQUES 15–20 (AJUSTAR NOMBRES SEGÚN TEMPLATE) ---------
-
-                "final_WBT 6P_sounding": "W25",
-                "final_WBT 6P_volume": "Z25",
-                "final_WBT 6P_density": "AC25",
-
-                "final_WBT 6S_sounding": "W26",
-                "final_WBT 6S_volume": "Z26",
-                "final_WBT 6S_density": "AC26",
-
-                "final_WBT 7P_sounding": "W27",
-                "final_WBT 7P_volume": "Z27",
-                "final_WBT 7P_density": "AC27",
-
-                "final_WBT 7S_sounding": "W28",
-                "final_WBT 7S_volume": "Z28",
-                "final_WBT 7S_density": "AC28",
-
-                "final_WBT 8P_sounding": "W29",
-                "final_WBT 8P_volume": "Z29",
-                "final_WBT 8P_density": "AC29",
-
-                "final_WBT 8S_sounding": "W30",
-                "final_WBT 8S_volume": "Z30",
-                "final_WBT 8S_density": "AC30",
-
-                # =====================================================
-                # FINAL FRESH WATER (HEIGHT + VOLUME)
-                # =====================================================
-
-                "final_FW P_height": "W47",
-                "final_FW P_volume": "AC47",
-
-                "final_FW S_height": "W48",
-                "final_FW S_volume": "AC48",
-
-                "final_FW DIST_height": "W49",
-                "final_FW DIST_volume": "AC49",
             }
         }
     }
@@ -626,8 +429,223 @@ class DraftSurveyExcelGenerator:
                 else:
                     self._safe_set(ws, cell, value)
 
+        # =====================================================
+        # DEDUCTIONS — DYNAMIC BALLAST + FRESH WATER
+        # =====================================================
+        try:
+            if "Deductions" in wb.sheetnames:
+                ws = wb["Deductions"]
+
+                # -------------------------------------------------
+                # HELPERS
+                # -------------------------------------------------
+                def _get_list(*possible_keys):
+                    for key in possible_keys:
+                        value = (payload or {}).get(key)
+                        if isinstance(value, list):
+                            return value
+                    return []
+
+                def _fill_vertical_block(items, start_row, col_name, col_height, col_sounding, col_volume, col_density):
+                    for i, item in enumerate((items or [])[:20]):
+                        row = start_row + i
+                        item = item or {}
+
+                        self._safe_set(ws, f"{col_name}{row}", item.get("name"))
+                        self._safe_set(ws, f"{col_height}{row}", item.get("height"))
+                        self._safe_set(ws, f"{col_sounding}{row}", item.get("sounding"))
+                        self._safe_set(ws, f"{col_volume}{row}", item.get("volume"))
+                        self._safe_set(ws, f"{col_density}{row}", item.get("density"))
+
+                # -------------------------------------------------
+                # BALLAST INITIAL
+                # A11 name / D11 height / G11 sounding / J11 volume / M11 density
+                # -------------------------------------------------
+                ballast_initial = _get_list(
+                    "ballast_initial",
+                    "init_ballast_tanks",
+                    "initial_ballast",
+                    "ballast_init"
+                )
+                _fill_vertical_block(
+                    items=ballast_initial,
+                    start_row=11,
+                    col_name="A",
+                    col_height="D",
+                    col_sounding="G",
+                    col_volume="J",
+                    col_density="M"
+                )
+
+                # -------------------------------------------------
+                # BALLAST FINAL
+                # T11 name / W11 height / Z11 sounding / AC11 volume / AF11 density
+                # -------------------------------------------------
+                ballast_final = _get_list(
+                    "ballast_final",
+                    "final_ballast_tanks",
+                    "final_ballast",
+                    "ballast_final"
+                )
+                _fill_vertical_block(
+                    items=ballast_final,
+                    start_row=11,
+                    col_name="T",
+                    col_height="W",
+                    col_sounding="Z",
+                    col_volume="AC",
+                    col_density="AF"
+                )
+
+                # -------------------------------------------------
+                # FRESH WATER INITIAL
+                # A47 name / D47 height / G47 sounding / J47 volume / M47 density
+                # -------------------------------------------------
+                fresh_water_initial = _get_list(
+                    "fresh_water_initial",
+                    "init_fresh_water_tanks",
+                    "initial_fresh_water",
+                    "fresh_water_init"
+                )
+                _fill_vertical_block(
+                    items=fresh_water_initial,
+                    start_row=47,
+                    col_name="A",
+                    col_height="D",
+                    col_sounding="G",
+                    col_volume="J",
+                    col_density="M"
+                )
+
+                # -------------------------------------------------
+                # FRESH WATER FINAL
+                # T47 name / W47 height / Z47 sounding / AC47 volume / AF47 density
+                # -------------------------------------------------
+                fresh_water_final = _get_list(
+                    "fresh_water_final",
+                    "final_fresh_water_tanks",
+                    "final_fresh_water",
+                    "fresh_water_final"
+                )
+                _fill_vertical_block(
+                    items=fresh_water_final,
+                    start_row=47,
+                    col_name="T",
+                    col_height="W",
+                    col_sounding="Z",
+                    col_volume="AC",
+                    col_density="AF"
+                )
+
+        except Exception:
+            pass
+
         tmp_dir = tempfile.mkdtemp(prefix="draft_excel_")
         tmp_path = os.path.join(tmp_dir, "draft_survey.xlsx")
+
+        # =====================================================
+        # DEDUCTIONS — DYNAMIC BALLAST + FRESH WATER (BLINDADO)
+        # =====================================================
+        try:
+            if "Deductions" in wb.sheetnames:
+                ws_ded = wb["Deductions"]
+
+                # -------------------------------------------------
+                # HELPERS
+                # -------------------------------------------------
+                def _get_list(*keys):
+                    for k in keys:
+                        v = (payload or {}).get(k)
+                        if isinstance(v, list):
+                            return v
+                    return []
+
+                def _clear_block(start_row, cols, max_rows=20):
+                    for i in range(max_rows):
+                        row = start_row + i
+                        for col in cols:
+                            try:
+                                ws_ded[f"{col}{row}"].value = None
+                            except Exception:
+                                pass
+
+                def _fill_block(items, start_row, col_name, col_height, col_sounding, col_volume, col_density):
+                    for i, item in enumerate((items or [])[:20]):
+                        row = start_row + i
+                        item = item or {}
+
+                        self._safe_set(ws_ded, f"{col_name}{row}", item.get("name"))
+                        self._safe_set(ws_ded, f"{col_height}{row}", item.get("height"))
+                        self._safe_set(ws_ded, f"{col_sounding}{row}", item.get("sounding"))
+                        self._safe_set(ws_ded, f"{col_volume}{row}", item.get("volume"))
+                        self._safe_set(ws_ded, f"{col_density}{row}", item.get("density"))
+
+                # -------------------------------------------------
+                # BALLAST INITIAL
+                # -------------------------------------------------
+                ballast_initial = _get_list(
+                    "ballast_initial",
+                    "init_ballast_tanks",
+                    "initial_ballast"
+                )
+
+                _clear_block(11, ["A", "D", "G", "J", "M"])
+                _fill_block(
+                    ballast_initial,
+                    11,
+                    "A", "D", "G", "J", "M"
+                )
+
+                # -------------------------------------------------
+                # BALLAST FINAL
+                # -------------------------------------------------
+                ballast_final = _get_list(
+                    "ballast_final",
+                    "final_ballast_tanks",
+                    "final_ballast"
+                )
+
+                _clear_block(11, ["T", "W", "Z", "AC", "AF"])
+                _fill_block(
+                    ballast_final,
+                    11,
+                    "T", "W", "Z", "AC", "AF"
+                )
+
+                # -------------------------------------------------
+                # FRESH WATER INITIAL
+                # -------------------------------------------------
+                fw_initial = _get_list(
+                    "fresh_water_initial",
+                    "init_fresh_water_tanks",
+                    "initial_fresh_water"
+                )
+
+                _clear_block(47, ["A", "D", "G", "J", "M"])
+                _fill_block(
+                    fw_initial,
+                    47,
+                    "A", "D", "G", "J", "M"
+                )
+
+                # -------------------------------------------------
+                # FRESH WATER FINAL
+                # -------------------------------------------------
+                fw_final = _get_list(
+                    "fresh_water_final",
+                    "final_fresh_water_tanks",
+                    "final_fresh_water"
+                )
+
+                _clear_block(47, ["T", "W", "Z", "AC", "AF"])
+                _fill_block(
+                    fw_final,
+                    47,
+                    "T", "W", "Z", "AC", "AF"
+                )
+
+        except Exception:
+            pass
 
         wb.save(tmp_path)
 
