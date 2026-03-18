@@ -36,7 +36,7 @@ router = APIRouter(
 )
 
 # =========================================================
-# POST — BALLAST (CREATE) — ULTRA BLINDADO / FIX FRESH WATER
+# POST / PUT — BALLAST (CREATE / UPDATE) — ULTRA BLINDADO
 # =========================================================
 @router.post("/ballast/{draft_survey_id}")
 def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
@@ -46,199 +46,204 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
     try:
         payload = payload or {}
 
-        metadata_keys = [
-            "year", "month", "continent", "country",
-            "port", "client", "draft_report_number"
-        ]
-
         # =====================================================
-        # 1️⃣ RESOLVER draft real
+        # 1) RESOLVER ID REAL DE draft_survey
+        #    El path recibe general_id, no necesariamente id real
         # =====================================================
         cur.execute(
-            "SELECT id FROM draft_survey WHERE general_id = %s",
+            """
+            SELECT id
+            FROM draft_survey
+            WHERE general_id = %s
+            """,
             (draft_survey_id,)
         )
         row = cur.fetchone()
 
+        # fallback: por si alguna vez mandan el id real
         if not row:
+            cur.execute(
+                """
+                SELECT id
+                FROM draft_survey
+                WHERE id = %s
+                """,
+                (draft_survey_id,)
+            )
+            row = cur.fetchone()
+
+        if not row:
+            conn.rollback()
             raise HTTPException(
                 status_code=404,
-                detail=f"draft_survey_id {draft_survey_id} does not exist"
+                detail=f"No existe draft_survey con general_id/id = {draft_survey_id}"
             )
 
-        real_draft_id = row[0]
+        real_draft_survey_id = row[0]
 
         # =====================================================
-        # 2️⃣ NORMALIZAR PAYLOAD
-        # =====================================================
-        normalized = {}
-
-        def clean_value(v):
-            if v is None:
-                return None
-
-            if isinstance(v, str):
-                vv = v.strip()
-
-                if vv.lower() in ("", "none", "null"):
-                    return None
-
-                # permitir Empty / Gauge
-                if vv.lower() in ("empty", "gauge"):
-                    return vv.upper()
-
-                vv = vv.replace(",", ".")
-
-                try:
-                    return str(float(vv))
-                except Exception:
-                    return vv
-
-            return v
-
-        for k, v in payload.items():
-
-            if not isinstance(k, str):
-                continue
-
-            new_key = k.lower().strip().replace(" ", "_")
-            normalized[new_key] = clean_value(v)
-
-        # asegurar metadata
-        for m in metadata_keys:
-            normalized.setdefault(m, None)
-
-        normalized["draft_survey_id"] = real_draft_id
-
-        # =====================================================
-        # 3️⃣ MAPEO FRESH WATER A COLUMNAS FIJAS
-        # =====================================================
-        for phase in ["init", "final"]:
-            for i in range(1, 21):
-
-                h = normalized.get(f"{phase}_fw_{i}_height")
-                v = normalized.get(f"{phase}_fw_{i}_volume")
-
-                if h is None and v is None:
-                    continue
-
-                name = f"fw_{i}"
-
-                # lógica simple: 1=P, 2=S, 3=DIST
-                if i == 1:
-                    normalized[f"{phase}_fw_p_height"] = h
-                    normalized[f"{phase}_fw_p_volume"] = v
-
-                elif i == 2:
-                    normalized[f"{phase}_fw_s_height"] = h
-                    normalized[f"{phase}_fw_s_volume"] = v
-
-                elif i == 3:
-                    normalized[f"{phase}_fw_dist_height"] = h
-                    normalized[f"{phase}_fw_dist_volume"] = v
-
-        # =====================================================
-        # 4️⃣ SQL DINÁMICO
-        # =====================================================
-        columns = ["draft_survey_id"]
-        values = ["%(draft_survey_id)s"]
-
-        # FPT / APT / SLOP
-        for phase in ["init", "final"]:
-            for base in ["fpt", "apt", "slop_tank"]:
-                for field in ["sounding", "volume", "density"]:
-                    col = f"{phase}_{base}_{field}"
-                    columns.append(col)
-                    values.append(f"%({col})s")
-
-        # WBT
-        for phase in ["init", "final"]:
-            for i in range(1, 21):
-                for side in ["p", "s"]:
-                    for field in ["sounding", "volume", "density"]:
-                        col = f"{phase}_wbt_{i}{side}_{field}"
-                        columns.append(col)
-                        values.append(f"%({col})s")
-
-        # FRESH WATER DINÁMICO
-        for phase in ["init", "final"]:
-            for i in range(1, 21):
-                for field in ["height", "volume"]:
-                    col = f"{phase}_fw_{i}_{field}"
-                    columns.append(col)
-                    values.append(f"%({col})s")
-
-        # 🔥 FRESH WATER FIJO (CRÍTICO)
-        for phase in ["init", "final"]:
-            for fw in ["fw_p", "fw_s", "fw_dist"]:
-                for field in ["height", "volume"]:
-                    col = f"{phase}_{fw}_{field}"
-                    columns.append(col)
-                    values.append(f"%({col})s")
-
-        # METADATA
-        for m in metadata_keys:
-            columns.append(m)
-            values.append(f"%({m})s")
-
-        columns.append("status")
-        values.append("'Pending for review'")
-
-        sql = f"""
-            INSERT INTO draft_survey_ballast (
-                {", ".join(columns)}
-            )
-            VALUES (
-                {", ".join(values)}
-            )
-        """
-
-        # =====================================================
-        # 5️⃣ RELLENO NULL SAFE
-        # =====================================================
-        import re
-        keys = re.findall(r"%\((.*?)\)s", sql)
-
-        for k in keys:
-            normalized.setdefault(k, None)
-
-        # =====================================================
-        # 6️⃣ UPSERT
+        # 2) OBTENER COLUMNAS REALES DE LA TABLA BALLAST
+        #    Para no reventar si el payload trae campos extra
         # =====================================================
         cur.execute(
-            "SELECT id FROM draft_survey_ballast WHERE draft_survey_id = %s",
-            (real_draft_id,)
-        )
-        exists = cur.fetchone()
-
-        if exists:
-
-            set_parts = []
-            for col in columns:
-                if col in ("draft_survey_id", "status"):
-                    continue
-                set_parts.append(f"{col} = %({col})s")
-
-            update_sql = f"""
-                UPDATE draft_survey_ballast
-                SET
-                    {", ".join(set_parts)},
-                    updated_at = NOW(),
-                    status = 'Pending for review'
-                WHERE draft_survey_id = %(draft_survey_id)s
             """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = 'draft_survey_ballast'
+            ORDER BY ordinal_position
+            """
+        )
+        ballast_columns_rows = cur.fetchall()
+        ballast_columns = {r[0] for r in ballast_columns_rows}
 
-            cur.execute(update_sql, normalized)
+        if not ballast_columns:
+            conn.rollback()
+            raise HTTPException(
+                status_code=500,
+                detail="La tabla public.draft_survey_ballast no existe o no tiene columnas."
+            )
+
+        # =====================================================
+        # 3) NORMALIZAR PAYLOAD
+        # =====================================================
+        clean_payload = {}
+
+        for k, v in payload.items():
+            key = str(k).strip()
+
+            # ignorar claves vacías
+            if not key:
+                continue
+
+            # solo columnas existentes en la tabla
+            if key not in ballast_columns:
+                continue
+
+            # normalizar strings vacíos
+            if isinstance(v, str):
+                v = v.strip()
+                if v == "":
+                    v = None
+
+            clean_payload[key] = v
+
+        # =====================================================
+        # 4) FORZAR FK CORRECTA SI EXISTE ESA COLUMNA
+        # =====================================================
+        fk_candidates = [
+            "draft_survey_id",
+            "draftsurvey_id",
+            "draft_survey",
+            "draftsurvey"
+        ]
+
+        fk_col = None
+        for candidate in fk_candidates:
+            if candidate in ballast_columns:
+                fk_col = candidate
+                break
+
+        if not fk_col:
+            conn.rollback()
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    "La tabla draft_survey_ballast no tiene una columna FK válida "
+                    "(esperada: draft_survey_id o similar)."
+                )
+            )
+
+        clean_payload[fk_col] = real_draft_survey_id
+
+        # =====================================================
+        # 5) BUSCAR SI YA EXISTE REGISTRO DE BALLAST
+        #    (1 ballast por draft_survey)
+        # =====================================================
+        cur.execute(
+            f"""
+            SELECT id
+            FROM draft_survey_ballast
+            WHERE {fk_col} = %s
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (real_draft_survey_id,)
+        )
+        existing = cur.fetchone()
+
+        # =====================================================
+        # 6) SI SOLO VIENE LA FK, IGUAL INSERTA/ACTUALIZA
+        # =====================================================
+        if existing:
+            ballast_id = existing[0]
+
+            update_fields = [
+                c for c in clean_payload.keys()
+                if c != "id"
+            ]
+
+            if update_fields:
+                set_clause = ", ".join([f"{c} = %s" for c in update_fields])
+                values = [clean_payload[c] for c in update_fields]
+                values.append(ballast_id)
+
+                cur.execute(
+                    f"""
+                    UPDATE draft_survey_ballast
+                    SET {set_clause}
+                    WHERE id = %s
+                    RETURNING id
+                    """,
+                    values
+                )
+
+                updated = cur.fetchone()
+                ballast_id = updated[0] if updated else ballast_id
+
+            conn.commit()
+
+            return {
+                "status": "ok",
+                "action": "updated",
+                "draft_survey_id": real_draft_survey_id,
+                "ballast_id": ballast_id,
+                "saved_fields": list(clean_payload.keys())
+            }
 
         else:
-            cur.execute(sql, normalized)
+            insert_fields = [
+                c for c in clean_payload.keys()
+                if c != "id"
+            ]
 
-        conn.commit()
+            if not insert_fields:
+                insert_fields = [fk_col]
+                clean_payload[fk_col] = real_draft_survey_id
 
-        return {
-            "success": True,
-            "draft_survey_id": real_draft_id
-        }
+            columns_sql = ", ".join(insert_fields)
+            placeholders_sql = ", ".join(["%s"] * len(insert_fields))
+            values = [clean_payload[c] for c in insert_fields]
+
+            cur.execute(
+                f"""
+                INSERT INTO draft_survey_ballast ({columns_sql})
+                VALUES ({placeholders_sql})
+                RETURNING id
+                """,
+                values
+            )
+            inserted = cur.fetchone()
+
+            conn.commit()
+
+            return {
+                "status": "ok",
+                "action": "created",
+                "draft_survey_id": real_draft_survey_id,
+                "ballast_id": inserted[0] if inserted else None,
+                "saved_fields": insert_fields
+            }
 
     except HTTPException:
         conn.rollback()
@@ -246,7 +251,10 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
 
     except Exception as e:
         conn.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error guardando ballast: {str(e)}"
+        )
 
     finally:
         cur.close()
