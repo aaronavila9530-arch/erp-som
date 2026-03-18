@@ -3,6 +3,7 @@ import tempfile
 import subprocess
 from typing import Dict
 from docx import Document
+from datetime import datetime
 
 
 # =====================================================
@@ -16,6 +17,38 @@ TEMPLATE_PATH = os.path.abspath(
         "presentation_draft_survey.docx"
     )
 )
+
+
+# =====================================================
+# FORMAT DATE — LONG ENGLISH (NO TIME)
+# =====================================================
+def _format_date_long_en(value):
+
+    if not value:
+        return ""
+
+    try:
+        # Si viene como datetime
+        if isinstance(value, datetime):
+            dt = value
+
+        else:
+            value = str(value)
+
+            # ISO con hora → cortar
+            if "T" in value:
+                value = value.split("T")[0]
+
+            # Intentar parsear YYYY-MM-DD
+            try:
+                dt = datetime.strptime(value[:10], "%Y-%m-%d")
+            except Exception:
+                return value  # fallback
+
+        return dt.strftime("%B %d, %Y")  # March 18, 2026
+
+    except Exception:
+        return str(value)
 
 
 # =====================================================
@@ -87,6 +120,11 @@ def generate_draft_survey_presentation_pdf(data: dict) -> str:
             f"Draft Survey presentation template not found: {TEMPLATE_PATH}"
         )
 
+    # 🔥 FORMATEO DE FECHA (SIN HORA + LONG ENGLISH)
+    formatted_date = _format_date_long_en(
+        data.get("word_commenced")
+    )
+
     placeholders = {
         "{draft_report_number}": str(data.get("draft_report_number") or ""),
         "{word_vessel}": str(data.get("word_vessel") or ""),
@@ -95,7 +133,7 @@ def generate_draft_survey_presentation_pdf(data: dict) -> str:
         "{word_survey_requested_by}": str(data.get("word_survey_requested_by") or ""),
         "{word_port}": str(data.get("word_port") or ""),
         "{word_country}": str(data.get("word_country") or ""),
-        "{word_commenced}": str(data.get("word_commenced") or ""),
+        "{word_commenced}": formatted_date,  # 👈 AQUÍ APLICADO
     }
 
     doc = Document(TEMPLATE_PATH)
