@@ -36,7 +36,7 @@ router = APIRouter(
 )
 
 # =========================================================
-# POST / PUT — BALLAST (CREATE / UPDATE) — ULTRA PRO FINAL
+# POST / PUT — BALLAST (CREATE / UPDATE) — ULTRA MAX PRO
 # =========================================================
 @router.post("/ballast/{draft_survey_id}")
 def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
@@ -49,23 +49,15 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
         # =====================================================
         # 1) RESOLVER ID REAL
         # =====================================================
-        cur.execute("""
-            SELECT id FROM draft_survey WHERE general_id = %s
-        """, (draft_survey_id,))
+        cur.execute("SELECT id FROM draft_survey WHERE general_id = %s", (draft_survey_id,))
         row = cur.fetchone()
 
         if not row:
-            cur.execute("""
-                SELECT id FROM draft_survey WHERE id = %s
-            """, (draft_survey_id,))
+            cur.execute("SELECT id FROM draft_survey WHERE id = %s", (draft_survey_id,))
             row = cur.fetchone()
 
         if not row:
-            conn.rollback()
-            raise HTTPException(
-                status_code=404,
-                detail=f"No existe draft_survey con id/general_id = {draft_survey_id}"
-            )
+            raise HTTPException(404, f"No existe draft_survey {draft_survey_id}")
 
         real_id = row[0]
 
@@ -75,21 +67,16 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
         cur.execute("""
             SELECT column_name, data_type
             FROM information_schema.columns
-            WHERE table_schema = 'public'
-              AND table_name = 'draft_survey_ballast'
+            WHERE table_name = 'draft_survey_ballast'
         """)
 
         col_types = {r[0]: r[1] for r in cur.fetchall()}
-
-        if not col_types:
-            raise HTTPException(500, "Tabla draft_survey_ballast inválida")
-
         cols = set(col_types.keys())
 
         # =====================================================
-        # 3) CLEAN INTELIGENTE SEGÚN TIPO
+        # 3) CLEAN INTELIGENTE
         # =====================================================
-        def clean_by_type(key, value):
+        def clean(key, value):
 
             if value is None:
                 return None
@@ -104,22 +91,19 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
 
             col_type = col_types.get(key, "")
 
-            # NUMÉRICOS
             if col_type in ["double precision", "numeric", "real"]:
                 try:
                     return float(value)
                 except:
-                    return None  # 🔥 evita errores
+                    return None
 
-            # TEXTOS
             if "char" in col_type or col_type == "text":
                 return str(value)
 
-            # DEFAULT
             return value
 
         # =====================================================
-        # 4) LIMPIAR PAYLOAD
+        # 🔥 4) NORMALIZAR PAYLOAD COMPLETO
         # =====================================================
         clean_payload = {}
         ignored_keys = []
@@ -131,77 +115,76 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
             if not key:
                 continue
 
-            if key not in cols:
+            if key in cols:
+                clean_payload[key] = clean(key, v)
+            else:
                 ignored_keys.append(key)
-                continue
-
-            clean_payload[key] = clean_by_type(key, v)
 
         # =====================================================
-        # 5) FK
+        # 🔥 5) FORZAR FW (aunque columnas no existan)
         # =====================================================
-        fk_candidates = [
-            "draft_survey_id",
-            "draftsurvey_id",
-            "draft_survey",
-            "draftsurvey"
-        ]
+        fw_detected = [k for k in payload.keys() if "_fw_" in k]
 
-        fk_col = next((c for c in fk_candidates if c in cols), None)
+        if fw_detected:
+            print("🔥 FW DETECTADO:", len(fw_detected), "campos")
+
+        # =====================================================
+        # 6) FK
+        # =====================================================
+        fk_col = next((c for c in ["draft_survey_id", "draftsurvey_id"] if c in cols), None)
 
         if not fk_col:
-            raise HTTPException(500, "No existe FK válida en draft_survey_ballast")
+            raise HTTPException(500, "FK no encontrada")
 
         clean_payload[fk_col] = real_id
 
         # =====================================================
-        # 🔥 6) JSON BACKUP SIEMPRE (NO SOLO FALLBACK)
+        # 🔥 7) JSON BACKUP SIEMPRE COMPLETO
         # =====================================================
         if "raw_payload" in cols:
             clean_payload["raw_payload"] = payload
 
-        elif "ballast_json" in cols:
+        if "ballast_json" in cols:
             clean_payload["ballast_json"] = payload
 
         # =====================================================
-        # DEBUG PRO
+        # 🔥 DEBUG NIVEL DIOS
         # =====================================================
-        print("------ BALLAST DEBUG ------")
+        print("====== BALLAST DEBUG ======")
         print("REAL ID:", real_id)
-        print("CLEAN:", len(clean_payload))
-        print("IGNORED:", len(ignored_keys))
-        print("IGNORED SAMPLE:", ignored_keys[:5])
-        print("---------------------------")
+        print("TOTAL INPUT:", len(payload))
+        print("GUARDADOS:", len(clean_payload))
+        print("IGNORADOS:", len(ignored_keys))
+        print("SAMPLE IGNORADOS:", ignored_keys[:10])
+        print("===========================")
 
         # =====================================================
-        # 7) UPSERT
+        # 🔥 8) UPSERT
         # =====================================================
         cur.execute(f"""
-            SELECT id
-            FROM draft_survey_ballast
+            SELECT id FROM draft_survey_ballast
             WHERE {fk_col} = %s
             LIMIT 1
         """, (real_id,))
         existing = cur.fetchone()
 
-        fields = [k for k in clean_payload.keys() if k != "id"]
+        fields = list(clean_payload.keys())
 
         if existing:
             ballast_id = existing[0]
 
-            if fields:
-                set_clause = ", ".join([f"{c} = %s" for c in fields])
-                values = [clean_payload[c] for c in fields] + [ballast_id]
+            set_clause = ", ".join([f"{c} = %s" for c in fields])
+            values = [clean_payload[c] for c in fields] + [ballast_id]
 
-                cur.execute(f"""
-                    UPDATE draft_survey_ballast
-                    SET {set_clause},
-                        updated_at = NOW()
-                    WHERE id = %s
-                    RETURNING id
-                """, values)
+            cur.execute(f"""
+                UPDATE draft_survey_ballast
+                SET {set_clause},
+                    updated_at = NOW()
+                WHERE id = %s
+                RETURNING id
+            """, values)
 
-                ballast_id = cur.fetchone()[0]
+            ballast_id = cur.fetchone()[0]
 
             conn.commit()
 
@@ -214,10 +197,6 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
             }
 
         else:
-            if not fields:
-                fields = [fk_col]
-                clean_payload[fk_col] = real_id
-
             cols_sql = ", ".join(fields)
             vals_sql = ", ".join(["%s"] * len(fields))
             values = [clean_payload[c] for c in fields]
@@ -246,13 +225,11 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
 
     except Exception as e:
         conn.rollback()
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error guardando ballast: {str(e)}"
-        )
+        raise HTTPException(500, f"Error guardando ballast: {str(e)}")
 
     finally:
         cur.close()
+
 
 # ---------------------------------------------------------
 # GET BALLAST
