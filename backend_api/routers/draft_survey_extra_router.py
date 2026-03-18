@@ -36,7 +36,7 @@ router = APIRouter(
 )
 
 # =========================================================
-# POST / PUT — BALLAST (CREATE / UPDATE) — ULTRA BLINDADO PRO
+# POST / PUT — BALLAST (CREATE / UPDATE) — ULTRA PRO FINAL
 # =========================================================
 @router.post("/ballast/{draft_survey_id}")
 def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
@@ -70,47 +70,53 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
         real_id = row[0]
 
         # =====================================================
-        # 2) COLUMNAS REALES
+        # 2) COLUMNAS + TIPOS
         # =====================================================
         cur.execute("""
-            SELECT column_name
+            SELECT column_name, data_type
             FROM information_schema.columns
             WHERE table_schema = 'public'
               AND table_name = 'draft_survey_ballast'
         """)
-        cols = {r[0] for r in cur.fetchall()}
 
-        if not cols:
-            conn.rollback()
-            raise HTTPException(
-                status_code=500,
-                detail="Tabla draft_survey_ballast inválida"
-            )
+        col_types = {r[0]: r[1] for r in cur.fetchall()}
+
+        if not col_types:
+            raise HTTPException(500, "Tabla draft_survey_ballast inválida")
+
+        cols = set(col_types.keys())
 
         # =====================================================
-        # 3) HELPERS
+        # 3) CLEAN INTELIGENTE SEGÚN TIPO
         # =====================================================
-        def clean(v):
+        def clean_by_type(key, value):
 
-            if v is None:
+            if value is None:
                 return None
 
-            if isinstance(v, str):
-                v = v.strip()
+            if isinstance(value, str):
+                value = value.strip()
 
-                if v == "":
+                if value == "":
                     return None
 
-                # normalizar coma decimal
-                v = v.replace(",", ".")
+                value = value.replace(",", ".")
 
-                # intentar número
+            col_type = col_types.get(key, "")
+
+            # NUMÉRICOS
+            if col_type in ["double precision", "numeric", "real"]:
                 try:
-                    return float(v)
-                except Exception:
-                    return v  # texto tipo "EMPTY", "GAUGE"
+                    return float(value)
+                except:
+                    return None  # 🔥 evita errores
 
-            return v
+            # TEXTOS
+            if "char" in col_type or col_type == "text":
+                return str(value)
+
+            # DEFAULT
+            return value
 
         # =====================================================
         # 4) LIMPIAR PAYLOAD
@@ -129,7 +135,7 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
                 ignored_keys.append(key)
                 continue
 
-            clean_payload[key] = clean(v)
+            clean_payload[key] = clean_by_type(key, v)
 
         # =====================================================
         # 5) FK
@@ -144,38 +150,27 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
         fk_col = next((c for c in fk_candidates if c in cols), None)
 
         if not fk_col:
-            conn.rollback()
-            raise HTTPException(
-                status_code=500,
-                detail="No existe FK válida en draft_survey_ballast"
-            )
+            raise HTTPException(500, "No existe FK válida en draft_survey_ballast")
 
         clean_payload[fk_col] = real_id
 
         # =====================================================
-        # 🔥 6) FALLBACK JSON (CRÍTICO)
-        # Si no hay columnas válidas → guardamos TODO como JSON
+        # 🔥 6) JSON BACKUP SIEMPRE (NO SOLO FALLBACK)
         # =====================================================
-        if len(clean_payload) <= 1:  # solo FK
+        if "raw_payload" in cols:
+            clean_payload["raw_payload"] = payload
 
-            if "raw_payload" in cols:
-                clean_payload["raw_payload"] = payload
-
-            elif "ballast_json" in cols:
-                clean_payload["ballast_json"] = payload
-
-            else:
-                # DEBUG FUERTE
-                print("⚠️ TODOS LOS CAMPOS IGNORADOS")
-                print("IGNORED:", ignored_keys[:10])
+        elif "ballast_json" in cols:
+            clean_payload["ballast_json"] = payload
 
         # =====================================================
-        # DEBUG (TE VA A SALVAR HORAS)
+        # DEBUG PRO
         # =====================================================
         print("------ BALLAST DEBUG ------")
         print("REAL ID:", real_id)
-        print("CLEAN FIELDS:", len(clean_payload))
+        print("CLEAN:", len(clean_payload))
         print("IGNORED:", len(ignored_keys))
+        print("IGNORED SAMPLE:", ignored_keys[:5])
         print("---------------------------")
 
         # =====================================================
@@ -200,7 +195,8 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
 
                 cur.execute(f"""
                     UPDATE draft_survey_ballast
-                    SET {set_clause}
+                    SET {set_clause},
+                        updated_at = NOW()
                     WHERE id = %s
                     RETURNING id
                 """, values)
@@ -210,10 +206,10 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
             conn.commit()
 
             return {
-                "status": "ok",
+                "success": True,
                 "action": "updated",
                 "ballast_id": ballast_id,
-                "saved_fields": fields,
+                "saved_fields": len(fields),
                 "ignored_fields": len(ignored_keys)
             }
 
@@ -237,10 +233,10 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
             conn.commit()
 
             return {
-                "status": "ok",
+                "success": True,
                 "action": "created",
                 "ballast_id": ballast_id,
-                "saved_fields": fields,
+                "saved_fields": len(fields),
                 "ignored_fields": len(ignored_keys)
             }
 
