@@ -143,8 +143,9 @@ def filter_servicios(
 
 
 # =========================================================
-# POST — CREATE (ULTRA BLINDADO REAL 100%)
-# GUARDA TODO draft_survey DINÁMICAMENTE
+# POST — CREATE (ULTRA BLINDADO REAL 100% FIXED)
+# NO INSERTA ID / CREATED_AT / UPDATED_AT
+# GUARDA TODO DINÁMICO SIN ROMPER DB
 # =========================================================
 
 @router.post("/")
@@ -156,7 +157,7 @@ def create_draft_survey(payload: dict, conn=Depends(get_db)):
         payload = payload or {}
 
         # =====================================================
-        # LIMPIEZA MINIMA (NO TOCAR TEXTO)
+        # LIMPIEZA MINIMA
         # =====================================================
         def clean_value(v):
             if v is None:
@@ -174,13 +175,13 @@ def create_draft_survey(payload: dict, conn=Depends(get_db)):
         }
 
         # =====================================================
-        # SOLO PARSEAR FECHAS
+        # PARSE FECHAS
         # =====================================================
         payload["init_date"] = parse_date(payload.get("init_date"))
         payload["final_date"] = parse_date(payload.get("final_date"))
 
         # =====================================================
-        # FALLBACKS (SIN ALTERAR TEXTO)
+        # FALLBACKS
         # =====================================================
         if payload.get("init_cargo") is None:
             payload["init_cargo"] = payload.get("cargo")
@@ -232,7 +233,7 @@ def create_draft_survey(payload: dict, conn=Depends(get_db)):
             raise HTTPException(400, "draft_report_number already exists")
 
         # =====================================================
-        # INSERT GENERAL (SIN CAMBIOS)
+        # INSERT GENERAL
         # =====================================================
         cur.execute("""
             INSERT INTO general_draft_survey (
@@ -281,17 +282,21 @@ def create_draft_survey(payload: dict, conn=Depends(get_db)):
         general_id = cur.fetchone()["id"]
 
         # =====================================================
-        # 🔥 ULTRA CLAVE: OBTENER COLUMNAS REALES DE draft_survey
+        # 🔥 COLUMNAS REALES (EXCLUYENDO AUTO)
         # =====================================================
         cur.execute("""
             SELECT column_name
             FROM information_schema.columns
             WHERE table_name = 'draft_survey'
         """)
-        cols = {row["column_name"] for row in cur.fetchall()}
+        cols = {
+            row["column_name"]
+            for row in cur.fetchall()
+            if row["column_name"] not in ("id", "created_at", "updated_at")
+        }
 
         # =====================================================
-        # 🔥 MAPEO DINÁMICO REAL (ESTO ES LO QUE FALTABA)
+        # 🔥 MAPEO DINÁMICO
         # =====================================================
         draft_data = {}
 
@@ -299,17 +304,17 @@ def create_draft_survey(payload: dict, conn=Depends(get_db)):
             if k in cols:
                 draft_data[k] = v
 
-        # SIEMPRE agregar general_id
+        # SIEMPRE link
         draft_data["general_id"] = general_id
 
         # =====================================================
-        # 🔥 ASEGURAR TODAS LAS COLUMNAS (EVITA ERRORES NULL)
+        # 🔥 COMPLETAR CAMPOS FALTANTES (SIN TOCAR AUTO)
         # =====================================================
         for col in cols:
             draft_data.setdefault(col, None)
 
         # =====================================================
-        # 🔥 INSERT DINÁMICO TOTAL
+        # 🔥 INSERT DINÁMICO LIMPIO
         # =====================================================
         columns = ", ".join(draft_data.keys())
         placeholders = ", ".join([f"%({k})s" for k in draft_data.keys()])
