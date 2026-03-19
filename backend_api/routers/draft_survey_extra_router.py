@@ -31,8 +31,10 @@ def clean_value_as_is(value):
 
 
 # =========================================================
-# POST / PUT — BALLAST (CREATE / UPDATE) — ULTRA BLINDADO REAL FINAL++
-# GUARDA 100% DEL PAYLOAD (COLUMNAS + JSON BACKUP)
+# POST / PUT — BALLAST (CREATE / UPDATE) — ULTRA BLINDADO REAL FINAL+++
+# ✔ GUARDA TODO EL PAYLOAD (COLUMNAS + JSON)
+# ✔ NO ROMPE POR NUMERIC (EMPTY / GAUGE SAFE)
+# ✔ SOPORTA FRONT DINÁMICO 100%
 # =========================================================
 @router.post("/ballast/{draft_survey_id}")
 def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
@@ -43,14 +45,41 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
         payload = payload or {}
 
         # =====================================================
-        # HELPER: RESPETAR TODO TAL CUAL
+        # HELPER: LIMPIEZA MINIMA (SIN ALTERAR SEMÁNTICA)
         # =====================================================
         def clean_value_as_is(v):
             if v is None:
                 return None
-            if isinstance(v, str) and v.strip() == "":
-                return None
+            if isinstance(v, str):
+                v = v.strip()
+                if v == "":
+                    return None
             return v
+
+        # =====================================================
+        # HELPER: PROTEGER NUMERIC (CLAVE DEL SISTEMA)
+        # NO PIERDE EMPTY / GAUGE → SOLO EVITA CRASH
+        # =====================================================
+        def safe_numeric(v):
+            if v is None:
+                return None
+
+            if isinstance(v, (int, float)):
+                return v
+
+            if isinstance(v, str):
+                val = v.strip().upper()
+
+                # 🔥 RESPETAR SEMÁNTICA PERO NO ROMPER DB
+                if val in ["EMPTY", "GAUGE", "N/A", "-"]:
+                    return None
+
+                try:
+                    return float(val.replace(",", "."))
+                except:
+                    return None
+
+            return None
 
         # =====================================================
         # 1) RESOLVER ID REAL
@@ -72,18 +101,20 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
         real_id = row[0]
 
         # =====================================================
-        # 2) COLUMNAS REALES
+        # 2) COLUMNAS + TIPOS (CRÍTICO)
         # =====================================================
         cur.execute("""
-            SELECT column_name
+            SELECT column_name, data_type
             FROM information_schema.columns
             WHERE table_schema = 'public'
               AND table_name = 'draft_survey_ballast'
         """)
-        cols = {r[0] for r in cur.fetchall()}
+        col_info = {r[0]: r[1] for r in cur.fetchall()}
 
-        if not cols:
+        if not col_info:
             raise HTTPException(500, "No se pudieron leer columnas")
+
+        cols = set(col_info.keys())
 
         # =====================================================
         # 3) FK
@@ -97,10 +128,11 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
             raise HTTPException(500, "FK no encontrada")
 
         # =====================================================
-        # 4) PREPARAR PAYLOAD COMPLETO (NO PERDER NADA)
+        # 4) PROCESAR PAYLOAD COMPLETO
         # =====================================================
         clean_payload = {}
         full_payload = {}
+        ignored_keys = []
 
         for k, v in payload.items():
 
@@ -110,12 +142,21 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
             key = str(k)
             value = clean_value_as_is(v)
 
-            # 🔥 guardar TODO
+            # 🔥 GUARDAR TODO (JSON)
             full_payload[key] = value
 
-            # 🔥 guardar en columnas SOLO si existen
             if key in cols:
-                clean_payload[key] = value
+
+                col_type = col_info.get(key, "")
+
+                # 🔥 PROTEGER NUMERIC
+                if col_type in ("numeric", "double precision", "real", "integer"):
+                    clean_payload[key] = safe_numeric(value)
+                else:
+                    clean_payload[key] = value
+
+            else:
+                ignored_keys.append(key)
 
         # =====================================================
         # 5) FORZAR FK
@@ -123,7 +164,7 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
         clean_payload[fk_col] = real_id
 
         # =====================================================
-        # 6) GUARDAR TODO EL PAYLOAD EN JSON (CLAVE)
+        # 6) BACKUP JSON COMPLETO
         # =====================================================
         if "raw_payload" in cols:
             clean_payload["raw_payload"] = full_payload
@@ -132,7 +173,7 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
             clean_payload["ballast_json"] = full_payload
 
         # =====================================================
-        # 7) FALLBACK MINIMO
+        # 7) FALLBACK
         # =====================================================
         fields = list(clean_payload.keys())
 
@@ -141,13 +182,14 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
             clean_payload = {fk_col: real_id}
 
         # =====================================================
-        # DEBUG (CRÍTICO PARA VALIDAR 100%)
+        # DEBUG PROFESIONAL
         # =====================================================
         print("====== BALLAST DEBUG ======")
         print("REAL ID:", real_id)
         print("TOTAL INPUT:", len(payload))
-        print("TOTAL GUARDADO COLUMNAS:", len(clean_payload))
-        print("TOTAL JSON:", len(full_payload))
+        print("COLUMNAS DB:", len(cols))
+        print("GUARDADOS:", len(clean_payload))
+        print("IGNORADOS:", len(ignored_keys))
         print("===========================")
 
         # =====================================================
@@ -189,7 +231,8 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
                 "ballast_id": ballast_id,
                 "draft_survey_id": real_id,
                 "total_payload": len(full_payload),
-                "saved_in_columns": len(clean_payload)
+                "saved_in_columns": len(clean_payload),
+                "ignored": len(ignored_keys)
             }
 
         # =====================================================
@@ -215,7 +258,8 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
             "ballast_id": ballast_id,
             "draft_survey_id": real_id,
             "total_payload": len(full_payload),
-            "saved_in_columns": len(clean_payload)
+            "saved_in_columns": len(clean_payload),
+            "ignored": len(ignored_keys)
         }
 
     except HTTPException:
@@ -228,6 +272,7 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
 
     finally:
         cur.close()
+
 
 
 

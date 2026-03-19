@@ -143,7 +143,8 @@ def filter_servicios(
 
 
 # =========================================================
-# POST — CREATE (SIN TOCAR TEXTO)
+# POST — CREATE (ULTRA BLINDADO REAL 100%)
+# GUARDA TODO draft_survey DINÁMICAMENTE
 # =========================================================
 
 @router.post("/")
@@ -155,8 +156,17 @@ def create_draft_survey(payload: dict, conn=Depends(get_db)):
         payload = payload or {}
 
         # =====================================================
-        # LIMPIEZA MINIMA (SIN MODIFICAR TEXTO)
+        # LIMPIEZA MINIMA (NO TOCAR TEXTO)
         # =====================================================
+        def clean_value(v):
+            if v is None:
+                return None
+            if isinstance(v, str):
+                v = v.strip()
+                if v == "":
+                    return None
+            return v
+
         payload = {
             k: clean_value(v)
             for k, v in payload.items()
@@ -222,31 +232,7 @@ def create_draft_survey(payload: dict, conn=Depends(get_db)):
             raise HTTPException(400, "draft_report_number already exists")
 
         # =====================================================
-        # ASEGURAR KEYS
-        # =====================================================
-        required_keys = set([
-            "vessel_mv","survey_no","call_letters","vessel_previous_names",
-            "flag","registry","built_year","by","master","initial_surveyors",
-            "chief_officer","final_surveyors","chief_engineer",
-            "survey_requested_by","witness_draughts","on_account_of",
-            "witness_sounding","attended_also_by","init_ships_location",
-            "final_ships_location","length_overall","length_between_pp",
-            "extreme_breadth","moulded_breadth",
-            "depth_overall_incl_keel_plate","moulded_depth",
-            "summer_draught","summer_freeboard","constant_declared",
-            "constant_calculated","light_displacement",
-            "light_shipweight_plan","summer_displacement",
-            "summer_deadweight","net_register_tons",
-            "gross_register_tons","hydro_tables_issued",
-            "trim_tables_available","hydrometer_no",
-            "year","month","continent","country","port","client","draft_report_number"
-        ])
-
-        for k in required_keys:
-            payload.setdefault(k, None)
-
-        # =====================================================
-        # INSERT GENERAL
+        # INSERT GENERAL (SIN CAMBIOS)
         # =====================================================
         cur.execute("""
             INSERT INTO general_draft_survey (
@@ -295,31 +281,45 @@ def create_draft_survey(payload: dict, conn=Depends(get_db)):
         general_id = cur.fetchone()["id"]
 
         # =====================================================
-        # INSERT DRAFT (SIN TOCAR DATA)
+        # 🔥 ULTRA CLAVE: OBTENER COLUMNAS REALES DE draft_survey
         # =====================================================
-        draft_data = payload.copy()
+        cur.execute("""
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_name = 'draft_survey'
+        """)
+        cols = {row["column_name"] for row in cur.fetchall()}
+
+        # =====================================================
+        # 🔥 MAPEO DINÁMICO REAL (ESTO ES LO QUE FALTABA)
+        # =====================================================
+        draft_data = {}
+
+        for k, v in payload.items():
+            if k in cols:
+                draft_data[k] = v
+
+        # SIEMPRE agregar general_id
         draft_data["general_id"] = general_id
 
-        cur.execute("""
-            INSERT INTO draft_survey (
-                general_id,
-                init_date, init_time_from, init_time_to,
-                final_date, final_time_from, final_time_to,
-                cargo, port_from, port_to,
-                year, month, continent, country, port, client, draft_report_number,
-                chief_officer, master, msl_surveyor,
-                status
-            )
-            VALUES (
-                %(general_id)s,
-                %(init_date)s, %(init_time_from)s, %(init_time_to)s,
-                %(final_date)s, %(final_time_from)s, %(final_time_to)s,
-                %(cargo)s, %(port_from)s, %(port_to)s,
-                %(year)s, %(month)s, %(continent)s, %(country)s, %(port)s, %(client)s, %(draft_report_number)s,
-                %(chief_officer)s, %(master)s, %(msl_surveyor)s,
-                'Pending for review'
-            )
-        """, draft_data)
+        # =====================================================
+        # 🔥 ASEGURAR TODAS LAS COLUMNAS (EVITA ERRORES NULL)
+        # =====================================================
+        for col in cols:
+            draft_data.setdefault(col, None)
+
+        # =====================================================
+        # 🔥 INSERT DINÁMICO TOTAL
+        # =====================================================
+        columns = ", ".join(draft_data.keys())
+        placeholders = ", ".join([f"%({k})s" for k in draft_data.keys()])
+
+        query = f"""
+            INSERT INTO draft_survey ({columns})
+            VALUES ({placeholders})
+        """
+
+        cur.execute(query, draft_data)
 
         conn.commit()
 
