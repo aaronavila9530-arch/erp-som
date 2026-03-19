@@ -31,8 +31,8 @@ def clean_value_as_is(value):
 
 
 # =========================================================
-# POST / PUT — BALLAST (CREATE / UPDATE) — ULTRA BLINDADO REAL
-# GUARDA EXACTAMENTE LO QUE VIENE DEL FRONT
+# POST / PUT — BALLAST (CREATE / UPDATE) — ULTRA BLINDADO REAL FINAL
+# GUARDA EXACTAMENTE LO QUE VIENE DEL FRONT (SIN CASTS, SIN NULL FORZADO)
 # =========================================================
 @router.post("/ballast/{draft_survey_id}")
 def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
@@ -43,14 +43,15 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
         payload = payload or {}
 
         # =====================================================
-        # HELPER: NO TOCAR TEXTO
+        # HELPER: RESPETAR TODO TAL CUAL
+        # SOLO convierte "" → None (opcional)
         # =====================================================
         def clean_value_as_is(v):
             if v is None:
                 return None
-            if isinstance(v, str) and v == "":
+            if isinstance(v, str) and v.strip() == "":
                 return None
-            return v
+            return v  # 🔥 NO TOCAR NADA MÁS
 
         # =====================================================
         # 1) RESOLVER ID REAL
@@ -97,7 +98,7 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
             raise HTTPException(500, "FK no encontrada")
 
         # =====================================================
-        # 4) LIMPIAR PAYLOAD (SIN TOCAR TEXTO)
+        # 4) LIMPIAR PAYLOAD (SIN ALTERAR TEXTO)
         # =====================================================
         clean_payload = {}
         ignored_keys = []
@@ -115,12 +116,12 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
                 ignored_keys.append(key)
 
         # =====================================================
-        # 🔥 5) FORZAR FK SIEMPRE
+        # 5) FORZAR FK
         # =====================================================
         clean_payload[fk_col] = real_id
 
         # =====================================================
-        # 🔥 6) BACKUP JSON (SI EXISTE)
+        # 6) BACKUP JSON
         # =====================================================
         if "raw_payload" in cols:
             clean_payload["raw_payload"] = payload
@@ -129,12 +130,11 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
             clean_payload["ballast_json"] = payload
 
         # =====================================================
-        # 🔥 7) FALLBACK: SI SOLO VIENE FK → IGUAL INSERTAR
+        # 7) FALLBACK MINIMO
         # =====================================================
         fields = list(clean_payload.keys())
 
         if not fields:
-            # 🔥 FORZAR MINIMO INSERT
             fields = [fk_col]
             clean_payload = {fk_col: real_id}
 
@@ -143,7 +143,7 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
         # =====================================================
         print("====== BALLAST DEBUG ======")
         print("REAL ID:", real_id)
-        print("FIELDS:", fields)
+        print("FIELDS:", fields[:10], "...")
         print("TOTAL INPUT:", len(payload))
         print("IGNORADOS:", len(ignored_keys))
         print("===========================")
@@ -191,7 +191,7 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
             }
 
         # =====================================================
-        # 10) INSERT (SIEMPRE FUNCIONA)
+        # 10) INSERT
         # =====================================================
         cols_sql = ", ".join(fields)
         vals_sql = ", ".join(["%s"] * len(fields))
@@ -226,6 +226,7 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
 
     finally:
         cur.close()
+
 
 
     # ---------------------------------------------------------
