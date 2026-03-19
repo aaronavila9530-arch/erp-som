@@ -410,11 +410,12 @@ def get_draft_survey(general_id: int, conn=Depends(get_db)):
         cur.close()
 
     # =========================================================
-    # PUT — UPDATE BOTH TABLES (ULTRA BLINDADO ENTERPRISE)
+    # PUT — UPDATE BOTH TABLES (ULTRA BLINDADO FINAL)
+    # SOPORTA: general_id (int) Y draft_report_number (str)
     # =========================================================
 
-    @router.put("/{general_id}")
-    def update_draft_survey(general_id: int, payload: dict, conn=Depends(get_db)):
+    @router.put("/{identifier}")
+    def update_draft_survey(identifier: str, payload: dict, conn=Depends(get_db)):
 
         cur = conn.cursor(cursor_factory=RealDictCursor)
 
@@ -422,7 +423,33 @@ def get_draft_survey(general_id: int, conn=Depends(get_db)):
             payload = payload or {}
 
             # =====================================================
-            # 🔥 1) LIMPIEZA ROBUSTA (ANTI 422 / NULL / STRINGS)
+            # 🔥 0) RESOLVER GENERAL_ID (CRÍTICO)
+            # =====================================================
+            general_id = None
+
+            try:
+                general_id = int(identifier)
+            except:
+                pass
+
+            if not general_id:
+                cur.execute("""
+                    SELECT id
+                    FROM general_draft_survey
+                    WHERE draft_report_number = %s
+                """, (identifier,))
+                row = cur.fetchone()
+
+                if not row:
+                    raise HTTPException(
+                        404,
+                        f"No existe draft_report_number {identifier}"
+                    )
+
+                general_id = row["id"]
+
+            # =====================================================
+            # 🔥 1) LIMPIEZA ROBUSTA
             # =====================================================
             def clean(v):
                 if v is None:
@@ -440,19 +467,19 @@ def get_draft_survey(general_id: int, conn=Depends(get_db)):
             }
 
             # =====================================================
-            # 🔥 2) NORMALIZACIÓN NUMÉRICA SEGURA
+            # 🔥 2) NORMALIZACIÓN NUMÉRICA
             # =====================================================
             for k, v in payload.items():
                 payload[k] = normalize_numeric(v)
 
             # =====================================================
-            # 🔥 3) FECHAS SEGURAS
+            # 🔥 3) FECHAS
             # =====================================================
             payload["init_date"] = parse_date(payload.get("init_date"))
             payload["final_date"] = parse_date(payload.get("final_date"))
 
             # =====================================================
-            # 🔥 4) VALIDAR EXISTENCIA GENERAL
+            # 🔒 4) VALIDAR EXISTENCIA GENERAL
             # =====================================================
             cur.execute("""
                 SELECT id FROM general_draft_survey WHERE id = %s
@@ -461,7 +488,16 @@ def get_draft_survey(general_id: int, conn=Depends(get_db)):
                 raise HTTPException(404, f"No existe general_id {general_id}")
 
             # =====================================================
-            # 🔥 5) STATUS CONTROLADO
+            # 🔒 5) VALIDAR EXISTENCIA DRAFT
+            # =====================================================
+            cur.execute("""
+                SELECT id FROM draft_survey WHERE general_id = %s
+            """, (general_id,))
+            if not cur.fetchone():
+                raise HTTPException(404, "No existe draft_survey asociado")
+
+            # =====================================================
+            # 🔥 6) STATUS CONTROLADO
             # =====================================================
             allowed_status = ["Pending for review", "Approved"]
             new_status = payload.get("status")
@@ -472,7 +508,7 @@ def get_draft_survey(general_id: int, conn=Depends(get_db)):
             payload["status"] = new_status
 
             # =====================================================
-            # 🔥 6) COLUMNAS REALES GENERAL (ANTI CRASH)
+            # 🔥 7) COLUMNAS REALES
             # =====================================================
             cur.execute("""
                 SELECT column_name
@@ -485,9 +521,6 @@ def get_draft_survey(general_id: int, conn=Depends(get_db)):
                 if r["column_name"] not in ("id", "created_at")
             }
 
-            # =====================================================
-            # 🔥 7) COLUMNAS REALES DRAFT
-            # =====================================================
             cur.execute("""
                 SELECT column_name
                 FROM information_schema.columns
@@ -500,7 +533,7 @@ def get_draft_survey(general_id: int, conn=Depends(get_db)):
             }
 
             # =====================================================
-            # 🔥 8) SPLIT PAYLOAD
+            # 🔥 8) SPLIT PAYLOAD INTELIGENTE
             # =====================================================
             general_payload = {}
             draft_payload = {}
@@ -514,27 +547,14 @@ def get_draft_survey(general_id: int, conn=Depends(get_db)):
                     draft_payload[k] = v
 
             # =====================================================
-            # 🔥 9) VALIDAR EXISTENCIA DRAFT
-            # =====================================================
-            cur.execute("""
-                SELECT id FROM draft_survey WHERE general_id = %s
-            """, (general_id,))
-            draft_row = cur.fetchone()
-
-            if not draft_row:
-                raise HTTPException(404, "No existe draft_survey asociado")
-
-            # =====================================================
-            # 🔥 10) UPDATE GENERAL DINÁMICO
+            # 🔥 9) UPDATE GENERAL
             # =====================================================
             if general_payload:
-
-                has_updated_at = "updated_at" in general_cols
 
                 set_clause = ", ".join([f"{k} = %s" for k in general_payload.keys()])
                 values = list(general_payload.values())
 
-                if has_updated_at:
+                if "updated_at" in general_cols:
                     set_clause += ", updated_at = NOW()"
 
                 values.append(general_id)
@@ -546,16 +566,14 @@ def get_draft_survey(general_id: int, conn=Depends(get_db)):
                 """, values)
 
             # =====================================================
-            # 🔥 11) UPDATE DRAFT DINÁMICO
+            # 🔥 10) UPDATE DRAFT
             # =====================================================
             if draft_payload:
-
-                has_updated_at = "updated_at" in draft_cols
 
                 set_clause = ", ".join([f"{k} = %s" for k in draft_payload.keys()])
                 values = list(draft_payload.values())
 
-                if has_updated_at:
+                if "updated_at" in draft_cols:
                     set_clause += ", updated_at = NOW()"
 
                 values.append(general_id)
@@ -567,9 +585,20 @@ def get_draft_survey(general_id: int, conn=Depends(get_db)):
                 """, values)
 
             # =====================================================
+            # 🔥 11) NO CAMBIOS (EVITA CONFUSIÓN FRONT)
+            # =====================================================
+            if not general_payload and not draft_payload:
+                return {
+                    "success": True,
+                    "action": "no_changes",
+                    "general_id": general_id
+                }
+
+            # =====================================================
             # 🔥 12) DEBUG PRO
             # =====================================================
             print("====== PUT MAIN OK ======")
+            print("IDENTIFIER:", identifier)
             print("GENERAL ID:", general_id)
             print("GENERAL FIELDS:", len(general_payload))
             print("DRAFT FIELDS:", len(draft_payload))
