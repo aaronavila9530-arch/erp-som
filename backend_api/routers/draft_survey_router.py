@@ -1,71 +1,41 @@
 from fastapi import APIRouter, Depends, HTTPException
 from psycopg2.extras import RealDictCursor
 from datetime import datetime
-from database import get_db  # ← usa tu get_db existente
+from database import get_db
 from psycopg2 import IntegrityError
-
-from fastapi.responses import FileResponse
 
 router = APIRouter(
     prefix="/draft-survey",
     tags=["Draft Survey"]
 )
 
+# =========================================================
+# HELPERS (NO TOCAR TEXTO)
+# =========================================================
 
-# =========================================================
-# HELPERS
-# =========================================================
+def clean_value(v):
+    if v is None:
+        return None
+    if isinstance(v, str):
+        if v.strip().lower() in ("", "none", "null"):
+            return None
+        return v  # 🔥 TAL CUAL VIENE
+    return v
+
 
 def parse_date(value):
     if not value:
         return None
     try:
-        if "-" in value and len(value.split("-")[0]) == 4:
-            return datetime.strptime(value.split(" ")[0], "%Y-%m-%d").date()
-        return datetime.strptime(value.split(" ")[0], "%d-%m-%Y").date()
-    except Exception:
+        raw = str(value).split(" ")[0]
+
+        if "-" in raw and len(raw.split("-")[0]) == 4:
+            return datetime.strptime(raw, "%Y-%m-%d").date()
+
+        return datetime.strptime(raw, "%d-%m-%Y").date()
+
+    except:
         return None
-
-
-def safe(payload, key):
-    v = payload.get(key)
-    return v if v not in ["", None] else None
-
-# =========================================================
-# NORMALIZE NUMERIC VALUES (comma -> dot for PostgreSQL)
-# =========================================================
-
-def normalize_numeric(v):
-
-    if v is None:
-        return None
-
-    if isinstance(v, str):
-
-        vv = v.strip()
-
-        if vv == "":
-            return None
-
-        # quitar separadores de miles comunes
-        vv = vv.replace(" ", "")
-
-        # si hay coma y punto asumimos formato europeo
-        if "," in vv and "." in vv:
-            if vv.rfind(",") > vv.rfind("."):
-                vv = vv.replace(".", "").replace(",", ".")
-            else:
-                vv = vv.replace(",", "")
-
-        else:
-            vv = vv.replace(",", ".")
-
-        try:
-            return float(vv)
-        except Exception:
-            return vv
-
-    return v
 
 
 # =========================================================
@@ -173,12 +143,7 @@ def filter_servicios(
 
 
 # =========================================================
-# POST — CREATE (BOTH TABLES) — ULTRA BLINDADO REAL (FIXES)
-# - Limpia strings vacíos/"None"/"null" -> None
-# - Normaliza init_cargo/init_port_from/init_port_to si el form manda cargo/port_from/port_to
-# - Normaliza trim_tables_available desde trim_tables_yes/no si viene así
-# - INSERT draft_survey: usa TODAS las columnas que tu tabla tiene (no solo 10)
-#   para evitar NOT NULL / defaults / triggers raros y alinear 1:1
+# POST — CREATE (SIN TOCAR TEXTO)
 # =========================================================
 
 @router.post("/")
@@ -189,75 +154,77 @@ def create_draft_survey(payload: dict, conn=Depends(get_db)):
     try:
         payload = payload or {}
 
-        def _clean_value(v):
-            if v is None:
-                return None
-            if isinstance(v, str):
-                vv = v.strip()
-                if vv == "":
-                    return None
-                if vv.lower() in ("none", "null"):
-                    return None
-                return vv
-            return v
-
-        payload = {k: _clean_value(v) for k, v in payload.items() if isinstance(k, str)}
+        # =====================================================
+        # LIMPIEZA MINIMA (SIN MODIFICAR TEXTO)
+        # =====================================================
+        payload = {
+            k: clean_value(v)
+            for k, v in payload.items()
+            if isinstance(k, str)
+        }
 
         # =====================================================
-        # NORMALIZE NUMERIC VALUES
+        # SOLO PARSEAR FECHAS
         # =====================================================
-        for k, v in payload.items():
-            payload[k] = normalize_numeric(v)
-
         payload["init_date"] = parse_date(payload.get("init_date"))
         payload["final_date"] = parse_date(payload.get("final_date"))
 
-        if payload.get("init_cargo") is None and payload.get("cargo") is not None:
+        # =====================================================
+        # FALLBACKS (SIN ALTERAR TEXTO)
+        # =====================================================
+        if payload.get("init_cargo") is None:
             payload["init_cargo"] = payload.get("cargo")
 
-        if payload.get("init_port_from") is None and payload.get("port_from") is not None:
+        if payload.get("init_port_from") is None:
             payload["init_port_from"] = payload.get("port_from")
 
-        if payload.get("init_port_to") is None and payload.get("port_to") is not None:
+        if payload.get("init_port_to") is None:
             payload["init_port_to"] = payload.get("port_to")
 
-        if payload.get("cargo") is None and payload.get("init_cargo") is not None:
+        if payload.get("cargo") is None:
             payload["cargo"] = payload.get("init_cargo")
 
-        if payload.get("port_from") is None and payload.get("init_port_from") is not None:
+        if payload.get("port_from") is None:
             payload["port_from"] = payload.get("init_port_from")
 
-        if payload.get("port_to") is None and payload.get("init_port_to") is not None:
+        if payload.get("port_to") is None:
             payload["port_to"] = payload.get("init_port_to")
 
         if payload.get("trim_tables_available") is None:
             if payload.get("trim_tables_yes") is not None:
-                try:
-                    payload["trim_tables_available"] = bool(payload.get("trim_tables_yes"))
-                except Exception:
-                    payload["trim_tables_available"] = None
+                payload["trim_tables_available"] = bool(payload.get("trim_tables_yes"))
 
+        # =====================================================
+        # VALIDACIÓN
+        # =====================================================
         critical_fields = [
             "vessel_mv","survey_no","year","month",
             "continent","country","port","client","draft_report_number"
         ]
 
         missing = [f for f in critical_fields if not payload.get(f)]
+
         if missing:
             raise HTTPException(
                 status_code=400,
                 detail=f"Missing required fields: {', '.join(missing)}"
             )
 
+        # =====================================================
+        # DUPLICADO
+        # =====================================================
         cur.execute("""
             SELECT id FROM general_draft_survey
             WHERE draft_report_number = %s
         """, (payload["draft_report_number"],))
 
         if cur.fetchone():
-            raise HTTPException(status_code=400, detail="draft_report_number already exists")
+            raise HTTPException(400, "draft_report_number already exists")
 
-        required_general_keys = [
+        # =====================================================
+        # ASEGURAR KEYS
+        # =====================================================
+        required_keys = set([
             "vessel_mv","survey_no","call_letters","vessel_previous_names",
             "flag","registry","built_year","by","master","initial_surveyors",
             "chief_officer","final_surveyors","chief_engineer",
@@ -273,55 +240,14 @@ def create_draft_survey(payload: dict, conn=Depends(get_db)):
             "gross_register_tons","hydro_tables_issued",
             "trim_tables_available","hydrometer_no",
             "year","month","continent","country","port","client","draft_report_number"
-        ]
+        ])
 
-        required_draft_keys = [
-            "init_date","init_time_from","init_time_to",
-            "final_date","final_time_from","final_time_to",
-            "init_cargo","init_port_from","init_port_to",
-            "cargo","port_from","port_to",
-            "loading","unloading",
+        for k in required_keys:
+            payload.setdefault(k, None)
 
-            "init_draft_fwd_port","init_draft_fwd_stb",
-            "init_draft_mid_port","init_draft_mid_stb",
-            "init_draft_aft_port","init_draft_aft_stb",
-            "init_draft_fwd_marks","init_draft_mid_marks","init_draft_aft_marks",
-            "init_sg","init_lpp",
-
-            "final_draft_fwd_port","final_draft_fwd_stb",
-            "final_draft_mid_port","final_draft_mid_stb",
-            "final_draft_aft_port","final_draft_aft_stb",
-            "final_draft_fwd_marks","final_draft_mid_marks","final_draft_aft_marks",
-            "final_sg","final_lpp",
-
-            "init_tpc_p","init_tpc_s","init_bl_figure",
-            "final_tpc_p","final_tpc_s","final_bl_figure",
-
-            "init_slop","init_swimming_pool","init_ballast",
-            "init_fresh_water","init_fuel_oil","init_diesel_oil",
-            "init_lub_oil","init_others","init_deductions",
-
-            "final_slop","final_swimming_pool","final_ballast",
-            "final_fresh_water","final_fuel_oil","final_diesel_oil",
-            "final_lub_oil","final_others","final_deductions",
-
-            "init_hydro1_draft_1","init_hydro1_disp_1","init_hydro1_tpc_1","init_hydro1_lcf_1",
-            "init_hydro1_draft_2","init_hydro1_disp_2","init_hydro1_tpc_2","init_hydro1_lcf_2",
-            "init_hydro1_draft_mtc","init_hydro1_mtc_p50_1","init_hydro1_mtc_m50_1",
-            "init_hydro1_mtc_p50_2","init_hydro1_mtc_m50_2",
-
-            "init_hydro2_draft_1","init_hydro2_disp_1","init_hydro2_tpc_1","init_hydro2_lcf_1",
-            "init_hydro2_draft_2","init_hydro2_disp_2","init_hydro2_tpc_2","init_hydro2_lcf_2",
-            "init_hydro2_draft_mtc","init_hydro2_mtc_p50_1","init_hydro2_mtc_m50_1",
-            "init_hydro2_mtc_p50_2","init_hydro2_mtc_m50_2",
-
-            "year","month","continent","country","port","client","draft_report_number",
-            "chief_officer","master","msl_surveyor"
-        ]
-
-        for key in required_general_keys + required_draft_keys:
-            payload.setdefault(key, None)
-
+        # =====================================================
+        # INSERT GENERAL
+        # =====================================================
         cur.execute("""
             INSERT INTO general_draft_survey (
                 vessel_mv, survey_no, call_letters, vessel_previous_names,
@@ -368,6 +294,9 @@ def create_draft_survey(payload: dict, conn=Depends(get_db)):
 
         general_id = cur.fetchone()["id"]
 
+        # =====================================================
+        # INSERT DRAFT (SIN TOCAR DATA)
+        # =====================================================
         draft_data = payload.copy()
         draft_data["general_id"] = general_id
 
@@ -375,102 +304,33 @@ def create_draft_survey(payload: dict, conn=Depends(get_db)):
             INSERT INTO draft_survey (
                 general_id,
                 init_date, init_time_from, init_time_to,
-                init_cargo, init_port_from, init_port_to,
-
-                init_draft_fwd_port, init_draft_fwd_stb,
-                init_draft_mid_port, init_draft_mid_stb,
-                init_draft_aft_port, init_draft_aft_stb,
-                init_sg, init_ballast, init_fresh_water,
-                init_fuel_oil, init_diesel_oil, init_lub_oil,
-                init_others, init_deductions,
-
                 final_date, final_time_from, final_time_to,
-                final_draft_fwd_port, final_draft_fwd_stb,
-                final_draft_mid_port, final_draft_mid_stb,
-                final_draft_aft_port, final_draft_aft_stb,
-                final_sg, final_ballast, final_fresh_water,
-                final_fuel_oil, final_diesel_oil, final_lub_oil,
-                final_others, final_deductions,
-
-                cargo, port_from, port_to, loading, unloading,
-
-                init_draft_fwd_marks, init_draft_mid_marks, init_draft_aft_marks,
-                final_draft_fwd_marks, final_draft_mid_marks, final_draft_aft_marks,
-
-                init_lpp, final_lpp,
-                init_tpc_p, init_tpc_s, final_tpc_p, final_tpc_s,
-                init_bl_figure, final_bl_figure,
-                init_slop, init_swimming_pool, final_slop, final_swimming_pool,
-
-                init_hydro1_draft_1, init_hydro1_disp_1, init_hydro1_tpc_1, init_hydro1_lcf_1,
-                init_hydro1_draft_2, init_hydro1_disp_2, init_hydro1_tpc_2, init_hydro1_lcf_2,
-                init_hydro1_draft_mtc, init_hydro1_mtc_p50_1, init_hydro1_mtc_m50_1,
-                init_hydro1_mtc_p50_2, init_hydro1_mtc_m50_2,
-
-                init_hydro2_draft_1, init_hydro2_disp_1, init_hydro2_tpc_1, init_hydro2_lcf_1,
-                init_hydro2_draft_2, init_hydro2_disp_2, init_hydro2_tpc_2, init_hydro2_lcf_2,
-                init_hydro2_draft_mtc, init_hydro2_mtc_p50_1, init_hydro2_mtc_m50_1,
-                init_hydro2_mtc_p50_2, init_hydro2_mtc_m50_2,
-
+                cargo, port_from, port_to,
                 year, month, continent, country, port, client, draft_report_number,
                 chief_officer, master, msl_surveyor,
-
                 status
             )
             VALUES (
                 %(general_id)s,
-
                 %(init_date)s, %(init_time_from)s, %(init_time_to)s,
-                %(init_cargo)s, %(init_port_from)s, %(init_port_to)s,
-
-                %(init_draft_fwd_port)s, %(init_draft_fwd_stb)s,
-                %(init_draft_mid_port)s, %(init_draft_mid_stb)s,
-                %(init_draft_aft_port)s, %(init_draft_aft_stb)s,
-                %(init_sg)s, %(init_ballast)s, %(init_fresh_water)s,
-                %(init_fuel_oil)s, %(init_diesel_oil)s, %(init_lub_oil)s,
-                %(init_others)s, %(init_deductions)s,
-
                 %(final_date)s, %(final_time_from)s, %(final_time_to)s,
-                %(final_draft_fwd_port)s, %(final_draft_fwd_stb)s,
-                %(final_draft_mid_port)s, %(final_draft_mid_stb)s,
-                %(final_draft_aft_port)s, %(final_draft_aft_stb)s,
-                %(final_sg)s, %(final_ballast)s, %(final_fresh_water)s,
-                %(final_fuel_oil)s, %(final_diesel_oil)s, %(final_lub_oil)s,
-                %(final_others)s, %(final_deductions)s,
-
-                %(cargo)s, %(port_from)s, %(port_to)s, %(loading)s, %(unloading)s,
-
-                %(init_draft_fwd_marks)s, %(init_draft_mid_marks)s, %(init_draft_aft_marks)s,
-                %(final_draft_fwd_marks)s, %(final_draft_mid_marks)s, %(final_draft_aft_marks)s,
-
-                %(init_lpp)s, %(final_lpp)s,
-                %(init_tpc_p)s, %(init_tpc_s)s, %(final_tpc_p)s, %(final_tpc_s)s,
-                %(init_bl_figure)s, %(final_bl_figure)s,
-                %(init_slop)s, %(init_swimming_pool)s, %(final_slop)s, %(final_swimming_pool)s,
-
-                %(init_hydro1_draft_1)s, %(init_hydro1_disp_1)s, %(init_hydro1_tpc_1)s, %(init_hydro1_lcf_1)s,
-                %(init_hydro1_draft_2)s, %(init_hydro1_disp_2)s, %(init_hydro1_tpc_2)s, %(init_hydro1_lcf_2)s,
-                %(init_hydro1_draft_mtc)s, %(init_hydro1_mtc_p50_1)s, %(init_hydro1_mtc_m50_1)s,
-                %(init_hydro1_mtc_p50_2)s, %(init_hydro1_mtc_m50_2)s,
-
-                %(init_hydro2_draft_1)s, %(init_hydro2_disp_1)s, %(init_hydro2_tpc_1)s, %(init_hydro2_lcf_1)s,
-                %(init_hydro2_draft_2)s, %(init_hydro2_disp_2)s, %(init_hydro2_tpc_2)s, %(init_hydro2_lcf_2)s,
-                %(init_hydro2_draft_mtc)s, %(init_hydro2_mtc_p50_1)s, %(init_hydro2_mtc_m50_1)s,
-                %(init_hydro2_mtc_p50_2)s, %(init_hydro2_mtc_m50_2)s,
-
+                %(cargo)s, %(port_from)s, %(port_to)s,
                 %(year)s, %(month)s, %(continent)s, %(country)s, %(port)s, %(client)s, %(draft_report_number)s,
                 %(chief_officer)s, %(master)s, %(msl_surveyor)s,
-
                 'Pending for review'
             )
         """, draft_data)
 
         conn.commit()
-        return {"success": True, "general_id": general_id}
+
+        return {
+            "success": True,
+            "general_id": general_id
+        }
 
     except IntegrityError as e:
         conn.rollback()
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(400, str(e))
 
     except HTTPException:
         conn.rollback()
@@ -478,7 +338,7 @@ def create_draft_survey(payload: dict, conn=Depends(get_db)):
 
     except Exception as e:
         conn.rollback()
-        raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
+        raise HTTPException(500, f"Unexpected error: {str(e)}")
 
     finally:
         cur.close()
