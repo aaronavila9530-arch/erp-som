@@ -446,7 +446,7 @@ def create_word(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
         payload = payload or {}
 
         # =====================================================
-        # 🔒 CAMPOS WORD ESPERADOS (NO OBLIGA A LLENAR)
+        # 🔒 CAMPOS WORD BASE (SIN DATETIME LEGACY)
         # =====================================================
         expected_fields = [
             "word_mt", "word_product", "word_vessel", "word_port", "word_country",
@@ -454,14 +454,24 @@ def create_word(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
             "word_master", "word_chief_officer",
             "word_name", "word_port_registry", "word_grt", "word_nrt",
             "word_year", "word_imo",
-            "word_arrived_buoy", "word_nor_tendered",
-            "word_all_fast", "word_initial_draft",
-            "word_commenced", "word_completed", "word_final_draft",
             "word_metric_tons", "word_goods_product", "word_holds",
             "word_draft_figures", "word_bl_figures",
             "word_difference", "word_percentage",
             "word_shore_scale", "word_shore_bl",
             "word_shore_difference", "word_shore_percentage"
+        ]
+
+        # =====================================================
+        # 🔥 CAMPOS DATETIME (SEPARADOS)
+        # =====================================================
+        datetime_fields = [
+            "word_arrived_buoy",
+            "word_nor_tendered",
+            "word_all_fast",
+            "word_initial_draft",
+            "word_commenced",
+            "word_completed",
+            "word_final_draft"
         ]
 
         # =====================================================
@@ -473,7 +483,7 @@ def create_word(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
         ]
 
         # =====================================================
-        # 🔧 NORMALIZADOR NUMÉRICO ULTRA BLINDADO
+        # 🔧 NORMALIZADOR NUMÉRICO
         # =====================================================
         def normalize_numeric(v):
 
@@ -481,17 +491,12 @@ def create_word(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
                 return None
 
             if isinstance(v, str):
-
                 vv = v.strip()
 
                 if vv.lower() in ("", "none", "null", "empty"):
                     return None
 
-                # eliminar separador miles
-                vv = vv.replace(",", "")
-
-	        # eliminar espacios internos
-                vv = vv.replace(" ", "")
+                vv = vv.replace(",", "").replace(" ", "")
 
                 try:
                     return float(vv)
@@ -501,7 +506,7 @@ def create_word(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
             return v
 
         # =====================================================
-        # 🔧 LIMPIEZA GENERAL DE VALORES
+        # 🔧 CLEAN VALUE
         # =====================================================
         def _clean_value(v):
 
@@ -509,7 +514,6 @@ def create_word(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
                 return None
 
             if isinstance(v, str):
-
                 vv = v.strip()
 
                 if vv.lower() in ("", "none", "null", "empty"):
@@ -520,6 +524,25 @@ def create_word(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
             return normalize_numeric(v)
 
         # =====================================================
+        # 🔥 NORMALIZADOR DATE / TIME (ANTI CONCATENACIÓN)
+        # =====================================================
+        def _clean_date(v):
+            if not v:
+                return None
+            try:
+                return datetime.strptime(str(v), "%Y-%m-%d").date()
+            except:
+                return None
+
+        def _clean_time(v):
+            if not v:
+                return None
+            try:
+                return datetime.strptime(str(v), "%H:%M").time()
+            except:
+                return None
+
+        # =====================================================
         # 1️⃣ RESOLVER draft_survey.id REAL
         # =====================================================
         cur.execute(
@@ -528,14 +551,10 @@ def create_word(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
         )
 
         row = cur.fetchone()
-
-        if row:
-            real_draft_id = row[0]
-        else:
-            real_draft_id = draft_survey_id
+        real_draft_id = row[0] if row else draft_survey_id
 
         # =====================================================
-        # 2️⃣ LIMPIAR PAYLOAD
+        # 2️⃣ LIMPIAR PAYLOAD BASE
         # =====================================================
         cleaned = {}
 
@@ -544,6 +563,17 @@ def create_word(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
 
         for field in metadata_fields:
             cleaned[field] = _clean_value(payload.get(field))
+
+        # =====================================================
+        # 🔥 PROCESAR DATETIME (SEPARADO SIEMPRE)
+        # =====================================================
+        for field in datetime_fields:
+
+            date_val = payload.get(f"{field}_date")
+            time_val = payload.get(f"{field}_time")
+
+            cleaned[f"{field}_date"] = _clean_date(date_val)
+            cleaned[f"{field}_time"] = _clean_time(time_val)
 
         cleaned["draft_survey_id"] = real_draft_id
         cleaned["status"] = _clean_value(payload.get("status")) or "Pending for review"
@@ -558,12 +588,15 @@ def create_word(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
 
         exists = cur.fetchone()
 
+        all_fields = expected_fields + metadata_fields + [
+            f"{f}_date" for f in datetime_fields
+        ] + [
+            f"{f}_time" for f in datetime_fields
+        ]
+
         if exists:
 
-            set_parts = []
-
-            for col in expected_fields + metadata_fields:
-                set_parts.append(f"{col} = %({col})s")
+            set_parts = [f"{col} = %({col})s" for col in all_fields]
 
             update_sql = f"""
                 UPDATE draft_survey_word_report
@@ -578,53 +611,19 @@ def create_word(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
 
         else:
 
-            insert_sql = """
+            insert_sql = f"""
                 INSERT INTO draft_survey_word_report (
                     draft_survey_id,
                     created_at,
                     updated_at,
-
-                    word_mt, word_product, word_vessel, word_port, word_country,
-                    word_survey_requested_by, word_on_behalf_of,
-                    word_master, word_chief_officer,
-                    word_name, word_port_registry, word_grt, word_nrt,
-                    word_year, word_imo,
-                    word_arrived_buoy, word_nor_tendered,
-                    word_all_fast, word_initial_draft,
-                    word_commenced, word_completed, word_final_draft,
-                    word_metric_tons, word_goods_product, word_holds,
-                    word_draft_figures, word_bl_figures,
-                    word_difference, word_percentage,
-                    word_shore_scale, word_shore_bl,
-                    word_shore_difference, word_shore_percentage,
-
-                    year, month, continent, country,
-                    port, client, draft_report_number,
-
+                    {", ".join(all_fields)},
                     status
                 )
                 VALUES (
                     %(draft_survey_id)s,
                     NOW(),
                     NOW(),
-
-                    %(word_mt)s, %(word_product)s, %(word_vessel)s, %(word_port)s, %(word_country)s,
-                    %(word_survey_requested_by)s, %(word_on_behalf_of)s,
-                    %(word_master)s, %(word_chief_officer)s,
-                    %(word_name)s, %(word_port_registry)s, %(word_grt)s, %(word_nrt)s,
-                    %(word_year)s, %(word_imo)s,
-                    %(word_arrived_buoy)s, %(word_nor_tendered)s,
-                    %(word_all_fast)s, %(word_initial_draft)s,
-                    %(word_commenced)s, %(word_completed)s, %(word_final_draft)s,
-                    %(word_metric_tons)s, %(word_goods_product)s, %(word_holds)s,
-                    %(word_draft_figures)s, %(word_bl_figures)s,
-                    %(word_difference)s, %(word_percentage)s,
-                    %(word_shore_scale)s, %(word_shore_bl)s,
-                    %(word_shore_difference)s, %(word_shore_percentage)s,
-
-                    %(year)s, %(month)s, %(continent)s, %(country)s,
-                    %(port)s, %(client)s, %(draft_report_number)s,
-
+                    {", ".join([f"%({col})s" for col in all_fields])},
                     %(status)s
                 )
             """
