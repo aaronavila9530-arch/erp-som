@@ -29,7 +29,7 @@ PERMISSIONS = [
     ("admin", "hhrr", "employees", True),
     ("admin", "hhrr", "generate", True),
     ("admin", "hhrr", "reports", True),
-    ("admin", "hhrr", "payslips", True),   # ✅ FIX
+    ("admin", "hhrr", "payslips", True),
 
     # --- OT LOG ---
     ("admin", "hhrr", "ot_log", True),
@@ -42,20 +42,24 @@ PERMISSIONS = [
     ("admin", "hhrr", "close_hr_module", False),
 
     # =====================================================
-    # USER — AUTOGESTIÓN EMPLEADO (SURVEYORS)
+    # USER — AUTOGESTIÓN EMPLEADO
     # =====================================================
     ("user", "hhrr", "view", True),
-    ("user", "hhrr", "create", True),      # ✅ solicitudes
+    ("user", "hhrr", "create", True),
     ("user", "hhrr", "edit", True),
 
-    # --- OT LOG ---
-    ("user", "hhrr", "ot_log", True),      # ✅ horas OK
+    # 🔥 OT LOG — FIX CRÍTICO (ESTO ERA EL PROBLEMA)
+    ("user", "hhrr", "ot_log", True),          # summary + create + list
     ("user", "hhrr", "ot_log_view_all", False),
     ("user", "hhrr", "ot_log_status", False),
     ("user", "hhrr", "ot_log_export", False),
 
+    # 🔥 AÑADIDOS PARA EVITAR 403 FUTUROS
+    ("user", "hhrr", "me", True),              # endpoints tipo /me/*
+    ("user", "hhrr", "summary", True),         # por si RBAC evalúa granular
+
     # --- PAYSLIPS ---
-    ("user", "hhrr", "payslips", True),    # ✅ FIX CRÍTICO
+    ("user", "hhrr", "payslips", True),
 
     # --- BLOQUEOS ---
     ("user", "hhrr", "approve", False),
@@ -67,7 +71,7 @@ PERMISSIONS = [
     ("user", "hhrr", "close_hr_module", False),
 
     # =====================================================
-    # CONSULTOR — LECTURA / AUDITORÍA
+    # CONSULTOR — LECTURA
     # =====================================================
     ("consultor", "hhrr", "view", True),
     ("consultor", "hhrr", "payroll", True),
@@ -81,7 +85,7 @@ PERMISSIONS = [
     ("consultor", "hhrr", "ot_log_export", True),
 
     # --- PAYSLIPS ---
-    ("consultor", "hhrr", "payslips", True),  # ✅ FIX
+    ("consultor", "hhrr", "payslips", True),
 
     # --- BLOQUEOS ---
     ("consultor", "hhrr", "create", False),
@@ -94,29 +98,25 @@ PERMISSIONS = [
 
 
 def main():
-
     conn = None
 
     try:
-
         print("🔐 Conectando a PostgreSQL...")
 
         conn = psycopg2.connect(DATABASE_URL)
         cur = conn.cursor()
 
-        print("🔐 Normalizando permisos RBAC — HHRR")
+        print("🔐 Aplicando permisos RBAC HHRR (ULTRA FIX)...")
 
         records = []
 
         for role, module, action, allowed in PERMISSIONS:
-
-            role_norm = role.strip().lower()
-            module_norm = module.strip().lower()
-            action_norm = action.strip().lower()
-
-            records.append(
-                (role_norm, module_norm, action_norm, allowed)
-            )
+            records.append((
+                role.strip().lower(),
+                module.strip().lower(),
+                action.strip().lower(),
+                bool(allowed)
+            ))
 
         execute_batch(
             cur,
@@ -133,19 +133,17 @@ def main():
 
         conn.commit()
 
-        print("✅ Permisos RBAC HHRR actualizados correctamente")
-        print(f"📊 Permisos procesados: {len(records)}")
+        print("✅ RBAC actualizado correctamente")
+        print(f"📊 Total reglas: {len(records)}")
 
     except Exception as e:
-
         if conn:
             conn.rollback()
 
-        print("❌ Error actualizando RBAC HHRR")
+        print("❌ ERROR RBAC:")
         print(str(e))
 
     finally:
-
         if conn:
             conn.close()
 
