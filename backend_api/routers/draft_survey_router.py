@@ -409,248 +409,194 @@ def get_draft_survey(general_id: int, conn=Depends(get_db)):
     finally:
         cur.close()
 
-# =========================================================
-# PUT — UPDATE BOTH TABLES
-# =========================================================
+    # =========================================================
+    # PUT — UPDATE BOTH TABLES (ULTRA BLINDADO ENTERPRISE)
+    # =========================================================
 
-@router.put("/{general_id}")
-def update_draft_survey(general_id: int, payload: dict, conn=Depends(get_db)):
+    @router.put("/{general_id}")
+    def update_draft_survey(general_id: int, payload: dict, conn=Depends(get_db)):
 
-    cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur = conn.cursor(cursor_factory=RealDictCursor)
 
-    try:
-        # ===============================
-        # NORMALIZACIONES
-        # ===============================
-        payload = payload or {}
+        try:
+            payload = payload or {}
 
-        # =====================================================
-        # NORMALIZE NUMERIC VALUES
-        # =====================================================
-        for k, v in payload.items():
-            payload[k] = normalize_numeric(v)
+            # =====================================================
+            # 🔥 1) LIMPIEZA ROBUSTA (ANTI 422 / NULL / STRINGS)
+            # =====================================================
+            def clean(v):
+                if v is None:
+                    return None
+                if isinstance(v, str):
+                    v = v.strip()
+                    if v == "" or v.lower() in ("none", "null"):
+                        return None
+                return v
 
-        payload["init_date"] = parse_date(payload.get("init_date"))
-        payload["final_date"] = parse_date(payload.get("final_date"))
+            payload = {
+                str(k): clean(v)
+                for k, v in payload.items()
+                if isinstance(k, str)
+            }
 
-        # ===============================
-        # 🔒 BLINDAJE NUEVAS KEYS
-        # ===============================
-        required_new_keys = [
-            # Metadata
-            "year","month","continent","country","port","client","draft_report_number",
-            # Firmas nuevas en draft
-            "chief_officer","master","msl_surveyor"
-        ]
+            # =====================================================
+            # 🔥 2) NORMALIZACIÓN NUMÉRICA SEGURA
+            # =====================================================
+            for k, v in payload.items():
+                payload[k] = normalize_numeric(v)
 
-        for key in required_new_keys:
-            payload.setdefault(key, None)
+            # =====================================================
+            # 🔥 3) FECHAS SEGURAS
+            # =====================================================
+            payload["init_date"] = parse_date(payload.get("init_date"))
+            payload["final_date"] = parse_date(payload.get("final_date"))
 
-        # ===============================
-        # STATUS CONTROLADO
-        # ===============================
-        allowed_status = ["Pending for review", "Approved"]
+            # =====================================================
+            # 🔥 4) VALIDAR EXISTENCIA GENERAL
+            # =====================================================
+            cur.execute("""
+                SELECT id FROM general_draft_survey WHERE id = %s
+            """, (general_id,))
+            if not cur.fetchone():
+                raise HTTPException(404, f"No existe general_id {general_id}")
 
-        new_status = payload.get("status")
+            # =====================================================
+            # 🔥 5) STATUS CONTROLADO
+            # =====================================================
+            allowed_status = ["Pending for review", "Approved"]
+            new_status = payload.get("status")
 
-        if new_status not in allowed_status:
-            new_status = "Pending for review"
+            if new_status not in allowed_status:
+                new_status = "Pending for review"
 
-        # =====================================================
-        # UPDATE GENERAL (100% CAMPOS + METADATA)
-        # =====================================================
-        cur.execute("""
-            UPDATE general_draft_survey
-            SET
-                vessel_mv=%(vessel_mv)s,
-                survey_no=%(survey_no)s,
-                call_letters=%(call_letters)s,
-                vessel_previous_names=%(vessel_previous_names)s,
-                flag=%(flag)s,
-                registry=%(registry)s,
-                built_year=%(built_year)s,
-                by=%(by)s,
-                master=%(master)s,
-                initial_surveyors=%(initial_surveyors)s,
-                chief_officer=%(chief_officer)s,
-                final_surveyors=%(final_surveyors)s,
-                chief_engineer=%(chief_engineer)s,
-                survey_requested_by=%(survey_requested_by)s,
-                witness_draughts=%(witness_draughts)s,
-                on_account_of=%(on_account_of)s,
-                witness_sounding=%(witness_sounding)s,
-                attended_also_by=%(attended_also_by)s,
-                init_ships_location=%(init_ships_location)s,
-                final_ships_location=%(final_ships_location)s,
-                length_overall=%(length_overall)s,
-                length_between_pp=%(length_between_pp)s,
-                extreme_breadth=%(extreme_breadth)s,
-                moulded_breadth=%(moulded_breadth)s,
-                depth_overall_incl_keel_plate=%(depth_overall_incl_keel_plate)s,
-                moulded_depth=%(moulded_depth)s,
-                summer_draught=%(summer_draught)s,
-                summer_freeboard=%(summer_freeboard)s,
-                constant_declared=%(constant_declared)s,
-                constant_calculated=%(constant_calculated)s,
-                light_displacement=%(light_displacement)s,
-                light_shipweight_plan=%(light_shipweight_plan)s,
-                summer_displacement=%(summer_displacement)s,
-                summer_deadweight=%(summer_deadweight)s,
-                net_register_tons=%(net_register_tons)s,
-                gross_register_tons=%(gross_register_tons)s,
-                hydro_tables_issued=%(hydro_tables_issued)s,
-                trim_tables_available=%(trim_tables_available)s,
-                hydrometer_no=%(hydrometer_no)s,
+            payload["status"] = new_status
 
-                -- 🔵 NUEVO METADATA
-                year=%(year)s,
-                month=%(month)s,
-                continent=%(continent)s,
-                country=%(country)s,
-                port=%(port)s,
-                client=%(client)s,
-                draft_report_number=%(draft_report_number)s,
+            # =====================================================
+            # 🔥 6) COLUMNAS REALES GENERAL (ANTI CRASH)
+            # =====================================================
+            cur.execute("""
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_name = 'general_draft_survey'
+            """)
+            general_cols = {
+                r["column_name"]
+                for r in cur.fetchall()
+                if r["column_name"] not in ("id", "created_at")
+            }
 
-                status=%(status)s,
-                updated_at=NOW()
-            WHERE id=%(general_id)s
-        """, {**payload, "general_id": general_id, "status": new_status})
+            # =====================================================
+            # 🔥 7) COLUMNAS REALES DRAFT
+            # =====================================================
+            cur.execute("""
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_name = 'draft_survey'
+            """)
+            draft_cols = {
+                r["column_name"]
+                for r in cur.fetchall()
+                if r["column_name"] not in ("id", "created_at")
+            }
 
-        # =====================================================
-        # UPDATE DRAFT (100% CAMPOS + METADATA + FIRMAS)
-        # =====================================================
-        cur.execute("""
-            UPDATE draft_survey
-            SET
-                init_date=%(init_date)s,
-                init_time_from=%(init_time_from)s,
-                init_time_to=%(init_time_to)s,
+            # =====================================================
+            # 🔥 8) SPLIT PAYLOAD
+            # =====================================================
+            general_payload = {}
+            draft_payload = {}
 
-                cargo=%(cargo)s,
-                port_from=%(port_from)s,
-                port_to=%(port_to)s,
-                loading=%(loading)s,
-                unloading=%(unloading)s,
+            for k, v in payload.items():
 
-                init_draft_fwd_port=%(init_draft_fwd_port)s,
-                init_draft_fwd_stb=%(init_draft_fwd_stb)s,
-                init_draft_mid_port=%(init_draft_mid_port)s,
-                init_draft_mid_stb=%(init_draft_mid_stb)s,
-                init_draft_aft_port=%(init_draft_aft_port)s,
-                init_draft_aft_stb=%(init_draft_aft_stb)s,
+                if k in general_cols:
+                    general_payload[k] = v
 
-                init_draft_fwd_marks=%(init_draft_fwd_marks)s,
-                init_draft_mid_marks=%(init_draft_mid_marks)s,
-                init_draft_aft_marks=%(init_draft_aft_marks)s,
+                if k in draft_cols:
+                    draft_payload[k] = v
 
-                init_sg=%(init_sg)s,
-                init_lpp=%(init_lpp)s,
-                init_tpc_p=%(init_tpc_p)s,
-                init_tpc_s=%(init_tpc_s)s,
-                init_bl_figure=%(init_bl_figure)s,
-                init_slop=%(init_slop)s,
-                init_swimming_pool=%(init_swimming_pool)s,
+            # =====================================================
+            # 🔥 9) VALIDAR EXISTENCIA DRAFT
+            # =====================================================
+            cur.execute("""
+                SELECT id FROM draft_survey WHERE general_id = %s
+            """, (general_id,))
+            draft_row = cur.fetchone()
 
-                init_ballast=%(init_ballast)s,
-                init_fresh_water=%(init_fresh_water)s,
-                init_fuel_oil=%(init_fuel_oil)s,
-                init_diesel_oil=%(init_diesel_oil)s,
-                init_lub_oil=%(init_lub_oil)s,
-                init_others=%(init_others)s,
-                init_deductions=%(init_deductions)s,
+            if not draft_row:
+                raise HTTPException(404, "No existe draft_survey asociado")
 
-                final_date=%(final_date)s,
-                final_time_from=%(final_time_from)s,
-                final_time_to=%(final_time_to)s,
+            # =====================================================
+            # 🔥 10) UPDATE GENERAL DINÁMICO
+            # =====================================================
+            if general_payload:
 
-                final_draft_fwd_port=%(final_draft_fwd_port)s,
-                final_draft_fwd_stb=%(final_draft_fwd_stb)s,
-                final_draft_mid_port=%(final_draft_mid_port)s,
-                final_draft_mid_stb=%(final_draft_mid_stb)s,
-                final_draft_aft_port=%(final_draft_aft_port)s,
-                final_draft_aft_stb=%(final_draft_aft_stb)s,
+                has_updated_at = "updated_at" in general_cols
 
-                final_draft_fwd_marks=%(final_draft_fwd_marks)s,
-                final_draft_mid_marks=%(final_draft_mid_marks)s,
-                final_draft_aft_marks=%(final_draft_aft_marks)s,
+                set_clause = ", ".join([f"{k} = %s" for k in general_payload.keys()])
+                values = list(general_payload.values())
 
-                final_sg=%(final_sg)s,
-                final_lpp=%(final_lpp)s,
-                final_tpc_p=%(final_tpc_p)s,
-                final_tpc_s=%(final_tpc_s)s,
-                final_bl_figure=%(final_bl_figure)s,
-                final_slop=%(final_slop)s,
-                final_swimming_pool=%(final_swimming_pool)s,
+                if has_updated_at:
+                    set_clause += ", updated_at = NOW()"
 
-                final_ballast=%(final_ballast)s,
-                final_fresh_water=%(final_fresh_water)s,
-                final_fuel_oil=%(final_fuel_oil)s,
-                final_diesel_oil=%(final_diesel_oil)s,
-                final_lub_oil=%(final_lub_oil)s,
-                final_others=%(final_others)s,
-                final_deductions=%(final_deductions)s,
+                values.append(general_id)
 
-                init_hydro1_draft_1=%(init_hydro1_draft_1)s,
-                init_hydro1_disp_1=%(init_hydro1_disp_1)s,
-                init_hydro1_tpc_1=%(init_hydro1_tpc_1)s,
-                init_hydro1_lcf_1=%(init_hydro1_lcf_1)s,
-                init_hydro1_draft_2=%(init_hydro1_draft_2)s,
-                init_hydro1_disp_2=%(init_hydro1_disp_2)s,
-                init_hydro1_tpc_2=%(init_hydro1_tpc_2)s,
-                init_hydro1_lcf_2=%(init_hydro1_lcf_2)s,
-                init_hydro1_draft_mtc=%(init_hydro1_draft_mtc)s,
-                init_hydro1_mtc_p50_1=%(init_hydro1_mtc_p50_1)s,
-                init_hydro1_mtc_m50_1=%(init_hydro1_mtc_m50_1)s,
-                init_hydro1_mtc_p50_2=%(init_hydro1_mtc_p50_2)s,
-                init_hydro1_mtc_m50_2=%(init_hydro1_mtc_m50_2)s,
+                cur.execute(f"""
+                    UPDATE general_draft_survey
+                    SET {set_clause}
+                    WHERE id = %s
+                """, values)
 
-                init_hydro2_draft_1=%(init_hydro2_draft_1)s,
-                init_hydro2_disp_1=%(init_hydro2_disp_1)s,
-                init_hydro2_tpc_1=%(init_hydro2_tpc_1)s,
-                init_hydro2_lcf_1=%(init_hydro2_lcf_1)s,
-                init_hydro2_draft_2=%(init_hydro2_draft_2)s,
-                init_hydro2_disp_2=%(init_hydro2_disp_2)s,
-                init_hydro2_tpc_2=%(init_hydro2_tpc_2)s,
-                init_hydro2_lcf_2=%(init_hydro2_lcf_2)s,
-                init_hydro2_draft_mtc=%(init_hydro2_draft_mtc)s,
-                init_hydro2_mtc_p50_1=%(init_hydro2_mtc_p50_1)s,
-                init_hydro2_mtc_m50_1=%(init_hydro2_mtc_m50_1)s,
-                init_hydro2_mtc_p50_2=%(init_hydro2_mtc_p50_2)s,
-                init_hydro2_mtc_m50_2=%(init_hydro2_mtc_m50_2)s,
+            # =====================================================
+            # 🔥 11) UPDATE DRAFT DINÁMICO
+            # =====================================================
+            if draft_payload:
 
-                -- 🔵 NUEVO METADATA
-                year=%(year)s,
-                month=%(month)s,
-                continent=%(continent)s,
-                country=%(country)s,
-                port=%(port)s,
-                client=%(client)s,
-                draft_report_number=%(draft_report_number)s,
+                has_updated_at = "updated_at" in draft_cols
 
-                -- 🔵 NUEVAS FIRMAS
-                chief_officer=%(chief_officer)s,
-                master=%(master)s,
-                msl_surveyor=%(msl_surveyor)s,
+                set_clause = ", ".join([f"{k} = %s" for k in draft_payload.keys()])
+                values = list(draft_payload.values())
 
-                status=%(status)s,
-                updated_at=NOW()
+                if has_updated_at:
+                    set_clause += ", updated_at = NOW()"
 
-            WHERE general_id=%(general_id)s
-        """, {**payload, "general_id": general_id, "status": new_status})
+                values.append(general_id)
 
-        conn.commit()
+                cur.execute(f"""
+                    UPDATE draft_survey
+                    SET {set_clause}
+                    WHERE general_id = %s
+                """, values)
 
-        return {
-            "success": True,
-            "status": new_status
-        }
+            # =====================================================
+            # 🔥 12) DEBUG PRO
+            # =====================================================
+            print("====== PUT MAIN OK ======")
+            print("GENERAL ID:", general_id)
+            print("GENERAL FIELDS:", len(general_payload))
+            print("DRAFT FIELDS:", len(draft_payload))
+            print("STATUS:", new_status)
+            print("=========================")
 
-    except Exception as e:
-        conn.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+            conn.commit()
 
-    finally:
-        cur.close()
+            return {
+                "success": True,
+                "status": new_status,
+                "general_updated": len(general_payload),
+                "draft_updated": len(draft_payload)
+            }
+
+        except HTTPException:
+            conn.rollback()
+            raise
+
+        except Exception as e:
+            conn.rollback()
+            print("PUT MAIN ERROR:", str(e))
+            raise HTTPException(status_code=500, detail=str(e))
+
+        finally:
+            cur.close()
+
 
 # =========================================================
 # Preview

@@ -435,7 +435,7 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
             cur.close()
 
     # ---------------------------------------------------------
-    # PUT BALLAST — ULTRA BLINDADO (ESPEJO DEL POST)
+    # PUT BALLAST — ULTRA BLINDADO (ENTERPRISE FIXED)
     # ---------------------------------------------------------
     @router.put("/ballast/{draft_survey_id}")
     def update_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
@@ -446,7 +446,7 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
             payload = payload or {}
 
             # =====================================================
-            # 1) RESOLVER ID REAL (MISMA LÓGICA POST/GET)
+            # 1) RESOLVER ID REAL
             # =====================================================
             cur.execute("""
                 SELECT id FROM draft_survey WHERE general_id = %s
@@ -465,7 +465,7 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
             real_id = row[0]
 
             # =====================================================
-            # 2) DETECTAR COLUMNAS REALES
+            # 2) COLUMNAS REALES (EXCLUYENDO SISTEMA)
             # =====================================================
             cur.execute("""
                 SELECT column_name
@@ -473,13 +473,18 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
                 WHERE table_schema = 'public'
                   AND table_name = 'draft_survey_ballast'
             """)
-            cols = {r[0] for r in cur.fetchall()}
+
+            cols = {
+                r[0]
+                for r in cur.fetchall()
+                if r[0] not in ("id", "created_at")
+            }
 
             if not cols:
                 raise HTTPException(500, "No se pudieron leer columnas")
 
             # =====================================================
-            # 3) DETECTAR FK
+            # 3) FK DETECTION
             # =====================================================
             fk_col = next(
                 (c for c in ["draft_survey_id", "draftsurvey_id"] if c in cols),
@@ -490,7 +495,7 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
                 raise HTTPException(500, "FK no encontrada")
 
             # =====================================================
-            # 🔒 4) BLOQUEAR SI APPROVED
+            # 🔒 4) BLOQUEO APPROVED
             # =====================================================
             if "status" in cols:
                 cur.execute(f"""
@@ -504,13 +509,15 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
                     raise HTTPException(403, "Already approved")
 
             # =====================================================
-            # 5) LIMPIAR PAYLOAD (SIN ALTERAR TEXTO)
+            # 5) LIMPIEZA ROBUSTA
             # =====================================================
-            def clean_value_as_is(v):
+            def clean(v):
                 if v is None:
                     return None
-                if isinstance(v, str) and v == "":
-                    return None
+                if isinstance(v, str):
+                    v = v.strip()
+                    if v == "" or v.lower() in ("none", "null"):
+                        return None
                 return v
 
             clean_payload = {}
@@ -523,18 +530,13 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
 
                 key = str(k)
 
-                if key in cols:
-                    clean_payload[key] = clean_value_as_is(v)
+                if key in cols and key != fk_col:
+                    clean_payload[key] = clean(v)
                 else:
                     ignored_keys.append(key)
 
             # =====================================================
-            # 🔥 6) FORZAR FK
-            # =====================================================
-            clean_payload[fk_col] = real_id
-
-            # =====================================================
-            # 🔥 7) BACKUP JSON (CRÍTICO)
+            # 🔥 BACKUP JSON (CRÍTICO)
             # =====================================================
             if "raw_payload" in cols:
                 clean_payload["raw_payload"] = payload
@@ -543,26 +545,7 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
                 clean_payload["ballast_json"] = payload
 
             # =====================================================
-            # 🔧 8) CAMPOS A ACTUALIZAR
-            # =====================================================
-            fields = list(clean_payload.keys())
-
-            if not fields:
-                fields = [fk_col]
-                clean_payload = {fk_col: real_id}
-
-            # =====================================================
-            # DEBUG
-            # =====================================================
-            print("====== PUT BALLAST DEBUG ======")
-            print("REAL ID:", real_id)
-            print("FIELDS:", fields)
-            print("TOTAL INPUT:", len(payload))
-            print("IGNORADOS:", len(ignored_keys))
-            print("===============================")
-
-            # =====================================================
-            # 9) VALIDAR EXISTENCIA
+            # 6) VALIDAR EXISTENCIA
             # =====================================================
             cur.execute(f"""
                 SELECT id
@@ -578,29 +561,59 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
             ballast_id = existing[0]
 
             # =====================================================
-            # 🔥 10) UPDATE DINÁMICO REAL
+            # 🔥 7) SI NO HAY CAMPOS → NO UPDATE
             # =====================================================
-            set_clause = ", ".join([f"{f} = %s" for f in fields])
-            values = [clean_payload[f] for f in fields] + [ballast_id]
+            if not clean_payload:
+                return {
+                    "success": True,
+                    "action": "no_changes",
+                    "ballast_id": ballast_id,
+                    "draft_survey_id": real_id
+                }
+
+            # =====================================================
+            # 🔥 8) DETECTAR updated_at
+            # =====================================================
+            has_updated_at = "updated_at" in cols
+
+            # =====================================================
+            # 🔥 9) UPDATE DINÁMICO SEGURO
+            # =====================================================
+            set_clause = ", ".join([f"{f} = %s" for f in clean_payload.keys()])
+            values = list(clean_payload.values())
+
+            if has_updated_at:
+                set_clause += ", updated_at = NOW()"
+
+            values.append(ballast_id)
 
             cur.execute(f"""
                 UPDATE draft_survey_ballast
-                SET {set_clause},
-                    updated_at = NOW()
+                SET {set_clause}
                 WHERE id = %s
                 RETURNING id
             """, values)
 
-            ballast_id = cur.fetchone()[0]
+            updated_id = cur.fetchone()[0]
 
             conn.commit()
+
+            # =====================================================
+            # DEBUG PRO
+            # =====================================================
+            print("====== PUT BALLAST OK ======")
+            print("REAL ID:", real_id)
+            print("UPDATED ID:", updated_id)
+            print("FIELDS:", len(clean_payload))
+            print("IGNORED:", len(ignored_keys))
+            print("============================")
 
             return {
                 "success": True,
                 "action": "updated",
-                "ballast_id": ballast_id,
+                "ballast_id": updated_id,
                 "draft_survey_id": real_id,
-                "saved_fields": len(fields),
+                "saved_fields": len(clean_payload),
                 "ignored_fields": len(ignored_keys)
             }
 
@@ -827,7 +840,7 @@ def create_word(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
 
     # =========================================================
     # ================= WORD REPORT UPDATE ====================
-    # ULTRA BLINDADO — DINÁMICO + DATETIME + JSON BACKUP
+    # ULTRA BLINDADO — ENTERPRISE FIXED
     # =========================================================
     @router.put("/word/{draft_survey_id}")
     def update_word(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
@@ -838,7 +851,7 @@ def create_word(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
             payload = payload or {}
 
             # =====================================================
-            # 1) RESOLVER ID REAL (MISMA LÓGICA QUE POST)
+            # 1) RESOLVER ID REAL
             # =====================================================
             cur.execute("""
                 SELECT id FROM draft_survey WHERE general_id = %s
@@ -857,7 +870,7 @@ def create_word(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
             real_id = row[0]
 
             # =====================================================
-            # 2) COLUMNAS REALES
+            # 2) COLUMNAS REALES (EXCLUYENDO SISTEMA)
             # =====================================================
             cur.execute("""
                 SELECT column_name
@@ -865,7 +878,12 @@ def create_word(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
                 WHERE table_schema = 'public'
                   AND table_name = 'draft_survey_word_report'
             """)
-            cols = {r[0] for r in cur.fetchall()}
+
+            cols = {
+                r[0]
+                for r in cur.fetchall()
+                if r[0] not in ("id", "created_at")
+            }
 
             if not cols:
                 raise HTTPException(500, "No se pudieron leer columnas")
@@ -887,12 +905,14 @@ def create_word(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
             # =====================================================
             # HELPERS
             # =====================================================
-            def clean_value(v):
+            def clean(v):
                 if v is None:
                     return None
-                if isinstance(v, str) and v == "":
-                    return None
-                return v  # 🔥 NO tocar texto
+                if isinstance(v, str):
+                    v = v.strip()
+                    if v == "" or v.lower() in ("none", "null"):
+                        return None
+                return v
 
             from datetime import datetime
 
@@ -915,14 +935,13 @@ def create_word(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
                             time_val = None
 
                         return date_val, time_val
-
                     except:
                         return None, None
 
                 return None, None
 
             # =====================================================
-            # CAMPOS CONTROLADOS (IGUAL QUE POST)
+            # CAMPOS CONTROLADOS
             # =====================================================
             expected_fields = [
                 "word_mt", "word_product", "word_vessel", "word_port", "word_country",
@@ -953,7 +972,7 @@ def create_word(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
             ]
 
             # =====================================================
-            # 🔥 4) LIMPIAR + ARMAR PAYLOAD
+            # 🔥 4) LIMPIEZA + BUILD
             # =====================================================
             clean_payload = {}
             ignored_keys = []
@@ -961,9 +980,9 @@ def create_word(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
             # normales
             for f in expected_fields + metadata_fields:
                 if f in cols:
-                    clean_payload[f] = clean_value(payload.get(f))
+                    clean_payload[f] = clean(payload.get(f))
 
-            # datetime inteligente
+            # datetime robusto
             for f in datetime_fields:
 
                 date_val = payload.get(f"{f}_date")
@@ -988,15 +1007,15 @@ def create_word(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
                 if f"{f}_time" in cols:
                     clean_payload[f"{f}_time"] = t
 
-            # FK
-            clean_payload["draft_survey_id"] = real_id
+            # FK (NO SE ACTUALIZA EN SET)
+            fk_col = "draft_survey_id"
 
             # STATUS
             if "status" in cols:
                 clean_payload["status"] = payload.get("status") or "Pending for review"
 
             # =====================================================
-            # 🔥 5) JSON BACKUP (CRÍTICO)
+            # 🔥 BACKUP JSON
             # =====================================================
             if "raw_payload" in cols:
                 clean_payload["raw_payload"] = payload
@@ -1005,29 +1024,56 @@ def create_word(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
                 clean_payload["word_json"] = payload
 
             # =====================================================
-            # 🔧 6) UPDATE DINÁMICO
+            # 🔥 5) VALIDAR EXISTENCIA
             # =====================================================
-            fields = list(clean_payload.keys())
+            cur.execute("""
+                SELECT id
+                FROM draft_survey_word_report
+                WHERE draft_survey_id = %s
+                LIMIT 1
+            """, (real_id,))
+            existing = cur.fetchone()
 
-            if not fields:
-                raise HTTPException(400, "No hay campos para actualizar")
-
-            set_clause = ", ".join([f"{f} = %s" for f in fields])
-            values = [clean_payload[f] for f in fields] + [real_id]
+            if not existing:
+                raise HTTPException(404, "No existe registro word para actualizar")
 
             # =====================================================
-            # DEBUG
+            # 🔥 6) SI NO HAY CAMBIOS
             # =====================================================
-            print("====== PUT WORD DEBUG ======")
+            if not clean_payload:
+                return {
+                    "success": True,
+                    "action": "no_changes",
+                    "draft_survey_id": real_id
+                }
+
+            # =====================================================
+            # 🔥 7) updated_at OPCIONAL
+            # =====================================================
+            has_updated_at = "updated_at" in cols
+
+            # =====================================================
+            # 🔥 8) UPDATE DINÁMICO SEGURO
+            # =====================================================
+            set_clause = ", ".join([f"{f} = %s" for f in clean_payload.keys()])
+            values = list(clean_payload.values())
+
+            if has_updated_at:
+                set_clause += ", updated_at = NOW()"
+
+            values.append(real_id)
+
+            # =====================================================
+            # DEBUG PRO
+            # =====================================================
+            print("====== PUT WORD OK ======")
             print("REAL ID:", real_id)
-            print("FIELDS:", fields)
-            print("IGNORADOS:", ignored_keys)
-            print("============================")
+            print("FIELDS:", len(clean_payload))
+            print("=========================")
 
             cur.execute(f"""
                 UPDATE draft_survey_word_report
-                SET {set_clause},
-                    updated_at = NOW()
+                SET {set_clause}
                 WHERE draft_survey_id = %s
                 RETURNING id
             """, values)
@@ -1035,7 +1081,7 @@ def create_word(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
             updated = cur.fetchone()
 
             if not updated:
-                raise HTTPException(404, "No existe registro word para actualizar")
+                raise HTTPException(500, "Falló el UPDATE (no retornó fila)")
 
             conn.commit()
 
@@ -1043,7 +1089,7 @@ def create_word(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
                 "success": True,
                 "action": "updated",
                 "draft_survey_id": real_id,
-                "saved_fields": len(fields)
+                "saved_fields": len(clean_payload)
             }
 
         except HTTPException:
