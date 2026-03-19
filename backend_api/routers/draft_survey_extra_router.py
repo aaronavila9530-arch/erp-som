@@ -31,8 +31,8 @@ def clean_value_as_is(value):
 
 
 # =========================================================
-# POST / PUT — BALLAST (CREATE / UPDATE) — BLINDADO REAL
-# TAL COMO LO RECIBE DEL FRONT, ASÍ LO GUARDA
+# POST / PUT — BALLAST (CREATE / UPDATE) — ULTRA BLINDADO REAL
+# GUARDA EXACTAMENTE LO QUE VIENE DEL FRONT
 # =========================================================
 @router.post("/ballast/{draft_survey_id}")
 def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
@@ -43,88 +43,71 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
         payload = payload or {}
 
         # =====================================================
-        # 1) RESOLVER ID REAL DE draft_survey
+        # HELPER: NO TOCAR TEXTO
         # =====================================================
-        cur.execute(
-            """
-            SELECT id
-            FROM draft_survey
-            WHERE general_id = %s
-            """,
-            (draft_survey_id,)
-        )
+        def clean_value_as_is(v):
+            if v is None:
+                return None
+            if isinstance(v, str) and v == "":
+                return None
+            return v
+
+        # =====================================================
+        # 1) RESOLVER ID REAL
+        # =====================================================
+        cur.execute("""
+            SELECT id FROM draft_survey WHERE general_id = %s
+        """, (draft_survey_id,))
         row = cur.fetchone()
 
         if not row:
-            cur.execute(
-                """
-                SELECT id
-                FROM draft_survey
-                WHERE id = %s
-                """,
-                (draft_survey_id,)
-            )
+            cur.execute("""
+                SELECT id FROM draft_survey WHERE id = %s
+            """, (draft_survey_id,))
             row = cur.fetchone()
 
         if not row:
-            raise HTTPException(
-                status_code=404,
-                detail=f"No existe draft_survey {draft_survey_id}"
-            )
+            raise HTTPException(404, f"No existe draft_survey {draft_survey_id}")
 
         real_id = row[0]
 
         # =====================================================
-        # 2) LEER COLUMNAS REALES DE LA TABLA
+        # 2) COLUMNAS REALES
         # =====================================================
-        cur.execute(
-            """
+        cur.execute("""
             SELECT column_name
             FROM information_schema.columns
             WHERE table_schema = 'public'
               AND table_name = 'draft_survey_ballast'
-            ORDER BY ordinal_position
-            """
-        )
+        """)
         cols = {r[0] for r in cur.fetchall()}
 
         if not cols:
-            raise HTTPException(
-                status_code=500,
-                detail="No se pudieron leer columnas de draft_survey_ballast"
-            )
+            raise HTTPException(500, "No se pudieron leer columnas")
 
         # =====================================================
-        # 3) DETECTAR FK REAL
+        # 3) FK
         # =====================================================
-        fk_col = None
-
-        for candidate in ["draft_survey_id", "draftsurvey_id"]:
-            if candidate in cols:
-                fk_col = candidate
-                break
+        fk_col = next(
+            (c for c in ["draft_survey_id", "draftsurvey_id"] if c in cols),
+            None
+        )
 
         if not fk_col:
-            raise HTTPException(
-                status_code=500,
-                detail="FK no encontrada en draft_survey_ballast"
-            )
+            raise HTTPException(500, "FK no encontrada")
 
         # =====================================================
-        # 4) LIMPIAR PAYLOAD SIN TOCAR TEXTOS
+        # 4) LIMPIAR PAYLOAD (SIN TOCAR TEXTO)
         # =====================================================
         clean_payload = {}
         ignored_keys = []
 
         for k, v in payload.items():
 
-            if k is None:
+            if not k:
                 continue
 
             key = str(k)
-
-            if key == "":
-                continue
 
             if key in cols:
                 clean_payload[key] = clean_value_as_is(v)
@@ -132,12 +115,12 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
                 ignored_keys.append(key)
 
         # =====================================================
-        # 5) FORZAR FK
+        # 🔥 5) FORZAR FK SIEMPRE
         # =====================================================
         clean_payload[fk_col] = real_id
 
         # =====================================================
-        # 6) BACKUP JSON COMPLETO SI EXISTE LA COLUMNA
+        # 🔥 6) BACKUP JSON (SI EXISTE)
         # =====================================================
         if "raw_payload" in cols:
             clean_payload["raw_payload"] = payload
@@ -146,69 +129,55 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
             clean_payload["ballast_json"] = payload
 
         # =====================================================
-        # 7) DEBUG
+        # 🔥 7) FALLBACK: SI SOLO VIENE FK → IGUAL INSERTAR
+        # =====================================================
+        fields = list(clean_payload.keys())
+
+        if not fields:
+            # 🔥 FORZAR MINIMO INSERT
+            fields = [fk_col]
+            clean_payload = {fk_col: real_id}
+
+        # =====================================================
+        # DEBUG
         # =====================================================
         print("====== BALLAST DEBUG ======")
-        print("GENERAL/PATH ID:", draft_survey_id)
-        print("REAL DRAFT ID:", real_id)
+        print("REAL ID:", real_id)
+        print("FIELDS:", fields)
         print("TOTAL INPUT:", len(payload))
-        print("GUARDADOS:", len(clean_payload))
         print("IGNORADOS:", len(ignored_keys))
-        print("SAMPLE IGNORADOS:", ignored_keys[:20])
         print("===========================")
 
         # =====================================================
-        # 8) VERIFICAR SI YA EXISTE REGISTRO
+        # 8) EXISTING
         # =====================================================
-        cur.execute(
-            f"""
+        cur.execute(f"""
             SELECT id
             FROM draft_survey_ballast
             WHERE {fk_col} = %s
             LIMIT 1
-            """,
-            (real_id,)
-        )
+        """, (real_id,))
         existing = cur.fetchone()
-
-        fields = list(clean_payload.keys())
-
-        if not fields:
-            raise HTTPException(
-                status_code=400,
-                detail="No hay campos válidos para guardar en draft_survey_ballast"
-            )
 
         # =====================================================
         # 9) UPDATE
         # =====================================================
         if existing:
+
             ballast_id = existing[0]
 
-            set_clause = ", ".join([f"{field} = %s" for field in fields])
-            values = [clean_payload[field] for field in fields] + [ballast_id]
+            set_clause = ", ".join([f"{f} = %s" for f in fields])
+            values = [clean_payload[f] for f in fields] + [ballast_id]
 
-            cur.execute(
-                f"""
+            cur.execute(f"""
                 UPDATE draft_survey_ballast
-                SET
-                    {set_clause},
+                SET {set_clause},
                     updated_at = NOW()
                 WHERE id = %s
                 RETURNING id
-                """,
-                values
-            )
+            """, values)
 
-            updated_row = cur.fetchone()
-
-            if not updated_row:
-                raise HTTPException(
-                    status_code=500,
-                    detail="No se pudo actualizar draft_survey_ballast"
-                )
-
-            ballast_id = updated_row[0]
+            ballast_id = cur.fetchone()[0]
 
             conn.commit()
 
@@ -218,35 +187,23 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
                 "ballast_id": ballast_id,
                 "draft_survey_id": real_id,
                 "saved_fields": len(fields),
-                "ignored_fields": len(ignored_keys),
-                "ignored_keys": ignored_keys
+                "ignored_fields": len(ignored_keys)
             }
 
         # =====================================================
-        # 10) INSERT
+        # 10) INSERT (SIEMPRE FUNCIONA)
         # =====================================================
         cols_sql = ", ".join(fields)
         vals_sql = ", ".join(["%s"] * len(fields))
-        values = [clean_payload[field] for field in fields]
+        values = [clean_payload[f] for f in fields]
 
-        cur.execute(
-            f"""
+        cur.execute(f"""
             INSERT INTO draft_survey_ballast ({cols_sql})
             VALUES ({vals_sql})
             RETURNING id
-            """,
-            values
-        )
+        """, values)
 
-        inserted_row = cur.fetchone()
-
-        if not inserted_row:
-            raise HTTPException(
-                status_code=500,
-                detail="No se pudo crear draft_survey_ballast"
-            )
-
-        ballast_id = inserted_row[0]
+        ballast_id = cur.fetchone()[0]
 
         conn.commit()
 
@@ -256,8 +213,7 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
             "ballast_id": ballast_id,
             "draft_survey_id": real_id,
             "saved_fields": len(fields),
-            "ignored_fields": len(ignored_keys),
-            "ignored_keys": ignored_keys
+            "ignored_fields": len(ignored_keys)
         }
 
     except HTTPException:
@@ -266,10 +222,7 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
 
     except Exception as e:
         conn.rollback()
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error guardando ballast: {str(e)}"
-        )
+        raise HTTPException(500, f"Error guardando ballast: {str(e)}")
 
     finally:
         cur.close()
