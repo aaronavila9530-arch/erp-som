@@ -434,221 +434,165 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
         finally:
             cur.close()
 
-    # ---------------------------------------------------------
-    # PUT BALLAST — ULTRA BLINDADO (ACEPTA ID O REPORT NUMBER)
-    # ---------------------------------------------------------
-    @router.put("/ballast/{draft_survey_id}")
-    def update_ballast(draft_survey_id: str, payload: dict, conn=Depends(get_db)):
+import tkinter as tk
+from tkinter import ttk, messagebox, filedialog
 
-        cur = conn.cursor()
+from Modulos.HHRR.ui_lazy_table import TablaLazy
+from api_client import listar_eventos_hr, hr_download_payslip_pdf
+
+
+class VistaColillasEmployee(ttk.Frame):
+
+    def __init__(self, parent, empleado_id=None, rol=None):
+        super().__init__(parent)
+
+        self.rol = (rol or "").lower().strip()
+        self.data = []
+
+        self._construir_ui()
+        self._cargar_colillas()  # 🔥 IMPORTANTE
+
+    # =========================================================
+    # UI
+    # =========================================================
+    def _construir_ui(self):
+
+        columnas = ["periodo", "status"]
+
+        self.tabla = TablaLazy(
+            self,
+            columnas=columnas,
+            ancho_columnas={
+                "periodo": 150,
+                "status": 120
+            }
+        )
+        self.tabla.pack(fill="both", expand=True, padx=10, pady=10)
+
+        cont_btn = ttk.Frame(self)
+        cont_btn.pack(fill="x", pady=5)
+
+        ttk.Button(
+            cont_btn,
+            text="Recargar",
+            command=self._cargar_colillas
+        ).pack(side="left", padx=5)
+
+        ttk.Button(
+            cont_btn,
+            text="Descargar",
+            command=self._descargar_colilla
+        ).pack(side="right", padx=5)
+
+    # =========================================================
+    # CARGA DATA (SIN get_payslips_api)
+    # =========================================================
+    def _cargar_colillas(self):
 
         try:
-            payload = payload or {}
+            datos = listar_eventos_hr(event_type="PAYSLIP")
+        except Exception as e:
+            messagebox.showerror("Error", f"Backend error:\n{e}")
+            return
 
-            # =====================================================
-            # 🔥 1) RESOLVER ID REAL (INT O STRING)
-            # =====================================================
-            real_id = None
+        if not isinstance(datos, list):
+            datos = []
 
-            # -----------------------------------------------------
-            # INT → general_id
-            # -----------------------------------------------------
-            if str(draft_survey_id).isdigit():
+        filas = []
+        self.data = []
 
-                cur.execute("""
-                    SELECT id FROM draft_survey WHERE general_id = %s
-                """, (int(draft_survey_id),))
-                row = cur.fetchone()
+        for d in datos:
 
-                if not row:
-                    cur.execute("""
-                        SELECT id FROM draft_survey WHERE id = %s
-                    """, (int(draft_survey_id),))
-                    row = cur.fetchone()
+            if not isinstance(d, dict):
+                continue
 
-                if row:
-                    real_id = row[0]
+            payload = d.get("payload") or {}
 
-            # -----------------------------------------------------
-            # STRING → draft_report_number
-            # -----------------------------------------------------
-            if not real_id:
+            year = payload.get("year")
+            month = payload.get("month")
 
-                cur.execute("""
-                    SELECT id
-                    FROM draft_survey
-                    WHERE draft_report_number = %s
-                """, (str(draft_survey_id),))
-                row = cur.fetchone()
+            periodo = payload.get("periodo")
 
-                if row:
-                    real_id = row[0]
+            if not periodo:
+                if year and month:
+                    periodo = f"{year}-{str(month).zfill(2)}"
+                else:
+                    periodo = "—"
 
-            if not real_id:
-                raise HTTPException(404, f"No existe draft_survey {draft_survey_id}")
-
-            # =====================================================
-            # 🔥 2) COLUMNAS REALES
-            # =====================================================
-            cur.execute("""
-                SELECT column_name
-                FROM information_schema.columns
-                WHERE table_name = 'draft_survey_ballast'
-            """)
-
-            cols = {
-                r[0]
-                for r in cur.fetchall()
-                if r[0] not in ("id", "created_at")
+            fila = {
+                "periodo": periodo,
+                "status": d.get("status") or "—",
+                "_year": year,
+                "_month": month
             }
 
-            if not cols:
-                raise HTTPException(500, "No se pudieron leer columnas")
+            filas.append(fila)
+            self.data.append(fila)
 
-            # =====================================================
-            # 🔥 3) FK DETECTION
-            # =====================================================
-            fk_col = next(
-                (c for c in ["draft_survey_id", "draftsurvey_id"] if c in cols),
-                None
+        self.tabla.cargar_datos(filas)
+
+        if not filas:
+            messagebox.showinfo("Info", "No hay colillas disponibles")
+
+    # =========================================================
+    # DESCARGA
+    # =========================================================
+    def _descargar_colilla(self):
+
+        row = self.tabla.obtener_seleccionado()
+
+        if not row:
+            messagebox.showwarning("Atención", "Seleccione una colilla")
+            return
+
+        year = row.get("_year")
+        month = row.get("_month")
+
+        if not year or not month:
+            messagebox.showerror("Error", "Datos incompletos de la colilla")
+            return
+
+        filename = f"COLILLA_{year}_{month}.pdf"
+
+        path = filedialog.asksaveasfilename(
+            defaultextension=".pdf",
+            initialfile=filename,
+            filetypes=[("PDF", "*.pdf")]
+        )
+
+        if not path:
+            return
+
+        try:
+            resp = hr_download_payslip_pdf(
+                year=year,
+                month=month
             )
 
-            if not fk_col:
-                raise HTTPException(500, "FK no encontrada")
-
-            # =====================================================
-            # 🔒 4) BLOQUEO APPROVED
-            # =====================================================
-            if "status" in cols:
-                cur.execute(f"""
-                    SELECT status
-                    FROM draft_survey_ballast
-                    WHERE {fk_col} = %s
-                    LIMIT 1
-                """, (real_id,))
-                status_row = cur.fetchone()
-
-                if status_row and status_row[0] == "Approved":
-                    raise HTTPException(403, "Already approved")
-
-            # =====================================================
-            # 🔥 5) LIMPIEZA ROBUSTA
-            # =====================================================
-            def clean(v):
-                if v is None:
-                    return None
-                if isinstance(v, str):
-                    v = v.strip()
-                    if v == "" or v.lower() in ("none", "null"):
-                        return None
-                return v
-
-            clean_payload = {}
-            ignored_keys = []
-
-            for k, v in payload.items():
-
-                if not k:
-                    continue
-
-                key = str(k)
-
-                if key in cols and key != fk_col:
-                    clean_payload[key] = clean(v)
-                else:
-                    ignored_keys.append(key)
-
-            # =====================================================
-            # 🔥 BACKUP JSON (CRÍTICO)
-            # =====================================================
-            if "raw_payload" in cols:
-                clean_payload["raw_payload"] = payload
-
-            if "ballast_json" in cols:
-                clean_payload["ballast_json"] = payload
-
-            # =====================================================
-            # 🔥 6) VALIDAR EXISTENCIA
-            # =====================================================
-            cur.execute(f"""
-                SELECT id
-                FROM draft_survey_ballast
-                WHERE {fk_col} = %s
-                LIMIT 1
-            """, (real_id,))
-            existing = cur.fetchone()
-
-            if not existing:
-                raise HTTPException(404, "No existe registro ballast para actualizar")
-
-            ballast_id = existing[0]
-
-            # =====================================================
-            # 🔥 7) NO CAMBIOS
-            # =====================================================
-            if not clean_payload:
-                return {
-                    "success": True,
-                    "action": "no_changes",
-                    "ballast_id": ballast_id,
-                    "draft_survey_id": real_id
-                }
-
-            # =====================================================
-            # 🔥 8) UPDATE DINÁMICO
-            # =====================================================
-            has_updated_at = "updated_at" in cols
-
-            set_clause = ", ".join([f"{f} = %s" for f in clean_payload.keys()])
-            values = list(clean_payload.values())
-
-            if has_updated_at:
-                set_clause += ", updated_at = NOW()"
-
-            values.append(ballast_id)
-
-            cur.execute(f"""
-                UPDATE draft_survey_ballast
-                SET {set_clause}
-                WHERE id = %s
-                RETURNING id
-            """, values)
-
-            updated_id = cur.fetchone()[0]
-
-            conn.commit()
-
-            # =====================================================
-            # DEBUG PRO
-            # =====================================================
-            print("====== PUT BALLAST OK ======")
-            print("INPUT:", draft_survey_id)
-            print("REAL ID:", real_id)
-            print("UPDATED ID:", updated_id)
-            print("FIELDS:", len(clean_payload))
-            print("IGNORED:", len(ignored_keys))
-            print("============================")
-
-            return {
-                "success": True,
-                "action": "updated",
-                "ballast_id": updated_id,
-                "draft_survey_id": real_id,
-                "saved_fields": len(clean_payload),
-                "ignored_fields": len(ignored_keys)
-            }
-
-        except HTTPException:
-            conn.rollback()
-            raise
+            if resp is None:
+                raise Exception("Respuesta vacía")
 
         except Exception as e:
-            conn.rollback()
-            print("PUT BALLAST ERROR:", str(e))
-            raise HTTPException(500, f"Error actualizando ballast: {str(e)}")
+            messagebox.showerror("Error", f"Fallo al descargar:\n{e}")
+            return
 
-        finally:
-            cur.close()
+        try:
+            with open(path, "wb") as f:
+
+                if hasattr(resp, "iter_content"):
+                    for chunk in resp.iter_content(8192):
+                        if chunk:
+                            f.write(chunk)
+                elif isinstance(resp, (bytes, bytearray)):
+                    f.write(resp)
+                else:
+                    raise Exception("Formato de respuesta no soportado")
+
+        except Exception as e:
+            messagebox.showerror("Error", f"No se pudo guardar:\n{e}")
+            return
+
+        messagebox.showinfo("OK", "Colilla descargada correctamente")
 
 
 # =========================================================
