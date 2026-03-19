@@ -95,9 +95,11 @@ def listar_eventos(
     # USER → solo sus solicitudes
     # ADMIN / MASTER → todas
     # ---------------------------------------------------------
-    if rol == "user":
+    rol = (rol or "").lower().strip()
+
+    if rol not in ("admin", "master"):
         base_sql += """
-            WHERE e.created_by = %s
+            WHERE LOWER(e.created_by) = LOWER(%s)
             ORDER BY e.created_at DESC
         """
         cur.execute(base_sql, (usuario,))
@@ -107,7 +109,7 @@ def listar_eventos(
         """
         cur.execute(base_sql)
 
-    rows = cur.fetchall()
+    rows = cur.fetchall()   # 🔥 FALTABA ESTO
 
     # ---------------------------------------------------------
     # BLINDAJE FINAL (evita nulls que rompan frontend)
