@@ -30,14 +30,12 @@ def clean_value_as_is(value):
     return value
 
 
-# =========================================================
-# POST / PUT — BALLAST (CREATE / UPDATE) — ULTRA BLINDADO REAL FINAL+++
-# ✔ GUARDA TODO EL PAYLOAD (COLUMNAS + JSON)
-# ✔ NO ROMPE POR NUMERIC (EMPTY / GAUGE SAFE)
-# ✔ SOPORTA FRONT DINÁMICO 100%
-# =========================================================
+# ---------------------------------------------------------
+# BALLAST — CREATE / UPDATE (ANTI 405 DEFINITIVO)
+# ---------------------------------------------------------
 @router.post("/ballast/{draft_survey_id}")
-def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
+@router.put("/ballast/{draft_survey_id}")
+def update_ballast(draft_survey_id: str, payload: dict, conn=Depends(get_db)):
 
     cur = conn.cursor()
 
@@ -45,236 +43,117 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
         payload = payload or {}
 
         # =====================================================
-        # HELPER: LIMPIEZA MINIMA (SIN ALTERAR SEMÁNTICA)
+        # 🔥 RESOLVER ID REAL (INT O REPORT NUMBER)
         # =====================================================
-        def clean_value_as_is(v):
+        real_id = None
+
+        if str(draft_survey_id).isdigit():
+
+            cur.execute("""
+                SELECT id FROM draft_survey WHERE general_id = %s
+            """, (int(draft_survey_id),))
+            row = cur.fetchone()
+
+            if not row:
+                cur.execute("""
+                    SELECT id FROM draft_survey WHERE id = %s
+                """, (int(draft_survey_id),))
+                row = cur.fetchone()
+
+            if row:
+                real_id = row[0]
+
+        if not real_id:
+
+            cur.execute("""
+                SELECT id FROM draft_survey
+                WHERE draft_report_number = %s
+            """, (draft_survey_id,))
+            row = cur.fetchone()
+
+            if row:
+                real_id = row[0]
+
+        if not real_id:
+            raise HTTPException(404, "Draft survey no encontrado")
+
+        # =====================================================
+        # 🔥 BUSCAR REGISTRO BALLAST
+        # =====================================================
+        cur.execute("""
+            SELECT id
+            FROM draft_survey_ballast
+            WHERE draft_survey_id = %s
+            LIMIT 1
+        """, (real_id,))
+        row = cur.fetchone()
+
+        if not row:
+            raise HTTPException(404, "Ballast no existe")
+
+        ballast_id = row[0]
+
+        # =====================================================
+        # 🔥 LIMPIEZA
+        # =====================================================
+        def clean(v):
             if v is None:
                 return None
             if isinstance(v, str):
                 v = v.strip()
-                if v == "":
+                if v == "" or v.lower() in ("none", "null"):
                     return None
             return v
 
-        # =====================================================
-        # HELPER: PROTEGER NUMERIC (CLAVE DEL SISTEMA)
-        # NO PIERDE EMPTY / GAUGE → SOLO EVITA CRASH
-        # =====================================================
-        def safe_numeric(v):
-            if v is None:
-                return None
-
-            if isinstance(v, (int, float)):
-                return v
-
-            if isinstance(v, str):
-                val = v.strip().upper()
-
-                # 🔥 RESPETAR SEMÁNTICA PERO NO ROMPER DB
-                if val in ["EMPTY", "GAUGE", "N/A", "-"]:
-                    return None
-
-                try:
-                    return float(val.replace(",", "."))
-                except:
-                    return None
-
-            return None
+        payload = {k: clean(v) for k, v in payload.items()}
 
         # =====================================================
-        # 1) RESOLVER ID REAL
+        # 🔥 COLUMNAS REALES
         # =====================================================
         cur.execute("""
-            SELECT id FROM draft_survey WHERE general_id = %s
-        """, (draft_survey_id,))
-        row = cur.fetchone()
-
-        if not row:
-            cur.execute("""
-                SELECT id FROM draft_survey WHERE id = %s
-            """, (draft_survey_id,))
-            row = cur.fetchone()
-
-        if not row:
-            raise HTTPException(404, f"No existe draft_survey {draft_survey_id}")
-
-        real_id = row[0]
-
-        # =====================================================
-        # 2) COLUMNAS + TIPOS (CRÍTICO)
-        # =====================================================
-        cur.execute("""
-            SELECT column_name, data_type
+            SELECT column_name
             FROM information_schema.columns
-            WHERE table_schema = 'public'
-              AND table_name = 'draft_survey_ballast'
+            WHERE table_name = 'draft_survey_ballast'
         """)
-        col_info = {r[0]: r[1] for r in cur.fetchall()}
 
-        if not col_info:
-            raise HTTPException(500, "No se pudieron leer columnas")
+        cols = {r[0] for r in cur.fetchall()}
 
-        cols = set(col_info.keys())
+        update_fields = {
+            k: v for k, v in payload.items()
+            if k in cols and k not in ("id", "created_at", "draft_survey_id")
+        }
 
-        # =====================================================
-        # 3) FK
-        # =====================================================
-        fk_col = next(
-            (c for c in ["draft_survey_id", "draftsurvey_id"] if c in cols),
-            None
-        )
-
-        if not fk_col:
-            raise HTTPException(500, "FK no encontrada")
+        if not update_fields:
+            return {"success": True, "message": "No changes"}
 
         # =====================================================
-        # 4) PROCESAR PAYLOAD COMPLETO
+        # 🔥 UPDATE
         # =====================================================
-        clean_payload = {}
-        full_payload = {}
-        ignored_keys = []
+        set_clause = ", ".join([f"{k} = %s" for k in update_fields])
+        values = list(update_fields.values())
 
-        for k, v in payload.items():
-
-            if not k:
-                continue
-
-            key = str(k)
-            value = clean_value_as_is(v)
-
-            # 🔥 GUARDAR TODO (JSON)
-            full_payload[key] = value
-
-            if key in cols:
-
-                col_type = col_info.get(key, "")
-
-                # 🔥 PROTEGER NUMERIC
-                if col_type in ("numeric", "double precision", "real", "integer"):
-                    clean_payload[key] = safe_numeric(value)
-                else:
-                    clean_payload[key] = value
-
-            else:
-                ignored_keys.append(key)
-
-        # =====================================================
-        # 5) FORZAR FK
-        # =====================================================
-        clean_payload[fk_col] = real_id
-
-        # =====================================================
-        # 6) BACKUP JSON COMPLETO
-        # =====================================================
-        if "raw_payload" in cols:
-            clean_payload["raw_payload"] = full_payload
-
-        if "ballast_json" in cols:
-            clean_payload["ballast_json"] = full_payload
-
-        # =====================================================
-        # 7) FALLBACK
-        # =====================================================
-        fields = list(clean_payload.keys())
-
-        if not fields:
-            fields = [fk_col]
-            clean_payload = {fk_col: real_id}
-
-        # =====================================================
-        # DEBUG PROFESIONAL
-        # =====================================================
-        print("====== BALLAST DEBUG ======")
-        print("REAL ID:", real_id)
-        print("TOTAL INPUT:", len(payload))
-        print("COLUMNAS DB:", len(cols))
-        print("GUARDADOS:", len(clean_payload))
-        print("IGNORADOS:", len(ignored_keys))
-        print("===========================")
-
-        # =====================================================
-        # 8) EXISTING
-        # =====================================================
-        cur.execute(f"""
-            SELECT id
-            FROM draft_survey_ballast
-            WHERE {fk_col} = %s
-            LIMIT 1
-        """, (real_id,))
-        existing = cur.fetchone()
-
-        # =====================================================
-        # 9) UPDATE
-        # =====================================================
-        if existing:
-
-            ballast_id = existing[0]
-
-            set_clause = ", ".join([f"{f} = %s" for f in fields])
-            values = [clean_payload[f] for f in fields] + [ballast_id]
-
-            cur.execute(f"""
-                UPDATE draft_survey_ballast
-                SET {set_clause},
-                    updated_at = NOW()
-                WHERE id = %s
-                RETURNING id
-            """, values)
-
-            ballast_id = cur.fetchone()[0]
-
-            conn.commit()
-
-            return {
-                "success": True,
-                "action": "updated",
-                "ballast_id": ballast_id,
-                "draft_survey_id": real_id,
-                "total_payload": len(full_payload),
-                "saved_in_columns": len(clean_payload),
-                "ignored": len(ignored_keys)
-            }
-
-        # =====================================================
-        # 10) INSERT
-        # =====================================================
-        cols_sql = ", ".join(fields)
-        vals_sql = ", ".join(["%s"] * len(fields))
-        values = [clean_payload[f] for f in fields]
+        values.append(ballast_id)
 
         cur.execute(f"""
-            INSERT INTO draft_survey_ballast ({cols_sql})
-            VALUES ({vals_sql})
-            RETURNING id
+            UPDATE draft_survey_ballast
+            SET {set_clause}, updated_at = NOW()
+            WHERE id = %s
         """, values)
-
-        ballast_id = cur.fetchone()[0]
 
         conn.commit()
 
         return {
             "success": True,
-            "action": "created",
-            "ballast_id": ballast_id,
-            "draft_survey_id": real_id,
-            "total_payload": len(full_payload),
-            "saved_in_columns": len(clean_payload),
-            "ignored": len(ignored_keys)
+            "ballast_id": ballast_id
         }
-
-    except HTTPException:
-        conn.rollback()
-        raise
 
     except Exception as e:
         conn.rollback()
-        raise HTTPException(500, f"Error guardando ballast: {str(e)}")
+        print("BALLAST ERROR:", str(e))
+        raise HTTPException(500, str(e))
 
     finally:
         cur.close()
-
-
-
 
     # ---------------------------------------------------------
     # GET BALLAST — ULTRA BLINDADO (ESPEJO EXACTO DEL POST)
