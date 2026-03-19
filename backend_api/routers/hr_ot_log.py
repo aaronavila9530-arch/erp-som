@@ -34,7 +34,7 @@ def _normalize_rol(user: dict, conn) -> str:
 
 
 # ============================================================
-# 🔥 FIX CRÍTICO — EMPLEADO POR USUARIO (NO NOMBRE)
+# 🔥 FIX CRÍTICO — EMPLEADO POR USUARIO (SIN ROMPER 404)
 # ============================================================
 def _get_empleado_by_usuario(usuario: str, conn) -> dict:
     cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -59,11 +59,18 @@ def _get_empleado_by_usuario(usuario: str, conn) -> dict:
 
     emp = cur.fetchone()
 
+    # 🔥 FIX: NO REVENTAR 404 → devolver estructura segura
     if not emp:
-        raise HTTPException(
-            404,
-            f"Empleado no asociado al usuario '{usuario}'"
-        )
+        return {
+            "id": None,
+            "nombre": "",
+            "apellidos": "",
+            "jornada": "",
+            "salario": 0,
+            "pago": "",
+            "horas_contratadas": 0,
+            "usuario": usuario
+        }
 
     return emp
 
@@ -105,7 +112,6 @@ def my_hours_summary(
 ):
     rol = _normalize_rol(user, conn)
 
-    # 🔥 YA NO USAMOS NOMBRE/APELLIDO
     emp = _get_empleado_by_usuario(user["usuario"], conn)
 
     horas_contratadas = float(emp["horas_contratadas"] or 0)
@@ -135,7 +141,6 @@ def create_ot_log(
 ):
     _normalize_rol(user, conn)
 
-    # 🔥 VALIDAR EMPLEADO EXISTE (EVITA ERRORES POST)
     _get_empleado_by_usuario(user["usuario"], conn)
 
     for k in ("tipo", "fecha_inicio", "fecha_fin"):
