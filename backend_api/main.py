@@ -47,7 +47,7 @@ from routers.password_reset import router as password_reset_router
 
 # HHRR
 from routers import hr
-from routers import hr_ot_log
+from routers.hr_ot_log import router as hr_ot_log_router
 from routers.payroll import router as payroll_router
 from routers.hr_events import router as hr_events_router
 from routers.hr_empleados import router as hr_empleados_router
@@ -219,7 +219,7 @@ app.include_router(exchange_rate_router)
 app.include_router(password_reset_router)
 
 app.include_router(hr.router)
-app.include_router(hr_ot_log.router)
+app.include_router(hr_ot_log_router)
 app.include_router(payroll_router)
 app.include_router(hr_events_router)    
 app.include_router(hr_empleados_router)
