@@ -435,10 +435,10 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
             cur.close()
 
     # ---------------------------------------------------------
-    # PUT BALLAST — ULTRA BLINDADO (ENTERPRISE FIXED)
+    # PUT BALLAST — ULTRA BLINDADO (ACEPTA ID O REPORT NUMBER)
     # ---------------------------------------------------------
     @router.put("/ballast/{draft_survey_id}")
-    def update_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
+    def update_ballast(draft_survey_id: str, payload: dict, conn=Depends(get_db)):
 
         cur = conn.cursor()
 
@@ -446,32 +446,54 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
             payload = payload or {}
 
             # =====================================================
-            # 1) RESOLVER ID REAL
+            # 🔥 1) RESOLVER ID REAL (INT O STRING)
             # =====================================================
-            cur.execute("""
-                SELECT id FROM draft_survey WHERE general_id = %s
-            """, (draft_survey_id,))
-            row = cur.fetchone()
+            real_id = None
 
-            if not row:
+            # -----------------------------------------------------
+            # INT → general_id
+            # -----------------------------------------------------
+            if str(draft_survey_id).isdigit():
+
                 cur.execute("""
-                    SELECT id FROM draft_survey WHERE id = %s
-                """, (draft_survey_id,))
+                    SELECT id FROM draft_survey WHERE general_id = %s
+                """, (int(draft_survey_id),))
                 row = cur.fetchone()
 
-            if not row:
+                if not row:
+                    cur.execute("""
+                        SELECT id FROM draft_survey WHERE id = %s
+                    """, (int(draft_survey_id),))
+                    row = cur.fetchone()
+
+                if row:
+                    real_id = row[0]
+
+            # -----------------------------------------------------
+            # STRING → draft_report_number
+            # -----------------------------------------------------
+            if not real_id:
+
+                cur.execute("""
+                    SELECT id
+                    FROM draft_survey
+                    WHERE draft_report_number = %s
+                """, (str(draft_survey_id),))
+                row = cur.fetchone()
+
+                if row:
+                    real_id = row[0]
+
+            if not real_id:
                 raise HTTPException(404, f"No existe draft_survey {draft_survey_id}")
 
-            real_id = row[0]
-
             # =====================================================
-            # 2) COLUMNAS REALES (EXCLUYENDO SISTEMA)
+            # 🔥 2) COLUMNAS REALES
             # =====================================================
             cur.execute("""
                 SELECT column_name
                 FROM information_schema.columns
-                WHERE table_schema = 'public'
-                  AND table_name = 'draft_survey_ballast'
+                WHERE table_name = 'draft_survey_ballast'
             """)
 
             cols = {
@@ -484,7 +506,7 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
                 raise HTTPException(500, "No se pudieron leer columnas")
 
             # =====================================================
-            # 3) FK DETECTION
+            # 🔥 3) FK DETECTION
             # =====================================================
             fk_col = next(
                 (c for c in ["draft_survey_id", "draftsurvey_id"] if c in cols),
@@ -499,7 +521,8 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
             # =====================================================
             if "status" in cols:
                 cur.execute(f"""
-                    SELECT status FROM draft_survey_ballast
+                    SELECT status
+                    FROM draft_survey_ballast
                     WHERE {fk_col} = %s
                     LIMIT 1
                 """, (real_id,))
@@ -509,7 +532,7 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
                     raise HTTPException(403, "Already approved")
 
             # =====================================================
-            # 5) LIMPIEZA ROBUSTA
+            # 🔥 5) LIMPIEZA ROBUSTA
             # =====================================================
             def clean(v):
                 if v is None:
@@ -545,7 +568,7 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
                 clean_payload["ballast_json"] = payload
 
             # =====================================================
-            # 6) VALIDAR EXISTENCIA
+            # 🔥 6) VALIDAR EXISTENCIA
             # =====================================================
             cur.execute(f"""
                 SELECT id
@@ -561,7 +584,7 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
             ballast_id = existing[0]
 
             # =====================================================
-            # 🔥 7) SI NO HAY CAMPOS → NO UPDATE
+            # 🔥 7) NO CAMBIOS
             # =====================================================
             if not clean_payload:
                 return {
@@ -572,13 +595,10 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
                 }
 
             # =====================================================
-            # 🔥 8) DETECTAR updated_at
+            # 🔥 8) UPDATE DINÁMICO
             # =====================================================
             has_updated_at = "updated_at" in cols
 
-            # =====================================================
-            # 🔥 9) UPDATE DINÁMICO SEGURO
-            # =====================================================
             set_clause = ", ".join([f"{f} = %s" for f in clean_payload.keys()])
             values = list(clean_payload.values())
 
@@ -602,6 +622,7 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
             # DEBUG PRO
             # =====================================================
             print("====== PUT BALLAST OK ======")
+            print("INPUT:", draft_survey_id)
             print("REAL ID:", real_id)
             print("UPDATED ID:", updated_id)
             print("FIELDS:", len(clean_payload))
@@ -623,6 +644,7 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
 
         except Exception as e:
             conn.rollback()
+            print("PUT BALLAST ERROR:", str(e))
             raise HTTPException(500, f"Error actualizando ballast: {str(e)}")
 
         finally:
