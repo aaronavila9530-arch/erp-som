@@ -5,67 +5,79 @@ from database import get_db
 
 
 def get_current_user(
-    x_user: str = Header(None, alias="X-User"),
-    x_role: str = Header(None, alias="X-Role"),
+    x_user: str | None = Header(default=None, alias="X-User"),
+    x_role: str | None = Header(default=None, alias="X-Role"),
     conn=Depends(get_db)
 ):
     """
-    🔐 ERP-SOM — AUTH (ULTRA BLINDADO)
+    AUTH HHRR / ERP-SOM
 
-    Obtiene usuario desde headers:
+    Lee usuario y rol desde headers:
     - X-User
     - X-Role
 
-    ✔ Normaliza valores
-    ✔ Valida existencia en DB
-    ✔ Verifica activo
-    ✔ Retorna estructura lista para RBAC
+    Valida:
+    - que existan
+    - que el usuario exista en DB
+    - que esté activo
 
-    ⚠️ CRÍTICO:
-    Si el frontend NO envía headers → falla correctamente (401)
+    Retorna:
+    {
+        "usuario": "...",
+        "nombre": "...",
+        "rol": "..."
+    }
     """
 
     # =====================================================
-    # 🔍 DEBUG (CLAVE PARA TU BUG ACTUAL)
+    # DEBUG REAL
     # =====================================================
-    print("🔐 AUTH DEBUG → X-User:", x_user, "| X-Role:", x_role)
+    print(f"🔐 AUTH DEBUG | X-User={x_user!r} | X-Role={x_role!r}")
 
     # =====================================================
-    # 🔒 VALIDACIÓN HEADERS
+    # VALIDAR HEADERS
     # =====================================================
-    if not x_user or not str(x_user).strip():
+    if x_user is None or not str(x_user).strip():
         raise HTTPException(
             status_code=401,
             detail="Usuario no autenticado (X-User requerido)"
         )
 
-    if not x_role or not str(x_role).strip():
+    if x_role is None or not str(x_role).strip():
         raise HTTPException(
             status_code=401,
             detail="Rol no especificado (X-Role requerido)"
         )
 
     # =====================================================
-    # 🧼 NORMALIZACIÓN
+    # NORMALIZAR
     # =====================================================
     usuario = str(x_user).strip().lower()
     rol = str(x_role).strip().lower()
 
     # =====================================================
-    # 🔎 VALIDAR USUARIO EN DB
+    # VALIDAR USUARIO EN DB
     # =====================================================
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
 
-        cur.execute("""
-            SELECT usuario, nombre, activo
+        cur.execute(
+            """
+            SELECT
+                usuario,
+                nombre,
+                activo
             FROM usuarios
-            WHERE LOWER(usuario) = %s
+            WHERE LOWER(TRIM(usuario)) = %s
             LIMIT 1
-        """, (usuario,))
+            """,
+            (usuario,)
+        )
 
         user = cur.fetchone()
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=500,
@@ -73,7 +85,7 @@ def get_current_user(
         )
 
     # =====================================================
-    # ❌ USUARIO NO EXISTE
+    # USUARIO NO EXISTE
     # =====================================================
     if not user:
         raise HTTPException(
@@ -82,19 +94,19 @@ def get_current_user(
         )
 
     # =====================================================
-    # ❌ USUARIO INACTIVO
+    # USUARIO INACTIVO
     # =====================================================
-    if not user.get("activo"):
+    if not bool(user.get("activo")):
         raise HTTPException(
             status_code=403,
             detail=f"Usuario '{usuario}' inactivo"
         )
 
     # =====================================================
-    # 🔐 ESTRUCTURA FINAL (RBAC READY)
+    # RESPUESTA FINAL
     # =====================================================
     return {
-        "usuario": user["usuario"].strip().lower(),
-        "nombre": user.get("nombre"),
-        "rol": rol  # 🔥 NORMALIZADO (lower)
+        "usuario": str(user["usuario"]).strip().lower(),
+        "nombre": (user.get("nombre") or "").strip(),
+        "rol": rol
     }
