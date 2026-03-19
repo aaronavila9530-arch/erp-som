@@ -655,14 +655,12 @@ def create_word(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
 # =========================================================
 # ================= WORD REPORT UPDATE ====================
 # =========================================================
-
 @router.put("/word/{draft_survey_id}")
 def update_word(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
 
     cur = conn.cursor()
 
     try:
-
         payload = payload or {}
 
         # -----------------------------------------------------
@@ -688,14 +686,24 @@ def update_word(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
             "word_master", "word_chief_officer",
             "word_name", "word_port_registry", "word_grt", "word_nrt",
             "word_year", "word_imo",
-            "word_arrived_buoy", "word_nor_tendered",
-            "word_all_fast", "word_initial_draft",
-            "word_commenced", "word_completed", "word_final_draft",
             "word_metric_tons", "word_goods_product", "word_holds",
             "word_draft_figures", "word_bl_figures",
             "word_difference", "word_percentage",
             "word_shore_scale", "word_shore_bl",
             "word_shore_difference", "word_shore_percentage"
+        ]
+
+        # -----------------------------------------------------
+        # 🔥 DATETIME FIELDS (NUEVOS)
+        # -----------------------------------------------------
+        datetime_fields = [
+            "word_arrived_buoy",
+            "word_nor_tendered",
+            "word_all_fast",
+            "word_initial_draft",
+            "word_commenced",
+            "word_completed",
+            "word_final_draft"
         ]
 
         # -----------------------------------------------------
@@ -707,17 +715,35 @@ def update_word(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
         ]
 
         # -----------------------------------------------------
-        # 🔒 NORMALIZAR + BLINDAR
+        # 🔒 CLEAN SIN ROMPER TEXTOS
         # -----------------------------------------------------
+        def clean(v):
+            if v in ["", "None", None]:
+                return None
+            return v  # NO tocar strings
+
         cleaned = {}
 
+        # normales
         for field in expected_fields + metadata_fields:
-            value = payload.get(field)
-            cleaned[field] = None if value in ["", "None", None] else value
+            cleaned[field] = clean(payload.get(field))
+
+        # -----------------------------------------------------
+        # 🔥 DATETIME SEPARADO (CLAVE)
+        # -----------------------------------------------------
+        for key in datetime_fields:
+
+            date_val = payload.get(f"{key}_date")
+            time_val = payload.get(f"{key}_time")
+
+            cleaned[f"{key}_date"] = clean(date_val)
+            cleaned[f"{key}_time"] = clean(time_val)
 
         cleaned["draft_survey_id"] = draft_survey_id
 
-        # Status controlado
+        # -----------------------------------------------------
+        # STATUS CONTROLADO
+        # -----------------------------------------------------
         allowed_status = ["Pending for review", "Approved"]
         new_status = payload.get("status")
 
@@ -727,7 +753,7 @@ def update_word(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
         cleaned["status"] = new_status
 
         # -----------------------------------------------------
-        # FULL UPDATE 1:1
+        # 🔥 SQL UPDATE (CON DATETIME NUEVO)
         # -----------------------------------------------------
         sql = """
         UPDATE draft_survey_word_report
@@ -752,13 +778,27 @@ def update_word(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
             word_year=%(word_year)s,
             word_imo=%(word_imo)s,
 
-            word_arrived_buoy=%(word_arrived_buoy)s,
-            word_nor_tendered=%(word_nor_tendered)s,
-            word_all_fast=%(word_all_fast)s,
-            word_initial_draft=%(word_initial_draft)s,
-            word_commenced=%(word_commenced)s,
-            word_completed=%(word_completed)s,
-            word_final_draft=%(word_final_draft)s,
+            # 🔥 NUEVO
+            word_arrived_buoy_date=%(word_arrived_buoy_date)s,
+            word_arrived_buoy_time=%(word_arrived_buoy_time)s,
+
+            word_nor_tendered_date=%(word_nor_tendered_date)s,
+            word_nor_tendered_time=%(word_nor_tendered_time)s,
+
+            word_all_fast_date=%(word_all_fast_date)s,
+            word_all_fast_time=%(word_all_fast_time)s,
+
+            word_initial_draft_date=%(word_initial_draft_date)s,
+            word_initial_draft_time=%(word_initial_draft_time)s,
+
+            word_commenced_date=%(word_commenced_date)s,
+            word_commenced_time=%(word_commenced_time)s,
+
+            word_completed_date=%(word_completed_date)s,
+            word_completed_time=%(word_completed_time)s,
+
+            word_final_draft_date=%(word_final_draft_date)s,
+            word_final_draft_time=%(word_final_draft_time)s,
 
             word_metric_tons=%(word_metric_tons)s,
             word_goods_product=%(word_goods_product)s,
