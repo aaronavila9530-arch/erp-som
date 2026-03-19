@@ -31,8 +31,8 @@ def clean_value_as_is(value):
 
 
 # =========================================================
-# POST / PUT — BALLAST (CREATE / UPDATE) — ULTRA BLINDADO REAL FINAL
-# GUARDA EXACTAMENTE LO QUE VIENE DEL FRONT (SIN CASTS, SIN NULL FORZADO)
+# POST / PUT — BALLAST (CREATE / UPDATE) — ULTRA BLINDADO REAL FINAL++
+# GUARDA 100% DEL PAYLOAD (COLUMNAS + JSON BACKUP)
 # =========================================================
 @router.post("/ballast/{draft_survey_id}")
 def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
@@ -44,14 +44,13 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
 
         # =====================================================
         # HELPER: RESPETAR TODO TAL CUAL
-        # SOLO convierte "" → None (opcional)
         # =====================================================
         def clean_value_as_is(v):
             if v is None:
                 return None
             if isinstance(v, str) and v.strip() == "":
                 return None
-            return v  # 🔥 NO TOCAR NADA MÁS
+            return v
 
         # =====================================================
         # 1) RESOLVER ID REAL
@@ -98,10 +97,10 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
             raise HTTPException(500, "FK no encontrada")
 
         # =====================================================
-        # 4) LIMPIAR PAYLOAD (SIN ALTERAR TEXTO)
+        # 4) PREPARAR PAYLOAD COMPLETO (NO PERDER NADA)
         # =====================================================
         clean_payload = {}
-        ignored_keys = []
+        full_payload = {}
 
         for k, v in payload.items():
 
@@ -109,11 +108,14 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
                 continue
 
             key = str(k)
+            value = clean_value_as_is(v)
 
+            # 🔥 guardar TODO
+            full_payload[key] = value
+
+            # 🔥 guardar en columnas SOLO si existen
             if key in cols:
-                clean_payload[key] = clean_value_as_is(v)
-            else:
-                ignored_keys.append(key)
+                clean_payload[key] = value
 
         # =====================================================
         # 5) FORZAR FK
@@ -121,13 +123,13 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
         clean_payload[fk_col] = real_id
 
         # =====================================================
-        # 6) BACKUP JSON
+        # 6) GUARDAR TODO EL PAYLOAD EN JSON (CLAVE)
         # =====================================================
         if "raw_payload" in cols:
-            clean_payload["raw_payload"] = payload
+            clean_payload["raw_payload"] = full_payload
 
         if "ballast_json" in cols:
-            clean_payload["ballast_json"] = payload
+            clean_payload["ballast_json"] = full_payload
 
         # =====================================================
         # 7) FALLBACK MINIMO
@@ -139,13 +141,13 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
             clean_payload = {fk_col: real_id}
 
         # =====================================================
-        # DEBUG
+        # DEBUG (CRÍTICO PARA VALIDAR 100%)
         # =====================================================
         print("====== BALLAST DEBUG ======")
         print("REAL ID:", real_id)
-        print("FIELDS:", fields[:10], "...")
         print("TOTAL INPUT:", len(payload))
-        print("IGNORADOS:", len(ignored_keys))
+        print("TOTAL GUARDADO COLUMNAS:", len(clean_payload))
+        print("TOTAL JSON:", len(full_payload))
         print("===========================")
 
         # =====================================================
@@ -186,8 +188,8 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
                 "action": "updated",
                 "ballast_id": ballast_id,
                 "draft_survey_id": real_id,
-                "saved_fields": len(fields),
-                "ignored_fields": len(ignored_keys)
+                "total_payload": len(full_payload),
+                "saved_in_columns": len(clean_payload)
             }
 
         # =====================================================
@@ -212,8 +214,8 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
             "action": "created",
             "ballast_id": ballast_id,
             "draft_survey_id": real_id,
-            "saved_fields": len(fields),
-            "ignored_fields": len(ignored_keys)
+            "total_payload": len(full_payload),
+            "saved_in_columns": len(clean_payload)
         }
 
     except HTTPException:
