@@ -229,7 +229,7 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
 
 
     # ---------------------------------------------------------
-    # GET BALLAST — FIX RECONSTRUCCIÓN FW (BLINDADO)
+    # GET BALLAST — ULTRA BLINDADO (ESPEJO EXACTO DEL POST)
     # ---------------------------------------------------------
     @router.get("/ballast/{draft_survey_id}")
     def get_ballast(draft_survey_id: int, conn=Depends(get_db)):
@@ -237,198 +237,335 @@ def create_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
         cur = conn.cursor(cursor_factory=RealDictCursor)
 
         try:
+            # =====================================================
+            # 1) RESOLVER ID REAL (MISMA LÓGICA QUE POST)
+            # =====================================================
             cur.execute("""
-                SELECT *
-                FROM draft_survey_ballast
-                WHERE draft_survey_id=%s
+                SELECT id FROM draft_survey WHERE general_id = %s
             """, (draft_survey_id,))
-
             row = cur.fetchone()
 
             if not row:
-                raise HTTPException(status_code=404, detail="Not found")
+                cur.execute("""
+                    SELECT id FROM draft_survey WHERE id = %s
+                """, (draft_survey_id,))
+                row = cur.fetchone()
+
+            if not row:
+                raise HTTPException(404, f"No existe draft_survey {draft_survey_id}")
+
+            real_id = row["id"]
 
             # =====================================================
-            # 🟢 FRESH WATER — ESTRUCTURA PLANA (COMPATIBLE FRONT)
+            # 2) DETECTAR COLUMNAS REALES
+            # =====================================================
+            cur.execute("""
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = 'draft_survey_ballast'
+            """)
+            cols = {r["column_name"] for r in cur.fetchall()}
+
+            if not cols:
+                raise HTTPException(500, "No se pudieron leer columnas")
+
+            # =====================================================
+            # 3) DETECTAR FK DINÁMICO
+            # =====================================================
+            fk_col = next(
+                (c for c in ["draft_survey_id", "draftsurvey_id"] if c in cols),
+                None
+            )
+
+            if not fk_col:
+                raise HTTPException(500, "FK no encontrada")
+
+            # =====================================================
+            # 4) TRAER REGISTRO
+            # =====================================================
+            cur.execute(f"""
+                SELECT *
+                FROM draft_survey_ballast
+                WHERE {fk_col} = %s
+                LIMIT 1
+            """, (real_id,))
+
+            db_row = cur.fetchone()
+
+            if not db_row:
+                raise HTTPException(404, "No ballast encontrado")
+
+            # =====================================================
+            # 🔥 5) PRIORIZAR JSON ORIGINAL (ESPEJO PERFECTO)
+            # =====================================================
+            original_payload = None
+
+            if "raw_payload" in db_row and db_row["raw_payload"]:
+                original_payload = db_row["raw_payload"]
+
+            elif "ballast_json" in db_row and db_row["ballast_json"]:
+                original_payload = db_row["ballast_json"]
+
+            # =====================================================
+            # 🔥 6) RECONSTRUCCIÓN DINÁMICA (SI NO HAY JSON)
+            # =====================================================
+            reconstructed = {}
+
+            if not original_payload:
+                for k, v in db_row.items():
+                    if k in ["id", "created_at", "updated_at"]:
+                        continue
+                    reconstructed[k] = v
+
+            # =====================================================
+            # 🟢 7) FRESH WATER DINÁMICO (NO ROMPE FRONT)
             # =====================================================
             fresh_water = {}
 
             for phase in ["init", "final"]:
                 for i in range(1, 21):
 
-                    fresh_water[f"{phase}_fw_{i}_name"] = row.get(f"{phase}_fw_{i}_name")
-                    fresh_water[f"{phase}_fw_{i}_height"] = row.get(f"{phase}_fw_{i}_height")
-                    fresh_water[f"{phase}_fw_{i}_sounding"] = row.get(f"{phase}_fw_{i}_sounding")
-                    fresh_water[f"{phase}_fw_{i}_volume"] = row.get(f"{phase}_fw_{i}_volume")
-                    fresh_water[f"{phase}_fw_{i}_density"] = row.get(f"{phase}_fw_{i}_density")
-                    fresh_water[f"{phase}_fw_{i}_total"] = row.get(f"{phase}_fw_{i}_total")
+                    for field in ["name", "height", "sounding", "volume", "density", "total"]:
+                        key = f"{phase}_fw_{i}_{field}"
+
+                        if key in db_row:
+                            fresh_water[key] = db_row.get(key)
+                        else:
+                            fresh_water[key] = None
 
             # =====================================================
-            # 🔢 TOTAL FW
+            # 🔢 8) TOTALES FW
             # =====================================================
             totals_fw = {
-                "init_total_fresh_water": row.get("init_total_fresh_water"),
-                "final_total_fresh_water": row.get("final_total_fresh_water")
+                "init_total_fresh_water": db_row.get("init_total_fresh_water"),
+                "final_total_fresh_water": db_row.get("final_total_fresh_water")
             }
 
             # =====================================================
-            # 🔥 RESPUESTA FINAL (BLINDADA)
+            # DEBUG
+            # =====================================================
+            print("====== GET BALLAST DEBUG ======")
+            print("REAL ID:", real_id)
+            print("USANDO JSON:", bool(original_payload))
+            print("COLUMNAS DB:", len(db_row.keys()))
+            print("===============================")
+
+            # =====================================================
+            # 🔥 9) RESPUESTA FINAL (ULTRA BLINDADA)
             # =====================================================
             return {
                 "success": True,
 
-                # 🔹 DATA ORIGINAL (para compatibilidad legacy)
-                "data": row,
+                # 🔹 EXACTO LO QUE ENVIO EL FRONT (PRIORIDAD)
+                "payload": original_payload if original_payload else reconstructed,
 
-                # 🔹 FW listo para UI dinámica
+                # 🔹 DATA DB COMPLETA
+                "data": db_row,
+
+                # 🔹 FW LISTO UI
                 "fresh_water": fresh_water,
 
-                # 🔹 Totales
-                "fresh_water_totals": totals_fw
+                # 🔹 TOTALES
+                "fresh_water_totals": totals_fw,
+
+                # 🔹 CONTROL
+                "meta": {
+                    "draft_survey_id": real_id,
+                    "used_json_backup": bool(original_payload),
+                    "total_columns": len(db_row.keys())
+                }
             }
+
+        except HTTPException:
+            raise
+
+        except Exception as e:
+            raise HTTPException(500, f"Error obteniendo ballast: {str(e)}")
 
         finally:
             cur.close()
 
-# ---------------------------------------------------------
-# PUT BALLAST (FULL UPDATE - DINÁMICO HASTA 20 TANQUES)
-# ---------------------------------------------------------
+    # ---------------------------------------------------------
+    # PUT BALLAST — ULTRA BLINDADO (ESPEJO DEL POST)
+    # ---------------------------------------------------------
+    @router.put("/ballast/{draft_survey_id}")
+    def update_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
 
-@router.put("/ballast/{draft_survey_id}")
-def update_ballast(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
+        cur = conn.cursor()
 
-    cur = conn.cursor()
+        try:
+            payload = payload or {}
 
-    try:
-        payload = payload or {}
+            # =====================================================
+            # 1) RESOLVER ID REAL (MISMA LÓGICA POST/GET)
+            # =====================================================
+            cur.execute("""
+                SELECT id FROM draft_survey WHERE general_id = %s
+            """, (draft_survey_id,))
+            row = cur.fetchone()
 
-        # -------------------------------------------------
-        # 🔒 BLOQUEAR SI YA ESTÁ APROBADO
-        # -------------------------------------------------
-        cur.execute("""
-            SELECT status FROM draft_survey_ballast
-            WHERE draft_survey_id = %s
-        """, (draft_survey_id,))
+            if not row:
+                cur.execute("""
+                    SELECT id FROM draft_survey WHERE id = %s
+                """, (draft_survey_id,))
+                row = cur.fetchone()
 
-        row = cur.fetchone()
+            if not row:
+                raise HTTPException(404, f"No existe draft_survey {draft_survey_id}")
 
-        if row and row[0] == "Approved":
-            raise HTTPException(status_code=403, detail="Already approved")
+            real_id = row[0]
 
-        # -------------------------------------------------
-        # 🔒 BLINDAJE METADATA
-        # -------------------------------------------------
-        metadata_keys = [
-            "year", "month", "continent", "country",
-            "port", "client", "draft_report_number"
-        ]
+            # =====================================================
+            # 2) DETECTAR COLUMNAS REALES
+            # =====================================================
+            cur.execute("""
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = 'draft_survey_ballast'
+            """)
+            cols = {r[0] for r in cur.fetchall()}
 
-        for key in metadata_keys:
-            payload.setdefault(key, None)
+            if not cols:
+                raise HTTPException(500, "No se pudieron leer columnas")
 
-        # -------------------------------------------------
-        # 🔒 NORMALIZAR KEYS
-        # -------------------------------------------------
-        normalized = {}
+            # =====================================================
+            # 3) DETECTAR FK
+            # =====================================================
+            fk_col = next(
+                (c for c in ["draft_survey_id", "draftsurvey_id"] if c in cols),
+                None
+            )
 
-        for k, v in payload.items():
+            if not fk_col:
+                raise HTTPException(500, "FK no encontrada")
 
-            if not isinstance(k, str):
-                continue
+            # =====================================================
+            # 🔒 4) BLOQUEAR SI APPROVED
+            # =====================================================
+            if "status" in cols:
+                cur.execute(f"""
+                    SELECT status FROM draft_survey_ballast
+                    WHERE {fk_col} = %s
+                    LIMIT 1
+                """, (real_id,))
+                status_row = cur.fetchone()
 
-            new_key = k.lower().strip().replace(" ", "_")
+                if status_row and status_row[0] == "Approved":
+                    raise HTTPException(403, "Already approved")
 
-            # limpiar vacíos
-            if v is None:
-                value = None
+            # =====================================================
+            # 5) LIMPIAR PAYLOAD (SIN ALTERAR TEXTO)
+            # =====================================================
+            def clean_value_as_is(v):
+                if v is None:
+                    return None
+                if isinstance(v, str) and v == "":
+                    return None
+                return v
 
-            elif isinstance(v, str):
-                vv = v.strip()
+            clean_payload = {}
+            ignored_keys = []
 
-                if vv.lower() in ("", "none", "null", "empty"):
-                    value = None
+            for k, v in payload.items():
+
+                if not k:
+                    continue
+
+                key = str(k)
+
+                if key in cols:
+                    clean_payload[key] = clean_value_as_is(v)
                 else:
-                    value = vv
+                    ignored_keys.append(key)
 
-            else:
-                value = v
+            # =====================================================
+            # 🔥 6) FORZAR FK
+            # =====================================================
+            clean_payload[fk_col] = real_id
 
-            # normalizar números (coma decimal → punto)
-            value = normalize_numeric(value)
+            # =====================================================
+            # 🔥 7) BACKUP JSON (CRÍTICO)
+            # =====================================================
+            if "raw_payload" in cols:
+                clean_payload["raw_payload"] = payload
 
-            normalized[new_key] = value
+            if "ballast_json" in cols:
+                clean_payload["ballast_json"] = payload
 
-        normalized["draft_survey_id"] = draft_survey_id
-        normalized["status"] = normalized.get("status", "Approved")
+            # =====================================================
+            # 🔧 8) CAMPOS A ACTUALIZAR
+            # =====================================================
+            fields = list(clean_payload.keys())
 
-        # -------------------------------------------------
-        # 🔧 CONSTRUIR UPDATE DINÁMICO
-        # -------------------------------------------------
-        set_clauses = []
+            if not fields:
+                fields = [fk_col]
+                clean_payload = {fk_col: real_id}
 
-        # -------- FPT / APT / SLOP --------
-        for phase in ["init", "final"]:
-            for base in ["fpt", "apt", "slop_tank"]:
-                for field in ["sounding", "volume", "density"]:
-                    col = f"{phase}_{base}_{field}"
-                    set_clauses.append(f"{col}=%({col})s")
+            # =====================================================
+            # DEBUG
+            # =====================================================
+            print("====== PUT BALLAST DEBUG ======")
+            print("REAL ID:", real_id)
+            print("FIELDS:", fields)
+            print("TOTAL INPUT:", len(payload))
+            print("IGNORADOS:", len(ignored_keys))
+            print("===============================")
 
-        # -------- WBT 1 → 20 --------
-        for phase in ["init", "final"]:
-            for i in range(1, 21):
-                for side in ["p", "s"]:
-                    for field in ["sounding", "volume", "density"]:
-                        col = f"{phase}_wbt_{i}{side}_{field}"
-                        set_clauses.append(f"{col}=%({col})s")
+            # =====================================================
+            # 9) VALIDAR EXISTENCIA
+            # =====================================================
+            cur.execute(f"""
+                SELECT id
+                FROM draft_survey_ballast
+                WHERE {fk_col} = %s
+                LIMIT 1
+            """, (real_id,))
+            existing = cur.fetchone()
 
-        # -------- FRESH WATER (DINÁMICO 1 → 20) --------
-        for phase in ["init", "final"]:
-            for i in range(1, 21):
-                for field in ["height", "volume"]:
-                    col = f"{phase}_fw_{i}_{field}"
-                    set_clauses.append(f"{col}=%({col})s")
+            if not existing:
+                raise HTTPException(404, "No existe registro ballast para actualizar")
 
-        # -------- METADATA --------
-        for m in metadata_keys:
-            set_clauses.append(f"{m}=%({m})s")
+            ballast_id = existing[0]
 
-        # -------- STATUS + UPDATED_AT --------
-        set_clauses.append("status=%(status)s")
-        set_clauses.append("updated_at=NOW()")
+            # =====================================================
+            # 🔥 10) UPDATE DINÁMICO REAL
+            # =====================================================
+            set_clause = ", ".join([f"{f} = %s" for f in fields])
+            values = [clean_payload[f] for f in fields] + [ballast_id]
 
-        sql = f"""
-            UPDATE draft_survey_ballast
-            SET
-                {", ".join(set_clauses)}
-            WHERE draft_survey_id = %(draft_survey_id)s
-        """
+            cur.execute(f"""
+                UPDATE draft_survey_ballast
+                SET {set_clause},
+                    updated_at = NOW()
+                WHERE id = %s
+                RETURNING id
+            """, values)
 
-        # -------------------------------------------------
-        # 🔒 RELLENAR FALTANTES CON None
-        # -------------------------------------------------
-        import re
-        keys = re.findall(r"%\((.*?)\)s", sql)
+            ballast_id = cur.fetchone()[0]
 
-        for k in keys:
-            normalized.setdefault(k, None)
+            conn.commit()
 
-        # -------------------------------------------------
-        # 🚀 EXECUTE
-        # -------------------------------------------------
-        cur.execute(sql, normalized)
-        conn.commit()
+            return {
+                "success": True,
+                "action": "updated",
+                "ballast_id": ballast_id,
+                "draft_survey_id": real_id,
+                "saved_fields": len(fields),
+                "ignored_fields": len(ignored_keys)
+            }
 
-        return {
-            "success": True,
-            "status": normalized["status"]
-        }
+        except HTTPException:
+            conn.rollback()
+            raise
 
-    except Exception as e:
-        conn.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        except Exception as e:
+            conn.rollback()
+            raise HTTPException(500, f"Error actualizando ballast: {str(e)}")
 
-    finally:
-        cur.close()
+        finally:
+            cur.close()
 
 
 # =========================================================
@@ -640,196 +777,356 @@ def create_word(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
 
 
 
-# =========================================================
-# ================= WORD REPORT UPDATE ====================
-# =========================================================
-@router.put("/word/{draft_survey_id}")
-def update_word(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
+    # =========================================================
+    # ================= WORD REPORT UPDATE ====================
+    # ULTRA BLINDADO — DINÁMICO + DATETIME + JSON BACKUP
+    # =========================================================
+    @router.put("/word/{draft_survey_id}")
+    def update_word(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
 
-    cur = conn.cursor()
+        cur = conn.cursor()
 
-    try:
-        payload = payload or {}
+        try:
+            payload = payload or {}
 
-        # -----------------------------------------------------
-        # 🔒 BLOQUEAR SI YA ESTÁ APROBADO
-        # -----------------------------------------------------
-        cur.execute("""
-            SELECT status
-            FROM draft_survey_word_report
-            WHERE draft_survey_id = %s
-        """, (draft_survey_id,))
+            # =====================================================
+            # 1) RESOLVER ID REAL (MISMA LÓGICA QUE POST)
+            # =====================================================
+            cur.execute("""
+                SELECT id FROM draft_survey WHERE general_id = %s
+            """, (draft_survey_id,))
+            row = cur.fetchone()
 
-        row = cur.fetchone()
+            if not row:
+                cur.execute("""
+                    SELECT id FROM draft_survey WHERE id = %s
+                """, (draft_survey_id,))
+                row = cur.fetchone()
 
-        if row and row[0] == "Approved":
-            raise HTTPException(status_code=403, detail="Already approved")
+            if not row:
+                raise HTTPException(404, f"No existe draft_survey {draft_survey_id}")
 
-        # -----------------------------------------------------
-        # 🔒 CAMPOS WORD
-        # -----------------------------------------------------
-        expected_fields = [
-            "word_mt", "word_product", "word_vessel", "word_port", "word_country",
-            "word_survey_requested_by", "word_on_behalf_of",
-            "word_master", "word_chief_officer",
-            "word_name", "word_port_registry", "word_grt", "word_nrt",
-            "word_year", "word_imo",
-            "word_metric_tons", "word_goods_product", "word_holds",
-            "word_draft_figures", "word_bl_figures",
-            "word_difference", "word_percentage",
-            "word_shore_scale", "word_shore_bl",
-            "word_shore_difference", "word_shore_percentage"
-        ]
+            real_id = row[0]
 
-        # -----------------------------------------------------
-        # 🔥 DATETIME FIELDS (NUEVOS)
-        # -----------------------------------------------------
-        datetime_fields = [
-            "word_arrived_buoy",
-            "word_nor_tendered",
-            "word_all_fast",
-            "word_initial_draft",
-            "word_commenced",
-            "word_completed",
-            "word_final_draft"
-        ]
+            # =====================================================
+            # 2) COLUMNAS REALES
+            # =====================================================
+            cur.execute("""
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = 'draft_survey_word_report'
+            """)
+            cols = {r[0] for r in cur.fetchall()}
 
-        # -----------------------------------------------------
-        # 🔒 METADATA
-        # -----------------------------------------------------
-        metadata_fields = [
-            "year", "month", "continent", "country",
-            "port", "client", "draft_report_number"
-        ]
+            if not cols:
+                raise HTTPException(500, "No se pudieron leer columnas")
 
-        # -----------------------------------------------------
-        # 🔒 CLEAN SIN ROMPER TEXTOS
-        # -----------------------------------------------------
-        def clean(v):
-            if v in ["", "None", None]:
-                return None
-            return v  # NO tocar strings
+            # =====================================================
+            # 🔒 3) BLOQUEO APPROVED
+            # =====================================================
+            if "status" in cols:
+                cur.execute("""
+                    SELECT status FROM draft_survey_word_report
+                    WHERE draft_survey_id = %s
+                    LIMIT 1
+                """, (real_id,))
+                status_row = cur.fetchone()
 
-        cleaned = {}
+                if status_row and status_row[0] == "Approved":
+                    raise HTTPException(403, "Already approved")
 
-        # normales
-        for field in expected_fields + metadata_fields:
-            cleaned[field] = clean(payload.get(field))
+            # =====================================================
+            # HELPERS
+            # =====================================================
+            def clean_value(v):
+                if v is None:
+                    return None
+                if isinstance(v, str) and v == "":
+                    return None
+                return v  # 🔥 NO tocar texto
 
-        # -----------------------------------------------------
-        # 🔥 DATETIME SEPARADO (CLAVE)
-        # -----------------------------------------------------
-        for key in datetime_fields:
+            from datetime import datetime
 
-            date_val = payload.get(f"{key}_date")
-            time_val = payload.get(f"{key}_time")
+            def split_datetime(raw):
+                if not raw:
+                    return None, None
 
-            cleaned[f"{key}_date"] = clean(date_val)
-            cleaned[f"{key}_time"] = clean(time_val)
+                if isinstance(raw, str) and " " in raw:
+                    try:
+                        d, t = raw.split(" ")
 
-        cleaned["draft_survey_id"] = draft_survey_id
+                        try:
+                            date_val = datetime.strptime(d, "%m-%d-%Y").date()
+                        except:
+                            date_val = None
 
-        # -----------------------------------------------------
-        # STATUS CONTROLADO
-        # -----------------------------------------------------
-        allowed_status = ["Pending for review", "Approved"]
-        new_status = payload.get("status")
+                        try:
+                            time_val = datetime.strptime(t, "%H:%M").time()
+                        except:
+                            time_val = None
 
-        if new_status not in allowed_status:
-            new_status = "Pending for review"
+                        return date_val, time_val
 
-        cleaned["status"] = new_status
+                    except:
+                        return None, None
 
-        # -----------------------------------------------------
-        # 🔥 SQL UPDATE (CON DATETIME NUEVO)
-        # -----------------------------------------------------
-        sql = """
-        UPDATE draft_survey_word_report
-        SET
-            word_mt=%(word_mt)s,
-            word_product=%(word_product)s,
-            word_vessel=%(word_vessel)s,
-            word_port=%(word_port)s,
-            word_country=%(word_country)s,
+                return None, None
 
-            word_survey_requested_by=%(word_survey_requested_by)s,
-            word_on_behalf_of=%(word_on_behalf_of)s,
+            # =====================================================
+            # CAMPOS CONTROLADOS (IGUAL QUE POST)
+            # =====================================================
+            expected_fields = [
+                "word_mt", "word_product", "word_vessel", "word_port", "word_country",
+                "word_survey_requested_by", "word_on_behalf_of",
+                "word_master", "word_chief_officer",
+                "word_name", "word_port_registry", "word_grt", "word_nrt",
+                "word_year", "word_imo",
+                "word_metric_tons", "word_goods_product", "word_holds",
+                "word_draft_figures", "word_bl_figures",
+                "word_difference", "word_percentage",
+                "word_shore_scale", "word_shore_bl",
+                "word_shore_difference", "word_shore_percentage"
+            ]
 
-            word_master=%(word_master)s,
-            word_chief_officer=%(word_chief_officer)s,
+            metadata_fields = [
+                "year", "month", "continent", "country",
+                "port", "client", "draft_report_number"
+            ]
 
-            word_name=%(word_name)s,
-            word_port_registry=%(word_port_registry)s,
-            word_grt=%(word_grt)s,
-            word_nrt=%(word_nrt)s,
+            datetime_fields = [
+                "word_arrived_buoy",
+                "word_nor_tendered",
+                "word_all_fast",
+                "word_initial_draft",
+                "word_commenced",
+                "word_completed",
+                "word_final_draft"
+            ]
 
-            word_year=%(word_year)s,
-            word_imo=%(word_imo)s,
+            # =====================================================
+            # 🔥 4) LIMPIAR + ARMAR PAYLOAD
+            # =====================================================
+            clean_payload = {}
+            ignored_keys = []
 
-            # 🔥 NUEVO
-            word_arrived_buoy_date=%(word_arrived_buoy_date)s,
-            word_arrived_buoy_time=%(word_arrived_buoy_time)s,
+            # normales
+            for f in expected_fields + metadata_fields:
+                if f in cols:
+                    clean_payload[f] = clean_value(payload.get(f))
 
-            word_nor_tendered_date=%(word_nor_tendered_date)s,
-            word_nor_tendered_time=%(word_nor_tendered_time)s,
+            # datetime inteligente
+            for f in datetime_fields:
 
-            word_all_fast_date=%(word_all_fast_date)s,
-            word_all_fast_time=%(word_all_fast_time)s,
+                date_val = payload.get(f"{f}_date")
+                time_val = payload.get(f"{f}_time")
 
-            word_initial_draft_date=%(word_initial_draft_date)s,
-            word_initial_draft_time=%(word_initial_draft_time)s,
+                if date_val or time_val:
+                    try:
+                        d = datetime.strptime(date_val, "%Y-%m-%d").date() if date_val else None
+                    except:
+                        d = None
 
-            word_commenced_date=%(word_commenced_date)s,
-            word_commenced_time=%(word_commenced_time)s,
+                    try:
+                        t = datetime.strptime(time_val, "%H:%M").time() if time_val else None
+                    except:
+                        t = None
+                else:
+                    d, t = split_datetime(payload.get(f))
 
-            word_completed_date=%(word_completed_date)s,
-            word_completed_time=%(word_completed_time)s,
+                if f"{f}_date" in cols:
+                    clean_payload[f"{f}_date"] = d
 
-            word_final_draft_date=%(word_final_draft_date)s,
-            word_final_draft_time=%(word_final_draft_time)s,
+                if f"{f}_time" in cols:
+                    clean_payload[f"{f}_time"] = t
 
-            word_metric_tons=%(word_metric_tons)s,
-            word_goods_product=%(word_goods_product)s,
-            word_holds=%(word_holds)s,
+            # FK
+            clean_payload["draft_survey_id"] = real_id
 
-            word_draft_figures=%(word_draft_figures)s,
-            word_bl_figures=%(word_bl_figures)s,
-            word_difference=%(word_difference)s,
-            word_percentage=%(word_percentage)s,
+            # STATUS
+            if "status" in cols:
+                clean_payload["status"] = payload.get("status") or "Pending for review"
 
-            word_shore_scale=%(word_shore_scale)s,
-            word_shore_bl=%(word_shore_bl)s,
-            word_shore_difference=%(word_shore_difference)s,
-            word_shore_percentage=%(word_shore_percentage)s,
+            # =====================================================
+            # 🔥 5) JSON BACKUP (CRÍTICO)
+            # =====================================================
+            if "raw_payload" in cols:
+                clean_payload["raw_payload"] = payload
 
-            year=%(year)s,
-            month=%(month)s,
-            continent=%(continent)s,
-            country=%(country)s,
-            port=%(port)s,
-            client=%(client)s,
-            draft_report_number=%(draft_report_number)s,
+            if "word_json" in cols:
+                clean_payload["word_json"] = payload
 
-            status=%(status)s,
-            updated_at=NOW()
+            # =====================================================
+            # 🔧 6) UPDATE DINÁMICO
+            # =====================================================
+            fields = list(clean_payload.keys())
 
-        WHERE draft_survey_id=%(draft_survey_id)s
-        """
+            if not fields:
+                raise HTTPException(400, "No hay campos para actualizar")
 
-        cur.execute(sql, cleaned)
+            set_clause = ", ".join([f"{f} = %s" for f in fields])
+            values = [clean_payload[f] for f in fields] + [real_id]
 
-        conn.commit()
+            # =====================================================
+            # DEBUG
+            # =====================================================
+            print("====== PUT WORD DEBUG ======")
+            print("REAL ID:", real_id)
+            print("FIELDS:", fields)
+            print("IGNORADOS:", ignored_keys)
+            print("============================")
 
-        return {
-            "success": True,
-            "status": new_status
-        }
+            cur.execute(f"""
+                UPDATE draft_survey_word_report
+                SET {set_clause},
+                    updated_at = NOW()
+                WHERE draft_survey_id = %s
+                RETURNING id
+            """, values)
 
-    except Exception as e:
-        conn.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+            updated = cur.fetchone()
 
-    finally:
-        cur.close()
+            if not updated:
+                raise HTTPException(404, "No existe registro word para actualizar")
 
+            conn.commit()
+
+            return {
+                "success": True,
+                "action": "updated",
+                "draft_survey_id": real_id,
+                "saved_fields": len(fields)
+            }
+
+        except HTTPException:
+            conn.rollback()
+            raise
+
+        except Exception as e:
+            conn.rollback()
+            print("WORD PUT ERROR:", str(e))
+            raise HTTPException(500, str(e))
+
+        finally:
+            cur.close()
+
+    # =========================================================
+    # ================= WORD REPORT GET =======================
+    # ULTRA BLINDADO — JSON PRIORITY + DATETIME SAFE
+    # =========================================================
+    @router.get("/word/{draft_survey_id}")
+    def get_word(draft_survey_id: int, conn=Depends(get_db)):
+
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+
+        try:
+            # =====================================================
+            # 1) RESOLVER ID REAL (MISMA LÓGICA QUE POST/PUT)
+            # =====================================================
+            cur.execute("""
+                SELECT id FROM draft_survey WHERE general_id = %s
+            """, (draft_survey_id,))
+            row = cur.fetchone()
+
+            if not row:
+                cur.execute("""
+                    SELECT id FROM draft_survey WHERE id = %s
+                """, (draft_survey_id,))
+                row = cur.fetchone()
+
+            if not row:
+                raise HTTPException(404, f"No existe draft_survey {draft_survey_id}")
+
+            real_id = row["id"]
+
+            # =====================================================
+            # 2) TRAER REGISTRO
+            # =====================================================
+            cur.execute("""
+                SELECT *
+                FROM draft_survey_word_report
+                WHERE draft_survey_id = %s
+                LIMIT 1
+            """, (real_id,))
+
+            db_row = cur.fetchone()
+
+            if not db_row:
+                raise HTTPException(404, "No existe word report")
+
+            # =====================================================
+            # 🔥 3) PRIORIZAR JSON ORIGINAL
+            # =====================================================
+            original_payload = None
+
+            if "raw_payload" in db_row and db_row["raw_payload"]:
+                original_payload = db_row["raw_payload"]
+
+            elif "word_json" in db_row and db_row["word_json"]:
+                original_payload = db_row["word_json"]
+
+            # =====================================================
+            # 🔧 4) RECONSTRUCCIÓN (SI NO HAY JSON)
+            # =====================================================
+            reconstructed = {}
+
+            if not original_payload:
+
+                for k, v in db_row.items():
+
+                    # ignorar técnicos
+                    if k in ["id", "created_at", "updated_at"]:
+                        continue
+
+                    # =================================================
+                    # 🔥 RECONSTRUIR DATETIME (FORMATO FRONT)
+                    # =================================================
+                    if k.endswith("_date"):
+                        base = k.replace("_date", "")
+                        reconstructed[f"{base}_date"] = v.isoformat() if v else None
+
+                    elif k.endswith("_time"):
+                        base = k.replace("_time", "")
+                        reconstructed[f"{base}_time"] = v.strftime("%H:%M") if v else None
+
+                    else:
+                        reconstructed[k] = v
+
+            # =====================================================
+            # DEBUG
+            # =====================================================
+            print("====== GET WORD DEBUG ======")
+            print("REAL ID:", real_id)
+            print("USANDO JSON:", bool(original_payload))
+            print("COLUMNAS:", len(db_row.keys()))
+            print("============================")
+
+            # =====================================================
+            # 🔥 RESPUESTA FINAL
+            # =====================================================
+            return {
+                "success": True,
+
+                # 🔹 EXACTO LO QUE ENVIO EL FRONT
+                "payload": original_payload if original_payload else reconstructed,
+
+                # 🔹 DATA COMPLETA DB
+                "data": db_row,
+
+                # 🔹 CONTROL
+                "meta": {
+                    "draft_survey_id": real_id,
+                    "used_json_backup": bool(original_payload),
+                    "total_columns": len(db_row.keys())
+                }
+            }
+
+        except HTTPException:
+            raise
+
+        except Exception as e:
+            raise HTTPException(500, f"Error obteniendo word: {str(e)}")
+
+        finally:
+            cur.close()
 
