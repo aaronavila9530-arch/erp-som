@@ -6,7 +6,8 @@ router = APIRouter(prefix="/draft-survey-filters", tags=["Draft Survey Filters"]
 
 
 # =========================================================
-# CASCADE FILTER ENDPOINT
+# CASCADE FILTER ENDPOINT — ULTRA BLINDADO (SIN UNION)
+# FUENTE ÚNICA: general_draft_survey (DATA REAL CONSISTENTE)
 # =========================================================
 @router.get("/")
 def get_draft_filters(
@@ -24,19 +25,17 @@ def get_draft_filters(
     try:
 
         # =====================================================
-        # 1️⃣ BASE QUERY UNIFICADA
+        # 🔥 BASE QUERY REAL
         # =====================================================
         base_query = """
-            SELECT continent, country, year, month, port, client, draft_report_number
-            FROM draft_survey
-            UNION
-            SELECT continent, country, year, month, port, client, draft_report_number
-            FROM draft_survey_ballast
-            UNION
-            SELECT continent, country, year, month, port, client, draft_report_number
-            FROM draft_survey_word_report
-            UNION
-            SELECT continent, country, year, month, port, client, draft_report_number
+            SELECT
+                continent,
+                country,
+                year,
+                month,
+                port,
+                client,
+                draft_report_number
             FROM general_draft_survey
         """
 
@@ -44,7 +43,7 @@ def get_draft_filters(
         values = []
 
         # =====================================================
-        # 2️⃣ FILTROS DINÁMICOS
+        # FILTROS DINÁMICOS
         # =====================================================
         if continent:
             filters.append("continent = %s")
@@ -70,16 +69,36 @@ def get_draft_filters(
             filters.append("client = %s")
             values.append(client)
 
-        final_query = f"SELECT DISTINCT * FROM ({base_query}) AS unified"
+        final_query = base_query
 
         if filters:
             final_query += " WHERE " + " AND ".join(filters)
+
+        # =====================================================
+        # DEBUG CRÍTICO
+        # =====================================================
+        print("FILTER QUERY:", final_query)
+        print("VALUES:", values)
 
         cur.execute(final_query, values)
         rows = cur.fetchall()
 
         # =====================================================
-        # 3️⃣ CONSTRUIR RESPUESTA EN CASCADA
+        # SI NO HAY DATOS → NO ROMPER FRONT
+        # =====================================================
+        if not rows:
+            return {
+                "continents": [],
+                "countries": [],
+                "years": [],
+                "months": [],
+                "ports": [],
+                "clients": [],
+                "draft_reports": []
+            }
+
+        # =====================================================
+        # CASCADE REAL
         # =====================================================
         continents = set()
         countries = set()
@@ -106,6 +125,20 @@ def get_draft_filters(
             "ports": sorted(filter(None, ports)),
             "clients": sorted(filter(None, clients)),
             "draft_reports": sorted(filter(None, reports))
+        }
+
+    except Exception as e:
+        print("FILTER ERROR:", str(e))
+
+        return {
+            "continents": [],
+            "countries": [],
+            "years": [],
+            "months": [],
+            "ports": [],
+            "clients": [],
+            "draft_reports": [],
+            "error": str(e)
         }
 
     finally:
