@@ -29,6 +29,7 @@ PERMISSIONS = [
     ("admin", "hhrr", "employees", True),
     ("admin", "hhrr", "generate", True),
     ("admin", "hhrr", "reports", True),
+    ("admin", "hhrr", "payslips", True),   # ✅ FIX
 
     # --- OT LOG ---
     ("admin", "hhrr", "ot_log", True),
@@ -41,17 +42,22 @@ PERMISSIONS = [
     ("admin", "hhrr", "close_hr_module", False),
 
     # =====================================================
-    # USER — AUTOGESTIÓN EMPLEADO
+    # USER — AUTOGESTIÓN EMPLEADO (SURVEYORS)
     # =====================================================
     ("user", "hhrr", "view", True),
-    ("user", "hhrr", "create", True),
+    ("user", "hhrr", "create", True),      # ✅ solicitudes
     ("user", "hhrr", "edit", True),
-    ("user", "hhrr", "ot_log", True),
 
+    # --- OT LOG ---
+    ("user", "hhrr", "ot_log", True),      # ✅ horas OK
     ("user", "hhrr", "ot_log_view_all", False),
     ("user", "hhrr", "ot_log_status", False),
     ("user", "hhrr", "ot_log_export", False),
 
+    # --- PAYSLIPS ---
+    ("user", "hhrr", "payslips", True),    # ✅ FIX CRÍTICO
+
+    # --- BLOQUEOS ---
     ("user", "hhrr", "approve", False),
     ("user", "hhrr", "payroll", False),
     ("user", "hhrr", "employees", False),
@@ -69,10 +75,15 @@ PERMISSIONS = [
     ("consultor", "hhrr", "reports", True),
     ("consultor", "hhrr", "generate", True),
 
+    # --- OT LOG ---
     ("consultor", "hhrr", "ot_log", True),
     ("consultor", "hhrr", "ot_log_view_all", True),
     ("consultor", "hhrr", "ot_log_export", True),
 
+    # --- PAYSLIPS ---
+    ("consultor", "hhrr", "payslips", True),  # ✅ FIX
+
+    # --- BLOQUEOS ---
     ("consultor", "hhrr", "create", False),
     ("consultor", "hhrr", "edit", False),
     ("consultor", "hhrr", "approve", False),

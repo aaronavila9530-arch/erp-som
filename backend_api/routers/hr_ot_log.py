@@ -17,16 +17,11 @@ router = APIRouter(
 # ============================================================
 
 def _normalize_rol(user: dict, conn) -> str:
-    """
-    NORMALIZA el rol SIEMPRE antes de usarlo.
-    Esto garantiza que ADMIN / MASTER no tengan bloqueos por RBAC.
-    """
     rol = (user.get("rol") or "").strip().lower()
     if rol:
-        user["rol"] = rol   # 🔑 CLAVE: corregimos el user EN SITIO
+        user["rol"] = rol
         return rol
 
-    # Fallback extremo (no debería pasar)
     cur = conn.cursor(cursor_factory=RealDictCursor)
     cur.execute(
         "SELECT rol FROM usuarios WHERE usuario = %s LIMIT 1",
@@ -38,27 +33,12 @@ def _normalize_rol(user: dict, conn) -> str:
     return rol_db
 
 
-def _get_usuario_nombre_apellido(user: dict, conn) -> tuple[str, str]:
+# ============================================================
+# 🔥 FIX CRÍTICO — EMPLEADO POR USUARIO (NO NOMBRE)
+# ============================================================
+def _get_empleado_by_usuario(usuario: str, conn) -> dict:
     cur = conn.cursor(cursor_factory=RealDictCursor)
-    cur.execute(
-        """
-        SELECT nombre, apellido
-        FROM usuarios
-        WHERE usuario = %s
-        LIMIT 1
-        """,
-        (user["usuario"],)
-    )
-    row = cur.fetchone()
 
-    if not row:
-        raise HTTPException(404, "Usuario no encontrado en tabla usuarios")
-
-    return row["nombre"], row["apellido"]
-
-
-def _get_empleado(nombre: str, apellido: str, conn) -> dict:
-    cur = conn.cursor(cursor_factory=RealDictCursor)
     cur.execute(
         """
         SELECT
@@ -68,21 +48,23 @@ def _get_empleado(nombre: str, apellido: str, conn) -> dict:
             jornada,
             salario,
             pago,
-            horas_contratadas
+            horas_contratadas,
+            usuario
         FROM empleados
-        WHERE lower(nombre) = lower(%s)
-          AND lower(apellidos) = lower(%s)
+        WHERE lower(usuario) = lower(%s)
         LIMIT 1
         """,
-        (nombre, apellido)
+        (usuario,)
     )
+
     emp = cur.fetchone()
 
     if not emp:
         raise HTTPException(
             404,
-            "Empleado no encontrado (match nombre / apellidos)"
+            f"Empleado no asociado al usuario '{usuario}'"
         )
+
     return emp
 
 
@@ -123,8 +105,8 @@ def my_hours_summary(
 ):
     rol = _normalize_rol(user, conn)
 
-    nombre, apellido = _get_usuario_nombre_apellido(user, conn)
-    emp = _get_empleado(nombre, apellido, conn)
+    # 🔥 YA NO USAMOS NOMBRE/APELLIDO
+    emp = _get_empleado_by_usuario(user["usuario"], conn)
 
     horas_contratadas = float(emp["horas_contratadas"] or 0)
     horas_usadas = _sumar_horas(user["usuario"], conn, year, month)
@@ -152,6 +134,9 @@ def create_ot_log(
     conn=Depends(get_db)
 ):
     _normalize_rol(user, conn)
+
+    # 🔥 VALIDAR EMPLEADO EXISTE (EVITA ERRORES POST)
+    _get_empleado_by_usuario(user["usuario"], conn)
 
     for k in ("tipo", "fecha_inicio", "fecha_fin"):
         if k not in data:
@@ -323,7 +308,7 @@ def delete_ot_log(
 
 
 # ============================================================
-# UPDATE OT LOG STATUS (APROBAR / RECHAZAR)
+# UPDATE OT LOG STATUS
 # ============================================================
 @router.put(
     "/{log_id}/estado",
@@ -342,27 +327,28 @@ def update_ot_log_estado(
     if estado not in ("PENDIENTE", "APROBADO", "RECHAZADO"):
         raise HTTPException(
             status_code=400,
-            detail="Estado inválido. Use PENDIENTE, APROBADO o RECHAZADO."
+            detail="Estado inválido"
         )
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
-    cur.execute("""
-        SELECT id
-        FROM hr_ot_log
-        WHERE id = %s
-        LIMIT 1
-    """, (log_id,))
+    cur.execute(
+        "SELECT id FROM hr_ot_log WHERE id = %s",
+        (log_id,)
+    )
 
     if not cur.fetchone():
-        raise HTTPException(404, "Registro de horas no encontrado")
+        raise HTTPException(404, "Registro no encontrado")
 
-    cur.execute("""
+    cur.execute(
+        """
         UPDATE hr_ot_log
         SET estado = %s
         WHERE id = %s
         RETURNING *
-    """, (estado, log_id))
+        """,
+        (estado, log_id)
+    )
 
     updated = cur.fetchone()
     conn.commit()
