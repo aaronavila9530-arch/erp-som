@@ -10,48 +10,91 @@ def get_current_user(
     conn=Depends(get_db)
 ):
     """
-    Obtiene el usuario autenticado desde headers:
+    🔐 ERP-SOM — AUTH (ULTRA BLINDADO)
+
+    Obtiene usuario desde headers:
     - X-User
     - X-Role
-    y valida el usuario contra la tabla usuarios.
+
+    ✔ Normaliza valores
+    ✔ Valida existencia en DB
+    ✔ Verifica activo
+    ✔ Retorna estructura lista para RBAC
+
+    ⚠️ CRÍTICO:
+    Si el frontend NO envía headers → falla correctamente (401)
     """
 
-    if not x_user:
+    # =====================================================
+    # 🔍 DEBUG (CLAVE PARA TU BUG ACTUAL)
+    # =====================================================
+    print("🔐 AUTH DEBUG → X-User:", x_user, "| X-Role:", x_role)
+
+    # =====================================================
+    # 🔒 VALIDACIÓN HEADERS
+    # =====================================================
+    if not x_user or not str(x_user).strip():
         raise HTTPException(
             status_code=401,
             detail="Usuario no autenticado (X-User requerido)"
         )
 
-    if not x_role:
+    if not x_role or not str(x_role).strip():
         raise HTTPException(
             status_code=401,
             detail="Rol no especificado (X-Role requerido)"
         )
 
-    cur = conn.cursor(cursor_factory=RealDictCursor)
+    # =====================================================
+    # 🧼 NORMALIZACIÓN
+    # =====================================================
+    usuario = str(x_user).strip().lower()
+    rol = str(x_role).strip().lower()
 
-    cur.execute("""
-        SELECT usuario, nombre, activo
-        FROM usuarios
-        WHERE usuario = %s
-        LIMIT 1
-    """, (x_user,))
+    # =====================================================
+    # 🔎 VALIDAR USUARIO EN DB
+    # =====================================================
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
 
-    user = cur.fetchone()
+        cur.execute("""
+            SELECT usuario, nombre, activo
+            FROM usuarios
+            WHERE LOWER(usuario) = %s
+            LIMIT 1
+        """, (usuario,))
 
+        user = cur.fetchone()
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error validando usuario: {str(e)}"
+        )
+
+    # =====================================================
+    # ❌ USUARIO NO EXISTE
+    # =====================================================
     if not user:
         raise HTTPException(
             status_code=401,
-            detail="Usuario no existe"
+            detail=f"Usuario '{usuario}' no existe"
         )
 
-    if not user["activo"]:
+    # =====================================================
+    # ❌ USUARIO INACTIVO
+    # =====================================================
+    if not user.get("activo"):
         raise HTTPException(
             status_code=403,
-            detail="Usuario inactivo"
+            detail=f"Usuario '{usuario}' inactivo"
         )
 
-    # 🔑 CLAVE: agregar el rol para RBAC
-    user["rol"] = x_role.upper()
-
-    return user
+    # =====================================================
+    # 🔐 ESTRUCTURA FINAL (RBAC READY)
+    # =====================================================
+    return {
+        "usuario": user["usuario"].strip().lower(),
+        "nombre": user.get("nombre"),
+        "rol": rol  # 🔥 NORMALIZADO (lower)
+    }
