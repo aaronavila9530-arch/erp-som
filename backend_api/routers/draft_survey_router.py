@@ -508,12 +508,13 @@ def get_draft_survey(general_id: int, conn=Depends(get_db)):
             payload["status"] = new_status
 
             # =====================================================
-            # 🔥 7) COLUMNAS REALES
+            # 🔥 7) COLUMNAS REALES (FIX CRÍTICO CON SCHEMA)
             # =====================================================
             cur.execute("""
                 SELECT column_name
                 FROM information_schema.columns
                 WHERE table_name = 'general_draft_survey'
+                  AND table_schema = 'public'
             """)
             general_cols = {
                 r["column_name"]
@@ -525,12 +526,19 @@ def get_draft_survey(general_id: int, conn=Depends(get_db)):
                 SELECT column_name
                 FROM information_schema.columns
                 WHERE table_name = 'draft_survey'
+                  AND table_schema = 'public'
             """)
             draft_cols = {
                 r["column_name"]
                 for r in cur.fetchall()
                 if r["column_name"] not in ("id", "created_at")
             }
+
+            # =====================================================
+            # 🔥 DEBUG COLUMNAS (CRÍTICO)
+            # =====================================================
+            print("GENERAL COLS:", general_cols)
+            print("DRAFT COLS:", draft_cols)
 
             # =====================================================
             # 🔥 8) SPLIT PAYLOAD INTELIGENTE
@@ -545,6 +553,15 @@ def get_draft_survey(general_id: int, conn=Depends(get_db)):
 
                 if k in draft_cols:
                     draft_payload[k] = v
+
+                if k not in general_cols and k not in draft_cols:
+                    print(f"⚠️ CAMPO IGNORADO: {k}")
+
+            # =====================================================
+            # 🔥 DEBUG PAYLOAD
+            # =====================================================
+            print("GENERAL PAYLOAD:", general_payload.keys())
+            print("DRAFT PAYLOAD:", draft_payload.keys())
 
             # =====================================================
             # 🔥 9) UPDATE GENERAL
@@ -585,7 +602,7 @@ def get_draft_survey(general_id: int, conn=Depends(get_db)):
                 """, values)
 
             # =====================================================
-            # 🔥 11) NO CAMBIOS (EVITA CONFUSIÓN FRONT)
+            # 🔥 11) NO CAMBIOS
             # =====================================================
             if not general_payload and not draft_payload:
                 return {
@@ -595,7 +612,7 @@ def get_draft_survey(general_id: int, conn=Depends(get_db)):
                 }
 
             # =====================================================
-            # 🔥 12) DEBUG PRO
+            # 🔥 12) DEBUG FINAL
             # =====================================================
             print("====== PUT MAIN OK ======")
             print("IDENTIFIER:", identifier)
