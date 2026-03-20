@@ -411,7 +411,7 @@ def get_draft_survey(general_id: int, conn=Depends(get_db)):
 
     # =========================================================
     # PUT — UPDATE BOTH TABLES (ULTRA BLINDADO FINAL)
-    # SOPORTA: general_id (int) Y draft_report_number (str)
+    # FIX REAL: valida columnas + usa ID real + valida rowcount
     # =========================================================
 
     @router.put("/{identifier}")
@@ -423,7 +423,7 @@ def get_draft_survey(general_id: int, conn=Depends(get_db)):
             payload = payload or {}
 
             # =====================================================
-            # 🔥 0) RESOLVER GENERAL_ID (CRÍTICO)
+            # 🔥 0) RESOLVER GENERAL_ID
             # =====================================================
             general_id = None
 
@@ -441,15 +441,12 @@ def get_draft_survey(general_id: int, conn=Depends(get_db)):
                 row = cur.fetchone()
 
                 if not row:
-                    raise HTTPException(
-                        404,
-                        f"No existe draft_report_number {identifier}"
-                    )
+                    raise HTTPException(404, f"No existe draft_report_number {identifier}")
 
                 general_id = row["id"]
 
             # =====================================================
-            # 🔥 1) LIMPIEZA ROBUSTA
+            # 🔥 1) LIMPIEZA
             # =====================================================
             def clean(v):
                 if v is None:
@@ -479,22 +476,24 @@ def get_draft_survey(general_id: int, conn=Depends(get_db)):
             payload["final_date"] = parse_date(payload.get("final_date"))
 
             # =====================================================
-            # 🔒 4) VALIDAR EXISTENCIA GENERAL
+            # 🔒 4) VALIDAR GENERAL
             # =====================================================
-            cur.execute("""
-                SELECT id FROM general_draft_survey WHERE id = %s
-            """, (general_id,))
+            cur.execute("SELECT id FROM general_draft_survey WHERE id = %s", (general_id,))
             if not cur.fetchone():
                 raise HTTPException(404, f"No existe general_id {general_id}")
 
             # =====================================================
-            # 🔒 5) VALIDAR EXISTENCIA DRAFT
+            # 🔒 5) VALIDAR DRAFT + OBTENER ID REAL
             # =====================================================
             cur.execute("""
-                SELECT id FROM draft_survey WHERE general_id = %s
+                SELECT id FROM draft_survey WHERE general_id = %s LIMIT 1
             """, (general_id,))
-            if not cur.fetchone():
+            draft_row = cur.fetchone()
+
+            if not draft_row:
                 raise HTTPException(404, "No existe draft_survey asociado")
+
+            draft_id = draft_row["id"]
 
             # =====================================================
             # 🔥 6) STATUS CONTROLADO
@@ -508,7 +507,7 @@ def get_draft_survey(general_id: int, conn=Depends(get_db)):
             payload["status"] = new_status
 
             # =====================================================
-            # 🔥 7) COLUMNAS REALES (FIX CRÍTICO CON SCHEMA)
+            # 🔥 7) COLUMNAS REALES (FIX SCHEMA)
             # =====================================================
             cur.execute("""
                 SELECT column_name
@@ -535,13 +534,7 @@ def get_draft_survey(general_id: int, conn=Depends(get_db)):
             }
 
             # =====================================================
-            # 🔥 DEBUG COLUMNAS (CRÍTICO)
-            # =====================================================
-            print("GENERAL COLS:", general_cols)
-            print("DRAFT COLS:", draft_cols)
-
-            # =====================================================
-            # 🔥 8) SPLIT PAYLOAD INTELIGENTE
+            # 🔥 8) SPLIT PAYLOAD
             # =====================================================
             general_payload = {}
             draft_payload = {}
@@ -557,14 +550,11 @@ def get_draft_survey(general_id: int, conn=Depends(get_db)):
                 if k not in general_cols and k not in draft_cols:
                     print(f"⚠️ CAMPO IGNORADO: {k}")
 
-            # =====================================================
-            # 🔥 DEBUG PAYLOAD
-            # =====================================================
             print("GENERAL PAYLOAD:", general_payload.keys())
             print("DRAFT PAYLOAD:", draft_payload.keys())
 
             # =====================================================
-            # 🔥 9) UPDATE GENERAL
+            # 🔥 9) UPDATE GENERAL (VALIDA AFECTACIÓN)
             # =====================================================
             if general_payload:
 
@@ -582,8 +572,11 @@ def get_draft_survey(general_id: int, conn=Depends(get_db)):
                     WHERE id = %s
                 """, values)
 
+                if cur.rowcount == 0:
+                    raise HTTPException(500, "general_draft_survey NO se actualizó")
+
             # =====================================================
-            # 🔥 10) UPDATE DRAFT
+            # 🔥 10) UPDATE DRAFT (FIX REAL)
             # =====================================================
             if draft_payload:
 
@@ -593,13 +586,16 @@ def get_draft_survey(general_id: int, conn=Depends(get_db)):
                 if "updated_at" in draft_cols:
                     set_clause += ", updated_at = NOW()"
 
-                values.append(general_id)
+                values.append(draft_id)
 
                 cur.execute(f"""
                     UPDATE draft_survey
                     SET {set_clause}
-                    WHERE general_id = %s
+                    WHERE id = %s
                 """, values)
+
+                if cur.rowcount == 0:
+                    raise HTTPException(500, "draft_survey NO se actualizó")
 
             # =====================================================
             # 🔥 11) NO CAMBIOS
@@ -617,6 +613,7 @@ def get_draft_survey(general_id: int, conn=Depends(get_db)):
             print("====== PUT MAIN OK ======")
             print("IDENTIFIER:", identifier)
             print("GENERAL ID:", general_id)
+            print("DRAFT ID:", draft_id)
             print("GENERAL FIELDS:", len(general_payload))
             print("DRAFT FIELDS:", len(draft_payload))
             print("STATUS:", new_status)

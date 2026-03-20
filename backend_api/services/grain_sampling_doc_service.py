@@ -1,6 +1,7 @@
 import os
 import tempfile
 from docx import Document
+from datetime import datetime
 
 
 # ============================================================
@@ -30,11 +31,58 @@ def generate_grain_sampling_doc(data: dict) -> str:
     doc = Document(template_path)
 
     # ========================================================
-    # SAFE VALUE
+    # DATE → LONG ENGLISH FORMAT (ULTRA SAFE)
     # ========================================================
 
-    def safe(value):
-        return "" if value is None else str(value)
+    def format_date_long_en(value):
+        """
+        Convierte fechas a formato:
+        12 March 2026
+
+        Soporta:
+        - datetime
+        - string YYYY-MM-DD
+        - ISO strings
+        - fallback seguro
+        """
+        if not value:
+            return ""
+
+        try:
+            # datetime directo
+            if isinstance(value, datetime):
+                dt = value
+            else:
+                v = str(value).strip()
+
+                # quitar tiempo si viene
+                if "T" in v:
+                    v = v.split("T")[0]
+                if " " in v:
+                    v = v.split(" ")[0]
+
+                dt = datetime.strptime(v, "%Y-%m-%d")
+
+            return dt.strftime("%d %B %Y")
+
+        except Exception:
+            return str(value)
+
+    # ========================================================
+    # SAFE VALUE (AUTO DATE FORMAT)
+    # ========================================================
+
+    def safe(key, value):
+        if value is None:
+            return ""
+
+        # Detectar campos tipo fecha automáticamente
+        key_lower = key.lower()
+
+        if "date" in key_lower:
+            return format_date_long_en(value)
+
+        return str(value)
 
     # ========================================================
     # ULTRA SAFE REPLACEMENT
@@ -56,17 +104,18 @@ def generate_grain_sampling_doc(data: dict) -> str:
 
         for key, value in data_dict.items():
             placeholder = f"{{{key}}}"
+
             if placeholder in full_text:
                 full_text = full_text.replace(
                     placeholder,
-                    safe(value)
+                    safe(key, value)
                 )
                 modified = True
 
         if not modified:
             return
 
-        # Ahora reescribimos carácter por carácter
+        # Reescritura sin romper formato
         index = 0
 
         for run in paragraph.runs:
@@ -79,8 +128,7 @@ def generate_grain_sampling_doc(data: dict) -> str:
             run.text = full_text[index:index + original_length]
             index += original_length
 
-        # Si el nuevo texto es más largo que la suma original,
-        # lo agregamos al último run SIN romper formato
+        # Si crece el texto → append al último run
         if index < len(full_text):
             paragraph.runs[-1].text += full_text[index:]
 
