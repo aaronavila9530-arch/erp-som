@@ -410,7 +410,7 @@ def get_draft_survey(general_id: int, conn=Depends(get_db)):
         cur.close()
 
     # =========================================================
-    # PUT — UPDATE BOTH TABLES (FIX REAL PRODUCCIÓN)
+    # PUT — UPDATE BOTH TABLES (FIX DEFINITIVO REAL)
     # =========================================================
     @router.put("/{identifier}")
     def update_draft_survey(identifier: str, payload: dict, conn=Depends(get_db)):
@@ -421,7 +421,7 @@ def get_draft_survey(general_id: int, conn=Depends(get_db)):
             payload = payload or {}
 
             # =====================================================
-            # 0) RESOLVER GENERAL_ID
+            # 1) RESOLVER GENERAL_ID
             # =====================================================
             try:
                 general_id = int(identifier)
@@ -434,16 +434,14 @@ def get_draft_survey(general_id: int, conn=Depends(get_db)):
                 row = cur.fetchone()
 
                 if not row:
-                    raise HTTPException(404, f"No existe {identifier}")
+                    raise HTTPException(404, "No existe")
 
                 general_id = row["id"]
 
             # =====================================================
-            # 1) CLEAN
+            # 2) CLEAN
             # =====================================================
             def clean(v):
-                if v is None:
-                    return None
                 if isinstance(v, str):
                     v = v.strip()
                     if v == "" or v.lower() in ("none", "null"):
@@ -453,90 +451,31 @@ def get_draft_survey(general_id: int, conn=Depends(get_db)):
             payload = {k: clean(v) for k, v in payload.items() if isinstance(k, str)}
 
             # =====================================================
-            # 2) NORMALIZACIONES CRÍTICAS (TU CASO REAL)
+            # 3) NORMALIZACIONES CLAVE
             # =====================================================
+            payload["trim_tables_available"] = bool(payload.get("trim_tables_yes"))
 
-            # 🔥 trim_tables
-            if "trim_tables_yes" in payload or "trim_tables_no" in payload:
-                payload["trim_tables_available"] = bool(payload.get("trim_tables_yes"))
+            payload["init_cargo"] = payload.get("cargo")
+            payload["init_port_from"] = payload.get("port_from")
+            payload["init_port_to"] = payload.get("port_to")
 
-            # 🔥 cargo / ports → draft_survey
-            if "cargo" in payload:
-                payload["init_cargo"] = payload["cargo"]
-
-            if "port_from" in payload:
-                payload["init_port_from"] = payload["port_from"]
-
-            if "port_to" in payload:
-                payload["init_port_to"] = payload["port_to"]
-
-            # =====================================================
-            # 3) FECHAS
-            # =====================================================
             payload["init_date"] = parse_date(payload.get("init_date"))
             payload["final_date"] = parse_date(payload.get("final_date"))
 
             # =====================================================
-            # 4) VALIDACIONES
+            # 4) COLUMNAS
             # =====================================================
-            cur.execute("SELECT id FROM general_draft_survey WHERE id = %s", (general_id,))
-            if not cur.fetchone():
-                raise HTTPException(404, "General no existe")
-
-            cur.execute("SELECT id FROM draft_survey WHERE general_id = %s", (general_id,))
-            if not cur.fetchone():
-                raise HTTPException(404, "Draft no existe")
-
-            # =====================================================
-            # 5) COLUMNAS
-            # =====================================================
-            cur.execute("""
-                SELECT column_name
-                FROM information_schema.columns
-                WHERE table_name = 'general_draft_survey'
-            """)
+            cur.execute("SELECT column_name FROM information_schema.columns WHERE table_name='general_draft_survey'")
             general_cols = {r["column_name"] for r in cur.fetchall()}
 
-            cur.execute("""
-                SELECT column_name
-                FROM information_schema.columns
-                WHERE table_name = 'draft_survey'
-            """)
+            cur.execute("SELECT column_name FROM information_schema.columns WHERE table_name='draft_survey'")
             draft_cols = {r["column_name"] for r in cur.fetchall()}
 
-            # =====================================================
-            # 6) SPLIT REAL + DEBUG
-            # =====================================================
-            general_payload = {}
-            draft_payload = {}
-            ignored = []
-
-            for k, v in payload.items():
-
-                if k in general_cols:
-                    general_payload[k] = v
-
-                elif k in draft_cols:
-                    draft_payload[k] = v
-
-                else:
-                    ignored.append(k)
-
-            print("IGNORED:", ignored)
-            print("GENERAL KEYS:", list(general_payload.keys()))
-            print("DRAFT KEYS:", list(draft_payload.keys()))
+            general_payload = {k: v for k, v in payload.items() if k in general_cols}
+            draft_payload = {k: v for k, v in payload.items() if k in draft_cols}
 
             # =====================================================
-            # 🚨 NO MÁS SILENCIO
-            # =====================================================
-            if not general_payload and not draft_payload:
-                raise HTTPException(
-                    400,
-                    "NO HAY CAMPOS VÁLIDOS PARA UPDATE"
-                )
-
-            # =====================================================
-            # 7) UPDATE GENERAL
+            # 5) UPDATE GENERAL (SIEMPRE)
             # =====================================================
             if general_payload:
 
@@ -552,10 +491,10 @@ def get_draft_survey(general_id: int, conn=Depends(get_db)):
                     WHERE id = %s
                 """, values)
 
-                print("UPDATED GENERAL:", cur.rowcount)
+                print("GENERAL ROWS:", cur.rowcount)
 
             # =====================================================
-            # 8) UPDATE DRAFT
+            # 🔥 6) UPDATE DRAFT (DOBLE MÉTODO)
             # =====================================================
             if draft_payload:
 
@@ -563,30 +502,37 @@ def get_draft_survey(general_id: int, conn=Depends(get_db)):
                 values = list(draft_payload.values())
 
                 set_clause += ", updated_at = NOW()"
-                values.append(general_id)
+
+                # 🔥 INTENTO 1 → POR general_id
+                values_1 = values + [general_id]
 
                 cur.execute(f"""
                     UPDATE draft_survey
                     SET {set_clause}
                     WHERE general_id = %s
-                """, values)
+                """, values_1)
 
-                print("UPDATED DRAFT:", cur.rowcount)
+                updated = cur.rowcount
 
-            # =====================================================
-            # 9) COMMIT REAL
-            # =====================================================
+                # 🔥 INTENTO 2 → FALLBACK por draft_report_number
+                if updated == 0:
+                    values_2 = values + [identifier]
+
+                    cur.execute(f"""
+                        UPDATE draft_survey
+                        SET {set_clause}
+                        WHERE draft_report_number = %s
+                    """, values_2)
+
+                    updated = cur.rowcount
+
+                print("DRAFT ROWS:", updated)
+
             conn.commit()
 
             return {
-                "success": True,
-                "general_updated": len(general_payload),
-                "draft_updated": len(draft_payload)
+                "success": True
             }
-
-        except HTTPException:
-            conn.rollback()
-            raise
 
         except Exception as e:
             conn.rollback()
