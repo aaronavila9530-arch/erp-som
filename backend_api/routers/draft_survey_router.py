@@ -410,15 +410,8 @@ def get_draft_survey(general_id: int, conn=Depends(get_db)):
         cur.close()
 
     # =========================================================
-    # PUT — UPDATE BOTH TABLES (ULTRA BLINDADO FINAL REAL)
-    # FIXES:
-    # - Schema correcto (current_schema)
-    # - Obtiene draft_id REAL
-    # - UPDATE con RETURNING (no silencioso)
-    # - Valida rowcount real
-    # - Commit verificado contra DB
+    # PUT — UPDATE BOTH TABLES (FIX REAL PRODUCCIÓN)
     # =========================================================
-
     @router.put("/{identifier}")
     def update_draft_survey(identifier: str, payload: dict, conn=Depends(get_db)):
 
@@ -430,53 +423,23 @@ def get_draft_survey(general_id: int, conn=Depends(get_db)):
             # =====================================================
             # 0) RESOLVER GENERAL_ID
             # =====================================================
-            general_id = None
-
             try:
                 general_id = int(identifier)
             except:
-                pass
-
-            if not general_id:
                 cur.execute("""
                     SELECT id
                     FROM general_draft_survey
                     WHERE draft_report_number = %s
-                    LIMIT 1
                 """, (identifier,))
                 row = cur.fetchone()
 
                 if not row:
-                    raise HTTPException(404, f"No existe draft_report_number {identifier}")
+                    raise HTTPException(404, f"No existe {identifier}")
 
                 general_id = row["id"]
 
             # =====================================================
-            # 1) VALIDAR GENERAL + OBTENER DRAFT_ID REAL
-            # =====================================================
-            cur.execute("""
-                SELECT id
-                FROM general_draft_survey
-                WHERE id = %s
-            """, (general_id,))
-            if not cur.fetchone():
-                raise HTTPException(404, f"No existe general_id {general_id}")
-
-            cur.execute("""
-                SELECT id
-                FROM draft_survey
-                WHERE general_id = %s
-                LIMIT 1
-            """, (general_id,))
-            draft_row = cur.fetchone()
-
-            if not draft_row:
-                raise HTTPException(404, "No existe draft_survey asociado")
-
-            draft_id = draft_row["id"]
-
-            # =====================================================
-            # 2) LIMPIEZA
+            # 1) CLEAN
             # =====================================================
             def clean(v):
                 if v is None:
@@ -487,157 +450,138 @@ def get_draft_survey(general_id: int, conn=Depends(get_db)):
                         return None
                 return v
 
-            payload = {
-                str(k): clean(v)
-                for k, v in payload.items()
-                if isinstance(k, str)
-            }
+            payload = {k: clean(v) for k, v in payload.items() if isinstance(k, str)}
 
             # =====================================================
-            # 3) NORMALIZACIÓN NUMÉRICA
+            # 2) NORMALIZACIONES CRÍTICAS (TU CASO REAL)
             # =====================================================
-            for k in list(payload.keys()):
-                payload[k] = normalize_numeric(payload[k])
+
+            # 🔥 trim_tables
+            if "trim_tables_yes" in payload or "trim_tables_no" in payload:
+                payload["trim_tables_available"] = bool(payload.get("trim_tables_yes"))
+
+            # 🔥 cargo / ports → draft_survey
+            if "cargo" in payload:
+                payload["init_cargo"] = payload["cargo"]
+
+            if "port_from" in payload:
+                payload["init_port_from"] = payload["port_from"]
+
+            if "port_to" in payload:
+                payload["init_port_to"] = payload["port_to"]
 
             # =====================================================
-            # 4) FECHAS
+            # 3) FECHAS
             # =====================================================
-            if "init_date" in payload:
-                payload["init_date"] = parse_date(payload.get("init_date"))
-
-            if "final_date" in payload:
-                payload["final_date"] = parse_date(payload.get("final_date"))
+            payload["init_date"] = parse_date(payload.get("init_date"))
+            payload["final_date"] = parse_date(payload.get("final_date"))
 
             # =====================================================
-            # 5) STATUS CONTROLADO
+            # 4) VALIDACIONES
             # =====================================================
-            allowed_status = ["Pending for review", "Approved"]
-            if payload.get("status") not in allowed_status:
-                payload["status"] = "Pending for review"
+            cur.execute("SELECT id FROM general_draft_survey WHERE id = %s", (general_id,))
+            if not cur.fetchone():
+                raise HTTPException(404, "General no existe")
+
+            cur.execute("SELECT id FROM draft_survey WHERE general_id = %s", (general_id,))
+            if not cur.fetchone():
+                raise HTTPException(404, "Draft no existe")
 
             # =====================================================
-            # 6) SCHEMA REAL
-            # =====================================================
-            cur.execute("SELECT current_schema() AS schema_name")
-            schema = cur.fetchone()["schema_name"]
-
-            # =====================================================
-            # 7) COLUMNAS REALES
+            # 5) COLUMNAS
             # =====================================================
             cur.execute("""
                 SELECT column_name
                 FROM information_schema.columns
-                WHERE table_schema = %s
-                  AND table_name = 'general_draft_survey'
-            """, (schema,))
-            general_cols = {
-                r["column_name"]
-                for r in cur.fetchall()
-                if r["column_name"] not in ("id", "created_at")
-            }
+                WHERE table_name = 'general_draft_survey'
+            """)
+            general_cols = {r["column_name"] for r in cur.fetchall()}
 
             cur.execute("""
                 SELECT column_name
                 FROM information_schema.columns
-                WHERE table_schema = %s
-                  AND table_name = 'draft_survey'
-            """, (schema,))
-            draft_cols = {
-                r["column_name"]
-                for r in cur.fetchall()
-                if r["column_name"] not in ("id", "created_at", "general_id")
-            }
+                WHERE table_name = 'draft_survey'
+            """)
+            draft_cols = {r["column_name"] for r in cur.fetchall()}
 
             # =====================================================
-            # 8) SPLIT PAYLOAD
+            # 6) SPLIT REAL + DEBUG
             # =====================================================
             general_payload = {}
             draft_payload = {}
+            ignored = []
 
             for k, v in payload.items():
+
                 if k in general_cols:
                     general_payload[k] = v
-                if k in draft_cols:
+
+                elif k in draft_cols:
                     draft_payload[k] = v
 
-            print("GENERAL PAYLOAD:", general_payload)
-            print("DRAFT PAYLOAD:", draft_payload)
+                else:
+                    ignored.append(k)
+
+            print("IGNORED:", ignored)
+            print("GENERAL KEYS:", list(general_payload.keys()))
+            print("DRAFT KEYS:", list(draft_payload.keys()))
 
             # =====================================================
-            # 9) UPDATE GENERAL (CON RETURNING)
+            # 🚨 NO MÁS SILENCIO
+            # =====================================================
+            if not general_payload and not draft_payload:
+                raise HTTPException(
+                    400,
+                    "NO HAY CAMPOS VÁLIDOS PARA UPDATE"
+                )
+
+            # =====================================================
+            # 7) UPDATE GENERAL
             # =====================================================
             if general_payload:
 
                 set_clause = ", ".join([f"{k} = %s" for k in general_payload])
                 values = list(general_payload.values())
 
-                if "updated_at" in general_cols:
-                    set_clause += ", updated_at = NOW()"
-
+                set_clause += ", updated_at = NOW()"
                 values.append(general_id)
 
                 cur.execute(f"""
                     UPDATE general_draft_survey
                     SET {set_clause}
                     WHERE id = %s
-                    RETURNING id, updated_at
                 """, values)
 
-                updated = cur.fetchone()
-                if not updated:
-                    raise HTTPException(500, "GENERAL NO SE ACTUALIZÓ")
+                print("UPDATED GENERAL:", cur.rowcount)
 
             # =====================================================
-            # 10) UPDATE DRAFT (CON ID REAL + RETURNING)
+            # 8) UPDATE DRAFT
             # =====================================================
             if draft_payload:
 
                 set_clause = ", ".join([f"{k} = %s" for k in draft_payload])
                 values = list(draft_payload.values())
 
-                if "updated_at" in draft_cols:
-                    set_clause += ", updated_at = NOW()"
-
-                values.append(draft_id)
+                set_clause += ", updated_at = NOW()"
+                values.append(general_id)
 
                 cur.execute(f"""
                     UPDATE draft_survey
                     SET {set_clause}
-                    WHERE id = %s
-                    RETURNING id, updated_at
+                    WHERE general_id = %s
                 """, values)
 
-                updated = cur.fetchone()
-                if not updated:
-                    raise HTTPException(500, "DRAFT NO SE ACTUALIZÓ")
+                print("UPDATED DRAFT:", cur.rowcount)
 
             # =====================================================
-            # 11) VALIDAR QUE HUBO CAMBIOS
-            # =====================================================
-            if not general_payload and not draft_payload:
-                raise HTTPException(400, "No hay campos válidos para actualizar")
-
-            # =====================================================
-            # 12) COMMIT + VALIDACIÓN REAL
+            # 9) COMMIT REAL
             # =====================================================
             conn.commit()
 
-            cur.execute("""
-                SELECT updated_at
-                FROM general_draft_survey
-                WHERE id = %s
-            """, (general_id,))
-            check = cur.fetchone()
-
-            print("✅ COMMIT REAL:", check)
-
-            # =====================================================
-            # 13) RESPONSE
-            # =====================================================
             return {
                 "success": True,
-                "general_updated": list(general_payload.keys()),
-                "draft_updated": list(draft_payload.keys())
+                "general_updated": len(general_payload),
+                "draft_updated": len(draft_payload)
             }
 
         except HTTPException:
@@ -646,8 +590,8 @@ def get_draft_survey(general_id: int, conn=Depends(get_db)):
 
         except Exception as e:
             conn.rollback()
-            print("PUT MAIN ERROR:", str(e))
-            raise HTTPException(status_code=500, detail=str(e))
+            print("ERROR:", str(e))
+            raise HTTPException(500, str(e))
 
         finally:
             cur.close()
