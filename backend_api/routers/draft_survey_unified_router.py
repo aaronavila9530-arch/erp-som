@@ -42,7 +42,8 @@ def _get_table_columns(conn, table_name: str) -> set:
 def _normalize_payload(payload: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     """
     Acepta 2 formatos:
-      A) Unificado por secciones:
+
+      A) Payload realmente seccionado:
          {
            "general": {...},
            "draft": {...},
@@ -50,20 +51,43 @@ def _normalize_payload(payload: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
            "word": {...}
          }
 
-      B) Flat (como viene del form):
-         { "vessel_mv": "...", "init_date": "...", "init_FPT_sounding": "...", "word_mt": "...", ... }
+      B) Payload flat (como viene del form):
+         {
+           "vessel_mv": "...",
+           "initial_surveyors": "...",
+           "init_date": "...",
+           "word_mt": "...",
+           "ballast": {...},
+           "fresh_water": {...}
+         }
 
-    En modo B, rutea automáticamente por prefijos:
-      - word_* -> word
-      - init_/final_ + tanques (FPT/WBT/APT/SLOP/FW ...) -> ballast
-      - campos típicos de draft_survey (init_date/final_date/cargo/port_from/...) -> draft
-      - resto -> general
+    REGLA CRÍTICA:
+    - NO asumir que viene seccionado solo porque exista la key "ballast".
+    - El form flat también manda "ballast" y "fresh_water" como bloques extra.
+    - Solo se trata como seccionado si viene al menos una de estas keys:
+        "general", "draft", "word"
+      con valor dict real.
     """
-    if not isinstance(payload, dict):
-        return {"general": {}, "draft": {}, "ballast": {}, "word": {}}
 
-    # Si ya viene seccionado
-    if any(k in payload for k in ("general", "draft", "ballast", "word")):
+    if not isinstance(payload, dict):
+        return {
+            "general": {},
+            "draft": {},
+            "ballast": {},
+            "word": {}
+        }
+
+    # =====================================================
+    # 1) DETECCIÓN CORRECTA DE PAYLOAD SECCIONADO
+    # =====================================================
+    # OJO:
+    # "ballast" por sí solo NO basta, porque el payload flat también lo trae.
+    is_sectioned = any(
+        key in payload and isinstance(payload.get(key), dict)
+        for key in ("general", "draft", "word")
+    )
+
+    if is_sectioned:
         return {
             "general": payload.get("general") or {},
             "draft": payload.get("draft") or {},
@@ -71,45 +95,86 @@ def _normalize_payload(payload: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
             "word": payload.get("word") or {},
         }
 
-    # Si viene flat
+    # =====================================================
+    # 2) PAYLOAD FLAT -> AUTO-RUTEO
+    # =====================================================
     general: Dict[str, Any] = {}
     draft: Dict[str, Any] = {}
     ballast: Dict[str, Any] = {}
     word: Dict[str, Any] = {}
 
+    # Estos bloques NO deben forzar modo seccionado
+    special_blocks = {"ballast", "fresh_water"}
+
     ballast_keywords = [
         "FPT", "WBT", "APT", "SLOP", "FW P", "FW S", "FW DIST",
-        # variaciones típicas (por si en algún punto cambian a underscores)
         "FW_P", "FW_S", "FW_DIST", "SLOP_TANK"
     ]
 
-    # Campos típicos del draft_survey (tu tabla grande)
+    # Campos típicos del draft_survey
     draft_common_prefixes = ("init_", "final_")
     draft_common_fields = {
-        "status", "cargo", "port_from", "port_to", "loading", "unloading",
-        "year", "month", "continent", "country", "port", "client", "draft_report_number",
-        "general_id"  # normalmente no lo cambias, pero lo toleramos si viene
+        "status",
+        "cargo",
+        "port_from",
+        "port_to",
+        "loading",
+        "unloading",
+        "year",
+        "month",
+        "continent",
+        "country",
+        "port",
+        "client",
+        "draft_report_number",
+        "general_id",
+        "trim_tables_available",
+        "trim_tables_yes",
+        "trim_tables_no",
+        "msl_surveyor"
     }
 
     for k, v in payload.items():
-        if k.startswith("word_"):
+
+        # -------------------------------------------------
+        # IGNORAR BLOQUES COMPLEJOS QUE NO DEBEN CAER
+        # EN general/draft por error
+        # -------------------------------------------------
+        if k in special_blocks and isinstance(v, dict):
+            continue
+
+        # -------------------------------------------------
+        # WORD REPORT
+        # -------------------------------------------------
+        if isinstance(k, str) and k.startswith("word_"):
             word[k] = v
             continue
 
-        # ballast suele venir con keys que contienen nombres de tanques
-        if any(tank in k for tank in ballast_keywords):
+        # -------------------------------------------------
+        # BALLAST (solo si viene por columnas flat)
+        # -------------------------------------------------
+        if isinstance(k, str) and any(tank in k for tank in ballast_keywords):
             ballast[k] = v
             continue
 
-        # draft_survey: init_*/final_* y campos globales de draft
-        if k.startswith(draft_common_prefixes) or k in draft_common_fields:
+        # -------------------------------------------------
+        # DRAFT SURVEY
+        # -------------------------------------------------
+        if isinstance(k, str) and (k.startswith(draft_common_prefixes) or k in draft_common_fields):
             draft[k] = v
             continue
 
-        # fallback -> general_draft_survey
+        # -------------------------------------------------
+        # FALLBACK -> GENERAL_DRAFT_SURVEY
+        # -------------------------------------------------
         general[k] = v
 
-    return {"general": general, "draft": draft, "ballast": ballast, "word": word}
+    return {
+        "general": general,
+        "draft": draft,
+        "ballast": ballast,
+        "word": word
+    }
 
 
 def _update_by_report_number(
