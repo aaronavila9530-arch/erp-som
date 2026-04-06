@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from psycopg2.extras import RealDictCursor
-from datetime import datetime
+from datetime import datetime, date
 from database import get_db
 from psycopg2 import IntegrityError
 
@@ -746,6 +746,19 @@ def update_draft_survey(identifier: str, payload: dict, conn=Depends(get_db)):
                 status_code=400,
                 detail="El payload no contiene columnas válidas para actualizar en general_draft_survey o draft_survey"
             )
+
+
+        # =====================================================
+        # 🔍 DEBUG PAYLOADS
+        # =====================================================
+        print("===================================")
+        print("GENERAL PAYLOAD:")
+        print(general_payload)
+        print("DRAFT PAYLOAD:")
+        print(draft_payload)
+        print("GENERAL ID:", general_id)
+        print("DRAFT ID:", draft_id)
+        print("===================================")
 
         # =====================================================
         # 10) UPDATE GENERAL_DRAFT_SURVEY
