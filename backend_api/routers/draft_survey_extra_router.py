@@ -31,126 +31,437 @@ def clean_value_as_is(value):
 
 
 # ---------------------------------------------------------
-# BALLAST — CREATE / UPDATE (ANTI 405 DEFINITIVO)
+# BALLAST HELPERS — BLINDADOS
+# ---------------------------------------------------------
+def _resolve_draft_survey_real_id(cur, draft_survey_id: str):
+    real_id = None
+
+    if str(draft_survey_id).isdigit():
+
+        cur.execute("""
+            SELECT id
+            FROM draft_survey
+            WHERE general_id = %s
+            LIMIT 1
+        """, (int(draft_survey_id),))
+        row = cur.fetchone()
+
+        if not row:
+            cur.execute("""
+                SELECT id
+                FROM draft_survey
+                WHERE id = %s
+                LIMIT 1
+            """, (int(draft_survey_id),))
+            row = cur.fetchone()
+
+        if row:
+            real_id = row[0]
+
+    if not real_id:
+        cur.execute("""
+            SELECT id
+            FROM draft_survey
+            WHERE draft_report_number = %s
+            LIMIT 1
+        """, (str(draft_survey_id),))
+        row = cur.fetchone()
+
+        if row:
+            real_id = row[0]
+
+    return real_id
+
+
+def _get_ballast_columns(cur):
+    cur.execute("""
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'draft_survey_ballast'
+    """)
+    return {r[0] for r in cur.fetchall()}
+
+
+def _clean_ballast_value(v):
+    if v is None:
+        return None
+
+    if isinstance(v, str):
+        vv = v.strip()
+        if vv == "":
+            return None
+        if vv.lower() in ("none", "null"):
+            return None
+        return vv
+
+    return v
+
+
+def _normalize_tank_name(name: str) -> str:
+    import re
+
+    raw = str(name or "").upper().strip()
+    raw = raw.replace("-", " ")
+    raw = raw.replace("_", " ")
+    raw = re.sub(r"\s+", " ", raw)
+    return raw
+
+
+def _tank_base_key(prefix: str, tank_name: str):
+    import re
+
+    n = _normalize_tank_name(tank_name)
+
+    if n == "FPT":
+        return f"{prefix}_fpt"
+
+    if n == "APT":
+        return f"{prefix}_apt"
+
+    if n in ("SLOP", "SLOP TANK"):
+        return f"{prefix}_slop_tank"
+
+    m = re.match(r"^WBT\s*(\d+)\s*([PS])$", n)
+    if m:
+        tank_no = m.group(1)
+        side = m.group(2).lower()
+        return f"{prefix}_wbt_{tank_no}{side}"
+
+    return None
+
+
+def _build_ballast_flat_payload(payload: dict, cols: set):
+    payload = payload or {}
+
+    ballast_block = payload.get("ballast")
+    fresh_water_block = payload.get("fresh_water")
+
+    # Compatibilidad: si mandan directo {"init":[...], "final":[...]}
+    if not isinstance(ballast_block, dict) and any(k in payload for k in ("init", "final")):
+        ballast_block = {
+            "init": payload.get("init") or [],
+            "final": payload.get("final") or []
+        }
+
+    if not isinstance(ballast_block, dict):
+        ballast_block = {}
+
+    if not isinstance(fresh_water_block, dict):
+        fresh_water_block = {}
+
+    flat_payload = {}
+
+    # -----------------------------------------------------
+    # LIMPIAR SLOTS DE BALLAST (para evitar basura vieja)
+    # -----------------------------------------------------
+    for prefix in ("init", "final"):
+
+        for i in range(1, 21):
+            for side in ("p", "s"):
+                base = f"{prefix}_wbt_{i}{side}"
+                for field in ("name", "sounding", "volume", "density"):
+                    key = f"{base}_{field}"
+                    if key in cols:
+                        flat_payload[key] = None
+
+        for tank in ("fpt", "apt", "slop_tank"):
+            base = f"{prefix}_{tank}"
+            for field in ("name", "sounding", "volume", "density"):
+                key = f"{base}_{field}"
+                if key in cols:
+                    flat_payload[key] = None
+
+    # -----------------------------------------------------
+    # LIMPIAR SLOTS DE FRESH WATER
+    # -----------------------------------------------------
+    for prefix in ("init", "final"):
+        for i in range(1, 21):
+            for field in ("name", "height", "sounding", "volume", "density", "total"):
+                key = f"{prefix}_fw_{i}_{field}"
+                if key in cols:
+                    flat_payload[key] = None
+
+    # -----------------------------------------------------
+    # MAPEAR BALLAST JSON -> COLUMNAS
+    # -----------------------------------------------------
+    for prefix in ("init", "final"):
+
+        tank_list = ballast_block.get(prefix, [])
+        if not isinstance(tank_list, list):
+            continue
+
+        for tank in tank_list:
+            if not isinstance(tank, dict):
+                continue
+
+            tank_name = _clean_ballast_value(tank.get("tank_name"))
+            if not tank_name:
+                continue
+
+            base = _tank_base_key(prefix, tank_name)
+            if not base:
+                continue
+
+            mapping = {
+                f"{base}_name": tank_name,
+                f"{base}_sounding": _clean_ballast_value(tank.get("sounding")),
+                f"{base}_volume": _clean_ballast_value(tank.get("volume")),
+                f"{base}_density": _clean_ballast_value(tank.get("density")),
+            }
+
+            for k, v in mapping.items():
+                if k in cols:
+                    flat_payload[k] = v
+
+    # -----------------------------------------------------
+    # MAPEAR FRESH WATER JSON -> COLUMNAS
+    # -----------------------------------------------------
+    for prefix in ("init", "final"):
+
+        tank_list = fresh_water_block.get(prefix, [])
+        if not isinstance(tank_list, list):
+            continue
+
+        for idx, tank in enumerate(tank_list[:20], start=1):
+            if not isinstance(tank, dict):
+                continue
+
+            base = f"{prefix}_fw_{idx}"
+
+            mapping = {
+                f"{base}_name": _clean_ballast_value(tank.get("tank_name")),
+                f"{base}_height": _clean_ballast_value(tank.get("height")),
+                f"{base}_sounding": _clean_ballast_value(tank.get("sounding")),
+                f"{base}_volume": _clean_ballast_value(tank.get("volume")),
+                f"{base}_density": _clean_ballast_value(tank.get("density")),
+            }
+
+            for k, v in mapping.items():
+                if k in cols:
+                    flat_payload[k] = v
+
+    # -----------------------------------------------------
+    # BACKUP JSON ORIGINAL
+    # -----------------------------------------------------
+    if "raw_payload" in cols:
+        flat_payload["raw_payload"] = payload
+
+    if "ballast_json" in cols:
+        flat_payload["ballast_json"] = {
+            "ballast": ballast_block,
+            "fresh_water": fresh_water_block
+        }
+
+    return flat_payload
+
+
+# ---------------------------------------------------------
+# BALLAST — CREATE
 # ---------------------------------------------------------
 @router.post("/ballast/{draft_survey_id}")
+def create_ballast(draft_survey_id: str, payload: dict, conn=Depends(get_db)):
+
+    cur = conn.cursor()
+
+    try:
+        real_id = _resolve_draft_survey_real_id(cur, draft_survey_id)
+
+        if not real_id:
+            raise HTTPException(404, f"No existe draft_survey {draft_survey_id}")
+
+        cols = _get_ballast_columns(cur)
+
+        if not cols:
+            raise HTTPException(500, "No se pudieron leer columnas de draft_survey_ballast")
+
+        fk_col = next(
+            (c for c in ("draft_survey_id", "draftsurvey_id") if c in cols),
+            None
+        )
+
+        if not fk_col:
+            raise HTTPException(500, "FK no encontrada en draft_survey_ballast")
+
+        # -----------------------------------------------------
+        # VALIDAR QUE NO EXISTA YA
+        # -----------------------------------------------------
+        cur.execute(f"""
+            SELECT id
+            FROM draft_survey_ballast
+            WHERE {fk_col} = %s
+            LIMIT 1
+        """, (real_id,))
+        existing = cur.fetchone()
+
+        if existing:
+            raise HTTPException(409, "Ya existe registro ballast para este draft_survey")
+
+        flat_payload = _build_ballast_flat_payload(payload, cols)
+
+        # FK obligatoria
+        flat_payload[fk_col] = real_id
+
+        # status opcional
+        if "status" in cols:
+            flat_payload["status"] = "Pending for review"
+
+        insert_fields = {
+            k: v
+            for k, v in flat_payload.items()
+            if k in cols and k not in ("id", "created_at", "updated_at")
+        }
+
+        if not insert_fields:
+            raise HTTPException(400, "No hay campos válidos para crear ballast")
+
+        fields = list(insert_fields.keys())
+        placeholders = ", ".join(["%s"] * len(fields))
+        columns_sql = ", ".join(fields)
+        values = [insert_fields[f] for f in fields]
+
+        cur.execute(f"""
+            INSERT INTO draft_survey_ballast ({columns_sql})
+            VALUES ({placeholders})
+            RETURNING id
+        """, values)
+
+        ballast_id = cur.fetchone()[0]
+
+        conn.commit()
+
+        print("====== POST BALLAST OK ======")
+        print("INPUT:", draft_survey_id)
+        print("REAL ID:", real_id)
+        print("BALLAST ID:", ballast_id)
+        print("FIELDS:", len(insert_fields))
+        print("=============================")
+
+        return {
+            "success": True,
+            "action": "created",
+            "ballast_id": ballast_id,
+            "draft_survey_id": real_id,
+            "saved_fields": len(insert_fields)
+        }
+
+    except HTTPException:
+        conn.rollback()
+        raise
+
+    except Exception as e:
+        conn.rollback()
+        print("POST BALLAST ERROR:", str(e))
+        raise HTTPException(500, f"Error creando ballast: {str(e)}")
+
+    finally:
+        cur.close()
+
+
+# ---------------------------------------------------------
+# BALLAST — UPDATE
+# ---------------------------------------------------------
 @router.put("/ballast/{draft_survey_id}")
 def update_ballast(draft_survey_id: str, payload: dict, conn=Depends(get_db)):
 
     cur = conn.cursor()
 
     try:
-        payload = payload or {}
-
-        # =====================================================
-        # 🔥 RESOLVER ID REAL (INT O REPORT NUMBER)
-        # =====================================================
-        real_id = None
-
-        if str(draft_survey_id).isdigit():
-
-            cur.execute("""
-                SELECT id FROM draft_survey WHERE general_id = %s
-            """, (int(draft_survey_id),))
-            row = cur.fetchone()
-
-            if not row:
-                cur.execute("""
-                    SELECT id FROM draft_survey WHERE id = %s
-                """, (int(draft_survey_id),))
-                row = cur.fetchone()
-
-            if row:
-                real_id = row[0]
+        real_id = _resolve_draft_survey_real_id(cur, draft_survey_id)
 
         if not real_id:
+            raise HTTPException(404, f"No existe draft_survey {draft_survey_id}")
 
-            cur.execute("""
-                SELECT id FROM draft_survey
-                WHERE draft_report_number = %s
-            """, (draft_survey_id,))
-            row = cur.fetchone()
+        cols = _get_ballast_columns(cur)
 
-            if row:
-                real_id = row[0]
+        if not cols:
+            raise HTTPException(500, "No se pudieron leer columnas de draft_survey_ballast")
 
-        if not real_id:
-            raise HTTPException(404, "Draft survey no encontrado")
+        fk_col = next(
+            (c for c in ("draft_survey_id", "draftsurvey_id") if c in cols),
+            None
+        )
 
-        # =====================================================
-        # 🔥 BUSCAR REGISTRO BALLAST
-        # =====================================================
-        cur.execute("""
+        if not fk_col:
+            raise HTTPException(500, "FK no encontrada en draft_survey_ballast")
+
+        # -----------------------------------------------------
+        # BUSCAR EXISTENTE
+        # -----------------------------------------------------
+        cur.execute(f"""
             SELECT id
             FROM draft_survey_ballast
-            WHERE draft_survey_id = %s
+            WHERE {fk_col} = %s
             LIMIT 1
         """, (real_id,))
-        row = cur.fetchone()
+        existing = cur.fetchone()
 
-        if not row:
-            raise HTTPException(404, "Ballast no existe")
+        if not existing:
+            raise HTTPException(404, "No existe registro ballast para actualizar")
 
-        ballast_id = row[0]
+        ballast_id = existing[0]
 
-        # =====================================================
-        # 🔥 LIMPIEZA
-        # =====================================================
-        def clean(v):
-            if v is None:
-                return None
-            if isinstance(v, str):
-                v = v.strip()
-                if v == "" or v.lower() in ("none", "null"):
-                    return None
-            return v
-
-        payload = {k: clean(v) for k, v in payload.items()}
-
-        # =====================================================
-        # 🔥 COLUMNAS REALES
-        # =====================================================
-        cur.execute("""
-            SELECT column_name
-            FROM information_schema.columns
-            WHERE table_name = 'draft_survey_ballast'
-        """)
-
-        cols = {r[0] for r in cur.fetchall()}
+        flat_payload = _build_ballast_flat_payload(payload, cols)
 
         update_fields = {
-            k: v for k, v in payload.items()
-            if k in cols and k not in ("id", "created_at", "draft_survey_id")
+            k: v
+            for k, v in flat_payload.items()
+            if k in cols and k not in ("id", "created_at", fk_col)
         }
 
         if not update_fields:
-            return {"success": True, "message": "No changes"}
+            return {
+                "success": True,
+                "action": "no_changes",
+                "ballast_id": ballast_id,
+                "draft_survey_id": real_id
+            }
 
-        # =====================================================
-        # 🔥 UPDATE
-        # =====================================================
-        set_clause = ", ".join([f"{k} = %s" for k in update_fields])
+        set_clause = ", ".join([f"{k} = %s" for k in update_fields.keys()])
         values = list(update_fields.values())
+
+        if "updated_at" in cols:
+            set_clause += ", updated_at = NOW()"
 
         values.append(ballast_id)
 
         cur.execute(f"""
             UPDATE draft_survey_ballast
-            SET {set_clause}, updated_at = NOW()
+            SET {set_clause}
             WHERE id = %s
+            RETURNING id
         """, values)
+
+        updated = cur.fetchone()
+
+        if not updated:
+            raise HTTPException(500, "Falló el UPDATE de ballast")
 
         conn.commit()
 
+        print("====== PUT BALLAST OK ======")
+        print("INPUT:", draft_survey_id)
+        print("REAL ID:", real_id)
+        print("BALLAST ID:", updated[0])
+        print("FIELDS:", len(update_fields))
+        print("============================")
+
         return {
             "success": True,
-            "ballast_id": ballast_id
+            "action": "updated",
+            "ballast_id": updated[0],
+            "draft_survey_id": real_id,
+            "saved_fields": len(update_fields)
         }
+
+    except HTTPException:
+        conn.rollback()
+        raise
 
     except Exception as e:
         conn.rollback()
-        print("BALLAST ERROR:", str(e))
-        raise HTTPException(500, str(e))
+        print("PUT BALLAST ERROR:", str(e))
+        raise HTTPException(500, f"Error actualizando ballast: {str(e)}")
 
     finally:
         cur.close()
