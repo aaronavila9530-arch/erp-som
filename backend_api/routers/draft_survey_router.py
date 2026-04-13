@@ -157,19 +157,68 @@ def create_draft_survey(payload: dict, conn=Depends(get_db)):
         payload = payload or {}
 
         # =====================================================
-        # LIMPIEZA MINIMA
+        # LIMPIEZA + NORMALIZACIÓN BLINDADA
         # =====================================================
         def clean_value(v):
             if v is None:
                 return None
+
             if isinstance(v, str):
                 v = v.strip()
-                if v == "":
+                if v == "" or v.lower() in ("none", "null"):
                     return None
+
+            return v
+
+        def parse_bool(v):
+            if isinstance(v, bool):
+                return v
+
+            if v is None:
+                return None
+
+            if isinstance(v, str):
+                vv = v.strip().lower()
+                if vv in ("true", "1", "yes", "y", "si", "sí"):
+                    return True
+                if vv in ("false", "0", "no", "n"):
+                    return False
+
+            return v
+
+        def normalize_decimal_string(v):
+            """
+            Convierte solo strings numéricos reales.
+            Soporta coma decimal.
+            No rompe textos como:
+            - MV GREAT 61
+            - PUERTO CALDERA
+            """
+            if v is None:
+                return None
+
+            if isinstance(v, (int, float, bool)):
+                return v
+
+            if isinstance(v, str):
+                s = v.strip()
+
+                if s == "":
+                    return None
+
+                # reemplazo coma → punto
+                s2 = s.replace(",", ".")
+
+                try:
+                    float(s2)
+                    return s2
+                except Exception:
+                    return v
+
             return v
 
         payload = {
-            k: clean_value(v)
+            str(k): clean_value(v)
             for k, v in payload.items()
             if isinstance(k, str)
         }
@@ -203,7 +252,76 @@ def create_draft_survey(payload: dict, conn=Depends(get_db)):
 
         if payload.get("trim_tables_available") is None:
             if payload.get("trim_tables_yes") is not None:
-                payload["trim_tables_available"] = bool(payload.get("trim_tables_yes"))
+                payload["trim_tables_available"] = parse_bool(payload.get("trim_tables_yes"))
+
+        # =====================================================
+        # 🔥 DETECTAR TIPOS REALES DE DB
+        # =====================================================
+        cur.execute("""
+            SELECT column_name, data_type
+            FROM information_schema.columns
+            WHERE table_name = 'general_draft_survey'
+        """)
+        general_meta = {
+            row["column_name"]: row["data_type"]
+            for row in cur.fetchall()
+        }
+
+        cur.execute("""
+            SELECT column_name, data_type
+            FROM information_schema.columns
+            WHERE table_name = 'draft_survey'
+        """)
+        draft_meta = {
+            row["column_name"]: row["data_type"]
+            for row in cur.fetchall()
+        }
+
+        def normalize_by_db_type(key, value, meta_dict):
+            if key not in meta_dict:
+                return value
+
+            dtype = (meta_dict[key] or "").lower()
+
+            if value is None:
+                return None
+
+            if dtype in ("boolean",):
+                return parse_bool(value)
+
+            if dtype in ("date",):
+                return parse_date(value)
+
+            if dtype in (
+                "integer",
+                "bigint",
+                "smallint",
+                "numeric",
+                "decimal",
+                "real",
+                "double precision"
+            ):
+                return normalize_decimal_string(value)
+
+            return value
+
+        # =====================================================
+        # 🔥 NORMALIZAR PAYLOAD SEGÚN DB
+        # =====================================================
+        normalized_payload = {}
+
+        for k, v in payload.items():
+
+            if k in general_meta:
+                normalized_payload[k] = normalize_by_db_type(k, v, general_meta)
+
+            elif k in draft_meta:
+                normalized_payload[k] = normalize_by_db_type(k, v, draft_meta)
+
+            else:
+                normalized_payload[k] = v
+
+        payload = normalized_payload
 
         # =====================================================
         # VALIDACIÓN
@@ -284,15 +402,10 @@ def create_draft_survey(payload: dict, conn=Depends(get_db)):
         # =====================================================
         # 🔥 COLUMNAS REALES (EXCLUYENDO AUTO)
         # =====================================================
-        cur.execute("""
-            SELECT column_name
-            FROM information_schema.columns
-            WHERE table_name = 'draft_survey'
-        """)
         cols = {
-            row["column_name"]
-            for row in cur.fetchall()
-            if row["column_name"] not in ("id", "created_at", "updated_at")
+            col_name
+            for col_name in draft_meta.keys()
+            if col_name not in ("id", "created_at", "updated_at")
         }
 
         # =====================================================
