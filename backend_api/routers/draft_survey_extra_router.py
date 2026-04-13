@@ -29,6 +29,74 @@ def clean_value_as_is(value):
 
     return value
 
+def _normalize_decimal_string(v):
+    """
+    Convierte solo strings numéricos reales.
+    Soporta coma decimal.
+    No toca textos normales.
+    """
+    if v is None:
+        return None
+
+    if isinstance(v, (int, float, bool)):
+        return v
+
+    if isinstance(v, str):
+        s = v.strip()
+        if s == "":
+            return None
+
+        s2 = s.replace(",", ".")
+
+        try:
+            float(s2)
+            return s2
+        except Exception:
+            return v
+
+    return v
+
+
+def _get_table_column_types(cur, table_name: str):
+    cur.execute("""
+        SELECT column_name, data_type
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = %s
+    """, (table_name,))
+    return {row[0]: row[1] for row in cur.fetchall()}
+
+
+def _normalize_value_by_db_type(value, data_type: str):
+    dtype = (data_type or "").lower()
+
+    if value is None:
+        return None
+
+    if dtype in (
+        "integer",
+        "bigint",
+        "smallint",
+        "numeric",
+        "decimal",
+        "real",
+        "double precision"
+    ):
+        return _normalize_decimal_string(value)
+
+    return value
+
+
+def _normalize_payload_by_db_types(payload: dict, column_types: dict):
+    normalized = {}
+
+    for key, value in (payload or {}).items():
+        if key in column_types:
+            normalized[key] = _normalize_value_by_db_type(value, column_types[key])
+        else:
+            normalized[key] = value
+
+    return normalized
 
 # ---------------------------------------------------------
 # BALLAST HELPERS — BLINDADOS
@@ -205,9 +273,9 @@ def _build_ballast_flat_payload(payload: dict, cols: set):
 
             mapping = {
                 f"{base}_name": tank_name,
-                f"{base}_sounding": _clean_ballast_value(tank.get("sounding")),
-                f"{base}_volume": _clean_ballast_value(tank.get("volume")),
-                f"{base}_density": _clean_ballast_value(tank.get("density")),
+                f"{base}_sounding": _normalize_decimal_string(_clean_ballast_value(tank.get("sounding"))),
+                f"{base}_volume": _normalize_decimal_string(_clean_ballast_value(tank.get("volume"))),
+                f"{base}_density": _normalize_decimal_string(_clean_ballast_value(tank.get("density"))),
             }
 
             for k, v in mapping.items():
@@ -231,10 +299,10 @@ def _build_ballast_flat_payload(payload: dict, cols: set):
 
             mapping = {
                 f"{base}_name": _clean_ballast_value(tank.get("tank_name")),
-                f"{base}_height": _clean_ballast_value(tank.get("height")),
-                f"{base}_sounding": _clean_ballast_value(tank.get("sounding")),
-                f"{base}_volume": _clean_ballast_value(tank.get("volume")),
-                f"{base}_density": _clean_ballast_value(tank.get("density")),
+                f"{base}_height": _normalize_decimal_string(_clean_ballast_value(tank.get("height"))),
+                f"{base}_sounding": _normalize_decimal_string(_clean_ballast_value(tank.get("sounding"))),
+                f"{base}_volume": _normalize_decimal_string(_clean_ballast_value(tank.get("volume"))),
+                f"{base}_density": _normalize_decimal_string(_clean_ballast_value(tank.get("density"))),
             }
 
             for k, v in mapping.items():
@@ -301,6 +369,13 @@ def create_ballast(draft_survey_id: str, payload: dict, conn=Depends(get_db)):
 
         # FK obligatoria
         flat_payload[fk_col] = real_id
+
+        # -----------------------------------------------------
+        # NORMALIZAR SEGÚN TIPOS REALES DE DB
+        # -----------------------------------------------------
+        ballast_meta = _get_table_column_types(cur, "draft_survey_ballast")
+        flat_payload = _normalize_payload_by_db_types(flat_payload, ballast_meta)
+
 
         # status opcional
         if "status" in cols:
@@ -402,6 +477,12 @@ def update_ballast(draft_survey_id: str, payload: dict, conn=Depends(get_db)):
         ballast_id = existing[0]
 
         flat_payload = _build_ballast_flat_payload(payload, cols)
+
+        # -----------------------------------------------------
+        # NORMALIZAR SEGÚN TIPOS REALES DE DB
+        # -----------------------------------------------------
+        ballast_meta = _get_table_column_types(cur, "draft_survey_ballast")
+        flat_payload = _normalize_payload_by_db_types(flat_payload, ballast_meta)
 
         update_fields = {
             k: v
@@ -981,6 +1062,13 @@ def create_word(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
         cleaned["status"] = clean_value(payload.get("status")) or "Pending for review"
 
         # =====================================================
+        # NORMALIZAR SEGÚN TIPOS REALES DE DB
+        # =====================================================
+        word_meta = _get_table_column_types(cur, "draft_survey_word_report")
+        cleaned = _normalize_payload_by_db_types(cleaned, word_meta)
+
+
+        # =====================================================
         # 4) UPSERT
         # =====================================================
         cur.execute(
@@ -1234,6 +1322,12 @@ def create_word(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
 
             if "word_json" in cols:
                 clean_payload["word_json"] = payload
+
+            # =====================================================
+            # NORMALIZAR SEGÚN TIPOS REALES DE DB
+            # =====================================================
+            word_meta = _get_table_column_types(cur, "draft_survey_word_report")
+            clean_payload = _normalize_payload_by_db_types(clean_payload, word_meta)
 
             # =====================================================
             # 🔥 5) VALIDAR EXISTENCIA
