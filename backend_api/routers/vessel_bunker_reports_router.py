@@ -55,22 +55,64 @@ class VesselBunkerReportRouter:
     def _normalize_hhmm(value: str, max_value: int):
         if value is None:
             return None
+
         s = str(value).strip()
         if not s:
             return None
+
         if not s.isdigit():
             return None
+
         n = int(s)
         if n < 0 or n > max_value:
             return None
+
         return f"{n:02d}"
+
+    @staticmethod
+    def _normalize_numeric_for_db(value):
+        """
+        Normaliza numéricos para PostgreSQL:
+        - "" -> None
+        - "4,65" -> "4.65"
+        - "1.234,56" -> "1234.56"
+        - "1,234.56" -> "1234.56"
+        - limpia espacios
+        - si no es numérico válido, devuelve el valor original
+        """
+        if value is None:
+            return None
+
+        s = str(value).strip()
+        if not s:
+            return None
+
+        s = s.replace(" ", "")
+
+        if "," in s and "." in s:
+            if s.rfind(",") > s.rfind("."):
+                # Formato europeo: 1.234,56
+                s = s.replace(".", "")
+                s = s.replace(",", ".")
+            else:
+                # Formato US: 1,234.56
+                s = s.replace(",", "")
+        elif "," in s:
+            # Caso simple: 4,65 -> 4.65
+            s = s.replace(",", ".")
+
+        try:
+            float(s)
+            return s
+        except Exception:
+            return value
 
     def _get_table_columns(self, cur):
         cur.execute("""
             SELECT column_name
             FROM information_schema.columns
-            WHERE table_schema='public'
-              AND table_name='vessel_bunker_reports'
+            WHERE table_schema = 'public'
+              AND table_name = 'vessel_bunker_reports'
         """)
         return {r["column_name"] for r in cur.fetchall()}
 
@@ -105,7 +147,7 @@ class VesselBunkerReportRouter:
         row = row or {}
         row = self._ensure_full_slots(row)
 
-        # Campos auxiliares del frontend (si existen en DB, vendrán; si no, quedan None)
+        # Campos auxiliares del frontend
         row.setdefault("antecedent_arrived_dt", None)
         row.setdefault("antecedent_survey_date_from", None)
         row.setdefault("antecedent_survey_date_to", None)
@@ -115,12 +157,20 @@ class VesselBunkerReportRouter:
         return row
 
     def _normalize_common(self, payload: dict):
-        payload = payload or {}
+        if payload is None:
+            payload = {}
 
-        # limpiar strings vacíos
-        payload = {k: self._clean_value(v) for k, v in payload.items()}
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=422, detail="Invalid payload format.")
 
-        # fechas UI->DB
+        # -------------------------------------------------
+        # Limpiar strings vacíos
+        # -------------------------------------------------
+        payload = {k: self._clean_value(v) for k, v in payload.items() if isinstance(k, str)}
+
+        # -------------------------------------------------
+        # Fechas UI -> DB
+        # -------------------------------------------------
         date_keys = [
             "report_date",
             "berthing_date",
@@ -129,25 +179,99 @@ class VesselBunkerReportRouter:
             "antecedent_arrived_dt",
             "antecedent_survey_date_from",
             "antecedent_survey_date_to",
+            "log_eosp_date",
+            "log_pob_date",
+            "log_fwe_date",
+            "log_bunker_date",
+            "log_at_survey_date",
         ]
         for k in date_keys:
             if k in payload:
                 payload[k] = self._normalize_date_for_db(payload.get(k))
 
+        # -------------------------------------------------
         # HH/MM
+        # -------------------------------------------------
         hhmm_limits = {
-            "dslop_hour": 23, "dslop_minute": 59,
-            "antecedent_survey_hour_from": 23, "antecedent_survey_minute_from": 59,
-            "antecedent_survey_hour_to": 23, "antecedent_survey_minute_to": 59,
-            "log_eosp_hour": 23, "log_eosp_minute": 59,
-            "log_pob_hour": 23, "log_pob_minute": 59,
-            "log_fwe_hour": 23, "log_fwe_minute": 59,
-            "log_bunker_hour": 23, "log_bunker_minute": 59,
-            "log_at_survey_hour": 23, "log_at_survey_minute": 59,
+            "dslop_hour": 23,
+            "dslop_minute": 59,
+
+            "antecedent_survey_hour_from": 23,
+            "antecedent_survey_minute_from": 59,
+            "antecedent_survey_hour_to": 23,
+            "antecedent_survey_minute_to": 59,
+
+            "log_eosp_hour": 23,
+            "log_eosp_minute": 59,
+
+            "log_pob_hour": 23,
+            "log_pob_minute": 59,
+
+            "log_fwe_hour": 23,
+            "log_fwe_minute": 59,
+
+            "log_bunker_hour": 23,
+            "log_bunker_minute": 59,
+
+            "log_at_survey_hour": 23,
+            "log_at_survey_minute": 59,
+
+            "berthing_hour": 23,
+            "berthing_minute": 59,
         }
         for k, mx in hhmm_limits.items():
             if k in payload:
                 payload[k] = self._normalize_hhmm(payload.get(k), mx)
+
+        # -------------------------------------------------
+        # Numéricos fijos
+        # -------------------------------------------------
+        numeric_fields = {
+            "gross_tonnage",
+            "bunker_delivery_declared",
+            "rob_diff",
+            "plus_consumption",
+            "generator_until_aps",
+            "cons_dept",
+            "me_to_sea_buoy",
+            "draft",
+            "draft_fwd",
+            "draft_aft",
+            "trim",
+            "list",
+
+            "log_eosp_vlsfo", "log_eosp_hfso", "log_eosp_mdo", "log_eosp_lsmgo",
+            "log_pob_vlsfo", "log_pob_hfso", "log_pob_mdo", "log_pob_lsmgo",
+            "log_fwe_vlsfo", "log_fwe_hfso", "log_fwe_mdo", "log_fwe_lsmgo",
+            "log_bunker_vlsfo", "log_bunker_hfso", "log_bunker_mdo", "log_bunker_lsmgo",
+            "log_at_survey_vlsfo", "log_at_survey_hfso", "log_at_survey_mdo", "log_at_survey_lsmgo",
+
+            "cons_sea_loaded_vlsfo", "cons_sea_loaded_hfso", "cons_sea_loaded_mdo", "cons_sea_loaded_lsmgo",
+            "cons_sea_ballast_vlsfo", "cons_sea_ballast_hfso", "cons_sea_ballast_mdo", "cons_sea_ballast_lsmgo",
+            "cons_port_ship_gear_vlsfo", "cons_port_ship_gear_hfso", "cons_port_ship_gear_mdo", "cons_port_ship_gear_lsmgo",
+            "cons_port_shore_gear_vlsfo", "cons_port_shore_gear_hfso", "cons_port_shore_gear_mdo", "cons_port_shore_gear_lsmgo",
+        }
+
+        for key in list(payload.keys()):
+            if key in numeric_fields:
+                payload[key] = self._normalize_numeric_for_db(payload.get(key))
+                continue
+
+            if key.startswith("vlsfo_tank_") or key.startswith("mgo_tank_"):
+                if key.endswith((
+                    "_dist_mtrs",
+                    "_gauge_mtrs",
+                    "_volume_m3",
+                    "_temp_c",
+                    "_temp_f",
+                    "_density_15c",
+                    "_weight_mt",
+                )):
+                    payload[key] = self._normalize_numeric_for_db(payload.get(key))
+                continue
+
+            if key.startswith("bunker_figure_") and key.endswith(("_ifo", "_vlsfo", "_lsmgo")):
+                payload[key] = self._normalize_numeric_for_db(payload.get(key))
 
         return payload
 
@@ -168,10 +292,17 @@ class VesselBunkerReportRouter:
             payload = self._ensure_full_slots(payload)
 
             table_cols = self._get_table_columns(cur)
-            filtered = {k: v for k, v in payload.items() if k in table_cols}
+            filtered = {
+                k: v
+                for k, v in payload.items()
+                if k in table_cols
+            }
 
             if not filtered:
-                raise HTTPException(status_code=422, detail="Empty or invalid payload (no valid columns).")
+                raise HTTPException(
+                    status_code=422,
+                    detail="Empty or invalid payload (no valid columns)."
+                )
 
             columns = list(filtered.keys())
             values = [filtered[c] for c in columns]
@@ -188,14 +319,21 @@ class VesselBunkerReportRouter:
             new_row = cur.fetchone()
             conn.commit()
 
-            return {"success": True, "data": self._ensure_response_slots(dict(new_row))}
+            return {
+                "success": True,
+                "data": self._ensure_response_slots(dict(new_row))
+            }
 
         except HTTPException:
             conn.rollback()
             raise
+
         except Exception as e:
             conn.rollback()
             raise HTTPException(status_code=500, detail=str(e))
+
+        finally:
+            cur.close()
 
     # =========================================================
     # UPDATE (FULL PUT + BLINDADO)
@@ -205,7 +343,10 @@ class VesselBunkerReportRouter:
         cur = conn.cursor(cursor_factory=RealDictCursor)
 
         try:
-            cur.execute("SELECT status FROM vessel_bunker_reports WHERE id=%s", (report_id,))
+            cur.execute(
+                "SELECT status FROM vessel_bunker_reports WHERE id = %s",
+                (report_id,)
+            )
             row = cur.fetchone()
 
             if not row:
@@ -222,10 +363,18 @@ class VesselBunkerReportRouter:
 
             table_cols = self._get_table_columns(cur)
             blocked_keys = {"id", "created_at"}
-            filtered = {k: v for k, v in payload.items() if (k in table_cols and k not in blocked_keys)}
+
+            filtered = {
+                k: v
+                for k, v in payload.items()
+                if (k in table_cols and k not in blocked_keys)
+            }
 
             if not filtered:
-                raise HTTPException(status_code=422, detail="Empty or invalid payload (no valid columns).")
+                raise HTTPException(
+                    status_code=422,
+                    detail="Empty or invalid payload (no valid columns)."
+                )
 
             set_clauses = []
             values = []
@@ -247,14 +396,21 @@ class VesselBunkerReportRouter:
             updated = cur.fetchone()
             conn.commit()
 
-            return {"success": True, "data": self._ensure_response_slots(dict(updated))}
+            return {
+                "success": True,
+                "data": self._ensure_response_slots(dict(updated))
+            }
 
         except HTTPException:
             conn.rollback()
             raise
+
         except Exception as e:
             conn.rollback()
             raise HTTPException(status_code=500, detail=str(e))
+
+        finally:
+            cur.close()
 
     # =========================================================
     # GET BY ID
@@ -263,13 +419,23 @@ class VesselBunkerReportRouter:
 
         cur = conn.cursor(cursor_factory=RealDictCursor)
 
-        cur.execute("SELECT * FROM vessel_bunker_reports WHERE id=%s", (report_id,))
-        row = cur.fetchone()
+        try:
+            cur.execute(
+                "SELECT * FROM vessel_bunker_reports WHERE id = %s",
+                (report_id,)
+            )
+            row = cur.fetchone()
 
-        if not row:
-            raise HTTPException(status_code=404, detail="Report not found")
+            if not row:
+                raise HTTPException(status_code=404, detail="Report not found")
 
-        return {"success": True, "data": self._ensure_response_slots(dict(row))}
+            return {
+                "success": True,
+                "data": self._ensure_response_slots(dict(row))
+            }
+
+        finally:
+            cur.close()
 
     # =========================================================
     # GET ALL (PAGINADO + BUSQUEDA)
@@ -278,42 +444,62 @@ class VesselBunkerReportRouter:
 
         cur = conn.cursor(cursor_factory=RealDictCursor)
 
-        limit = max(1, min(int(limit or 200), 1000))
-        offset = max(0, int(offset or 0))
+        try:
+            limit = max(1, min(int(limit or 200), 1000))
+            offset = max(0, int(offset or 0))
 
-        table_cols = self._get_table_columns(cur)
+            table_cols = self._get_table_columns(cur)
 
-        where = []
-        values = []
+            where = []
+            values = []
 
-        if q:
-            q = str(q).strip()
             if q:
-                like = f"%{q}%"
-                or_parts = []
-                for col in ("bunker_cert_no", "ship_name", "client", "port", "country", "certificate", "report_category", "status"):
-                    if col in table_cols:
-                        or_parts.append(f"CAST({col} AS TEXT) ILIKE %s")
-                        values.append(like)
-                if or_parts:
-                    where.append("(" + " OR ".join(or_parts) + ")")
+                q = str(q).strip()
+                if q:
+                    like = f"%{q}%"
+                    or_parts = []
 
-        where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+                    for col in (
+                        "bunker_cert_no",
+                        "ship_name",
+                        "client",
+                        "port",
+                        "country",
+                        "certificate",
+                        "report_category",
+                        "status"
+                    ):
+                        if col in table_cols:
+                            or_parts.append(f"CAST({col} AS TEXT) ILIKE %s")
+                            values.append(like)
 
-        query = f"""
-            SELECT *
-            FROM vessel_bunker_reports
-            {where_sql}
-            ORDER BY created_at DESC NULLS LAST, id DESC
-            LIMIT %s OFFSET %s
-        """
-        values.extend([limit, offset])
+                    if or_parts:
+                        where.append("(" + " OR ".join(or_parts) + ")")
 
-        cur.execute(query, values)
-        rows = cur.fetchall() or []
+            where_sql = ("WHERE " + " AND ".join(where)) if where else ""
 
-        # listado: no rellenar slots (pesado). El detalle sí.
-        return {"success": True, "data": rows, "limit": limit, "offset": offset, "count": len(rows)}
+            query = f"""
+                SELECT *
+                FROM vessel_bunker_reports
+                {where_sql}
+                ORDER BY created_at DESC NULLS LAST, id DESC
+                LIMIT %s OFFSET %s
+            """
+            values.extend([limit, offset])
+
+            cur.execute(query, values)
+            rows = cur.fetchall() or []
+
+            return {
+                "success": True,
+                "data": rows,
+                "limit": limit,
+                "offset": offset,
+                "count": len(rows)
+            }
+
+        finally:
+            cur.close()
 
 
 _bunker_router = VesselBunkerReportRouter()

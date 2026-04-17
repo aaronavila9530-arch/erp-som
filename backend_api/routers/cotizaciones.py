@@ -3,11 +3,10 @@
 # Archivo: backend_api/routers/cotizaciones.py
 # ============================================================
 
-from fastapi import APIRouter, Depends, HTTPException, Header
+from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from typing import Optional
 from psycopg2.extras import RealDictCursor
 from pydantic import BaseModel
-from datetime import date
 
 from database import get_db
 from rbac_service import has_permission
@@ -29,6 +28,78 @@ router = APIRouter(
     prefix="/comercial/cotizaciones",
     tags=["Comercial — Cotizaciones"]
 )
+
+
+# ============================================================
+# HELPERS
+# ============================================================
+
+def _clean_str(value):
+    if value is None:
+        return None
+    value = str(value).strip()
+    return value if value else None
+
+
+def _normalize_payload_dict(data: dict) -> dict:
+    clean = {}
+    for k, v in (data or {}).items():
+        if isinstance(v, str):
+            clean[k] = _clean_str(v)
+        else:
+            clean[k] = v
+    return clean
+
+
+def _build_cotizaciones_filters(
+    cliente: str | None = None,
+    servicio: str | None = None,
+    continente: str | None = None,
+    pais: str | None = None,
+    puerto: str | None = None,
+    status: str | None = None,
+    year: int | None = None,
+):
+    filters = []
+    params = {}
+
+    cliente = _clean_str(cliente)
+    servicio = _clean_str(servicio)
+    continente = _clean_str(continente)
+    pais = _clean_str(pais)
+    puerto = _clean_str(puerto)
+    status = _clean_str(status)
+
+    if year:
+        filters.append("EXTRACT(YEAR FROM COALESCE(updated_at, created_at)) = %(year)s")
+        params["year"] = year
+
+    if cliente:
+        filters.append("TRIM(cliente) = %(cliente)s")
+        params["cliente"] = cliente
+
+    if servicio:
+        filters.append("TRIM(servicio) = %(servicio)s")
+        params["servicio"] = servicio
+
+    if continente:
+        filters.append("TRIM(continente) = %(continente)s")
+        params["continente"] = continente
+
+    if pais:
+        filters.append("TRIM(pais) = %(pais)s")
+        params["pais"] = pais
+
+    if puerto:
+        filters.append("TRIM(puerto) = %(puerto)s")
+        params["puerto"] = puerto
+
+    if status:
+        filters.append("TRIM(status) = %(status)s")
+        params["status"] = status
+
+    return filters, params
+
 
 # ============================================================
 # SCHEMAS
@@ -89,64 +160,79 @@ class CotizacionUpdate(BaseModel):
 def get_cotizaciones_meta(conn=Depends(get_db)):
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
-    # Clientes
-    cur.execute("""
-        SELECT
-            codigo,
-            TRIM(nombrejuridico) AS nombre
-        FROM cliente
-        ORDER BY nombre;
-    """)
-    clientes = cur.fetchall()
+    try:
+        # Clientes
+        cur.execute("""
+            SELECT
+                codigo,
+                TRIM(nombrejuridico) AS nombre
+            FROM cliente
+            WHERE nombrejuridico IS NOT NULL
+              AND TRIM(nombrejuridico) <> ''
+            ORDER BY nombre;
+        """)
+        clientes = cur.fetchall() or []
 
-    # Servicios
-    cur.execute("""
-        SELECT
-            codigo,
-            codigoprod,
-            TRIM(nombre) AS nombre
-        FROM serviciosmd
-        ORDER BY nombre;
-    """)
-    servicios = cur.fetchall()
+        # Servicios
+        cur.execute("""
+            SELECT
+                codigo,
+                codigoprod,
+                TRIM(nombre) AS nombre
+            FROM serviciosmd
+            WHERE nombre IS NOT NULL
+              AND TRIM(nombre) <> ''
+            ORDER BY nombre;
+        """)
+        servicios = cur.fetchall() or []
 
-    # Ubicaciones
-    cur.execute("""
-        SELECT DISTINCT
-            TRIM(continente) AS continente,
-            TRIM(pais) AS pais,
-            TRIM(puerto) AS puerto
-        FROM continentes_paises_puertos
-        WHERE continente IS NOT NULL
-          AND pais IS NOT NULL
-          AND puerto IS NOT NULL
-        ORDER BY continente, pais, puerto;
-    """)
-    ubicaciones = cur.fetchall()
+        # Ubicaciones
+        cur.execute("""
+            SELECT DISTINCT
+                TRIM(continente) AS continente,
+                TRIM(pais) AS pais,
+                TRIM(puerto) AS puerto
+            FROM continentes_paises_puertos
+            WHERE continente IS NOT NULL
+              AND TRIM(continente) <> ''
+              AND pais IS NOT NULL
+              AND TRIM(pais) <> ''
+              AND puerto IS NOT NULL
+              AND TRIM(puerto) <> ''
+            ORDER BY continente, pais, puerto;
+        """)
+        ubicaciones = cur.fetchall() or []
 
-    # Precios activos
-    cur.execute("""
-        SELECT
-            servicio,
-            cliente,
-            continente,
-            pais,
-            puerto,
-            precio,
-            moneda
-        FROM servicios_precios
-        WHERE activo = TRUE;
-    """)
-    precios = cur.fetchall()
+        # Precios activos y limpios para cascada
+        cur.execute("""
+            SELECT
+                TRIM(servicio)   AS servicio,
+                TRIM(cliente)    AS cliente,
+                TRIM(continente) AS continente,
+                TRIM(pais)       AS pais,
+                TRIM(puerto)     AS puerto,
+                precio,
+                moneda,
+                activo
+            FROM servicios_precios
+            WHERE activo = TRUE
+              AND cliente IS NOT NULL
+              AND TRIM(cliente) <> ''
+              AND servicio IS NOT NULL
+              AND TRIM(servicio) <> ''
+            ORDER BY cliente, servicio, continente, pais, puerto;
+        """)
+        precios = cur.fetchall() or []
 
-    cur.close()
+        return {
+            "clientes": clientes,
+            "servicios": servicios,
+            "ubicaciones": ubicaciones,
+            "precios": precios
+        }
 
-    return {
-        "clientes": clientes,
-        "servicios": servicios,
-        "ubicaciones": ubicaciones,
-        "precios": precios
-    }
+    finally:
+        cur.close()
 
 
 # ============================================================
@@ -157,34 +243,58 @@ def get_cotizaciones_meta(conn=Depends(get_db)):
     "",
     dependencies=[Depends(require_permission("comercial", "view"))]
 )
-def listar_cotizaciones(conn=Depends(get_db)):
+def listar_cotizaciones(
+    cliente: str | None = Query(None),
+    servicio: str | None = Query(None),
+    continente: str | None = Query(None),
+    pais: str | None = Query(None),
+    puerto: str | None = Query(None),
+    status: str | None = Query(None),
+    conn=Depends(get_db)
+):
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
-    cur.execute("""
-        SELECT
-            id,
-            quotation_number,
-            cliente,
-            servicio,
-            continente,
-            pais,
-            puerto,
-            precio,
-            idioma,
-            validez,
-            status,
-            created_at
-        FROM public.cotizaciones
-        ORDER BY created_at DESC;
-    """)
+    try:
+        filters, params = _build_cotizaciones_filters(
+            cliente=cliente,
+            servicio=servicio,
+            continente=continente,
+            pais=pais,
+            puerto=puerto,
+            status=status,
+        )
 
-    data = cur.fetchall()
-    cur.close()
+        where_clause = f"WHERE {' AND '.join(filters)}" if filters else ""
 
-    return {
-        "total": len(data),
-        "data": data
-    }
+        cur.execute(f"""
+            SELECT
+                id,
+                quotation_number,
+                TRIM(cliente)    AS cliente,
+                TRIM(servicio)   AS servicio,
+                TRIM(continente) AS continente,
+                TRIM(pais)       AS pais,
+                TRIM(puerto)     AS puerto,
+                precio,
+                idioma,
+                validez,
+                TRIM(status)     AS status,
+                created_at
+            FROM public.cotizaciones
+            {where_clause}
+            ORDER BY created_at DESC;
+        """, params)
+
+        data = cur.fetchall() or []
+
+        return {
+            "total": len(data),
+            "data": data
+        }
+
+    finally:
+        cur.close()
+
 
 # ============================================================
 # Consecutivo Cotización
@@ -197,27 +307,29 @@ def listar_cotizaciones(conn=Depends(get_db)):
 def get_next_quotation_number(conn=Depends(get_db)):
     cur = conn.cursor()
 
-    cur.execute("""
-        SELECT quotation_number
-        FROM public.cotizaciones
-        ORDER BY id DESC
-        LIMIT 1
-        FOR UPDATE;
-    """)
+    try:
+        cur.execute("""
+            SELECT quotation_number
+            FROM public.cotizaciones
+            ORDER BY id DESC
+            LIMIT 1
+            FOR UPDATE;
+        """)
 
-    row = cur.fetchone()
+        row = cur.fetchone()
 
-    if row and row[0]:
-        last_num = int(row[0].replace("Quotation", "").strip())
-        next_num = last_num + 1
-    else:
-        next_num = 1
+        if row and row[0]:
+            last_num = int(str(row[0]).replace("Quotation", "").strip())
+            next_num = last_num + 1
+        else:
+            next_num = 1
 
-    cur.close()
+        return {
+            "quotation_number": f"Quotation {next_num:05d}"
+        }
 
-    return {
-        "quotation_number": f"Quotation {next_num:05d}"
-    }
+    finally:
+        cur.close()
 
 
 # ============================================================
@@ -231,45 +343,56 @@ def get_next_quotation_number(conn=Depends(get_db)):
 def crear_cotizacion(payload: CotizacionCreate, conn=Depends(get_db)):
     cur = conn.cursor()
 
-    cur.execute("""
-        SELECT quotation_number
-        FROM public.cotizaciones
-        ORDER BY id DESC
-        LIMIT 1
-        FOR UPDATE;
-    """)
+    try:
+        cur.execute("""
+            SELECT quotation_number
+            FROM public.cotizaciones
+            ORDER BY id DESC
+            LIMIT 1
+            FOR UPDATE;
+        """)
 
-    row = cur.fetchone()
-    next_num = int(row[0].replace("Quotation", "").strip()) + 1 if row else 1
-    quotation_number = f"Quotation {next_num:05d}"
+        row = cur.fetchone()
+        next_num = int(str(row[0]).replace("Quotation", "").strip()) + 1 if row and row[0] else 1
+        quotation_number = f"Quotation {next_num:05d}"
 
-    sql = """
-        INSERT INTO public.cotizaciones (
-            cliente, servicio, continente, pais, puerto,
-            precio, idioma, validez, status,
-            servicio_1, precio_1, servicio_2, precio_2,
-            servicio_3, precio_3, servicio_4, precio_4,
-            quotation_number
-        )
-        VALUES (
-            %(cliente)s, %(servicio)s, %(continente)s, %(pais)s, %(puerto)s,
-            %(precio)s, %(idioma)s, %(validez)s, %(status)s,
-            %(servicio_1)s, %(precio_1)s, %(servicio_2)s, %(precio_2)s,
-            %(servicio_3)s, %(precio_3)s, %(servicio_4)s, %(precio_4)s,
-            %(quotation_number)s
-        )
-        RETURNING id, quotation_number;
-    """
+        sql = """
+            INSERT INTO public.cotizaciones (
+                cliente, servicio, continente, pais, puerto,
+                precio, idioma, validez, status,
+                servicio_1, precio_1, servicio_2, precio_2,
+                servicio_3, precio_3, servicio_4, precio_4,
+                quotation_number
+            )
+            VALUES (
+                %(cliente)s, %(servicio)s, %(continente)s, %(pais)s, %(puerto)s,
+                %(precio)s, %(idioma)s, %(validez)s, %(status)s,
+                %(servicio_1)s, %(precio_1)s, %(servicio_2)s, %(precio_2)s,
+                %(servicio_3)s, %(precio_3)s, %(servicio_4)s, %(precio_4)s,
+                %(quotation_number)s
+            )
+            RETURNING id, quotation_number;
+        """
 
-    params = payload.dict()
-    params["quotation_number"] = quotation_number
+        params = _normalize_payload_dict(payload.dict())
+        params["quotation_number"] = quotation_number
 
-    cur.execute(sql, params)
-    row = cur.fetchone()
-    conn.commit()
-    cur.close()
+        cur.execute(sql, params)
+        row = cur.fetchone()
+        conn.commit()
 
-    return {"status": "OK", "id": row[0], "quotation_number": row[1]}
+        return {
+            "status": "OK",
+            "id": row[0],
+            "quotation_number": row[1]
+        }
+
+    except Exception:
+        conn.rollback()
+        raise
+
+    finally:
+        cur.close()
 
 
 # ============================================================
@@ -287,94 +410,111 @@ def actualizar_cotizacion(
 ):
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
-    # --------------------------------------------------------
-    # Validar existencia de la cotización
-    # --------------------------------------------------------
-    cur.execute("""
-        SELECT id, status
-        FROM public.cotizaciones
-        WHERE id = %s;
-    """, (cotizacion_id,))
+    try:
+        # --------------------------------------------------------
+        # Validar existencia de la cotización
+        # --------------------------------------------------------
+        cur.execute("""
+            SELECT id, status
+            FROM public.cotizaciones
+            WHERE id = %s;
+        """, (cotizacion_id,))
 
-    current = cur.fetchone()
-    if not current:
+        current = cur.fetchone()
+        if not current:
+            raise HTTPException(status_code=404, detail="Cotización no encontrada")
+
+        status_actual = _clean_str(current["status"])
+        data = _normalize_payload_dict(payload.dict(exclude_unset=True))
+
+        if not data:
+            raise HTTPException(
+                status_code=400,
+                detail="No hay campos para actualizar"
+            )
+
+        # --------------------------------------------------------
+        # Validaciones de negocio sobre STATUS
+        # --------------------------------------------------------
+        nuevo_status = _clean_str(data.get("status"))
+
+        if nuevo_status:
+            if nuevo_status not in ("PENDIENTE", "APROBADO", "CANCELADO"):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Estado inválido"
+                )
+
+            if status_actual == "APROBADO":
+                raise HTTPException(
+                    status_code=400,
+                    detail="Una cotización APROBADA no puede modificarse"
+                )
+
+            if status_actual == "CANCELADO":
+                raise HTTPException(
+                    status_code=400,
+                    detail="Una cotización CANCELADA no puede modificarse"
+                )
+
+            if nuevo_status == "CANCELADO" and not _clean_str(data.get("razon_cancelacion")):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Debe indicar la razón de cancelación"
+                )
+
+        # --------------------------------------------------------
+        # Construcción segura del UPDATE
+        # --------------------------------------------------------
+        allowed_fields = {
+            "cliente", "servicio", "continente", "pais", "puerto",
+            "precio", "idioma", "validez", "status",
+            "servicio_1", "precio_1", "servicio_2", "precio_2",
+            "servicio_3", "precio_3", "servicio_4", "precio_4",
+            "razon_cancelacion"
+        }
+
+        fields = []
+        params = {"id": cotizacion_id}
+
+        for k, v in data.items():
+            if k not in allowed_fields:
+                continue
+            fields.append(f"{k} = %({k})s")
+            params[k] = v
+
+        if not fields:
+            raise HTTPException(
+                status_code=400,
+                detail="No hay campos válidos para actualizar"
+            )
+
+        fields.append("updated_at = NOW()")
+
+        sql = f"""
+            UPDATE public.cotizaciones
+            SET {", ".join(fields)}
+            WHERE id = %(id)s;
+        """
+
+        cur.execute(sql, params)
+        conn.commit()
+
+        return {
+            "status": "OK",
+            "id": cotizacion_id
+        }
+
+    except HTTPException:
+        conn.rollback()
+        raise
+
+    except Exception:
+        conn.rollback()
+        raise
+
+    finally:
         cur.close()
-        raise HTTPException(status_code=404, detail="Cotización no encontrada")
-
-    status_actual = current["status"]
-    data = payload.dict(exclude_unset=True)
-
-    if not data:
-        cur.close()
-        raise HTTPException(
-            status_code=400,
-            detail="No hay campos para actualizar"
-        )
-
-    # --------------------------------------------------------
-    # Validaciones de negocio sobre STATUS
-    # --------------------------------------------------------
-    nuevo_status = data.get("status")
-
-    if nuevo_status:
-        if nuevo_status not in ("PENDIENTE", "APROBADO", "CANCELADO"):
-            cur.close()
-            raise HTTPException(
-                status_code=400,
-                detail="Estado inválido"
-            )
-
-        # No permitir volver atrás
-        if status_actual == "APROBADO":
-            cur.close()
-            raise HTTPException(
-                status_code=400,
-                detail="Una cotización APROBADA no puede modificarse"
-            )
-
-        if status_actual == "CANCELADO":
-            cur.close()
-            raise HTTPException(
-                status_code=400,
-                detail="Una cotización CANCELADA no puede modificarse"
-            )
-
-        # Si se cancela → razón obligatoria
-        if nuevo_status == "CANCELADO" and not data.get("razon_cancelacion"):
-            cur.close()
-            raise HTTPException(
-                status_code=400,
-                detail="Debe indicar la razón de cancelación"
-            )
-
-    # --------------------------------------------------------
-    # Construcción segura del UPDATE
-    # --------------------------------------------------------
-    fields = []
-    params = {"id": cotizacion_id}
-
-    for k, v in data.items():
-        fields.append(f"{k} = %({k})s")
-        params[k] = v
-
-    fields.append("updated_at = NOW()")
-
-    sql = f"""
-        UPDATE public.cotizaciones
-        SET {", ".join(fields)}
-        WHERE id = %(id)s;
-    """
-
-    cur.execute(sql, params)
-    conn.commit()
-    cur.close()
-
-    return {
-        "status": "OK",
-        "id": cotizacion_id
-    }
-
-
 
 
 # ============================================================
@@ -388,16 +528,22 @@ def actualizar_cotizacion(
 def eliminar_cotizacion(cotizacion_id: int, conn=Depends(get_db)):
     cur = conn.cursor()
 
-    cur.execute("""
-        DELETE FROM public.cotizaciones
-        WHERE id = %s;
-    """, (cotizacion_id,))
+    try:
+        cur.execute("""
+            DELETE FROM public.cotizaciones
+            WHERE id = %s;
+        """, (cotizacion_id,))
 
-    conn.commit()
-    cur.close()
+        conn.commit()
 
-    return {"status": "OK"}
+        return {"status": "OK"}
 
+    except Exception:
+        conn.rollback()
+        raise
+
+    finally:
+        cur.close()
 
 
 # ============================================================
@@ -412,6 +558,7 @@ def get_cotizaciones_kpis(
     year: int | None = None,
     cliente: str | None = None,
     servicio: str | None = None,
+    continente: str | None = None,
     pais: str | None = None,
     puerto: str | None = None,
     status: str | None = None,
@@ -419,54 +566,39 @@ def get_cotizaciones_kpis(
 ):
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
-    filters = []
-    params = {}
+    try:
+        filters, params = _build_cotizaciones_filters(
+            year=year,
+            cliente=cliente,
+            servicio=servicio,
+            continente=continente,
+            pais=pais,
+            puerto=puerto,
+            status=status
+        )
 
-    if year:
-        filters.append("EXTRACT(YEAR FROM updated_at) = %(year)s")
-        params["year"] = year
+        where_clause = f"WHERE {' AND '.join(filters)}" if filters else ""
 
-    if cliente:
-        filters.append("cliente = %(cliente)s")
-        params["cliente"] = cliente
+        sql = f"""
+            SELECT
+                COUNT(DISTINCT TRIM(cliente))                        AS clientes,
+                COUNT(DISTINCT TRIM(servicio))                       AS servicios,
+                COUNT(DISTINCT TRIM(pais))                           AS paises,
+                COUNT(DISTINCT TRIM(puerto))                         AS puertos,
+                COUNT(*) FILTER (WHERE TRIM(status) = 'PENDIENTE')   AS pendientes,
+                COUNT(*) FILTER (WHERE TRIM(status) = 'APROBADO')    AS aprobadas,
+                COUNT(*) FILTER (WHERE TRIM(status) = 'CANCELADO')   AS canceladas
+            FROM public.cotizaciones
+            {where_clause};
+        """
 
-    if servicio:
-        filters.append("servicio = %(servicio)s")
-        params["servicio"] = servicio
+        cur.execute(sql, params)
+        result = cur.fetchone()
 
-    if pais:
-        filters.append("pais = %(pais)s")
-        params["pais"] = pais
+        return {
+            "year": year,
+            "kpis": result
+        }
 
-    if puerto:
-        filters.append("puerto = %(puerto)s")
-        params["puerto"] = puerto
-
-    if status:
-        filters.append("status = %(status)s")
-        params["status"] = status
-
-    where_clause = f"WHERE {' AND '.join(filters)}" if filters else ""
-
-    sql = f"""
-        SELECT
-            COUNT(DISTINCT cliente)                     AS clientes,
-            COUNT(DISTINCT servicio)                    AS servicios,
-            COUNT(DISTINCT pais)                        AS paises,
-            COUNT(DISTINCT puerto)                      AS puertos,
-            COUNT(*) FILTER (WHERE status = 'PENDIENTE') AS pendientes,
-            COUNT(*) FILTER (WHERE status = 'APROBADO')  AS aprobadas,
-            COUNT(*) FILTER (WHERE status = 'CANCELADO') AS canceladas
-        FROM public.cotizaciones
-        {where_clause};
-    """
-
-    cur.execute(sql, params)
-    result = cur.fetchone()
-    cur.close()
-
-    return {
-        "year": year,
-        "kpis": result
-    }
-
+    finally:
+        cur.close()
