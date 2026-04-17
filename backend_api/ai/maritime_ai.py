@@ -249,6 +249,128 @@ def improve_truck_supervision_text(
 
 
 # =========================================================
+# CLEAN CARGO CONDITION AI OUTPUT
+# =========================================================
+def _clean_cargo_condition_ai_output(output_text: str, section: str) -> str:
+    """
+    Limpia respuestas de IA que devuelven encabezados, markdown
+    o múltiples secciones cuando solo se pidió un bloque.
+    """
+
+    if not output_text:
+        return ""
+
+    text = output_text.strip()
+
+    # -----------------------------------------------------
+    # QUITAR PREFIJOS COMUNES
+    # -----------------------------------------------------
+    prefixes = [
+        "Improved Text:",
+        "Improved text:",
+        "Texto Mejorado:",
+        "Texto mejorado:",
+    ]
+
+    for prefix in prefixes:
+        if text.startswith(prefix):
+            text = text[len(prefix):].strip()
+            break
+
+    # -----------------------------------------------------
+    # QUITAR PRIMER ENCABEZADO SI VIENE SOLO
+    # -----------------------------------------------------
+    lines = text.splitlines()
+
+    while lines and not lines[0].strip():
+        lines.pop(0)
+
+    possible_headers = {
+        "### NARRATIVE",
+        "### FINDINGS",
+        "### REMARKS",
+        "### CONCLUSION",
+        "## NARRATIVE",
+        "## FINDINGS",
+        "## REMARKS",
+        "## CONCLUSION",
+        "# NARRATIVE",
+        "# FINDINGS",
+        "# REMARKS",
+        "# CONCLUSION",
+        "NARRATIVE",
+        "FINDINGS",
+        "REMARKS",
+        "CONCLUSION",
+        "### NARRATIVA",
+        "### HALLAZGOS",
+        "### OBSERVACIONES",
+        "### CONCLUSIÓN",
+        "### CONCLUSION",
+        "NARRATIVA",
+        "HALLAZGOS",
+        "OBSERVACIONES",
+        "CONCLUSIÓN",
+        "CONCLUSION",
+    }
+
+    if lines:
+        first_line = lines[0].strip().upper()
+        if first_line in possible_headers:
+            lines.pop(0)
+
+    text = "\n".join(lines).strip()
+
+    # -----------------------------------------------------
+    # CORTAR SI APARECEN OTRAS SECCIONES
+    # -----------------------------------------------------
+    stop_markers = [
+        "\n### NARRATIVE",
+        "\n### FINDINGS",
+        "\n### REMARKS",
+        "\n### CONCLUSION",
+        "\n## NARRATIVE",
+        "\n## FINDINGS",
+        "\n## REMARKS",
+        "\n## CONCLUSION",
+        "\n# NARRATIVE",
+        "\n# FINDINGS",
+        "\n# REMARKS",
+        "\n# CONCLUSION",
+        "\nNARRATIVE",
+        "\nFINDINGS",
+        "\nREMARKS",
+        "\nCONCLUSION",
+        "\n### NARRATIVA",
+        "\n### HALLAZGOS",
+        "\n### OBSERVACIONES",
+        "\n### CONCLUSIÓN",
+        "\nNARRATIVA",
+        "\nHALLAZGOS",
+        "\nOBSERVACIONES",
+        "\nCONCLUSIÓN",
+    ]
+
+    upper_text = text.upper()
+    cut_positions = []
+
+    for marker in stop_markers:
+        pos = upper_text.find(marker.upper())
+        if pos > 0:
+            cut_positions.append(pos)
+
+    if cut_positions:
+        text = text[:min(cut_positions)].strip()
+
+    # -----------------------------------------------------
+    # LIMPIEZA FINAL
+    # -----------------------------------------------------
+    text = text.replace("```", "").strip()
+
+    return text
+
+
+# =========================================================
 # CARGO CONDITION AI LOGIC (BILINGUAL + PRECAUTION SAFE)
 # =========================================================
 def improve_cargo_condition_text(
@@ -268,18 +390,42 @@ def improve_cargo_condition_text(
     if language not in ("ES", "EN"):
         language = "ES"
 
+    section = (section or "narrative").strip().lower()
+
     base_prompt = load_cargo_condition_prompt()
 
-    # 🔹 Instrucción dinámica por idioma
+    # 🔹 Instrucción dinámica por idioma + blindaje fuerte
     if language == "EN":
         language_instruction = (
-            "\n\nIMPORTANT: Rewrite strictly in professional maritime English. "
-            "Maintain neutral surveyor tone."
+            "\n\nIMPORTANT EXECUTION RULES:\n"
+            "- Rewrite ONLY the provided text block.\n"
+            "- This request corresponds to ONE selected bullet only.\n"
+            "- Do NOT write a full report.\n"
+            "- Do NOT generate other sections.\n"
+            "- Do NOT add headings.\n"
+            "- Do NOT include titles such as NARRATIVE, FINDINGS, REMARKS, or CONCLUSION.\n"
+            "- Do NOT use markdown.\n"
+            "- Do NOT include labels such as 'Improved Text:'.\n"
+            "- Do NOT add placeholders such as [insert date], [insert hold number], or similar.\n"
+            "- Keep strictly to the factual scope of the original selected bullet.\n"
+            "- Return only the improved rewritten bullet text.\n"
+            "- Return plain text only.\n"
         )
     else:
         language_instruction = (
-            "\n\nIMPORTANTE: Reescribe estrictamente en español técnico profesional marítimo. "
-            "Mantén tono formal de surveyor."
+            "\n\nREGLAS DE EJECUCIÓN IMPORTANTES:\n"
+            "- Reescribe ÚNICAMENTE el bloque de texto proporcionado.\n"
+            "- Esta solicitud corresponde a UN solo bullet seleccionado.\n"
+            "- No redactes un informe completo.\n"
+            "- No generes otras secciones.\n"
+            "- No agregues encabezados.\n"
+            "- No incluyas títulos como NARRATIVE, FINDINGS, REMARKS o CONCLUSION.\n"
+            "- No uses markdown.\n"
+            "- No incluyas etiquetas como 'Improved Text:'.\n"
+            "- No agregues placeholders como [insert date], [insert hold number] o similares.\n"
+            "- Mantente estrictamente dentro del alcance factual del bullet original seleccionado.\n"
+            "- Devuelve únicamente el bullet mejorado.\n"
+            "- Devuelve solo texto plano.\n"
         )
 
     prompt = (
@@ -287,6 +433,7 @@ def improve_cargo_condition_text(
         .replace("{{vessel}}", vessel or "N/A")
         .replace("{{port}}", port or "N/A")
         .replace("{{section}}", section or "narrative")
+        .replace("{{language}}", language)
         .replace("{{user_text}}", user_text.strip())
         + language_instruction
     )
@@ -294,8 +441,8 @@ def improve_cargo_condition_text(
     response = client.responses.create(
         model="gpt-4o-mini",
         input=prompt,
-        temperature=0.15,
-        max_output_tokens=900
+        temperature=0.05,
+        max_output_tokens=500
     )
 
     output_text = getattr(response, "output_text", None)
@@ -303,7 +450,12 @@ def improve_cargo_condition_text(
     if not output_text or not output_text.strip():
         raise RuntimeError("La IA devolvió una respuesta vacía.")
 
-    return output_text.strip()
+    cleaned_text = _clean_cargo_condition_ai_output(output_text, section)
+
+    if not cleaned_text:
+        raise RuntimeError("La IA devolvió contenido inválido para cargo condition.")
+
+    return cleaned_text
 
 
 # =========================================================
