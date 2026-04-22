@@ -486,6 +486,8 @@ def update_vessel_truck_supervision(
     payload: dict,
     conn=Depends(get_db)
 ):
+    from datetime import datetime, date
+    from fastapi import HTTPException
 
     cur = conn.cursor()
 
@@ -493,17 +495,94 @@ def update_vessel_truck_supervision(
         value = payload.get(key, default)
         return value if value not in ["", None] else default
 
+    def parse_date(value):
+        """
+        Acepta:
+        - dd-mm-YYYY   -> 22-04-2026
+        - YYYY-mm-dd   -> 2026-04-22
+        - date/datetime nativo
+        - "", None     -> None
+        """
+        if value in ("", None):
+            return None
+
+        if isinstance(value, date) and not isinstance(value, datetime):
+            return value
+
+        if isinstance(value, datetime):
+            return value.date()
+
+        if not isinstance(value, str):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid date type: {value}"
+            )
+
+        value = value.strip()
+
+        for fmt in ("%d-%m-%Y", "%Y-%m-%d"):
+            try:
+                return datetime.strptime(value, fmt).date()
+            except ValueError:
+                pass
+
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Invalid date format '{value}'. "
+                f"Use 'dd-mm-yyyy' or 'yyyy-mm-dd'."
+            )
+        )
+
+    def parse_bool(value):
+        """
+        Soporta:
+        True / False
+        'true' / 'false'
+        '1' / '0'
+        'yes' / 'no'
+        'on' / 'off'
+        """
+        if isinstance(value, bool):
+            return value
+
+        if value is None:
+            return False
+
+        if isinstance(value, (int, float)):
+            return bool(value)
+
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in ("true", "1", "yes", "y", "si", "sí", "on"):
+                return True
+            if normalized in ("false", "0", "no", "n", "off", ""):
+                return False
+
+        return False
+
     try:
+        if not isinstance(payload, dict):
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid payload. Expected JSON object."
+            )
 
         # =====================================================
         # DETECT APPROVAL ACTION
         # =====================================================
-        approve = payload.get("approve", False)
+        approve = parse_bool(payload.get("approve", False))
+        status_value = "Approved" if approve else None
 
-        if approve:
-            status_value = "Approved"
-        else:
-            status_value = None
+        # =====================================================
+        # NORMALIZE DATES
+        # =====================================================
+        report_date = parse_date(payload.get("report_date"))
+        arrival_date = parse_date(payload.get("arrival_date"))
+        inspection_date = parse_date(payload.get("inspection_date"))
+        supervision_completed_date = parse_date(
+            payload.get("supervision_completed_date")
+        )
 
         # =====================================================
         # BASE UPDATE
@@ -511,7 +590,6 @@ def update_vessel_truck_supervision(
         update_query = """
             UPDATE vessel_truck_supervision_reports
             SET
-
                 cert_no = %(cert_no)s,
                 customer = %(customer)s,
                 port = %(port)s,
@@ -551,14 +629,13 @@ def update_vessel_truck_supervision(
         """
 
         params = {
-
             "id": report_id,
 
             "cert_no": safe("cert_no"),
             "customer": safe("customer"),
             "port": safe("port"),
             "country": safe("country"),
-            "report_date": safe("report_date"),
+            "report_date": report_date,
 
             "vessel_name": safe("vessel_name"),
             "flag_port_registry": safe("flag_port_registry"),
@@ -570,9 +647,9 @@ def update_vessel_truck_supervision(
             "captain": safe("captain"),
             "chief_officer": safe("chief_officer"),
 
-            "arrival_date": safe("arrival_date"),
-            "inspection_date": safe("inspection_date"),
-            "supervision_completed_date": safe("supervision_completed_date"),
+            "arrival_date": arrival_date,
+            "inspection_date": inspection_date,
+            "supervision_completed_date": supervision_completed_date,
 
             "process_text": safe("process_text"),
             "findings_documental_text": safe("findings_documental_text"),
@@ -601,6 +678,7 @@ def update_vessel_truck_supervision(
         }
 
     except HTTPException:
+        conn.rollback()
         raise
 
     except Exception as e:
