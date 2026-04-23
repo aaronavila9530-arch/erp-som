@@ -274,7 +274,6 @@ def get_vessel_condition_survey(report_number: str, conn=Depends(get_db)):
             detail=f"Error retrieving vessel condition survey: {str(e)}"
         )
 
-
 # =========================================================
 # GET BY ID (PARA POPUPS)
 # =========================================================
