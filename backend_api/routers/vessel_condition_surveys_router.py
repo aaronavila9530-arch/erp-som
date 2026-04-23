@@ -208,10 +208,25 @@ def update_vessel_condition_survey(report_number: str, payload: dict, conn=Depen
 # GET
 # =========================================================
 
+# =========================================================
+# GET
+# =========================================================
+
 @router.get("/{report_number}")
 def get_vessel_condition_survey(report_number: str, conn=Depends(get_db)):
 
     try:
+
+        # -------------------------------------------------
+        # VALIDACIÓN BÁSICA
+        # -------------------------------------------------
+        report_number = str(report_number or "").strip()
+
+        if not report_number:
+            raise HTTPException(
+                status_code=400,
+                detail="Report number is required"
+            )
 
         cur = conn.cursor(cursor_factory=RealDictCursor)
 
@@ -220,6 +235,7 @@ def get_vessel_condition_survey(report_number: str, conn=Depends(get_db)):
             SELECT *
             FROM vessel_condition_surveys
             WHERE report_number = %s
+            LIMIT 1
             """,
             (report_number,)
         )
@@ -234,16 +250,28 @@ def get_vessel_condition_survey(report_number: str, conn=Depends(get_db)):
 
         row = dict(row)
 
-        # reconstruir bullets dinámicos
-        row = _collapse_dynamic_bullets(row)
+        # -------------------------------------------------
+        # RECONSTRUIR BULLETS DINÁMICOS
+        # -------------------------------------------------
+        try:
+            row = _collapse_dynamic_bullets(row)
+        except Exception:
+            # Evita que un problema en bullets rompa el GET completo
+            pass
 
-        return row
+        return {
+            "success": True,
+            "data": row
+        }
+
+    except HTTPException:
+        raise
 
     except Exception as e:
 
         raise HTTPException(
             status_code=500,
-            detail=str(e)
+            detail=f"Error retrieving vessel condition survey: {str(e)}"
         )
 
 
