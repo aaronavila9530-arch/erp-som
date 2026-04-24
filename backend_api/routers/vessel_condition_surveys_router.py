@@ -143,22 +143,44 @@ def create_vessel_condition_survey(payload: dict, conn=Depends(get_db)):
 # UPDATE
 # =========================================================
 
-@router.put("/{report_number}")
-def update_vessel_condition_survey(report_number: str, payload: dict, conn=Depends(get_db)):
+def _clean_update_payload(payload: dict) -> dict:
+
+    payload = payload or {}
+
+    _expand_dynamic_bullets(payload)
+
+    # No permitir actualizar columnas técnicas o inexistentes
+    blocked_keys = {
+        "id",
+        "created_at"
+    }
+
+    for key in list(payload.keys()):
+        if key in blocked_keys:
+            payload.pop(key, None)
+
+    payload["updated_at"] = datetime.utcnow()
+
+    # status permitido solo si viene Approved o Rejected
+    status = payload.get("status")
+
+    if status not in ["Approved", "Rejected", None]:
+        payload.pop("status", None)
+
+    return payload
+
+
+def _update_vessel_condition_survey_where(where_sql: str, where_value, payload: dict, conn):
 
     try:
 
-        payload = payload or {}
+        payload = _clean_update_payload(payload)
 
-        _expand_dynamic_bullets(payload)
-
-        payload["updated_at"] = datetime.utcnow()
-
-        # status permitido solo si viene Approved o Rejected
-        status = payload.get("status")
-
-        if status not in ["Approved", "Rejected", None]:
-            payload.pop("status", None)
+        if not payload:
+            raise HTTPException(
+                status_code=400,
+                detail="No fields received for update."
+            )
 
         sets = []
         params = []
@@ -167,13 +189,13 @@ def update_vessel_condition_survey(report_number: str, payload: dict, conn=Depen
             sets.append(f"{k} = %s")
             params.append(v)
 
-        params.append(report_number)
+        params.append(where_value)
 
         sql = f"""
-        UPDATE vessel_condition_surveys
-        SET {",".join(sets)}
-        WHERE report_number = %s
-        RETURNING report_number
+            UPDATE vessel_condition_surveys
+            SET {", ".join(sets)}
+            WHERE {where_sql}
+            RETURNING id, report_number
         """
 
         cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -182,6 +204,7 @@ def update_vessel_condition_survey(report_number: str, payload: dict, conn=Depen
         row = cur.fetchone()
 
         if not row:
+            conn.rollback()
             raise HTTPException(
                 status_code=404,
                 detail="Report not found"
@@ -191,8 +214,12 @@ def update_vessel_condition_survey(report_number: str, payload: dict, conn=Depen
 
         return {
             "success": True,
+            "id": row["id"],
             "report_number": row["report_number"]
         }
+
+    except HTTPException:
+        raise
 
     except Exception as e:
 
@@ -200,8 +227,38 @@ def update_vessel_condition_survey(report_number: str, payload: dict, conn=Depen
 
         raise HTTPException(
             status_code=500,
-            detail=str(e)
+            detail=f"Error updating vessel condition survey: {str(e)}"
         )
+
+
+@router.put("/{report_number}")
+def update_vessel_condition_survey(
+    report_number: str,
+    payload: dict,
+    conn=Depends(get_db)
+):
+
+    return _update_vessel_condition_survey_where(
+        "report_number = %s",
+        str(report_number).strip(),
+        payload,
+        conn
+    )
+
+
+@router.put("/id/{record_id}")
+def update_vessel_condition_survey_by_id(
+    record_id: int,
+    payload: dict,
+    conn=Depends(get_db)
+):
+
+    return _update_vessel_condition_survey_where(
+        "id = %s",
+        record_id,
+        payload,
+        conn
+    )
 
 
 # =========================================================
