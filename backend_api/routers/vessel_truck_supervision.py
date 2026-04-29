@@ -200,6 +200,28 @@ def create_vessel_truck_supervision(
             return None
 
     try:
+        cert_no = safe("cert_no")
+
+        if cert_no:
+            cur.execute(
+                """
+                SELECT id
+                FROM vessel_truck_supervision_reports
+                WHERE cert_no = %s
+                LIMIT 1
+                """,
+                (cert_no,)
+            )
+            existing = cur.fetchone()
+
+            if existing:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "Truck Supervision report already exists for this "
+                        "cert_no. Open it from Review to update it."
+                    )
+                )
 
         cur.execute("""
             INSERT INTO vessel_truck_supervision_reports (
@@ -272,7 +294,7 @@ def create_vessel_truck_supervision(
             RETURNING id, created_at, updated_at, status
         """, {
 
-            "cert_no": safe("cert_no"),
+            "cert_no": cert_no,
             "customer": safe("customer"),
             "port": safe("port"),
             "country": safe("country"),
@@ -309,6 +331,10 @@ def create_vessel_truck_supervision(
             "success": True,
             "data": new_record
         }
+
+    except HTTPException:
+        conn.rollback()
+        raise
 
     except Exception as e:
         conn.rollback()
