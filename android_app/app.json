@@ -1,0 +1,30 @@
+{
+  "expo": {
+    "name": "ERP SOM",
+    "slug": "erp-som-android",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "erpsom",
+    "userInterfaceStyle": "light",
+    "icon": "./assets/icon.png",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/de971da5-c502-48ed-94e0-8d9113debd07"
+    },
+    "android": {
+      "package": "com.msltech.erpsom",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#003A75"
+      }
+    },
+    "extra": {
+      "apiBaseUrl": "https://api-som-fastapi-production-e66d.up.railway.app",
+      "eas": {
+        "projectId": "de971da5-c502-48ed-94e0-8d9113debd07"
+      }
+    }
+  }
+}

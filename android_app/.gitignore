@@ -1,0 +1,6 @@
+node_modules/
+.expo/
+.expo-export-test/
+dist/
+build/
+*.log

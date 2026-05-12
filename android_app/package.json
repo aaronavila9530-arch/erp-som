@@ -1,0 +1,26 @@
+{
+  "name": "erp-som-android",
+  "version": "0.1.0",
+  "private": true,
+  "main": "node_modules/expo/AppEntry.js",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo run:android",
+    "typecheck": "tsc --noEmit",
+    "release:preview": "eas update --branch preview --message \"ERP SOM Android frontend update\""
+  },
+  "dependencies": {
+    "@react-native-async-storage/async-storage": "^2.1.2",
+    "expo": "^54.0.0",
+    "expo-local-authentication": "^55.0.13",
+    "expo-secure-store": "^55.0.13",
+    "expo-updates": "~29.0.17",
+    "react": "19.1.0",
+    "react-native": "0.81.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.0",
+    "babel-preset-expo": "^54.0.0",
+    "typescript": "^5.3.3"
+  }
+}
