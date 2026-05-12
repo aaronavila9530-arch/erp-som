@@ -5,7 +5,7 @@ import bcrypt
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from database import get_conn
+from database import get_conn, release_conn
 from routers.totp_service import (
     confirm_totp_enrollment,
     start_totp_enrollment,
@@ -39,6 +39,7 @@ MODULES_CONFIG = [
 
 def _fetch_user(usuario: str):
     conn = get_conn()
+    cur = None
     try:
         cur = conn.cursor()
         cur.execute(
@@ -52,12 +53,14 @@ def _fetch_user(usuario: str):
         )
         return cur.fetchone()
     finally:
-        cur.close()
-        conn.close()
+        if cur:
+            cur.close()
+        release_conn(conn)
 
 
 def _fetch_role(usuario: str) -> str:
     conn = get_conn()
+    cur = None
     try:
         cur = conn.cursor()
         cur.execute(
@@ -74,12 +77,14 @@ def _fetch_role(usuario: str) -> str:
             raise HTTPException(status_code=401, detail="Usuario no encontrado")
         return row[0]
     finally:
-        cur.close()
-        conn.close()
+        if cur:
+            cur.close()
+        release_conn(conn)
 
 
 def _touch_last_login(usuario: str):
     conn = get_conn()
+    cur = None
     try:
         cur = conn.cursor()
         cur.execute(
@@ -92,8 +97,9 @@ def _touch_last_login(usuario: str):
         )
         conn.commit()
     finally:
-        cur.close()
-        conn.close()
+        if cur:
+            cur.close()
+        release_conn(conn)
 
 
 def _has_visual_permission(usuario: str, rol: str, module_code: str, action: str) -> bool:
@@ -167,7 +173,12 @@ def mobile_login(payload: LoginRequest):
     if not activo:
         raise HTTPException(status_code=403, detail="Usuario inactivo")
 
-    if not bcrypt.checkpw(password.encode(), str(pass_hash).encode()):
+    try:
+        password_ok = bcrypt.checkpw(password.encode(), str(pass_hash).encode())
+    except ValueError:
+        password_ok = False
+
+    if not password_ok:
         raise HTTPException(status_code=401, detail="Credenciales inválidas")
 
     if not totp_enabled:

@@ -6,7 +6,7 @@
 import io
 import pyotp
 import qrcode
-from database import get_conn
+from database import get_conn, release_conn
 
 
 # ============================================================
@@ -72,6 +72,7 @@ def start_totp_enrollment(usuario: str) -> bytes:
     uri = generate_totp_uri(usuario, secret)
 
     conn = get_conn()
+    cur = None
     try:
         cur = conn.cursor()
 
@@ -94,8 +95,9 @@ def start_totp_enrollment(usuario: str) -> bytes:
         return generate_totp_qr_bytes(uri)
 
     finally:
-        cur.close()
-        conn.close()
+        if cur:
+            cur.close()
+        release_conn(conn)
 
 
 # ============================================================
@@ -108,6 +110,7 @@ def confirm_totp_enrollment(usuario: str, codigo: str) -> bool:
     """
 
     conn = get_conn()
+    cur = None
     try:
         cur = conn.cursor()
 
@@ -137,8 +140,9 @@ def confirm_totp_enrollment(usuario: str, codigo: str) -> bool:
         return True
 
     finally:
-        cur.close()
-        conn.close()
+        if cur:
+            cur.close()
+        release_conn(conn)
 
 
 # ============================================================
@@ -150,6 +154,7 @@ def validate_totp(usuario: str, codigo: str) -> bool:
     """
 
     conn = get_conn()
+    cur = None
     try:
         cur = conn.cursor()
 
@@ -172,5 +177,6 @@ def validate_totp(usuario: str, codigo: str) -> bool:
         return totp.verify(codigo, valid_window=1)
 
     finally:
-        cur.close()
-        conn.close()
+        if cur:
+            cur.close()
+        release_conn(conn)
