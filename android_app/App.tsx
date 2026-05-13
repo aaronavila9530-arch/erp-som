@@ -412,6 +412,10 @@ function DataView({
     return <DashboardView section={section} payload={payload} session={session} />;
   }
 
+  if (section?.key === "credit-hold") {
+    return <CreditControlMobile clients={rows} session={session} />;
+  }
+
   if (section?.table) {
     return <DesktopTable section={section} rows={rows} session={session} onReload={onReload} />;
   }
@@ -1280,6 +1284,289 @@ function DesktopTable({
           onReload();
         }}
       />
+    </View>
+  );
+}
+
+function CreditControlMobile({
+  clients,
+  session
+}: {
+  clients: Record<string, unknown>[];
+  session: NonNullable<ReturnType<typeof useAuth>["session"]>;
+}) {
+  const { labels, codes } = clientLabelsAndCodes({ data: clients });
+  const [selectedClient, setSelectedClient] = useState("");
+  const [creditExists, setCreditExists] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [form, setForm] = useState<Record<string, string>>({
+    termino_pago: "",
+    limite_credito: "",
+    moneda: "USD",
+    estado_credito: "ACTIVE",
+    hold_manual: "No",
+    observaciones: ""
+  });
+  const [exposure, setExposure] = useState<Record<string, unknown> | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+
+  const selectedCode = selectedClient ? codes[selectedClient] || selectedClient.split(" - ")[0] : "";
+  const readonly = creditExists && !editing;
+
+  function update(key: string, value: string) {
+    setForm((current) => ({ ...current, [key]: value }));
+  }
+
+  function clearCreditData(keepClient = true) {
+    if (!keepClient) setSelectedClient("");
+    setCreditExists(false);
+    setEditing(false);
+    setExposure(null);
+    setForm({
+      termino_pago: "",
+      limite_credito: "",
+      moneda: "USD",
+      estado_credito: "ACTIVE",
+      hold_manual: "No",
+      observaciones: ""
+    });
+  }
+
+  async function searchClient() {
+    if (!selectedCode) {
+      setMessage("Seleccione un cliente.");
+      return;
+    }
+
+    setBusy(true);
+    setMessage("");
+    setExposure(null);
+    try {
+      const credit = await apiRequest<Record<string, unknown>>(`/cliente-credito/${selectedCode}`, { session });
+      const exists = Boolean(credit.exists);
+      if (!exists) {
+        clearCreditData(true);
+        setEditing(true);
+        setMessage("Este cliente no tiene terminos crediticios asignados. Complete la asignacion inicial.");
+        return;
+      }
+
+      const data = asRecord(credit.data) || credit;
+      setCreditExists(true);
+      setEditing(false);
+      setForm({
+        termino_pago: formatValue(data.termino_pago) === "-" ? "" : formatValue(data.termino_pago),
+        limite_credito: formatValue(data.limite_credito) === "-" ? "" : formatValue(data.limite_credito),
+        moneda: formatValue(data.moneda) === "-" ? "USD" : formatValue(data.moneda),
+        estado_credito: formatValue(data.estado_credito ?? data.estado) === "-" ? "ACTIVE" : formatValue(data.estado_credito ?? data.estado),
+        hold_manual: data.hold_manual ? "Si" : "No",
+        observaciones: formatValue(data.observaciones) === "-" ? "" : formatValue(data.observaciones)
+      });
+
+      const nextExposure = await apiRequest<Record<string, unknown>>(`/cliente-credito/exposure/${selectedCode}`, { session });
+      setExposure(nextExposure);
+      setMessage("Credito y exposicion cargados.");
+    } catch (err) {
+      clearCreditData(true);
+      setMessage(err instanceof Error ? err.message : "No se pudo consultar el credito del cliente.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function validateCreditForm() {
+    if (!selectedCode) return "Seleccione un cliente.";
+    if (!form.termino_pago.trim()) return "Ingrese termino de pago.";
+    if (!form.limite_credito.trim()) return "Ingrese limite de credito.";
+    const term = Number(form.termino_pago);
+    const limit = Number(form.limite_credito);
+    if (!Number.isFinite(term) || term < 0) return "Termino de pago invalido.";
+    if (!Number.isFinite(limit) || limit < 0) return "Limite de credito invalido.";
+    return "";
+  }
+
+  async function saveCredit() {
+    const validation = validateCreditForm();
+    if (validation) {
+      setMessage(validation);
+      return;
+    }
+
+    const payload = {
+      codigo_cliente: selectedCode,
+      termino_pago: Number(form.termino_pago),
+      limite_credito: Number(form.limite_credito),
+      moneda: form.moneda || "USD",
+      estado_credito: form.estado_credito || "ACTIVE",
+      hold_manual: form.hold_manual === "Si",
+      observaciones: form.observaciones
+    };
+
+    setBusy(true);
+    setMessage("");
+    try {
+      if (creditExists) {
+        await apiRequest(`/cliente-credito/${selectedCode}`, { method: "PUT", body: payload, session });
+      } else {
+        await apiRequest("/cliente-credito/", { method: "POST", body: payload, session });
+      }
+      setMessage(creditExists ? "Condiciones crediticias actualizadas." : "Configuracion crediticia creada.");
+      await searchClient();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo guardar el credito.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function deleteCredit() {
+    if (!selectedCode || !creditExists) return;
+    Alert.alert("Confirmar", "Eliminar configuracion crediticia de este cliente?", [
+      { text: "Cancelar", style: "cancel" },
+      {
+        text: "Eliminar",
+        style: "destructive",
+        onPress: async () => {
+          setBusy(true);
+          setMessage("");
+          try {
+            await apiRequest(`/cliente-credito/${selectedCode}`, { method: "DELETE", session });
+            clearCreditData(true);
+            setMessage("Configuracion crediticia eliminada.");
+          } catch (err) {
+            setMessage(err instanceof Error ? err.message : "No se pudo eliminar el credito.");
+          } finally {
+            setBusy(false);
+          }
+        }
+      }
+    ]);
+  }
+
+  const semaforo = formatValue(exposure?.semaforo);
+  const trend = asRecord(exposure?.payment_trend);
+
+  return (
+    <View style={styles.creditShell}>
+      <Text style={styles.cardTitle}>Credit Control</Text>
+      <View style={styles.financeFilterBox}>
+        <SelectField label="Cliente" value={selectedClient} options={labels} onChange={setSelectedClient} />
+        <View style={styles.financeFilterActions}>
+          <Pressable style={styles.actionButton} onPress={searchClient}>
+            <Text style={styles.actionButtonText}>Buscar</Text>
+          </Pressable>
+          <Pressable style={styles.modalClose} onPress={() => clearCreditData(false)}>
+            <Text style={styles.modalCloseText}>Limpiar</Text>
+          </Pressable>
+        </View>
+      </View>
+
+      <View style={styles.creditCard}>
+        <View style={styles.creditHeader}>
+          <Text style={styles.cardTitle}>Condiciones crediticias</Text>
+          {creditExists ? (
+            <View style={[styles.creditStatusBadge, form.hold_manual === "Si" || form.estado_credito === "HOLD" ? styles.creditStatusHold : styles.creditStatusActive]}>
+              <Text style={styles.creditStatusText}>{form.hold_manual === "Si" ? "HOLD MANUAL" : form.estado_credito || "ACTIVE"}</Text>
+            </View>
+          ) : null}
+        </View>
+
+        <Text style={styles.label}>Termino de pago (dias)</Text>
+        <TextInput
+          editable={!readonly}
+          keyboardType="numeric"
+          value={form.termino_pago}
+          onChangeText={(value) => update("termino_pago", value)}
+          style={[styles.input, readonly && styles.readonlyInput]}
+        />
+
+        <Text style={styles.label}>Limite de credito</Text>
+        <TextInput
+          editable={!readonly}
+          keyboardType="decimal-pad"
+          value={form.limite_credito}
+          onChangeText={(value) => update("limite_credito", value)}
+          style={[styles.input, readonly && styles.readonlyInput]}
+        />
+
+        {readonly ? (
+          <>
+            <Text style={styles.label}>Moneda</Text>
+            <TextInput editable={false} value={form.moneda} style={[styles.input, styles.readonlyInput]} />
+            <Text style={styles.label}>Estado</Text>
+            <TextInput editable={false} value={form.estado_credito} style={[styles.input, styles.readonlyInput]} />
+            <Text style={styles.label}>Hold manual</Text>
+            <TextInput editable={false} value={form.hold_manual} style={[styles.input, styles.readonlyInput]} />
+          </>
+        ) : (
+          <>
+            <SelectField label="Moneda" value={form.moneda} options={["USD", "CRC", "EUR"]} onChange={(value) => update("moneda", value)} />
+            <SelectField label="Estado" value={form.estado_credito} options={["ACTIVE", "INACTIVE", "HOLD"]} onChange={(value) => update("estado_credito", value)} />
+            <SelectField label="Hold manual" value={form.hold_manual} options={["No", "Si"]} onChange={(value) => update("hold_manual", value)} />
+          </>
+        )}
+
+        <Text style={styles.label}>Observaciones</Text>
+        <TextInput
+          editable={!readonly}
+          multiline
+          value={form.observaciones}
+          onChangeText={(value) => update("observaciones", value)}
+          style={[styles.input, styles.multilineInput, readonly && styles.readonlyInput]}
+        />
+
+        <View style={styles.financeFilterActions}>
+          {creditExists && !editing ? (
+            <Pressable style={styles.actionButton} onPress={() => setEditing(true)}>
+              <Text style={styles.actionButtonText}>Editar</Text>
+            </Pressable>
+          ) : (
+            <PrimaryButton label={creditExists ? "Guardar cambios" : "Asignar credito"} loading={busy} onPress={saveCredit} />
+          )}
+          {creditExists ? (
+            <Pressable style={styles.modalClose} onPress={deleteCredit}>
+              <Text style={styles.modalCloseText}>Eliminar</Text>
+            </Pressable>
+          ) : null}
+        </View>
+      </View>
+
+      <View style={styles.creditCard}>
+        <View style={styles.creditHeader}>
+          <Text style={styles.cardTitle}>Exposicion Crediticia</Text>
+          {exposure ? (
+            <View style={[styles.creditSemaphore, semaforo === "VERDE" ? styles.creditGreen : semaforo === "AMARILLO" ? styles.creditYellow : styles.creditRed]}>
+              <Text style={styles.creditSemaphoreText}>
+                {semaforo === "VERDE" ? "DISPONIBLE" : semaforo === "AMARILLO" ? "CRITICO" : "SOBREGIRADO"}
+              </Text>
+            </View>
+          ) : null}
+        </View>
+
+        <View style={styles.kpiGrid}>
+          <View style={styles.kpiCard}>
+            <Text style={styles.kpiLabel}>Total facturado</Text>
+            <Text style={styles.kpiValue}>{formatValue(exposure?.total_facturado)}</Text>
+          </View>
+          <View style={styles.kpiCard}>
+            <Text style={styles.kpiLabel}>Disponible</Text>
+            <Text style={styles.kpiValue}>{formatValue(exposure?.disponible)}</Text>
+          </View>
+          <View style={styles.kpiCard}>
+            <Text style={styles.kpiLabel}>Exposicion</Text>
+            <Text style={styles.kpiValue}>{formatValue(exposure?.exposicion)}</Text>
+          </View>
+          <View style={styles.kpiCard}>
+            <Text style={styles.kpiLabel}>Avg dias de pago</Text>
+            <Text style={styles.kpiValue}>{formatValue(trend?.avg_days_to_pay)}</Text>
+          </View>
+        </View>
+        <Text style={styles.helperText}>Payment trend: {formatValue(trend?.trend)}</Text>
+      </View>
+
+      {busy ? <ActivityIndicator color={BLUE} style={styles.loader} /> : null}
+      {message ? <Text style={message.includes("no tiene") ? styles.helperText : styles.error}>{message}</Text> : null}
     </View>
   );
 }
@@ -2672,6 +2959,25 @@ const styles = StyleSheet.create({
   chart: { backgroundColor: "white", borderColor: BORDER, borderRadius: 8, borderWidth: 1, marginTop: 12, padding: 14 },
   content: { flex: 1 },
   contentInner: { padding: 14, paddingBottom: 32 },
+  creditCard: {
+    backgroundColor: "white",
+    borderColor: BORDER,
+    borderRadius: 8,
+    borderWidth: 1,
+    marginTop: 12,
+    padding: 12
+  },
+  creditGreen: { backgroundColor: "#D4EDDA" },
+  creditHeader: { alignItems: "center", flexDirection: "row", gap: 10, justifyContent: "space-between", marginBottom: 8 },
+  creditRed: { backgroundColor: "#F8D7DA" },
+  creditSemaphore: { borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6 },
+  creditSemaphoreText: { color: "#101828", fontSize: 11, fontWeight: "900" },
+  creditShell: { marginTop: 12 },
+  creditStatusActive: { backgroundColor: "#D4EDDA" },
+  creditStatusBadge: { borderRadius: 6, paddingHorizontal: 9, paddingVertical: 5 },
+  creditStatusHold: { backgroundColor: "#F8D7DA" },
+  creditStatusText: { color: "#101828", fontSize: 11, fontWeight: "900" },
+  creditYellow: { backgroundColor: "#FFF3CD" },
   dashboardBarLabel: { color: "#344054", flex: 1, fontSize: 12, fontWeight: "800" },
   dashboardBarRow: { marginTop: 12 },
   dashboardBarTop: { alignItems: "center", flexDirection: "row", gap: 8, justifyContent: "space-between", marginBottom: 6 },

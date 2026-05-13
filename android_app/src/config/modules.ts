@@ -528,8 +528,8 @@ export const ERP_MODULES: AppModule[] = [
       },
       {
         key: "credit-hold",
-        label: "Credit Hold",
-        endpoint: "/clientes?page=1&page_size=100",
+        label: "Credit (Order Hold & Release)",
+        endpoint: "/clientes?page=1&page_size=500",
         table: {
           idField: "codigo",
           columns: ["codigo", "nombrecomercial", "nombrejuridico", "pais", "correo", "telefono"],
