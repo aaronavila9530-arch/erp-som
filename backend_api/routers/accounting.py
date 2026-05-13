@@ -4,8 +4,18 @@ from fastapi import (
     HTTPException,
     Header
 )
+from fastapi.responses import FileResponse
 from psycopg2.extras import RealDictCursor
 from datetime import date
+import os
+import tempfile
+
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Font, PatternFill
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import landscape, letter
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from database import get_db
 from rbac_service import has_permission
@@ -30,6 +40,109 @@ def require_permission(module: str, action: str):
             )
     return checker
 
+
+def _accounting_entry_stats(conn):
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute("""
+        SELECT
+            COUNT(*) AS total_entries,
+            MAX(period) AS latest_period
+        FROM accounting_entries
+    """)
+    stats = cur.fetchone() or {}
+
+    cur.execute("""
+        SELECT period, COUNT(*) AS count
+        FROM accounting_entries
+        GROUP BY period
+        ORDER BY period DESC
+        LIMIT 12
+    """)
+    periods = cur.fetchall()
+
+    return {
+        "total_entries": int(stats.get("total_entries") or 0),
+        "latest_period": stats.get("latest_period"),
+        "period_counts": [
+            {"period": row["period"], "count": int(row["count"] or 0)}
+            for row in periods
+        ]
+    }
+
+
+def _report_title(report: str | None):
+    titles = {
+        "ASIENTOS": "Asientos contables",
+        "MAYOR": "Mayor general",
+        "BC": "Balance de comprobacion",
+        "ESF": "Estado de situacion financiera",
+        "ER": "Estado de resultados",
+        "FC": "Flujo de caja"
+    }
+    key = (report or "ASIENTOS").upper()
+    return titles.get(key, key)
+
+
+def _fetch_accounting_report_lines(
+    conn,
+    period: str | None = None,
+    period_from: str | None = None,
+    period_to: str | None = None,
+    origin: str | None = None,
+    account_code: str | None = None
+):
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    conditions = []
+    params = []
+
+    if period:
+        conditions.append("e.period = %s")
+        params.append(period)
+
+    if period_from:
+        conditions.append("e.period >= %s")
+        params.append(period_from)
+
+    if period_to:
+        conditions.append("e.period <= %s")
+        params.append(period_to)
+
+    if origin and origin != "TODOS":
+        conditions.append("e.origin = %s")
+        params.append(origin)
+
+    if account_code and account_code != "TODOS":
+        conditions.append("l.account_code = %s")
+        params.append(account_code)
+
+    where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+
+    cur.execute(f"""
+        SELECT
+            e.entry_date,
+            e.id AS entry_id,
+            e.period,
+            e.origin,
+            e.origin_id,
+            e.description AS entry_description,
+            l.account_code,
+            l.account_name,
+            l.line_description,
+            l.debit,
+            l.credit
+        FROM accounting_entries e
+        JOIN accounting_lines l ON l.entry_id = e.id
+        {where_clause}
+        ORDER BY e.period DESC, e.entry_date DESC, e.id DESC, l.id ASC
+    """, params)
+
+    return cur.fetchall()
+
+
+def _report_filename(extension: str, report: str | None, period: str | None, period_from: str | None, period_to: str | None):
+    scope = period or (f"{period_from or 'inicio'}_{period_to or 'fin'}" if period_from or period_to else "todos")
+    safe_report = (report or "ASIENTOS").lower().replace(" ", "_")
+    return f"accounting_{safe_report}_{scope}.{extension}"
 
 
 @router.post("/manual-entry")
@@ -469,6 +582,40 @@ def sync_payroll(conn=Depends(get_db)):
         raise HTTPException(500, repr(e))
 
 
+@router.post("/sync/all")
+def sync_all_accounting(conn=Depends(get_db)):
+    try:
+        from services.accounting_auto import (
+            sync_cash_app_to_accounting,
+            sync_collections_to_accounting,
+            sync_itp_to_accounting,
+            sync_payroll_to_accounting
+        )
+
+        before = _accounting_entry_stats(conn)
+
+        sync_collections_to_accounting(conn)
+        sync_cash_app_to_accounting(conn)
+        sync_itp_to_accounting(conn)
+        sync_payroll_to_accounting(conn)
+
+        after = _accounting_entry_stats(conn)
+
+        return {
+            "status": "ok",
+            "message": "Accounting sincronizado correctamente",
+            "created": max(0, after["total_entries"] - before["total_entries"]),
+            "before": before,
+            "after": after,
+            "latest_period": after["latest_period"],
+            "period_counts": after["period_counts"]
+        }
+
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, repr(e))
+
+
 
 @router.get("/ledger")
 def get_accounting_ledger(
@@ -589,6 +736,142 @@ def get_accounting_ledger(
 # ============================================================
 # IVA (FUENTE ÚNICA: accounting_lines.created_at)
 # ============================================================
+@router.get("/reports/excel")
+def download_accounting_report_excel(
+    report: str | None = "ASIENTOS",
+    period: str | None = None,
+    period_from: str | None = None,
+    period_to: str | None = None,
+    origin: str | None = None,
+    account_code: str | None = None,
+    conn=Depends(get_db)
+):
+    rows = _fetch_accounting_report_lines(conn, period, period_from, period_to, origin, account_code)
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Accounting"
+
+    title = _report_title(report)
+    scope = period or (f"{period_from or 'inicio'} a {period_to or 'fin'}" if period_from or period_to else "Todos")
+    ws.merge_cells("A1:J1")
+    ws["A1"] = f"{title} - {scope}"
+    ws["A1"].font = Font(bold=True, size=14)
+    ws["A1"].alignment = Alignment(horizontal="center")
+
+    headers = ["Fecha", "Asiento", "Periodo", "Origen", "Origen ID", "Cuenta", "Nombre cuenta", "Detalle", "Debe", "Haber"]
+    ws.append([])
+    ws.append(headers)
+    header_fill = PatternFill("solid", fgColor="003A75")
+    for cell in ws[3]:
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center")
+
+    total_debit = 0.0
+    total_credit = 0.0
+    for row in rows:
+        debit = float(row.get("debit") or 0)
+        credit = float(row.get("credit") or 0)
+        total_debit += debit
+        total_credit += credit
+        ws.append([
+            row.get("entry_date"),
+            row.get("entry_id"),
+            row.get("period"),
+            row.get("origin"),
+            row.get("origin_id"),
+            row.get("account_code"),
+            row.get("account_name"),
+            row.get("line_description") or row.get("entry_description"),
+            debit,
+            credit
+        ])
+
+    ws.append(["", "", "", "", "", "", "", "Totales", total_debit, total_credit])
+    for cell in ws[ws.max_row]:
+        cell.font = Font(bold=True)
+
+    widths = [14, 10, 12, 16, 14, 14, 28, 48, 14, 14]
+    for idx, width in enumerate(widths, start=1):
+        ws.column_dimensions[chr(64 + idx)].width = width
+
+    for row in ws.iter_rows(min_row=4, min_col=9, max_col=10):
+        for cell in row:
+            cell.number_format = '#,##0.00'
+
+    tmp_dir = tempfile.mkdtemp(prefix="erp_som_accounting_")
+    filename = _report_filename("xlsx", report, period, period_from, period_to)
+    path = os.path.join(tmp_dir, filename)
+    wb.save(path)
+
+    return FileResponse(
+        path,
+        filename=filename,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+
+@router.get("/reports/pdf")
+def download_accounting_report_pdf(
+    report: str | None = "ASIENTOS",
+    period: str | None = None,
+    period_from: str | None = None,
+    period_to: str | None = None,
+    origin: str | None = None,
+    account_code: str | None = None,
+    conn=Depends(get_db)
+):
+    rows = _fetch_accounting_report_lines(conn, period, period_from, period_to, origin, account_code)
+    tmp_dir = tempfile.mkdtemp(prefix="erp_som_accounting_")
+    filename = _report_filename("pdf", report, period, period_from, period_to)
+    path = os.path.join(tmp_dir, filename)
+
+    title = _report_title(report)
+    scope = period or (f"{period_from or 'inicio'} a {period_to or 'fin'}" if period_from or period_to else "Todos")
+    styles = getSampleStyleSheet()
+    doc = SimpleDocTemplate(path, pagesize=landscape(letter), rightMargin=24, leftMargin=24, topMargin=24, bottomMargin=24)
+
+    data = [["Fecha", "Asiento", "Periodo", "Origen", "Cuenta", "Detalle", "Debe", "Haber"]]
+    total_debit = 0.0
+    total_credit = 0.0
+    for row in rows:
+        debit = float(row.get("debit") or 0)
+        credit = float(row.get("credit") or 0)
+        total_debit += debit
+        total_credit += credit
+        data.append([
+            str(row.get("entry_date") or ""),
+            str(row.get("entry_id") or ""),
+            str(row.get("period") or ""),
+            str(row.get("origin") or ""),
+            str(row.get("account_code") or ""),
+            str(row.get("line_description") or row.get("entry_description") or "")[:80],
+            f"{debit:,.2f}",
+            f"{credit:,.2f}"
+        ])
+    data.append(["", "", "", "", "", "Totales", f"{total_debit:,.2f}", f"{total_credit:,.2f}"])
+
+    table = Table(data, repeatRows=1, colWidths=[58, 48, 58, 72, 58, 270, 72, 72])
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#003A75")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 7),
+        ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#D7DEE8")),
+        ("ALIGN", (6, 1), (7, -1), "RIGHT"),
+        ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+        ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#EEF3F8"))
+    ]))
+
+    doc.build([
+        Paragraph(f"{title} - {scope}", styles["Title"]),
+        Spacer(1, 12),
+        table
+    ])
+
+    return FileResponse(path, filename=filename, media_type="application/pdf")
+
+
 @router.get("/iva")
 def get_accounting_iva(
     period: str,  # 'YYYY-MM'

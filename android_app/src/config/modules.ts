@@ -1,8 +1,27 @@
+export type TableAction = {
+  key: "view" | "edit" | "add" | "delete" | "generate";
+  label: string;
+  method?: "GET" | "POST" | "PUT" | "DELETE";
+  endpoint?: string;
+};
+
+export type TableConfig = {
+  idField: string;
+  columns: string[];
+  detailEndpoint?: string;
+  createEndpoint?: string;
+  updateEndpoint?: string;
+  deleteEndpoint?: string;
+  actions: TableAction[];
+  filters?: string[];
+};
+
 export type AppSection = {
   key: string;
   label: string;
   endpoint?: string;
   method?: "GET" | "POST" | "PUT";
+  table?: TableConfig;
 };
 
 export type AppModule = {
@@ -10,6 +29,276 @@ export type AppModule = {
   label: string;
   sections: AppSection[];
 };
+
+const clientColumns = [
+  "codigo",
+  "nombrejuridico",
+  "nombrecomercial",
+  "pais",
+  "correo",
+  "telefono",
+  "cedulajuridicavat",
+  "actividad_economica",
+  "comentarios",
+  "provincia",
+  "canton",
+  "distrito",
+  "direccionexacta",
+  "fecha_pago",
+  "prefijo",
+  "contacto_principal",
+  "contacto_secundario"
+];
+
+const supplierColumns = [
+  "Codigo",
+  "Nombre",
+  "Apellidos",
+  "NombreComercial",
+  "Cedula",
+  "Pais",
+  "Provincia",
+  "Canton",
+  "Distrito",
+  "DireccionExacta",
+  "Prefijo",
+  "Telefono",
+  "Correo",
+  "TerminosPago",
+  "Banco",
+  "CuentaIBAN",
+  "SwiftCode",
+  "UID",
+  "DireccionBanco",
+  "TipoProveeduria",
+  "Comentarios"
+];
+
+const employeeColumns = [
+  "codigo",
+  "nombre",
+  "apellidos",
+  "estado_civil",
+  "genero",
+  "nacionalidad",
+  "prefijo",
+  "telefono",
+  "provincia",
+  "canton",
+  "distrito",
+  "direccion",
+  "jornada",
+  "salario",
+  "pago",
+  "banco",
+  "cuenta_iban",
+  "moneda",
+  "enfermedades",
+  "contacto_emergencia",
+  "telefono_emergencia",
+  "activo1",
+  "marca1",
+  "serial1",
+  "activo2",
+  "marca2",
+  "serial2",
+  "activo3",
+  "marca3",
+  "serial3",
+  "fecharegistro"
+];
+
+const surveyorColumns = [
+  "codigo",
+  "nombre",
+  "apellidos",
+  "estado_civil",
+  "genero",
+  "nacionalidad",
+  "prefijo",
+  "telefono",
+  "provincia",
+  "canton",
+  "distrito",
+  "direccion",
+  "jornada",
+  "operacion",
+  "honorario",
+  "pago",
+  "banco",
+  "cuenta_iban",
+  "moneda",
+  "swift",
+  "uid",
+  "enfermedades",
+  "contacto_emergencia",
+  "telefono_emergencia",
+  "puerto"
+];
+
+const serviceColumns = [
+  "consec",
+  "tipo",
+  "estado",
+  "num_informe",
+  "buque_contenedor",
+  "cliente",
+  "contacto",
+  "detalle",
+  "continente",
+  "pais",
+  "puerto",
+  "operacion",
+  "surveyor",
+  "honorarios",
+  "costo_operativo",
+  "fecha_inicio",
+  "hora_inicio",
+  "fecha_fin",
+  "hora_fin",
+  "demoras",
+  "duracion",
+  "factura",
+  "valor_factura",
+  "fecha_factura",
+  "terminos_pago",
+  "fecha_vencimiento",
+  "dias_vencido",
+  "razon_cancelacion",
+  "comentario_cancelacion"
+];
+
+const billingColumns = [
+  "id",
+  "tipo_factura",
+  "tipo_documento",
+  "numero_documento",
+  "nombre_cliente",
+  "fecha_emision",
+  "moneda",
+  "total",
+  "estado"
+];
+
+const invoicingColumns = [
+  "consec",
+  "tipo",
+  "buque_contenedor",
+  "num_informe",
+  "detalle",
+  "cliente",
+  "continente",
+  "pais",
+  "puerto",
+  "operacion",
+  "fecha_inicio",
+  "hora_inicio",
+  "fecha_fin",
+  "hora_fin",
+  "demoras",
+  "duracion",
+  "factura"
+];
+
+const collectionsColumns = [
+  "codigo_cliente",
+  "nombre_cliente",
+  "tipo_factura",
+  "tipo_documento",
+  "numero_documento",
+  "fecha_emision",
+  "dias_credito",
+  "fecha_vencimiento",
+  "aging_dias",
+  "bucket_aging",
+  "moneda",
+  "total",
+  "saldo_pendiente",
+  "num_informe",
+  "buque_contenedor",
+  "operacion",
+  "periodo_operacion",
+  "estado_factura",
+  "disputada"
+];
+
+const bankReconciliationColumns = [
+  "banco",
+  "fecha_pago",
+  "nombre_cliente",
+  "numero_documento",
+  "referencia",
+  "tipo_aplicacion",
+  "monto_pagado",
+  "monto_aplicado",
+  "saldo",
+  "estado"
+];
+
+const invoiceToPayColumns = [
+  "id",
+  "payee_name",
+  "obligation_type",
+  "referencia",
+  "vessel",
+  "country",
+  "operation",
+  "currency",
+  "total",
+  "balance",
+  "status",
+  "last_payment_date",
+  "issue_date",
+  "due_date",
+  "origin"
+];
+
+const accountingLedgerColumns = ["entry_date", "entry_id", "account", "line_description", "debit", "credit", "period", "origin"];
+
+const closingStatusColumns = [
+  "company_code",
+  "fiscal_year",
+  "period",
+  "ledger",
+  "period_closed",
+  "gl_closed",
+  "tb_closed",
+  "pnl_closed",
+  "fs_closed",
+  "fy_opened",
+  "last_batch_id",
+  "updated_at"
+];
+
+const disputeColumns = [
+  "management_id",
+  "status",
+  "disputed_amount",
+  "dispute_closed_at",
+  "dispute_id",
+  "dispute_case",
+  "numero_documento",
+  "codigo_cliente",
+  "nombre_cliente",
+  "fecha_factura",
+  "fecha_vencimiento",
+  "monto",
+  "motivo",
+  "comentario",
+  "buque_contenedor",
+  "operacion",
+  "periodo_operacion",
+  "ultimo_comentario"
+];
+
+const masterActions: TableAction[] = [
+  { key: "view", label: "Ver" },
+  { key: "add", label: "Agregar" },
+  { key: "edit", label: "Editar" },
+  { key: "delete", label: "Eliminar" }
+];
+
+const readOnlyActions: TableAction[] = [{ key: "view", label: "Ver" }];
 
 export const ERP_MODULES: AppModule[] = [
   {
@@ -26,11 +315,81 @@ export const ERP_MODULES: AppModule[] = [
     code: "master_data",
     label: "Master Data",
     sections: [
-      { key: "clientes", label: "Clientes", endpoint: "/clientes?page=1&page_size=100" },
-      { key: "proveedores", label: "Proveedores", endpoint: "/proveedores?page=1&page_size=100" },
-      { key: "empleados", label: "Empleados", endpoint: "/empleados?page=1&page_size=100" },
-      { key: "surveyores", label: "Surveyores", endpoint: "/surveyores?page=1&page_size=100" },
-      { key: "servicios-md", label: "Servicios MD", endpoint: "/servicios_md?page=1&page_size=100" },
+      {
+        key: "clientes",
+        label: "Clientes",
+        endpoint: "/clientes?page=1&page_size=100",
+        table: {
+          idField: "codigo",
+          columns: clientColumns,
+          detailEndpoint: "/clientes/{id}",
+          createEndpoint: "/clientes/add",
+          updateEndpoint: "/clientes/update",
+          deleteEndpoint: "/clientes/{id}",
+          actions: masterActions,
+          filters: ["codigo", "nombrecomercial", "pais", "correo"]
+        }
+      },
+      {
+        key: "proveedores",
+        label: "Proveedores",
+        endpoint: "/proveedores/?page=1&page_size=100",
+        table: {
+          idField: "Codigo",
+          columns: supplierColumns,
+          detailEndpoint: "/proveedores/{id}",
+          createEndpoint: "/proveedores/add",
+          updateEndpoint: "/proveedores/update",
+          deleteEndpoint: "/proveedores/{id}",
+          actions: masterActions,
+          filters: ["Codigo", "NombreComercial", "Pais", "Correo"]
+        }
+      },
+      {
+        key: "empleados",
+        label: "Empleados",
+        endpoint: "/empleados/?page=1&page_size=100",
+        table: {
+          idField: "codigo",
+          columns: employeeColumns,
+          detailEndpoint: "/empleados/{id}",
+          createEndpoint: "/empleados/add",
+          updateEndpoint: "/empleados/update",
+          deleteEndpoint: "/empleados/{id}",
+          actions: masterActions,
+          filters: ["codigo", "nombre", "apellidos", "telefono"]
+        }
+      },
+      {
+        key: "surveyores",
+        label: "Surveyores",
+        endpoint: "/surveyores/?page=1&page_size=100",
+        table: {
+          idField: "codigo",
+          columns: surveyorColumns,
+          detailEndpoint: "/surveyores/{id}",
+          createEndpoint: "/surveyores/add",
+          updateEndpoint: "/surveyores/update",
+          deleteEndpoint: "/surveyores/{id}",
+          actions: masterActions,
+          filters: ["codigo", "nombre", "apellidos", "puerto"]
+        }
+      },
+      {
+        key: "servicios-md",
+        label: "Servicios MD",
+        endpoint: "/servicios_md/?page=1&page_size=100",
+        table: {
+          idField: "codigo",
+          columns: ["codigo", "codigo_prod", "nombre", "costo"],
+          detailEndpoint: "/servicios_md/{id}",
+          createEndpoint: "/servicios_md/add",
+          updateEndpoint: "/servicios_md/update",
+          deleteEndpoint: "/servicios_md/{id}",
+          actions: masterActions,
+          filters: ["codigo", "codigo_prod", "nombre"]
+        }
+      },
       { key: "puertos", label: "Continentes / Paises / Puertos", endpoint: "/cpp/puertos_all" }
     ]
   },
@@ -38,7 +397,30 @@ export const ERP_MODULES: AppModule[] = [
     code: "servicios",
     label: "Servicios",
     sections: [
-      { key: "tabla-servicios", label: "Tabla de servicios", endpoint: "/servicios/?page=1&page_size=50" },
+      {
+        key: "tabla-servicios",
+        label: "Tabla de servicios",
+        endpoint: "/servicios/?page=1&page_size=50",
+        table: {
+          idField: "consec",
+          columns: serviceColumns,
+          detailEndpoint: "/servicios/{id}",
+          createEndpoint: "/servicios/add",
+          updateEndpoint: "/servicios/editar/{id}",
+          deleteEndpoint: "/servicios/{id}",
+          actions: [
+            { key: "view", label: "Ver" },
+            { key: "add", label: "Agregar Servicio" },
+            { key: "edit", label: "Editar" },
+            { key: "generate", label: "Generar Consecutivo", method: "PUT", endpoint: "/servicios/confirmar/{id}" },
+            { key: "generate", label: "Finalizar", method: "PUT", endpoint: "/servicios/generar_informe/{id}" },
+            { key: "generate", label: "Cancelar", method: "PUT", endpoint: "/servicios/cancelar/{id}" },
+            { key: "generate", label: "Demoras", method: "PUT", endpoint: "/servicios/demoras/{id}" },
+            { key: "delete", label: "Eliminar" }
+          ],
+          filters: ["consec", "estado", "surveyor", "cliente", "year"]
+        }
+      },
       { key: "surveyors-servicio", label: "Surveyors por servicio", endpoint: "/servicios-surveyors/catalogo/lista" },
       { key: "servicios-filtros", label: "Filtros", endpoint: "/servicios/_meta/filtros" },
       { key: "servicios-ultimo", label: "Ultimo consecutivo", endpoint: "/servicios_md/ultimo" }
@@ -48,15 +430,114 @@ export const ERP_MODULES: AppModule[] = [
     code: "finanzas",
     label: "Finanzas",
     sections: [
-      { key: "billing", label: "Billing", endpoint: "/billing/search?page=1&page_size=50" },
-      { key: "invoicing", label: "Invoicing", endpoint: "/invoicing/facturables" },
-      { key: "collections", label: "Collections", endpoint: "/collections/search?page=1&page_size=50" },
-      { key: "bank-reconciliation", label: "Bank Reconciliation", endpoint: "/bank-reconciliation?page=1&page_size=50" },
-      { key: "invoice-to-pay", label: "Invoice To Pay", endpoint: "/invoice-to-pay/kpis" },
-      { key: "accounting", label: "Accounting", endpoint: "/accounting/accounts" },
-      { key: "closing", label: "Closing", endpoint: "/closing/period/status" },
-      { key: "disputes", label: "Disputes", endpoint: "/dispute-management?page=1&page_size=50" },
-      { key: "credit-hold", label: "Credit Hold" }
+      {
+        key: "billing",
+        label: "Billing",
+        endpoint: "/invoicing/facturables?cliente=__seleccione_cliente__",
+        table: {
+          idField: "consec",
+          columns: invoicingColumns,
+          actions: [
+            { key: "view", label: "Ver" },
+            { key: "generate", label: "Factura Manual" },
+            { key: "generate", label: "Factura XML" },
+            { key: "generate", label: "Ver Factura" },
+            { key: "generate", label: "Facturacion Anticipada" },
+            { key: "generate", label: "Nota Credito" }
+          ],
+          filters: ["consec", "cliente", "num_informe", "buque_contenedor", "operacion"]
+        }
+      },
+      {
+        key: "invoicing",
+        label: "Invoicing",
+        endpoint: "/billing/search?page=1&page_size=50",
+        table: {
+          idField: "numero_documento",
+          columns: billingColumns,
+          detailEndpoint: "/billing/{id}",
+          actions: readOnlyActions,
+          filters: ["numero_documento", "nombre_cliente", "estado", "tipo_documento"]
+        }
+      },
+      {
+        key: "collections",
+        label: "Collections",
+        endpoint: "/collections/search?page=1&page_size=50",
+        table: {
+          idField: "numero_documento",
+          columns: collectionsColumns,
+          actions: [
+            { key: "view", label: "Ver" },
+            { key: "generate", label: "Post Accounting", method: "POST", endpoint: "/collections/post-to-accounting" }
+          ],
+          filters: ["numero_documento", "nombre_cliente", "bucket_aging", "estado_factura"]
+        }
+      },
+      {
+        key: "bank-reconciliation",
+        label: "Bank Reconciliation",
+        endpoint: "/bank-reconciliation?ver_todos=true&page=1&page_size=50",
+        table: {
+          idField: "id",
+          columns: bankReconciliationColumns,
+          actions: readOnlyActions,
+          filters: ["numero_documento", "nombre_cliente", "referencia", "estado"]
+        }
+      },
+      {
+        key: "invoice-to-pay",
+        label: "Invoice To Pay",
+        endpoint: "/invoice-to-pay/search?status=ALL",
+        table: {
+          idField: "id",
+          columns: invoiceToPayColumns,
+          deleteEndpoint: "/invoice-to-pay/{id}",
+          actions: [
+            { key: "view", label: "Ver" },
+            { key: "delete", label: "Eliminar" }
+          ],
+          filters: ["payee_name", "obligation_type", "referencia", "status", "origin"]
+        }
+      },
+      {
+        key: "accounting",
+        label: "Accounting",
+        endpoint: "/accounting/ledger",
+        table: {
+          idField: "entry_id",
+          columns: accountingLedgerColumns,
+          actions: [
+            { key: "view", label: "Ver" },
+            { key: "generate", label: "Reversar asiento", method: "POST", endpoint: "/accounting/reverse/{id}" }
+          ],
+          filters: ["entry_id", "account", "line_description", "period", "origin"]
+        }
+      },
+      {
+        key: "disputes",
+        label: "Disputes",
+        endpoint: "/dispute-management?page=1&page_size=50",
+        table: {
+          idField: "management_id",
+          columns: disputeColumns,
+          detailEndpoint: "/dispute-management/{id}/history",
+          actions: readOnlyActions,
+          filters: ["management_id", "status", "numero_documento", "nombre_cliente", "motivo"]
+        }
+      },
+      {
+        key: "credit-hold",
+        label: "Credit Hold",
+        endpoint: "/clientes?page=1&page_size=100",
+        table: {
+          idField: "codigo",
+          columns: ["codigo", "nombrecomercial", "nombrejuridico", "pais", "correo", "telefono"],
+          detailEndpoint: "/cliente-credito/{id}",
+          actions: readOnlyActions,
+          filters: ["codigo", "nombrecomercial", "nombrejuridico"]
+        }
+      }
     ]
   },
   {
