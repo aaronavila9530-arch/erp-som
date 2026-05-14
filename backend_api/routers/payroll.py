@@ -827,13 +827,14 @@ def descargar_colilla_pdf(
     )
 
 
-@router.get("/payslips/{year}/{month}/pdf-mobile")
-def descargar_colilla_pdf_mobile(
+@router.get("/hr-mobile-payslip-pdf/{year}/{month}")
+@router.get("/mobile-payslip-pdf/{year}/{month}")
+def descargar_colilla_pdf_mobile_v2(
     year: int,
     month: int,
-    usuario: str,
-    rol: str,
-    target_usuario: str | None = None,
+    request_user: str,
+    request_role: str,
+    target_user: str | None = None,
     conn=Depends(get_db)
 ):
     """
@@ -842,9 +843,9 @@ def descargar_colilla_pdf_mobile(
     puede descargar de otros; usuario normal solo la propia.
     """
     cur = conn.cursor(cursor_factory=RealDictCursor)
-    usuario_actual = (usuario or "").strip().lower()
-    rol_actual = (rol or "").strip().lower()
-    usuario_solicitado = (target_usuario or usuario_actual).strip().lower()
+    usuario_actual = (request_user or "").strip().lower()
+    rol_actual = (request_role or "").strip().lower()
+    usuario_solicitado = (target_user or usuario_actual).strip().lower()
 
     cur.execute("""
         SELECT usuario, activo
@@ -939,4 +940,23 @@ def descargar_colilla_pdf_mobile(
         BytesIO(pdf_bytes),
         media_type="application/pdf",
         headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
+
+
+@router.get("/payslips/{year}/{month}/pdf-mobile")
+def descargar_colilla_pdf_mobile(
+    year: int,
+    month: int,
+    usuario: str,
+    rol: str,
+    target_usuario: str | None = None,
+    conn=Depends(get_db)
+):
+    return descargar_colilla_pdf_mobile_v2(
+        year=year,
+        month=month,
+        request_user=usuario,
+        request_role=rol,
+        target_user=target_usuario,
+        conn=conn
     )

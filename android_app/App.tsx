@@ -1370,6 +1370,117 @@ function HRMiniTable({
   );
 }
 
+function formatYmd(date: Date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function parseYmd(value: string) {
+  if (!value) return null;
+  const [year, month, day] = value.split("-").map(Number);
+  if (!year || !month || !day) return null;
+  const date = new Date(year, month - 1, day);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function longEnglishDate(value: string) {
+  const date = parseYmd(value);
+  if (!date) return "Select date";
+  return date.toLocaleDateString("en-US", {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric"
+  });
+}
+
+function buildCalendarDays(viewDate: Date) {
+  const first = new Date(viewDate.getFullYear(), viewDate.getMonth(), 1);
+  const startOffset = first.getDay();
+  const cursor = new Date(first);
+  cursor.setDate(first.getDate() - startOffset);
+  return Array.from({ length: 42 }, (_, index) => {
+    const next = new Date(cursor);
+    next.setDate(cursor.getDate() + index);
+    return next;
+  });
+}
+
+function DateField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [viewDate, setViewDate] = useState(() => parseYmd(value) || new Date());
+  const selected = parseYmd(value);
+  const days = buildCalendarDays(viewDate);
+
+  function moveMonth(delta: number) {
+    setViewDate((current) => new Date(current.getFullYear(), current.getMonth() + delta, 1));
+  }
+
+  function select(date: Date) {
+    onChange(formatYmd(date));
+    setViewDate(date);
+    setOpen(false);
+  }
+
+  return (
+    <View style={styles.formField}>
+      <Text style={styles.label}>{label}</Text>
+      <Pressable style={styles.selectBox} onPress={() => setOpen(true)}>
+        <Text style={styles.selectText}>{longEnglishDate(value)}</Text>
+        {value ? <Text style={styles.helperText}>{value}</Text> : null}
+      </Pressable>
+      <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
+        <View style={styles.calendarOverlay}>
+          <View style={styles.calendarPanel}>
+            <View style={styles.calendarHeader}>
+              <Pressable style={styles.modalClose} onPress={() => moveMonth(-1)}><Text style={styles.modalCloseText}>Prev</Text></Pressable>
+              <Text style={styles.calendarTitle}>{viewDate.toLocaleDateString("en-US", { month: "long", year: "numeric" })}</Text>
+              <Pressable style={styles.modalClose} onPress={() => moveMonth(1)}><Text style={styles.modalCloseText}>Next</Text></Pressable>
+            </View>
+            <View style={styles.calendarWeek}>
+              {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => <Text key={day} style={styles.calendarWeekday}>{day}</Text>)}
+            </View>
+            <View style={styles.calendarGrid}>
+              {days.map((date) => {
+                const ymd = formatYmd(date);
+                const inMonth = date.getMonth() === viewDate.getMonth();
+                const active = selected && ymd === formatYmd(selected);
+                return (
+                  <Pressable key={ymd} style={[styles.calendarDay, active && styles.calendarDayActive]} onPress={() => select(date)}>
+                    <Text style={[styles.calendarDayText, !inMonth && styles.calendarDayMuted, active && styles.calendarDayTextActive]}>{date.getDate()}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+            <View style={styles.financeFilterActions}>
+              <Pressable style={styles.actionButton} onPress={() => select(new Date())}><Text style={styles.actionButtonText}>Today</Text></Pressable>
+              <Pressable style={styles.modalClose} onPress={() => setOpen(false)}><Text style={styles.modalCloseText}>Cancel</Text></Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+    </View>
+  );
+}
+
+function TimeField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+  const [hour = "08", minute = "00"] = (value || "08:00").split(":");
+  const hours = Array.from({ length: 24 }, (_, index) => String(index).padStart(2, "0"));
+  const minutes = Array.from({ length: 12 }, (_, index) => String(index * 5).padStart(2, "0"));
+  return (
+    <View style={styles.formField}>
+      <Text style={styles.label}>{label}</Text>
+      <View style={styles.timeRow}>
+        <View style={styles.timePart}>
+          <SelectField label="Hour" value={hour} options={hours} onChange={(nextHour) => onChange(`${nextHour}:${minute}`)} />
+        </View>
+        <View style={styles.timePart}>
+          <SelectField label="Minute" value={minute} options={minutes} onChange={(nextMinute) => onChange(`${hour}:${nextMinute}`)} />
+        </View>
+      </View>
+    </View>
+  );
+}
+
 function HREmployeesView({
   initialRows,
   session
@@ -1661,10 +1772,8 @@ function HRRequestsView({
             {["VACACIONES", "INCAPACIDAD", "LICENCIA"].includes(form.event_type) ? (
               <>
                 {form.event_type === "LICENCIA" ? <SelectField label="Tipo licencia" value={form.tipo_licencia || "PERSONAL"} options={["PERSONAL", "PATERNIDAD", "MATERNIDAD", "DUELO", "ESTUDIO"]} onChange={(tipo_licencia) => setForm((f) => ({ ...f, tipo_licencia }))} /> : null}
-                <Text style={styles.label}>Fecha inicio</Text>
-                <TextInput style={styles.input} value={form.fecha_inicio} onChangeText={(fecha_inicio) => setForm((f) => ({ ...f, fecha_inicio }))} placeholder="YYYY-MM-DD" />
-                <Text style={styles.label}>Fecha fin</Text>
-                <TextInput style={styles.input} value={form.fecha_fin} onChangeText={(fecha_fin) => setForm((f) => ({ ...f, fecha_fin }))} placeholder="YYYY-MM-DD" />
+                <DateField label="Fecha inicio" value={form.fecha_inicio} onChange={(fecha_inicio) => setForm((f) => ({ ...f, fecha_inicio }))} />
+                <DateField label="Fecha fin" value={form.fecha_fin} onChange={(fecha_fin) => setForm((f) => ({ ...f, fecha_fin }))} />
                 <Text style={styles.helperText}>Dias solicitados: {daysRequested()} | Disponibles: {formatValue(vacationInfo?.dias_disponibles)}</Text>
               </>
             ) : (
@@ -1819,10 +1928,10 @@ function HRHoursView({
           <View style={styles.modalHeader}><Text style={styles.modalTitle}>Registrar horas</Text><Pressable style={styles.modalClose} onPress={() => setShowForm(false)}><Text style={styles.modalCloseText}>Cerrar</Text></Pressable></View>
           <ScrollView contentContainerStyle={styles.modalBody}>
             <SelectField label="Tipo" value={form.tipo} options={["OPERACION", "INFORME"]} onChange={(tipo) => setForm((f) => ({ ...f, tipo }))} />
-            <Text style={styles.label}>Fecha inicio</Text><TextInput style={styles.input} value={form.fecha_inicio} onChangeText={(fecha_inicio) => setForm((f) => ({ ...f, fecha_inicio }))} placeholder="YYYY-MM-DD" />
-            <Text style={styles.label}>Hora inicio</Text><TextInput style={styles.input} value={form.hora_inicio} onChangeText={(hora_inicio) => setForm((f) => ({ ...f, hora_inicio }))} placeholder="HH:MM" />
-            <Text style={styles.label}>Fecha fin</Text><TextInput style={styles.input} value={form.fecha_fin} onChangeText={(fecha_fin) => setForm((f) => ({ ...f, fecha_fin }))} placeholder="YYYY-MM-DD" />
-            <Text style={styles.label}>Hora fin</Text><TextInput style={styles.input} value={form.hora_fin} onChangeText={(hora_fin) => setForm((f) => ({ ...f, hora_fin }))} placeholder="HH:MM" />
+            <DateField label="Fecha inicio" value={form.fecha_inicio} onChange={(fecha_inicio) => setForm((f) => ({ ...f, fecha_inicio }))} />
+            <TimeField label="Hora inicio" value={form.hora_inicio} onChange={(hora_inicio) => setForm((f) => ({ ...f, hora_inicio }))} />
+            <DateField label="Fecha fin" value={form.fecha_fin} onChange={(fecha_fin) => setForm((f) => ({ ...f, fecha_fin }))} />
+            <TimeField label="Hora fin" value={form.hora_fin} onChange={(hora_fin) => setForm((f) => ({ ...f, hora_fin }))} />
             <Text style={styles.label}>Buque</Text><TextInput style={styles.input} value={form.buque} onChangeText={(buque) => setForm((f) => ({ ...f, buque }))} />
             <Text style={styles.label}>Detalle</Text><TextInput multiline style={[styles.input, styles.multilineInput]} value={form.comentario} onChangeText={(comentario) => setForm((f) => ({ ...f, comentario }))} />
             <PrimaryButton label="Registrar" loading={busy} onPress={saveHours} />
@@ -1977,11 +2086,11 @@ function HRPayslipsView({
       return;
     }
     const params = new URLSearchParams({
-      usuario: session.usuario,
-      rol: session.rol,
-      target_usuario: formatValue(selectedRow.usuario)
+      request_user: session.usuario,
+      request_role: session.rol,
+      target_user: formatValue(selectedRow.usuario)
     });
-    const url = `${API_BASE_URL}/hr/payroll/payslips/${selectedRow.year}/${selectedRow.month}/pdf-mobile?${params.toString()}`;
+    const url = `${API_BASE_URL}/hr/payroll/mobile-payslip-pdf/${selectedRow.year}/${selectedRow.month}?${params.toString()}`;
     try {
       await Linking.openURL(url);
       setMessage("Abriendo descarga de colilla.");
@@ -3881,6 +3990,18 @@ const styles = StyleSheet.create({
   brand: { color: BLUE, fontSize: 28, fontWeight: "800", marginBottom: 8, textAlign: "center" },
   cardTitle: { color: "#101828", fontSize: 15, fontWeight: "800" },
   chart: { backgroundColor: "white", borderColor: BORDER, borderRadius: 8, borderWidth: 1, marginTop: 12, padding: 14 },
+  calendarDay: { alignItems: "center", borderRadius: 6, height: 38, justifyContent: "center", width: "14.28%" },
+  calendarDayActive: { backgroundColor: BLUE },
+  calendarDayMuted: { color: "#98A2B3" },
+  calendarDayText: { color: "#101828", fontSize: 13, fontWeight: "800" },
+  calendarDayTextActive: { color: "white" },
+  calendarGrid: { flexDirection: "row", flexWrap: "wrap", marginTop: 8 },
+  calendarHeader: { alignItems: "center", flexDirection: "row", justifyContent: "space-between", marginBottom: 10 },
+  calendarOverlay: { alignItems: "center", backgroundColor: "rgba(15, 23, 42, 0.45)", flex: 1, justifyContent: "center", padding: 18 },
+  calendarPanel: { backgroundColor: "white", borderRadius: 8, padding: 14, width: "100%" },
+  calendarTitle: { color: "#101828", fontSize: 17, fontWeight: "900" },
+  calendarWeek: { flexDirection: "row" },
+  calendarWeekday: { color: "#667085", fontSize: 11, fontWeight: "900", textAlign: "center", width: "14.28%" },
   content: { flex: 1 },
   contentInner: { padding: 14, paddingBottom: 32 },
   creditCard: {
@@ -4133,6 +4254,8 @@ const styles = StyleSheet.create({
     padding: 10
   },
   tableToolbar: { alignItems: "center", flexDirection: "row", gap: 10, marginBottom: 10 },
+  timePart: { flex: 1 },
+  timeRow: { flexDirection: "row", gap: 10 },
   subtitle: { color: "#101828", fontSize: 18, fontWeight: "800", marginBottom: 14 },
   title: { color: "#101828", fontSize: 22, fontWeight: "800", marginBottom: 16, textAlign: "center" },
   top: { backgroundColor: BLUE, paddingBottom: 12 },
