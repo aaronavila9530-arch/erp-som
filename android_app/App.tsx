@@ -416,6 +416,10 @@ function DataView({
     return <HHRRSectionMobile section={section} initialPayload={payload} session={session} />;
   }
 
+  if (moduleCode === "comercial" && section) {
+    return <ComercialSectionMobile section={section} initialPayload={payload} session={session} />;
+  }
+
   if (section?.key === "credit-hold") {
     return <CreditControlMobile clients={rows} session={session} />;
   }
@@ -529,6 +533,668 @@ function DashboardView({
         )
       )}
 
+      {message ? <Text style={styles.error}>{message}</Text> : null}
+    </View>
+  );
+}
+
+function uniqueStrings(rows: Record<string, unknown>[], key: string) {
+  return Array.from(new Set(rows.map((row) => formatValue(row[key])).filter((value) => value && value !== "-"))).sort();
+}
+
+function displayBase(value: string) {
+  return value.replace(/\s+\([^)]*\)$/, "").trim();
+}
+
+function comercialAppend(params: URLSearchParams, key: string, value: string) {
+  const clean = value.trim();
+  if (clean && clean !== "Todos") params.append(key, clean);
+}
+
+function ComercialSectionMobile({
+  section,
+  initialPayload,
+  session
+}: {
+  section: AppSection;
+  initialPayload: unknown;
+  session: NonNullable<ReturnType<typeof useAuth>["session"]>;
+}) {
+  if (section.key === "board") return <ComercialBoardView initialPayload={initialPayload} session={session} />;
+  if (section.key === "clientes-comercial") return <ComercialClientesView initialPayload={initialPayload} session={session} />;
+  if (section.key === "precios") return <ComercialPreciosView initialPayload={initialPayload} session={session} />;
+  if (section.key === "cotizaciones") return <ComercialCotizacionesView initialPayload={initialPayload} session={session} />;
+  if (section.key === "analytics-clientes") return <ComercialClientAnalyticsView initialPayload={initialPayload} session={session} />;
+  if (section.key === "analytics-puertos") return <ComercialKpisView title="Analytics Puertos" endpoint="/comercial/analytics/puertos/kpis" initialPayload={initialPayload} session={session} />;
+  if (section.key === "analytics-servicios") return <ComercialKpisView title="Analytics Servicios" endpoint="/comercial/analytics/servicios/kpis" initialPayload={initialPayload} session={session} />;
+  return <ListView rows={rowsFromAny(initialPayload)} />;
+}
+
+function ComercialBoardView({
+  initialPayload,
+  session
+}: {
+  initialPayload: unknown;
+  session: NonNullable<ReturnType<typeof useAuth>["session"]>;
+}) {
+  const currentYear = String(new Date().getFullYear());
+  const [rows, setRows] = useState(rowsFromAny(initialPayload));
+  const [selected, setSelected] = useState<number | null>(null);
+  const [filters, setFilters] = useState({
+    cliente: "",
+    pais: "",
+    puerto: "",
+    surveyor: "",
+    year: "",
+    confirmado: true,
+    operacion: true,
+    finalizado: false,
+    cancelado: false
+  });
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const columns = [
+    "consec",
+    "tipo",
+    "estado",
+    "num_informe",
+    "buque_contenedor",
+    "cliente",
+    "operacion",
+    "detalle",
+    "surveyor",
+    "continente",
+    "pais",
+    "puerto",
+    "fecha_inicio",
+    "hora_inicio",
+    "fecha_fin",
+    "hora_fin",
+    "demoras",
+    "duracion"
+  ];
+
+  async function load() {
+    const params = new URLSearchParams();
+    comercialAppend(params, "cliente", filters.cliente);
+    comercialAppend(params, "pais", filters.pais);
+    comercialAppend(params, "puerto", filters.puerto);
+    comercialAppend(params, "surveyor", filters.surveyor);
+    if (filters.year) params.set("year", filters.year);
+    if (filters.confirmado) params.append("estados", "Confirmado");
+    if (filters.operacion) params.append("estados", "En Operación");
+    if (filters.finalizado) params.append("estados", "FINALIZADO");
+    if (filters.cancelado) params.append("estados", "Cancelado");
+    if (!params.has("estados") && !params.toString()) {
+      params.append("estados", "Confirmado");
+      params.append("estados", "En Operación");
+    }
+
+    setBusy(true);
+    setMessage("");
+    try {
+      const payload = await apiRequest(`/comercial/board?${params.toString()}`, { session });
+      const nextRows = rowsFromAny(payload).sort((a, b) => Number(b.consec || 0) - Number(a.consec || 0));
+      setRows(nextRows);
+      setSelected(null);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo cargar pizarra comercial.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    load();
+  }, [session.usuario, session.rol]);
+
+  const years = Array.from(new Set([currentYear, ...rows.map((row) => String(formatValue(row.fecha_inicio)).slice(0, 4)).filter((year) => /^\d{4}$/.test(year))])).sort().reverse();
+
+  return (
+    <View style={styles.tableShell}>
+      <Text style={styles.cardTitle}>Comercial - Pizarra Operativa</Text>
+      <View style={styles.financeFilterBox}>
+        <SelectField label="Cliente" value={filters.cliente} options={["", ...uniqueStrings(rows, "cliente")]} onChange={(cliente) => setFilters((f) => ({ ...f, cliente }))} />
+        <SelectField label="Pais" value={filters.pais} options={["", ...uniqueStrings(rows, "pais")]} onChange={(pais) => setFilters((f) => ({ ...f, pais }))} />
+        <SelectField label="Puerto" value={filters.puerto} options={["", ...uniqueStrings(rows, "puerto")]} onChange={(puerto) => setFilters((f) => ({ ...f, puerto }))} />
+        <SelectField label="Surveyor" value={filters.surveyor} options={["", ...uniqueStrings(rows, "surveyor")]} onChange={(surveyor) => setFilters((f) => ({ ...f, surveyor }))} />
+        <SelectField label="Anio" value={filters.year} options={["", ...years]} onChange={(year) => setFilters((f) => ({ ...f, year }))} />
+        <View style={styles.commercialStatusRow}>
+          {[
+            ["confirmado", "Confirmado"],
+            ["operacion", "En Operación"],
+            ["finalizado", "Finalizado"],
+            ["cancelado", "Cancelado"]
+          ].map(([key, label]) => (
+            <Pressable key={key} style={[styles.statusChip, filters[key as keyof typeof filters] ? styles.statusChipActive : null]} onPress={() => setFilters((f) => ({ ...f, [key]: !f[key as keyof typeof filters] }))}>
+              <Text style={[styles.statusChipText, filters[key as keyof typeof filters] ? styles.statusChipTextActive : null]}>{label}</Text>
+            </Pressable>
+          ))}
+        </View>
+        <View style={styles.financeFilterActions}>
+          <Pressable style={styles.actionButton} onPress={load}><Text style={styles.actionButtonText}>Buscar</Text></Pressable>
+          <Pressable style={styles.modalClose} onPress={() => setFilters({ cliente: "", pais: "", puerto: "", surveyor: "", year: "", confirmado: true, operacion: true, finalizado: false, cancelado: false })}><Text style={styles.modalCloseText}>Limpiar</Text></Pressable>
+        </View>
+      </View>
+      <Text style={styles.tableCount}>{rows.length} resultados</Text>
+      <HRMiniTable rows={rows} columns={columns} selectedIndex={selected} onSelect={setSelected} />
+      {busy ? <ActivityIndicator color={BLUE} style={styles.loader} /> : null}
+      {message ? <Text style={styles.error}>{message}</Text> : null}
+    </View>
+  );
+}
+
+function ComercialClientesView({
+  initialPayload,
+  session
+}: {
+  initialPayload: unknown;
+  session: NonNullable<ReturnType<typeof useAuth>["session"]>;
+}) {
+  const [rows, setRows] = useState(rowsFromAny(initialPayload));
+  const [selected, setSelected] = useState<number | null>(null);
+  const [filters, setFilters] = useState({ codigo: "", nombre: "" });
+  const [detail, setDetail] = useState<Record<string, unknown> | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const columns = ["id", "codigo", "nombrecomercial", "nombrejuridico", "pais", "telefono", "correo", "contacto_principal", "fecha_pago"];
+  const selectedRow = selected === null ? null : rows[selected] || null;
+
+  async function load() {
+    const params = new URLSearchParams();
+    comercialAppend(params, "codigo", filters.codigo);
+    comercialAppend(params, "nombre", filters.nombre);
+    setBusy(true);
+    setMessage("");
+    try {
+      const payload = await apiRequest(`/comercial/clientes${params.toString() ? `?${params.toString()}` : ""}`, { session });
+      setRows(rowsFromAny(payload));
+      setSelected(null);
+      setDetail(null);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo cargar clientes.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function showDetail() {
+    if (!selectedRow) {
+      setMessage("Seleccione un cliente.");
+      return;
+    }
+    const id = formatValue(selectedRow.id);
+    setBusy(true);
+    setMessage("");
+    try {
+      const payload = await apiRequest(`/comercial/clientes?id=${encodeURIComponent(id)}`, { session });
+      setDetail(rowsFromAny(payload)[0] || selectedRow);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo ver cliente.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <View style={styles.tableShell}>
+      <Text style={styles.cardTitle}>Comercial - Clientes</Text>
+      <View style={styles.financeFilterBox}>
+        <Text style={styles.label}>Codigo</Text>
+        <TextInput style={styles.input} value={filters.codigo} onChangeText={(codigo) => setFilters((f) => ({ ...f, codigo }))} />
+        <Text style={styles.label}>Nombre</Text>
+        <TextInput style={styles.input} value={filters.nombre} onChangeText={(nombre) => setFilters((f) => ({ ...f, nombre }))} />
+        <View style={styles.financeFilterActions}>
+          <Pressable style={styles.actionButton} onPress={load}><Text style={styles.actionButtonText}>Buscar</Text></Pressable>
+          <Pressable style={styles.actionButton} onPress={showDetail}><Text style={styles.actionButtonText}>Ver</Text></Pressable>
+        </View>
+      </View>
+      <HRMiniTable rows={rows} columns={columns} selectedIndex={selected} onSelect={setSelected} />
+      {detail ? (
+        <View style={styles.summaryBox}>
+          {Object.entries(detail).slice(0, 18).map(([key, value]) => (
+            <View key={key} style={styles.fieldRow}>
+              <Text style={styles.fieldKey}>{key.replaceAll("_", " ")}</Text>
+              <Text style={styles.fieldValue}>{formatValue(value)}</Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
+      {busy ? <ActivityIndicator color={BLUE} style={styles.loader} /> : null}
+      {message ? <Text style={styles.error}>{message}</Text> : null}
+    </View>
+  );
+}
+
+function ComercialPreciosView({
+  initialPayload,
+  session
+}: {
+  initialPayload: unknown;
+  session: NonNullable<ReturnType<typeof useAuth>["session"]>;
+}) {
+  const [rows, setRows] = useState(rowsFromAny(initialPayload));
+  const [meta, setMeta] = useState<Record<string, unknown>>({});
+  const [selected, setSelected] = useState<number | null>(null);
+  const [filters, setFilters] = useState({ servicio: "", cliente: "", continente: "", pais: "", puerto: "" });
+  const [modalMode, setModalMode] = useState<"add" | "edit" | null>(null);
+  const [form, setForm] = useState({ servicio: "", cliente: "", continente: "", pais: "", puerto: "", precio: "", activo: "true" });
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const columns = ["id", "servicio", "cliente", "continente", "pais", "puerto", "precio", "activo"];
+  const selectedRow = selected === null ? null : rows[selected] || null;
+  const ubicaciones = (Array.isArray(meta.ubicaciones) ? meta.ubicaciones : []).map((item) => asRecord(item)).filter(Boolean) as Record<string, unknown>[];
+  const servicios = (Array.isArray(meta.servicios) ? meta.servicios : []).map((item) => asRecord(item)).filter(Boolean).map((item) => `${formatValue(item?.nombre)} (${formatValue(item?.codigo)})`);
+  const clientes = (Array.isArray(meta.clientes) ? meta.clientes : []).map((item) => asRecord(item)).filter(Boolean).map((item) => `${formatValue(item?.nombrejuridico ?? item?.nombre)} (${formatValue(item?.codigo)})`);
+
+  function locationOptions(field: string, source: Record<string, string>) {
+    return [
+      "",
+      ...Array.from(
+        new Set(
+          ubicaciones
+            .filter((row) => (!source.continente || row.continente === source.continente) && (!source.pais || row.pais === source.pais))
+            .map((row) => formatValue(row[field]))
+            .filter((value) => value !== "-")
+        )
+      ).sort()
+    ];
+  }
+
+  async function loadMeta() {
+    try {
+      const payload = await apiRequest<Record<string, unknown>>("/comercial/precios/meta", { session });
+      setMeta(payload || {});
+    } catch {
+      setMeta({});
+    }
+  }
+
+  async function load() {
+    setBusy(true);
+    setMessage("");
+    try {
+      const payload = await apiRequest("/comercial/precios", { session });
+      const allRows = rowsFromAny(payload);
+      const filtered = allRows.filter((row) => {
+        return (!filters.servicio || formatValue(row.servicio) === displayBase(filters.servicio))
+          && (!filters.cliente || formatValue(row.cliente) === displayBase(filters.cliente))
+          && (!filters.continente || formatValue(row.continente) === filters.continente)
+          && (!filters.pais || formatValue(row.pais) === filters.pais)
+          && (!filters.puerto || formatValue(row.puerto) === filters.puerto);
+      });
+      setRows(filtered);
+      setSelected(null);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo cargar precios.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    loadMeta();
+  }, [session.usuario, session.rol]);
+
+  function openPrice(mode: "add" | "edit") {
+    if (mode === "edit" && !selectedRow) {
+      setMessage("Seleccione un precio.");
+      return;
+    }
+    const source = mode === "edit" ? selectedRow || {} : {};
+    setForm({
+      servicio: formatValue(source.servicio) === "-" ? "" : formatValue(source.servicio),
+      cliente: formatValue(source.cliente) === "-" ? "" : formatValue(source.cliente),
+      continente: formatValue(source.continente) === "-" ? "" : formatValue(source.continente),
+      pais: formatValue(source.pais) === "-" ? "" : formatValue(source.pais),
+      puerto: formatValue(source.puerto) === "-" ? "" : formatValue(source.puerto),
+      precio: formatValue(source.precio) === "-" ? "" : formatValue(source.precio),
+      activo: String(source.activo ?? true)
+    });
+    setModalMode(mode);
+  }
+
+  async function savePrice() {
+    const payload: Record<string, unknown> = {
+      servicio: displayBase(form.servicio),
+      cliente: displayBase(form.cliente),
+      continente: form.continente || null,
+      pais: form.pais || null,
+      puerto: form.puerto || null,
+      precio: Number(form.precio || 0)
+    };
+    if (modalMode === "edit") payload.activo = form.activo === "true";
+    setBusy(true);
+    setMessage("");
+    try {
+      if (modalMode === "add") {
+        await apiRequest("/comercial/precios", { method: "POST", body: payload, session });
+      } else if (selectedRow) {
+        await apiRequest(`/comercial/precios/${selectedRow.id}`, { method: "PUT", body: payload, session });
+      }
+      setModalMode(null);
+      await load();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo guardar precio.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deletePrice() {
+    if (!selectedRow) {
+      setMessage("Seleccione un precio.");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      await apiRequest(`/comercial/precios/${selectedRow.id}`, { method: "DELETE", session });
+      await load();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo eliminar precio.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <View style={styles.tableShell}>
+      <Text style={styles.cardTitle}>Comercial - Precios</Text>
+      <View style={styles.financeFilterBox}>
+        <SelectField label="Servicio" value={filters.servicio} options={["", ...servicios]} onChange={(servicio) => setFilters((f) => ({ ...f, servicio }))} />
+        <SelectField label="Cliente" value={filters.cliente} options={["", ...clientes]} onChange={(cliente) => setFilters((f) => ({ ...f, cliente }))} />
+        <SelectField label="Continente" value={filters.continente} options={locationOptions("continente", {})} onChange={(continente) => setFilters((f) => ({ ...f, continente, pais: "", puerto: "" }))} />
+        <SelectField label="Pais" value={filters.pais} options={locationOptions("pais", { continente: filters.continente })} onChange={(pais) => setFilters((f) => ({ ...f, pais, puerto: "" }))} />
+        <SelectField label="Puerto" value={filters.puerto} options={locationOptions("puerto", { continente: filters.continente, pais: filters.pais })} onChange={(puerto) => setFilters((f) => ({ ...f, puerto }))} />
+        <View style={styles.financeFilterActions}>
+          <Pressable style={styles.actionButton} onPress={load}><Text style={styles.actionButtonText}>Buscar</Text></Pressable>
+          <Pressable style={styles.modalClose} onPress={() => setFilters({ servicio: "", cliente: "", continente: "", pais: "", puerto: "" })}><Text style={styles.modalCloseText}>Limpiar</Text></Pressable>
+        </View>
+      </View>
+      <HRMiniTable rows={rows} columns={columns} selectedIndex={selected} onSelect={setSelected} />
+      <ScrollView horizontal contentContainerStyle={styles.actionBar}>
+        <Pressable style={styles.actionButton} onPress={() => openPrice("add")}><Text style={styles.actionButtonText}>Agregar</Text></Pressable>
+        <Pressable style={styles.actionButton} onPress={() => openPrice("edit")}><Text style={styles.actionButtonText}>Editar</Text></Pressable>
+        <Pressable style={styles.modalClose} onPress={deletePrice}><Text style={styles.modalCloseText}>Eliminar</Text></Pressable>
+      </ScrollView>
+      {busy ? <ActivityIndicator color={BLUE} style={styles.loader} /> : null}
+      {message ? <Text style={styles.error}>{message}</Text> : null}
+      <Modal visible={modalMode !== null} animationType="slide" onRequestClose={() => setModalMode(null)}>
+        <SafeAreaView style={styles.modalScreen}>
+          <View style={styles.modalHeader}><Text style={styles.modalTitle}>{modalMode === "add" ? "Agregar Precio" : "Editar Precio"}</Text><Pressable style={styles.modalClose} onPress={() => setModalMode(null)}><Text style={styles.modalCloseText}>Cerrar</Text></Pressable></View>
+          <ScrollView contentContainerStyle={styles.modalBody} keyboardShouldPersistTaps="handled">
+            <SelectField label="Servicio" value={form.servicio} options={servicios} onChange={(servicio) => setForm((f) => ({ ...f, servicio }))} />
+            <SelectField label="Cliente" value={form.cliente} options={clientes} onChange={(cliente) => setForm((f) => ({ ...f, cliente }))} />
+            <SelectField label="Continente" value={form.continente} options={locationOptions("continente", {})} onChange={(continente) => setForm((f) => ({ ...f, continente, pais: "", puerto: "" }))} />
+            <SelectField label="Pais" value={form.pais} options={locationOptions("pais", { continente: form.continente })} onChange={(pais) => setForm((f) => ({ ...f, pais, puerto: "" }))} />
+            <SelectField label="Puerto" value={form.puerto} options={locationOptions("puerto", { continente: form.continente, pais: form.pais })} onChange={(puerto) => setForm((f) => ({ ...f, puerto }))} />
+            <Text style={styles.label}>Precio</Text><TextInput keyboardType="decimal-pad" style={styles.input} value={form.precio} onChangeText={(precio) => setForm((f) => ({ ...f, precio }))} />
+            {modalMode === "edit" ? <SelectField label="Activo" value={form.activo} options={["true", "false"]} onChange={(activo) => setForm((f) => ({ ...f, activo }))} /> : null}
+            <PrimaryButton label="Guardar" loading={busy} onPress={savePrice} />
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+    </View>
+  );
+}
+
+function ComercialCotizacionesView({
+  initialPayload,
+  session
+}: {
+  initialPayload: unknown;
+  session: NonNullable<ReturnType<typeof useAuth>["session"]>;
+}) {
+  const [rows, setRows] = useState(rowsFromAny(initialPayload));
+  const [meta, setMeta] = useState<Record<string, unknown>>({});
+  const [selected, setSelected] = useState<number | null>(null);
+  const [filters, setFilters] = useState({ cliente: "", servicio: "", continente: "", pais: "", puerto: "", status: "" });
+  const [showNew, setShowNew] = useState(false);
+  const [quote, setQuote] = useState({ cliente: "", servicio: "", continente: "", pais: "", puerto: "", idioma: "ES", validez: "15" });
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const columns = ["id", "quotation_number", "cliente", "servicio", "continente", "pais", "puerto", "precio", "idioma", "validez", "status", "created_at"];
+  const selectedRow = selected === null ? null : rows[selected] || null;
+  const precios = (Array.isArray(meta.precios) ? meta.precios : []).map((item) => asRecord(item)).filter(Boolean) as Record<string, unknown>[];
+  const activePrecios = precios.filter((row) => row.activo !== false);
+
+  function quoteOptions(field: string, source: Record<string, string>) {
+    return [
+      "",
+      ...Array.from(
+        new Set(
+          activePrecios
+            .filter((row) => (!source.cliente || row.cliente === source.cliente) && (!source.continente || row.continente === source.continente) && (!source.pais || row.pais === source.pais) && (!source.puerto || row.puerto === source.puerto))
+            .map((row) => formatValue(row[field]))
+            .filter((value) => value !== "-")
+        )
+      ).sort()
+    ];
+  }
+
+  async function loadMeta() {
+    try {
+      const payload = await apiRequest<Record<string, unknown>>("/comercial/cotizaciones/meta", { session });
+      setMeta(payload || {});
+    } catch {
+      setMeta({});
+    }
+  }
+
+  async function load() {
+    const params = new URLSearchParams();
+    Object.entries(filters).forEach(([key, value]) => comercialAppend(params, key, value));
+    setBusy(true);
+    setMessage("");
+    try {
+      const payload = await apiRequest(`/comercial/cotizaciones${params.toString() ? `?${params.toString()}` : ""}`, { session });
+      setRows(rowsFromAny(payload));
+      setSelected(null);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo cargar cotizaciones.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    loadMeta();
+  }, [session.usuario, session.rol]);
+
+  async function saveQuote() {
+    const match = activePrecios.find((row) =>
+      row.cliente === quote.cliente
+      && row.servicio === quote.servicio
+      && (!quote.continente || row.continente === quote.continente)
+      && (!quote.pais || row.pais === quote.pais)
+      && (!quote.puerto || row.puerto === quote.puerto)
+    );
+    if (!quote.cliente || !quote.servicio || !match) {
+      setMessage("Seleccione cliente, servicio y una combinacion con precio configurado.");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      await apiRequest("/comercial/cotizaciones", {
+        method: "POST",
+        body: {
+          cliente: quote.cliente,
+          servicio: quote.servicio,
+          continente: quote.continente || match.continente || null,
+          pais: quote.pais || match.pais || null,
+          puerto: quote.puerto || match.puerto || null,
+          precio: Number(match.precio || 0),
+          idioma: quote.idioma,
+          validez: Number(quote.validez || 15),
+          status: "PENDIENTE"
+        },
+        session
+      });
+      setShowNew(false);
+      await load();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo crear cotizacion.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function updateQuote(status: "APROBADO" | "CANCELADO") {
+    if (!selectedRow) {
+      setMessage("Seleccione una cotizacion.");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      await apiRequest(`/comercial/cotizaciones/${selectedRow.id}`, {
+        method: "PUT",
+        body: status === "CANCELADO" ? { status, razon_cancelacion: "Cancelada desde app" } : { status },
+        session
+      });
+      await load();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo actualizar cotizacion.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <View style={styles.tableShell}>
+      <Text style={styles.cardTitle}>Comercial - Cotizaciones</Text>
+      <View style={styles.financeFilterBox}>
+        <SelectField label="Cliente" value={filters.cliente} options={quoteOptions("cliente", {})} onChange={(cliente) => setFilters((f) => ({ ...f, cliente }))} />
+        <SelectField label="Servicio" value={filters.servicio} options={quoteOptions("servicio", { cliente: filters.cliente })} onChange={(servicio) => setFilters((f) => ({ ...f, servicio }))} />
+        <SelectField label="Continente" value={filters.continente} options={quoteOptions("continente", { cliente: filters.cliente })} onChange={(continente) => setFilters((f) => ({ ...f, continente, pais: "", puerto: "" }))} />
+        <SelectField label="Pais" value={filters.pais} options={quoteOptions("pais", { cliente: filters.cliente, continente: filters.continente })} onChange={(pais) => setFilters((f) => ({ ...f, pais, puerto: "" }))} />
+        <SelectField label="Puerto" value={filters.puerto} options={quoteOptions("puerto", { cliente: filters.cliente, continente: filters.continente, pais: filters.pais })} onChange={(puerto) => setFilters((f) => ({ ...f, puerto }))} />
+        <SelectField label="Status" value={filters.status} options={["", "PENDIENTE", "APROBADO", "CANCELADO"]} onChange={(status) => setFilters((f) => ({ ...f, status }))} />
+        <View style={styles.financeFilterActions}>
+          <Pressable style={styles.actionButton} onPress={load}><Text style={styles.actionButtonText}>Buscar</Text></Pressable>
+          <Pressable style={styles.modalClose} onPress={() => setFilters({ cliente: "", servicio: "", continente: "", pais: "", puerto: "", status: "" })}><Text style={styles.modalCloseText}>Limpiar</Text></Pressable>
+        </View>
+      </View>
+      <HRMiniTable rows={rows} columns={columns} selectedIndex={selected} onSelect={setSelected} />
+      <ScrollView horizontal contentContainerStyle={styles.actionBar}>
+        <Pressable style={styles.actionButton} onPress={() => setShowNew(true)}><Text style={styles.actionButtonText}>Nueva Cotizacion</Text></Pressable>
+        <Pressable style={styles.actionButton} onPress={() => updateQuote("APROBADO")}><Text style={styles.actionButtonText}>Aprobar</Text></Pressable>
+        <Pressable style={styles.modalClose} onPress={() => updateQuote("CANCELADO")}><Text style={styles.modalCloseText}>Cancelar</Text></Pressable>
+      </ScrollView>
+      {busy ? <ActivityIndicator color={BLUE} style={styles.loader} /> : null}
+      {message ? <Text style={styles.error}>{message}</Text> : null}
+      <Modal visible={showNew} animationType="slide" onRequestClose={() => setShowNew(false)}>
+        <SafeAreaView style={styles.modalScreen}>
+          <View style={styles.modalHeader}><Text style={styles.modalTitle}>Nueva Cotizacion</Text><Pressable style={styles.modalClose} onPress={() => setShowNew(false)}><Text style={styles.modalCloseText}>Cerrar</Text></Pressable></View>
+          <ScrollView contentContainerStyle={styles.modalBody} keyboardShouldPersistTaps="handled">
+            <SelectField label="Cliente" value={quote.cliente} options={quoteOptions("cliente", {})} onChange={(cliente) => setQuote((f) => ({ ...f, cliente, servicio: "", continente: "", pais: "", puerto: "" }))} />
+            <SelectField label="Continente" value={quote.continente} options={quoteOptions("continente", { cliente: quote.cliente })} onChange={(continente) => setQuote((f) => ({ ...f, continente, pais: "", puerto: "", servicio: "" }))} />
+            <SelectField label="Pais" value={quote.pais} options={quoteOptions("pais", { cliente: quote.cliente, continente: quote.continente })} onChange={(pais) => setQuote((f) => ({ ...f, pais, puerto: "", servicio: "" }))} />
+            <SelectField label="Puerto" value={quote.puerto} options={quoteOptions("puerto", { cliente: quote.cliente, continente: quote.continente, pais: quote.pais })} onChange={(puerto) => setQuote((f) => ({ ...f, puerto, servicio: "" }))} />
+            <SelectField label="Servicio" value={quote.servicio} options={quoteOptions("servicio", { cliente: quote.cliente, continente: quote.continente, pais: quote.pais, puerto: quote.puerto })} onChange={(servicio) => setQuote((f) => ({ ...f, servicio }))} />
+            <SelectField label="Idioma" value={quote.idioma} options={["ES", "EN"]} onChange={(idioma) => setQuote((f) => ({ ...f, idioma }))} />
+            <Text style={styles.label}>Validez dias</Text><TextInput keyboardType="number-pad" style={styles.input} value={quote.validez} onChangeText={(validez) => setQuote((f) => ({ ...f, validez }))} />
+            <PrimaryButton label="Confirmar y Guardar" loading={busy} onPress={saveQuote} />
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+    </View>
+  );
+}
+
+function ComercialClientAnalyticsView({
+  initialPayload,
+  session
+}: {
+  initialPayload: unknown;
+  session: NonNullable<ReturnType<typeof useAuth>["session"]>;
+}) {
+  const [data, setData] = useState(initialPayload);
+  const [filters, setFilters] = useState({ year: String(new Date().getFullYear()), cliente: "", servicio: "" });
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const rows = rowsFromAny(data);
+  const obj = asRecord(data) || {};
+
+  async function load() {
+    const params = new URLSearchParams();
+    comercialAppend(params, "year", filters.year);
+    comercialAppend(params, "cliente", filters.cliente);
+    comercialAppend(params, "servicio", filters.servicio);
+    setBusy(true);
+    setMessage("");
+    try {
+      setData(await apiRequest(`/comercial/client-view?${params.toString()}`, { session }));
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo cargar analytics clientes.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <View style={styles.tableShell}>
+      <Text style={styles.cardTitle}>Analytics Clientes</Text>
+      <View style={styles.financeFilterBox}>
+        <Text style={styles.label}>Anio</Text><TextInput keyboardType="number-pad" style={styles.input} value={filters.year} onChangeText={(year) => setFilters((f) => ({ ...f, year }))} />
+        <SelectField label="Cliente" value={filters.cliente} options={["", ...uniqueStrings(rows, "cliente")]} onChange={(cliente) => setFilters((f) => ({ ...f, cliente }))} />
+        <SelectField label="Servicio" value={filters.servicio} options={["", ...uniqueStrings(rows, "servicios")]} onChange={(servicio) => setFilters((f) => ({ ...f, servicio }))} />
+        <Pressable style={styles.actionButton} onPress={load}><Text style={styles.actionButtonText}>Buscar</Text></Pressable>
+      </View>
+      <KpiGrid numbers={flattenNumbers(obj.kpis).slice(0, 8)} />
+      <HRMiniTable rows={rows} columns={["cliente", "servicios", "buque_contenedor", "frecuencia", "valor_facturado", "margen_bruto", "margen_neto", "rentabilidad_pct"]} selectedIndex={null} onSelect={() => undefined} />
+      {busy ? <ActivityIndicator color={BLUE} style={styles.loader} /> : null}
+      {message ? <Text style={styles.error}>{message}</Text> : null}
+    </View>
+  );
+}
+
+function ComercialKpisView({
+  title,
+  endpoint,
+  initialPayload,
+  session
+}: {
+  title: string;
+  endpoint: string;
+  initialPayload: unknown;
+  session: NonNullable<ReturnType<typeof useAuth>["session"]>;
+}) {
+  const [data, setData] = useState(initialPayload);
+  const [filters, setFilters] = useState({ year_from: String(new Date().getFullYear()), year_to: String(new Date().getFullYear()), continente: "", pais: "", puerto: "" });
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const obj = asRecord(data) || {};
+
+  async function load() {
+    const params = new URLSearchParams();
+    Object.entries(filters).forEach(([key, value]) => comercialAppend(params, key, value));
+    setBusy(true);
+    setMessage("");
+    try {
+      setData(await apiRequest(`${endpoint}?${params.toString()}`, { session }));
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo cargar analytics.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <View style={styles.tableShell}>
+      <Text style={styles.cardTitle}>{title}</Text>
+      <View style={styles.financeFilterBox}>
+        <Text style={styles.label}>Year from</Text><TextInput keyboardType="number-pad" style={styles.input} value={filters.year_from} onChangeText={(year_from) => setFilters((f) => ({ ...f, year_from }))} />
+        <Text style={styles.label}>Year to</Text><TextInput keyboardType="number-pad" style={styles.input} value={filters.year_to} onChangeText={(year_to) => setFilters((f) => ({ ...f, year_to }))} />
+        <Text style={styles.label}>Continente</Text><TextInput style={styles.input} value={filters.continente} onChangeText={(continente) => setFilters((f) => ({ ...f, continente }))} />
+        <Text style={styles.label}>Pais</Text><TextInput style={styles.input} value={filters.pais} onChangeText={(pais) => setFilters((f) => ({ ...f, pais }))} />
+        <Text style={styles.label}>Puerto</Text><TextInput style={styles.input} value={filters.puerto} onChangeText={(puerto) => setFilters((f) => ({ ...f, puerto }))} />
+        <Pressable style={styles.actionButton} onPress={load}><Text style={styles.actionButtonText}>Buscar</Text></Pressable>
+      </View>
+      <KpiGrid numbers={flattenNumbers(obj.kpis || obj).slice(0, 8)} />
+      {busy ? <ActivityIndicator color={BLUE} style={styles.loader} /> : null}
       {message ? <Text style={styles.error}>{message}</Text> : null}
     </View>
   );
@@ -4138,6 +4804,18 @@ const styles = StyleSheet.create({
   actionBar: { gap: 8, paddingVertical: 12 },
   actionButton: { backgroundColor: BLUE, borderRadius: 6, paddingHorizontal: 12, paddingVertical: 10 },
   actionButtonText: { color: "white", fontSize: 12, fontWeight: "800" },
+  commercialStatusRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 10 },
+  statusChip: {
+    backgroundColor: "white",
+    borderColor: BORDER,
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 8
+  },
+  statusChipActive: { backgroundColor: BLUE, borderColor: BLUE },
+  statusChipText: { color: "#344054", fontSize: 12, fontWeight: "800" },
+  statusChipTextActive: { color: "white" },
   accountingTcBox: {
     backgroundColor: "#F8FAFC",
     borderColor: BORDER,
