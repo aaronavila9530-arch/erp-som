@@ -10,6 +10,8 @@ from psycopg2.extras import RealDictCursor
 from pydantic import BaseModel
 import os
 import tempfile
+import time
+import uuid
 
 from database import get_db
 from rbac_service import has_permission
@@ -153,9 +155,32 @@ class CotizacionUpdate(BaseModel):
     razon_cancelacion: Optional[str] = None
 
 
+class CotizacionExportCreate(BaseModel):
+    quotation_number: Optional[str] = ""
+    cliente: Optional[str] = ""
+    servicio: Optional[str] = ""
+    idioma: Optional[str] = "ES"
+    texto: str
+
+
+EXPORT_CACHE = {}
+EXPORT_TTL_SECONDS = 600
+
+
 def _safe_export_name(value: str) -> str:
     clean = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in str(value or "quotation"))
     return clean[:80] or "quotation"
+
+
+def _cleanup_export_cache():
+    now = time.time()
+    expired = [
+        key
+        for key, item in EXPORT_CACHE.items()
+        if now - float(item.get("created_at", 0)) > EXPORT_TTL_SECONDS
+    ]
+    for key in expired:
+        EXPORT_CACHE.pop(key, None)
 
 
 # ============================================================
@@ -345,9 +370,24 @@ def get_next_quotation_number(conn=Depends(get_db)):
 # GET - EXPORTAR COTIZACION MOBILE (WORD / PDF)
 # ============================================================
 
+@router.post(
+    "/export-ticket",
+    dependencies=[Depends(require_permission("comercial", "view"))]
+)
+def crear_export_ticket(payload: CotizacionExportCreate):
+    _cleanup_export_cache()
+    ticket = uuid.uuid4().hex
+    EXPORT_CACHE[ticket] = {
+        "created_at": time.time(),
+        "data": payload.dict()
+    }
+    return {"ticket": ticket}
+
+
 @router.get("/export/{formato}")
 def exportar_cotizacion_mobile(
     formato: str,
+    ticket: str = Query(""),
     quotation_number: str = Query(""),
     cliente: str = Query(""),
     servicio: str = Query(""),
@@ -358,6 +398,19 @@ def exportar_cotizacion_mobile(
 ):
     if not request_user or not has_permission((request_role or "").lower(), "comercial", "view"):
         raise HTTPException(status_code=403, detail="Usuario no autenticado")
+
+    _cleanup_export_cache()
+    if ticket:
+        cached = EXPORT_CACHE.get(ticket)
+        if not cached:
+            raise HTTPException(status_code=404, detail="Exportacion expirada")
+
+        data_cached = cached.get("data") or {}
+        quotation_number = data_cached.get("quotation_number") or quotation_number
+        cliente = data_cached.get("cliente") or cliente
+        servicio = data_cached.get("servicio") or servicio
+        idioma = data_cached.get("idioma") or idioma
+        texto = data_cached.get("texto") or texto
 
     formato = (formato or "").strip().lower()
     if formato not in {"word", "pdf"}:

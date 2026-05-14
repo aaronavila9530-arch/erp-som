@@ -558,7 +558,7 @@ function buildQuotationText(cliente: string, services: Record<string, unknown>[]
   const validYmd = validDate.toISOString().slice(0, 10);
   const servicesText = services.map((item) => `- ${formatValue(item.servicio)}: $ ${Number(item.precio || 0).toFixed(2)} USD`).join("\n");
   const total = services.reduce((sum, item) => sum + Number(item.precio || 0), 0);
-  const name = cliente || "Client";
+  const name = cliente || (idioma === "EN" ? "Client" : "Cliente");
 
   if (idioma === "EN") {
     return `Dear ${name},\n\nWe are pleased to submit our quotation for the following services:\n\n${servicesText}\n\nTotal amount: USD ${total.toFixed(2)}\n\nThis quotation is valid until ${validYmd}.\nPayment terms: 30 days from invoice date.\n\nSincerely,\nMarine Surveyors & Logistics Group SRL`;
@@ -977,8 +977,27 @@ function ComercialCotizacionesView({
   const selectedRow = selected === null ? null : rows[selected] || null;
   const precios = (Array.isArray(meta.precios) ? meta.precios : []).map((item) => asRecord(item)).filter(Boolean) as Record<string, unknown>[];
   const activePrecios = precios.filter((row) => row.activo !== false);
+  const metaClientes = (Array.isArray(meta.clientes) ? meta.clientes : []).map((item) => asRecord(item)).filter(Boolean) as Record<string, unknown>[];
+  const metaServicios = (Array.isArray(meta.servicios) ? meta.servicios : []).map((item) => asRecord(item)).filter(Boolean) as Record<string, unknown>[];
+  const metaUbicaciones = (Array.isArray(meta.ubicaciones) ? meta.ubicaciones : []).map((item) => asRecord(item)).filter(Boolean) as Record<string, unknown>[];
 
   function quoteOptions(field: string, source: Record<string, string>) {
+    if (!activePrecios.length) {
+      if (field === "cliente") return ["", ...metaClientes.map((row) => formatValue(row.nombre)).filter((value) => value !== "-")];
+      if (field === "servicio") return ["", ...metaServicios.map((row) => formatValue(row.nombre)).filter((value) => value !== "-")];
+      return [
+        "",
+        ...Array.from(
+          new Set(
+            metaUbicaciones
+              .filter((row) => (!source.continente || row.continente === source.continente) && (!source.pais || row.pais === source.pais))
+              .map((row) => formatValue(row[field]))
+              .filter((value) => value !== "-")
+          )
+        ).sort()
+      ];
+    }
+
     return [
       "",
       ...Array.from(
@@ -993,16 +1012,19 @@ function ComercialCotizacionesView({
   }
 
   async function loadMeta() {
-    try {
-      const [payload, nextNumber] = await Promise.all([
-        apiRequest<Record<string, unknown>>("/comercial/cotizaciones/meta", { session }),
-        apiRequest<Record<string, unknown>>("/comercial/cotizaciones/next-quotation-number", { session }).catch(() => null)
-      ]);
-      setMeta(payload || {});
-      setQuotationNumber(formatValue(nextNumber?.quotation_number) === "-" ? "" : formatValue(nextNumber?.quotation_number));
-    } catch {
+    setMessage("");
+    const payload = await apiRequest<Record<string, unknown>>("/comercial/cotizaciones/meta", { session }).catch((err) => {
+      setMessage(err instanceof Error ? err.message : "No se pudo cargar catalogos de cotizacion.");
+      return null;
+    });
+    if (payload) {
+      setMeta(payload);
+    } else {
       setMeta({});
     }
+
+    const nextNumber = await apiRequest<Record<string, unknown>>("/comercial/cotizaciones/next-quotation-number", { session }).catch(() => null);
+    setQuotationNumber(formatValue(nextNumber?.quotation_number) === "-" ? "" : formatValue(nextNumber?.quotation_number));
   }
 
   async function load() {
@@ -1087,21 +1109,44 @@ function ComercialCotizacionesView({
     });
   }
 
-  function exportQuote(format: "word" | "pdf") {
+  async function exportQuote(format: "word" | "pdf") {
     if (!selectedServices.length) {
       setMessage("Debe agregar al menos un servicio.");
       return;
     }
-    const params = new URLSearchParams({
-      request_user: session.usuario,
-      request_role: session.rol,
-      quotation_number: quotationNumber,
-      cliente: quote.cliente,
-      servicio: selectedServices.map((item) => formatValue(item.servicio)).join(", "),
-      idioma: quote.idioma,
-      texto: previewText
-    });
-    Linking.openURL(`${API_BASE_URL}/comercial/cotizaciones/export/${format}?${params.toString()}`);
+    setBusy(true);
+    setMessage("");
+    try {
+      const payload = await apiRequest<Record<string, unknown>>("/comercial/cotizaciones/export-ticket", {
+        method: "POST",
+        body: {
+          quotation_number: quotationNumber,
+          cliente: quote.cliente,
+          servicio: selectedServices.map((item) => formatValue(item.servicio)).join(", "),
+          idioma: quote.idioma,
+          texto: previewText
+        },
+        session
+      });
+      const ticket = formatValue(payload.ticket);
+      const params = new URLSearchParams({
+        request_user: session.usuario,
+        request_role: session.rol,
+        ticket
+      });
+      const url = `${API_BASE_URL}/comercial/cotizaciones/export/${format}?${params.toString()}`;
+      const supported = await Linking.canOpenURL(url);
+      if (!supported) {
+        await Share.share({ message: url });
+      } else {
+        await Linking.openURL(url);
+      }
+      setMessage(`Abriendo descarga ${format.toUpperCase()}...`);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo abrir la descarga.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function saveQuote() {
