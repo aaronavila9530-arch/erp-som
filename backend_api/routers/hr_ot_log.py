@@ -134,6 +134,10 @@ def my_hours_summary(
     "/",
     dependencies=[Depends(require_permission("hhrr", "ot_log"))]
 )
+@router.post(
+    "",
+    dependencies=[Depends(require_permission("hhrr", "ot_log"))]
+)
 def create_ot_log(
     data: dict,
     user=Depends(get_current_user),
@@ -202,6 +206,10 @@ def create_ot_log(
 # ============================================================
 @router.get(
     "/",
+    dependencies=[Depends(require_permission("hhrr", "ot_log"))]
+)
+@router.get(
+    "",
     dependencies=[Depends(require_permission("hhrr", "ot_log"))]
 )
 def list_ot_logs(

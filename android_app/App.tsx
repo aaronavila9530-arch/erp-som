@@ -1710,7 +1710,7 @@ function HRHoursView({
     try {
       const [summaryPayload, rowsPayload] = await Promise.all([
         apiRequest<Record<string, unknown>>("/hr/ot-log/me/summary", { session }).catch(() => null),
-        apiRequest(`/hr/ot-log/?${params.toString()}`, { session })
+        apiRequest(`/hr/ot-log?${params.toString()}`, { session })
       ]);
       setSummary(summaryPayload);
       setRows(rowsFromAny(rowsPayload));
@@ -1734,7 +1734,7 @@ function HRHoursView({
     setBusy(true);
     setMessage("");
     try {
-      await apiRequest("/hr/ot-log/", {
+      await apiRequest("/hr/ot-log", {
         method: "POST",
         body: {
           tipo: form.tipo,
@@ -1976,7 +1976,12 @@ function HRPayslipsView({
       setMessage("Seleccione una colilla.");
       return;
     }
-    const url = `${API_BASE_URL}/hr/payroll/payslips/${selectedRow.year}/${selectedRow.month}/pdf`;
+    const params = new URLSearchParams({
+      usuario: session.usuario,
+      rol: session.rol,
+      target_usuario: formatValue(selectedRow.usuario)
+    });
+    const url = `${API_BASE_URL}/hr/payroll/payslips/${selectedRow.year}/${selectedRow.month}/pdf-mobile?${params.toString()}`;
     try {
       await Linking.openURL(url);
       setMessage("Abriendo descarga de colilla.");

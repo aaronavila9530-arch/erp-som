@@ -825,3 +825,118 @@ def descargar_colilla_pdf(
         media_type="application/pdf",
         headers={"Content-Disposition": f"attachment; filename={filename}"}
     )
+
+
+@router.get("/payslips/{year}/{month}/pdf-mobile")
+def descargar_colilla_pdf_mobile(
+    year: int,
+    month: int,
+    usuario: str,
+    rol: str,
+    target_usuario: str | None = None,
+    conn=Depends(get_db)
+):
+    """
+    Descarga mobile: Linking.openURL no puede enviar headers X-User/X-Role.
+    Se valida usuario/rol contra BD y se aplica la misma regla: admin/master
+    puede descargar de otros; usuario normal solo la propia.
+    """
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    usuario_actual = (usuario or "").strip().lower()
+    rol_actual = (rol or "").strip().lower()
+    usuario_solicitado = (target_usuario or usuario_actual).strip().lower()
+
+    cur.execute("""
+        SELECT usuario, activo
+        FROM usuarios
+        WHERE LOWER(TRIM(usuario)) = %s
+        LIMIT 1
+    """, (usuario_actual,))
+    auth_user = cur.fetchone()
+
+    if not auth_user:
+        raise HTTPException(401, "Usuario no existe")
+    if not bool(auth_user.get("activo")):
+        raise HTTPException(403, "Usuario inactivo")
+
+    if rol_actual not in ("admin", "master") and usuario_solicitado != usuario_actual:
+        raise HTTPException(403, "No autorizado")
+
+    cur.execute("""
+        SELECT
+            usuario,
+            year,
+            month,
+            salario_neto,
+            salario_bruto,
+            horas_extra,
+            monto_horas_extra
+        FROM payroll_runs
+        WHERE usuario = %s
+          AND year = %s
+          AND month = %s
+        LIMIT 1
+    """, (usuario_solicitado, year, month))
+
+    run = cur.fetchone()
+    if not run:
+        raise HTTPException(404, "Colilla no encontrada")
+
+    cur.execute("""
+        SELECT
+            nombre,
+            apellidos,
+            cedula_id,
+            jornada,
+            salario,
+            pago
+        FROM empleados
+        WHERE usuario = %s
+        LIMIT 1
+    """, (usuario_solicitado,))
+
+    emp = cur.fetchone()
+    if not emp:
+        raise HTTPException(404, "Empleado no encontrado")
+
+    salario_bruto = float(run["salario_bruto"] or 0)
+    monto_horas_extra = float(run["monto_horas_extra"] or 0)
+    salario_base = salario_bruto - monto_horas_extra
+    deducciones_trabajador = round(
+        sum(salario_bruto * tasa for tasa in DEDUCCIONES_TRABAJADOR.values()),
+        2
+    )
+    impuesto_renta = calcular_renta(salario_bruto)
+    cargas_patronales = round(
+        sum(salario_bruto * tasa for tasa in CARGAS_PATRONALES.values()),
+        2
+    )
+
+    data = {
+        "usuario": run["usuario"],
+        "nombre": emp["nombre"],
+        "apellidos": emp["apellidos"],
+        "cedula_id": emp["cedula_id"],
+        "jornada": emp["jornada"],
+        "pago": emp["pago"],
+        "year": run["year"],
+        "month": run["month"],
+        "salario_base": round(salario_base, 2),
+        "horas_ot": float(run["horas_extra"] or 0),
+        "pago_horas_extra": round(monto_horas_extra, 2),
+        "salario_bruto": round(salario_bruto, 2),
+        "deducciones_trabajador": deducciones_trabajador,
+        "impuesto_renta": impuesto_renta,
+        "salario_neto": float(run["salario_neto"] or 0),
+        "cargas_patronales": cargas_patronales,
+        "costo_total_empresa": round(salario_bruto + cargas_patronales, 2)
+    }
+
+    pdf_bytes = _generar_colilla_pdf_bytes(data=data, year=year, month=month)
+    filename = f"COLILLA_{run['usuario']}_{year}_{month}.pdf"
+
+    return StreamingResponse(
+        BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
