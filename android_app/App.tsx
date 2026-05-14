@@ -551,6 +551,22 @@ function comercialAppend(params: URLSearchParams, key: string, value: string) {
   if (clean && clean !== "Todos") params.append(key, clean);
 }
 
+function buildQuotationText(cliente: string, services: Record<string, unknown>[], idioma: string, validez: string) {
+  const days = Number(validez || 15);
+  const validDate = new Date();
+  validDate.setDate(validDate.getDate() + (Number.isFinite(days) ? days : 15));
+  const validYmd = validDate.toISOString().slice(0, 10);
+  const servicesText = services.map((item) => `- ${formatValue(item.servicio)}: $ ${Number(item.precio || 0).toFixed(2)} USD`).join("\n");
+  const total = services.reduce((sum, item) => sum + Number(item.precio || 0), 0);
+  const name = cliente || "Client";
+
+  if (idioma === "EN") {
+    return `Dear ${name},\n\nWe are pleased to submit our quotation for the following services:\n\n${servicesText}\n\nTotal amount: USD ${total.toFixed(2)}\n\nThis quotation is valid until ${validYmd}.\nPayment terms: 30 days from invoice date.\n\nSincerely,\nMarine Surveyors & Logistics Group SRL`;
+  }
+
+  return `Estimado ${name},\n\nPor medio de la presente compartimos la cotizacion para los siguientes servicios:\n\n${servicesText}\n\nMonto total: $ ${total.toFixed(2)} USD\n\nEsta cotizacion tiene una validez hasta el ${validYmd}.\nTerminos de pago: 30 dias fecha factura.\n\nAtentamente,\nMarine Surveyors & Logistics Group SRL`;
+}
+
 function ComercialSectionMobile({
   section,
   initialPayload,
@@ -952,6 +968,9 @@ function ComercialCotizacionesView({
   const [filters, setFilters] = useState({ cliente: "", servicio: "", continente: "", pais: "", puerto: "", status: "" });
   const [showNew, setShowNew] = useState(false);
   const [quote, setQuote] = useState({ cliente: "", servicio: "", continente: "", pais: "", puerto: "", idioma: "ES", validez: "15" });
+  const [quotationNumber, setQuotationNumber] = useState("");
+  const [selectedServices, setSelectedServices] = useState<Record<string, unknown>[]>([]);
+  const [previewText, setPreviewText] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const columns = ["id", "quotation_number", "cliente", "servicio", "continente", "pais", "puerto", "precio", "idioma", "validez", "status", "created_at"];
@@ -975,8 +994,12 @@ function ComercialCotizacionesView({
 
   async function loadMeta() {
     try {
-      const payload = await apiRequest<Record<string, unknown>>("/comercial/cotizaciones/meta", { session });
+      const [payload, nextNumber] = await Promise.all([
+        apiRequest<Record<string, unknown>>("/comercial/cotizaciones/meta", { session }),
+        apiRequest<Record<string, unknown>>("/comercial/cotizaciones/next-quotation-number", { session }).catch(() => null)
+      ]);
       setMeta(payload || {});
+      setQuotationNumber(formatValue(nextNumber?.quotation_number) === "-" ? "" : formatValue(nextNumber?.quotation_number));
     } catch {
       setMeta({});
     }
@@ -1002,7 +1025,20 @@ function ComercialCotizacionesView({
     loadMeta();
   }, [session.usuario, session.rol]);
 
-  async function saveQuote() {
+  function refreshPreview(nextServices = selectedServices, nextQuote = quote) {
+    setPreviewText(buildQuotationText(nextQuote.cliente, nextServices, nextQuote.idioma, nextQuote.validez));
+  }
+
+  function openNewQuote() {
+    const blank = { cliente: "", servicio: "", continente: "", pais: "", puerto: "", idioma: "ES", validez: "15" };
+    setQuote(blank);
+    setSelectedServices([]);
+    setPreviewText(buildQuotationText("", [], "ES", "15"));
+    setMessage("");
+    setShowNew(true);
+  }
+
+  function addQuoteService() {
     const match = activePrecios.find((row) =>
       row.cliente === quote.cliente
       && row.servicio === quote.servicio
@@ -1014,22 +1050,87 @@ function ComercialCotizacionesView({
       setMessage("Seleccione cliente, servicio y una combinacion con precio configurado.");
       return;
     }
+    const duplicated = selectedServices.some((item) =>
+      item.cliente === match.cliente
+      && item.servicio === match.servicio
+      && item.continente === match.continente
+      && item.pais === match.pais
+      && item.puerto === match.puerto
+    );
+    if (duplicated) {
+      setMessage("Ese servicio ya fue agregado.");
+      return;
+    }
+    const next = [...selectedServices, match];
+    setSelectedServices(next);
+    setQuote((current) => {
+      const nextQuote = { ...current, servicio: "" };
+      refreshPreview(next, nextQuote);
+      return nextQuote;
+    });
+    setMessage("");
+  }
+
+  function removeQuoteService(index: number) {
+    const next = selectedServices.filter((_, current) => current !== index);
+    setSelectedServices(next);
+    refreshPreview(next);
+  }
+
+  function updateQuoteField(key: keyof typeof quote, value: string) {
+    setQuote((current) => {
+      const next = { ...current, [key]: value };
+      if (["cliente", "idioma", "validez"].includes(key)) {
+        setPreviewText(buildQuotationText(next.cliente, selectedServices, next.idioma, next.validez));
+      }
+      return next;
+    });
+  }
+
+  function exportQuote(format: "word" | "pdf") {
+    if (!selectedServices.length) {
+      setMessage("Debe agregar al menos un servicio.");
+      return;
+    }
+    const params = new URLSearchParams({
+      request_user: session.usuario,
+      request_role: session.rol,
+      quotation_number: quotationNumber,
+      cliente: quote.cliente,
+      servicio: selectedServices.map((item) => formatValue(item.servicio)).join(", "),
+      idioma: quote.idioma,
+      texto: previewText
+    });
+    Linking.openURL(`${API_BASE_URL}/comercial/cotizaciones/export/${format}?${params.toString()}`);
+  }
+
+  async function saveQuote() {
+    if (!quote.cliente || !selectedServices.length) {
+      setMessage("Debe seleccionar cliente y agregar al menos un servicio.");
+      return;
+    }
+    const total = selectedServices.reduce((sum, item) => sum + Number(item.precio || 0), 0);
+    const body: Record<string, unknown> = {
+      cliente: quote.cliente,
+      servicio: selectedServices.map((item) => formatValue(item.servicio)).join(", "),
+      continente: quote.continente || selectedServices[0]?.continente || null,
+      pais: quote.pais || selectedServices[0]?.pais || null,
+      puerto: quote.puerto || selectedServices[0]?.puerto || null,
+      precio: total,
+      idioma: quote.idioma,
+      validez: Number(quote.validez || 15),
+      status: "PENDIENTE"
+    };
+    selectedServices.slice(0, 4).forEach((item, index) => {
+      body[`servicio_${index + 1}`] = formatValue(item.servicio);
+      body[`precio_${index + 1}`] = Number(item.precio || 0);
+    });
     setBusy(true);
     setMessage("");
     try {
       await apiRequest("/comercial/cotizaciones", {
         method: "POST",
-        body: {
-          cliente: quote.cliente,
-          servicio: quote.servicio,
-          continente: quote.continente || match.continente || null,
-          pais: quote.pais || match.pais || null,
-          puerto: quote.puerto || match.puerto || null,
-          precio: Number(match.precio || 0),
-          idioma: quote.idioma,
-          validez: Number(quote.validez || 15),
-          status: "PENDIENTE"
-        },
+        body,
         session
       });
       setShowNew(false);
@@ -1079,7 +1180,7 @@ function ComercialCotizacionesView({
       </View>
       <HRMiniTable rows={rows} columns={columns} selectedIndex={selected} onSelect={setSelected} />
       <ScrollView horizontal contentContainerStyle={styles.actionBar}>
-        <Pressable style={styles.actionButton} onPress={() => setShowNew(true)}><Text style={styles.actionButtonText}>Nueva Cotizacion</Text></Pressable>
+        <Pressable style={styles.actionButton} onPress={openNewQuote}><Text style={styles.actionButtonText}>Nueva Cotizacion</Text></Pressable>
         <Pressable style={styles.actionButton} onPress={() => updateQuote("APROBADO")}><Text style={styles.actionButtonText}>Aprobar</Text></Pressable>
         <Pressable style={styles.modalClose} onPress={() => updateQuote("CANCELADO")}><Text style={styles.modalCloseText}>Cancelar</Text></Pressable>
       </ScrollView>
@@ -1089,13 +1190,23 @@ function ComercialCotizacionesView({
         <SafeAreaView style={styles.modalScreen}>
           <View style={styles.modalHeader}><Text style={styles.modalTitle}>Nueva Cotizacion</Text><Pressable style={styles.modalClose} onPress={() => setShowNew(false)}><Text style={styles.modalCloseText}>Cerrar</Text></Pressable></View>
           <ScrollView contentContainerStyle={styles.modalBody} keyboardShouldPersistTaps="handled">
-            <SelectField label="Cliente" value={quote.cliente} options={quoteOptions("cliente", {})} onChange={(cliente) => setQuote((f) => ({ ...f, cliente, servicio: "", continente: "", pais: "", puerto: "" }))} />
+            {quotationNumber ? <Text style={styles.helperText}>{quotationNumber}</Text> : null}
+            <SelectField label="Cliente" value={quote.cliente} options={quoteOptions("cliente", {})} onChange={(cliente) => updateQuoteField("cliente", cliente)} />
             <SelectField label="Continente" value={quote.continente} options={quoteOptions("continente", { cliente: quote.cliente })} onChange={(continente) => setQuote((f) => ({ ...f, continente, pais: "", puerto: "", servicio: "" }))} />
             <SelectField label="Pais" value={quote.pais} options={quoteOptions("pais", { cliente: quote.cliente, continente: quote.continente })} onChange={(pais) => setQuote((f) => ({ ...f, pais, puerto: "", servicio: "" }))} />
             <SelectField label="Puerto" value={quote.puerto} options={quoteOptions("puerto", { cliente: quote.cliente, continente: quote.continente, pais: quote.pais })} onChange={(puerto) => setQuote((f) => ({ ...f, puerto, servicio: "" }))} />
-            <SelectField label="Servicio" value={quote.servicio} options={quoteOptions("servicio", { cliente: quote.cliente, continente: quote.continente, pais: quote.pais, puerto: quote.puerto })} onChange={(servicio) => setQuote((f) => ({ ...f, servicio }))} />
-            <SelectField label="Idioma" value={quote.idioma} options={["ES", "EN"]} onChange={(idioma) => setQuote((f) => ({ ...f, idioma }))} />
-            <Text style={styles.label}>Validez dias</Text><TextInput keyboardType="number-pad" style={styles.input} value={quote.validez} onChangeText={(validez) => setQuote((f) => ({ ...f, validez }))} />
+            <SelectField label="Servicio" value={quote.servicio} options={quoteOptions("servicio", { cliente: quote.cliente, continente: quote.continente, pais: quote.pais, puerto: quote.puerto })} onChange={(servicio) => updateQuoteField("servicio", servicio)} />
+            <Pressable style={styles.secondaryButton} onPress={addQuoteService}><Text style={styles.secondaryButtonText}>Agregar Servicio</Text></Pressable>
+            <HRMiniTable rows={selectedServices} columns={["servicio", "precio", "continente", "pais", "puerto"]} selectedIndex={null} onSelect={removeQuoteService} />
+            <Text style={styles.helperText}>Toque una linea de servicios cotizados para quitarla.</Text>
+            <SelectField label="Idioma" value={quote.idioma} options={["ES", "EN"]} onChange={(idioma) => updateQuoteField("idioma", idioma)} />
+            <Text style={styles.label}>Validez dias</Text><TextInput keyboardType="number-pad" style={styles.input} value={quote.validez} onChangeText={(validez) => updateQuoteField("validez", validez)} />
+            <Text style={styles.label}>Texto de la Cotizacion</Text>
+            <TextInput multiline style={[styles.input, styles.quotationPreviewInput]} value={previewText} onChangeText={setPreviewText} />
+            <ScrollView horizontal contentContainerStyle={styles.actionBar}>
+              <Pressable style={styles.actionButton} onPress={() => exportQuote("word")}><Text style={styles.actionButtonText}>Exportar WORD</Text></Pressable>
+              <Pressable style={styles.actionButton} onPress={() => exportQuote("pdf")}><Text style={styles.actionButtonText}>Exportar PDF</Text></Pressable>
+            </ScrollView>
             <PrimaryButton label="Confirmar y Guardar" loading={busy} onPress={saveQuote} />
           </ScrollView>
         </SafeAreaView>
@@ -4784,6 +4895,7 @@ const styles = StyleSheet.create({
   },
   primaryButton: { alignItems: "center", backgroundColor: BLUE, borderRadius: 6, marginTop: 6, paddingVertical: 13 },
   primaryButtonText: { color: "white", fontSize: 15, fontWeight: "800" },
+  quotationPreviewInput: { minHeight: 260, textAlignVertical: "top" },
   qr: { alignSelf: "center", height: 220, marginBottom: 16, width: 220 },
   rememberRow: { alignItems: "center", flexDirection: "row", justifyContent: "space-between", marginBottom: 12 },
   rememberText: { color: "#344054", fontSize: 13, fontWeight: "700" },

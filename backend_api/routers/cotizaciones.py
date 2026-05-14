@@ -4,12 +4,16 @@
 # ============================================================
 
 from fastapi import APIRouter, Depends, HTTPException, Header, Query
+from fastapi.responses import FileResponse
 from typing import Optional
 from psycopg2.extras import RealDictCursor
 from pydantic import BaseModel
+import os
+import tempfile
 
 from database import get_db
 from rbac_service import has_permission
+from services.cotizacion_export_service import export_cotizacion_pdf, export_cotizacion_word
 
 # ============================================================
 # RBAC — MISMA LÓGICA ERP-SOM
@@ -147,6 +151,11 @@ class CotizacionUpdate(BaseModel):
     precio_4: Optional[float] = None
 
     razon_cancelacion: Optional[str] = None
+
+
+def _safe_export_name(value: str) -> str:
+    clean = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in str(value or "quotation"))
+    return clean[:80] or "quotation"
 
 
 # ============================================================
@@ -330,6 +339,59 @@ def get_next_quotation_number(conn=Depends(get_db)):
 
     finally:
         cur.close()
+
+
+# ============================================================
+# GET - EXPORTAR COTIZACION MOBILE (WORD / PDF)
+# ============================================================
+
+@router.get("/export/{formato}")
+def exportar_cotizacion_mobile(
+    formato: str,
+    quotation_number: str = Query(""),
+    cliente: str = Query(""),
+    servicio: str = Query(""),
+    idioma: str = Query("ES"),
+    texto: str = Query(""),
+    request_user: str = Query(""),
+    request_role: str = Query("")
+):
+    if not request_user or not has_permission((request_role or "").lower(), "comercial", "view"):
+        raise HTTPException(status_code=403, detail="Usuario no autenticado")
+
+    formato = (formato or "").strip().lower()
+    if formato not in {"word", "pdf"}:
+        raise HTTPException(status_code=400, detail="Formato invalido")
+
+    suffix = ".docx" if formato == "word" else ".pdf"
+    fd, path = tempfile.mkstemp(suffix=suffix)
+    os.close(fd)
+
+    data = {
+        "quotation_number": quotation_number,
+        "cliente": cliente,
+        "servicio": servicio,
+        "idioma": idioma or "ES",
+        "texto": texto
+    }
+
+    try:
+        if formato == "word":
+            export_cotizacion_word(data, path)
+            media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        else:
+            export_cotizacion_pdf(data, path)
+            media_type = "application/pdf"
+
+        filename = f"{_safe_export_name(quotation_number or cliente)}{suffix}"
+        return FileResponse(path, filename=filename, media_type=media_type)
+    except Exception as exc:
+        try:
+            if os.path.exists(path):
+                os.remove(path)
+        except Exception:
+            pass
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 # ============================================================
