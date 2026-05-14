@@ -1020,7 +1020,14 @@ function ComercialCotizacionesView({
     if (payload) {
       setMeta(payload);
     } else {
-      setMeta({});
+      const pricesPayload = await apiRequest("/comercial/precios", { session }).catch(() => null);
+      const priceRows = rowsFromAny(pricesPayload);
+      if (priceRows.length) {
+        setMeta({ precios: priceRows });
+        setMessage("");
+      } else {
+        setMeta({});
+      }
     }
 
     const nextNumber = await apiRequest<Record<string, unknown>>("/comercial/cotizaciones/next-quotation-number", { session }).catch(() => null);
@@ -1047,6 +1054,16 @@ function ComercialCotizacionesView({
     loadMeta();
   }, [session.usuario, session.rol]);
 
+  function currentQuoteMatch() {
+    return activePrecios.find((row) =>
+      row.cliente === quote.cliente
+      && row.servicio === quote.servicio
+      && (!quote.continente || row.continente === quote.continente)
+      && (!quote.pais || row.pais === quote.pais)
+      && (!quote.puerto || row.puerto === quote.puerto)
+    );
+  }
+
   function refreshPreview(nextServices = selectedServices, nextQuote = quote) {
     setPreviewText(buildQuotationText(nextQuote.cliente, nextServices, nextQuote.idioma, nextQuote.validez));
   }
@@ -1061,13 +1078,7 @@ function ComercialCotizacionesView({
   }
 
   function addQuoteService() {
-    const match = activePrecios.find((row) =>
-      row.cliente === quote.cliente
-      && row.servicio === quote.servicio
-      && (!quote.continente || row.continente === quote.continente)
-      && (!quote.pais || row.pais === quote.pais)
-      && (!quote.puerto || row.puerto === quote.puerto)
-    );
+    const match = currentQuoteMatch();
     if (!quote.cliente || !quote.servicio || !match) {
       setMessage("Seleccione cliente, servicio y una combinacion con precio configurado.");
       return;
@@ -1110,7 +1121,10 @@ function ComercialCotizacionesView({
   }
 
   async function exportQuote(format: "word" | "pdf") {
-    if (!selectedServices.length) {
+    const pendingMatch = currentQuoteMatch();
+    const servicesToExport = selectedServices.length ? selectedServices : pendingMatch ? [pendingMatch] : [];
+    const textToExport = selectedServices.length ? previewText : buildQuotationText(quote.cliente, servicesToExport, quote.idioma, quote.validez);
+    if (!servicesToExport.length) {
       setMessage("Debe agregar al menos un servicio.");
       return;
     }
@@ -1122,9 +1136,9 @@ function ComercialCotizacionesView({
         body: {
           quotation_number: quotationNumber,
           cliente: quote.cliente,
-          servicio: selectedServices.map((item) => formatValue(item.servicio)).join(", "),
+          servicio: servicesToExport.map((item) => formatValue(item.servicio)).join(", "),
           idioma: quote.idioma,
-          texto: previewText
+          texto: textToExport
         },
         session
       });
@@ -1150,23 +1164,25 @@ function ComercialCotizacionesView({
   }
 
   async function saveQuote() {
-    if (!quote.cliente || !selectedServices.length) {
+    const pendingMatch = currentQuoteMatch();
+    const servicesToSave = selectedServices.length ? selectedServices : pendingMatch ? [pendingMatch] : [];
+    if (!quote.cliente || !servicesToSave.length) {
       setMessage("Debe seleccionar cliente y agregar al menos un servicio.");
       return;
     }
-    const total = selectedServices.reduce((sum, item) => sum + Number(item.precio || 0), 0);
+    const total = servicesToSave.reduce((sum, item) => sum + Number(item.precio || 0), 0);
     const body: Record<string, unknown> = {
       cliente: quote.cliente,
-      servicio: selectedServices.map((item) => formatValue(item.servicio)).join(", "),
-      continente: quote.continente || selectedServices[0]?.continente || null,
-      pais: quote.pais || selectedServices[0]?.pais || null,
-      puerto: quote.puerto || selectedServices[0]?.puerto || null,
+      servicio: servicesToSave.map((item) => formatValue(item.servicio)).join(", "),
+      continente: quote.continente || servicesToSave[0]?.continente || null,
+      pais: quote.pais || servicesToSave[0]?.pais || null,
+      puerto: quote.puerto || servicesToSave[0]?.puerto || null,
       precio: total,
       idioma: quote.idioma,
       validez: Number(quote.validez || 15),
       status: "PENDIENTE"
     };
-    selectedServices.slice(0, 4).forEach((item, index) => {
+    servicesToSave.slice(0, 4).forEach((item, index) => {
       body[`servicio_${index + 1}`] = formatValue(item.servicio);
       body[`precio_${index + 1}`] = Number(item.precio || 0);
     });

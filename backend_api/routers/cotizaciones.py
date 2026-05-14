@@ -246,7 +246,6 @@ def get_cotizaciones_meta(conn=Depends(get_db)):
                 TRIM(pais)       AS pais,
                 TRIM(puerto)     AS puerto,
                 precio,
-                moneda,
                 activo
             FROM servicios_precios
             WHERE activo = TRUE
