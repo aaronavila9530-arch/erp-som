@@ -412,6 +412,10 @@ function DataView({
     return <DashboardView section={section} payload={payload} session={session} />;
   }
 
+  if (moduleCode === "hhrre" && section) {
+    return <HHRRSectionMobile section={section} initialPayload={payload} session={session} />;
+  }
+
   if (section?.key === "credit-hold") {
     return <CreditControlMobile clients={rows} session={session} />;
   }
@@ -1284,6 +1288,921 @@ function DesktopTable({
           onReload();
         }}
       />
+    </View>
+  );
+}
+
+function isAdminSession(session: NonNullable<ReturnType<typeof useAuth>["session"]>) {
+  const role = (session.rol || "").toLowerCase();
+  return role === "admin" || role === "master";
+}
+
+function previousPayrollPeriod() {
+  const today = new Date();
+  const closed = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+  return {
+    year: String(closed.getFullYear()),
+    month: String(closed.getMonth() + 1).padStart(2, "0")
+  };
+}
+
+function rowsFromAny(payload: unknown) {
+  return rowsForSection(undefined, payload);
+}
+
+function HHRRSectionMobile({
+  section,
+  initialPayload,
+  session
+}: {
+  section: AppSection;
+  initialPayload: unknown;
+  session: NonNullable<ReturnType<typeof useAuth>["session"]>;
+}) {
+  if (section.key === "empleados-hr") return <HREmployeesView initialRows={rowsFromAny(initialPayload)} session={session} />;
+  if (section.key === "solicitudes") return <HRRequestsView initialRows={rowsFromAny(initialPayload)} session={session} />;
+  if (section.key === "registro-horas") return <HRHoursView initialPayload={initialPayload} session={session} />;
+  if (section.key === "payroll") return <HRPayrollView initialRows={rowsFromAny(initialPayload)} session={session} />;
+  if (section.key === "colillas") return <HRPayslipsView initialRows={rowsFromAny(initialPayload)} session={session} />;
+  if (section.key === "politicas") return <HRPoliciesView initialRows={rowsFromAny(initialPayload)} session={session} />;
+  if (section.key === "noticias") return <HRNewsView initialPayload={initialPayload} session={session} />;
+  return <ListView rows={rowsFromAny(initialPayload)} />;
+}
+
+function HRMiniTable({
+  rows,
+  columns,
+  selectedIndex,
+  onSelect
+}: {
+  rows: Record<string, unknown>[];
+  columns: string[];
+  selectedIndex: number | null;
+  onSelect: (index: number) => void;
+}) {
+  return (
+    <ScrollView horizontal showsHorizontalScrollIndicator>
+      <View>
+        <View style={styles.tableHeader}>
+          {columns.map((column) => (
+            <Text key={column} style={styles.tableHeaderCell} numberOfLines={1}>
+              {column.replaceAll("_", " ")}
+            </Text>
+          ))}
+        </View>
+        <ScrollView style={styles.tableRows} nestedScrollEnabled>
+          {rows.map((row, index) => (
+            <Pressable
+              key={`${formatValue(row.id ?? row.codigo ?? row.usuario)}-${index}`}
+              style={[styles.tableRow, selectedIndex === index && styles.tableRowSelected]}
+              onPress={() => onSelect(index)}
+            >
+              {columns.map((column) => (
+                <Text key={column} style={styles.tableCell} numberOfLines={1}>
+                  {formatValue(row[column])}
+                </Text>
+              ))}
+            </Pressable>
+          ))}
+        </ScrollView>
+      </View>
+    </ScrollView>
+  );
+}
+
+function HREmployeesView({
+  initialRows,
+  session
+}: {
+  initialRows: Record<string, unknown>[];
+  session: NonNullable<ReturnType<typeof useAuth>["session"]>;
+}) {
+  const admin = isAdminSession(session);
+  const [rows, setRows] = useState(initialRows);
+  const [selected, setSelected] = useState<number | null>(null);
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [filters, setFilters] = useState({ nombre: "", codigo: "", usuario: "", estado: "" });
+  const [modalMode, setModalMode] = useState<"add" | "edit" | "view" | null>(null);
+  const [form, setForm] = useState<Record<string, string>>({});
+  const columns = ["id", "codigo", "usuario", "nombre", "apellidos", "jornada", "salario", "pago", "estado"];
+  const selectedRow = selected === null ? null : rows[selected] || null;
+
+  async function load() {
+    const params = new URLSearchParams({ page: "1", page_size: "100" });
+    Object.entries(filters).forEach(([key, value]) => {
+      if (value.trim()) params.set(key, value.trim());
+    });
+    setBusy(true);
+    setMessage("");
+    try {
+      const payload = await apiRequest(`/hr/employees?${params.toString()}`, { session });
+      setRows(rowsFromAny(payload));
+      setSelected(null);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudieron cargar empleados.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function openForm(mode: "add" | "edit" | "view") {
+    if (mode !== "add" && !selectedRow) {
+      setMessage("Seleccione un empleado.");
+      return;
+    }
+    const source = mode === "add" ? {} : selectedRow || {};
+    const next = Object.fromEntries(HR_EMPLOYEE_FIELDS.map((field) => [field, formatValue(source[field]) === "-" ? "" : formatValue(source[field])]));
+    setForm(next);
+    setModalMode(mode);
+  }
+
+  async function saveEmployee() {
+    if (!modalMode || modalMode === "view") return;
+    const id = formatValue(selectedRow?.id);
+    setBusy(true);
+    setMessage("");
+    try {
+      if (modalMode === "add") {
+        await apiRequest("/hr/employees", { method: "POST", body: form, session });
+      } else {
+        await apiRequest(`/hr/employees/${id}`, { method: "PUT", body: form, session });
+      }
+      setModalMode(null);
+      await load();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo guardar empleado.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!admin) return <Text style={styles.empty}>No tienes permisos para administrar empleados.</Text>;
+
+  return (
+    <View style={styles.tableShell}>
+      <Text style={styles.cardTitle}>Empleados HHRR</Text>
+      <View style={styles.financeFilterBox}>
+        <TextInput style={styles.input} value={filters.nombre} onChangeText={(nombre) => setFilters((f) => ({ ...f, nombre }))} placeholder="Nombre o apellidos" />
+        <TextInput style={styles.input} value={filters.codigo} onChangeText={(codigo) => setFilters((f) => ({ ...f, codigo }))} placeholder="Codigo" />
+        <TextInput style={styles.input} value={filters.usuario} onChangeText={(usuario) => setFilters((f) => ({ ...f, usuario }))} placeholder="Usuario" />
+        <SelectField label="Estado" value={filters.estado || "Todos"} options={["Todos", "Activo", "Inactivo"]} onChange={(estado) => setFilters((f) => ({ ...f, estado: estado === "Todos" ? "" : estado }))} />
+        <View style={styles.financeFilterActions}>
+          <Pressable style={styles.actionButton} onPress={load}><Text style={styles.actionButtonText}>Buscar</Text></Pressable>
+          <Pressable style={styles.modalClose} onPress={() => setFilters({ nombre: "", codigo: "", usuario: "", estado: "" })}><Text style={styles.modalCloseText}>Limpiar</Text></Pressable>
+        </View>
+      </View>
+      <HRMiniTable rows={rows} columns={columns} selectedIndex={selected} onSelect={setSelected} />
+      <ScrollView horizontal contentContainerStyle={styles.actionBar}>
+        <Pressable style={styles.actionButton} onPress={() => openForm("view")}><Text style={styles.actionButtonText}>Ver</Text></Pressable>
+        <Pressable style={styles.actionButton} onPress={() => openForm("add")}><Text style={styles.actionButtonText}>Agregar</Text></Pressable>
+        <Pressable style={styles.actionButton} onPress={() => openForm("edit")}><Text style={styles.actionButtonText}>Editar</Text></Pressable>
+      </ScrollView>
+      {busy ? <ActivityIndicator color={BLUE} style={styles.loader} /> : null}
+      {message ? <Text style={styles.error}>{message}</Text> : null}
+      <Modal visible={modalMode !== null} animationType="slide" onRequestClose={() => setModalMode(null)}>
+        <SafeAreaView style={styles.modalScreen}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>{modalMode === "add" ? "Nuevo empleado" : modalMode === "edit" ? "Editar empleado" : "Ver empleado"}</Text>
+            <Pressable style={styles.modalClose} onPress={() => setModalMode(null)}><Text style={styles.modalCloseText}>Cerrar</Text></Pressable>
+          </View>
+          <ScrollView contentContainerStyle={styles.modalBody}>
+            {HR_EMPLOYEE_FIELDS.map((field) => (
+              <View key={field} style={styles.formField}>
+                <Text style={styles.label}>{field.replaceAll("_", " ")}</Text>
+                <TextInput
+                  editable={modalMode !== "view" && field !== "codigo" && field !== "id"}
+                  value={form[field] || ""}
+                  onChangeText={(value) => setForm((current) => ({ ...current, [field]: value }))}
+                  style={[styles.input, (modalMode === "view" || field === "codigo" || field === "id") && styles.readonlyInput]}
+                />
+              </View>
+            ))}
+            {modalMode !== "view" ? <PrimaryButton label="Guardar" loading={busy} onPress={saveEmployee} /> : null}
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+    </View>
+  );
+}
+
+const HR_EMPLOYEE_FIELDS = [
+  "id", "codigo", "cedula_id", "usuario", "nombre", "apellidos", "estado_civil", "genero", "nacionalidad",
+  "fecha_nacimiento", "edad", "prefijo", "telefono", "provincia", "canton", "distrito", "direccion",
+  "jornada", "salario", "pago", "banco", "cuenta_iban", "moneda", "fecha_ingreso", "horas_contratadas",
+  "vacaciones", "estado", "enfermedades", "contacto_emergencia", "telefono_emergencia",
+  "activo1", "marca1", "serial1", "activo2", "marca2", "serial2", "activo3", "marca3", "serial3"
+];
+
+function HRRequestsView({
+  initialRows,
+  session
+}: {
+  initialRows: Record<string, unknown>[];
+  session: NonNullable<ReturnType<typeof useAuth>["session"]>;
+}) {
+  const admin = isAdminSession(session);
+  const [rows, setRows] = useState(initialRows);
+  const [selected, setSelected] = useState<number | null>(null);
+  const [filters, setFilters] = useState({ empleado: "", status: "", tipo: "" });
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState<Record<string, string>>({ event_type: "VACACIONES", fecha_inicio: "", fecha_fin: "", motivo: "", tipo_licencia: "" });
+  const [vacationInfo, setVacationInfo] = useState<Record<string, unknown> | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const columns = ["id", "empleado", "event_type", "event_date", "period_year", "period_month", "dias", "status", "razon_solicitud", "created_by", "approved_by"];
+
+  function normalize(row: Record<string, unknown>): Record<string, unknown> {
+    const payload = asRecord(row.payload) || {};
+    return {
+      ...row,
+      dias: payload.dias_solicitados ?? row.vacaciones ?? "",
+      razon_solicitud: row.comentario_solicitud ?? payload.motivo ?? "",
+      status: formatValue(row.status).toUpperCase()
+    };
+  }
+
+  const normalizedRows = rows.map(normalize);
+  const visibleRows = normalizedRows.filter((row) => {
+    if (filters.empleado && formatValue(row.empleado) !== filters.empleado) return false;
+    if (filters.status && formatValue(row.status) !== filters.status) return false;
+    if (filters.tipo && formatValue(row.event_type) !== filters.tipo) return false;
+    return true;
+  });
+  const selectedRow = selected === null ? null : visibleRows[selected] || null;
+  const empleados = ["", ...Array.from(new Set(normalizedRows.map((row) => formatValue(row.empleado)).filter((value) => value !== "-")))];
+  const tipos = ["", ...Array.from(new Set(normalizedRows.map((row) => formatValue(row.event_type)).filter((value) => value !== "-")))];
+
+  async function load() {
+    setBusy(true);
+    setMessage("");
+    try {
+      const payload = await apiRequest("/hr/events/", { session });
+      setRows(rowsFromAny(payload));
+      setSelected(null);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudieron cargar solicitudes.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function openRequestForm() {
+    setShowForm(true);
+    setMessage("");
+    try {
+      const info = await apiRequest<Record<string, unknown>>("/hr/events/vacaciones/disponibles", { session });
+      setVacationInfo(info);
+    } catch {
+      setVacationInfo(null);
+    }
+  }
+
+  function daysRequested() {
+    if (!form.fecha_inicio || !form.fecha_fin) return 0;
+    const start = new Date(`${form.fecha_inicio}T00:00:00`);
+    const end = new Date(`${form.fecha_fin}T00:00:00`);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) return 0;
+    return Math.floor((end.getTime() - start.getTime()) / 86400000) + 1;
+  }
+
+  async function submitRequest() {
+    const type = form.event_type;
+    const payload: Record<string, unknown> = {};
+    if (["VACACIONES", "INCAPACIDAD", "LICENCIA"].includes(type)) {
+      const dias = daysRequested();
+      if (!form.fecha_inicio || !form.fecha_fin || dias <= 0) {
+        setMessage("Complete fechas validas para la solicitud.");
+        return;
+      }
+      payload.fecha_inicio = form.fecha_inicio;
+      payload.fecha_fin = form.fecha_fin;
+      payload.dias_solicitados = dias;
+      if (type === "LICENCIA") payload.tipo_licencia = form.tipo_licencia || "PERSONAL";
+    } else {
+      if (!form.motivo.trim()) {
+        setMessage("Debe indicar motivo.");
+        return;
+      }
+      payload.motivo = form.motivo.trim();
+    }
+
+    setBusy(true);
+    setMessage("");
+    try {
+      await apiRequest("/hr/events/", { method: "POST", body: { event_type: type, event_date: new Date().toISOString().slice(0, 10), payload }, session });
+      setShowForm(false);
+      setForm({ event_type: "VACACIONES", fecha_inicio: "", fecha_fin: "", motivo: "", tipo_licencia: "" });
+      await load();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo crear solicitud.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function updateRequestStatus(action: "approve" | "reject") {
+    if (!selectedRow) {
+      setMessage("Seleccione una solicitud.");
+      return;
+    }
+    if (!admin) {
+      setMessage("No autorizado.");
+      return;
+    }
+    if (formatValue(selectedRow.status) !== "PENDING") {
+      setMessage("Solo solicitudes pendientes.");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      await apiRequest(`/hr/events/${selectedRow.id}/${action}`, {
+        method: "PATCH",
+        body: { comentario: action === "approve" ? "Aprobado desde app" : "Rechazado desde app" },
+        session
+      });
+      await load();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo actualizar solicitud.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <View style={styles.tableShell}>
+      <Text style={styles.cardTitle}>Solicitudes HHRR</Text>
+      <View style={styles.financeFilterBox}>
+        <SelectField label="Empleado" value={filters.empleado} options={empleados} onChange={(empleado) => setFilters((f) => ({ ...f, empleado }))} />
+        <SelectField label="Estado" value={filters.status} options={["", "PENDING", "APPROVED", "REJECTED"]} onChange={(status) => setFilters((f) => ({ ...f, status }))} />
+        <SelectField label="Tipo" value={filters.tipo} options={tipos} onChange={(tipo) => setFilters((f) => ({ ...f, tipo }))} />
+        <View style={styles.financeFilterActions}>
+          <Pressable style={styles.actionButton} onPress={load}><Text style={styles.actionButtonText}>Cargar</Text></Pressable>
+          <Pressable style={styles.modalClose} onPress={() => setFilters({ empleado: "", status: "", tipo: "" })}><Text style={styles.modalCloseText}>Limpiar</Text></Pressable>
+        </View>
+      </View>
+      <HRMiniTable rows={visibleRows} columns={columns} selectedIndex={selected} onSelect={setSelected} />
+      <ScrollView horizontal contentContainerStyle={styles.actionBar}>
+        <Pressable style={styles.actionButton} onPress={openRequestForm}><Text style={styles.actionButtonText}>Nueva Solicitud</Text></Pressable>
+        {admin ? <Pressable style={styles.actionButton} onPress={() => updateRequestStatus("approve")}><Text style={styles.actionButtonText}>Aprobar</Text></Pressable> : null}
+        {admin ? <Pressable style={styles.actionButton} onPress={() => updateRequestStatus("reject")}><Text style={styles.actionButtonText}>Rechazar</Text></Pressable> : null}
+      </ScrollView>
+      {busy ? <ActivityIndicator color={BLUE} style={styles.loader} /> : null}
+      {message ? <Text style={styles.error}>{message}</Text> : null}
+      <Modal visible={showForm} animationType="slide" onRequestClose={() => setShowForm(false)}>
+        <SafeAreaView style={styles.modalScreen}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Nueva Solicitud HHRR</Text>
+            <Pressable style={styles.modalClose} onPress={() => setShowForm(false)}><Text style={styles.modalCloseText}>Cerrar</Text></Pressable>
+          </View>
+          <ScrollView contentContainerStyle={styles.modalBody}>
+            <SelectField label="Tipo de solicitud" value={form.event_type} options={["VACACIONES", "CONSTANCIA_SALARIAL", "CONSTANCIA_LABORAL", "INCAPACIDAD", "LICENCIA"]} onChange={(event_type) => setForm((f) => ({ ...f, event_type }))} />
+            {["VACACIONES", "INCAPACIDAD", "LICENCIA"].includes(form.event_type) ? (
+              <>
+                {form.event_type === "LICENCIA" ? <SelectField label="Tipo licencia" value={form.tipo_licencia || "PERSONAL"} options={["PERSONAL", "PATERNIDAD", "MATERNIDAD", "DUELO", "ESTUDIO"]} onChange={(tipo_licencia) => setForm((f) => ({ ...f, tipo_licencia }))} /> : null}
+                <Text style={styles.label}>Fecha inicio</Text>
+                <TextInput style={styles.input} value={form.fecha_inicio} onChangeText={(fecha_inicio) => setForm((f) => ({ ...f, fecha_inicio }))} placeholder="YYYY-MM-DD" />
+                <Text style={styles.label}>Fecha fin</Text>
+                <TextInput style={styles.input} value={form.fecha_fin} onChangeText={(fecha_fin) => setForm((f) => ({ ...f, fecha_fin }))} placeholder="YYYY-MM-DD" />
+                <Text style={styles.helperText}>Dias solicitados: {daysRequested()} | Disponibles: {formatValue(vacationInfo?.dias_disponibles)}</Text>
+              </>
+            ) : (
+              <>
+                <Text style={styles.label}>Motivo</Text>
+                <TextInput style={styles.input} value={form.motivo} onChangeText={(motivo) => setForm((f) => ({ ...f, motivo }))} />
+              </>
+            )}
+            <PrimaryButton label="Enviar" loading={busy} onPress={submitRequest} />
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+    </View>
+  );
+}
+
+function HRHoursView({
+  initialPayload,
+  session
+}: {
+  initialPayload: unknown;
+  session: NonNullable<ReturnType<typeof useAuth>["session"]>;
+}) {
+  const admin = isAdminSession(session);
+  const [rows, setRows] = useState(rowsFromAny(initialPayload));
+  const [summary, setSummary] = useState<Record<string, unknown> | null>(null);
+  const [selected, setSelected] = useState<number | null>(null);
+  const [filters, setFilters] = useState({ usuario: "", tipo: "", estado: "" });
+  const [form, setForm] = useState({ tipo: "OPERACION", fecha_inicio: "", hora_inicio: "08:00", fecha_fin: "", hora_fin: "17:00", buque: "", comentario: "" });
+  const [showForm, setShowForm] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const columns = admin ? ["id", "estado", "usuario", "tipo", "fecha_inicio", "fecha_fin", "duracion_horas", "buque", "comentario"] : ["id", "tipo", "fecha_inicio", "fecha_fin", "duracion_horas", "buque", "comentario", "estado"];
+  const selectedRow = selected === null ? null : rows[selected] || null;
+
+  async function load() {
+    const params = new URLSearchParams({ page: "1", page_size: "100" });
+    if (admin && filters.usuario) params.set("usuario", filters.usuario);
+    if (filters.tipo) params.set("tipo", filters.tipo);
+    if (filters.estado) params.set("estado", filters.estado);
+    setBusy(true);
+    setMessage("");
+    try {
+      const [summaryPayload, rowsPayload] = await Promise.all([
+        apiRequest<Record<string, unknown>>("/hr/ot-log/me/summary", { session }).catch(() => null),
+        apiRequest(`/hr/ot-log/?${params.toString()}`, { session })
+      ]);
+      setSummary(summaryPayload);
+      setRows(rowsFromAny(rowsPayload));
+      setSelected(null);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo cargar registro de horas.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    load();
+  }, [session.usuario, session.rol]);
+
+  async function saveHours() {
+    if (!form.fecha_inicio || !form.fecha_fin || !form.hora_inicio || !form.hora_fin) {
+      setMessage("Complete fecha y hora de inicio/fin.");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      await apiRequest("/hr/ot-log/", {
+        method: "POST",
+        body: {
+          tipo: form.tipo,
+          fecha_inicio: `${form.fecha_inicio}T${form.hora_inicio}:00`,
+          fecha_fin: `${form.fecha_fin}T${form.hora_fin}:00`,
+          buque: form.buque || null,
+          comentario: form.comentario || null
+        },
+        session
+      });
+      setShowForm(false);
+      await load();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo registrar horas.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function updateStatus(estado: string) {
+    if (!selectedRow) {
+      setMessage("Seleccione un registro.");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      await apiRequest(`/hr/ot-log/${selectedRow.id}/estado`, { method: "PUT", body: { estado }, session });
+      await load();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo actualizar estado.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deleteLog() {
+    if (!selectedRow) {
+      setMessage("Seleccione un registro.");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      await apiRequest(`/hr/ot-log/${selectedRow.id}`, { method: "DELETE", session });
+      await load();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo eliminar registro.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <View style={styles.tableShell}>
+      <Text style={styles.cardTitle}>{admin ? "Registro de Horas - Administracion" : "Registro de Horas"}</Text>
+      <View style={styles.summaryBox}>
+        <Text style={styles.helperText}>
+          Horas contratadas: {formatValue(summary?.horas_contratadas)} | Registradas: {formatValue(summary?.horas_registradas)} | Pendientes: {formatValue(summary?.horas_pendientes)}
+        </Text>
+      </View>
+      <View style={styles.financeFilterBox}>
+        {admin ? <TextInput style={styles.input} value={filters.usuario} onChangeText={(usuario) => setFilters((f) => ({ ...f, usuario }))} placeholder="Usuario" /> : null}
+        <SelectField label="Tipo" value={filters.tipo} options={["", "OPERACION", "INFORME"]} onChange={(tipo) => setFilters((f) => ({ ...f, tipo }))} />
+        <SelectField label="Estado" value={filters.estado} options={["", "PENDIENTE", "APROBADO", "RECHAZADO"]} onChange={(estado) => setFilters((f) => ({ ...f, estado }))} />
+        <View style={styles.financeFilterActions}>
+          <Pressable style={styles.actionButton} onPress={load}><Text style={styles.actionButtonText}>Filtrar</Text></Pressable>
+          <Pressable style={styles.modalClose} onPress={() => setFilters({ usuario: "", tipo: "", estado: "" })}><Text style={styles.modalCloseText}>Limpiar</Text></Pressable>
+        </View>
+      </View>
+      <HRMiniTable rows={rows} columns={columns} selectedIndex={selected} onSelect={setSelected} />
+      <ScrollView horizontal contentContainerStyle={styles.actionBar}>
+        <Pressable style={styles.actionButton} onPress={() => setShowForm(true)}><Text style={styles.actionButtonText}>Registrar horas</Text></Pressable>
+        {admin ? <Pressable style={styles.actionButton} onPress={() => updateStatus("APROBADO")}><Text style={styles.actionButtonText}>Aprobar</Text></Pressable> : null}
+        {admin ? <Pressable style={styles.actionButton} onPress={() => updateStatus("RECHAZADO")}><Text style={styles.actionButtonText}>Rechazar</Text></Pressable> : null}
+        {admin ? <Pressable style={styles.modalClose} onPress={deleteLog}><Text style={styles.modalCloseText}>Eliminar</Text></Pressable> : null}
+      </ScrollView>
+      {busy ? <ActivityIndicator color={BLUE} style={styles.loader} /> : null}
+      {message ? <Text style={styles.error}>{message}</Text> : null}
+      <Modal visible={showForm} animationType="slide" onRequestClose={() => setShowForm(false)}>
+        <SafeAreaView style={styles.modalScreen}>
+          <View style={styles.modalHeader}><Text style={styles.modalTitle}>Registrar horas</Text><Pressable style={styles.modalClose} onPress={() => setShowForm(false)}><Text style={styles.modalCloseText}>Cerrar</Text></Pressable></View>
+          <ScrollView contentContainerStyle={styles.modalBody}>
+            <SelectField label="Tipo" value={form.tipo} options={["OPERACION", "INFORME"]} onChange={(tipo) => setForm((f) => ({ ...f, tipo }))} />
+            <Text style={styles.label}>Fecha inicio</Text><TextInput style={styles.input} value={form.fecha_inicio} onChangeText={(fecha_inicio) => setForm((f) => ({ ...f, fecha_inicio }))} placeholder="YYYY-MM-DD" />
+            <Text style={styles.label}>Hora inicio</Text><TextInput style={styles.input} value={form.hora_inicio} onChangeText={(hora_inicio) => setForm((f) => ({ ...f, hora_inicio }))} placeholder="HH:MM" />
+            <Text style={styles.label}>Fecha fin</Text><TextInput style={styles.input} value={form.fecha_fin} onChangeText={(fecha_fin) => setForm((f) => ({ ...f, fecha_fin }))} placeholder="YYYY-MM-DD" />
+            <Text style={styles.label}>Hora fin</Text><TextInput style={styles.input} value={form.hora_fin} onChangeText={(hora_fin) => setForm((f) => ({ ...f, hora_fin }))} placeholder="HH:MM" />
+            <Text style={styles.label}>Buque</Text><TextInput style={styles.input} value={form.buque} onChangeText={(buque) => setForm((f) => ({ ...f, buque }))} />
+            <Text style={styles.label}>Detalle</Text><TextInput multiline style={[styles.input, styles.multilineInput]} value={form.comentario} onChangeText={(comentario) => setForm((f) => ({ ...f, comentario }))} />
+            <PrimaryButton label="Registrar" loading={busy} onPress={saveHours} />
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+    </View>
+  );
+}
+
+function HRPayrollView({
+  initialRows,
+  session
+}: {
+  initialRows: Record<string, unknown>[];
+  session: NonNullable<ReturnType<typeof useAuth>["session"]>;
+}) {
+  const admin = isAdminSession(session);
+  const [rows, setRows] = useState(initialRows);
+  const [selected, setSelected] = useState<number | null>(null);
+  const period = previousPayrollPeriod();
+  const [year, setYear] = useState(period.year);
+  const [month, setMonth] = useState(period.month);
+  const [preview, setPreview] = useState<Record<string, unknown> | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const columns = ["usuario", "nombre", "apellidos", "jornada", "salario", "pago", "estado"];
+  const selectedRow = selected === null ? null : rows[selected] || null;
+
+  async function load() {
+    setBusy(true);
+    setMessage("");
+    try {
+      const payload = await apiRequest("/hr/payroll/employees", { session });
+      setRows(rowsFromAny(payload));
+      setSelected(null);
+      setPreview(null);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudieron cargar empleados payroll.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function calculate() {
+    if (!selectedRow) {
+      setMessage("Seleccione un empleado.");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      const payload = await apiRequest<Record<string, unknown>>(`/hr/payroll/calculate?usuario=${encodeURIComponent(formatValue(selectedRow.usuario))}&year=${year}&month=${Number(month)}`, { session });
+      setPreview(payload);
+      setMessage("Preview de planilla calculado.");
+    } catch (err) {
+      setPreview(null);
+      setMessage(err instanceof Error ? err.message : "No se pudo calcular planilla.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function postPayroll() {
+    if (!preview) {
+      setMessage("Primero calcule la planilla.");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      await apiRequest("/hr/payroll/post", { method: "PUT", body: preview, session });
+      setMessage("Planilla registrada correctamente.");
+      setPreview(null);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo registrar planilla.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!admin) return <Text style={styles.empty}>No tienes permisos para acceder a Payroll.</Text>;
+
+  return (
+    <View style={styles.tableShell}>
+      <Text style={styles.cardTitle}>Payroll / Planilla</Text>
+      <View style={styles.financeFilterBox}>
+        <SelectField label="Anio" value={year} options={["2024", "2025", "2026", "2027", "2028", "2029", "2030"]} onChange={setYear} />
+        <SelectField label="Mes" value={month} options={["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12"]} onChange={setMonth} />
+        <Text style={styles.helperText}>El backend solo permite generar el periodo cerrado permitido.</Text>
+        <Pressable style={styles.actionButton} onPress={load}><Text style={styles.actionButtonText}>Cargar empleados</Text></Pressable>
+      </View>
+      <HRMiniTable rows={rows} columns={columns} selectedIndex={selected} onSelect={setSelected} />
+      <ScrollView horizontal contentContainerStyle={styles.actionBar}>
+        <Pressable style={styles.actionButton} onPress={calculate}><Text style={styles.actionButtonText}>Calcular</Text></Pressable>
+        <Pressable style={styles.actionButton} onPress={postPayroll}><Text style={styles.actionButtonText}>Postear Planilla</Text></Pressable>
+      </ScrollView>
+      {preview ? (
+        <View style={styles.summaryBox}>
+          <Text style={styles.cardTitle}>Preview</Text>
+          {["salario_base", "horas_ot", "pago_horas_extra", "salario_bruto", "deducciones_trabajador", "impuesto_renta", "salario_neto", "costo_total_empresa"].map((key) => (
+            <View key={key} style={styles.fieldRow}>
+              <Text style={styles.fieldKey}>{key.replaceAll("_", " ")}</Text>
+              <Text style={styles.fieldValue}>{formatValue(preview[key])}</Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
+      {busy ? <ActivityIndicator color={BLUE} style={styles.loader} /> : null}
+      {message ? <Text style={styles.error}>{message}</Text> : null}
+    </View>
+  );
+}
+
+function HRPayslipsView({
+  initialRows,
+  session
+}: {
+  initialRows: Record<string, unknown>[];
+  session: NonNullable<ReturnType<typeof useAuth>["session"]>;
+}) {
+  const [rows, setRows] = useState(initialRows);
+  const [selected, setSelected] = useState<number | null>(null);
+  const period = previousPayrollPeriod();
+  const [year, setYear] = useState("");
+  const [month, setMonth] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const columns = ["id", "usuario", "year", "month", "salario_neto", "salario_bruto", "horas_extra", "generado_por"];
+  const selectedRow = selected === null ? null : rows[selected] || null;
+
+  async function load() {
+    const params = new URLSearchParams({ page: "1", page_size: "50" });
+    if (year) params.set("year", year);
+    if (month) params.set("month", String(Number(month)));
+    setBusy(true);
+    setMessage("");
+    try {
+      const payload = await apiRequest(`/hr/payroll/payslips?${params.toString()}`, { session });
+      setRows(rowsFromAny(payload));
+      setSelected(null);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudieron cargar colillas.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function openPdf() {
+    if (!selectedRow) {
+      setMessage("Seleccione una colilla.");
+      return;
+    }
+    const url = `${API_BASE_URL}/hr/payroll/payslips/${selectedRow.year}/${selectedRow.month}/pdf`;
+    try {
+      await Linking.openURL(url);
+      setMessage("Abriendo descarga de colilla.");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo abrir la colilla.");
+    }
+  }
+
+  return (
+    <View style={styles.tableShell}>
+      <Text style={styles.cardTitle}>Colillas de Pago</Text>
+      <View style={styles.financeFilterBox}>
+        <SelectField label="Anio" value={year || "Todos"} options={["Todos", "2024", "2025", "2026", "2027", "2028", "2029", "2030"]} onChange={(value) => setYear(value === "Todos" ? "" : value)} />
+        <SelectField label="Mes" value={month || "Todos"} options={["Todos", "01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12"]} onChange={(value) => setMonth(value === "Todos" ? "" : value)} />
+        <Text style={styles.helperText}>Periodo cerrado actual sugerido: {period.month}/{period.year}</Text>
+        <View style={styles.financeFilterActions}>
+          <Pressable style={styles.actionButton} onPress={load}><Text style={styles.actionButtonText}>Buscar</Text></Pressable>
+          <Pressable style={styles.modalClose} onPress={() => { setYear(""); setMonth(""); }}><Text style={styles.modalCloseText}>Limpiar</Text></Pressable>
+        </View>
+      </View>
+      <HRMiniTable rows={rows} columns={columns} selectedIndex={selected} onSelect={setSelected} />
+      <ScrollView horizontal contentContainerStyle={styles.actionBar}>
+        <Pressable style={styles.actionButton} onPress={openPdf}><Text style={styles.actionButtonText}>Descargar colilla</Text></Pressable>
+      </ScrollView>
+      {busy ? <ActivityIndicator color={BLUE} style={styles.loader} /> : null}
+      {message ? <Text style={styles.error}>{message}</Text> : null}
+    </View>
+  );
+}
+
+function HRPoliciesView({
+  initialRows,
+  session
+}: {
+  initialRows: Record<string, unknown>[];
+  session: NonNullable<ReturnType<typeof useAuth>["session"]>;
+}) {
+  const admin = isAdminSession(session);
+  const [rows, setRows] = useState(initialRows);
+  const [selected, setSelected] = useState<number | null>(null);
+  const [categoria, setCategoria] = useState("");
+  const [modalMode, setModalMode] = useState<"view" | "add" | "edit" | null>(null);
+  const [form, setForm] = useState<Record<string, string>>({ categoria: "", titulo: "", articulo_ref: "", contenido: "", activo: "true" });
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const columns = ["id", "categoria", "titulo", "articulo_ref", "activo"];
+  const selectedRow = selected === null ? null : rows[selected] || null;
+  const categorias = ["", ...Array.from(new Set(rows.map((row) => formatValue(row.categoria)).filter((value) => value !== "-")))];
+
+  async function load() {
+    const params = new URLSearchParams({ solo_activas: "true" });
+    if (categoria) params.set("categoria", categoria);
+    setBusy(true);
+    setMessage("");
+    try {
+      const payload = await apiRequest(`/hr/policies?${params.toString()}`, { session });
+      setRows(rowsFromAny(payload));
+      setSelected(null);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudieron cargar politicas.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function openPolicy(mode: "view" | "add" | "edit") {
+    if (mode !== "add" && !selectedRow) {
+      setMessage("Seleccione una politica.");
+      return;
+    }
+    const source = mode === "add" ? {} : selectedRow || {};
+    setForm({
+      categoria: formatValue(source.categoria) === "-" ? "" : formatValue(source.categoria),
+      titulo: formatValue(source.titulo) === "-" ? "" : formatValue(source.titulo),
+      articulo_ref: formatValue(source.articulo_ref) === "-" ? "" : formatValue(source.articulo_ref),
+      contenido: formatValue(source.contenido) === "-" ? "" : formatValue(source.contenido),
+      activo: String(source.activo ?? true)
+    });
+    setModalMode(mode);
+  }
+
+  async function savePolicy() {
+    if (!modalMode || modalMode === "view") return;
+    setBusy(true);
+    setMessage("");
+    try {
+      const body = { ...form, activo: form.activo === "true" };
+      if (modalMode === "add") await apiRequest("/hr/policies", { method: "POST", body, session });
+      else await apiRequest(`/hr/policies/${selectedRow?.id}`, { method: "PUT", body, session });
+      setModalMode(null);
+      await load();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo guardar politica.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deletePolicy() {
+    if (!selectedRow) {
+      setMessage("Seleccione una politica.");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      await apiRequest(`/hr/policies/${selectedRow.id}`, { method: "DELETE", session });
+      await load();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo desactivar politica.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <View style={styles.tableShell}>
+      <Text style={styles.cardTitle}>Politicas de la Empresa</Text>
+      <View style={styles.financeFilterBox}>
+        <SelectField label="Categoria" value={categoria} options={categorias} onChange={setCategoria} />
+        <View style={styles.financeFilterActions}>
+          <Pressable style={styles.actionButton} onPress={load}><Text style={styles.actionButtonText}>Cargar</Text></Pressable>
+          <Pressable style={styles.modalClose} onPress={() => setCategoria("")}><Text style={styles.modalCloseText}>Limpiar</Text></Pressable>
+        </View>
+      </View>
+      <HRMiniTable rows={rows} columns={columns} selectedIndex={selected} onSelect={setSelected} />
+      <ScrollView horizontal contentContainerStyle={styles.actionBar}>
+        <Pressable style={styles.actionButton} onPress={() => openPolicy("view")}><Text style={styles.actionButtonText}>Ver</Text></Pressable>
+        {admin ? <Pressable style={styles.actionButton} onPress={() => openPolicy("add")}><Text style={styles.actionButtonText}>Agregar</Text></Pressable> : null}
+        {admin ? <Pressable style={styles.actionButton} onPress={() => openPolicy("edit")}><Text style={styles.actionButtonText}>Editar</Text></Pressable> : null}
+        {admin ? <Pressable style={styles.modalClose} onPress={deletePolicy}><Text style={styles.modalCloseText}>Eliminar</Text></Pressable> : null}
+      </ScrollView>
+      {busy ? <ActivityIndicator color={BLUE} style={styles.loader} /> : null}
+      {message ? <Text style={styles.error}>{message}</Text> : null}
+      <Modal visible={modalMode !== null} animationType="slide" onRequestClose={() => setModalMode(null)}>
+        <SafeAreaView style={styles.modalScreen}>
+          <View style={styles.modalHeader}><Text style={styles.modalTitle}>Politica</Text><Pressable style={styles.modalClose} onPress={() => setModalMode(null)}><Text style={styles.modalCloseText}>Cerrar</Text></Pressable></View>
+          <ScrollView contentContainerStyle={styles.modalBody}>
+            {["categoria", "titulo", "articulo_ref"].map((key) => (
+              <View key={key} style={styles.formField}><Text style={styles.label}>{key.replaceAll("_", " ")}</Text><TextInput editable={modalMode !== "view"} style={[styles.input, modalMode === "view" && styles.readonlyInput]} value={form[key] || ""} onChangeText={(value) => setForm((f) => ({ ...f, [key]: value }))} /></View>
+            ))}
+            <Text style={styles.label}>Contenido</Text>
+            <TextInput editable={modalMode !== "view"} multiline style={[styles.input, styles.multilineInput, modalMode === "view" && styles.readonlyInput]} value={form.contenido || ""} onChangeText={(contenido) => setForm((f) => ({ ...f, contenido }))} />
+            {modalMode !== "view" ? <PrimaryButton label="Guardar" loading={busy} onPress={savePolicy} /> : null}
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+    </View>
+  );
+}
+
+function HRNewsView({
+  initialPayload,
+  session
+}: {
+  initialPayload: unknown;
+  session: NonNullable<ReturnType<typeof useAuth>["session"]>;
+}) {
+  const admin = isAdminSession(session);
+  const [news, setNews] = useState<Record<string, unknown>>(asRecord(initialPayload) || {});
+  const [form, setForm] = useState<Record<string, string>>({
+    noticia_1: formatValue(asRecord(initialPayload)?.noticia_1) === "-" ? "" : formatValue(asRecord(initialPayload)?.noticia_1),
+    noticia_2: formatValue(asRecord(initialPayload)?.noticia_2) === "-" ? "" : formatValue(asRecord(initialPayload)?.noticia_2),
+    noticia_3: formatValue(asRecord(initialPayload)?.noticia_3) === "-" ? "" : formatValue(asRecord(initialPayload)?.noticia_3),
+    noticia_4: formatValue(asRecord(initialPayload)?.noticia_4) === "-" ? "" : formatValue(asRecord(initialPayload)?.noticia_4),
+    noticia_5: formatValue(asRecord(initialPayload)?.noticia_5) === "-" ? "" : formatValue(asRecord(initialPayload)?.noticia_5)
+  });
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+
+  async function load() {
+    setBusy(true);
+    setMessage("");
+    try {
+      const payload = await apiRequest<Record<string, unknown>>("/noticias/latest", { session });
+      setNews(payload);
+      setForm({
+        noticia_1: formatValue(payload.noticia_1) === "-" ? "" : formatValue(payload.noticia_1),
+        noticia_2: formatValue(payload.noticia_2) === "-" ? "" : formatValue(payload.noticia_2),
+        noticia_3: formatValue(payload.noticia_3) === "-" ? "" : formatValue(payload.noticia_3),
+        noticia_4: formatValue(payload.noticia_4) === "-" ? "" : formatValue(payload.noticia_4),
+        noticia_5: formatValue(payload.noticia_5) === "-" ? "" : formatValue(payload.noticia_5)
+      });
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudieron cargar noticias.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function publish() {
+    setBusy(true);
+    setMessage("");
+    try {
+      await apiRequest("/noticias", { method: "POST", body: form, session });
+      setMessage("Noticias publicadas.");
+      await load();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudieron publicar noticias.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <View style={styles.tableShell}>
+      <Text style={styles.cardTitle}>Noticias HHRR</Text>
+      <View style={styles.summaryBox}>
+        {[1, 2, 3, 4, 5].map((index) => {
+          const value = news[`noticia_${index}`];
+          return value ? <Text key={index} style={styles.helperText}>{formatValue(value)}</Text> : null;
+        })}
+      </View>
+      {admin ? (
+        <View style={styles.creditCard}>
+          <Text style={styles.cardTitle}>Publicar noticias</Text>
+          {[1, 2, 3, 4, 5].map((index) => {
+            const key = `noticia_${index}`;
+            return <TextInput key={key} style={styles.input} value={form[key] || ""} onChangeText={(value) => setForm((f) => ({ ...f, [key]: value }))} placeholder={`Noticia ${index}`} />;
+          })}
+          <PrimaryButton label="Publicar" loading={busy} onPress={publish} />
+        </View>
+      ) : null}
+      <Pressable style={styles.modalClose} onPress={load}><Text style={styles.modalCloseText}>Actualizar</Text></Pressable>
+      {busy ? <ActivityIndicator color={BLUE} style={styles.loader} /> : null}
+      {message ? <Text style={styles.error}>{message}</Text> : null}
     </View>
   );
 }
