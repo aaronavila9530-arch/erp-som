@@ -420,6 +420,10 @@ function DataView({
     return <ComercialSectionMobile section={section} initialPayload={payload} session={session} />;
   }
 
+  if (moduleCode === "informes" && section) {
+    return <InformesSectionMobile section={section} initialPayload={payload} session={session} />;
+  }
+
   if (section?.key === "credit-hold") {
     return <CreditControlMobile clients={rows} session={session} />;
   }
@@ -1368,6 +1372,372 @@ function ComercialKpisView({
       <KpiGrid numbers={flattenNumbers(obj.kpis || obj).slice(0, 8)} />
       {busy ? <ActivityIndicator color={BLUE} style={styles.loader} /> : null}
       {message ? <Text style={styles.error}>{message}</Text> : null}
+    </View>
+  );
+}
+
+type InformeAction = {
+  key: string;
+  label: string;
+  endpoint: string;
+  method?: "GET" | "POST" | "PUT";
+  body?: Record<string, unknown>;
+  file?: boolean;
+};
+
+type InformeConfig = {
+  title: string;
+  idField: string;
+  columns: string[];
+  detailEndpoint?: string;
+  statusField?: string;
+  filters?: string[];
+  actions: InformeAction[];
+};
+
+const INFORMES_CONFIG: Record<string, InformeConfig> = {
+  "status-informes": {
+    title: "Status Informes",
+    idField: "consec",
+    statusField: "status_informe",
+    columns: ["consec", "num_informe", "buque_contenedor", "cliente", "operacion", "pais", "puerto", "fecha_inicio", "status_informe"],
+    filters: ["status_informe", "cliente", "operacion", "pais", "puerto"],
+    actions: []
+  },
+  container: {
+    title: "Informes de Contenedores",
+    idField: "id",
+    detailEndpoint: "/container-reports/{id}",
+    statusField: "status",
+    columns: ["id", "report_number", "no", "customer", "vessel", "port", "date", "status"],
+    filters: ["status", "customer", "vessel", "port"],
+    actions: [
+      { key: "excel", label: "Excel", endpoint: "/container-reports/{id}/excel", file: true },
+      { key: "pdf", label: "PDF", endpoint: "/container-reports/{id}/download-pdf", file: true },
+      { key: "approve", label: "Aprobar", endpoint: "/container-reports/{id}", method: "PUT", body: { status: "Approved" } },
+      { key: "reject", label: "Rechazar", endpoint: "/container-reports/{id}", method: "PUT", body: { status: "Rejected" } }
+    ]
+  },
+  "grain-sampling": {
+    title: "Vessel Grain Sampling",
+    idField: "id",
+    detailEndpoint: "/vessel-grain-sampling/{id}",
+    statusField: "status",
+    columns: ["id", "cert_no", "vessel_name", "client", "port", "country", "date", "status"],
+    filters: ["status", "client", "vessel_name", "port", "country"],
+    actions: [
+      { key: "approve", label: "Aprobar", endpoint: "/vessel-grain-sampling/{id}/approve", method: "PUT" },
+      { key: "reject", label: "Rechazar", endpoint: "/vessel-grain-sampling/{id}", method: "PUT", body: { status: "Rejected" } },
+      { key: "presentation", label: "Presentacion PDF", endpoint: "/vessel-grain-sampling/{id}/presentation-pdf", method: "POST" },
+      { key: "unified", label: "Unified PDF", endpoint: "/vessel-grain-sampling/{id}/unified-pdf", method: "POST" }
+    ]
+  },
+  "truck-supervision": {
+    title: "Truck Supervision",
+    idField: "id",
+    detailEndpoint: "/vessel-truck-supervision/{id}",
+    statusField: "status",
+    columns: ["id", "cert_no", "vessel_name", "customer", "port", "country", "date", "status"],
+    filters: ["status", "customer", "vessel_name", "port", "country"],
+    actions: [
+      { key: "approve", label: "Aprobar/PDF", endpoint: "/vessel-truck-supervision/{id}/approve", method: "POST" },
+      { key: "reject", label: "Rechazar", endpoint: "/vessel-truck-supervision/{id}", method: "PUT", body: { status: "Rejected" } },
+      { key: "presentation", label: "Presentacion", endpoint: "/vessel-truck-supervision/{id}/presentation", file: true },
+      { key: "unified", label: "Unified", endpoint: "/vessel-truck-supervision/{id}/unified", file: true }
+    ]
+  },
+  "draft-survey": {
+    title: "Draft Survey",
+    idField: "general_id",
+    detailEndpoint: "/draft-survey/{id}",
+    statusField: "status",
+    columns: ["general_id", "cert_no", "vessel_name", "client", "port", "country", "survey_date", "status"],
+    filters: ["status", "client", "vessel_name", "port", "country"],
+    actions: [
+      { key: "reject", label: "Rechazar", endpoint: "/draft-survey/{id}", method: "PUT", body: { status: "Rejected" } }
+    ]
+  },
+  bunker: {
+    title: "Vessel Bunker",
+    idField: "id",
+    detailEndpoint: "/vessel-bunker-reports/{id}",
+    statusField: "status",
+    columns: ["id", "bunker_cert_no", "vessel", "client", "port", "country", "attendance_date", "status"],
+    filters: ["status", "client", "vessel", "port", "country"],
+    actions: [
+      { key: "excel", label: "Excel", endpoint: "/vessel-bunker-excel/generate/{id}", file: true },
+      { key: "pdf", label: "PDF", endpoint: "/vessel-bunker-excel/generate-pdf/{id}", file: true },
+      { key: "presentation", label: "Presentacion", endpoint: "/vessel-bunker-reports/presentation/{id}", file: true },
+      { key: "approve", label: "Aprobar", endpoint: "/vessel-bunker-reports/{id}", method: "PUT", body: { status: "Approved" } },
+      { key: "reject", label: "Rechazar", endpoint: "/vessel-bunker-reports/{id}", method: "PUT", body: { status: "Rejected" } }
+    ]
+  },
+  "cargo-condition": {
+    title: "Cargo Condition Survey",
+    idField: "id",
+    detailEndpoint: "/vessel-cargo-condition-surveys/{id}",
+    statusField: "status",
+    columns: ["id", "report_number", "vessel", "client", "port", "country", "date", "status"],
+    filters: ["status", "client", "vessel", "port", "country"],
+    actions: [
+      { key: "word", label: "Word", endpoint: "/vessel-cargo-condition-surveys/word/{id}", file: true },
+      { key: "presentation", label: "Presentacion", endpoint: "/vessel-cargo-condition-surveys/presentation/{id}", file: true },
+      { key: "approve", label: "Aprobar", endpoint: "/vessel-cargo-condition-surveys/{id}", method: "PUT", body: { status: "Approved" } },
+      { key: "reject", label: "Rechazar", endpoint: "/vessel-cargo-condition-surveys/{id}", method: "PUT", body: { status: "Rejected" } }
+    ]
+  },
+  "crane-inspection": {
+    title: "Crane Inspection",
+    idField: "id",
+    detailEndpoint: "/vessel-crane-inspection/{id}",
+    statusField: "status",
+    columns: ["id", "report_number", "vessel", "client", "port", "country", "inspection_date", "status"],
+    filters: ["status", "client", "vessel", "port", "country"],
+    actions: [
+      { key: "approve", label: "Aprobar", endpoint: "/vessel-crane-inspection/{id}", method: "PUT", body: { status: "Approved" } },
+      { key: "reject", label: "Rechazar", endpoint: "/vessel-crane-inspection/{id}", method: "PUT", body: { status: "Rejected" } }
+    ]
+  },
+  "vessel-condition": {
+    title: "Vessel Condition Survey",
+    idField: "id",
+    detailEndpoint: "/vessel-condition-surveys/id/{id}",
+    statusField: "status",
+    columns: ["id", "report_number", "vessel", "client", "port", "country", "inspection_date", "status"],
+    filters: ["status", "client", "vessel", "port", "country"],
+    actions: [
+      { key: "word", label: "Word", endpoint: "/vessel-condition-surveys/word/{id}", file: true },
+      { key: "presentation", label: "Presentacion", endpoint: "/vessel-condition-surveys/presentation/{id}", file: true },
+      { key: "approve", label: "Aprobar", endpoint: "/vessel-condition-surveys/id/{id}", method: "PUT", body: { status: "Approved" } },
+      { key: "reject", label: "Rechazar", endpoint: "/vessel-condition-surveys/id/{id}", method: "PUT", body: { status: "Rejected" } }
+    ]
+  },
+  "port-captancy": {
+    title: "Port Captancy",
+    idField: "id",
+    detailEndpoint: "/port-captancy-reports/id/{id}",
+    statusField: "status",
+    columns: ["id", "report_number", "vessel", "client", "port", "country", "date", "status"],
+    filters: ["status", "client", "vessel", "port", "country"],
+    actions: [
+      { key: "word", label: "Word", endpoint: "/port-captancy-reports/{id}/word", file: true },
+      { key: "presentation", label: "Presentacion", endpoint: "/port-captancy-reports/presentation/{id}", file: true },
+      { key: "approve", label: "Aprobar", endpoint: "/port-captancy-reports/{id}", method: "PUT", body: { status: "Approved" } },
+      { key: "reject", label: "Rechazar", endpoint: "/port-captancy-reports/{id}", method: "PUT", body: { status: "Rejected" } }
+    ]
+  },
+  "weight-certificate": {
+    title: "Weight Certificate",
+    idField: "id",
+    detailEndpoint: "/weight-certificates/{id}",
+    statusField: "status",
+    columns: ["id", "certificate_no", "vessel", "client", "port", "country", "date", "status"],
+    filters: ["status", "client", "vessel", "port", "country"],
+    actions: [
+      { key: "word", label: "Word", endpoint: "/weight-certificates/{id}/word", file: true },
+      { key: "pdf", label: "PDF", endpoint: "/weight-certificates/{id}/pdf", file: true },
+      { key: "approve", label: "Aprobar", endpoint: "/weight-certificates/{id}", method: "PUT", body: { status: "approve" } },
+      { key: "reject", label: "Rechazar", endpoint: "/weight-certificates/{id}", method: "PUT", body: { status: "reject" } }
+    ]
+  },
+  "holds-certificate": {
+    title: "Vessel Holds Inspection Certificate",
+    idField: "id",
+    detailEndpoint: "/vessel-holds-inspection-certificates/{id}",
+    statusField: "status",
+    columns: ["id", "certificate_no", "vessel", "client", "port", "country", "date", "status"],
+    filters: ["status", "client", "vessel", "port", "country"],
+    actions: [
+      { key: "excel", label: "Excel", endpoint: "/vessel-holds-inspection-certificates/{id}/excel", file: true },
+      { key: "pdf", label: "PDF", endpoint: "/vessel-holds-inspection-certificates/{id}/pdf", file: true },
+      { key: "approve", label: "Aprobar", endpoint: "/vessel-holds-inspection-certificates/{id}", method: "PUT", body: { status: "Approve" } },
+      { key: "reject", label: "Rechazar", endpoint: "/vessel-holds-inspection-certificates/{id}", method: "PUT", body: { status: "Reject" } }
+    ]
+  },
+  "sampling-certificate": {
+    title: "Sampling Certificate",
+    idField: "id",
+    detailEndpoint: "/sampling-certificates/{id}",
+    statusField: "status",
+    columns: ["id", "certificate_no", "vessel", "client", "port", "country", "date", "status"],
+    filters: ["status", "client", "vessel", "port", "country"],
+    actions: [
+      { key: "excel", label: "Excel", endpoint: "/sampling-certificates/{id}/excel", file: true },
+      { key: "pdf", label: "PDF", endpoint: "/sampling-certificates/{id}/pdf", file: true },
+      { key: "approve", label: "Aprobar", endpoint: "/sampling-certificates/{id}", method: "PUT", body: { status: "Approve" } },
+      { key: "reject", label: "Rechazar", endpoint: "/sampling-certificates/{id}", method: "PUT", body: { status: "Reject" } }
+    ]
+  },
+  "sealing-certificate": {
+    title: "Sealing Certificate",
+    idField: "id",
+    detailEndpoint: "/sealing-certificates/{id}",
+    statusField: "status",
+    columns: ["id", "certificate_no", "vessel", "client", "port", "country", "date", "status"],
+    filters: ["status", "client", "vessel", "port", "country"],
+    actions: [
+      { key: "excel", label: "Excel", endpoint: "/sealing-certificates/{id}/excel", file: true },
+      { key: "pdf", label: "PDF", endpoint: "/sealing-certificates/{id}/pdf", file: true },
+      { key: "approve", label: "Aprobar", endpoint: "/sealing-certificates/{id}", method: "PUT", body: { status: "Approve" } },
+      { key: "reject", label: "Rechazar", endpoint: "/sealing-certificates/{id}", method: "PUT", body: { status: "Reject" } }
+    ]
+  },
+  "lashing-certificate": {
+    title: "Lashing Certificate",
+    idField: "id",
+    detailEndpoint: "/lashing-certificates/{id}",
+    statusField: "status",
+    columns: ["id", "certificate_no", "vessel", "client", "port", "country", "date", "status"],
+    filters: ["status", "client", "vessel", "port", "country"],
+    actions: [
+      { key: "word", label: "Word", endpoint: "/lashing-certificates/{id}/word", file: true },
+      { key: "pdf", label: "PDF", endpoint: "/lashing-certificates/{id}/pdf", file: true },
+      { key: "approve", label: "Aprobar", endpoint: "/lashing-certificates/{id}", method: "PUT", body: { status: "Approve" } },
+      { key: "reject", label: "Rechazar", endpoint: "/lashing-certificates/{id}", method: "PUT", body: { status: "Reject" } }
+    ]
+  }
+};
+
+function endpointForRow(template: string, row: Record<string, unknown>, idField: string) {
+  return template.replace("{id}", encodeURIComponent(formatValue(row[idField])));
+}
+
+function InformesSectionMobile({
+  section,
+  initialPayload,
+  session
+}: {
+  section: AppSection;
+  initialPayload: unknown;
+  session: NonNullable<ReturnType<typeof useAuth>["session"]>;
+}) {
+  const config = INFORMES_CONFIG[section.key] || {
+    title: section.label,
+    idField: "id",
+    columns: rowsFromAny(initialPayload)[0] ? Object.keys(rowsFromAny(initialPayload)[0]).slice(0, 8) : ["id", "status"],
+    actions: []
+  };
+  const [rows, setRows] = useState(rowsFromAny(initialPayload));
+  const [selected, setSelected] = useState<number | null>(null);
+  const [detail, setDetail] = useState<Record<string, unknown> | null>(null);
+  const [filters, setFilters] = useState({ status: "", search: "" });
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const statusOptions = ["", "Pending", "Pending for review", "Approved", "Rejected", "Approve", "Reject"];
+
+  const visibleRows = rows.filter((row) => {
+    const statusField = config.statusField || "status";
+    if (filters.status && formatValue(row[statusField]) !== filters.status) return false;
+    if (!filters.search.trim()) return true;
+    const needle = filters.search.toLowerCase();
+    const fields = config.filters?.length ? config.filters : config.columns;
+    return fields.some((field) => formatValue(row[field]).toLowerCase().includes(needle));
+  });
+  const selectedRow = selected === null ? null : visibleRows[selected] || null;
+
+  async function load() {
+    if (!section.endpoint) return;
+    const params = new URLSearchParams();
+    if (filters.status && section.key === "status-informes") params.set("status", filters.status);
+    setBusy(true);
+    setMessage("");
+    try {
+      const payload = await apiRequest(`${section.endpoint}${params.toString() ? `?${params.toString()}` : ""}`, { session });
+      setRows(rowsFromAny(payload));
+      setSelected(null);
+      setDetail(null);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo cargar informes.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function openDetail() {
+    if (!selectedRow) {
+      setMessage("Seleccione una fila.");
+      return;
+    }
+    if (!config.detailEndpoint) {
+      setDetail(selectedRow);
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      const payload = await apiRequest<Record<string, unknown>>(endpointForRow(config.detailEndpoint, selectedRow, config.idField), { session });
+      setDetail(asRecord(payload) || selectedRow);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo abrir revision.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function runInformeAction(action: InformeAction) {
+    if (!selectedRow) {
+      setMessage("Seleccione una fila.");
+      return;
+    }
+    const endpoint = endpointForRow(action.endpoint, selectedRow, config.idField);
+    setBusy(true);
+    setMessage("");
+    try {
+      if (action.file || action.method === "GET" || !action.method) {
+        await Linking.openURL(`${API_BASE_URL}${endpoint}`);
+        setMessage(`Abriendo ${action.label}...`);
+      } else {
+        await apiRequest(endpoint, { method: action.method, body: action.body, session });
+        setMessage("Accion ejecutada correctamente.");
+        await load();
+      }
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : `No se pudo ejecutar ${action.label}.`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <View style={styles.tableShell}>
+      <Text style={styles.cardTitle}>{config.title}</Text>
+      <View style={styles.financeFilterBox}>
+        <SelectField label="Status" value={filters.status} options={statusOptions} onChange={(status) => setFilters((f) => ({ ...f, status }))} />
+        <Text style={styles.label}>Buscar</Text>
+        <TextInput style={styles.input} value={filters.search} onChangeText={(search) => setFilters((f) => ({ ...f, search }))} />
+        <View style={styles.financeFilterActions}>
+          <Pressable style={styles.actionButton} onPress={load}><Text style={styles.actionButtonText}>Cargar</Text></Pressable>
+          <Pressable style={styles.modalClose} onPress={() => setFilters({ status: "", search: "" })}><Text style={styles.modalCloseText}>Limpiar</Text></Pressable>
+        </View>
+      </View>
+      <Text style={styles.tableCount}>{visibleRows.length} registros</Text>
+      <HRMiniTable rows={visibleRows} columns={config.columns} selectedIndex={selected} onSelect={setSelected} />
+      <ScrollView horizontal contentContainerStyle={styles.actionBar}>
+        <Pressable style={styles.actionButton} onPress={openDetail}><Text style={styles.actionButtonText}>Review</Text></Pressable>
+        {config.actions.map((action) => (
+          <Pressable key={action.key} style={action.key === "reject" ? styles.modalClose : styles.actionButton} onPress={() => runInformeAction(action)}>
+            <Text style={action.key === "reject" ? styles.modalCloseText : styles.actionButtonText}>{action.label}</Text>
+          </Pressable>
+        ))}
+      </ScrollView>
+      {busy ? <ActivityIndicator color={BLUE} style={styles.loader} /> : null}
+      {message ? <Text style={styles.error}>{message}</Text> : null}
+      <Modal visible={detail !== null} animationType="slide" onRequestClose={() => setDetail(null)}>
+        <SafeAreaView style={styles.modalScreen}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Revision - {config.title}</Text>
+            <Pressable style={styles.modalClose} onPress={() => setDetail(null)}><Text style={styles.modalCloseText}>Cerrar</Text></Pressable>
+          </View>
+          <ScrollView contentContainerStyle={styles.modalBody}>
+            {detail ? Object.entries(detail).map(([key, value]) => (
+              <View key={key} style={styles.fieldRow}>
+                <Text style={styles.fieldKey}>{key.replaceAll("_", " ")}</Text>
+                <Text style={styles.fieldValue}>{formatValue(value)}</Text>
+              </View>
+            )) : null}
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
     </View>
   );
 }
