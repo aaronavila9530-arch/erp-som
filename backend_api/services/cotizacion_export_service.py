@@ -9,13 +9,20 @@ from reportlab.lib.units import inch
 from reportlab.pdfgen import canvas
 
 
-ROOT_DIR = Path(__file__).resolve().parents[2]
-ASSETS_DIR = ROOT_DIR / "assets"
+BACKEND_DIR = Path(__file__).resolve().parents[1]
+REPO_DIR = BACKEND_DIR.parent
+ASSET_DIRS = (
+    BACKEND_DIR / "assets",
+    REPO_DIR / "assets",
+)
 
 
 def _asset(name: str) -> str | None:
-    path = ASSETS_DIR / name
-    return str(path) if path.is_file() else None
+    for directory in ASSET_DIRS:
+        path = directory / name
+        if path.is_file():
+            return str(path)
+    return None
 
 
 def export_cotizacion_word(data: dict, output_path: str):
