@@ -1912,6 +1912,7 @@ function InformesSectionMobile({
   const [calculatorOpen, setCalculatorOpen] = useState(false);
   const [createConfig, setCreateConfig] = useState<InformeCreateConfig | null>(null);
   const [createForm, setCreateForm] = useState<Record<string, string>>({});
+  const [containerSelectorOpen, setContainerSelectorOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const statusOptions = ["", "Pending", "Pending for review", "Approved", "Rejected", "Approve", "Reject"];
@@ -2259,6 +2260,13 @@ function InformesSectionMobile({
                 <View key={field.key} style={styles.summaryBox}>
                   <Text style={styles.cardTitle}>{field.label}</Text>
                 </View>
+              ) : createConfig.key === "container" && field.key === "linked_report_number" ? (
+                <View key={field.key} style={styles.formField}>
+                  <Text style={styles.label}>{field.label}</Text>
+                  <Pressable style={styles.selectBox} onPress={() => setContainerSelectorOpen(true)}>
+                    <Text style={styles.selectText}>{createForm[field.key] || "Select service report"}</Text>
+                  </Pressable>
+                </View>
               ) : field.type === "date" ? (
                 <DateField key={field.key} label={field.label} value={createForm[field.key] || ""} onChange={(value) => setCreateForm((current) => ({ ...current, [field.key]: value }))} />
               ) : field.type === "datetime" ? (
@@ -2288,6 +2296,15 @@ function InformesSectionMobile({
           </ScrollView>
         </SafeAreaView>
       </Modal>
+      <ContainerReportSelectorModal
+        visible={containerSelectorOpen}
+        session={session}
+        onClose={() => setContainerSelectorOpen(false)}
+        onSelect={(reportNumber) => {
+          setCreateForm((current) => ({ ...current, linked_report_number: reportNumber }));
+          setContainerSelectorOpen(false);
+        }}
+      />
       <ProjectCalculatorModal visible={calculatorOpen} session={session} onClose={() => setCalculatorOpen(false)} />
     </View>
   );
@@ -2306,6 +2323,184 @@ function recordToEditableForm(record: Record<string, unknown>) {
     Object.entries(record)
       .filter(([key, value]) => !["created_at", "updated_at"].includes(key) && (value === null || ["string", "number", "boolean"].includes(typeof value)))
       .map(([key, value]) => [key, value === null || value === undefined ? "" : String(value)])
+  );
+}
+
+function arrayFromPayload(payload: unknown, key: string) {
+  const obj = asRecord(payload);
+  const value = obj?.[key];
+  return Array.isArray(value) ? value.map((item) => formatValue(item)).filter((item) => item !== "-") : [];
+}
+
+function ContainerReportSelectorModal({
+  visible,
+  session,
+  onClose,
+  onSelect
+}: {
+  visible: boolean;
+  session: NonNullable<ReturnType<typeof useAuth>["session"]>;
+  onClose: () => void;
+  onSelect: (reportNumber: string) => void;
+}) {
+  const [filters, setFilters] = useState({ cliente: "", anio: "", mes: "", buque_contenedor: "" });
+  const [clientes, setClientes] = useState<string[]>([]);
+  const [anios, setAnios] = useState<string[]>([]);
+  const [meses, setMeses] = useState<string[]>([]);
+  const [buques, setBuques] = useState<string[]>([]);
+  const [rows, setRows] = useState<Record<string, unknown>[]>([]);
+  const [selected, setSelected] = useState<number | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const selectedRow = selected === null ? null : rows[selected] || null;
+
+  async function loadBaseFilters() {
+    setBusy(true);
+    setMessage("");
+    try {
+      const payload = await apiRequest("/container-reports/filters", { session });
+      setClientes(arrayFromPayload(payload, "clientes"));
+      setAnios(arrayFromPayload(payload, "anios"));
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudieron cargar filtros.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function loadMonths(cliente: string, anio: string) {
+    setMeses([]);
+    setBuques([]);
+    setRows([]);
+    setFilters((current) => ({ ...current, mes: "", buque_contenedor: "" }));
+    if (!cliente || !anio) return;
+    try {
+      const payload = await apiRequest(`/container-reports/filters/months?cliente=${encodeURIComponent(cliente)}&anio=${encodeURIComponent(anio)}`, { session });
+      setMeses(arrayFromPayload(payload, "meses"));
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudieron cargar meses.");
+    }
+  }
+
+  async function loadVessels(nextFilters = filters) {
+    setBuques([]);
+    setRows([]);
+    setFilters((current) => ({ ...current, buque_contenedor: "" }));
+    if (!nextFilters.cliente || !nextFilters.anio || !nextFilters.mes) return;
+    try {
+      const params = new URLSearchParams({
+        cliente: nextFilters.cliente,
+        anio: nextFilters.anio,
+        mes: nextFilters.mes
+      });
+      const payload = await apiRequest(`/container-reports/filters/vessels?${params.toString()}`, { session });
+      setBuques(arrayFromPayload(payload, "buques_contenedor"));
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudieron cargar buques/contenedores.");
+    }
+  }
+
+  async function searchReports() {
+    if (!filters.cliente || !filters.anio || !filters.mes || !filters.buque_contenedor) {
+      setMessage("Complete cliente, anio, mes y vessel/container.");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      const params = new URLSearchParams({
+        cliente: filters.cliente,
+        buque_contenedor: filters.buque_contenedor,
+        anio: filters.anio,
+        mes: filters.mes
+      });
+      const payload = await apiRequest(`/container-reports/informes?${params.toString()}`, { session });
+      setRows(rowsFromAny(payload));
+      setSelected(null);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudieron buscar informes.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!visible) return;
+    setFilters({ cliente: "", anio: "", mes: "", buque_contenedor: "" });
+    setMeses([]);
+    setBuques([]);
+    setRows([]);
+    setSelected(null);
+    loadBaseFilters();
+  }, [visible]);
+
+  return (
+    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+      <SafeAreaView style={styles.modalScreen}>
+        <View style={styles.modalHeader}>
+          <Text style={styles.modalTitle}>Select Service Report</Text>
+          <Pressable style={styles.modalClose} onPress={onClose}><Text style={styles.modalCloseText}>Cerrar</Text></Pressable>
+        </View>
+        <ScrollView contentContainerStyle={styles.modalBody}>
+          <SelectField
+            label="Client"
+            value={filters.cliente}
+            options={clientes}
+            onChange={(cliente) => {
+              const next = { ...filters, cliente, mes: "", buque_contenedor: "" };
+              setFilters(next);
+              loadMonths(cliente, next.anio);
+            }}
+          />
+          <SelectField
+            label="Year"
+            value={filters.anio}
+            options={anios}
+            onChange={(anio) => {
+              const next = { ...filters, anio, mes: "", buque_contenedor: "" };
+              setFilters(next);
+              loadMonths(next.cliente, anio);
+            }}
+          />
+          <SelectField
+            label="Month"
+            value={filters.mes}
+            options={meses}
+            onChange={(mes) => {
+              const next = { ...filters, mes, buque_contenedor: "" };
+              setFilters(next);
+              loadVessels(next);
+            }}
+          />
+          <SelectField
+            label="Vessel / Container"
+            value={filters.buque_contenedor}
+            options={buques}
+            onChange={(buque_contenedor) => setFilters((current) => ({ ...current, buque_contenedor }))}
+          />
+          <View style={styles.informesHomeActions}>
+            <Pressable style={styles.actionButton} onPress={searchReports}><Text style={styles.actionButtonText}>Search</Text></Pressable>
+            <Pressable
+              style={styles.modalClose}
+              onPress={() => {
+                const report = formatValue(selectedRow?.num_informe);
+                if (report === "-") {
+                  setMessage("Please select a report.");
+                } else {
+                  onSelect(report);
+                }
+              }}
+            >
+              <Text style={styles.modalCloseText}>Use selected report</Text>
+            </Pressable>
+          </View>
+          <Text style={styles.tableCount}>{rows.length} reports</Text>
+          <HRMiniTable rows={rows} columns={["num_informe", "consec", "fecha_inicio"]} selectedIndex={selected} onSelect={setSelected} />
+          {busy ? <ActivityIndicator color={BLUE} style={styles.loader} /> : null}
+          {message ? <Text style={styles.error}>{message}</Text> : null}
+        </ScrollView>
+      </SafeAreaView>
+    </Modal>
   );
 }
 
