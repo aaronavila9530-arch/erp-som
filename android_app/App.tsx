@@ -1400,7 +1400,7 @@ type InformeConfig = {
 type InformeCreateField = {
   key: string;
   label: string;
-  type?: "text" | "date" | "multiline";
+  type?: "text" | "date" | "datetime" | "multiline" | "checkbox" | "section";
 };
 
 type InformeCreateConfig = {
@@ -1681,22 +1681,126 @@ const COMMON_REPORT_FIELDS: InformeCreateField[] = [
   { key: "remarks", label: "Observaciones", type: "multiline" }
 ];
 
+const CONTAINER_REPORT_FIELDS: InformeCreateField[] = [
+  { key: "section_link", label: "Report Link", type: "section" },
+  { key: "linked_report_number", label: "Report Number" },
+  { key: "container_type_text", label: "Container Type" },
+  { key: "section_general", label: "General Information", type: "section" },
+  { key: "report_no", label: "No." },
+  { key: "bl", label: "B / L" },
+  { key: "seals", label: "Seals" },
+  { key: "appointment", label: "Appointment" },
+  { key: "shippers", label: "Shippers" },
+  { key: "inspection_place", label: "Inspection Place" },
+  { key: "contact_person", label: "Contact Person" },
+  { key: "on_behalf_of", label: "On Behalf Of" },
+  { key: "consignee_notify", label: "Consig./Notify" },
+  { key: "vessel", label: "Vessel" },
+  { key: "contact_datetime", label: "Contact D/Time", type: "datetime" },
+  { key: "init_inspection_datetime", label: "Init Insp. D/Time", type: "datetime" },
+  { key: "init_to", label: "To", type: "datetime" },
+  { key: "final_inspection_datetime", label: "Final Insp. D/Time", type: "datetime" },
+  { key: "final_to", label: "To", type: "datetime" },
+  { key: "section_description", label: "Container Description", type: "section" },
+  { key: "container_size_20", label: "20 Foot", type: "checkbox" },
+  { key: "container_size_40", label: "40 Foot", type: "checkbox" },
+  { key: "container_type_dry", label: "Dry", type: "checkbox" },
+  { key: "container_type_reefer", label: "Reefer", type: "checkbox" },
+  { key: "container_type_iso", label: "ISO Tank", type: "checkbox" },
+  { key: "container_type_flat_rack", label: "Flat Rack", type: "checkbox" },
+  { key: "container_load_fcl", label: "FCL", type: "checkbox" },
+  { key: "container_load_lcl", label: "LCL", type: "checkbox" },
+  { key: "section_cause", label: "Cause of Inspection", type: "section" },
+  { key: "cause_seals_bl", label: "Seals != BL", type: "checkbox" },
+  { key: "cause_change_seals", label: "Change Seals", type: "checkbox" },
+  { key: "cause_customs", label: "Customs", type: "checkbox" },
+  { key: "cause_transfer", label: "Transfer", type: "checkbox" },
+  { key: "cause_leaking", label: "Leaking", type: "checkbox" },
+  { key: "cause_damage", label: "Damage", type: "checkbox" },
+  { key: "cause_stuff_condition", label: "Stuff / D Condition", type: "checkbox" },
+  { key: "cause_detail", label: "Detail of Cause (if necessary)", type: "multiline" },
+  { key: "section_goods", label: "Goods & Packages", type: "section" },
+  { key: "goods_description", label: "Goods", type: "multiline" },
+  { key: "package_carton", label: "Carton", type: "checkbox" },
+  { key: "package_bags", label: "Bags", type: "checkbox" },
+  { key: "package_boxes", label: "Boxes", type: "checkbox" },
+  { key: "package_drums", label: "Drums", type: "checkbox" },
+  { key: "package_pallets", label: "Pallets", type: "checkbox" },
+  { key: "package_bulk", label: "Bulk", type: "checkbox" },
+  { key: "package_bales", label: "Bales", type: "checkbox" },
+  { key: "package_crates", label: "Crates", type: "checkbox" },
+  { key: "package_other", label: "Other", type: "checkbox" },
+  { key: "qty_1_left", label: "Qty 1st Left" },
+  { key: "qty_1_right", label: "Qty 1st Right" },
+  { key: "qty_2_left", label: "Qty 2nd Left" },
+  { key: "qty_2_right", label: "Qty 2nd Right" },
+  { key: "qty_3_left", label: "Qty 3rd Left" },
+  { key: "qty_3_right", label: "Qty 3rd Right" },
+  { key: "package_marking", label: "Package & Marking Description", type: "multiline" },
+  { key: "goods_condition", label: "Goods Condition", type: "multiline" },
+  { key: "section_narratives", label: "Conditions and Narratives", type: "section" },
+  { key: "damage_details", label: "Details of Damage / Shortage", type: "multiline" },
+  { key: "remarks", label: "Remarks", type: "multiline" },
+  { key: "conclusion", label: "Conclusion", type: "multiline" },
+  { key: "picture_link", label: "Picture Link" },
+  { key: "section_docs", label: "Collected Documents", type: "section" },
+  { key: "doc_bl", label: "B/L", type: "checkbox" },
+  { key: "doc_packing_list", label: "Packing List", type: "checkbox" },
+  { key: "doc_shipping_invoice", label: "Shipping Invoice", type: "checkbox" },
+  { key: "doc_cargo_manifest", label: "Cargo Manifest", type: "checkbox" },
+  { key: "doc_commercial_invoice", label: "Commercial Invoice", type: "checkbox" },
+  { key: "doc_delivery_record", label: "Delivery / Received Record", type: "checkbox" },
+  { key: "doc_notice_loss", label: "Notice of Loss / Damage", type: "checkbox" },
+  { key: "doc_insurance_policy", label: "Insurance Policy", type: "checkbox" },
+  { key: "doc_other", label: "Other", type: "checkbox" },
+  { key: "section_quality", label: "Quality", type: "section" },
+  { key: "quality_packing_exam", label: "Packing Examination", type: "checkbox" },
+  { key: "quality_un_witness", label: "UN / Stuffed Witness", type: "checkbox" },
+  { key: "quality_visual_exam", label: "Visual Examination", type: "checkbox" },
+  { key: "quality_product_exam", label: "Product Examination", type: "checkbox" },
+  { key: "quality_documents", label: "Quality Documents", type: "checkbox" },
+  { key: "quality_sanitary_cert", label: "Sanitary Certificate", type: "checkbox" },
+  { key: "quality_phytosanitary_cert", label: "Phytosanitary Cert.", type: "checkbox" },
+  { key: "quality_factory_cert", label: "Factory Certificate", type: "checkbox" },
+  { key: "quality_origin_cert", label: "Certificate of Origin", type: "checkbox" },
+  { key: "section_persons", label: "Persons Present at Survey", type: "section" },
+  { key: "person_1_name", label: "Person 1 Name" },
+  { key: "person_1_position", label: "Person 1 Position" },
+  { key: "person_2_name", label: "Person 2 Name" },
+  { key: "person_2_position", label: "Person 2 Position" },
+  { key: "person_3_name", label: "Person 3 Name" },
+  { key: "person_3_position", label: "Person 3 Position" },
+  { key: "section_inspected", label: "Inspected Container", type: "section" },
+  { key: "ic_manuf", label: "Manuf. No." },
+  { key: "ic_csc", label: "CSC Saf. Apr." },
+  { key: "ic_max_gw", label: "Max. Gross Weight (Kgs)" },
+  { key: "ic_tare", label: "Tare (Kgs)" },
+  { key: "section_details", label: "General Details", type: "section" },
+  { key: "new_commodity", label: "New Commodity", type: "checkbox" },
+  { key: "used_commodity", label: "Used Commodity", type: "checkbox" },
+  { key: "net_weight", label: "Net W. (Kgs)" },
+  { key: "gross_weight", label: "Gross W. (Kgs)" },
+  { key: "volume", label: "Volume (m3)" },
+  { key: "section_transfer", label: "Transfer To Container", type: "section" },
+  { key: "tr_number", label: "Number" },
+  { key: "tr_manuf", label: "Manuf. No." },
+  { key: "tr_csc", label: "CSC Saf. Apr." },
+  { key: "tr_seal", label: "Seal No." },
+  { key: "tr_max_gw", label: "Max. Gross Weight (Kgs)" },
+  { key: "tr_tare", label: "Tare (Kgs)" },
+  { key: "section_scope", label: "Scope of Inspection", type: "section" },
+  { key: "scope_100", label: "100%", type: "checkbox" },
+  { key: "scope_random", label: "Random", type: "checkbox" },
+  { key: "scope_items", label: "No. Items" }
+];
+
 const INFORMES_CREATE_CONFIG: InformeCreateConfig[] = [
   {
     key: "container",
     group: "Informe contenedor",
     title: "Informe de Contenedor",
     endpoint: "/container-reports",
-    fields: [
-      { key: "report_no", label: "Report No." },
-      { key: "vessel", label: "Vessel" },
-      { key: "on_behalf_of", label: "Customer" },
-      { key: "inspection_place", label: "Inspection place" },
-      { key: "goods_description", label: "Goods" },
-      { key: "contact_datetime", label: "Contact date", type: "date" },
-      { key: "remarks", label: "Remarks", type: "multiline" },
-      { key: "conclusion", label: "Conclusion", type: "multiline" }
-    ]
+    fields: CONTAINER_REPORT_FIELDS
   },
   {
     key: "grain-sampling",
@@ -1947,7 +2051,14 @@ function InformesSectionMobile({
 
   function openCreate(configToCreate: InformeCreateConfig) {
     setCreateConfig(configToCreate);
-    setCreateForm(Object.fromEntries(configToCreate.fields.map((field) => [field.key, field.type === "date" ? formatYmd(new Date()) : ""])));
+    setCreateForm(Object.fromEntries(configToCreate.fields
+      .filter((field) => field.type !== "section")
+      .map((field) => {
+        if (field.type === "date") return [field.key, formatYmd(new Date())];
+        if (field.type === "datetime") return [field.key, `${formatYmd(new Date())} 00:00`];
+        if (field.type === "checkbox") return [field.key, "false"];
+        return [field.key, ""];
+      })));
     setGenerateOpen(false);
   }
 
@@ -1962,6 +2073,9 @@ function InformesSectionMobile({
           if (field.type === "date" && payload[field.key]) payload[field.key] = toDmy(payload[field.key]);
         });
       }
+      createConfig.fields.forEach((field) => {
+        if (field.type === "section") delete payload[field.key];
+      });
       await apiRequest(createConfig.endpoint, { method: "POST", body: payload, session });
       setCreateConfig(null);
       setCreateForm({});
@@ -1984,8 +2098,10 @@ function InformesSectionMobile({
       <View style={styles.financeFilterBox}>
         <SelectField label="Revisar informes" value={activeOption.label} options={INFORME_REVIEW_OPTIONS.map((option) => option.label)} onChange={changeReview} />
         <View style={styles.financeFilterActions}>
-          <Pressable style={styles.actionButton} onPress={() => setGenerateOpen(true)}><Text style={styles.actionButtonText}>Generar Informe</Text></Pressable>
           <Pressable style={styles.modalClose} onPress={() => setCalculatorOpen(true)}><Text style={styles.modalCloseText}>Calculadora de proyectos</Text></Pressable>
+          <Pressable style={styles.modalClose} onPress={() => changeReview(activeOption.label)}><Text style={styles.modalCloseText}>Revisar informes</Text></Pressable>
+          <Pressable style={styles.modalClose} onPress={() => changeReview("Status de Informes")}><Text style={styles.modalCloseText}>Tabla pendientes</Text></Pressable>
+          <Pressable style={styles.actionButton} onPress={() => setGenerateOpen(true)}><Text style={styles.actionButtonText}>Generar informes</Text></Pressable>
         </View>
       </View>
       <Text style={styles.cardTitle}>{config.title}</Text>
@@ -2076,8 +2192,23 @@ function InformesSectionMobile({
           </View>
           <ScrollView contentContainerStyle={styles.modalBody} keyboardShouldPersistTaps="handled">
             {createConfig?.fields.map((field) => (
-              field.type === "date" ? (
+              field.type === "section" ? (
+                <View key={field.key} style={styles.summaryBox}>
+                  <Text style={styles.cardTitle}>{field.label}</Text>
+                </View>
+              ) : field.type === "date" ? (
                 <DateField key={field.key} label={field.label} value={createForm[field.key] || ""} onChange={(value) => setCreateForm((current) => ({ ...current, [field.key]: value }))} />
+              ) : field.type === "datetime" ? (
+                <DateTimeField key={field.key} label={field.label} value={createForm[field.key] || ""} onChange={(value) => setCreateForm((current) => ({ ...current, [field.key]: value }))} />
+              ) : field.type === "checkbox" ? (
+                <View key={field.key} style={styles.rememberRow}>
+                  <Text style={styles.rememberText}>{field.label}</Text>
+                  <Switch
+                    value={createForm[field.key] === "true"}
+                    onValueChange={(value) => setCreateForm((current) => ({ ...current, [field.key]: value ? "true" : "false" }))}
+                    trackColor={{ true: BLUE }}
+                  />
+                </View>
               ) : (
                 <View key={field.key} style={styles.formField}>
                   <Text style={styles.label}>{field.label}</Text>
@@ -3067,6 +3198,32 @@ function DateField({ label, value, onChange }: { label: string; value: string; o
           </View>
         </View>
       </Modal>
+    </View>
+  );
+}
+
+function DateTimeField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+  const datePart = value?.slice(0, 10) || "";
+  const timePart = value?.slice(11, 16) || "00:00";
+
+  function setDate(nextDate: string) {
+    onChange(`${nextDate} ${timePart || "00:00"}`);
+  }
+
+  function setTime(nextTime: string) {
+    onChange(`${datePart || formatYmd(new Date())} ${nextTime}`);
+  }
+
+  return (
+    <View style={styles.formField}>
+      <DateField label={label} value={datePart} onChange={setDate} />
+      <Text style={styles.label}>Hora 24h</Text>
+      <TextInput
+        style={styles.input}
+        value={timePart}
+        onChangeText={setTime}
+        placeholder="00:00"
+      />
     </View>
   );
 }
