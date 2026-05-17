@@ -290,6 +290,12 @@ function Shell() {
     if (!activeModule && modules.length > 0) setActiveModule(modules[0]);
   }, [activeModule, modules]);
 
+  useEffect(() => {
+    if (activeModule?.code !== "informes" || activeSection || !session) return;
+    const statusSection = activeModule.sections.find((section) => section.key === "status-informes");
+    if (statusSection) openSection(statusSection);
+  }, [activeModule, activeSection, session]);
+
   async function openSection(section: AppSection) {
     setActiveSection(section);
     setPayload(null);
@@ -357,19 +363,21 @@ function Shell() {
         ) : (
           <>
             <Text style={styles.moduleTitle}>{activeModule.label}</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sectionTabs}>
-              {activeModule.sections.map((section) => (
-                <Pressable
-                  key={section.key}
-                  style={[styles.sectionTab, activeSection?.key === section.key && styles.sectionTabActive]}
-                  onPress={() => openSection(section)}
-                >
-                  <Text style={[styles.sectionText, activeSection?.key === section.key && styles.sectionTextActive]}>
-                    {section.label}
-                  </Text>
-                </Pressable>
-              ))}
-            </ScrollView>
+            {activeModule.code !== "informes" ? (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sectionTabs}>
+                {activeModule.sections.map((section) => (
+                  <Pressable
+                    key={section.key}
+                    style={[styles.sectionTab, activeSection?.key === section.key && styles.sectionTabActive]}
+                    onPress={() => openSection(section)}
+                  >
+                    <Text style={[styles.sectionText, activeSection?.key === section.key && styles.sectionTextActive]}>
+                      {section.label}
+                    </Text>
+                  </Pressable>
+                ))}
+              </ScrollView>
+            ) : null}
 
             {loading ? <ActivityIndicator color={BLUE} style={styles.loader} /> : null}
             {error ? <Text style={styles.error}>{error}</Text> : null}
@@ -1891,6 +1899,7 @@ function InformesSectionMobile({
     month: ""
   });
   const [generateOpen, setGenerateOpen] = useState(false);
+  const [generateGroup, setGenerateGroup] = useState<InformeCreateConfig["group"] | null>(null);
   const [calculatorOpen, setCalculatorOpen] = useState(false);
   const [createConfig, setCreateConfig] = useState<InformeCreateConfig | null>(null);
   const [createForm, setCreateForm] = useState<Record<string, string>>({});
@@ -2060,6 +2069,7 @@ function InformesSectionMobile({
         return [field.key, ""];
       })));
     setGenerateOpen(false);
+    setGenerateGroup(null);
   }
 
   async function submitCreate() {
@@ -2101,7 +2111,15 @@ function InformesSectionMobile({
           <Pressable style={styles.modalClose} onPress={() => setCalculatorOpen(true)}><Text style={styles.modalCloseText}>Calculadora de proyectos</Text></Pressable>
           <Pressable style={styles.modalClose} onPress={() => changeReview(activeOption.label)}><Text style={styles.modalCloseText}>Revisar informes</Text></Pressable>
           <Pressable style={styles.modalClose} onPress={() => changeReview("Status de Informes")}><Text style={styles.modalCloseText}>Tabla pendientes</Text></Pressable>
-          <Pressable style={styles.actionButton} onPress={() => setGenerateOpen(true)}><Text style={styles.actionButtonText}>Generar informes</Text></Pressable>
+          <Pressable
+            style={styles.actionButton}
+            onPress={() => {
+              setGenerateGroup(null);
+              setGenerateOpen(true);
+            }}
+          >
+            <Text style={styles.actionButtonText}>Generar informes</Text>
+          </Pressable>
         </View>
       </View>
       <Text style={styles.cardTitle}>{config.title}</Text>
@@ -2171,16 +2189,33 @@ function InformesSectionMobile({
             <Pressable style={styles.modalClose} onPress={() => setGenerateOpen(false)}><Text style={styles.modalCloseText}>Cerrar</Text></Pressable>
           </View>
           <ScrollView contentContainerStyle={styles.modalBody}>
-            {["Informe contenedor", "Informe buque", "Certificados"].map((group) => (
-              <View key={group} style={styles.summaryBox}>
-                <Text style={styles.cardTitle}>{group}</Text>
-                {INFORMES_CREATE_CONFIG.filter((item) => item.group === group).map((item) => (
-                  <Pressable key={item.key} style={styles.secondaryButton} onPress={() => openCreate(item)}>
-                    <Text style={styles.secondaryButtonText}>{item.title}</Text>
-                  </Pressable>
-                ))}
-              </View>
-            ))}
+            {!generateGroup ? (
+              <>
+                <Pressable style={styles.secondaryButton} onPress={() => openCreate(INFORMES_CREATE_CONFIG.find((item) => item.key === "container") || INFORMES_CREATE_CONFIG[0])}>
+                  <Text style={styles.secondaryButtonText}>Contenedor</Text>
+                </Pressable>
+                <Pressable style={styles.secondaryButton} onPress={() => setGenerateGroup("Informe buque")}>
+                  <Text style={styles.secondaryButtonText}>Buque</Text>
+                </Pressable>
+                <Pressable style={styles.secondaryButton} onPress={() => setGenerateGroup("Certificados")}>
+                  <Text style={styles.secondaryButtonText}>Certificado</Text>
+                </Pressable>
+              </>
+            ) : (
+              <>
+                <Pressable style={styles.modalClose} onPress={() => setGenerateGroup(null)}>
+                  <Text style={styles.modalCloseText}>Volver</Text>
+                </Pressable>
+                <View style={styles.summaryBox}>
+                  <Text style={styles.cardTitle}>{generateGroup}</Text>
+                  {INFORMES_CREATE_CONFIG.filter((item) => item.group === generateGroup).map((item) => (
+                    <Pressable key={item.key} style={styles.secondaryButton} onPress={() => openCreate(item)}>
+                      <Text style={styles.secondaryButtonText}>{item.title}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+              </>
+            )}
           </ScrollView>
         </SafeAreaView>
       </Modal>
