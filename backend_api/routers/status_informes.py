@@ -143,6 +143,132 @@ def list_status_informes(
 # ============================================================
 # GET — STATUS DISPONIBLES (COMBOBOX)
 # ============================================================
+@router.get("/record/{consec}")
+def get_status_informe(consec: int, conn=Depends(get_db)):
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+
+    try:
+        cur.execute("""
+            SELECT
+                consec,
+                num_informe,
+                buque_contenedor,
+                cliente,
+                detalle,
+                continente,
+                pais,
+                puerto,
+                operacion,
+                fecha_inicio,
+                hora_inicio,
+                fecha_fin,
+                hora_fin,
+                EXTRACT(YEAR FROM fecha_inicio)  AS year,
+                EXTRACT(MONTH FROM fecha_inicio) AS month,
+                status_informe
+            FROM servicios
+            WHERE consec = %s
+        """, (consec,))
+
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Status informe not found")
+
+        return row
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error retrieving status informe: {str(e)}"
+        )
+
+    finally:
+        cur.close()
+
+
+@router.put("/record/{consec}")
+def update_status_informe(consec: int, payload: dict, conn=Depends(get_db)):
+    allowed = {
+        "num_informe",
+        "buque_contenedor",
+        "cliente",
+        "detalle",
+        "continente",
+        "pais",
+        "puerto",
+        "operacion",
+        "fecha_inicio",
+        "hora_inicio",
+        "fecha_fin",
+        "hora_fin",
+        "status_informe",
+    }
+
+    updates = []
+    params = []
+
+    for key, value in payload.items():
+        if key in allowed:
+            updates.append(f"{key} = %s")
+            params.append(value if value != "" else None)
+
+    if not updates:
+        raise HTTPException(status_code=400, detail="No valid fields to update")
+
+    params.append(consec)
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+
+    try:
+        cur.execute(
+            f"""
+            UPDATE servicios
+            SET {", ".join(updates)}
+            WHERE consec = %s
+            RETURNING
+                consec,
+                num_informe,
+                buque_contenedor,
+                cliente,
+                detalle,
+                continente,
+                pais,
+                puerto,
+                operacion,
+                fecha_inicio,
+                hora_inicio,
+                fecha_fin,
+                hora_fin,
+                status_informe
+            """,
+            tuple(params)
+        )
+
+        row = cur.fetchone()
+        if not row:
+            conn.rollback()
+            raise HTTPException(status_code=404, detail="Status informe not found")
+
+        conn.commit()
+        return {
+            "success": True,
+            "data": row
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error updating status informe: {str(e)}"
+        )
+
+    finally:
+        cur.close()
+
+
 @router.get("/statuses")
 def get_available_statuses(conn=Depends(get_db)):
 

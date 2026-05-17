@@ -1390,15 +1390,34 @@ type InformeConfig = {
   idField: string;
   columns: string[];
   detailEndpoint?: string;
+  updateEndpoint?: string;
+  createEndpoint?: string;
   statusField?: string;
   filters?: string[];
   actions: InformeAction[];
+};
+
+type InformeCreateField = {
+  key: string;
+  label: string;
+  type?: "text" | "date" | "multiline";
+};
+
+type InformeCreateConfig = {
+  key: string;
+  group: "Informe contenedor" | "Informe buque" | "Certificados";
+  title: string;
+  endpoint: string;
+  dateFormat?: "ymd" | "dmy";
+  fields: InformeCreateField[];
 };
 
 const INFORMES_CONFIG: Record<string, InformeConfig> = {
   "status-informes": {
     title: "Status Informes",
     idField: "consec",
+    detailEndpoint: "/status-informes/record/{id}",
+    updateEndpoint: "/status-informes/record/{id}",
     statusField: "status_informe",
     columns: ["consec", "num_informe", "buque_contenedor", "cliente", "operacion", "pais", "puerto", "fecha_inicio", "status_informe"],
     filters: ["status_informe", "cliente", "operacion", "pais", "puerto"],
@@ -1408,6 +1427,8 @@ const INFORMES_CONFIG: Record<string, InformeConfig> = {
     title: "Informes de Contenedores",
     idField: "id",
     detailEndpoint: "/container-reports/{id}",
+    updateEndpoint: "/container-reports/{id}",
+    createEndpoint: "/container-reports",
     statusField: "status",
     columns: ["id", "report_number", "no", "customer", "vessel", "port", "date", "status"],
     filters: ["status", "customer", "vessel", "port"],
@@ -1422,6 +1443,8 @@ const INFORMES_CONFIG: Record<string, InformeConfig> = {
     title: "Vessel Grain Sampling",
     idField: "id",
     detailEndpoint: "/vessel-grain-sampling/{id}",
+    updateEndpoint: "/vessel-grain-sampling/{id}",
+    createEndpoint: "/vessel-grain-sampling",
     statusField: "status",
     columns: ["id", "cert_no", "vessel_name", "client", "port", "country", "date", "status"],
     filters: ["status", "client", "vessel_name", "port", "country"],
@@ -1436,6 +1459,8 @@ const INFORMES_CONFIG: Record<string, InformeConfig> = {
     title: "Truck Supervision",
     idField: "id",
     detailEndpoint: "/vessel-truck-supervision/{id}",
+    updateEndpoint: "/vessel-truck-supervision/{id}",
+    createEndpoint: "/vessel-truck-supervision/",
     statusField: "status",
     columns: ["id", "cert_no", "vessel_name", "customer", "port", "country", "date", "status"],
     filters: ["status", "customer", "vessel_name", "port", "country"],
@@ -1450,6 +1475,8 @@ const INFORMES_CONFIG: Record<string, InformeConfig> = {
     title: "Draft Survey",
     idField: "general_id",
     detailEndpoint: "/draft-survey/{id}",
+    updateEndpoint: "/draft-survey/{id}",
+    createEndpoint: "/draft-survey/",
     statusField: "status",
     columns: ["general_id", "cert_no", "vessel_name", "client", "port", "country", "survey_date", "status"],
     filters: ["status", "client", "vessel_name", "port", "country"],
@@ -1461,6 +1488,8 @@ const INFORMES_CONFIG: Record<string, InformeConfig> = {
     title: "Vessel Bunker",
     idField: "id",
     detailEndpoint: "/vessel-bunker-reports/{id}",
+    updateEndpoint: "/vessel-bunker-reports/{id}",
+    createEndpoint: "/vessel-bunker-reports/",
     statusField: "status",
     columns: ["id", "bunker_cert_no", "vessel", "client", "port", "country", "attendance_date", "status"],
     filters: ["status", "client", "vessel", "port", "country"],
@@ -1476,6 +1505,8 @@ const INFORMES_CONFIG: Record<string, InformeConfig> = {
     title: "Cargo Condition Survey",
     idField: "id",
     detailEndpoint: "/vessel-cargo-condition-surveys/{id}",
+    updateEndpoint: "/vessel-cargo-condition-surveys/{id}",
+    createEndpoint: "/vessel-cargo-condition-surveys/",
     statusField: "status",
     columns: ["id", "report_number", "vessel", "client", "port", "country", "date", "status"],
     filters: ["status", "client", "vessel", "port", "country"],
@@ -1490,6 +1521,8 @@ const INFORMES_CONFIG: Record<string, InformeConfig> = {
     title: "Crane Inspection",
     idField: "id",
     detailEndpoint: "/vessel-crane-inspection/{id}",
+    updateEndpoint: "/vessel-crane-inspection/{id}",
+    createEndpoint: "/vessel-crane-inspection/",
     statusField: "status",
     columns: ["id", "report_number", "vessel", "client", "port", "country", "inspection_date", "status"],
     filters: ["status", "client", "vessel", "port", "country"],
@@ -1502,6 +1535,8 @@ const INFORMES_CONFIG: Record<string, InformeConfig> = {
     title: "Vessel Condition Survey",
     idField: "id",
     detailEndpoint: "/vessel-condition-surveys/id/{id}",
+    updateEndpoint: "/vessel-condition-surveys/id/{id}",
+    createEndpoint: "/vessel-condition-surveys",
     statusField: "status",
     columns: ["id", "report_number", "vessel", "client", "port", "country", "inspection_date", "status"],
     filters: ["status", "client", "vessel", "port", "country"],
@@ -1516,6 +1551,8 @@ const INFORMES_CONFIG: Record<string, InformeConfig> = {
     title: "Port Captancy",
     idField: "id",
     detailEndpoint: "/port-captancy-reports/id/{id}",
+    updateEndpoint: "/port-captancy-reports/{report_number}",
+    createEndpoint: "/port-captancy-reports",
     statusField: "status",
     columns: ["id", "report_number", "vessel", "client", "port", "country", "date", "status"],
     filters: ["status", "client", "vessel", "port", "country"],
@@ -1530,6 +1567,8 @@ const INFORMES_CONFIG: Record<string, InformeConfig> = {
     title: "Weight Certificate",
     idField: "id",
     detailEndpoint: "/weight-certificates/{id}",
+    updateEndpoint: "/weight-certificates/{id}",
+    createEndpoint: "/weight-certificates",
     statusField: "status",
     columns: ["id", "certificate_no", "vessel", "client", "port", "country", "date", "status"],
     filters: ["status", "client", "vessel", "port", "country"],
@@ -1544,6 +1583,8 @@ const INFORMES_CONFIG: Record<string, InformeConfig> = {
     title: "Vessel Holds Inspection Certificate",
     idField: "id",
     detailEndpoint: "/vessel-holds-inspection-certificates/{id}",
+    updateEndpoint: "/vessel-holds-inspection-certificates/{id}",
+    createEndpoint: "/vessel-holds-inspection-certificates",
     statusField: "status",
     columns: ["id", "certificate_no", "vessel", "client", "port", "country", "date", "status"],
     filters: ["status", "client", "vessel", "port", "country"],
@@ -1558,6 +1599,8 @@ const INFORMES_CONFIG: Record<string, InformeConfig> = {
     title: "Sampling Certificate",
     idField: "id",
     detailEndpoint: "/sampling-certificates/{id}",
+    updateEndpoint: "/sampling-certificates/{id}",
+    createEndpoint: "/sampling-certificates",
     statusField: "status",
     columns: ["id", "certificate_no", "vessel", "client", "port", "country", "date", "status"],
     filters: ["status", "client", "vessel", "port", "country"],
@@ -1572,6 +1615,8 @@ const INFORMES_CONFIG: Record<string, InformeConfig> = {
     title: "Sealing Certificate",
     idField: "id",
     detailEndpoint: "/sealing-certificates/{id}",
+    updateEndpoint: "/sealing-certificates/{id}",
+    createEndpoint: "/sealing-certificates",
     statusField: "status",
     columns: ["id", "certificate_no", "vessel", "client", "port", "country", "date", "status"],
     filters: ["status", "client", "vessel", "port", "country"],
@@ -1586,6 +1631,8 @@ const INFORMES_CONFIG: Record<string, InformeConfig> = {
     title: "Lashing Certificate",
     idField: "id",
     detailEndpoint: "/lashing-certificates/{id}",
+    updateEndpoint: "/lashing-certificates/{id}",
+    createEndpoint: "/lashing-certificates",
     statusField: "status",
     columns: ["id", "certificate_no", "vessel", "client", "port", "country", "date", "status"],
     filters: ["status", "client", "vessel", "port", "country"],
@@ -1599,7 +1646,108 @@ const INFORMES_CONFIG: Record<string, InformeConfig> = {
 };
 
 function endpointForRow(template: string, row: Record<string, unknown>, idField: string) {
-  return template.replace("{id}", encodeURIComponent(formatValue(row[idField])));
+  return template.replace(/\{([^}]+)\}/g, (_, rawKey: string) => {
+    const key = rawKey === "id" ? idField : rawKey;
+    const value = row[key] ?? row[idField] ?? "";
+    return encodeURIComponent(formatValue(value));
+  });
+}
+
+const INFORME_REVIEW_OPTIONS = [
+  { key: "status-informes", label: "Status de Informes" },
+  { key: "container", label: "Informes de contenedores" },
+  { key: "grain-sampling", label: "Informe de muestreos de granos" },
+  { key: "truck-supervision", label: "Informe Truck Supervision" },
+  { key: "draft-survey", label: "Informe Draft Survey" },
+  { key: "bunker", label: "Informe Vessel Bunker" },
+  { key: "cargo-condition", label: "Informe Cargo Condition Survey" },
+  { key: "crane-inspection", label: "Informe Crane Inspection" },
+  { key: "vessel-condition", label: "Informe Vessel Condition Survey" },
+  { key: "port-captancy", label: "Informe Port Captancy" },
+  { key: "weight-certificate", label: "Informe Weight Certificate" },
+  { key: "holds-certificate", label: "Informe Vessel Holds Inspection" },
+  { key: "sampling-certificate", label: "Informe Sampling Certificate" },
+  { key: "sealing-certificate", label: "Informe Sealing Certificate" },
+  { key: "lashing-certificate", label: "Informe Lashing Certificate" }
+];
+
+const COMMON_REPORT_FIELDS: InformeCreateField[] = [
+  { key: "report_number", label: "Num informe" },
+  { key: "vessel", label: "Buque" },
+  { key: "client", label: "Cliente" },
+  { key: "country", label: "Pais" },
+  { key: "port", label: "Puerto" },
+  { key: "date", label: "Fecha", type: "date" },
+  { key: "remarks", label: "Observaciones", type: "multiline" }
+];
+
+const INFORMES_CREATE_CONFIG: InformeCreateConfig[] = [
+  {
+    key: "container",
+    group: "Informe contenedor",
+    title: "Informe de Contenedor",
+    endpoint: "/container-reports",
+    fields: [
+      { key: "report_no", label: "Report No." },
+      { key: "vessel", label: "Vessel" },
+      { key: "on_behalf_of", label: "Customer" },
+      { key: "inspection_place", label: "Inspection place" },
+      { key: "goods_description", label: "Goods" },
+      { key: "contact_datetime", label: "Contact date", type: "date" },
+      { key: "remarks", label: "Remarks", type: "multiline" },
+      { key: "conclusion", label: "Conclusion", type: "multiline" }
+    ]
+  },
+  {
+    key: "grain-sampling",
+    group: "Informe buque",
+    title: "Muestreo de Granos",
+    endpoint: "/vessel-grain-sampling",
+    fields: [
+      { key: "cert_no", label: "CERT No." },
+      { key: "place_date", label: "Place / date" },
+      { key: "requested_by", label: "Requested by" },
+      { key: "vessel_name", label: "Vessel" },
+      { key: "captain", label: "Captain" },
+      { key: "chief_officer", label: "Chief officer" },
+      { key: "supervision", label: "Supervision", type: "multiline" },
+      { key: "conclusion", label: "Conclusion", type: "multiline" }
+    ]
+  },
+  {
+    key: "truck-supervision",
+    group: "Informe buque",
+    title: "Truck Supervision",
+    endpoint: "/vessel-truck-supervision/",
+    dateFormat: "dmy",
+    fields: [
+      { key: "cert_no", label: "CERT No." },
+      { key: "customer", label: "Customer" },
+      { key: "port", label: "Puerto" },
+      { key: "country", label: "Pais" },
+      { key: "report_date", label: "Fecha", type: "date" },
+      { key: "vessel_name", label: "Buque" },
+      { key: "process_text", label: "Proceso de Supervision", type: "multiline" },
+      { key: "conclusion_text", label: "Conclusion", type: "multiline" }
+    ]
+  },
+  { key: "draft-survey", group: "Informe buque", title: "Draft Survey", endpoint: "/draft-survey/", fields: COMMON_REPORT_FIELDS },
+  { key: "bunker", group: "Informe buque", title: "Vessel Bunker", endpoint: "/vessel-bunker-reports/", fields: COMMON_REPORT_FIELDS },
+  { key: "cargo-condition", group: "Informe buque", title: "Cargo Condition Survey", endpoint: "/vessel-cargo-condition-surveys/", fields: COMMON_REPORT_FIELDS },
+  { key: "crane-inspection", group: "Informe buque", title: "Crane Inspection", endpoint: "/vessel-crane-inspection/", fields: COMMON_REPORT_FIELDS },
+  { key: "vessel-condition", group: "Informe buque", title: "Vessel Condition Survey", endpoint: "/vessel-condition-surveys", fields: COMMON_REPORT_FIELDS },
+  { key: "port-captancy", group: "Informe buque", title: "Port Captancy", endpoint: "/port-captancy-reports", fields: COMMON_REPORT_FIELDS },
+  { key: "weight-certificate", group: "Certificados", title: "Weight Certificate", endpoint: "/weight-certificates", fields: COMMON_REPORT_FIELDS },
+  { key: "holds-certificate", group: "Certificados", title: "Holds Inspection Certificate", endpoint: "/vessel-holds-inspection-certificates", fields: COMMON_REPORT_FIELDS },
+  { key: "sampling-certificate", group: "Certificados", title: "Sampling Certificate", endpoint: "/sampling-certificates", fields: COMMON_REPORT_FIELDS },
+  { key: "sealing-certificate", group: "Certificados", title: "Sealing Certificate", endpoint: "/sealing-certificates", fields: COMMON_REPORT_FIELDS },
+  { key: "lashing-certificate", group: "Certificados", title: "Lashing Certificate", endpoint: "/lashing-certificates", fields: COMMON_REPORT_FIELDS }
+];
+
+function toDmy(value: string) {
+  const parsed = parseYmd(value);
+  if (!parsed) return value;
+  return `${String(parsed.getDate()).padStart(2, "0")}-${String(parsed.getMonth() + 1).padStart(2, "0")}-${parsed.getFullYear()}`;
 }
 
 function InformesSectionMobile({
@@ -1611,16 +1759,38 @@ function InformesSectionMobile({
   initialPayload: unknown;
   session: NonNullable<ReturnType<typeof useAuth>["session"]>;
 }) {
-  const config = INFORMES_CONFIG[section.key] || {
-    title: section.label,
+  const [activeKey, setActiveKey] = useState(section.key);
+  const activeOption = INFORME_REVIEW_OPTIONS.find((option) => option.key === activeKey) || INFORME_REVIEW_OPTIONS[0];
+  const config = INFORMES_CONFIG[activeKey] || {
+    title: activeOption.label || section.label,
     idField: "id",
     columns: rowsFromAny(initialPayload)[0] ? Object.keys(rowsFromAny(initialPayload)[0]).slice(0, 8) : ["id", "status"],
     actions: []
   };
+  const activeSection = {
+    key: activeKey,
+    label: activeOption.label,
+    endpoint: section.key === activeKey ? section.endpoint : undefined
+  };
   const [rows, setRows] = useState(rowsFromAny(initialPayload));
   const [selected, setSelected] = useState<number | null>(null);
   const [detail, setDetail] = useState<Record<string, unknown> | null>(null);
-  const [filters, setFilters] = useState({ status: "", search: "" });
+  const [detailForm, setDetailForm] = useState<Record<string, string>>({});
+  const [filters, setFilters] = useState({
+    status: "",
+    search: "",
+    continente: "",
+    pais: "",
+    puerto: "",
+    operacion: "",
+    year: "",
+    month: ""
+  });
+  const [generateOpen, setGenerateOpen] = useState(false);
+  const [calculatorOpen, setCalculatorOpen] = useState(false);
+  const [createConfig, setCreateConfig] = useState<InformeCreateConfig | null>(null);
+  const [createForm, setCreateForm] = useState<Record<string, string>>({});
+  const [calc, setCalc] = useState({ ingresos: "", honorarios: "", costos: "", tarjetas: "" });
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const statusOptions = ["", "Pending", "Pending for review", "Approved", "Rejected", "Approve", "Reject"];
@@ -1628,30 +1798,77 @@ function InformesSectionMobile({
   const visibleRows = rows.filter((row) => {
     const statusField = config.statusField || "status";
     if (filters.status && formatValue(row[statusField]) !== filters.status) return false;
+    for (const field of ["continente", "pais", "puerto", "operacion"]) {
+      if (filters[field as keyof typeof filters] && formatValue(row[field]).toLowerCase() !== filters[field as keyof typeof filters].toLowerCase()) return false;
+    }
+    if (filters.year && formatValue(row.year) !== filters.year) return false;
+    if (filters.month && formatValue(row.month) !== filters.month) return false;
     if (!filters.search.trim()) return true;
     const needle = filters.search.toLowerCase();
     const fields = config.filters?.length ? config.filters : config.columns;
     return fields.some((field) => formatValue(row[field]).toLowerCase().includes(needle));
   });
   const selectedRow = selected === null ? null : visibleRows[selected] || null;
+  const calculatorTotals = useMemo(() => {
+    const ingresos = Number(calc.ingresos) || 0;
+    const honorarios = Number(calc.honorarios) || 0;
+    const costos = Number(calc.costos) || 0;
+    const tarjetas = Number(calc.tarjetas) || 0;
+    const totalCostos = honorarios + costos + tarjetas;
+    return { totalCostos, utilidad: ingresos - totalCostos, margen: ingresos ? ((ingresos - totalCostos) / ingresos) * 100 : 0 };
+  }, [calc]);
 
   async function load() {
-    if (!section.endpoint) return;
+    const endpoint = getInformeEndpoint(activeKey, section, activeSection);
+    if (!endpoint) return;
     const params = new URLSearchParams();
-    if (filters.status && section.key === "status-informes") params.set("status", filters.status);
+    if (filters.status && activeKey === "status-informes") params.set("status", filters.status);
+    if (activeKey === "status-informes") {
+      if (filters.continente) params.set("continente", filters.continente);
+      if (filters.pais) params.set("pais", filters.pais);
+      if (filters.puerto) params.set("puerto", filters.puerto);
+      if (filters.operacion) params.set("operacion", filters.operacion);
+      if (filters.year) params.set("year", filters.year);
+      if (filters.month) params.set("month", filters.month);
+    }
     setBusy(true);
     setMessage("");
     try {
-      const payload = await apiRequest(`${section.endpoint}${params.toString() ? `?${params.toString()}` : ""}`, { session });
+      const payload = await apiRequest(`${endpoint}${params.toString() ? `?${params.toString()}` : ""}`, { session });
       setRows(rowsFromAny(payload));
       setSelected(null);
       setDetail(null);
+      setDetailForm({});
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "No se pudo cargar informes.");
     } finally {
       setBusy(false);
     }
   }
+
+  async function changeReview(label: string) {
+    const option = INFORME_REVIEW_OPTIONS.find((item) => item.label === label);
+    if (!option) return;
+    setActiveKey(option.key);
+    setFilters({ status: "", search: "", continente: "", pais: "", puerto: "", operacion: "", year: "", month: "" });
+    setRows([]);
+    setSelected(null);
+    setDetail(null);
+    setDetailForm({});
+  }
+
+  useEffect(() => {
+    setActiveKey(section.key);
+    setRows(rowsFromAny(initialPayload));
+    setSelected(null);
+    setDetail(null);
+    setDetailForm({});
+  }, [section.key, initialPayload]);
+
+  useEffect(() => {
+    if (activeKey === section.key && rows.length) return;
+    load();
+  }, [activeKey]);
 
   async function openDetail() {
     if (!selectedRow) {
@@ -1660,15 +1877,45 @@ function InformesSectionMobile({
     }
     if (!config.detailEndpoint) {
       setDetail(selectedRow);
+      setDetailForm(recordToEditableForm(selectedRow));
       return;
     }
     setBusy(true);
     setMessage("");
     try {
       const payload = await apiRequest<Record<string, unknown>>(endpointForRow(config.detailEndpoint, selectedRow, config.idField), { session });
-      setDetail(asRecord(payload) || selectedRow);
+      const nextDetail = asRecord(payload) || selectedRow;
+      setDetail(nextDetail);
+      setDetailForm(recordToEditableForm(nextDetail));
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "No se pudo abrir revision.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveDetail() {
+    if (!detail) return;
+    const updateEndpoint = config.updateEndpoint || config.detailEndpoint;
+    if (!updateEndpoint) {
+      setMessage("Este informe no tiene endpoint de actualizacion.");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      const row = { ...detail, ...detailForm };
+      await apiRequest(endpointForRow(updateEndpoint, row, config.idField), {
+        method: "PUT",
+        body: detailForm,
+        session
+      });
+      setMessage("Informe actualizado correctamente.");
+      setDetail(null);
+      setDetailForm({});
+      await load();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo guardar cambios.");
     } finally {
       setBusy(false);
     }
@@ -1698,16 +1945,73 @@ function InformesSectionMobile({
     }
   }
 
+  function openCreate(configToCreate: InformeCreateConfig) {
+    setCreateConfig(configToCreate);
+    setCreateForm(Object.fromEntries(configToCreate.fields.map((field) => [field.key, field.type === "date" ? formatYmd(new Date()) : ""])));
+    setGenerateOpen(false);
+  }
+
+  async function submitCreate() {
+    if (!createConfig) return;
+    setBusy(true);
+    setMessage("");
+    try {
+      const payload: Record<string, string> = { ...createForm, status: "Pending for review" };
+      if (createConfig.dateFormat === "dmy") {
+        createConfig.fields.forEach((field) => {
+          if (field.type === "date" && payload[field.key]) payload[field.key] = toDmy(payload[field.key]);
+        });
+      }
+      await apiRequest(createConfig.endpoint, { method: "POST", body: payload, session });
+      setCreateConfig(null);
+      setCreateForm({});
+      setMessage("Informe creado y enviado a revision.");
+      if (activeKey === createConfig.key) await load();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo crear el informe.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function resetFilters() {
+    setFilters({ status: "", search: "", continente: "", pais: "", puerto: "", operacion: "", year: "", month: "" });
+  }
+
   return (
     <View style={styles.tableShell}>
+      <Text style={styles.moduleTitle}>Informes Maritimos</Text>
+      <View style={styles.financeFilterBox}>
+        <SelectField label="Revisar informes" value={activeOption.label} options={INFORME_REVIEW_OPTIONS.map((option) => option.label)} onChange={changeReview} />
+        <View style={styles.financeFilterActions}>
+          <Pressable style={styles.actionButton} onPress={() => setGenerateOpen(true)}><Text style={styles.actionButtonText}>Generar Informe</Text></Pressable>
+          <Pressable style={styles.modalClose} onPress={() => setCalculatorOpen(true)}><Text style={styles.modalCloseText}>Calculadora de proyectos</Text></Pressable>
+        </View>
+      </View>
       <Text style={styles.cardTitle}>{config.title}</Text>
       <View style={styles.financeFilterBox}>
         <SelectField label="Status" value={filters.status} options={statusOptions} onChange={(status) => setFilters((f) => ({ ...f, status }))} />
+        {activeKey === "status-informes" ? (
+          <>
+            <Text style={styles.label}>Continente</Text>
+            <TextInput style={styles.input} value={filters.continente} onChangeText={(continente) => setFilters((f) => ({ ...f, continente }))} />
+            <Text style={styles.label}>Pais</Text>
+            <TextInput style={styles.input} value={filters.pais} onChangeText={(pais) => setFilters((f) => ({ ...f, pais }))} />
+            <Text style={styles.label}>Puerto</Text>
+            <TextInput style={styles.input} value={filters.puerto} onChangeText={(puerto) => setFilters((f) => ({ ...f, puerto }))} />
+            <Text style={styles.label}>Operacion</Text>
+            <TextInput style={styles.input} value={filters.operacion} onChangeText={(operacion) => setFilters((f) => ({ ...f, operacion }))} />
+            <Text style={styles.label}>Anio</Text>
+            <TextInput keyboardType="number-pad" style={styles.input} value={filters.year} onChangeText={(year) => setFilters((f) => ({ ...f, year }))} />
+            <Text style={styles.label}>Mes</Text>
+            <TextInput keyboardType="number-pad" style={styles.input} value={filters.month} onChangeText={(month) => setFilters((f) => ({ ...f, month }))} />
+          </>
+        ) : null}
         <Text style={styles.label}>Buscar</Text>
         <TextInput style={styles.input} value={filters.search} onChangeText={(search) => setFilters((f) => ({ ...f, search }))} />
         <View style={styles.financeFilterActions}>
           <Pressable style={styles.actionButton} onPress={load}><Text style={styles.actionButtonText}>Cargar</Text></Pressable>
-          <Pressable style={styles.modalClose} onPress={() => setFilters({ status: "", search: "" })}><Text style={styles.modalCloseText}>Limpiar</Text></Pressable>
+          <Pressable style={styles.modalClose} onPress={resetFilters}><Text style={styles.modalCloseText}>Limpiar</Text></Pressable>
         </View>
       </View>
       <Text style={styles.tableCount}>{visibleRows.length} registros</Text>
@@ -1728,17 +2032,114 @@ function InformesSectionMobile({
             <Text style={styles.modalTitle}>Revision - {config.title}</Text>
             <Pressable style={styles.modalClose} onPress={() => setDetail(null)}><Text style={styles.modalCloseText}>Cerrar</Text></Pressable>
           </View>
-          <ScrollView contentContainerStyle={styles.modalBody}>
-            {detail ? Object.entries(detail).map(([key, value]) => (
-              <View key={key} style={styles.fieldRow}>
-                <Text style={styles.fieldKey}>{key.replaceAll("_", " ")}</Text>
-                <Text style={styles.fieldValue}>{formatValue(value)}</Text>
+          <ScrollView contentContainerStyle={styles.modalBody} keyboardShouldPersistTaps="handled">
+            {detail ? Object.keys(detailForm).map((key) => (
+              <View key={key} style={styles.formField}>
+                <Text style={styles.label}>{key.replaceAll("_", " ")}</Text>
+                <TextInput
+                  style={[styles.input, detailForm[key]?.length > 80 && styles.multilineInput]}
+                  multiline={detailForm[key]?.length > 80}
+                  value={detailForm[key]}
+                  onChangeText={(value) => setDetailForm((current) => ({ ...current, [key]: value }))}
+                />
               </View>
             )) : null}
+            <Pressable style={styles.actionButton} onPress={saveDetail}><Text style={styles.actionButtonText}>Guardar Cambios</Text></Pressable>
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+      <Modal visible={generateOpen} animationType="slide" onRequestClose={() => setGenerateOpen(false)}>
+        <SafeAreaView style={styles.modalScreen}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Generar Informe Maritimo</Text>
+            <Pressable style={styles.modalClose} onPress={() => setGenerateOpen(false)}><Text style={styles.modalCloseText}>Cerrar</Text></Pressable>
+          </View>
+          <ScrollView contentContainerStyle={styles.modalBody}>
+            {["Informe contenedor", "Informe buque", "Certificados"].map((group) => (
+              <View key={group} style={styles.summaryBox}>
+                <Text style={styles.cardTitle}>{group}</Text>
+                {INFORMES_CREATE_CONFIG.filter((item) => item.group === group).map((item) => (
+                  <Pressable key={item.key} style={styles.secondaryButton} onPress={() => openCreate(item)}>
+                    <Text style={styles.secondaryButtonText}>{item.title}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            ))}
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+      <Modal visible={Boolean(createConfig)} animationType="slide" onRequestClose={() => setCreateConfig(null)}>
+        <SafeAreaView style={styles.modalScreen}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>{createConfig?.title || "Crear informe"}</Text>
+            <Pressable style={styles.modalClose} onPress={() => setCreateConfig(null)}><Text style={styles.modalCloseText}>Cerrar</Text></Pressable>
+          </View>
+          <ScrollView contentContainerStyle={styles.modalBody} keyboardShouldPersistTaps="handled">
+            {createConfig?.fields.map((field) => (
+              field.type === "date" ? (
+                <DateField key={field.key} label={field.label} value={createForm[field.key] || ""} onChange={(value) => setCreateForm((current) => ({ ...current, [field.key]: value }))} />
+              ) : (
+                <View key={field.key} style={styles.formField}>
+                  <Text style={styles.label}>{field.label}</Text>
+                  <TextInput
+                    style={[styles.input, field.type === "multiline" && styles.multilineInput]}
+                    multiline={field.type === "multiline"}
+                    value={createForm[field.key] || ""}
+                    onChangeText={(value) => setCreateForm((current) => ({ ...current, [field.key]: value }))}
+                  />
+                </View>
+              )
+            ))}
+            <Pressable style={styles.actionButton} onPress={submitCreate}><Text style={styles.actionButtonText}>Enviar a revision</Text></Pressable>
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+      <Modal visible={calculatorOpen} animationType="slide" onRequestClose={() => setCalculatorOpen(false)}>
+        <SafeAreaView style={styles.modalScreen}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Calculadora de proyectos</Text>
+            <Pressable style={styles.modalClose} onPress={() => setCalculatorOpen(false)}><Text style={styles.modalCloseText}>Cerrar</Text></Pressable>
+          </View>
+          <ScrollView contentContainerStyle={styles.modalBody}>
+            {[
+              ["ingresos", "Ingresos"],
+              ["honorarios", "Honorarios"],
+              ["costos", "Costo operativo"],
+              ["tarjetas", "Tarjetas"]
+            ].map(([key, label]) => (
+              <View key={key} style={styles.formField}>
+                <Text style={styles.label}>{label}</Text>
+                <TextInput keyboardType="decimal-pad" style={styles.input} value={calc[key as keyof typeof calc]} onChangeText={(value) => setCalc((current) => ({ ...current, [key]: value }))} />
+              </View>
+            ))}
+            <View style={styles.summaryBox}>
+              <Text style={styles.fieldKey}>Total costos</Text>
+              <Text style={styles.fieldValue}>{calculatorTotals.totalCostos.toFixed(2)}</Text>
+              <Text style={styles.fieldKey}>Utilidad</Text>
+              <Text style={styles.fieldValue}>{calculatorTotals.utilidad.toFixed(2)}</Text>
+              <Text style={styles.fieldKey}>Margen</Text>
+              <Text style={styles.fieldValue}>{calculatorTotals.margen.toFixed(2)}%</Text>
+            </View>
           </ScrollView>
         </SafeAreaView>
       </Modal>
     </View>
+  );
+}
+
+function getInformeEndpoint(activeKey: string, currentSection: AppSection, activeSection: AppSection) {
+  if (currentSection.key === activeKey && currentSection.endpoint) return currentSection.endpoint;
+  const config = INFORMES_CONFIG[activeKey];
+  if (activeKey === "status-informes") return "/status-informes";
+  if (activeKey === "container") return "/container-reports/list";
+  return config?.createEndpoint || activeSection.endpoint;
+}
+
+function recordToEditableForm(record: Record<string, unknown>) {
+  return Object.fromEntries(
+    Object.entries(record)
+      .filter(([key, value]) => !["created_at", "updated_at"].includes(key) && (value === null || ["string", "number", "boolean"].includes(typeof value)))
+      .map(([key, value]) => [key, value === null || value === undefined ? "" : String(value)])
   );
 }
 
