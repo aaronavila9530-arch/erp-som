@@ -1661,6 +1661,14 @@ function endpointForRow(template: string, row: Record<string, unknown>, idField:
   });
 }
 
+function unwrapRecordPayload(payload: unknown) {
+  const obj = asRecord(payload);
+  if (!obj) return null;
+  const data = asRecord(obj.data);
+  if (data) return data;
+  return obj;
+}
+
 const INFORME_REVIEW_OPTIONS = [
   { key: "status-informes", label: "Status de Informes" },
   { key: "container", label: "Informes de contenedores" },
@@ -1900,10 +1908,10 @@ function InformesSectionMobile({
   });
   const [generateOpen, setGenerateOpen] = useState(false);
   const [generateGroup, setGenerateGroup] = useState<InformeCreateConfig["group"] | null>(null);
+  const [reviewOpen, setReviewOpen] = useState(false);
   const [calculatorOpen, setCalculatorOpen] = useState(false);
   const [createConfig, setCreateConfig] = useState<InformeCreateConfig | null>(null);
   const [createForm, setCreateForm] = useState<Record<string, string>>({});
-  const [calc, setCalc] = useState({ ingresos: "", honorarios: "", costos: "", tarjetas: "" });
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const statusOptions = ["", "Pending", "Pending for review", "Approved", "Rejected", "Approve", "Reject"];
@@ -1922,15 +1930,6 @@ function InformesSectionMobile({
     return fields.some((field) => formatValue(row[field]).toLowerCase().includes(needle));
   });
   const selectedRow = selected === null ? null : visibleRows[selected] || null;
-  const calculatorTotals = useMemo(() => {
-    const ingresos = Number(calc.ingresos) || 0;
-    const honorarios = Number(calc.honorarios) || 0;
-    const costos = Number(calc.costos) || 0;
-    const tarjetas = Number(calc.tarjetas) || 0;
-    const totalCostos = honorarios + costos + tarjetas;
-    return { totalCostos, utilidad: ingresos - totalCostos, margen: ingresos ? ((ingresos - totalCostos) / ingresos) * 100 : 0 };
-  }, [calc]);
-
   async function load() {
     const endpoint = getInformeEndpoint(activeKey, section, activeSection);
     if (!endpoint) return;
@@ -1997,7 +1996,7 @@ function InformesSectionMobile({
     setMessage("");
     try {
       const payload = await apiRequest<Record<string, unknown>>(endpointForRow(config.detailEndpoint, selectedRow, config.idField), { session });
-      const nextDetail = asRecord(payload) || selectedRow;
+      const nextDetail = unwrapRecordPayload(payload) || selectedRow;
       setDetail(nextDetail);
       setDetailForm(recordToEditableForm(nextDetail));
     } catch (err) {
@@ -2106,10 +2105,9 @@ function InformesSectionMobile({
     <View style={styles.tableShell}>
       <Text style={styles.moduleTitle}>Informes Maritimos</Text>
       <View style={styles.financeFilterBox}>
-        <SelectField label="Revisar informes" value={activeOption.label} options={INFORME_REVIEW_OPTIONS.map((option) => option.label)} onChange={changeReview} />
-        <View style={styles.financeFilterActions}>
+        <View style={styles.informesHomeActions}>
           <Pressable style={styles.modalClose} onPress={() => setCalculatorOpen(true)}><Text style={styles.modalCloseText}>Calculadora de proyectos</Text></Pressable>
-          <Pressable style={styles.modalClose} onPress={() => changeReview(activeOption.label)}><Text style={styles.modalCloseText}>Revisar informes</Text></Pressable>
+          <Pressable style={styles.modalClose} onPress={() => setReviewOpen(true)}><Text style={styles.modalCloseText}>Revisar informes</Text></Pressable>
           <Pressable style={styles.modalClose} onPress={() => changeReview("Status de Informes")}><Text style={styles.modalCloseText}>Tabla pendientes</Text></Pressable>
           <Pressable
             style={styles.actionButton}
@@ -2167,6 +2165,14 @@ function InformesSectionMobile({
             <Pressable style={styles.modalClose} onPress={() => setDetail(null)}><Text style={styles.modalCloseText}>Cerrar</Text></Pressable>
           </View>
           <ScrollView contentContainerStyle={styles.modalBody} keyboardShouldPersistTaps="handled">
+            {detail && Object.keys(detailForm).length === 0 ? (
+              Object.entries(detail).map(([key, value]) => (
+                <View key={key} style={styles.fieldRow}>
+                  <Text style={styles.fieldKey}>{key.replaceAll("_", " ")}</Text>
+                  <Text style={styles.fieldValue}>{formatValue(value)}</Text>
+                </View>
+              ))
+            ) : null}
             {detail ? Object.keys(detailForm).map((key) => (
               <View key={key} style={styles.formField}>
                 <Text style={styles.label}>{key.replaceAll("_", " ")}</Text>
@@ -2179,6 +2185,28 @@ function InformesSectionMobile({
               </View>
             )) : null}
             <Pressable style={styles.actionButton} onPress={saveDetail}><Text style={styles.actionButtonText}>Guardar Cambios</Text></Pressable>
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+      <Modal visible={reviewOpen} animationType="slide" onRequestClose={() => setReviewOpen(false)}>
+        <SafeAreaView style={styles.modalScreen}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Revisar informes</Text>
+            <Pressable style={styles.modalClose} onPress={() => setReviewOpen(false)}><Text style={styles.modalCloseText}>Cerrar</Text></Pressable>
+          </View>
+          <ScrollView contentContainerStyle={styles.modalBody}>
+            {INFORME_REVIEW_OPTIONS.filter((option) => option.key !== "status-informes").map((option) => (
+              <Pressable
+                key={option.key}
+                style={styles.secondaryButton}
+                onPress={() => {
+                  setReviewOpen(false);
+                  changeReview(option.label);
+                }}
+              >
+                <Text style={styles.secondaryButtonText}>{option.label}</Text>
+              </Pressable>
+            ))}
           </ScrollView>
         </SafeAreaView>
       </Modal>
@@ -2260,35 +2288,7 @@ function InformesSectionMobile({
           </ScrollView>
         </SafeAreaView>
       </Modal>
-      <Modal visible={calculatorOpen} animationType="slide" onRequestClose={() => setCalculatorOpen(false)}>
-        <SafeAreaView style={styles.modalScreen}>
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Calculadora de proyectos</Text>
-            <Pressable style={styles.modalClose} onPress={() => setCalculatorOpen(false)}><Text style={styles.modalCloseText}>Cerrar</Text></Pressable>
-          </View>
-          <ScrollView contentContainerStyle={styles.modalBody}>
-            {[
-              ["ingresos", "Ingresos"],
-              ["honorarios", "Honorarios"],
-              ["costos", "Costo operativo"],
-              ["tarjetas", "Tarjetas"]
-            ].map(([key, label]) => (
-              <View key={key} style={styles.formField}>
-                <Text style={styles.label}>{label}</Text>
-                <TextInput keyboardType="decimal-pad" style={styles.input} value={calc[key as keyof typeof calc]} onChangeText={(value) => setCalc((current) => ({ ...current, [key]: value }))} />
-              </View>
-            ))}
-            <View style={styles.summaryBox}>
-              <Text style={styles.fieldKey}>Total costos</Text>
-              <Text style={styles.fieldValue}>{calculatorTotals.totalCostos.toFixed(2)}</Text>
-              <Text style={styles.fieldKey}>Utilidad</Text>
-              <Text style={styles.fieldValue}>{calculatorTotals.utilidad.toFixed(2)}</Text>
-              <Text style={styles.fieldKey}>Margen</Text>
-              <Text style={styles.fieldValue}>{calculatorTotals.margen.toFixed(2)}%</Text>
-            </View>
-          </ScrollView>
-        </SafeAreaView>
-      </Modal>
+      <ProjectCalculatorModal visible={calculatorOpen} session={session} onClose={() => setCalculatorOpen(false)} />
     </View>
   );
 }
@@ -2306,6 +2306,202 @@ function recordToEditableForm(record: Record<string, unknown>) {
     Object.entries(record)
       .filter(([key, value]) => !["created_at", "updated_at"].includes(key) && (value === null || ["string", "number", "boolean"].includes(typeof value)))
       .map(([key, value]) => [key, value === null || value === undefined ? "" : String(value)])
+  );
+}
+
+function ProjectCalculatorModal({
+  visible,
+  session,
+  onClose
+}: {
+  visible: boolean;
+  session: NonNullable<ReturnType<typeof useAuth>["session"]>;
+  onClose: () => void;
+}) {
+  const [rows, setRows] = useState<Record<string, unknown>[]>([]);
+  const [selected, setSelected] = useState<number | null>(null);
+  const [mode, setMode] = useState<"list" | "create">("list");
+  const [form, setForm] = useState({
+    nombre_proyecto: "",
+    moneda: "USD",
+    horas: "1",
+    minutos: "0",
+    persona_1: "",
+    persona_2: "",
+    persona_3: "",
+    gasto_alimentacion: "",
+    gasto_comunicacion: "",
+    gasto_transporte: "",
+    margen: "20",
+    precio: "",
+    comentarios: ""
+  });
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const selectedRow = selected === null ? null : rows[selected] || null;
+  const tiempo = (Number(form.horas) || 0) + (Number(form.minutos) || 0) / 60;
+  const personalCostos = [form.persona_1, form.persona_2, form.persona_3].map(Number).filter((value) => Number.isFinite(value) && value > 0);
+  const totalHonorarios = personalCostos.reduce((sum, value) => sum + value, 0) * tiempo;
+  const totalGastos = (Number(form.gasto_alimentacion) || 0) + (Number(form.gasto_comunicacion) || 0) + (Number(form.gasto_transporte) || 0);
+  const costoTotal = totalHonorarios + totalGastos;
+  const margen = (Number(form.margen) || 0) / 100;
+  const suggestedPrice = margen < 1 ? costoTotal / (1 - margen) : 0;
+  const precio = Number(form.precio) || suggestedPrice;
+  const utilidad = precio ? ((precio - costoTotal) / precio) * 100 : 0;
+
+  async function loadProjects() {
+    setBusy(true);
+    setMessage("");
+    try {
+      const payload = await apiRequest("/proyectos-calculo", { session });
+      setRows(rowsFromAny(payload));
+      setSelected(null);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudieron cargar los proyectos.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    if (visible) {
+      setMode("list");
+      loadProjects();
+    }
+  }, [visible]);
+
+  async function createProject() {
+    if (!form.nombre_proyecto.trim()) {
+      setMessage("Debe ingresar el nombre del proyecto.");
+      return;
+    }
+    if (!personalCostos.length) {
+      setMessage("Debe ingresar al menos un costo de personal mayor a 0.");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      await apiRequest("/proyectos-calculo", {
+        method: "POST",
+        session,
+        body: {
+          nombre_proyecto: form.nombre_proyecto.trim(),
+          personal_costos: personalCostos,
+          moneda: form.moneda,
+          tiempo: Number(tiempo.toFixed(2)),
+          total_honorarios: Number(totalHonorarios.toFixed(2)),
+          gasto_alimentacion: Number(form.gasto_alimentacion) || 0,
+          gasto_comunicacion: Number(form.gasto_comunicacion) || 0,
+          gasto_transporte: Number(form.gasto_transporte) || 0,
+          total_gastos: Number(totalGastos.toFixed(2)),
+          margen: Number(form.margen) || 0,
+          precio: Number(precio.toFixed(2)),
+          utilidad: Number(utilidad.toFixed(2)),
+          comentarios: form.comentarios || null
+        }
+      });
+      setMessage("Proyecto guardado correctamente.");
+      setMode("list");
+      await loadProjects();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo guardar el proyecto.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+      <SafeAreaView style={styles.modalScreen}>
+        <View style={styles.modalHeader}>
+          <Text style={styles.modalTitle}>Calculadora de proyectos</Text>
+          <Pressable style={styles.modalClose} onPress={onClose}><Text style={styles.modalCloseText}>Cerrar</Text></Pressable>
+        </View>
+        <ScrollView contentContainerStyle={styles.modalBody} keyboardShouldPersistTaps="handled">
+          <View style={styles.informesHomeActions}>
+            <Pressable style={mode === "list" ? styles.actionButton : styles.modalClose} onPress={() => setMode("list")}>
+              <Text style={mode === "list" ? styles.actionButtonText : styles.modalCloseText}>Proyectos existentes</Text>
+            </Pressable>
+            <Pressable style={mode === "create" ? styles.actionButton : styles.modalClose} onPress={() => setMode("create")}>
+              <Text style={mode === "create" ? styles.actionButtonText : styles.modalCloseText}>Nuevo Proyecto</Text>
+            </Pressable>
+          </View>
+          {mode === "list" ? (
+            <>
+              <Pressable style={styles.secondaryButton} onPress={loadProjects}><Text style={styles.secondaryButtonText}>Cargar proyectos</Text></Pressable>
+              <Text style={styles.tableCount}>{rows.length} proyectos</Text>
+              <HRMiniTable
+                rows={rows}
+                columns={["nombre_proyecto", "moneda", "precio", "utilidad", "creado_el"]}
+                selectedIndex={selected}
+                onSelect={setSelected}
+              />
+              {selectedRow ? (
+                <View style={styles.summaryBox}>
+                  {Object.entries(selectedRow).map(([key, value]) => (
+                    <View key={key} style={styles.fieldRow}>
+                      <Text style={styles.fieldKey}>{key.replaceAll("_", " ")}</Text>
+                      <Text style={styles.fieldValue}>{formatValue(value)}</Text>
+                    </View>
+                  ))}
+                </View>
+              ) : null}
+            </>
+          ) : (
+            <>
+              <Text style={styles.label}>Nombre del Proyecto</Text>
+              <TextInput style={styles.input} value={form.nombre_proyecto} onChangeText={(value) => setForm((current) => ({ ...current, nombre_proyecto: value }))} />
+              <SelectField label="Moneda" value={form.moneda} options={["USD", "CRC", "EUR"]} onChange={(moneda) => setForm((current) => ({ ...current, moneda }))} />
+              <View style={styles.timeRow}>
+                <View style={styles.timePart}>
+                  <Text style={styles.label}>Horas</Text>
+                  <TextInput keyboardType="number-pad" style={styles.input} value={form.horas} onChangeText={(horas) => setForm((current) => ({ ...current, horas }))} />
+                </View>
+                <View style={styles.timePart}>
+                  <Text style={styles.label}>Minutos</Text>
+                  <TextInput keyboardType="number-pad" style={styles.input} value={form.minutos} onChangeText={(minutos) => setForm((current) => ({ ...current, minutos }))} />
+                </View>
+              </View>
+              {["persona_1", "persona_2", "persona_3"].map((key, index) => (
+                <View key={key} style={styles.formField}>
+                  <Text style={styles.label}>Persona {index + 1} costo/hora</Text>
+                  <TextInput keyboardType="decimal-pad" style={styles.input} value={form[key as keyof typeof form]} onChangeText={(value) => setForm((current) => ({ ...current, [key]: value }))} />
+                </View>
+              ))}
+              {[
+                ["gasto_alimentacion", "Alimentacion"],
+                ["gasto_comunicacion", "Comunicacion"],
+                ["gasto_transporte", "Transporte"]
+              ].map(([key, label]) => (
+                <View key={key} style={styles.formField}>
+                  <Text style={styles.label}>{label}</Text>
+                  <TextInput keyboardType="decimal-pad" style={styles.input} value={form[key as keyof typeof form]} onChangeText={(value) => setForm((current) => ({ ...current, [key]: value }))} />
+                </View>
+              ))}
+              <SelectField label="Margen %" value={form.margen} options={["10", "20", "30", "40", "50", "60", "70", "80", "90"]} onChange={(margen) => setForm((current) => ({ ...current, margen }))} />
+              <Text style={styles.label}>Precio editable</Text>
+              <TextInput keyboardType="decimal-pad" style={styles.input} value={form.precio} placeholder={suggestedPrice.toFixed(2)} onChangeText={(precio) => setForm((current) => ({ ...current, precio }))} />
+              <Text style={styles.label}>Comentarios</Text>
+              <TextInput style={[styles.input, styles.multilineInput]} multiline value={form.comentarios} onChangeText={(comentarios) => setForm((current) => ({ ...current, comentarios }))} />
+              <View style={styles.summaryBox}>
+                <Text style={styles.fieldKey}>Total Honorarios</Text>
+                <Text style={styles.fieldValue}>{totalHonorarios.toFixed(2)}</Text>
+                <Text style={styles.fieldKey}>Total Gastos</Text>
+                <Text style={styles.fieldValue}>{totalGastos.toFixed(2)}</Text>
+                <Text style={styles.fieldKey}>Precio</Text>
+                <Text style={styles.fieldValue}>{precio.toFixed(2)}</Text>
+                <Text style={styles.fieldKey}>Rentabilidad %</Text>
+                <Text style={styles.fieldValue}>{utilidad.toFixed(2)}</Text>
+              </View>
+              <Pressable style={styles.actionButton} onPress={createProject}><Text style={styles.actionButtonText}>Guardar Proyecto</Text></Pressable>
+            </>
+          )}
+          {busy ? <ActivityIndicator color={BLUE} style={styles.loader} /> : null}
+          {message ? <Text style={message.includes("correctamente") ? styles.helperText : styles.error}>{message}</Text> : null}
+        </ScrollView>
+      </SafeAreaView>
+    </Modal>
   );
 }
 
@@ -5866,6 +6062,7 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     padding: 12
   },
+  informesHomeActions: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   headerButton: { borderColor: "white", borderRadius: 6, borderWidth: 1, paddingHorizontal: 12, paddingVertical: 8 },
   headerButtonText: { color: "white", fontSize: 13, fontWeight: "700" },
   headerSub: { color: "#D8E7F8", fontSize: 12, marginTop: 2 },
