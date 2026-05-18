@@ -44,6 +44,9 @@ class GrainSamplingVesselForm(ttk.Frame):
     # =========================================================
     # HEADER
     # =========================================================
+    # =========================================================
+    # HEADER
+    # =========================================================
     def _build_header(self):
 
         header = ttk.Frame(self)
@@ -55,12 +58,35 @@ class GrainSamplingVesselForm(ttk.Frame):
             font=("Segoe UI", 14, "bold")
         ).pack(side="left")
 
-        if self.on_back:
-            ttk.Button(
-                header,
-                text="← Back",
-                command=self.on_back
-            ).pack(side="right")
+        # ======================================================
+        # 🔥 BACK 100% FORZADO A HOME (SIN DEPENDER DE on_back)
+        # ======================================================
+        def _go_home():
+
+            try:
+                from Modulos.Informes.informes_home_ui import InformesHomeUI
+
+                # 🔥 destruir TODO el contenido del parent (clave)
+                for widget in self.parent.winfo_children():
+                    widget.destroy()
+
+                # 🔥 reconstruir HOME correctamente
+                home = InformesHomeUI(
+                    self.parent,
+                    usuario=self.usuario,
+                    rol=self.rol
+                )
+
+                home.pack(fill="both", expand=True)
+
+            except Exception as e:
+                messagebox.showerror("Navigation Error", str(e))
+
+        ttk.Button(
+            header,
+            text="← Back",
+            command=_go_home  # 🔥 SIEMPRE usa este (no on_back)
+        ).pack(side="right")
 
     # =========================================================
     # SCROLLABLE
@@ -82,6 +108,9 @@ class GrainSamplingVesselForm(ttk.Frame):
             "<Configure>",
             lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
         )
+
+        # 🔥 ACTIVAR SCROLL CON RUEDA (VERSIÓN PRO)
+        self._bind_mousewheel(canvas)
 
         self._section_selector()
         self._section_main_data()
@@ -368,7 +397,7 @@ class GrainSamplingVesselForm(ttk.Frame):
 
         ttk.Button(
             frm,
-            text="✨ Improve Conclusion with AI",
+            text="✨ Mejorar conclusi�n con PORTIA",
             command=self._improve_conclusion
         ).pack(side="left", padx=5)
 
@@ -411,7 +440,7 @@ class GrainSamplingVesselForm(ttk.Frame):
             )
 
         except Exception as e:
-            messagebox.showerror("AI Error", str(e))
+            messagebox.showerror("PORTIA Error", str(e))
 
     # =========================================================
     # CREATE — 100% ALIGNED WITH DB STRUCTURE
@@ -628,7 +657,7 @@ class GrainSamplingVesselForm(ttk.Frame):
     def _ask_ai_language(self):
 
         win = tk.Toplevel(self)
-        win.title("AI Language")
+        win.title("PORTIA Language")
         win.geometry("300x150")
         win.transient(self)
         win.grab_set()
@@ -651,3 +680,32 @@ class GrainSamplingVesselForm(ttk.Frame):
         self.wait_window(win)
 
         return result["lang"]
+
+
+    # =========================================================
+    # MOUSE SCROLL (WHEEL) — UNIVERSAL / ROBUSTO
+    # =========================================================
+    def _bind_mousewheel(self, canvas):
+
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        def _on_mousewheel_linux_up(event):
+            canvas.yview_scroll(-1, "units")
+
+        def _on_mousewheel_linux_down(event):
+            canvas.yview_scroll(1, "units")
+
+        # activar solo cuando el mouse entra al form (clave para Tkinter)
+        def _bind(_):
+            canvas.bind_all("<MouseWheel>", _on_mousewheel)
+            canvas.bind_all("<Button-4>", _on_mousewheel_linux_up)
+            canvas.bind_all("<Button-5>", _on_mousewheel_linux_down)
+
+        def _unbind(_):
+            canvas.unbind_all("<MouseWheel>")
+            canvas.unbind_all("<Button-4>")
+            canvas.unbind_all("<Button-5>")
+
+        self.form.bind("<Enter>", _bind)
+        self.form.bind("<Leave>", _unbind)

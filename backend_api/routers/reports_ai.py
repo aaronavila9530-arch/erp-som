@@ -11,12 +11,12 @@ from ai.maritime_ai import (
 
 router = APIRouter(
     prefix="/reports/ai",
-    tags=["Reports AI"]
+    tags=["Reports PORTIA"]
 )
 
 
 # =========================================================
-# CONTAINER AI (YA FUNCIONANDO)
+# CONTAINER PORTIA (YA FUNCIONANDO)
 # =========================================================
 @router.post("/improve/container")
 def improve_container(payload: dict):
@@ -33,7 +33,7 @@ def improve_container(payload: dict):
 
     except Exception as e:
         # 🔥 DEBUG CRÍTICO
-        print("❌ AI CONTAINER ERROR:", repr(e))
+        print("❌ PORTIA CONTAINER ERROR:", repr(e))
         raise HTTPException(
             status_code=500,
             detail=str(e)
@@ -41,7 +41,7 @@ def improve_container(payload: dict):
 
 
 # =========================================================
-# GRAIN SAMPLING AI (BILINGUAL + HARDENED)
+# GRAIN SAMPLING PORTIA (BILINGUAL + HARDENED)
 # =========================================================
 @router.post("/improve/grain")
 def improve_grain(payload: dict):
@@ -60,7 +60,7 @@ def improve_grain(payload: dict):
         if language not in ("ES", "EN"):
             language = "ES"
 
-        # 🔥 Llamada al servicio IA
+        # 🔥 Llamada al servicio PORTIA
         result = improve_grain_sampling_text(
             user_text=user_text,
             vessel=payload.get("vessel"),
@@ -81,17 +81,17 @@ def improve_grain(payload: dict):
 
     except Exception as e:
         # 🔥 DEBUG CRÍTICO
-        print("❌ AI GRAIN ERROR:", repr(e))
+        print("❌ PORTIA GRAIN ERROR:", repr(e))
 
         raise HTTPException(
             status_code=500,
-            detail=f"AI grain improvement failed: {str(e)}"
+            detail=f"PORTIA grain improvement failed: {str(e)}"
         )
 
 
 
 # =========================================================
-# TRUCK SUPERVISION AI
+# TRUCK SUPERVISION PORTIA
 # =========================================================
 @router.post("/improve/truck")
 def improve_truck(payload: dict):
@@ -126,17 +126,17 @@ def improve_truck(payload: dict):
         raise
 
     except Exception as e:
-        print("❌ AI TRUCK ERROR:", repr(e))
+        print("❌ PORTIA TRUCK ERROR:", repr(e))
 
         raise HTTPException(
             status_code=500,
-            detail=f"AI truck improvement failed: {str(e)}"
+            detail=f"PORTIA truck improvement failed: {str(e)}"
         )
 
 
 
 # =========================================================
-# CARGO CONDITION AI (SINGLE OR MULTI BLOCK)
+# CARGO CONDITION PORTIA (SINGLE OR MULTI BLOCK)
 # =========================================================
 @router.post("/improve/cargo-condition")
 def improve_cargo_condition(payload: dict):
@@ -210,14 +210,14 @@ def improve_cargo_condition(payload: dict):
         raise
 
     except Exception as e:
-        print("❌ AI CARGO CONDITION ERROR:", repr(e))
+        print("❌ PORTIA CARGO CONDITION ERROR:", repr(e))
         raise HTTPException(
             status_code=500,
-            detail="AI cargo condition improvement failed."
+            detail="PORTIA cargo condition improvement failed."
         )
 
 # =========================================================
-# Crane inspection IA
+# Crane inspection PORTIA
 # =========================================================
 
 @router.post("/improve/crane-inspection")
@@ -260,7 +260,7 @@ def improve_crane_inspection(payload: dict):
 
     except Exception as e:
 
-        print("❌ AI CRANE INSPECTION ERROR:", repr(e))
+        print("❌ PORTIA CRANE INSPECTION ERROR:", repr(e))
 
         raise HTTPException(
             status_code=500,
@@ -270,7 +270,7 @@ def improve_crane_inspection(payload: dict):
 
 
 # =========================================================
-# VESSEL CONDITION SURVEY AI
+# VESSEL CONDITION SURVEY PORTIA
 # =========================================================
 @router.post("/improve/vessel-condition")
 def improve_vessel_condition(payload: dict):
@@ -352,16 +352,16 @@ def improve_vessel_condition(payload: dict):
 
     except Exception as e:
 
-        print("❌ AI VESSEL CONDITION ERROR:", repr(e))
+        print("❌ PORTIA VESSEL CONDITION ERROR:", repr(e))
 
         raise HTTPException(
             status_code=500,
-            detail="AI vessel condition improvement failed."
+            detail="PORTIA vessel condition improvement failed."
         )
 
 
 # =========================================================
-# PORT CAPTANCY AI
+# PORT CAPTANCY PORTIA
 # =========================================================
 @router.post("/improve/port-captancy")
 def improve_port_captancy(payload: dict):
@@ -413,7 +413,7 @@ def improve_port_captancy(payload: dict):
 
     except Exception as e:
 
-        print("❌ AI PORT CAPTANCY ERROR:", repr(e))
+        print("❌ PORTIA PORT CAPTANCY ERROR:", repr(e))
 
         raise HTTPException(
             status_code=500,

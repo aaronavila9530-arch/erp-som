@@ -1754,6 +1754,10 @@ const COMMON_REPORT_FIELDS: InformeCreateField[] = [
 const CONTAINER_REPORT_FIELDS: InformeCreateField[] = [
   { key: "section_link", label: "Report Link", type: "section" },
   { key: "linked_report_number", label: "Report Number" },
+  { key: "linked_service_client", label: "Client" },
+  { key: "linked_service_country", label: "Country" },
+  { key: "linked_service_port", label: "Port" },
+  { key: "linked_service_operation", label: "Operation" },
   { key: "container_type_text", label: "Container Type" },
   { key: "section_general", label: "General Information", type: "section" },
   { key: "report_no", label: "No." },
@@ -2157,6 +2161,40 @@ function InformesSectionMobile({
     }
   }
 
+  async function improveContainerTextWithPortia(field: InformeCreateField) {
+    const originalText = (createForm[field.key] || "").trim();
+    if (!originalText) {
+      setMessage("La seccion seleccionada no tiene texto para mejorar.");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      const response = await apiRequest<Record<string, unknown>>("/reports/ai/improve/container", {
+        method: "POST",
+        session,
+        body: {
+          text: originalText,
+          container_no: createForm.report_no || createForm.linked_report_number || "",
+          cargo: createForm.goods_description || "",
+          location: createForm.inspection_place || "",
+          condition: "As observed during inspection"
+        }
+      });
+      const nextText = formatValue(response.text || response.improved_text || response.result);
+      if (nextText === "-") {
+        setMessage("PORTIA no devolvio texto valido.");
+        return;
+      }
+      setCreateForm((current) => ({ ...current, [field.key]: nextText }));
+      setMessage(`PORTIA mejoro: ${field.label}.`);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "PORTIA no pudo mejorar el texto.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function resetFilters() {
     setFilters({ status: "", search: "", continente: "", pais: "", puerto: "", operacion: "", year: "", month: "" });
   }
@@ -2348,6 +2386,11 @@ function InformesSectionMobile({
                     value={createForm[field.key] || ""}
                     onChangeText={(value) => setCreateForm((current) => ({ ...current, [field.key]: value }))}
                   />
+                  {createConfig.key === "container" && field.type === "multiline" ? (
+                    <Pressable style={styles.secondaryButton} onPress={() => improveContainerTextWithPortia(field)}>
+                      <Text style={styles.secondaryButtonText}>Mejorar con PORTIA</Text>
+                    </Pressable>
+                  ) : null}
                 </View>
               )
             ))}
@@ -2359,8 +2402,8 @@ function InformesSectionMobile({
         visible={containerSelectorOpen}
         session={session}
         onClose={() => setContainerSelectorOpen(false)}
-        onSelect={(reportNumber) => {
-          setCreateForm((current) => ({ ...current, linked_report_number: reportNumber }));
+        onSelect={(report) => {
+          setCreateForm((current) => ({ ...current, ...containerFormFromServiceReport(report) }));
           setContainerSelectorOpen(false);
         }}
       />
@@ -2385,6 +2428,43 @@ function recordToEditableForm(record: Record<string, unknown>) {
   );
 }
 
+function composeServiceDateTime(row: Record<string, unknown>) {
+  const date = formatValue(row.fecha_inicio);
+  const time = formatValue(row.hora_inicio);
+  if (date === "-") return "";
+  return time === "-" ? `${date} 00:00` : `${date} ${time.slice(0, 5)}`;
+}
+
+function containerFormFromServiceReport(row: Record<string, unknown>) {
+  const reportNumber = formatValue(row.num_informe);
+  const client = formatValue(row.cliente);
+  const vessel = formatValue(row.buque_contenedor);
+  const country = formatValue(row.pais);
+  const port = formatValue(row.puerto);
+  const operation = formatValue(row.operacion);
+  const detail = formatValue(row.detalle);
+  const contact = formatValue(row.contacto);
+  const serviceDateTime = composeServiceDateTime(row);
+
+  return {
+    linked_report_number: reportNumber === "-" ? "" : reportNumber,
+    linked_service_client: client === "-" ? "" : client,
+    linked_service_country: country === "-" ? "" : country,
+    linked_service_port: port === "-" ? "" : port,
+    linked_service_operation: operation === "-" ? "" : operation,
+    report_no: reportNumber === "-" ? "" : reportNumber,
+    vessel: vessel === "-" ? "" : vessel,
+    shippers: client === "-" ? "" : client,
+    on_behalf_of: client === "-" ? "" : client,
+    inspection_place: [port, country].filter((item) => item !== "-").join(", "),
+    contact_person: contact === "-" ? "" : contact,
+    goods_description: detail === "-" ? "" : detail,
+    container_type_text: operation === "-" ? "" : operation,
+    contact_datetime: serviceDateTime,
+    init_inspection_datetime: serviceDateTime
+  };
+}
+
 function arrayFromPayload(payload: unknown, key: string) {
   const obj = asRecord(payload);
   const value = obj?.[key];
@@ -2400,7 +2480,7 @@ function ContainerReportSelectorModal({
   visible: boolean;
   session: NonNullable<ReturnType<typeof useAuth>["session"]>;
   onClose: () => void;
-  onSelect: (reportNumber: string) => void;
+  onSelect: (report: Record<string, unknown>) => void;
 }) {
   const [filters, setFilters] = useState({ cliente: "", anio: "", mes: "", buque_contenedor: "" });
   const [clientes, setClientes] = useState<string[]>([]);
@@ -2546,7 +2626,7 @@ function ContainerReportSelectorModal({
                 if (report === "-") {
                   setMessage("Please select a report.");
                 } else {
-                  onSelect(report);
+                  onSelect(selectedRow || { num_informe: report });
                 }
               }}
             >
@@ -2554,7 +2634,7 @@ function ContainerReportSelectorModal({
             </Pressable>
           </View>
           <Text style={styles.tableCount}>{rows.length} reports</Text>
-          <HRMiniTable rows={rows} columns={["num_informe", "consec", "fecha_inicio"]} selectedIndex={selected} onSelect={setSelected} />
+          <HRMiniTable rows={rows} columns={["num_informe", "cliente", "buque_contenedor", "pais", "puerto", "operacion", "fecha_inicio"]} selectedIndex={selected} onSelect={setSelected} />
           {busy ? <ActivityIndicator color={BLUE} style={styles.loader} /> : null}
           {message ? <Text style={styles.error}>{message}</Text> : null}
         </ScrollView>

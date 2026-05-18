@@ -5,12 +5,13 @@ from tkinter import ttk, messagebox
 class PopupAIMaritimeControl(tk.Toplevel):
 
     """
-    Popup previo a ejecutar IA para Cargo Condition.
+    ERP-SOM
+    PORTIA Control Popup
 
     Permite:
     - Seleccionar sección
     - Seleccionar idioma
-    - Confirmar cantidad de bullets detectados
+    - Seleccionar bullets específicos
     """
 
     SECTIONS = [
@@ -25,11 +26,16 @@ class PopupAIMaritimeControl(tk.Toplevel):
         ("Español", "ES"),
     ]
 
+    # =========================================================
+    # INIT
+    # =========================================================
     def __init__(self, parent, form_instance, on_execute):
+
         super().__init__(parent)
 
-        self.title("Improve IA Maritime")
-        self.geometry("500x420")
+        self.title("Mejorar con PORTIA")
+        self.geometry("560x660")
+
         self.transient(parent)
         self.grab_set()
 
@@ -39,10 +45,13 @@ class PopupAIMaritimeControl(tk.Toplevel):
         self.section_var = tk.StringVar(value="narrative")
         self.language_var = tk.StringVar(value="EN")
 
+        self.checkbox_vars = []
+        self.lines = []
+
         self._build_ui()
 
     # =========================================================
-    # UI
+    # BUILD UI
     # =========================================================
     def _build_ui(self):
 
@@ -51,28 +60,34 @@ class PopupAIMaritimeControl(tk.Toplevel):
 
         ttk.Label(
             container,
-            text="AI Maritime Text Enhancement",
+            text="PORTIA Text Enhancement",
             font=("Segoe UI", 12, "bold")
         ).pack(pady=(0, 10))
 
-        # ---------------- SECTION ----------------
+        # =====================================================
+        # SECTION SELECTOR
+        # =====================================================
         section_box = ttk.LabelFrame(container, text="Select Section")
-        section_box.pack(fill="x", pady=10)
+        section_box.pack(fill="x", pady=8)
 
         for text, value in self.SECTIONS:
+
             ttk.Radiobutton(
                 section_box,
                 text=text,
                 value=value,
                 variable=self.section_var,
-                command=self._update_preview
+                command=self._load_section_bullets
             ).pack(anchor="w", padx=10, pady=3)
 
-        # ---------------- LANGUAGE ----------------
+        # =====================================================
+        # LANGUAGE
+        # =====================================================
         lang_box = ttk.LabelFrame(container, text="Output Language")
-        lang_box.pack(fill="x", pady=10)
+        lang_box.pack(fill="x", pady=8)
 
         for text, value in self.LANGUAGES:
+
             ttk.Radiobutton(
                 lang_box,
                 text=text,
@@ -80,85 +95,226 @@ class PopupAIMaritimeControl(tk.Toplevel):
                 variable=self.language_var
             ).pack(anchor="w", padx=10, pady=3)
 
-        # ---------------- INFO ----------------
+        # =====================================================
+        # BULLET SELECTION
+        # =====================================================
+        bullets_box = ttk.LabelFrame(container, text="Select Bullet(s) to Improve")
+        bullets_box.pack(fill="both", expand=True, pady=10)
+
+        self.bullet_container = ttk.Frame(bullets_box)
+        self.bullet_container.pack(fill="both", expand=True, padx=5, pady=5)
+
+        canvas = tk.Canvas(self.bullet_container, height=200, highlightthickness=0)
+
+        scrollbar = ttk.Scrollbar(
+            self.bullet_container,
+            orient="vertical",
+            command=canvas.yview
+        )
+
+        self.bullet_frame = ttk.Frame(canvas)
+
+        self.bullet_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(
+                scrollregion=canvas.bbox("all")
+            )
+        )
+
+        canvas.create_window(
+            (0, 0),
+            window=self.bullet_frame,
+            anchor="nw"
+        )
+
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        # =====================================================
+        # INFO LABEL
+        # =====================================================
         self.lbl_info = ttk.Label(
             container,
             text="",
             foreground="#555"
         )
-        self.lbl_info.pack(pady=10)
+        self.lbl_info.pack(pady=5)
 
-        # ---------------- ACTIONS ----------------
+        # =====================================================
+        # ACTION BUTTONS
+        # =====================================================
         actions = ttk.Frame(container)
         actions.pack(fill="x", pady=10)
 
         ttk.Button(
             actions,
-            text="Cancel",
-            command=self.destroy
-        ).pack(side="left")
+            text="Select All",
+            command=self._select_all
+        ).pack(side="left", padx=3)
 
         ttk.Button(
             actions,
-            text="Improve with IA",
-            command=self._execute
+            text="Clear",
+            command=self._clear_all
+        ).pack(side="left", padx=3)
+
+        ttk.Button(
+            actions,
+            text="Cancel",
+            command=self.destroy
         ).pack(side="right")
 
-        self._update_preview()
+        ttk.Button(
+            actions,
+            text="Mejorar con PORTIA",
+            command=self._execute
+        ).pack(side="right", padx=5)
+
+        self._load_section_bullets()
 
     # =========================================================
-    # PREVIEW DETECTION
+    # LOAD BULLETS FROM FORM
     # =========================================================
-    def _update_preview(self):
+    def _load_section_bullets(self):
+
+        for widget in self.bullet_frame.winfo_children():
+            widget.destroy()
+
+        self.checkbox_vars.clear()
 
         section = self.section_var.get()
 
         try:
-            lines = getattr(self.form, f"{section}_lines", [])
 
-            count = len([
-                txt.get("1.0", "end-1c").strip()
-                for txt in lines
-                if txt.get("1.0", "end-1c").strip()
-            ])
+            self.lines = getattr(self.form, f"{section}_lines", [])
+
+            valid_lines = []
+
+            for idx, txt in enumerate(self.lines):
+
+                try:
+
+                    value = txt.get("1.0", "end-1c").strip()
+
+                    if value:
+                        valid_lines.append((idx, value))
+
+                except Exception:
+                    continue
+
+            for idx, text in valid_lines:
+
+                var = tk.BooleanVar(value=True)
+
+                preview = text.replace("\n", " ")
+
+                if len(preview) > 120:
+                    preview = preview[:120] + "..."
+
+                chk = ttk.Checkbutton(
+                    self.bullet_frame,
+                    text=f"{idx+1}. {preview}",
+                    variable=var
+                )
+
+                chk.pack(anchor="w", pady=2)
+
+                self.checkbox_vars.append((idx, var))
 
             self.lbl_info.config(
-                text=f"Detected {count} text block(s) in '{section.capitalize()}' section."
+                text=f"Detected {len(valid_lines)} text block(s) in '{section.replace('_',' ').title()}' section."
             )
 
         except Exception:
+
             self.lbl_info.config(
                 text="Section not available."
             )
 
     # =========================================================
-    # EXECUTE
+    # SELECT ALL
+    # =========================================================
+    def _select_all(self):
+
+        for _, var in self.checkbox_vars:
+            var.set(True)
+
+    # =========================================================
+    # CLEAR ALL
+    # =========================================================
+    def _clear_all(self):
+
+        for _, var in self.checkbox_vars:
+            var.set(False)
+
+    # =========================================================
+    # EXECUTE PORTIA
     # =========================================================
     def _execute(self):
 
-        section = self.section_var.get()
-        language = self.language_var.get()
+        section = (self.section_var.get() or "").strip()
+        language = (self.language_var.get() or "").strip().upper()
 
-        lines = getattr(self.form, f"{section}_lines", [])
+        if not section:
+            section = "narrative"
 
-        items = [
-            txt.get("1.0", "end-1c").strip()
-            for txt in lines
-            if txt.get("1.0", "end-1c").strip()
-        ]
+        if language not in ("EN", "ES"):
+            language = "EN"
 
-        if not items:
+        selected_indexes = []
+        selected_items = []
+
+        # -----------------------------------------------------
+        # RECOLECTAR SOLO LOS BULLETS MARCADOS
+        # -----------------------------------------------------
+        for idx, var in self.checkbox_vars:
+
+            if not var.get():
+                continue
+
+            try:
+                if idx < len(self.lines):
+                    txt_widget = self.lines[idx]
+
+                    if txt_widget:
+                        text = txt_widget.get("1.0", "end-1c").strip()
+
+                        if text:
+                            selected_indexes.append(idx)
+                            selected_items.append(text)
+
+            except Exception:
+                continue
+
+        # -----------------------------------------------------
+        # VALIDACIÓN
+        # -----------------------------------------------------
+        if not selected_items:
+
             messagebox.showwarning(
-                "IA Maritime",
-                "No text found in selected section."
+                "PORTIA",
+                "Please select at least one valid text block."
             )
             return
 
-        self.destroy()
+        # -----------------------------------------------------
+        # EJECUCIÓN SEGURA
+        # -----------------------------------------------------
+        try:
+            self.destroy()
 
-        # Llama al form para ejecutar IA
-        self.on_execute(
-            section=section,
-            language=language,
-            items=items
-        )
+            self.on_execute(
+                section=section,
+                language=language,
+                items=selected_items,
+                selected_indexes=selected_indexes
+            )
+
+        except Exception as e:
+
+            messagebox.showerror(
+                "PORTIA",
+                f"Execution failed:\n{str(e)}"
+            )

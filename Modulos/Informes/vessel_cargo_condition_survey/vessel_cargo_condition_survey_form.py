@@ -31,6 +31,10 @@ class VesselCargoConditionSurveyForm(ttk.Frame):
 
         self.vars = {}
         self.readonly_widgets = []
+        self.record_id = None
+        self.is_loaded_from_table = False
+        self.is_editing_existing = False
+        self.section_items = {}
 
         self._build_ui()
 
@@ -59,23 +63,42 @@ class VesselCargoConditionSurveyForm(ttk.Frame):
         btn_frame = ttk.Frame(topbar)
         btn_frame.pack(side="right")
 
-        ttk.Button(
+        self.btn_select_report = ttk.Button(
             btn_frame,
             text="Seleccionar Reporte",
             command=self._select_service
-        ).pack(side="left", padx=4)
+        )
+        self.btn_select_report.pack(side="left", padx=4)
 
-        ttk.Button(
+        self.btn_improve_ai = ttk.Button(
             btn_frame,
-            text="Improve IA Maritime",
+            text="Mejorar con PORTIA",
             command=self._improve_ai_maritime
-        ).pack(side="left", padx=4)
+        )
+        self.btn_improve_ai.pack(side="left", padx=4)
 
-        ttk.Button(
+        self.btn_send_review = ttk.Button(
             btn_frame,
             text="Enviar a Revisión",
             command=self._send_to_review
-        ).pack(side="left", padx=4)
+        )
+        self.btn_send_review.pack(side="left", padx=4)
+
+        self.btn_edit = ttk.Button(
+            btn_frame,
+            text="Editar",
+            command=self._enable_edit_mode
+        )
+        self.btn_edit.pack(side="left", padx=4)
+        self.btn_edit.pack_forget()
+
+        self.btn_save_changes = ttk.Button(
+            btn_frame,
+            text="Guardar Cambios",
+            command=self._save_changes
+        )
+        self.btn_save_changes.pack(side="left", padx=4)
+        self.btn_save_changes.pack_forget()
 
         ttk.Button(
             btn_frame,
@@ -292,15 +315,22 @@ class VesselCargoConditionSurveyForm(ttk.Frame):
         toolbar = ttk.Frame(box)
         toolbar.pack(fill="x", padx=10, pady=(5, 0))
 
-        ttk.Button(
+        btn_add = ttk.Button(
             toolbar,
             text="+",
             width=3,
             command=lambda: self._add_bullet_line(key_prefix)
-        ).pack(side="right")
+        )
+        btn_add.pack(side="right")
 
         container = ttk.Frame(box)
         container.pack(fill="x", padx=10, pady=10)
+
+        self.section_items[key_prefix] = {
+            "container": container,
+            "items": [],
+            "add_button": btn_add
+        }
 
         setattr(self, f"{key_prefix}_container", container)
         setattr(self, f"{key_prefix}_lines", [])
@@ -309,18 +339,197 @@ class VesselCargoConditionSurveyForm(ttk.Frame):
 
     def _add_bullet_line(self, key_prefix):
 
-        container = getattr(self, f"{key_prefix}_container")
-        lines = getattr(self, f"{key_prefix}_lines")
+        section = self.section_items.get(key_prefix)
+        if not section:
+            return
+
+        container = section["container"]
+        items = section["items"]
 
         frame = ttk.Frame(container)
         frame.pack(fill="x", pady=2)
 
-        ttk.Label(frame, text="•").pack(side="left", padx=(0, 5))
+        ttk.Label(frame, text="•").pack(side="left", padx=(0, 5), anchor="n")
 
         txt = tk.Text(frame, height=3, width=110)
         txt.pack(side="left", fill="x", expand=True)
 
-        lines.append(txt)
+        btn_remove = ttk.Button(
+            frame,
+            text="-",
+            width=3,
+            command=lambda f=frame, s=key_prefix: self._remove_bullet_line(s, f)
+        )
+        btn_remove.pack(side="left", padx=(6, 0), anchor="n")
+
+        items.append({
+            "frame": frame,
+            "text": txt,
+            "remove_button": btn_remove
+        })
+
+        setattr(
+            self,
+            f"{key_prefix}_lines",
+            [meta["text"] for meta in items]
+        )
+
+    def _remove_bullet_line(self, key_prefix, frame):
+
+        section = self.section_items.get(key_prefix)
+        if not section:
+            return
+
+        items = section["items"]
+
+        if len(items) <= 1:
+            for meta in items:
+                if meta["frame"] == frame:
+                    meta["text"].delete("1.0", "end")
+                    return
+            return
+
+        new_items = []
+
+        for meta in items:
+            if meta["frame"] == frame:
+                try:
+                    meta["frame"].destroy()
+                except Exception:
+                    pass
+            else:
+                new_items.append(meta)
+
+        section["items"] = new_items
+
+        setattr(
+            self,
+            f"{key_prefix}_lines",
+            [meta["text"] for meta in new_items]
+        )
+
+    def _set_form_editable(self, editable: bool):
+
+        state_entries = "normal" if editable else "disabled"
+        state_combo = "readonly" if editable else "disabled"
+        state_text = "normal" if editable else "disabled"
+
+        try:
+            if editable:
+                self.btn_select_report.config(state="disabled")
+                self.btn_improve_ai.config(state="normal")
+                self.btn_send_review.pack_forget()
+                self.btn_edit.pack_forget()
+                self.btn_save_changes.pack(side="left", padx=4)
+            else:
+                self.btn_select_report.config(state="disabled")
+                self.btn_improve_ai.config(state="disabled")
+                self.btn_save_changes.pack_forget()
+                self.btn_edit.pack(side="left", padx=4)
+        except Exception:
+            pass
+
+        for widget in self.scroll_frame.winfo_children():
+            self._apply_state_recursive(widget, state_entries, state_combo, state_text)
+
+        for section in self.section_items.values():
+            add_btn = section.get("add_button")
+            if add_btn:
+                try:
+                    add_btn.config(state="normal" if editable else "disabled")
+                except Exception:
+                    pass
+
+            for meta in section.get("items", []):
+                try:
+                    meta["text"].config(state=state_text)
+                except Exception:
+                    pass
+
+                try:
+                    meta["remove_button"].config(state="normal" if editable else "disabled")
+                except Exception:
+                    pass
+
+    def _apply_state_recursive(self, widget, state_entries, state_combo, state_text):
+
+        for child in widget.winfo_children():
+
+            try:
+                if isinstance(child, tk.Text):
+                    child.config(state=state_text)
+
+                elif isinstance(child, ttk.Combobox):
+                    child.config(state=state_combo)
+
+                elif isinstance(child, ttk.Entry):
+                    current_state = str(child.cget("state"))
+
+                    if current_state == "readonly":
+                        # readonly solo se mantiene en campos de popup
+                        if editable := (state_entries == "normal"):
+                            try:
+                                child.config(state="readonly")
+                            except Exception:
+                                pass
+                        else:
+                            try:
+                                child.config(state="disabled")
+                            except Exception:
+                                pass
+                    else:
+                        child.config(state=state_entries)
+
+            except Exception:
+                pass
+
+            self._apply_state_recursive(child, state_entries, state_combo, state_text)
+
+    def _enable_edit_mode(self):
+        self._set_form_editable(True)
+
+
+    def _save_changes(self):
+
+        if not self.record_id:
+            messagebox.showwarning(
+                "Guardar Cambios",
+                "No se encontró el ID del registro cargado."
+            )
+            return
+
+        confirm = messagebox.askyesno(
+            "Confirmar",
+            "¿Deseas guardar los cambios del informe?"
+        )
+
+        if not confirm:
+            return
+
+        try:
+            payload = self._build_payload()
+
+            response = api_client.update_vessel_cargo_condition_api(
+                self.record_id,
+                payload
+            )
+
+            if not response.get("success"):
+                messagebox.showerror(
+                    "Guardar Cambios",
+                    response.get("error") or "No se pudieron guardar los cambios."
+                )
+                return
+
+            messagebox.showinfo(
+                "Guardar Cambios",
+                "Cambios actualizados correctamente."
+            )
+
+            self._set_form_editable(False)
+
+        except Exception as e:
+            messagebox.showerror("Guardar Cambios", str(e))
 
     # =========================================================
     # CARGO TYPE SECTION (SINGLE TEXTBOX)
@@ -542,44 +751,154 @@ class VesselCargoConditionSurveyForm(ttk.Frame):
 
 
     # =========================================================
-    # EXECUTE AI IMPROVEMENT
+    # EXECUTE PORTIA IMPROVEMENT
     # =========================================================
-    def _execute_ai_improvement(self, section, language, items):
+    def _execute_ai_improvement(self, section, language, items, selected_indexes=None):
 
-        vessel = self._v("vessel").get()
-        port = self._v("port").get()
+        # -----------------------------------------------------
+        # VALIDACIÓN INICIAL
+        # -----------------------------------------------------
+        if not items or not isinstance(items, list):
 
-        response = api_client.improve_cargo_condition_ai_api(
-            section=section,
-            language=language,
-            vessel=vessel,
-            port=port,
-            items=items
-        )
+            messagebox.showwarning(
+                "PORTIA",
+                "No text blocks were selected."
+            )
+            return
+
+        cleaned_items = [
+            (item or "").strip()
+            for item in items
+            if (item or "").strip()
+        ]
+
+        if not cleaned_items:
+
+            messagebox.showwarning(
+                "PORTIA",
+                "Selected text blocks are empty."
+            )
+            return
+
+        if selected_indexes is None:
+            selected_indexes = []
+
+        if not isinstance(selected_indexes, list):
+            selected_indexes = []
+
+        # -----------------------------------------------------
+        # NORMALIZACIÓN
+        # -----------------------------------------------------
+        section = (section or "").strip().lower() or "narrative"
+        language = (language or "").strip().upper() or "EN"
+
+        if language not in ("EN", "ES"):
+            language = "EN"
+
+        vessel = (self._v("vessel").get() or "").strip()
+        port = (self._v("port").get() or "").strip()
+
+        # -----------------------------------------------------
+        # LLAMADA API
+        # -----------------------------------------------------
+        try:
+            response = api_client.improve_cargo_condition_ai_api(
+                section=section,
+                language=language,
+                vessel=vessel,
+                port=port,
+                items=cleaned_items
+            )
+
+        except Exception as e:
+
+            messagebox.showerror(
+                "PORTIA",
+                f"API connection failed:\n{str(e)}"
+            )
+            return
+
+        # -----------------------------------------------------
+        # VALIDAR RESPUESTA
+        # -----------------------------------------------------
+        if not isinstance(response, dict):
+
+            messagebox.showerror(
+                "PORTIA",
+                "Invalid response from PORTIA service."
+            )
+            return
 
         if not response.get("success"):
+
             messagebox.showerror(
-                "IA Maritime",
-                response.get("error") or "AI processing failed."
+                "PORTIA",
+                response.get("error") or "PORTIA processing failed."
             )
             return
 
         ai_items = response.get("items")
 
-        if not ai_items:
+        if not ai_items or not isinstance(ai_items, list):
+
             messagebox.showerror(
-                "IA Maritime",
-                "AI returned empty response."
+                "PORTIA",
+                "PORTIA returned empty or invalid response."
             )
             return
 
-        PopupAICompare(
-            parent=self,
-            original_text="\n\n".join(items),
-            ai_text="\n\n".join(ai_items),
-            on_accept=lambda new_text: self._apply_ai_text(section, new_text),
-            on_retry=lambda: self._execute_ai_improvement(section, language, items)
-        )
+        cleaned_ai_items = [
+            (item or "").strip()
+            for item in ai_items
+            if (item or "").strip()
+        ]
+
+        if not cleaned_ai_items:
+
+            messagebox.showerror(
+                "PORTIA",
+                "PORTIA returned no usable content."
+            )
+            return
+
+        # -----------------------------------------------------
+        # CONSISTENCIA ENTRE INPUT Y OUTPUT
+        # -----------------------------------------------------
+        if len(cleaned_ai_items) != len(cleaned_items):
+
+            messagebox.showerror(
+                "PORTIA",
+                "PORTIA returned a different number of text blocks than requested."
+            )
+            return
+
+        # -----------------------------------------------------
+        # POPUP COMPARACIÓN
+        # -----------------------------------------------------
+        try:
+            PopupAICompare(
+                parent=self,
+                original_text="\n\n".join(cleaned_items),
+                ai_text="\n\n".join(cleaned_ai_items),
+                on_accept=lambda new_texts=cleaned_ai_items: self._apply_ai_items_to_selected_indexes(
+                    section,
+                    selected_indexes,
+                    new_texts
+                ),
+                on_retry=lambda: self._execute_ai_improvement(
+                    section,
+                    language,
+                    cleaned_items,
+                    selected_indexes
+                )
+            )
+
+        except Exception as e:
+
+            messagebox.showerror(
+                "PORTIA",
+                f"Failed to open comparison window:\n{str(e)}"
+            )
 
 
     # =========================================================
@@ -668,7 +987,7 @@ class VesselCargoConditionSurveyForm(ttk.Frame):
 
 
     # =========================================================
-    # APPLY AI TEXT TO FORM
+    # APPLY PORTIA TEXT TO FORM
     # =========================================================
     def _apply_ai_text(self, section, new_text):
 
@@ -712,11 +1031,14 @@ class VesselCargoConditionSurveyForm(ttk.Frame):
 
         try:
             payload = self._build_payload()
-
-            # 🔹 Forzar status
             payload["status"] = "Pending for review"
 
-            response = api_client.create_vessel_cargo_condition_api(payload)
+            response = api_client.create_vessel_cargo_condition_api(
+                payload
+            )
+
+            if response.get("success"):
+                self.record_id = response.get("id")
 
             if not response.get("success"):
                 messagebox.showerror(
@@ -730,10 +1052,8 @@ class VesselCargoConditionSurveyForm(ttk.Frame):
                 "Informe enviado correctamente a revisión."
             )
 
-            # 🔹 Destruir form
             self.destroy()
 
-            # 🔹 Regresar al Home
             InformesHomeUI(
                 self.parent,
                 usuario=self.usuario,
@@ -751,12 +1071,15 @@ class VesselCargoConditionSurveyForm(ttk.Frame):
         if not data:
             return
 
+        self.record_id = data.get("id")
+        self.is_loaded_from_table = True
+        self.is_editing_existing = True
+
         # -----------------------------------------
         # 1. NORMAL VAR FIELDS
         # -----------------------------------------
         for k, v in data.items():
 
-            # asegurar que el StringVar exista
             var = self._v(k)
 
             if v is not None:
@@ -771,7 +1094,18 @@ class VesselCargoConditionSurveyForm(ttk.Frame):
 
         for sec in sections:
 
-            lines = getattr(self, f"{sec}_lines")
+            section = self.section_items.get(sec)
+            if not section:
+                continue
+
+            items = section["items"]
+
+            # limpiar existentes
+            for meta in items:
+                try:
+                    meta["text"].delete("1.0", "end")
+                except Exception:
+                    pass
 
             for i in range(10):
 
@@ -780,12 +1114,27 @@ class VesselCargoConditionSurveyForm(ttk.Frame):
 
                 if value:
 
-                    while len(lines) <= i:
+                    while len(items) <= i:
                         self._add_bullet_line(sec)
-                        lines = getattr(self, f"{sec}_lines")
+                        items = section["items"]
 
-                    lines[i].delete("1.0", "end")
-                    lines[i].insert("1.0", value)
+                    items[i]["text"].delete("1.0", "end")
+                    items[i]["text"].insert("1.0", value)
+
+            setattr(
+                self,
+                f"{sec}_lines",
+                [meta["text"] for meta in section["items"]]
+            )
+
+        # -----------------------------------------
+        # 3. MODO REVIEW INICIAL
+        # -----------------------------------------
+        self.btn_send_review.pack_forget()
+        self.btn_save_changes.pack_forget()
+        self.btn_edit.pack(side="left", padx=4)
+
+        self._set_form_editable(False)
 
 
 

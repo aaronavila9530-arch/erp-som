@@ -398,7 +398,17 @@ def get_container_reports_by_servicio(
             SELECT
                 consec,
                 num_informe,
-                fecha_inicio
+                buque_contenedor,
+                cliente,
+                contacto,
+                detalle,
+                continente,
+                pais,
+                puerto,
+                operacion,
+                surveyor,
+                fecha_inicio,
+                hora_inicio
             FROM public.servicios
             WHERE cliente = %(cliente)s
               AND buque_contenedor = %(buque)s

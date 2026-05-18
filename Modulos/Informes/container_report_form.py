@@ -96,6 +96,9 @@ class ContainerReportForm(ttk.Frame):
             lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
         )
 
+        # 🔥 ACTIVAR SCROLL CON RUEDA (FIX REAL)
+        self._bind_mousewheel(canvas)
+
         self._section_report_selector()
 
         self._section_general_information()
@@ -343,7 +346,7 @@ class ContainerReportForm(ttk.Frame):
 
         ttk.Button(
             frm,
-            text="✨ Improve with Maritime AI",
+            text="✨ Mejorar con PORTIA",
             command=self._ask_ai_target
         ).pack(side="left", padx=5)
 
@@ -445,7 +448,7 @@ class ContainerReportForm(ttk.Frame):
             )
 
         except Exception as e:
-            messagebox.showerror("AI Error", str(e))
+            messagebox.showerror("PORTIA Error", str(e))
 
     def _apply_ai_text(self, widget, text):
         widget.delete("1.0", "end")
@@ -878,3 +881,30 @@ class ContainerReportForm(ttk.Frame):
         }
 
 
+    # =========================================================
+    # MOUSE SCROLL — ROBUSTO (NO ROMPE OTROS MODULOS)
+    # =========================================================
+    def _bind_mousewheel(self, canvas):
+
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        def _on_mousewheel_linux_up(event):
+            canvas.yview_scroll(-1, "units")
+
+        def _on_mousewheel_linux_down(event):
+            canvas.yview_scroll(1, "units")
+
+        # 🔥 SOLO ACTIVO CUANDO EL MOUSE ESTÁ DENTRO DEL FORM
+        def _bind(_):
+            canvas.bind_all("<MouseWheel>", _on_mousewheel)
+            canvas.bind_all("<Button-4>", _on_mousewheel_linux_up)
+            canvas.bind_all("<Button-5>", _on_mousewheel_linux_down)
+
+        def _unbind(_):
+            canvas.unbind_all("<MouseWheel>")
+            canvas.unbind_all("<Button-4>")
+            canvas.unbind_all("<Button-5>")
+
+        self.form.bind("<Enter>", _bind)
+        self.form.bind("<Leave>", _unbind)

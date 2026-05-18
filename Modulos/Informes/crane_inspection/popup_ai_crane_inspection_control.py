@@ -32,7 +32,7 @@ class PopupAICraneInspectionControl(tk.Toplevel):
     def __init__(self, parent, form_instance, on_execute):
         super().__init__(parent)
 
-        self.title("Improve Crane Inspection with IA")
+        self.title("Mejorar Crane Inspection con PORTIA")
         self.geometry("500x430")
         self.transient(parent)
         self.grab_set()
@@ -56,7 +56,7 @@ class PopupAICraneInspectionControl(tk.Toplevel):
 
         ttk.Label(
             container,
-            text="AI Crane Inspection Enhancement",
+            text="PORTIA Crane Inspection Enhancement",
             font=("Segoe UI", 12, "bold")
         ).pack(pady=(0, 10))
 
@@ -111,7 +111,7 @@ class PopupAICraneInspectionControl(tk.Toplevel):
 
         ttk.Button(
             actions,
-            text="Improve with IA",
+            text="Mejorar con PORTIA",
             command=self._execute
         ).pack(side="right")
 
@@ -148,7 +148,7 @@ class PopupAICraneInspectionControl(tk.Toplevel):
             )
 
     # =========================================================
-    # EXECUTE IA
+    # EXECUTE PORTIA
     # =========================================================
 
     def _execute(self):
@@ -167,7 +167,7 @@ class PopupAICraneInspectionControl(tk.Toplevel):
         if not items:
 
             messagebox.showwarning(
-                "IA Crane Inspection",
+                "PORTIA Crane Inspection",
                 "No text found in selected section."
             )
             return

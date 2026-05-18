@@ -82,7 +82,7 @@ def load_cargo_condition_prompt() -> str:
 
 
 # =========================================================
-# CONTAINER AI LOGIC
+# CONTAINER PORTIA LOGIC
 # =========================================================
 def improve_container_text(
     user_text: str,
@@ -116,13 +116,13 @@ def improve_container_text(
     output_text = getattr(response, "output_text", None)
 
     if not output_text or not output_text.strip():
-        raise RuntimeError("La IA devolvió una respuesta vacía.")
+        raise RuntimeError("PORTIA devolvio una respuesta vacia.")
 
     return output_text.strip()
 
 
 # =========================================================
-# GRAIN SAMPLING AI LOGIC (BILINGUAL + HARDENED)
+# GRAIN SAMPLING PORTIA LOGIC (BILINGUAL + HARDENED)
 # =========================================================
 def improve_grain_sampling_text(
     user_text: str,
@@ -178,14 +178,14 @@ def improve_grain_sampling_text(
     output_text = getattr(response, "output_text", None)
 
     if not output_text or not output_text.strip():
-        raise RuntimeError("La IA devolvió una respuesta vacía.")
+        raise RuntimeError("PORTIA devolvio una respuesta vacia.")
 
     return output_text.strip()
 
 
 
 # =========================================================
-# TRUCK SUPERVISION AI LOGIC (BILINGUAL)
+# TRUCK SUPERVISION PORTIA LOGIC (BILINGUAL)
 # =========================================================
 def improve_truck_supervision_text(
     user_text: str,
@@ -243,17 +243,17 @@ def improve_truck_supervision_text(
     output_text = getattr(response, "output_text", None)
 
     if not output_text or not output_text.strip():
-        raise RuntimeError("La IA devolvió una respuesta vacía.")
+        raise RuntimeError("PORTIA devolvio una respuesta vacia.")
 
     return output_text.strip()
 
 
 # =========================================================
-# CLEAN CARGO CONDITION AI OUTPUT
+# CLEAN CARGO CONDITION PORTIA OUTPUT
 # =========================================================
 def _clean_cargo_condition_ai_output(output_text: str, section: str) -> str:
     """
-    Limpia respuestas de IA que devuelven encabezados, markdown
+    Limpia respuestas de PORTIA que devuelven encabezados, markdown
     o múltiples secciones cuando solo se pidió un bloque.
     """
 
@@ -371,7 +371,7 @@ def _clean_cargo_condition_ai_output(output_text: str, section: str) -> str:
 
 
 # =========================================================
-# CARGO CONDITION AI LOGIC (BILINGUAL + PRECAUTION SAFE)
+# CARGO CONDITION PORTIA LOGIC (BILINGUAL + PRECAUTION SAFE)
 # =========================================================
 def improve_cargo_condition_text(
     user_text: str,
@@ -448,12 +448,12 @@ def improve_cargo_condition_text(
     output_text = getattr(response, "output_text", None)
 
     if not output_text or not output_text.strip():
-        raise RuntimeError("La IA devolvió una respuesta vacía.")
+        raise RuntimeError("PORTIA devolvio una respuesta vacia.")
 
     cleaned_text = _clean_cargo_condition_ai_output(output_text, section)
 
     if not cleaned_text:
-        raise RuntimeError("La IA devolvió contenido inválido para cargo condition.")
+        raise RuntimeError("PORTIA devolvio contenido invalido para cargo condition.")
 
     return cleaned_text
 
@@ -515,7 +515,7 @@ def improve_crane_inspection_text(
     output_text = getattr(response, "output_text", None)
 
     if not output_text:
-        raise RuntimeError("AI returned empty response")
+        raise RuntimeError("PORTIA returned empty response")
 
     return output_text.strip()
 
@@ -570,13 +570,13 @@ def improve_vessel_condition_text(
     output_text = getattr(response, "output_text", None)
 
     if not output_text:
-        raise RuntimeError("AI returned empty response")
+        raise RuntimeError("PORTIA returned empty response")
 
     return output_text.strip()
 
 
 # =========================================================
-# PORT CAPTANCY AI
+# PORT CAPTANCY PORTIA
 # =========================================================
 def improve_port_captancy_text(
     user_text: str,
@@ -627,6 +627,6 @@ def improve_port_captancy_text(
     output_text = getattr(response, "output_text", None)
 
     if not output_text:
-        raise RuntimeError("AI returned empty response")
+        raise RuntimeError("PORTIA returned empty response")
 
     return output_text.strip()

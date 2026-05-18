@@ -5,28 +5,40 @@ from tkinter import ttk
 class PopupAICompare(tk.Toplevel):
 
     """
-    Popup comparativo entre texto original y propuesta IA.
+    ERP-SOM
+    PORTIA Text Comparison Popup
+
+    Compara:
+    - Texto original
+    - Texto propuesto por PORTIA
 
     Soporta:
-    - Texto simple (str)
-    - Lista de textos (list[str]) → numerados automáticamente
+    - str
+    - list[str]
+
+    on_accept(): callback ejecutado si el usuario acepta.
     """
 
+    # =========================================================
+    # INIT
+    # =========================================================
     def __init__(self, parent, original_text, ai_text, on_accept=None, on_retry=None):
+
         super().__init__(parent)
 
-        self.title("AI Text Proposal")
+        self.title("Propuesta PORTIA")
         self.geometry("1000x650")
-        self.minsize(800, 500)
+        self.minsize(850, 520)
+
         self.transient(parent)
         self.grab_set()
 
         self.on_accept = on_accept
         self.on_retry = on_retry
 
-        # -----------------------------------------------------
+        # =====================================================
         # MAIN CONTAINER
-        # -----------------------------------------------------
+        # =====================================================
         container = ttk.Frame(self, padding=12)
         container.pack(fill="both", expand=True)
 
@@ -36,9 +48,9 @@ class PopupAICompare(tk.Toplevel):
         cols.columnconfigure(0, weight=1)
         cols.columnconfigure(1, weight=1)
 
-        # -----------------------------------------------------
+        # =====================================================
         # ORIGINAL PANEL
-        # -----------------------------------------------------
+        # =====================================================
         left = ttk.LabelFrame(cols, text="Original Text")
         left.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
 
@@ -48,23 +60,25 @@ class PopupAICompare(tk.Toplevel):
         self.txt_original = tk.Text(
             left,
             wrap="word",
-            padx=8,
-            pady=8
+            padx=10,
+            pady=10
         )
 
         self._insert_text(self.txt_original, original_text)
         self.txt_original.config(state="disabled")
         self.txt_original.grid(row=0, column=0, sticky="nsew")
 
-        # Scrollbar Original
         sb_left = ttk.Scrollbar(left, command=self.txt_original.yview)
         sb_left.grid(row=0, column=1, sticky="ns")
-        self.txt_original.configure(yscrollcommand=sb_left.set)
 
-        # -----------------------------------------------------
+        self.txt_original.configure(
+            yscrollcommand=sb_left.set
+        )
+
+        # =====================================================
         # AI PANEL
-        # -----------------------------------------------------
-        right = ttk.LabelFrame(cols, text="AI Proposal")
+        # =====================================================
+        right = ttk.LabelFrame(cols, text="Propuesta PORTIA")
         right.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
 
         right.columnconfigure(0, weight=1)
@@ -73,21 +87,23 @@ class PopupAICompare(tk.Toplevel):
         self.txt_ai = tk.Text(
             right,
             wrap="word",
-            padx=8,
-            pady=8
+            padx=10,
+            pady=10
         )
 
         self._insert_text(self.txt_ai, ai_text)
         self.txt_ai.grid(row=0, column=0, sticky="nsew")
 
-        # Scrollbar AI
         sb_right = ttk.Scrollbar(right, command=self.txt_ai.yview)
         sb_right.grid(row=0, column=1, sticky="ns")
-        self.txt_ai.configure(yscrollcommand=sb_right.set)
 
-        # -----------------------------------------------------
-        # ACTIONS
-        # -----------------------------------------------------
+        self.txt_ai.configure(
+            yscrollcommand=sb_right.set
+        )
+
+        # =====================================================
+        # ACTION BUTTONS
+        # =====================================================
         actions = ttk.Frame(container)
         actions.pack(fill="x", pady=12)
 
@@ -99,41 +115,61 @@ class PopupAICompare(tk.Toplevel):
 
         ttk.Button(
             actions,
-            text="✅ Use AI Text",
+            text="❌ Cancel",
+            command=self.destroy
+        ).pack(side="right", padx=5)
+
+        ttk.Button(
+            actions,
+            text="✅ Usar texto PORTIA",
             command=self._accept
         ).pack(side="right")
 
-        # Center window
+        # =====================================================
+        # CENTER WINDOW
+        # =====================================================
         self._center_window()
 
     # =========================================================
-    # INSERT HANDLER (STR OR LIST)
+    # INSERT TEXT (STR OR LIST)
     # =========================================================
     def _insert_text(self, widget, text_data):
 
-        if not text_data:
+        try:
+
+            if not text_data:
+                widget.insert("1.0", "")
+                return
+
+            if isinstance(text_data, list):
+
+                formatted = "\n\n".join(
+                    f"{i+1}. {str(t).strip()}"
+                    for i, t in enumerate(text_data)
+                )
+
+            else:
+
+                formatted = str(text_data).strip()
+
+            widget.insert("1.0", formatted)
+
+        except Exception:
+
             widget.insert("1.0", "")
-            return
-
-        # If list → enumerate bullets
-        if isinstance(text_data, list):
-            formatted = "\n\n".join(
-                f"{i + 1}. {str(t).strip()}"
-                for i, t in enumerate(text_data)
-            )
-        else:
-            formatted = str(text_data).strip()
-
-        widget.insert("1.0", formatted)
 
     # =========================================================
-    # ACCEPT
+    # ACCEPT PORTIA TEXT
     # =========================================================
     def _accept(self):
 
-        if callable(self.on_accept):
-            result_text = self.txt_ai.get("1.0", "end").strip()
-            self.on_accept(result_text)
+        try:
+
+            if callable(self.on_accept):
+                self.on_accept()
+
+        except Exception:
+            pass
 
         self.destroy()
 
@@ -142,8 +178,13 @@ class PopupAICompare(tk.Toplevel):
     # =========================================================
     def _retry(self):
 
-        if callable(self.on_retry):
-            self.on_retry()
+        try:
+
+            if callable(self.on_retry):
+                self.on_retry()
+
+        except Exception:
+            pass
 
         self.destroy()
 

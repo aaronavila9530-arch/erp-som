@@ -19,15 +19,17 @@ from Modulos.Informes.popup.popup_ai_compare import PopupAICompare
 
 class VesselTruckSupervisionForm(ttk.Frame):
 
-    def __init__(self, parent, usuario=None, rol=None, on_back=None):
+    def __init__(self, parent, usuario=None, rol=None, on_back=None, mode="create"):
         super().__init__(parent)
 
         self.parent = parent
         self.usuario = usuario
         self.rol = (rol or "").lower()
         self.on_back = on_back
+        self.mode = mode
 
         self.current_report_id = None
+        self._editable = self.mode == "create"
 
         self.grid(row=0, column=0, sticky="nsew")
         self.grid_rowconfigure(1, weight=1)
@@ -36,6 +38,60 @@ class VesselTruckSupervisionForm(ttk.Frame):
         self._build_header()
         self._build_scrollable_form()
 
+    def _safe_text(self, value):
+        if value is None:
+            return ""
+        return str(value)
+
+    def _set_entry_value(self, entry, value):
+        entry.delete(0, "end")
+        entry.insert(0, self._safe_text(value))
+
+    def _set_text_value(self, text_widget, value):
+        text_widget.delete("1.0", "end")
+        text_widget.insert("1.0", self._safe_text(value))
+
+    def _set_widget_state(self, widget, enabled):
+        state = "normal" if enabled else "disabled"
+        try:
+            widget.configure(state=state)
+        except tk.TclError:
+            pass
+
+    def _set_editing_enabled(self, enabled):
+        self._editable = enabled
+
+        widgets = [
+            self.cert_no,
+            self.customer,
+            self.port,
+            self.country,
+            self.report_date,
+            self.captain,
+            self.chief_officer,
+            self.process_text,
+            self.findings_doc,
+            self.findings_oper,
+            self.findings_inc,
+            self.conclusion_text,
+        ]
+        widgets.extend(self.ship_fields.values())
+        widgets.extend(self.time_fields.values())
+
+        for widget in widgets:
+            self._set_widget_state(widget, enabled)
+
+        if hasattr(self, "btn_save_changes"):
+            self.btn_save_changes.config(state="normal" if enabled else "disabled")
+
+    def _enable_review_editing(self):
+        if self.mode != "review":
+            return
+        self._set_editing_enabled(True)
+
+    # =========================================================
+    # HEADER
+    # =========================================================
     # =========================================================
     # HEADER
     # =========================================================
@@ -50,12 +106,35 @@ class VesselTruckSupervisionForm(ttk.Frame):
             font=("Segoe UI", 14, "bold")
         ).pack(side="left")
 
-        if self.on_back:
-            ttk.Button(
-                header,
-                text="← Back",
-                command=self.on_back
-            ).pack(side="right")
+        # ======================================================
+        # BACK FORZADO - SIEMPRE REGRESA A HOME (CORRECTO)
+        # ======================================================
+        def _go_home():
+
+            try:
+                from Modulos.Informes.informes_home_ui import InformesHomeUI
+
+                # limpiar completamente el contenedor padre
+                for widget in self.parent.winfo_children():
+                    widget.destroy()
+
+                # reconstruir pantalla HOME correctamente
+                home = InformesHomeUI(
+                    self.parent,
+                    usuario=self.usuario,
+                    rol=self.rol
+                )
+
+                home.pack(fill="both", expand=True)
+
+            except Exception as e:
+                messagebox.showerror("Navigation Error", str(e))
+
+        ttk.Button(
+            header,
+            text="← Back",
+            command=_go_home
+        ).pack(side="right")
 
     # =========================================================
     # SCROLLABLE
@@ -78,6 +157,9 @@ class VesselTruckSupervisionForm(ttk.Frame):
             lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
         )
 
+        # ACTIVAR SCROLL CON RUEDA
+        self._bind_mousewheel(canvas)
+
         self._section_header_data()
         self._section_ship()
         self._section_representatives()
@@ -86,6 +168,7 @@ class VesselTruckSupervisionForm(ttk.Frame):
         self._section_findings()
         self._section_conclusion()
         self._section_actions()
+
     # =========================================================
     # HEADER DATA + BUSCAR
     # =========================================================
@@ -239,25 +322,36 @@ class VesselTruckSupervisionForm(ttk.Frame):
         frm.pack(fill="x", pady=20)
 
         # ---------------- GUARDAR CAMBIOS ----------------
-        self.btn_save_changes = ttk.Button(
-            frm,
-            text="Guardar Cambios",
-            command=self._save_changes,
-            state="disabled"
-        )
-        self.btn_save_changes.pack(side="right", padx=5)
+        self.btn_save_changes = None
 
-        # ---------------- ENVIAR A REVISIÓN ----------------
-        ttk.Button(
-            frm,
-            text="Enviar a Revisión",
-            command=self._submit_for_review
-        ).pack(side="right", padx=5)
+        if self.mode == "review":
+            self.btn_save_changes = ttk.Button(
+                frm,
+                text="Guardar Cambios",
+                command=self._save_changes,
+                state="normal"
+            )
+            self.btn_save_changes.pack(side="right", padx=5)
+
+            ttk.Button(
+                frm,
+                text="Editar",
+                command=self._enable_review_editing
+            ).pack(side="right", padx=5)
+
+        else:
+
+            # ---------------- ENVIAR A REVISIÓN ----------------
+            ttk.Button(
+                frm,
+                text="Enviar a Revisión",
+                command=self._submit_for_review
+            ).pack(side="right", padx=5)
 
         # ---------------- AI ----------------
         ttk.Button(
             frm,
-            text="Improve AI Maritime",
+            text="Mejorar con PORTIA",
             command=self._improve_ai
         ).pack(side="right", padx=5)
 
@@ -266,6 +360,12 @@ class VesselTruckSupervisionForm(ttk.Frame):
     # API SAVE
     # =========================================================
     def _submit_for_review(self):
+        if self.mode != "create":
+            messagebox.showwarning(
+                "Enviar a Revisión",
+                "Este formulario está en modo review. Usa Guardar Cambios."
+            )
+            return
 
         data = {
             "cert_no": self.cert_no.get(),
@@ -299,21 +399,15 @@ class VesselTruckSupervisionForm(ttk.Frame):
 
         try:
 
-            if self.current_report_id:
-                update_vessel_truck_supervision_api(
-                    self.current_report_id,
-                    data
-                )
-            else:
-                resp = create_vessel_truck_supervision_api(data)
-                self.current_report_id = resp.get("data", {}).get("id")
+            resp = create_vessel_truck_supervision_api(data)
+            self.current_report_id = resp.get("data", {}).get("id")
 
             messagebox.showinfo(
                 "Success",
                 "Report sent successfully."
             )
 
-            # 🔥 VOLVER AL MAIN SCREEN
+            # VOLVER AL MAIN SCREEN
             if self.on_back:
                 self.on_back()
 
@@ -429,7 +523,7 @@ class VesselTruckSupervisionForm(ttk.Frame):
 
 
     # =========================================================
-    # AI IMPROVE (SELECCIÓN DE SECCIÓN + IDIOMA)
+    # PORTIA IMPROVE (SELECCIÓN DE SECCIÓN + IDIOMA)
     # =========================================================
     def _improve_ai(self):
 
@@ -488,8 +582,8 @@ class VesselTruckSupervisionForm(ttk.Frame):
 
             if not resp.get("success"):
                 messagebox.showerror(
-                    "Error IA",
-                    "La IA no devolvió respuesta válida."
+                    "Error PORTIA",
+                    "PORTIA no devolvio respuesta valida."
                 )
                 return
 
@@ -506,13 +600,13 @@ class VesselTruckSupervisionForm(ttk.Frame):
 
         except Exception as e:
             messagebox.showerror(
-                "Error IA",
-                f"No se pudo procesar la mejora AI:\n{e}"
+                "Error PORTIA",
+                f"No se pudo procesar la mejora con PORTIA:\n{e}"
             )
 
 
     # =========================================================
-    # APPLY AI TEXT TO SPECIFIC SECTION
+    # APPLY PORTIA TEXT TO SPECIFIC SECTION
     # =========================================================
     def _apply_ai_section(self, widget, new_text):
 
@@ -562,6 +656,12 @@ class VesselTruckSupervisionForm(ttk.Frame):
     # SAVE CHANGES (PUT)
     # =========================================================
     def _save_changes(self):
+        if self.mode != "review":
+            messagebox.showwarning(
+                "Guardar",
+                "Guardar Cambios solo está disponible desde Review."
+            )
+            return
 
         if not self.current_report_id:
             messagebox.showwarning(
@@ -583,6 +683,7 @@ class VesselTruckSupervisionForm(ttk.Frame):
                 "Success",
                 "Cambios guardados correctamente."
             )
+            self._set_editing_enabled(True)
 
         except Exception as e:
             messagebox.showerror(
@@ -615,17 +716,10 @@ class VesselTruckSupervisionForm(ttk.Frame):
             self.current_report_id = report_id
 
             # ================= HEADER =================
-            self.cert_no.delete(0, "end")
-            self.cert_no.insert(0, data.get("cert_no", ""))
-
-            self.customer.delete(0, "end")
-            self.customer.insert(0, data.get("customer", ""))
-
-            self.port.delete(0, "end")
-            self.port.insert(0, data.get("port", ""))
-
-            self.country.delete(0, "end")
-            self.country.insert(0, data.get("country", ""))
+            self._set_entry_value(self.cert_no, data.get("cert_no"))
+            self._set_entry_value(self.customer, data.get("customer"))
+            self._set_entry_value(self.port, data.get("port"))
+            self._set_entry_value(self.country, data.get("country"))
 
             # ================= FECHAS =================
             try:
@@ -656,51 +750,69 @@ class VesselTruckSupervisionForm(ttk.Frame):
 
 
             # ================= REPRESENTANTES =================
-            self.captain.delete(0, "end")
-            self.captain.insert(0, data.get("captain", ""))
-
-            self.chief_officer.delete(0, "end")
-            self.chief_officer.insert(0, data.get("chief_officer", ""))
+            self._set_entry_value(self.captain, data.get("captain"))
+            self._set_entry_value(self.chief_officer, data.get("chief_officer"))
 
             # ================= SHIP =================
-            self.ship_fields["Nombre"].delete(0, "end")
-            self.ship_fields["Nombre"].insert(0, data.get("vessel_name", ""))
+            self._set_entry_value(self.ship_fields["Nombre"], data.get("vessel_name"))
 
-            self.ship_fields["Bandera / Puerto Registro"].delete(0, "end")
-            self.ship_fields["Bandera / Puerto Registro"].insert(
-                0, data.get("flag_port_registry", "")
+            self._set_entry_value(
+                self.ship_fields["Bandera / Puerto Registro"],
+                data.get("flag_port_registry")
             )
 
-            self.ship_fields["GRT"].delete(0, "end")
-            self.ship_fields["GRT"].insert(0, data.get("grt", ""))
+            self._set_entry_value(self.ship_fields["GRT"], data.get("grt"))
 
-            self.ship_fields["NRT"].delete(0, "end")
-            self.ship_fields["NRT"].insert(0, data.get("nrt", ""))
+            self._set_entry_value(self.ship_fields["NRT"], data.get("nrt"))
 
-            self.ship_fields["IMO Nº"].delete(0, "end")
-            self.ship_fields["IMO Nº"].insert(0, data.get("imo_no", ""))
+            self._set_entry_value(self.ship_fields["IMO Nº"], data.get("imo_no"))
 
-            self.ship_fields["Año Construcción"].delete(0, "end")
-            self.ship_fields["Año Construcción"].insert(0, data.get("build_year", ""))
+            self._set_entry_value(
+                self.ship_fields["Año Construcción"],
+                data.get("build_year")
+            )
 
             # ================= TEXT AREAS =================
-            self.process_text.delete("1.0", "end")
-            self.process_text.insert("1.0", data.get("process_text", ""))
+            self._set_text_value(self.process_text, data.get("process_text"))
 
-            self.findings_doc.delete("1.0", "end")
-            self.findings_doc.insert("1.0", data.get("findings_documental_text", ""))
+            self._set_text_value(
+                self.findings_doc,
+                data.get("findings_documental_text")
+            )
 
-            self.findings_oper.delete("1.0", "end")
-            self.findings_oper.insert("1.0", data.get("findings_operational_text", ""))
+            self._set_text_value(
+                self.findings_oper,
+                data.get("findings_operational_text")
+            )
 
-            self.findings_inc.delete("1.0", "end")
-            self.findings_inc.insert("1.0", data.get("incidents_text", ""))
+            self._set_text_value(self.findings_inc, data.get("incidents_text"))
 
-            self.conclusion_text.delete("1.0", "end")
-            self.conclusion_text.insert("1.0", data.get("conclusion_text", ""))
+            self._set_text_value(self.conclusion_text, data.get("conclusion_text"))
 
-            # 🔥 HABILITAR GUARDAR CAMBIOS
-            self.btn_save_changes.config(state="normal")
+            if self.mode == "review":
+                self._set_editing_enabled(True)
 
         except Exception as e:
             messagebox.showerror("Error", str(e))
+
+
+    # =========================================================
+    # MOUSE SCROLL (WHEEL) - UNIVERSAL
+    # =========================================================
+    def _bind_mousewheel(self, widget):
+
+        def _on_mousewheel(event):
+            widget.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        def _on_mousewheel_linux_up(event):
+            widget.yview_scroll(-1, "units")
+
+        def _on_mousewheel_linux_down(event):
+            widget.yview_scroll(1, "units")
+
+        # Windows / Mac
+        widget.bind_all("<MouseWheel>", _on_mousewheel)
+
+        # Linux
+        widget.bind_all("<Button-4>", _on_mousewheel_linux_up)
+        widget.bind_all("<Button-5>", _on_mousewheel_linux_down)

@@ -6,6 +6,15 @@ from tkcalendar import DateEntry
 from Modulos.Informes.Vessel_Draft_Survey.popup_servicio_draft_selector import PopupServicioDraftSelector
 from Modulos.Informes.informes_home_ui import InformesHomeUI
 
+from Modulos.Informes.vessel_cargo_condition_survey.popup_ai_maritime_control import PopupAIMaritimeControl
+from api_client import improve_vessel_condition_text_api
+
+from api_client import (
+    create_vessel_condition_survey_api,
+    update_vessel_condition_survey_api,
+    get_vessel_condition_survey_api
+)
+
 
 class VesselConditionSurveyForm(ttk.Frame):
     """
@@ -20,7 +29,7 @@ class VesselConditionSurveyForm(ttk.Frame):
     Requerimientos implementados:
     - Botón Home -> InformesHomeUI
     - Botón Enviar a Revisión -> STUB listo para conectar después
-    - Botón Improve Maritime IA -> STUB listo para conectar después
+    - Botón Mejorar con PORTIA -> STUB listo para conectar después
     - Botón Seleccionar Reporte -> PopupServicioDraftSelector
     - Autofill desde popup
     - Scroll vertical con barra + mouse wheel
@@ -55,6 +64,12 @@ class VesselConditionSurveyForm(ttk.Frame):
         self.rol = rol
         self.on_back = on_back
 
+        self.mode = "create"
+        self.opened_from_review = False
+        self.form_locked = False
+        self.record_id = None
+        self.loaded_existing_record = False
+
         self.vars = {}
         self.date_widgets = {}
         self.dynamic_sections = {}
@@ -84,6 +99,25 @@ class VesselConditionSurveyForm(ttk.Frame):
         self._build_dynamic_text_section("5. SURVEY FINDINGS", "survey_findings")
         self._build_dynamic_text_section("6. REMARKS", "remarks")
         self._build_dynamic_text_section("7. CONCLUSION", "conclusion")
+        # =========================================================
+        # COMPATIBILIDAD CON POPUP PORTIA
+        # =========================================================
+        self.narrative_lines = [
+            meta["text"] for meta in self.dynamic_sections["narrative"]["items"]
+        ]
+
+        self.findings_lines = [
+            meta["text"] for meta in self.dynamic_sections["survey_findings"]["items"]
+        ]
+
+        self.remarks_lines = [
+            meta["text"] for meta in self.dynamic_sections["remarks"]["items"]
+        ]
+
+        self.conclusion_lines = [
+            meta["text"] for meta in self.dynamic_sections["conclusion"]["items"]
+        ]
+
         self._build_section_8_enclosure()
 
         ttk.Label(self.scroll_frame, text="").pack(pady=10)
@@ -107,29 +141,51 @@ class VesselConditionSurveyForm(ttk.Frame):
         right = ttk.Frame(topbar)
         right.pack(side="right")
 
-        ttk.Button(
+        self.btn_select_report = ttk.Button(
             right,
             text="Seleccionar Reporte",
             command=self._select_service
-        ).pack(side="left", padx=4)
+        )
+        self.btn_select_report.pack(side="left", padx=4)
 
-        ttk.Button(
+        self.btn_improve_ai = ttk.Button(
             right,
-            text="Improve Maritime IA",
+            text="Mejorar con PORTIA",
             command=self._improve_ai_maritime
-        ).pack(side="left", padx=4)
+        )
+        self.btn_improve_ai.pack(side="left", padx=4)
 
-        ttk.Button(
+        self.btn_edit = ttk.Button(
+            right,
+            text="Editar",
+            command=self._enable_edit_mode
+        )
+
+        self.btn_send_review = ttk.Button(
             right,
             text="Enviar a Revisión",
             command=self._send_to_review
-        ).pack(side="left", padx=4)
+        )
+        self.btn_send_review.pack(side="left", padx=4)
+
+        self.btn_save_changes = ttk.Button(
+            right,
+            text="Guardar Cambios",
+            command=self._save_changes
+        )
+        self.btn_save_changes.pack(side="left", padx=4)
+        self.btn_save_changes.pack_forget()
 
         ttk.Button(
             right,
             text="Home",
             command=self._go_home
         ).pack(side="left", padx=4)
+
+        self.btn_edit.pack(side="left", padx=4)
+        self.btn_edit.pack_forget()
+
+
 
     # =========================================================
     # SCROLL AREA
@@ -370,6 +426,45 @@ class VesselConditionSurveyForm(ttk.Frame):
 
         return row
 
+
+    # =========================================================
+    # COMPACT DATETIME (sin label a la izquierda)
+    # =========================================================
+    def _build_datetime_compact(self, parent, key_prefix):
+
+        date_var = self._v(f"{key_prefix}_date")
+
+        date_entry = DateEntry(
+            parent,
+            textvariable=date_var,
+            width=14,
+            locale="en_US",
+            date_pattern="yyyy-mm-dd"
+        )
+        date_entry.pack(side="left")
+
+        self.date_widgets[key_prefix] = date_entry
+
+        date_entry.bind("<<DateEntrySelected>>", lambda e, k=key_prefix: self._lock_long_date(k))
+        date_entry.bind("<FocusOut>", lambda e, k=key_prefix: self._lock_long_date(k))
+
+        ttk.Label(parent, text="  HH").pack(side="left", padx=(8,2))
+
+        ttk.Entry(
+            parent,
+            textvariable=self._v(f"{key_prefix}_hour"),
+            width=4
+        ).pack(side="left")
+
+        ttk.Label(parent, text="  MM").pack(side="left", padx=(8,2))
+
+        ttk.Entry(
+            parent,
+            textvariable=self._v(f"{key_prefix}_minute"),
+            width=4
+        ).pack(side="left")
+
+
     def _lock_long_date(self, key_prefix):
         var = self._v(f"{key_prefix}_date")
         current = var.get()
@@ -513,7 +608,7 @@ class VesselConditionSurveyForm(ttk.Frame):
 
         ttk.Label(
             line_2,
-            text='in ',
+            text="in ",
             justify="left"
         ).pack(side="left")
 
@@ -530,12 +625,19 @@ class VesselConditionSurveyForm(ttk.Frame):
             justify="left"
         ).pack(side="left")
 
-        port_lbl = ttk.Label(
+        ttk.Entry(
             line_2,
-            textvariable=self._v("port_country_display"),
-            font=("Segoe UI", 10)
-        )
-        port_lbl.pack(side="left")
+            textvariable=self._v("port"),
+            state="readonly",
+            width=18
+        ).pack(side="left", padx=(2, 4))
+
+        ttk.Entry(
+            line_2,
+            textvariable=self._v("country"),
+            state="readonly",
+            width=18
+        ).pack(side="left")
 
         ttk.Label(
             line_2,
@@ -576,24 +678,36 @@ class VesselConditionSurveyForm(ttk.Frame):
 
         sub_121 = ttk.Frame(inner)
         sub_121.pack(fill="x", pady=(6, 0))
+
         ttk.Label(sub_121, text="1.2.1.", width=8).pack(side="left")
-        ttk.Label(sub_121, text="DATE OF ARRIVAL", width=34).pack(side="left")
+
+        ttk.Label(
+            sub_121,
+            text="DATE OF ARRIVAL",
+            width=28
+        ).pack(side="left")
+
         right_121 = ttk.Frame(sub_121)
-        right_121.pack(side="left", fill="x", expand=True)
-        self._build_datetime_row(right_121, "", "arrival")
-        # quitar label interno vacío
-        for child in right_121.winfo_children():
-            if isinstance(child, ttk.Frame):
-                for sub in child.winfo_children():
-                    pass
+        right_121.pack(side="left", padx=(12,0))
+
+        self._build_datetime_compact(right_121, "arrival")
+
 
         sub_122 = ttk.Frame(inner)
         sub_122.pack(fill="x", pady=(4, 0))
+
         ttk.Label(sub_122, text="1.2.2.", width=8).pack(side="left")
-        ttk.Label(sub_122, text="DATE / TIME OF INSPECTION", width=34).pack(side="left")
+
+        ttk.Label(
+            sub_122,
+            text="DATE / TIME OF INSPECTION",
+            width=28
+        ).pack(side="left")
+
         right_122 = ttk.Frame(sub_122)
-        right_122.pack(side="left", fill="x", expand=True)
-        self._build_datetime_row(right_122, "", "inspection")
+        right_122.pack(side="left", padx=(12,0))
+
+        self._build_datetime_compact(right_122, "inspection")
 
         # 1.3 Representatives
         section_13 = ttk.Frame(inner)
@@ -665,35 +779,22 @@ class VesselConditionSurveyForm(ttk.Frame):
         r4 = ttk.Frame(rows)
         r4.pack(fill="x", pady=1)
         ttk.Label(r4, text="2.4.", width=8).pack(side="left")
-        ttk.Label(r4, text="Operation", width=24).pack(side="left")
-        ttk.Combobox(
-            r4,
-            textvariable=self._v("operation"),
-            values=self.OPERATION_OPTIONS,
-            width=26,
-            state="readonly"
-        ).pack(side="left")
+        ttk.Label(r4, text="NRT", width=24).pack(side="left")
+        ttk.Entry(r4, textvariable=self._v("nrt"), width=28).pack(side="left")
 
         # 2.5
         r5 = ttk.Frame(rows)
         r5.pack(fill="x", pady=1)
         ttk.Label(r5, text="2.5.", width=8).pack(side="left")
-        ttk.Label(r5, text="NRT", width=24).pack(side="left")
-        ttk.Entry(r5, textvariable=self._v("nrt"), width=28).pack(side="left")
+        ttk.Label(r5, text="IMO N°", width=24).pack(side="left")
+        ttk.Entry(r5, textvariable=self._v("imo_no"), width=28).pack(side="left")
 
         # 2.6
         r6 = ttk.Frame(rows)
         r6.pack(fill="x", pady=1)
         ttk.Label(r6, text="2.6.", width=8).pack(side="left")
-        ttk.Label(r6, text="IMO N°", width=24).pack(side="left")
-        ttk.Entry(r6, textvariable=self._v("imo_no"), width=28).pack(side="left")
-
-        # 2.7
-        r7 = ttk.Frame(rows)
-        r7.pack(fill="x", pady=1)
-        ttk.Label(r7, text="2.7.", width=8).pack(side="left")
-        ttk.Label(r7, text="Year Built", width=24).pack(side="left")
-        ttk.Entry(r7, textvariable=self._v("year_built"), width=28).pack(side="left")
+        ttk.Label(r6, text="Year Built", width=24).pack(side="left")
+        ttk.Entry(r6, textvariable=self._v("year_built"), width=28).pack(side="left")
 
     # =========================================================
     # SECTION 3 - EXTRACT TIME SHEET
@@ -722,15 +823,51 @@ class VesselConditionSurveyForm(ttk.Frame):
         table.pack(fill="x", pady=(8, 0))
 
         for num, label, key in self.time_sheet_rows:
+
             row = ttk.Frame(table)
             row.pack(fill="x", pady=1)
 
             ttk.Label(row, text=num, width=8).pack(side="left")
-            ttk.Label(row, text=label, width=28).pack(side="left")
-            right = ttk.Frame(row)
-            right.pack(side="left")
 
-            self._build_datetime_row(right, "", key)
+            # =====================================================
+            # TEXT COLUMN
+            # =====================================================
+
+            text_col = ttk.Frame(row, width=30)
+            text_col.pack(side="left", anchor="w")
+
+            if key == "ts_4":
+
+                ttk.Combobox(
+                    text_col,
+                    textvariable=self._v("ts_4_operation"),
+                    values=["Discharge", "Charging"],
+                    width=12,
+                    state="readonly"
+                ).pack(side="left")
+
+                ttk.Label(
+                    text_col,
+                    text=" commenced"
+                ).pack(side="left", padx=(4,0))
+
+            else:
+
+                ttk.Label(
+                    text_col,
+                    text=label,
+                    width=28,
+                    anchor="w"
+                ).pack(side="left")
+
+            # =====================================================
+            # DATETIME COLUMN
+            # =====================================================
+
+            right = ttk.Frame(row)
+            right.pack(side="left", padx=(10,0))
+
+            self._build_datetime_compact(right, key)
 
     # =========================================================
     # SECTION 4/5/6/7 - DYNAMIC TEXT
@@ -804,21 +941,42 @@ class VesselConditionSurveyForm(ttk.Frame):
         actions = ttk.Frame(item_frame)
         actions.pack(side="left", padx=(6, 0), anchor="n")
 
-        ttk.Button(
+        btn_remove = ttk.Button(
             actions,
             text="-",
             width=3,
             command=lambda s=section_key, f=item_frame: self._remove_dynamic_item(s, f)
-        ).pack()
+        )
+        btn_remove.pack()
 
         item_meta = {
             "frame": item_frame,
             "number_label": number_label,
-            "text": text_widget
+            "text": text_widget,
+            "remove_button": btn_remove
         }
         items.append(item_meta)
 
         self._refresh_dynamic_numbers(section_key)
+
+        alias = {
+            "survey_findings": "findings",
+            "narrative": "narrative",
+            "remarks": "remarks",
+            "conclusion": "conclusion"
+        }.get(section_key, section_key)
+
+        setattr(
+            self,
+            f"{alias}_lines",
+            [meta["text"] for meta in section["items"]]
+        )
+
+        if self.form_locked:
+            try:
+                btn_remove.configure(state="disabled")
+            except Exception:
+                pass
 
     def _remove_dynamic_item(self, section_key, frame):
         section = self.dynamic_sections.get(section_key)
@@ -830,22 +988,47 @@ class VesselConditionSurveyForm(ttk.Frame):
         if len(items) <= 1:
             for meta in items:
                 if meta["frame"] == frame:
+                    try:
+                        meta["text"].configure(state="normal")
+                    except Exception:
+                        pass
+
                     meta["text"].delete("1.0", "end")
-                    return
-            return
+                    break
+        else:
+            new_items = []
 
-        new_items = []
-        for meta in items:
-            if meta["frame"] == frame:
-                try:
-                    meta["frame"].destroy()
-                except Exception:
-                    pass
-            else:
-                new_items.append(meta)
+            for meta in items:
+                if meta["frame"] == frame:
+                    try:
+                        meta["frame"].destroy()
+                    except Exception:
+                        pass
+                else:
+                    new_items.append(meta)
 
-        section["items"] = new_items
+            section["items"] = new_items
+
         self._refresh_dynamic_numbers(section_key)
+
+        alias = {
+            "survey_findings": "findings",
+            "narrative": "narrative",
+            "remarks": "remarks",
+            "conclusion": "conclusion"
+        }.get(section_key, section_key)
+
+        setattr(
+            self,
+            f"{alias}_lines",
+            [meta["text"] for meta in section["items"]]
+        )
+
+        try:
+            self.update_idletasks()
+            self._on_frame_configure()
+        except Exception:
+            pass
 
     def _refresh_dynamic_numbers(self, section_key):
         section = self.dynamic_sections.get(section_key)
@@ -883,7 +1066,7 @@ class VesselConditionSurveyForm(ttk.Frame):
         ttk.Entry(
             row,
             textvariable=self._v("link_picture")
-        ).pack(side="left")
+        ).pack(side="left", fill="x", expand=True)
 
     # =========================================================
     # POPUP SELECTOR
@@ -964,27 +1147,355 @@ class VesselConditionSurveyForm(ttk.Frame):
             messagebox.showerror("Autofill Reporte", str(e))
 
     # =========================================================
-    # STUB BUTTONS
+    # IMPROVE PORTIA
     # =========================================================
     def _improve_ai_maritime(self):
-        messagebox.showinfo(
-            "Improve Maritime IA",
-            "Este botón ya quedó creado en el form.\n\nLa conexión lógica con IA se activará después."
-        )
 
+        try:
+
+            PopupAIMaritimeControl(
+                self.parent,
+                form_instance=self,
+                on_execute=self._execute_ai_improve
+            )
+
+        except Exception as e:
+
+            messagebox.showerror(
+                "Mejorar con PORTIA",
+                str(e)
+            )
+
+
+    # =========================================================
+    # EXECUTE PORTIA IMPROVE
+    # =========================================================
+    def _execute_ai_improve(
+        self,
+        section=None,
+        language="EN",
+        items=None,
+        selected_indexes=None,
+        **kwargs
+    ):
+        try:
+            section = (section or kwargs.get("section") or "").strip() or "narrative"
+
+            language = (language or kwargs.get("language") or "EN").strip().upper()
+            if language not in ("EN", "ES"):
+                language = "EN"
+
+            if selected_indexes is None:
+                selected_indexes = kwargs.get("selected_indexes")
+
+            if items is None:
+                items = kwargs.get("items")
+
+            selected_indexes = selected_indexes or []
+            items = items or []
+
+            section_map = {
+                "findings": "survey_findings",
+                "survey_findings": "survey_findings",
+                "narrative": "narrative",
+                "remarks": "remarks",
+                "conclusion": "conclusion",
+            }
+
+            section = section_map.get(section, section)
+
+            vessel = self._v("vessel").get()
+            port = self._v("port").get()
+            report_type = self._v("report_type").get()
+
+            section_data = self.dynamic_sections.get(section)
+
+            if not section_data:
+                messagebox.showerror(
+                    "PORTIA",
+                    "Section not found in form."
+                )
+                return
+
+            widgets = section_data.get("items", [])
+
+            if not widgets:
+                messagebox.showwarning(
+                    "PORTIA",
+                    "No bullets detected in this section."
+                )
+                return
+
+            selected_texts = []
+            valid_indexes = []
+
+            if isinstance(items, list) and items:
+                for pos, text_value in enumerate(items):
+                    text_value = str(text_value or "").strip()
+
+                    if not text_value:
+                        continue
+
+                    selected_texts.append(text_value)
+
+                    try:
+                        idx = int(selected_indexes[pos])
+                    except Exception:
+                        idx = pos
+
+                    valid_indexes.append(idx)
+
+            else:
+                if not selected_indexes:
+                    messagebox.showwarning(
+                        "PORTIA",
+                        "Please select at least one bullet to improve."
+                    )
+                    return
+
+                for idx in selected_indexes:
+                    try:
+                        idx = int(idx)
+                    except Exception:
+                        continue
+
+                    if idx < 0 or idx >= len(widgets):
+                        continue
+
+                    txt_widget = widgets[idx].get("text")
+
+                    if not txt_widget:
+                        continue
+
+                    try:
+                        text_value = txt_widget.get("1.0", "end").strip()
+                    except Exception:
+                        continue
+
+                    if text_value:
+                        selected_texts.append(text_value)
+                        valid_indexes.append(idx)
+
+            if not selected_texts:
+                messagebox.showwarning(
+                    "PORTIA",
+                    "Selected bullet(s) contain no text."
+                )
+                return
+
+            payload = {
+                "vessel": vessel,
+                "port": port,
+                "report_type": report_type,
+                "section": section,
+                "language": language,
+                "items": selected_texts,
+            }
+
+            response = improve_vessel_condition_text_api(payload)
+
+            if not response or not isinstance(response, dict):
+                messagebox.showerror(
+                    "PORTIA",
+                    "PORTIA service returned an invalid response."
+                )
+                return
+
+            if not response.get("success"):
+                messagebox.showerror(
+                    "PORTIA",
+                    response.get("error") or "PORTIA processing failed."
+                )
+                return
+
+            improved_items = response.get("items", [])
+
+            if not isinstance(improved_items, list):
+                messagebox.showerror(
+                    "PORTIA",
+                    "PORTIA returned invalid improvement format."
+                )
+                return
+
+            if not improved_items:
+                messagebox.showwarning(
+                    "PORTIA",
+                    "PORTIA did not return improved text."
+                )
+                return
+
+            if len(improved_items) < len(selected_texts):
+                missing = len(selected_texts) - len(improved_items)
+                improved_items.extend(selected_texts[-missing:])
+
+            from Modulos.Informes.popup.popup_ai_compare import PopupAICompare
+
+            PopupAICompare(
+                self.parent,
+                selected_texts,
+                improved_items,
+                lambda: self._apply_ai_changes(
+                    section,
+                    valid_indexes,
+                    improved_items
+                )
+            )
+
+        except Exception as e:
+            messagebox.showerror(
+                "PORTIA",
+                str(e)
+            )
+
+    # =========================================================
+    # APPLY PORTIA CHANGES AFTER COMPARISON
+    # =========================================================
+    def _apply_ai_changes(self, section, selected_indexes, improved_items):
+
+        try:
+
+            section_data = self.dynamic_sections.get(section)
+
+            if not section_data:
+                return
+
+            widgets = section_data.get("items", [])
+
+            for pos, idx in enumerate(selected_indexes):
+
+                if idx >= len(widgets):
+                    continue
+
+                if pos >= len(improved_items):
+                    continue
+
+                txt_widget = widgets[idx]["text"]
+
+                txt_widget.delete("1.0", "end")
+                txt_widget.insert("1.0", improved_items[pos])
+
+        except Exception as e:
+
+            messagebox.showerror(
+                "PORTIA Apply Error",
+                str(e)
+            )
+
+
+    # =========================================================
+    # SEND TO REVIEW (POST)
+    # =========================================================
     def _send_to_review(self):
         try:
+
             payload = self._build_payload()
 
-            # Stub actual
-            messagebox.showinfo(
-                "Enviar a Revisión",
-                "El botón ya quedó creado y el payload ya se construye correctamente.\n\n"
-                "Luego conectamos el endpoint.\n\n"
-                f"Preview payload keys: {len(payload)} campos."
-            )
+            report_number = payload.get("report_number")
+
+            if not report_number:
+                messagebox.showwarning(
+                    "Enviar a Revisión",
+                    "Debe seleccionar primero un reporte."
+                )
+                return
+
+            # =====================================================
+            # REGISTRO EXISTENTE -> PUT
+            # NUEVO REGISTRO -> POST
+            # =====================================================
+            if False:
+                response = update_vessel_condition_survey_api(
+                    self.record_id,
+                    payload
+                )
+
+                if not response or not response.get("success"):
+                    messagebox.showerror(
+                        "Enviar a Revisión",
+                        "No se pudo actualizar el reporte existente."
+                    )
+                    return
+
+                messagebox.showinfo(
+                    "Reporte actualizado",
+                    f"El reporte {report_number} fue actualizado correctamente."
+                )
+
+            else:
+                response = create_vessel_condition_survey_api(payload)
+
+                if not response or not response.get("success"):
+                    messagebox.showerror(
+                        "Enviar a Revisión",
+                        "No se pudo registrar el reporte."
+                    )
+                    return
+
+                self.record_id = response.get("id")
+                self.loaded_existing_record = bool(self.record_id)
+
+                messagebox.showinfo(
+                    "Reporte enviado",
+                    f"El reporte {report_number} fue enviado a revisión.\n"
+                    "Status: Pending for review."
+                )
+
         except Exception as e:
             messagebox.showerror("Enviar a Revisión", str(e))
+
+
+    # =========================================================
+    # SAVE CHANGES (PUT)
+    # =========================================================
+    def _save_changes(self):
+        try:
+
+            payload = self._build_payload()
+
+            report_number = payload.get("report_number")
+
+            if not report_number:
+                messagebox.showwarning(
+                    "Guardar Cambios",
+                    "No se encontró el número de reporte."
+                )
+                return
+
+            if not self.record_id:
+                messagebox.showwarning(
+                    "Guardar Cambios",
+                    "No se encontró el ID del registro cargado. "
+                    "Abra el reporte desde la tabla para editarlo."
+                )
+                return
+
+            response = update_vessel_condition_survey_api(
+                self.record_id,
+                payload
+            )
+
+            if not response or not response.get("success"):
+
+                messagebox.showerror(
+                    "Guardar Cambios",
+                    "No se pudieron guardar los cambios."
+                )
+                return
+
+            self.loaded_existing_record = True
+
+            messagebox.showinfo(
+                "Cambios guardados",
+                f"El reporte {report_number} fue actualizado correctamente."
+            )
+
+        except Exception as e:
+
+            messagebox.showerror(
+                "Guardar Cambios",
+                str(e)
+            )
+
 
     # =========================================================
     # PAYLOAD
@@ -992,44 +1503,80 @@ class VesselConditionSurveyForm(ttk.Frame):
     def _build_payload(self):
         payload = {}
 
+        # -----------------------------------------------------
         # Header / popup
+        # -----------------------------------------------------
         payload["report_number"] = self._v("report_number").get() or None
         payload["continent"] = self._v("continent").get() or None
         payload["country"] = self._v("country").get() or None
         payload["port"] = self._v("port").get() or None
         payload["popup_operation"] = self._v("popup_operation").get() or None
-        payload["service_start_date"] = self._normalize_date_for_db(self._v("service_start_date").get())
+        payload["service_start_date"] = self._normalize_date_for_db(
+            self._v("service_start_date").get()
+        )
 
+        # -----------------------------------------------------
         # Section 1
+        # -----------------------------------------------------
         payload["report_type"] = self._v("report_type").get() or None
         payload["requested_by"] = self._v("requested_by").get() or None
-        payload["arrival_date"] = self._normalize_date_for_db(self._v("arrival_date").get())
-        payload["arrival_hour"] = self._normalize_hh(self._v("arrival_hour").get())
-        payload["arrival_minute"] = self._normalize_mm(self._v("arrival_minute").get())
 
-        payload["inspection_date"] = self._normalize_date_for_db(self._v("inspection_date").get())
-        payload["inspection_hour"] = self._normalize_hh(self._v("inspection_hour").get())
-        payload["inspection_minute"] = self._normalize_mm(self._v("inspection_minute").get())
+        payload["arrival_date"] = self._normalize_date_for_db(
+            self._v("arrival_date").get()
+        )
+        payload["arrival_hour"] = self._normalize_hh(
+            self._v("arrival_hour").get()
+        )
+        payload["arrival_minute"] = self._normalize_mm(
+            self._v("arrival_minute").get()
+        )
+
+        payload["inspection_date"] = self._normalize_date_for_db(
+            self._v("inspection_date").get()
+        )
+        payload["inspection_hour"] = self._normalize_hh(
+            self._v("inspection_hour").get()
+        )
+        payload["inspection_minute"] = self._normalize_mm(
+            self._v("inspection_minute").get()
+        )
 
         payload["master_of_ship"] = self._v("master_of_ship").get() or None
         payload["chief_officer"] = self._v("chief_officer").get() or None
 
+        # -----------------------------------------------------
         # Section 2
+        # -----------------------------------------------------
         payload["vessel"] = self._v("vessel").get() or None
         payload["port_registry_flag"] = self._v("port_registry_flag").get() or None
         payload["grt"] = self._v("grt").get() or None
-        payload["operation"] = self._v("operation").get() or None
+
+        # 🔥 operation sale del combobox de 3.4
+        ts4_operation = (self._v("ts_4_operation").get() or "").strip()
+        fallback_operation = (self._v("operation").get() or "").strip()
+        payload["operation"] = ts4_operation or fallback_operation or None
+
         payload["nrt"] = self._v("nrt").get() or None
         payload["imo_no"] = self._v("imo_no").get() or None
         payload["year_built"] = self._v("year_built").get() or None
 
+        # -----------------------------------------------------
         # Section 3
+        # -----------------------------------------------------
         for _, _, key in self.time_sheet_rows:
-            payload[f"{key}_date"] = self._normalize_date_for_db(self._v(f"{key}_date").get())
-            payload[f"{key}_hour"] = self._normalize_hh(self._v(f"{key}_hour").get())
-            payload[f"{key}_minute"] = self._normalize_mm(self._v(f"{key}_minute").get())
+            payload[f"{key}_date"] = self._normalize_date_for_db(
+                self._v(f"{key}_date").get()
+            )
+            payload[f"{key}_hour"] = self._normalize_hh(
+                self._v(f"{key}_hour").get()
+            )
+            payload[f"{key}_minute"] = self._normalize_mm(
+                self._v(f"{key}_minute").get()
+            )
 
+        # -----------------------------------------------------
         # Dynamic sections 4-7
+        # -----------------------------------------------------
         for section_key in ["narrative", "survey_findings", "remarks", "conclusion"]:
             section = self.dynamic_sections.get(section_key, {})
             items = section.get("items", [])
@@ -1040,10 +1587,17 @@ class VesselConditionSurveyForm(ttk.Frame):
             for idx, meta in enumerate(items, start=1):
                 if idx > self.MAX_DYNAMIC_ITEMS:
                     break
-                text = meta["text"].get("1.0", "end").strip()
+
+                try:
+                    text = meta["text"].get("1.0", "end").strip()
+                except Exception:
+                    text = ""
+
                 payload[f"{section_key}_{idx}"] = text if text else None
 
+        # -----------------------------------------------------
         # Section 8
+        # -----------------------------------------------------
         payload["link_picture"] = self._v("link_picture").get() or None
 
         return payload
@@ -1051,12 +1605,34 @@ class VesselConditionSurveyForm(ttk.Frame):
     # =========================================================
     # LOAD RECORD
     # =========================================================
-    def load_record(self, data):
+    def load_record(self, data, from_review=False):
         try:
+
             if not data:
                 return
 
-            # normal vars
+            # =====================================================
+            # GUARDAR CONTEXTO DEL REGISTRO CARGADO
+            # =====================================================
+            self.record_id = data.get("id")
+            self.loaded_existing_record = bool(self.record_id)
+            self.opened_from_review = bool(from_review)
+
+            # =====================================================
+            # CONFIGURACIÓN VISUAL INICIAL
+            # =====================================================
+            if hasattr(self, "btn_send_review"):
+                self.btn_send_review.pack_forget()
+
+            if hasattr(self, "btn_edit"):
+                self.btn_edit.pack_forget()
+
+            if hasattr(self, "btn_save_changes"):
+                self.btn_save_changes.pack_forget()
+
+            # =====================================================
+            # CAMPOS NORMALES
+            # =====================================================
             normal_fields = [
                 "report_number",
                 "continent",
@@ -1071,7 +1647,6 @@ class VesselConditionSurveyForm(ttk.Frame):
                 "vessel",
                 "port_registry_flag",
                 "grt",
-                "operation",
                 "nrt",
                 "imo_no",
                 "year_built",
@@ -1079,33 +1654,58 @@ class VesselConditionSurveyForm(ttk.Frame):
             ]
 
             for key in normal_fields:
-                if key in data:
-                    self._set_var_safely(key, data.get(key))
+                self._set_var_safely(key, data.get(key))
 
-            # date fields section 1
+            # =====================================================
+            # OPERATION / TS_4_OPERATION
+            # =====================================================
+            db_operation = data.get("operation")
+            self._set_var_safely("operation", db_operation)
+            self._set_var_safely("ts_4_operation", db_operation)
+
+            # =====================================================
+            # SECTION 1 — DATE FIELDS
+            # =====================================================
             if data.get("arrival_date"):
                 self._set_long_date_value("arrival", data.get("arrival_date"))
+            else:
+                self._set_var_safely("arrival_date", "")
+
             self._set_var_safely("arrival_hour", data.get("arrival_hour"))
             self._set_var_safely("arrival_minute", data.get("arrival_minute"))
 
             if data.get("inspection_date"):
                 self._set_long_date_value("inspection", data.get("inspection_date"))
+            else:
+                self._set_var_safely("inspection_date", "")
+
             self._set_var_safely("inspection_hour", data.get("inspection_hour"))
             self._set_var_safely("inspection_minute", data.get("inspection_minute"))
 
-            # section 3
+            # =====================================================
+            # SECTION 3 — TIME SHEET
+            # =====================================================
             for _, _, key in self.time_sheet_rows:
+
                 if data.get(f"{key}_date"):
                     self._set_long_date_value(key, data.get(f"{key}_date"))
+                else:
+                    self._set_var_safely(f"{key}_date", "")
+
                 self._set_var_safely(f"{key}_hour", data.get(f"{key}_hour"))
                 self._set_var_safely(f"{key}_minute", data.get(f"{key}_minute"))
 
-            # intro display fields
-            vessel = self._v("vessel").get()
-            port = self._v("port").get()
-            country = self._v("country").get()
+            # =====================================================
+            # CAMPOS DISPLAY DERIVADOS
+            # =====================================================
+            vessel = str(self._v("vessel").get() or "").strip()
+            port = str(self._v("port").get() or "").strip()
+            country = str(self._v("country").get() or "").strip()
 
-            self._set_var_safely("vessel_display_bold", f'MV "{vessel}"' if vessel else "")
+            self._set_var_safely(
+                "vessel_display_bold",
+                f'MV "{vessel}"' if vessel else ""
+            )
 
             port_country = ""
             if port and country:
@@ -1114,58 +1714,291 @@ class VesselConditionSurveyForm(ttk.Frame):
                 port_country = port
             elif country:
                 port_country = country
+
             self._set_var_safely("port_country_display", port_country)
 
-            # dynamic sections
+            # =====================================================
+            # SECCIONES DINÁMICAS
+            # SOPORTA:
+            # 1) columnas planas: narrative_1, narrative_2...
+            # 2) listas backend: narrative: [...]
+            # =====================================================
             for section_key in ["narrative", "survey_findings", "remarks", "conclusion"]:
+
                 incoming_values = []
-                for i in range(1, self.MAX_DYNAMIC_ITEMS + 1):
-                    value = data.get(f"{section_key}_{i}")
-                    if value:
-                        incoming_values.append(str(value))
+
+                # -------------------------------------------------
+                # FORMATO NUEVO DEL BACKEND:
+                # narrative = [...]
+                # survey_findings = [...]
+                # remarks = [...]
+                # conclusion = [...]
+                # -------------------------------------------------
+                list_values = data.get(section_key)
+
+                if isinstance(list_values, list):
+                    for value in list_values:
+                        if value is not None and str(value).strip():
+                            incoming_values.append(str(value).strip())
+
+                # -------------------------------------------------
+                # FORMATO PLANO DB:
+                # narrative_1 ... narrative_20
+                # -------------------------------------------------
+                if not incoming_values:
+                    for i in range(1, self.MAX_DYNAMIC_ITEMS + 1):
+                        value = data.get(f"{section_key}_{i}")
+
+                        if value is not None and str(value).strip():
+                            incoming_values.append(str(value).strip())
 
                 section = self.dynamic_sections.get(section_key)
+
                 if not section:
                     continue
 
-                items = section["items"]
+                # -------------------------------------------------
+                # LIMPIAR ITEMS EXISTENTES
+                # -------------------------------------------------
+                for meta in section.get("items", []):
+                    try:
+                        meta["text"].configure(state="normal")
+                    except Exception:
+                        pass
 
-                # limpiar primero
-                for meta in items:
-                    meta["text"].delete("1.0", "end")
+                    try:
+                        meta["text"].delete("1.0", "end")
+                    except Exception:
+                        pass
 
-                # agregar cajas si hacen falta
-                while len(section["items"]) < max(1, len(incoming_values)):
+                # -------------------------------------------------
+                # CREAR LOS BULLETS NECESARIOS
+                # -------------------------------------------------
+                required_items = max(1, len(incoming_values))
+
+                while len(section.get("items", [])) < required_items:
                     self._add_dynamic_item(section_key)
 
-                items = section["items"]
+                items = section.get("items", [])
 
-                if not incoming_values:
-                    continue
-
+                # -------------------------------------------------
+                # LLENAR TEXTO
+                # -------------------------------------------------
                 for idx, value in enumerate(incoming_values):
-                    items[idx]["text"].delete("1.0", "end")
-                    items[idx]["text"].insert("1.0", value)
+                    if idx >= len(items):
+                        break
+
+                    try:
+                        items[idx]["text"].configure(state="normal")
+                        items[idx]["text"].delete("1.0", "end")
+                        items[idx]["text"].insert("1.0", value)
+                    except Exception:
+                        continue
+
+                # -------------------------------------------------
+                # LIMPIAR SOBRANTES
+                # -------------------------------------------------
+                for idx in range(len(incoming_values), len(items)):
+                    try:
+                        items[idx]["text"].configure(state="normal")
+                        items[idx]["text"].delete("1.0", "end")
+                    except Exception:
+                        pass
+
+                try:
+                    self._refresh_dynamic_numbers(section_key)
+                except Exception:
+                    pass
+
+                alias = {
+                    "survey_findings": "findings",
+                    "narrative": "narrative",
+                    "remarks": "remarks",
+                    "conclusion": "conclusion"
+                }.get(section_key, section_key)
+
+                setattr(
+                    self,
+                    f"{alias}_lines",
+                    [meta["text"] for meta in section.get("items", [])]
+                )
+
+            # =====================================================
+            # MODO FINAL SEGÚN ORIGEN
+            # =====================================================
+            if self.opened_from_review:
+
+                self.mode = "review"
+
+                if hasattr(self, "btn_edit"):
+                    self.btn_edit.pack(side="left", padx=4)
+
+                try:
+                    self._set_form_locked_state(True)
+                except Exception:
+                    pass
+
+            else:
+
+                self.mode = "edit"
+
+                if hasattr(self, "btn_save_changes"):
+                    self.btn_save_changes.pack(side="left", padx=4)
+
+                try:
+                    self._set_form_locked_state(False)
+                except Exception:
+                    pass
 
         except Exception as e:
             messagebox.showerror("Load Record", str(e))
 
+
+
+
+    def _iter_form_widgets(self, parent):
+        for child in parent.winfo_children():
+            yield child
+            yield from self._iter_form_widgets(child)
+
+    def _set_form_locked_state(self, locked: bool):
+        self.form_locked = locked
+
+        try:
+            for widget in self._iter_form_widgets(self.scroll_frame):
+
+                if isinstance(widget, tk.Text):
+                    if locked:
+                        try:
+                            widget._previous_state = str(widget.cget("state"))
+                        except Exception:
+                            widget._previous_state = "normal"
+                        widget.configure(state="disabled")
+                    else:
+                        previous_state = getattr(widget, "_previous_state", "normal")
+                        widget.configure(state=previous_state)
+                    continue
+
+                try:
+                    widget_class = widget.winfo_class()
+                except Exception:
+                    widget_class = ""
+
+                if widget_class in ("TEntry", "TCombobox", "DateEntry"):
+                    if locked:
+                        try:
+                            widget._previous_state = str(widget.cget("state"))
+                        except Exception:
+                            widget._previous_state = "normal"
+                        try:
+                            widget.configure(state="disabled")
+                        except Exception:
+                            pass
+                    else:
+                        previous_state = getattr(widget, "_previous_state", "normal")
+                        try:
+                            widget.configure(state=previous_state)
+                        except Exception:
+                            pass
+
+            for section in self.dynamic_sections.values():
+                for meta in section.get("items", []):
+                    btn_remove = meta.get("remove_button")
+                    if btn_remove:
+                        try:
+                            btn_remove.configure(state="disabled" if locked else "normal")
+                        except Exception:
+                            pass
+
+        except Exception:
+            pass
+
+        try:
+            if locked:
+                self.btn_select_report.config(state="disabled")
+                self.btn_improve_ai.config(state="disabled")
+                self.btn_send_review.config(state="disabled")
+                self.btn_save_changes.config(state="disabled")
+            else:
+                self.btn_select_report.config(state="normal")
+                self.btn_improve_ai.config(state="normal")
+                self.btn_send_review.config(state="normal")
+                self.btn_save_changes.config(state="normal")
+        except Exception:
+            pass
+
     # =========================================================
-    # HOME
+    # REVIEW / EDIT MODE
+    # =========================================================
+    def _enter_review_mode(self):
+
+        self.mode = "review"
+        self.opened_from_review = True
+
+        try:
+            self.btn_send_review.pack_forget()
+        except Exception:
+            pass
+
+        try:
+            self.btn_save_changes.pack_forget()
+        except Exception:
+            pass
+
+        try:
+            self.btn_edit.pack(side="left", padx=4)
+            self.btn_edit.config(state="normal")
+        except Exception:
+            pass
+
+        self._set_form_locked_state(True)
+
+
+    def _enable_edit_mode(self):
+
+        self.mode = "edit"
+        self.opened_from_review = False
+
+        try:
+            self.btn_edit.pack_forget()
+        except Exception:
+            pass
+
+        try:
+            self.btn_send_review.pack_forget()
+        except Exception:
+            pass
+
+        try:
+            self.btn_save_changes.pack(side="left", padx=4)
+            self.btn_save_changes.config(state="normal")
+        except Exception:
+            pass
+
+        self._set_form_locked_state(False)
+
+
+
+    # =========================================================
+    # HOME (NAVIGATION FIX — FORZADO Y ESTABLE)
     # =========================================================
     def _go_home(self):
+
         try:
-            self.destroy()
+            from Modulos.Informes.informes_home_ui import InformesHomeUI
 
-            if callable(self.on_back):
-                self.on_back()
-                return
+            # 🔥 limpiar completamente el contenedor padre
+            for widget in self.parent.winfo_children():
+                widget.destroy()
 
-            InformesHomeUI(
+            # 🔥 reconstruir HOME correctamente
+            home = InformesHomeUI(
                 self.parent,
                 usuario=self.usuario,
                 rol=self.rol
             )
+
+            home.pack(fill="both", expand=True)
 
         except Exception as e:
             messagebox.showerror("Home", str(e))

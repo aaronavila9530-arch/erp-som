@@ -22,7 +22,7 @@ class CraneInspectionForm(ttk.Frame):
     - Selector Reporte: MISMA API / MISMO POPUP (Draft selector) y autofill.
     - Home: MISMO comportamiento (volver a InformesHomeUI).
     - Enviar a revisión: se conecta después (queda stub).
-    - Improve IA Maritime: integrado (usa PopupAIMaritimeControl + PopupAICompare).
+    - Mejorar con PORTIA: integrado (usa PopupAIMaritimeControl + PopupAICompare).
     - Fechas: DateEntry ISO yyyy-mm-dd + al salir del campo -> LONG en inglés.
     - Horas: 2 cuadros (HH / MM).
     - Crane Inspection checklist: checkbox + estado + 3 comentarios por punto.
@@ -98,6 +98,11 @@ class CraneInspectionForm(ttk.Frame):
             self.vars[key] = tk.BooleanVar(value=False)
         return self.vars[key]
 
+    def _enable_edit_mode(self):
+        self.is_edit_mode = True
+        if hasattr(self, "btn_update"):
+            self.btn_update.configure(state="normal")
+
     # =========================================================
     # UI ROOT
     # =========================================================
@@ -123,7 +128,7 @@ class CraneInspectionForm(ttk.Frame):
 
         ttk.Button(
             btn_frame,
-            text="Improve IA Maritime",
+            text="Mejorar con PORTIA",
             command=self._improve_ai_maritime
         ).pack(side="left", padx=4)
 
@@ -146,6 +151,12 @@ class CraneInspectionForm(ttk.Frame):
             btn_frame,
             text="Guardar Cambios",
             command=self._update_report
+        )
+
+        self.btn_edit = ttk.Button(
+            btn_frame,
+            text="Editar",
+            command=self._enable_edit_mode
         )
 
         ttk.Button(
@@ -782,7 +793,7 @@ class CraneInspectionForm(ttk.Frame):
         fn = getattr(api_client, "improve_crane_inspection_ai_api", None)
         if not callable(fn):
             messagebox.showerror(
-                "IA Maritime",
+                "PORTIA",
                 "No existe api_client.improve_crane_inspection_ai_api aún. (Lo conectamos cuando esté listo el endpoint)."
             )
             return
@@ -796,12 +807,12 @@ class CraneInspectionForm(ttk.Frame):
         )
 
         if not response.get("success"):
-            messagebox.showerror("IA Maritime", response.get("error") or "AI processing failed.")
+            messagebox.showerror("PORTIA", response.get("error") or "PORTIA processing failed.")
             return
 
         ai_items = response.get("items")
         if not ai_items:
-            messagebox.showerror("IA Maritime", "AI returned empty response.")
+            messagebox.showerror("PORTIA", "PORTIA returned empty response.")
             return
 
         PopupAICompare(
@@ -814,7 +825,7 @@ class CraneInspectionForm(ttk.Frame):
 
     def _apply_ai_text(self, section, new_text):
         """
-        Aplica el texto generado por IA a las secciones de bullets.
+        Aplica el texto generado por PORTIA a las secciones de bullets.
 
         Soporta:
         - Recommendations
@@ -839,8 +850,8 @@ class CraneInspectionForm(ttk.Frame):
 
             if not parsed:
                 messagebox.showwarning(
-                    "IA Maritime",
-                    "AI returned empty content."
+                    "PORTIA",
+                    "PORTIA returned empty content."
                 )
                 return
 
@@ -881,7 +892,7 @@ class CraneInspectionForm(ttk.Frame):
                 if key not in self._bullet_lines:
 
                     messagebox.showwarning(
-                        "IA Maritime",
+                        "PORTIA",
                         f"Unsupported section: {section}"
                     )
                     return
@@ -939,7 +950,7 @@ class CraneInspectionForm(ttk.Frame):
         except Exception as e:
 
             messagebox.showerror(
-                "IA Maritime",
+                "PORTIA",
                 str(e)
             )
 
@@ -1207,6 +1218,9 @@ class CraneInspectionForm(ttk.Frame):
 
                 if hasattr(self, "btn_update"):
                     self.btn_update.pack(side="left", padx=4)
+
+                if hasattr(self, "btn_edit"):
+                    self.btn_edit.pack(side="left", padx=4)
 
             except Exception:
                 pass
@@ -1525,11 +1539,7 @@ class CraneInspectionForm(ttk.Frame):
                     self.record_id = report_id
                     self.is_edit_mode = True
 
-                    if hasattr(self, "btn_submit"):
-                        self.btn_submit.pack_forget()
-
-                    if hasattr(self, "btn_update"):
-                        self.btn_update.pack(side="left", padx=4)
+                    pass
 
             except Exception:
                 pass
