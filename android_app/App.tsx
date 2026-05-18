@@ -1,4 +1,6 @@
 import * as LocalAuthentication from "expo-local-authentication";
+import * as FileSystem from "expo-file-system";
+import * as Sharing from "expo-sharing";
 import * as SecureStore from "expo-secure-store";
 import React, { useEffect, useMemo, useState } from "react";
 import {
@@ -1661,6 +1663,58 @@ function endpointForRow(template: string, row: Record<string, unknown>, idField:
   });
 }
 
+function cleanFilePart(value: string) {
+  return value.replace(/[^a-zA-Z0-9._-]+/g, "_").replace(/^_+|_+$/g, "") || "erp_som_file";
+}
+
+function extensionForInformeAction(action: InformeAction) {
+  const value = `${action.key} ${action.label} ${action.endpoint}`.toLowerCase();
+  if (value.includes("xlsx") || value.includes("excel")) return "xlsx";
+  if (value.includes("docx") || value.includes("word")) return "docx";
+  if (value.includes("pdf") || value.includes("presentation") || value.includes("unified")) return "pdf";
+  return "bin";
+}
+
+async function downloadSessionFile(
+  endpoint: string,
+  session: LoginResponse | null | { usuario: string; rol: string },
+  filename: string
+) {
+  const file = new FileSystem.File(FileSystem.Paths.cache, filename);
+  const headers: Record<string, string> = session
+    ? {
+        Accept: "application/octet-stream, application/pdf, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, */*",
+        "X-User": session.usuario,
+        "X-Role": session.rol,
+        "X-User-Role": session.rol
+      }
+    : { Accept: "application/octet-stream, application/pdf, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, */*" };
+
+  const response = await fetch(`${API_BASE_URL}${endpoint}`, { headers });
+  const bytes = new Uint8Array(await response.arrayBuffer());
+
+  if (!response.ok) {
+    let detail = `Error descargando archivo (${response.status}).`;
+    try {
+      const text = new TextDecoder().decode(bytes);
+      const parsed = JSON.parse(text) as Record<string, unknown>;
+      detail = formatValue(parsed.detail || parsed.error || parsed.message || text);
+    } catch {
+      // Keep the generic download error when the response is not readable JSON.
+    }
+    throw new Error(detail);
+  }
+
+  file.write(bytes);
+
+  if (await Sharing.isAvailableAsync()) {
+    await Sharing.shareAsync(file.uri);
+    return;
+  }
+
+  await Linking.openURL(file.uri);
+}
+
 function unwrapRecordPayload(payload: unknown) {
   const obj = asRecord(payload);
   if (!obj) return null;
@@ -2043,9 +2097,14 @@ function InformesSectionMobile({
     setBusy(true);
     setMessage("");
     try {
-      if (action.file || action.method === "GET" || !action.method) {
-        await Linking.openURL(`${API_BASE_URL}${endpoint}`);
-        setMessage(`Abriendo ${action.label}...`);
+      if (action.file) {
+        const rowId = formatValue(selectedRow[config.idField] || selectedRow.id || selectedRow.report_number || selectedRow.cert_no);
+        const filename = cleanFilePart(`${config.title}_${action.label}_${rowId}`) + `.${extensionForInformeAction(action)}`;
+        await downloadSessionFile(endpoint, session, filename);
+        setMessage(`${action.label} generado correctamente.`);
+      } else if (action.method === "GET" || !action.method) {
+        await apiRequest(endpoint, { session });
+        setMessage("Accion ejecutada correctamente.");
       } else {
         await apiRequest(endpoint, { method: action.method, body: action.body, session });
         setMessage("Accion ejecutada correctamente.");
