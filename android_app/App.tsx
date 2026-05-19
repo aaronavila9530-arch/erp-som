@@ -1484,15 +1484,21 @@ const INFORMES_CONFIG: Record<string, InformeConfig> = {
   },
   "draft-survey": {
     title: "Draft Survey",
-    idField: "general_id",
-    detailEndpoint: "/draft-survey/{id}",
-    updateEndpoint: "/draft-survey/{id}",
-    createEndpoint: "/draft-survey/",
+    idField: "draft_report_number",
+    detailEndpoint: "/draft-survey/unified/{id}",
+    updateEndpoint: "/draft-survey/unified/{id}",
+    createEndpoint: "/draft-survey-headers/",
     statusField: "status",
-    columns: ["general_id", "cert_no", "vessel_name", "client", "port", "country", "survey_date", "status"],
-    filters: ["status", "client", "vessel_name", "port", "country"],
+    columns: ["draft_report_number", "client", "port", "country", "continent", "year", "month", "status"],
+    filters: ["status", "client", "port", "country", "continent", "draft_report_number"],
     actions: [
-      { key: "reject", label: "Rechazar", endpoint: "/draft-survey/{id}", method: "PUT", body: { status: "Rejected" } }
+      { key: "excel", label: "Excel PDF", endpoint: "/draft-survey-excel/generate-pdf/{id}", file: true },
+      { key: "word", label: "Word PDF", endpoint: "/draft-survey-word/generate/{id}", file: true },
+      { key: "final", label: "Final PDF", endpoint: "/draft-survey-final/generate/{id}", file: true },
+      { key: "presentation", label: "Presentacion PDF", endpoint: "/draft-survey-word/presentation/{id}", file: true },
+      { key: "unified", label: "Unified PDF", endpoint: "/draft-survey-final/unified/{id}", file: true },
+      { key: "approve", label: "Aprobar", endpoint: "/draft-survey/{id}/approve", method: "PUT" },
+      { key: "reject", label: "Rechazar", endpoint: "/draft-survey/{id}/reject", method: "PUT" }
     ]
   },
   bunker: {
@@ -2057,6 +2063,7 @@ function InformesSectionMobile({
   const [containerSelectorOpen, setContainerSelectorOpen] = useState(false);
   const [grainSelectorOpen, setGrainSelectorOpen] = useState(false);
   const [truckSelectorOpen, setTruckSelectorOpen] = useState(false);
+  const [draftSurveyOpen, setDraftSurveyOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const statusOptions = ["", "Pending", "Pending for review", "Approved", "Rejected", "Approve", "Reject"];
@@ -2498,7 +2505,19 @@ function InformesSectionMobile({
                 <View style={styles.summaryBox}>
                   <Text style={styles.cardTitle}>{generateGroup}</Text>
                   {INFORMES_CREATE_CONFIG.filter((item) => item.group === generateGroup).map((item) => (
-                    <Pressable key={item.key} style={styles.secondaryButton} onPress={() => openCreate(item)}>
+                    <Pressable
+                      key={item.key}
+                      style={styles.secondaryButton}
+                      onPress={() => {
+                        if (item.key === "draft-survey") {
+                          setGenerateOpen(false);
+                          setGenerateGroup(null);
+                          setDraftSurveyOpen(true);
+                        } else {
+                          openCreate(item);
+                        }
+                      }}
+                    >
                       <Text style={styles.secondaryButtonText}>{item.title}</Text>
                     </Pressable>
                   ))}
@@ -2611,6 +2630,15 @@ function InformesSectionMobile({
         }}
       />
       <ProjectCalculatorModal visible={calculatorOpen} session={session} onClose={() => setCalculatorOpen(false)} />
+      <DraftSurveyMobileModal
+        visible={draftSurveyOpen}
+        session={session}
+        onClose={() => setDraftSurveyOpen(false)}
+        onSaved={async () => {
+          setDraftSurveyOpen(false);
+          if (activeKey === "draft-survey") await load();
+        }}
+      />
     </View>
   );
 }
@@ -3121,6 +3149,661 @@ function TruckServiceSelectorModal({
           </View>
           <Text style={styles.tableCount}>{rows.length} servicios</Text>
           <HRMiniTable rows={rows} columns={["num_informe", "buque_contenedor", "cliente", "pais", "puerto", "anio", "mes", "operacion"]} selectedIndex={selected} onSelect={setSelected} />
+          {busy ? <ActivityIndicator color={BLUE} style={styles.loader} /> : null}
+          {message ? <Text style={styles.error}>{message}</Text> : null}
+        </ScrollView>
+      </SafeAreaView>
+    </Modal>
+  );
+}
+
+const DRAFT_GENERAL_FIELDS = [
+  ["vessel_mv", "Vessel MV"], ["survey_no", "Survey no"], ["call_letters", "Call letters"], ["vessel_previous_names", "Vessel previous name/s"],
+  ["flag", "Flag"], ["registry", "Registry"], ["built_year", "Built year"], ["by", "By"],
+  ["master", "Master"], ["initial_surveyors", "Initial Surveyor/s"], ["chief_officer", "Chief Officer"], ["final_surveyors", "Final Surveyor/s"],
+  ["chief_engineer", "Chief Engineer"], ["survey_requested_by", "Survey requested by"], ["witness_draughts", "Witness draughts"], ["on_account_of", "On the account of"],
+  ["witness_sounding", "Witness sounding"], ["attended_also_by", "Attended also by"], ["init_ships_location", "Init Ship's location"], ["final_ships_location", "Final Ship's location"],
+  ["length_overall", "Length overall"], ["length_between_pp", "Length between p.p."], ["extreme_breadth", "Extreme breadth"], ["moulded_breadth", "Moulded breadth"],
+  ["depth_overall_incl_keel_plate", "Depth overall incl. keel plate"], ["moulded_depth", "Moulded depth"], ["summer_draught", "Summer draught"], ["summer_freeboard", "Summer freeboard"],
+  ["constant_declared", "Constant declared"], ["constant_calculated", "Constant calculated"], ["light_displacement", "Light displacement"], ["light_shipweight_plan", "Light shipweight (plan)"],
+  ["summer_displacement", "Summer displacement"], ["summer_deadweight", "Summer deadweight"], ["net_register_tons", "Net register tons"], ["gross_register_tons", "Gross register tons"],
+  ["hydro_tables_issued", "Hydrostatic tables issued by and dated"], ["hydrometer_no", "Hydrometer no"]
+] as const;
+
+const DRAFT_TOP_FIELDS = [
+  ["cargo", "Cargo"], ["port_from", "From"], ["port_to", "To"],
+  ["init_date", "Initial Date", "date"], ["init_time_from", "Initial From"], ["init_time_to", "Initial To"],
+  ["final_date", "Final Date", "date"], ["final_time_from", "Final From"], ["final_time_to", "Final To"]
+] as const;
+
+const DRAFT_SIDE_FIELDS = [
+  ["draft_fwd_port", "FWD Port"], ["draft_fwd_stb", "FWD STB"], ["draft_fwd_marks", "FWD Marks"],
+  ["draft_mid_port", "MID Port"], ["draft_mid_stb", "MID STB"], ["draft_mid_marks", "MID Marks"],
+  ["draft_aft_port", "AFT Port"], ["draft_aft_stb", "AFT STB"], ["draft_aft_marks", "AFT Marks"],
+  ["sg", "S.G"], ["lpp", "LPP"], ["tpc_p", "TPC - P"], ["tpc_s", "TPC - S"],
+  ["ballast", "Ballast"], ["fresh_water", "F. Water"], ["fuel_oil", "Fuel Oil"], ["diesel_oil", "Diesel Oil"],
+  ["lub_oil", "Lub Oil"], ["slop", "Slop"], ["swimming_pool", "Swimming Pool"], ["others", "Others"], ["bl_figure", "B/L Figure"]
+] as const;
+
+const DRAFT_HYDRO_FIELDS = [
+  "hydro1_draft_1", "hydro1_disp_1", "hydro1_tpc_1", "hydro1_lcf_1",
+  "hydro1_draft_2", "hydro1_disp_2", "hydro1_tpc_2", "hydro1_lcf_2",
+  "hydro1_draft_mtc", "hydro1_mtc_p50_1", "hydro1_mtc_m50_1", "hydro1_mtc_p50_2", "hydro1_mtc_m50_2",
+  "hydro2_draft_1", "hydro2_disp_1", "hydro2_tpc_1", "hydro2_lcf_1",
+  "hydro2_draft_2", "hydro2_disp_2", "hydro2_tpc_2", "hydro2_lcf_2",
+  "hydro2_draft_mtc", "hydro2_mtc_p50_1", "hydro2_mtc_m50_1", "hydro2_mtc_p50_2", "hydro2_mtc_m50_2"
+];
+
+const DRAFT_WORD_FIELDS = [
+  ["word_mt", "Metric Tons (MT)"], ["word_product", "Product"], ["word_vessel", "Vessel"], ["word_port", "Port"], ["word_country", "Country"],
+  ["word_survey_requested_by", "Survey requested by"], ["word_on_behalf_of", "On behalf of"], ["word_master", "Master of the ship"], ["word_chief_officer", "Chief Officer"],
+  ["word_name", "Name"], ["word_port_registry", "Port of Registry / Flag"], ["word_grt", "GRT"], ["word_nrt", "NRT"], ["word_year", "Year Built"], ["word_imo", "IMO Number"],
+  ["word_metric_tons", "Metric Tons"], ["word_goods_product", "Product"], ["word_holds", "Holds"], ["word_draft_figures", "Draft Survey Figures"],
+  ["word_bl_figures", "B/L Figures"], ["word_difference", "Difference"], ["word_percentage", "Percentage (%)"],
+  ["word_shore_scale", "Shore Scale Figures"], ["word_shore_bl", "B/L Figures"], ["word_shore_difference", "Difference"], ["word_shore_percentage", "Percentage (%)"]
+] as const;
+
+const DRAFT_WORD_DATETIME_FIELDS = [
+  ["word_arrived_buoy", "Vessel Arrived at Sea Buoy"], ["word_nor_tendered", "N.O.R Tendered"], ["word_all_fast", "All Fast"],
+  ["word_initial_draft", "Initial Draft Survey"], ["word_commenced", "Commenced Discharge"], ["word_completed", "Completed Discharge"], ["word_final_draft", "Final Draft Survey"]
+] as const;
+
+type DraftTank = { tank_name: string; height?: string; sounding: string; volume: string; density: string };
+
+function emptyDraftForm() {
+  const form: Record<string, string> = {
+    year: "",
+    month: "",
+    continent: "",
+    country: "",
+    port: "",
+    client: "",
+    draft_report_number: "",
+    loading: "true",
+    unloading: "false",
+    trim_tables_available: "true"
+  };
+  [...DRAFT_GENERAL_FIELDS, ...DRAFT_TOP_FIELDS, ...DRAFT_WORD_FIELDS].forEach(([key]) => { form[key] = ""; });
+  for (const prefix of ["init", "final"]) {
+    DRAFT_SIDE_FIELDS.forEach(([suffix]) => { form[`${prefix}_${suffix}`] = ""; });
+  }
+  DRAFT_HYDRO_FIELDS.forEach((suffix) => { form[`init_${suffix}`] = ""; });
+  DRAFT_WORD_DATETIME_FIELDS.forEach(([key]) => {
+    form[`${key}_date`] = formatYmd(new Date());
+    form[`${key}_time`] = "00:00";
+  });
+  return form;
+}
+
+function normalizeDraftPayload(payload: Record<string, unknown>) {
+  const data = asRecord(payload.data) || payload;
+  const next = emptyDraftForm();
+  Object.entries(data).forEach(([key, value]) => {
+    if (value === null || value === undefined || typeof value === "object") return;
+    next[key] = String(value);
+  });
+  return next;
+}
+
+function draftServiceFormFromRow(row: Record<string, unknown>) {
+  const date = monthStartFromService(row);
+  const report = formatValue(row.num_informe);
+  const vessel = formatValue(row.buque_contenedor);
+  const client = formatValue(row.cliente);
+  const continent = formatValue(row.continente);
+  const country = formatValue(row.pais);
+  const port = formatValue(row.puerto);
+  const operation = formatValue(row.operacion);
+  const parsed = parseYmd(date);
+
+  return {
+    draft_report_number: report === "-" ? "" : report,
+    survey_no: report === "-" ? "" : report,
+    vessel_mv: vessel === "-" ? "" : vessel,
+    word_vessel: vessel === "-" ? "" : vessel,
+    word_name: vessel === "-" ? "" : vessel,
+    client: client === "-" ? "" : client,
+    survey_requested_by: client === "-" ? "" : client,
+    word_survey_requested_by: client === "-" ? "" : client,
+    continent: continent === "-" ? "" : continent,
+    country: country === "-" ? "" : country,
+    word_country: country === "-" ? "" : country,
+    port: port === "-" ? "" : port,
+    word_port: port === "-" ? "" : port,
+    cargo: operation === "-" ? "" : operation,
+    word_product: operation === "-" ? "" : operation,
+    word_goods_product: operation === "-" ? "" : operation,
+    year: parsed ? String(parsed.getFullYear()) : "",
+    month: parsed ? String(parsed.getMonth() + 1) : "",
+    init_date: date,
+    final_date: date
+  };
+}
+
+function extractDraftTanks(data: Record<string, unknown>, prefix: "init" | "final", freshwater = false): DraftTank[] {
+  const raw = asRecord(data[freshwater ? "fresh_water" : "ballast"]);
+  const direct = raw?.[prefix];
+  if (Array.isArray(direct)) return direct.map((item) => asRecord(item)).filter(Boolean).map((item) => ({
+    tank_name: formatValue(item?.tank_name) === "-" ? "" : formatValue(item?.tank_name),
+    height: formatValue(item?.height) === "-" ? "" : formatValue(item?.height),
+    sounding: formatValue(item?.sounding) === "-" ? "" : formatValue(item?.sounding),
+    volume: formatValue(item?.volume) === "-" ? "" : formatValue(item?.volume),
+    density: formatValue(item?.density) === "-" ? "" : formatValue(item?.density)
+  }));
+
+  const tanks: DraftTank[] = [];
+  if (freshwater) {
+    for (let index = 1; index <= 20; index += 1) {
+      const base = `${prefix}_fw_${index}`;
+      const name = data[`${base}_name`];
+      const volume = data[`${base}_volume`];
+      if (name || volume) tanks.push({
+        tank_name: formatValue(name) === "-" ? "" : formatValue(name),
+        height: formatValue(data[`${base}_height`]) === "-" ? "" : formatValue(data[`${base}_height`]),
+        sounding: formatValue(data[`${base}_sounding`]) === "-" ? "" : formatValue(data[`${base}_sounding`]),
+        volume: formatValue(volume) === "-" ? "" : formatValue(volume),
+        density: formatValue(data[`${base}_density`]) === "-" ? "" : formatValue(data[`${base}_density`])
+      });
+    }
+    return tanks;
+  }
+
+  for (const tank of ["fpt", "apt", "slop_tank"]) {
+    const base = `${prefix}_${tank}`;
+    const name = data[`${base}_name`];
+    const volume = data[`${base}_volume`];
+    if (name || volume) tanks.push({
+      tank_name: formatValue(name) === "-" ? tank.toUpperCase().replace("_", " ") : formatValue(name),
+      sounding: formatValue(data[`${base}_sounding`]) === "-" ? "" : formatValue(data[`${base}_sounding`]),
+      volume: formatValue(volume) === "-" ? "" : formatValue(volume),
+      density: formatValue(data[`${base}_density`]) === "-" ? "" : formatValue(data[`${base}_density`])
+    });
+  }
+  for (let index = 1; index <= 20; index += 1) {
+    for (const side of ["p", "s"]) {
+      const base = `${prefix}_wbt_${index}${side}`;
+      const name = data[`${base}_name`];
+      const volume = data[`${base}_volume`];
+      if (name || volume) tanks.push({
+        tank_name: formatValue(name) === "-" ? `WBT ${index}${side.toUpperCase()}` : formatValue(name),
+        sounding: formatValue(data[`${base}_sounding`]) === "-" ? "" : formatValue(data[`${base}_sounding`]),
+        volume: formatValue(volume) === "-" ? "" : formatValue(volume),
+        density: formatValue(data[`${base}_density`]) === "-" ? "" : formatValue(data[`${base}_density`])
+      });
+    }
+  }
+  return tanks;
+}
+
+function DraftSurveyMobileModal({
+  visible,
+  session,
+  onClose,
+  onSaved
+}: {
+  visible: boolean;
+  session: NonNullable<ReturnType<typeof useAuth>["session"]>;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [mode, setMode] = useState<"choose" | "create" | "existing">("choose");
+  const [tab, setTab] = useState<"general" | "draft" | "ballast" | "word">("general");
+  const [form, setForm] = useState<Record<string, string>>(emptyDraftForm());
+  const [ballast, setBallast] = useState<{ init: DraftTank[]; final: DraftTank[] }>({ init: [], final: [] });
+  const [freshWater, setFreshWater] = useState<{ init: DraftTank[]; final: DraftTank[] }>({ init: [], final: [] });
+  const [serviceSelectorOpen, setServiceSelectorOpen] = useState(false);
+  const [existingSelectorOpen, setExistingSelectorOpen] = useState(false);
+  const [editing, setEditing] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const draftNumber = form.draft_report_number || form.survey_no;
+  const readonly = mode === "existing" && !editing;
+
+  useEffect(() => {
+    if (!visible) return;
+    setMode("choose");
+    setTab("general");
+    setForm(emptyDraftForm());
+    setBallast({ init: [], final: [] });
+    setFreshWater({ init: [], final: [] });
+    setEditing(true);
+    setMessage("");
+  }, [visible]);
+
+  function setValue(key: string, value: string) {
+    setForm((current) => {
+      const next = { ...current, [key]: value };
+      if (key === "loading" && value === "true") next.unloading = "false";
+      if (key === "unloading" && value === "true") next.loading = "false";
+      return next;
+    });
+  }
+
+  function buildPayload(): Record<string, unknown> {
+    const payload: Record<string, unknown> = { ...form };
+    payload.draft_report_number = payload.draft_report_number || payload.survey_no;
+    payload.survey_no = payload.survey_no || payload.draft_report_number;
+    return {
+      ...payload,
+      ballast,
+      fresh_water: freshWater
+    };
+  }
+
+  function buildWordPayload() {
+    const payload: Record<string, unknown> = {};
+    DRAFT_WORD_FIELDS.forEach(([key]) => { payload[key] = form[key] || null; });
+    DRAFT_WORD_DATETIME_FIELDS.forEach(([key]) => {
+      payload[`${key}_date`] = form[`${key}_date`] || null;
+      payload[`${key}_time`] = form[`${key}_time`] || null;
+    });
+    ["year", "month", "continent", "country", "port", "client", "draft_report_number"].forEach((key) => {
+      payload[key] = form[key] || null;
+    });
+    return payload;
+  }
+
+  async function loadExisting(draftReportNumber: string) {
+    setBusy(true);
+    setMessage("");
+    try {
+      const payload = await apiRequest<Record<string, unknown>>(`/draft-survey/unified/${encodeURIComponent(draftReportNumber)}`, { session });
+      const data = asRecord(payload.data) || payload;
+      setForm(normalizeDraftPayload(payload));
+      setBallast({ init: extractDraftTanks(data, "init"), final: extractDraftTanks(data, "final") });
+      setFreshWater({ init: extractDraftTanks(data, "init", true), final: extractDraftTanks(data, "final", true) });
+      setMode("existing");
+      setEditing(false);
+      setTab("general");
+      setExistingSelectorOpen(false);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo cargar el Draft.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function previewExcel() {
+    const payload = buildPayload();
+    if (!payload["vessel_mv"]) {
+      setMessage("Debe seleccionar un servicio o cargar un Draft antes de visualizar.");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      const filename = cleanFilePart(`${payload["draft_report_number"] || "Draft_Survey"}_preview`) + ".xlsx";
+      await downloadSessionFile("/draft-survey/preview/excel", session, filename, "POST", payload);
+      setMessage("Excel de Draft generado correctamente.");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo generar el Excel.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveDraft(sendToReview: boolean) {
+    const payload = buildPayload();
+    if (!payload["vessel_mv"] || !payload["draft_report_number"] || !payload["year"] || !payload["month"] || !payload["country"] || !payload["port"] || !payload["client"]) {
+      setMessage("Debe completar servicio, metadata y buque antes de guardar.");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      if (mode === "existing") {
+        await apiRequest(`/draft-survey/${encodeURIComponent(draftNumber)}`, { method: "PUT", session, body: payload });
+        await apiRequest(`/draft-survey-extra/ballast/${encodeURIComponent(draftNumber)}`, {
+          method: "PUT",
+          session,
+          body: { ballast, fresh_water: freshWater }
+        });
+        await apiRequest(`/draft-survey-extra/word/${encodeURIComponent(draftNumber)}`, { method: "POST", session, body: buildWordPayload() });
+        setMessage("Draft actualizado correctamente.");
+        setEditing(false);
+      } else {
+        const created = await apiRequest<Record<string, unknown>>("/draft-survey/", { method: "POST", session, body: payload });
+        const generalId = formatValue(created.general_id);
+        if (generalId === "-") throw new Error("El backend no devolvio general_id.");
+        await apiRequest(`/draft-survey-extra/ballast/${encodeURIComponent(generalId)}`, {
+          method: "POST",
+          session,
+          body: { ballast, fresh_water: freshWater }
+        });
+        await apiRequest(`/draft-survey-extra/word/${encodeURIComponent(generalId)}`, { method: "POST", session, body: buildWordPayload() });
+        setForm((current) => ({ ...current, general_id: generalId }));
+        setMode("existing");
+        setEditing(false);
+        setMessage(sendToReview ? "Draft enviado a revision." : "Draft guardado correctamente.");
+      }
+      if (sendToReview) onSaved();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo guardar Draft Survey.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function renderTextField(key: string, label: string, multiline = false) {
+    return (
+      <View key={key} style={styles.formField}>
+        <Text style={styles.label}>{label}</Text>
+        <TextInput
+          editable={!readonly}
+          style={[styles.input, multiline && styles.multilineInput, readonly && styles.readonlyInput]}
+          value={form[key] || ""}
+          onChangeText={(value) => setValue(key, value)}
+          multiline={multiline}
+        />
+      </View>
+    );
+  }
+
+  function renderTankEditor(kind: "ballast" | "fresh", prefix: "init" | "final") {
+    const rows = kind === "ballast" ? ballast[prefix] : freshWater[prefix];
+    const setRows = (nextRows: DraftTank[]) => {
+      if (kind === "ballast") setBallast((current) => ({ ...current, [prefix]: nextRows }));
+      else setFreshWater((current) => ({ ...current, [prefix]: nextRows }));
+    };
+    return (
+      <View style={styles.summaryBox}>
+        <Text style={styles.cardTitle}>{prefix.toUpperCase()} {kind === "ballast" ? "BALLAST" : "FRESH WATER"}</Text>
+        {rows.map((tank, index) => (
+          <View key={`${kind}-${prefix}-${index}`} style={styles.summaryBox}>
+            {renderTankInput(tank, index, "tank_name", "Tank", rows, setRows)}
+            {kind === "fresh" ? renderTankInput(tank, index, "height", "Height", rows, setRows) : null}
+            {renderTankInput(tank, index, "sounding", "Sounding", rows, setRows)}
+            {renderTankInput(tank, index, "volume", "Volume", rows, setRows)}
+            {renderTankInput(tank, index, "density", "Density", rows, setRows)}
+            <Pressable style={styles.modalClose} onPress={() => setRows(rows.filter((_, rowIndex) => rowIndex !== index))}>
+              <Text style={styles.modalCloseText}>Eliminar tanque</Text>
+            </Pressable>
+          </View>
+        ))}
+        <Pressable style={styles.secondaryButton} onPress={() => setRows([...rows, { tank_name: "", height: "", sounding: "", volume: "", density: "" }])}>
+          <Text style={styles.secondaryButtonText}>+ Add {kind === "ballast" ? "Tank" : "FW Tank"}</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
+  function renderTankInput(tank: DraftTank, index: number, key: keyof DraftTank, label: string, rows: DraftTank[], setRows: (nextRows: DraftTank[]) => void) {
+    return (
+      <View key={key} style={styles.formField}>
+        <Text style={styles.label}>{label}</Text>
+        <TextInput
+          editable={!readonly}
+          style={[styles.input, readonly && styles.readonlyInput]}
+          value={String(tank[key] || "")}
+          onChangeText={(value) => setRows(rows.map((item, rowIndex) => rowIndex === index ? { ...item, [key]: value } : item))}
+        />
+      </View>
+    );
+  }
+
+  const tabs = [
+    ["general", "General"], ["draft", "Draft"], ["ballast", "Ballast"], ["word", "Word Report"]
+  ] as const;
+
+  return (
+    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+      <SafeAreaView style={styles.modalScreen}>
+        <View style={styles.modalHeader}>
+          <Text style={styles.modalTitle}>Vessel Draft Survey</Text>
+          <Pressable style={styles.modalClose} onPress={onClose}><Text style={styles.modalCloseText}>Cerrar</Text></Pressable>
+        </View>
+        {mode === "choose" ? (
+          <View style={styles.modalBody}>
+            <Pressable style={styles.actionButton} onPress={() => { setMode("create"); setEditing(true); }}>
+              <Text style={styles.actionButtonText}>Crear desde cero</Text>
+            </Pressable>
+            <Pressable style={styles.secondaryButton} onPress={() => setExistingSelectorOpen(true)}>
+              <Text style={styles.secondaryButtonText}>Abrir Draft previo</Text>
+            </Pressable>
+            {message ? <Text style={styles.error}>{message}</Text> : null}
+          </View>
+        ) : (
+          <>
+            <View style={styles.financeFilterBox}>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.actionBar}>
+                <Pressable style={styles.secondaryButton} onPress={() => setServiceSelectorOpen(true)}><Text style={styles.secondaryButtonText}>Seleccionar Reporte</Text></Pressable>
+                <Pressable style={styles.secondaryButton} onPress={previewExcel}><Text style={styles.secondaryButtonText}>Visualizar Draft Excel</Text></Pressable>
+                {mode === "existing" ? <Pressable style={styles.secondaryButton} onPress={() => setEditing((value) => !value)}><Text style={styles.secondaryButtonText}>{editing ? "Bloquear" : "Editar"}</Text></Pressable> : null}
+                <Pressable style={styles.actionButton} onPress={() => saveDraft(false)}><Text style={styles.actionButtonText}>Guardar</Text></Pressable>
+                <Pressable style={styles.actionButton} onPress={() => saveDraft(true)}><Text style={styles.actionButtonText}>Enviar a revision</Text></Pressable>
+              </ScrollView>
+              <View style={styles.summaryBox}>
+                <Text style={styles.fieldKey}>Draft Information</Text>
+                <Text style={styles.fieldValue}>{[form.year, form.month, form.country, form.port, form.client, form.draft_report_number].filter(Boolean).join(" | ") || "Sin servicio seleccionado"}</Text>
+              </View>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.actionBar}>
+                {tabs.map(([key, label]) => (
+                  <Pressable key={key} style={tab === key ? styles.actionButton : styles.modalClose} onPress={() => setTab(key)}>
+                    <Text style={tab === key ? styles.actionButtonText : styles.modalCloseText}>{label}</Text>
+                  </Pressable>
+                ))}
+              </ScrollView>
+            </View>
+            <ScrollView contentContainerStyle={styles.modalBody} keyboardShouldPersistTaps="handled">
+              {tab === "general" ? (
+                <>
+                  {DRAFT_GENERAL_FIELDS.map(([key, label]) => renderTextField(key, label, key === "hydro_tables_issued"))}
+                  <View style={styles.rememberRow}>
+                    <Text style={styles.rememberText}>Range of trim correction tables available</Text>
+                    <Switch value={form.trim_tables_available === "true"} disabled={readonly} onValueChange={(value) => setValue("trim_tables_available", value ? "true" : "false")} trackColor={{ true: BLUE }} />
+                  </View>
+                </>
+              ) : null}
+              {tab === "draft" ? (
+                <>
+                  {DRAFT_TOP_FIELDS.map(([key, label, type]) => type === "date" ? (
+                    <DateField key={key} label={label} value={form[key] || ""} onChange={(value) => setValue(key, value)} />
+                  ) : renderTextField(key, label))}
+                  <View style={styles.rememberRow}><Text style={styles.rememberText}>Loading</Text><Switch value={form.loading === "true"} disabled={readonly} onValueChange={(value) => setValue("loading", value ? "true" : "false")} trackColor={{ true: BLUE }} /></View>
+                  <View style={styles.rememberRow}><Text style={styles.rememberText}>Unloading</Text><Switch value={form.unloading === "true"} disabled={readonly} onValueChange={(value) => setValue("unloading", value ? "true" : "false")} trackColor={{ true: BLUE }} /></View>
+                  {(["init", "final"] as const).map((prefix) => (
+                    <View key={prefix} style={styles.summaryBox}>
+                      <Text style={styles.cardTitle}>{prefix.toUpperCase()} SURVEY</Text>
+                      {DRAFT_SIDE_FIELDS.map(([suffix, label]) => renderTextField(`${prefix}_${suffix}`, label))}
+                    </View>
+                  ))}
+                  <View style={styles.summaryBox}>
+                    <Text style={styles.cardTitle}>INITIAL - Hydrostatic Data</Text>
+                    {DRAFT_HYDRO_FIELDS.map((suffix) => renderTextField(`init_${suffix}`, suffix.replaceAll("_", " ").toUpperCase()))}
+                  </View>
+                </>
+              ) : null}
+              {tab === "ballast" ? (
+                <>
+                  {renderTankEditor("ballast", "init")}
+                  {renderTankEditor("ballast", "final")}
+                  {renderTankEditor("fresh", "init")}
+                  {renderTankEditor("fresh", "final")}
+                </>
+              ) : null}
+              {tab === "word" ? (
+                <>
+                  {DRAFT_WORD_FIELDS.map(([key, label]) => renderTextField(key, label))}
+                  {DRAFT_WORD_DATETIME_FIELDS.map(([key, label]) => (
+                    <View key={key} style={styles.summaryBox}>
+                      <Text style={styles.cardTitle}>{label}</Text>
+                      <DateField label="Date" value={form[`${key}_date`] || ""} onChange={(value) => setValue(`${key}_date`, value)} />
+                      {renderTextField(`${key}_time`, "Time HH:MM")}
+                    </View>
+                  ))}
+                </>
+              ) : null}
+              {busy ? <ActivityIndicator color={BLUE} style={styles.loader} /> : null}
+              {message ? <Text style={message.includes("correctamente") || message.includes("revision") ? styles.helperText : styles.error}>{message}</Text> : null}
+            </ScrollView>
+          </>
+        )}
+        <DraftServiceSelectorModal
+          visible={serviceSelectorOpen}
+          session={session}
+          onClose={() => setServiceSelectorOpen(false)}
+          onSelect={(row) => {
+            setForm((current) => ({ ...current, ...draftServiceFormFromRow(row) }));
+            setServiceSelectorOpen(false);
+          }}
+        />
+        <DraftExistingSelectorModal visible={existingSelectorOpen} session={session} onClose={() => setExistingSelectorOpen(false)} onSelect={loadExisting} />
+      </SafeAreaView>
+    </Modal>
+  );
+}
+
+function DraftServiceSelectorModal({
+  visible,
+  session,
+  onClose,
+  onSelect
+}: {
+  visible: boolean;
+  session: NonNullable<ReturnType<typeof useAuth>["session"]>;
+  onClose: () => void;
+  onSelect: (report: Record<string, unknown>) => void;
+}) {
+  const [filters, setFilters] = useState({ year: "", month: "", continente: "", pais: "", puerto: "", cliente: "", operacion: "" });
+  const [rows, setRows] = useState<Record<string, unknown>[]>([]);
+  const [selected, setSelected] = useState<number | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const selectedRow = selected === null ? null : rows[selected] || null;
+  const options = {
+    years: [...new Set(rows.map((row) => formatValue(row.fecha_inicio).slice(0, 4)).filter((item) => item && item !== "-"))],
+    months: Array.from({ length: 12 }, (_, index) => String(index + 1).padStart(2, "0")),
+    continentes: [...new Set(rows.map((row) => formatValue(row.continente)).filter((item) => item !== "-"))],
+    paises: [...new Set(rows.map((row) => formatValue(row.pais)).filter((item) => item !== "-"))],
+    puertos: [...new Set(rows.map((row) => formatValue(row.puerto)).filter((item) => item !== "-"))],
+    clientes: [...new Set(rows.map((row) => formatValue(row.cliente)).filter((item) => item !== "-"))],
+    operaciones: [...new Set(rows.map((row) => formatValue(row.operacion)).filter((item) => item !== "-"))]
+  };
+
+  async function load(nextFilters = filters) {
+    setBusy(true);
+    setMessage("");
+    try {
+      const params = new URLSearchParams();
+      Object.entries(nextFilters).forEach(([key, value]) => { if (value) params.set(key, value); });
+      const payload = await apiRequest(`/draft-survey/servicios/filter${params.toString() ? `?${params.toString()}` : ""}`, { session });
+      setRows(rowsFromAny(payload));
+      setSelected(null);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudieron cargar servicios Draft.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function updateFilter(key: keyof typeof filters, value: string) {
+    const next = { ...filters, [key]: value };
+    setFilters(next);
+    load(next);
+  }
+
+  useEffect(() => {
+    if (!visible) return;
+    const initial = { year: "", month: "", continente: "", pais: "", puerto: "", cliente: "", operacion: "" };
+    setFilters(initial);
+    load(initial);
+  }, [visible]);
+
+  return (
+    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+      <SafeAreaView style={styles.modalScreen}>
+        <View style={styles.modalHeader}><Text style={styles.modalTitle}>Buscar Servicio - Draft Survey</Text><Pressable style={styles.modalClose} onPress={onClose}><Text style={styles.modalCloseText}>Cerrar</Text></Pressable></View>
+        <ScrollView contentContainerStyle={styles.modalBody}>
+          <SelectField label="Anio" value={filters.year} options={options.years} onChange={(value) => updateFilter("year", value)} />
+          <SelectField label="Mes" value={filters.month} options={options.months} onChange={(value) => updateFilter("month", value)} />
+          <SelectField label="Continente" value={filters.continente} options={options.continentes} onChange={(value) => updateFilter("continente", value)} />
+          <SelectField label="Pais" value={filters.pais} options={options.paises} onChange={(value) => updateFilter("pais", value)} />
+          <SelectField label="Puerto" value={filters.puerto} options={options.puertos} onChange={(value) => updateFilter("puerto", value)} />
+          <SelectField label="Cliente" value={filters.cliente} options={options.clientes} onChange={(value) => updateFilter("cliente", value)} />
+          <SelectField label="Operacion" value={filters.operacion} options={options.operaciones} onChange={(value) => updateFilter("operacion", value)} />
+          <View style={styles.informesHomeActions}>
+            <Pressable style={styles.actionButton} onPress={() => load(filters)}><Text style={styles.actionButtonText}>Buscar</Text></Pressable>
+            <Pressable style={styles.modalClose} onPress={() => selectedRow ? onSelect(selectedRow) : setMessage("Seleccione un servicio.")}><Text style={styles.modalCloseText}>Seleccionar</Text></Pressable>
+          </View>
+          <Text style={styles.tableCount}>{rows.length} servicios</Text>
+          <HRMiniTable rows={rows} columns={["num_informe", "buque_contenedor", "cliente", "continente", "pais", "puerto", "operacion", "fecha_inicio"]} selectedIndex={selected} onSelect={setSelected} />
+          {busy ? <ActivityIndicator color={BLUE} style={styles.loader} /> : null}
+          {message ? <Text style={styles.error}>{message}</Text> : null}
+        </ScrollView>
+      </SafeAreaView>
+    </Modal>
+  );
+}
+
+function DraftExistingSelectorModal({
+  visible,
+  session,
+  onClose,
+  onSelect
+}: {
+  visible: boolean;
+  session: NonNullable<ReturnType<typeof useAuth>["session"]>;
+  onClose: () => void;
+  onSelect: (draftReportNumber: string) => void;
+}) {
+  const [rows, setRows] = useState<Record<string, unknown>[]>([]);
+  const [filters, setFilters] = useState({ search: "", continent: "", country: "", year: "", month: "", port: "", client: "" });
+  const [selected, setSelected] = useState<number | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const filtered = rows.filter((row) => {
+    for (const key of ["continent", "country", "year", "month", "port", "client"] as const) {
+      if (filters[key] && formatValue(row[key]).toLowerCase() !== filters[key].toLowerCase()) return false;
+    }
+    if (!filters.search.trim()) return true;
+    const needle = filters.search.toLowerCase();
+    return ["draft_report_number", "client", "port", "country"].some((key) => formatValue(row[key]).toLowerCase().includes(needle));
+  });
+  const selectedRow = selected === null ? null : filtered[selected] || null;
+
+  async function load() {
+    setBusy(true);
+    setMessage("");
+    try {
+      const payload = await apiRequest("/draft-survey-headers/", { session });
+      setRows(rowsFromAny(payload));
+      setSelected(null);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudieron cargar Drafts previos.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!visible) return;
+    setFilters({ search: "", continent: "", country: "", year: "", month: "", port: "", client: "" });
+    load();
+  }, [visible]);
+
+  return (
+    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+      <SafeAreaView style={styles.modalScreen}>
+        <View style={styles.modalHeader}><Text style={styles.modalTitle}>Select Existing Draft Survey</Text><Pressable style={styles.modalClose} onPress={onClose}><Text style={styles.modalCloseText}>Cerrar</Text></Pressable></View>
+        <ScrollView contentContainerStyle={styles.modalBody}>
+          <Text style={styles.label}>Buscar</Text>
+          <TextInput style={styles.input} value={filters.search} onChangeText={(search) => setFilters((current) => ({ ...current, search }))} />
+          {(["continent", "country", "year", "month", "port", "client"] as const).map((key) => (
+            <View key={key} style={styles.formField}>
+              <Text style={styles.label}>{key}</Text>
+              <TextInput style={styles.input} value={filters[key]} onChangeText={(value) => setFilters((current) => ({ ...current, [key]: value }))} />
+            </View>
+          ))}
+          <View style={styles.informesHomeActions}>
+            <Pressable style={styles.actionButton} onPress={load}><Text style={styles.actionButtonText}>Buscar</Text></Pressable>
+            <Pressable style={styles.modalClose} onPress={() => {
+              const draft = formatValue(selectedRow?.draft_report_number);
+              if (draft === "-") setMessage("Seleccione un Draft.");
+              else onSelect(draft);
+            }}><Text style={styles.modalCloseText}>Cargar Draft</Text></Pressable>
+          </View>
+          <Text style={styles.tableCount}>{filtered.length} drafts</Text>
+          <HRMiniTable rows={filtered} columns={["draft_report_number", "client", "port", "country", "continent", "year", "month", "status"]} selectedIndex={selected} onSelect={setSelected} />
           {busy ? <ActivityIndicator color={BLUE} style={styles.loader} /> : null}
           {message ? <Text style={styles.error}>{message}</Text> : null}
         </ScrollView>

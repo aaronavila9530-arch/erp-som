@@ -926,7 +926,7 @@ def update_ballast(draft_survey_id: str, payload: dict, conn=Depends(get_db)):
 # ================= WORD REPORT (CREATE) ===================
 # =========================================================
 @router.post("/word/{draft_survey_id}")
-def create_word(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
+def create_word(draft_survey_id: str, payload: dict, conn=Depends(get_db)):
 
     cur = conn.cursor()
 
@@ -1013,12 +1013,10 @@ def create_word(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
         # =====================================================
         # 1) RESOLVER ID REAL
         # =====================================================
-        cur.execute(
-            "SELECT id FROM draft_survey WHERE general_id = %s",
-            (draft_survey_id,)
-        )
-        row = cur.fetchone()
-        real_id = row[0] if row else draft_survey_id
+        real_id = _resolve_draft_survey_real_id(cur, str(draft_survey_id))
+
+        if not real_id:
+            raise HTTPException(404, f"No existe draft_survey {draft_survey_id}")
 
         # =====================================================
         # 2) LIMPIAR BASE (SIN TOCAR TEXTO)

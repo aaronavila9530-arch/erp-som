@@ -49,6 +49,7 @@ def filter_servicios(
     continente: str | None = None,
     pais: str | None = None,
     puerto: str | None = None,
+    cliente: str | None = None,
     operacion: str | None = None,
     conn=Depends(get_db)
 ):
@@ -115,6 +116,13 @@ def filter_servicios(
         if puerto:
             base_query += " AND puerto ILIKE %s"
             params.append(puerto)
+
+        # -----------------------------------------------------
+        # CLIENTE
+        # -----------------------------------------------------
+        if cliente:
+            base_query += " AND cliente ILIKE %s"
+            params.append(cliente)
 
         # -----------------------------------------------------
         # OPERACION
@@ -487,6 +495,123 @@ def list_draft_surveys(conn=Depends(get_db)):
         """)
 
         return {"success": True, "data": cur.fetchall()}
+
+    finally:
+        cur.close()
+
+
+# =========================================================
+# STATUS ACTIONS
+# =========================================================
+
+@router.put("/{identifier}/approve")
+def approve_draft_survey(identifier: str, conn=Depends(get_db)):
+    return _set_draft_status(identifier, "Approved", conn)
+
+
+@router.put("/{identifier}/reject")
+def reject_draft_survey(identifier: str, conn=Depends(get_db)):
+    return _set_draft_status(identifier, "Rejected", conn)
+
+
+def _set_draft_status(identifier: str, status: str, conn):
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+
+    try:
+        general_id = None
+
+        try:
+            general_id = int(identifier)
+        except Exception:
+            pass
+
+        if general_id is None:
+            cur.execute(
+                """
+                SELECT id
+                FROM general_draft_survey
+                WHERE draft_report_number = %s
+                LIMIT 1
+                """,
+                (identifier,)
+            )
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"No existe draft_report_number {identifier}"
+                )
+            general_id = row["id"]
+
+        cur.execute(
+            """
+            SELECT draft_report_number
+            FROM general_draft_survey
+            WHERE id = %s
+            LIMIT 1
+            """,
+            (general_id,)
+        )
+        general_row = cur.fetchone()
+        if not general_row:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No existe general_draft_survey con id {general_id}"
+            )
+
+        draft_report_number = general_row["draft_report_number"]
+
+        for table in (
+            "general_draft_survey",
+            "draft_survey",
+            "draft_survey_ballast",
+            "draft_survey_word_report"
+        ):
+            cur.execute(
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = %s
+                """,
+                (table,)
+            )
+            cols = {row["column_name"] for row in cur.fetchall()}
+
+            if "status" not in cols or "draft_report_number" not in cols:
+                continue
+
+            set_clause = "status = %s"
+            if "updated_at" in cols:
+                set_clause += ", updated_at = NOW()"
+
+            cur.execute(
+                f"""
+                UPDATE {table}
+                SET {set_clause}
+                WHERE draft_report_number = %s
+                """,
+                (status, draft_report_number)
+            )
+
+        conn.commit()
+
+        return {
+            "success": True,
+            "draft_report_number": draft_report_number,
+            "status": status
+        }
+
+    except HTTPException:
+        conn.rollback()
+        raise
+
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error updating Draft status: {str(e)}"
+        )
 
     finally:
         cur.close()
