@@ -1473,13 +1473,13 @@ const INFORMES_CONFIG: Record<string, InformeConfig> = {
     updateEndpoint: "/vessel-truck-supervision/{id}",
     createEndpoint: "/vessel-truck-supervision/",
     statusField: "status",
-    columns: ["id", "cert_no", "vessel_name", "customer", "port", "country", "date", "status"],
-    filters: ["status", "customer", "vessel_name", "port", "country"],
+    columns: ["id", "cert_no", "vessel_name", "customer", "port", "report_date", "status"],
+    filters: ["status", "customer", "vessel_name", "port", "country", "cert_no"],
     actions: [
-      { key: "approve", label: "Aprobar/PDF", endpoint: "/vessel-truck-supervision/{id}/approve", method: "POST" },
-      { key: "reject", label: "Rechazar", endpoint: "/vessel-truck-supervision/{id}", method: "PUT", body: { status: "Rejected" } },
-      { key: "presentation", label: "Presentacion", endpoint: "/vessel-truck-supervision/{id}/presentation", file: true },
-      { key: "unified", label: "Unified", endpoint: "/vessel-truck-supervision/{id}/unified", file: true }
+      { key: "approve", label: "Aprobar/PDF", endpoint: "/vessel-truck-supervision/{id}/approve", method: "POST", file: true },
+      { key: "reject", label: "Rechazar", endpoint: "/vessel-truck-supervision/{id}/reject", method: "PUT" },
+      { key: "presentation", label: "Presentacion PDF", endpoint: "/vessel-truck-supervision/{id}/presentation", file: true },
+      { key: "unified", label: "Unified PDF", endpoint: "/vessel-truck-supervision/{id}/unified", file: true }
     ]
   },
   "draft-survey": {
@@ -1938,6 +1938,37 @@ const GRAIN_SAMPLING_FIELDS: InformeCreateField[] = [
   { key: "conclusion", label: "Conclusion", type: "multiline" }
 ];
 
+const TRUCK_SUPERVISION_FIELDS: InformeCreateField[] = [
+  { key: "section_header", label: "Report Header", type: "section" },
+  { key: "cert_no", label: "CERT No." },
+  { key: "customer", label: "Customer" },
+  { key: "port", label: "Puerto" },
+  { key: "country", label: "Pais" },
+  { key: "report_date", label: "Fecha", type: "date" },
+  { key: "section_ship", label: "2. BUQUE", type: "section" },
+  { key: "vessel_name", label: "Nombre" },
+  { key: "flag_port_registry", label: "Bandera / Puerto Registro" },
+  { key: "grt", label: "GRT" },
+  { key: "nrt", label: "NRT" },
+  { key: "imo_no", label: "IMO No." },
+  { key: "build_year", label: "Anio Construccion" },
+  { key: "section_representatives", label: "Representantes", type: "section" },
+  { key: "captain", label: "Capitan" },
+  { key: "chief_officer", label: "Primer Oficial" },
+  { key: "section_times", label: "Tiempos", type: "section" },
+  { key: "arrival_date", label: "Fecha Arribo", type: "date" },
+  { key: "inspection_date", label: "Fecha Inspeccion", type: "date" },
+  { key: "supervision_completed_date", label: "Supervision Completada", type: "date" },
+  { key: "section_process", label: "4. Proceso de Supervision", type: "section" },
+  { key: "process_text", label: "Proceso de Supervision", type: "multiline" },
+  { key: "section_findings", label: "5. Hallazgos", type: "section" },
+  { key: "findings_documental_text", label: "5.1 Hallazgos Documentales", type: "multiline" },
+  { key: "findings_operational_text", label: "5.2 Hallazgos de Control Operativo", type: "multiline" },
+  { key: "incidents_text", label: "5.3 Incidentes", type: "multiline" },
+  { key: "section_conclusion", label: "6. Conclusion", type: "section" },
+  { key: "conclusion_text", label: "Conclusion", type: "multiline" }
+];
+
 const INFORMES_CREATE_CONFIG: InformeCreateConfig[] = [
   {
     key: "container",
@@ -1960,16 +1991,7 @@ const INFORMES_CREATE_CONFIG: InformeCreateConfig[] = [
     title: "Truck Supervision",
     endpoint: "/vessel-truck-supervision/",
     dateFormat: "dmy",
-    fields: [
-      { key: "cert_no", label: "CERT No." },
-      { key: "customer", label: "Customer" },
-      { key: "port", label: "Puerto" },
-      { key: "country", label: "Pais" },
-      { key: "report_date", label: "Fecha", type: "date" },
-      { key: "vessel_name", label: "Buque" },
-      { key: "process_text", label: "Proceso de Supervision", type: "multiline" },
-      { key: "conclusion_text", label: "Conclusion", type: "multiline" }
-    ]
+    fields: TRUCK_SUPERVISION_FIELDS
   },
   { key: "draft-survey", group: "Informe buque", title: "Draft Survey", endpoint: "/draft-survey/", fields: COMMON_REPORT_FIELDS },
   { key: "bunker", group: "Informe buque", title: "Vessel Bunker", endpoint: "/vessel-bunker-reports/", fields: COMMON_REPORT_FIELDS },
@@ -2034,6 +2056,7 @@ function InformesSectionMobile({
   const [createForm, setCreateForm] = useState<Record<string, string>>({});
   const [containerSelectorOpen, setContainerSelectorOpen] = useState(false);
   const [grainSelectorOpen, setGrainSelectorOpen] = useState(false);
+  const [truckSelectorOpen, setTruckSelectorOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const statusOptions = ["", "Pending", "Pending for review", "Approved", "Rejected", "Approve", "Reject"];
@@ -2301,6 +2324,40 @@ function InformesSectionMobile({
     }
   }
 
+  async function improveTruckSupervisionWithPortia(field: InformeCreateField) {
+    const originalText = (createForm[field.key] || "").trim();
+    if (!originalText) {
+      setMessage("La seccion seleccionada no tiene texto para mejorar.");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      const response = await apiRequest<Record<string, unknown>>("/reports/ai/improve/truck", {
+        method: "POST",
+        session,
+        body: {
+          text: originalText,
+          vessel: createForm.vessel_name || "",
+          location: createForm.port || "",
+          cargo: "Truck Discharge Operation",
+          language: "ES"
+        }
+      });
+      const nextText = formatValue(response.text || response.improved_text || response.result);
+      if (nextText === "-") {
+        setMessage("PORTIA no devolvio texto valido.");
+        return;
+      }
+      setCreateForm((current) => ({ ...current, [field.key]: nextText }));
+      setMessage(`PORTIA mejoro: ${field.label}.`);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "PORTIA no pudo mejorar el texto.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function resetFilters() {
     setFilters({ status: "", search: "", continente: "", pais: "", puerto: "", operacion: "", year: "", month: "" });
   }
@@ -2477,6 +2534,13 @@ function InformesSectionMobile({
                     <Text style={styles.selectText}>{createForm[field.key] || "Seleccionar informe de servicio"}</Text>
                   </Pressable>
                 </View>
+              ) : createConfig.key === "truck-supervision" && field.key === "cert_no" ? (
+                <View key={field.key} style={styles.formField}>
+                  <Text style={styles.label}>{field.label}</Text>
+                  <Pressable style={styles.selectBox} onPress={() => setTruckSelectorOpen(true)}>
+                    <Text style={styles.selectText}>{createForm[field.key] || "Seleccionar informe de servicio"}</Text>
+                  </Pressable>
+                </View>
               ) : field.type === "date" ? (
                 <DateField key={field.key} label={field.label} value={createForm[field.key] || ""} onChange={(value) => setCreateForm((current) => ({ ...current, [field.key]: value }))} />
               ) : field.type === "datetime" ? (
@@ -2507,6 +2571,10 @@ function InformesSectionMobile({
                     <Pressable style={styles.secondaryButton} onPress={improveGrainSamplingWithPortia}>
                       <Text style={styles.secondaryButtonText}>Mejorar con PORTIA</Text>
                     </Pressable>
+                  ) : createConfig.key === "truck-supervision" && field.type === "multiline" ? (
+                    <Pressable style={styles.secondaryButton} onPress={() => improveTruckSupervisionWithPortia(field)}>
+                      <Text style={styles.secondaryButtonText}>Mejorar con PORTIA</Text>
+                    </Pressable>
                   ) : null}
                 </View>
               )
@@ -2531,6 +2599,15 @@ function InformesSectionMobile({
         onSelect={(report) => {
           setCreateForm((current) => ({ ...current, ...grainFormFromServiceReport(report) }));
           setGrainSelectorOpen(false);
+        }}
+      />
+      <TruckServiceSelectorModal
+        visible={truckSelectorOpen}
+        session={session}
+        onClose={() => setTruckSelectorOpen(false)}
+        onSelect={(report) => {
+          setCreateForm((current) => ({ ...current, ...truckFormFromServiceReport(report) }));
+          setTruckSelectorOpen(false);
         }}
       />
       <ProjectCalculatorModal visible={calculatorOpen} session={session} onClose={() => setCalculatorOpen(false)} />
@@ -2611,6 +2688,34 @@ function grainFormFromServiceReport(row: Record<string, unknown>) {
     requested_by: client === "-" ? "" : client,
     sampling_start_time: serviceDateTime,
     supervision: serviceDateTime
+  };
+}
+
+function monthStartFromService(row: Record<string, unknown>) {
+  const exactDate = formatValue(row.fecha_inicio);
+  if (exactDate !== "-") return exactDate.slice(0, 10);
+  const year = formatValue(row.anio ?? row.year);
+  const month = formatValue(row.mes ?? row.month);
+  if (year === "-" || month === "-") return formatYmd(new Date());
+  return `${year}-${month.padStart(2, "0")}-01`;
+}
+
+function truckFormFromServiceReport(row: Record<string, unknown>) {
+  const reportNumber = formatValue(row.num_informe);
+  const client = formatValue(row.cliente);
+  const vessel = formatValue(row.buque_contenedor);
+  const country = formatValue(row.pais);
+  const port = formatValue(row.puerto);
+  const reportDate = monthStartFromService(row);
+
+  return {
+    cert_no: reportNumber === "-" ? "" : reportNumber,
+    customer: client === "-" ? "" : client,
+    port: port === "-" ? "" : port,
+    country: country === "-" ? "" : country,
+    report_date: reportDate,
+    vessel_name: vessel === "-" ? "" : vessel,
+    inspection_date: reportDate
   };
 }
 
@@ -2903,6 +3008,119 @@ function GrainServiceSelectorModal({
           </View>
           <Text style={styles.tableCount}>{rows.length} informes</Text>
           <HRMiniTable rows={rows} columns={["num_informe", "buque_contenedor", "cliente", "pais", "puerto", "operacion", "fecha_inicio"]} selectedIndex={selected} onSelect={setSelected} />
+          {busy ? <ActivityIndicator color={BLUE} style={styles.loader} /> : null}
+          {message ? <Text style={styles.error}>{message}</Text> : null}
+        </ScrollView>
+      </SafeAreaView>
+    </Modal>
+  );
+}
+
+function TruckServiceSelectorModal({
+  visible,
+  session,
+  onClose,
+  onSelect
+}: {
+  visible: boolean;
+  session: NonNullable<ReturnType<typeof useAuth>["session"]>;
+  onClose: () => void;
+  onSelect: (report: Record<string, unknown>) => void;
+}) {
+  const [filters, setFilters] = useState({
+    anio: "",
+    mes: "",
+    continente: "",
+    pais: "",
+    puerto: "",
+    cliente: "",
+    buque_contenedor: "",
+    operacion: ""
+  });
+  const [options, setOptions] = useState<Record<string, string[]>>({});
+  const [rows, setRows] = useState<Record<string, unknown>[]>([]);
+  const [selected, setSelected] = useState<number | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const selectedRow = selected === null ? null : rows[selected] || null;
+
+  async function loadSelector(nextFilters = filters) {
+    setBusy(true);
+    setMessage("");
+    try {
+      const params = new URLSearchParams();
+      Object.entries(nextFilters).forEach(([key, value]) => {
+        if (value) params.set(key, value);
+      });
+      const payload = await apiRequest(`/vessel-truck-supervision/servicios-filter${params.toString() ? `?${params.toString()}` : ""}`, { session });
+      setOptions({
+        years: arrayFromNestedPayload(payload, "filters", "years"),
+        months: arrayFromNestedPayload(payload, "filters", "months"),
+        continentes: arrayFromNestedPayload(payload, "filters", "continentes"),
+        paises: arrayFromNestedPayload(payload, "filters", "paises"),
+        puertos: arrayFromNestedPayload(payload, "filters", "puertos"),
+        clientes: arrayFromNestedPayload(payload, "filters", "clientes"),
+        buques: arrayFromNestedPayload(payload, "filters", "buques"),
+        operaciones: arrayFromNestedPayload(payload, "filters", "operaciones")
+      });
+      setRows(rowsFromAny(payload));
+      setSelected(null);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo cargar el selector de Truck Supervision.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function updateFilter(key: keyof typeof filters, value: string) {
+    const next = { ...filters, [key]: value };
+    setFilters(next);
+    loadSelector(next);
+  }
+
+  useEffect(() => {
+    if (!visible) return;
+    const initial = { anio: "", mes: "", continente: "", pais: "", puerto: "", cliente: "", buque_contenedor: "", operacion: "" };
+    setFilters(initial);
+    setRows([]);
+    setOptions({});
+    setSelected(null);
+    loadSelector(initial);
+  }, [visible]);
+
+  return (
+    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+      <SafeAreaView style={styles.modalScreen}>
+        <View style={styles.modalHeader}>
+          <Text style={styles.modalTitle}>Buscar Servicio Truck</Text>
+          <Pressable style={styles.modalClose} onPress={onClose}><Text style={styles.modalCloseText}>Cerrar</Text></Pressable>
+        </View>
+        <ScrollView contentContainerStyle={styles.modalBody}>
+          <SelectField label="Anio" value={filters.anio} options={options.years || []} onChange={(value) => updateFilter("anio", value)} />
+          <SelectField label="Mes" value={filters.mes} options={options.months || []} onChange={(value) => updateFilter("mes", value)} />
+          <SelectField label="Continente" value={filters.continente} options={options.continentes || []} onChange={(value) => updateFilter("continente", value)} />
+          <SelectField label="Pais" value={filters.pais} options={options.paises || []} onChange={(value) => updateFilter("pais", value)} />
+          <SelectField label="Puerto" value={filters.puerto} options={options.puertos || []} onChange={(value) => updateFilter("puerto", value)} />
+          <SelectField label="Cliente" value={filters.cliente} options={options.clientes || []} onChange={(value) => updateFilter("cliente", value)} />
+          <SelectField label="Buque" value={filters.buque_contenedor} options={options.buques || []} onChange={(value) => updateFilter("buque_contenedor", value)} />
+          <SelectField label="Operacion" value={filters.operacion} options={options.operaciones || []} onChange={(value) => updateFilter("operacion", value)} />
+          <View style={styles.informesHomeActions}>
+            <Pressable style={styles.actionButton} onPress={() => loadSelector(filters)}><Text style={styles.actionButtonText}>Buscar</Text></Pressable>
+            <Pressable
+              style={styles.modalClose}
+              onPress={() => {
+                if (!selectedRow) {
+                  setMessage("Seleccione un servicio.");
+                } else {
+                  onSelect(selectedRow);
+                }
+              }}
+            >
+              <Text style={styles.modalCloseText}>Usar servicio</Text>
+            </Pressable>
+          </View>
+          <Text style={styles.tableCount}>{rows.length} servicios</Text>
+          <HRMiniTable rows={rows} columns={["num_informe", "buque_contenedor", "cliente", "pais", "puerto", "anio", "mes", "operacion"]} selectedIndex={selected} onSelect={setSelected} />
           {busy ? <ActivityIndicator color={BLUE} style={styles.loader} /> : null}
           {message ? <Text style={styles.error}>{message}</Text> : null}
         </ScrollView>

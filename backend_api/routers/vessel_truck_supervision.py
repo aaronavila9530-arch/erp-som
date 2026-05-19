@@ -117,6 +117,10 @@ def filter_servicios(
                 pais,
                 puerto,
                 operacion,
+                fecha_inicio,
+                hora_inicio,
+                contacto,
+                detalle,
                 EXTRACT(YEAR FROM fecha_inicio)::int AS anio,
                 EXTRACT(MONTH FROM fecha_inicio)::int AS mes
         """ + base_query + """
@@ -712,6 +716,54 @@ def update_vessel_truck_supervision(
         raise HTTPException(
             status_code=500,
             detail=f"Error updating report: {str(e)}"
+        )
+
+    finally:
+        cur.close()
+
+
+# =========================================================
+# REJECT
+# =========================================================
+
+@router.put("/{report_id}/reject")
+def reject_vessel_truck_supervision(
+    report_id: int,
+    conn=Depends(get_db)
+):
+    cur = conn.cursor()
+
+    try:
+        cur.execute("""
+            UPDATE vessel_truck_supervision_reports
+            SET status = 'Rejected',
+                updated_at = NOW()
+            WHERE id = %s
+        """, (report_id,))
+
+        if cur.rowcount == 0:
+            raise HTTPException(
+                status_code=404,
+                detail="Report not found"
+            )
+
+        conn.commit()
+
+        return {
+            "success": True,
+            "id": report_id,
+            "status": "Rejected"
+        }
+
+    except HTTPException:
+        conn.rollback()
+        raise
+
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error rejecting report: {str(e)}"
         )
 
     finally:
