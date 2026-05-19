@@ -1456,13 +1456,14 @@ const INFORMES_CONFIG: Record<string, InformeConfig> = {
     updateEndpoint: "/vessel-grain-sampling/{id}",
     createEndpoint: "/vessel-grain-sampling",
     statusField: "status",
-    columns: ["id", "cert_no", "vessel_name", "client", "port", "country", "date", "status"],
-    filters: ["status", "client", "vessel_name", "port", "country"],
+    columns: ["id", "cert_no", "vessel_name", "requested_by", "place_date", "sampling_start_time", "status"],
+    filters: ["status", "requested_by", "vessel_name", "cert_no"],
     actions: [
-      { key: "approve", label: "Aprobar", endpoint: "/vessel-grain-sampling/{id}/approve", method: "PUT" },
-      { key: "reject", label: "Rechazar", endpoint: "/vessel-grain-sampling/{id}", method: "PUT", body: { status: "Rejected" } },
-      { key: "presentation", label: "Presentacion PDF", endpoint: "/vessel-grain-sampling/{id}/presentation-pdf", method: "POST" },
-      { key: "unified", label: "Unified PDF", endpoint: "/vessel-grain-sampling/{id}/unified-pdf", method: "POST" }
+      { key: "word", label: "Word", endpoint: "/vessel-grain-sampling/{id}/generate-word", method: "POST", file: true },
+      { key: "approve", label: "Aprobar/PDF", endpoint: "/vessel-grain-sampling/{id}/approve", method: "PUT", file: true },
+      { key: "reject", label: "Rechazar", endpoint: "/vessel-grain-sampling/{id}/reject", method: "PUT" },
+      { key: "presentation", label: "Presentacion PDF", endpoint: "/vessel-grain-sampling/{id}/presentation-pdf", method: "POST", file: true },
+      { key: "unified", label: "Unified PDF", endpoint: "/vessel-grain-sampling/{id}/unified-pdf", method: "POST", file: true }
     ]
   },
   "truck-supervision": {
@@ -1678,7 +1679,9 @@ function extensionForInformeAction(action: InformeAction) {
 async function downloadSessionFile(
   endpoint: string,
   session: LoginResponse | null | { usuario: string; rol: string },
-  filename: string
+  filename: string,
+  method: "GET" | "POST" | "PUT" = "GET",
+  body?: Record<string, unknown>
 ) {
   const file = new FileSystem.File(FileSystem.Paths.cache, filename);
   const headers: Record<string, string> = session
@@ -1689,8 +1692,13 @@ async function downloadSessionFile(
         "X-User-Role": session.rol
       }
     : { Accept: "application/octet-stream, application/pdf, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, */*" };
+  if (body) headers["Content-Type"] = "application/json";
 
-  const response = await fetch(`${API_BASE_URL}${endpoint}`, { headers });
+  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+    method,
+    headers,
+    body: body ? JSON.stringify(body) : undefined
+  });
   const bytes = new Uint8Array(await response.arrayBuffer());
 
   if (!response.ok) {
@@ -1868,6 +1876,68 @@ const CONTAINER_REPORT_FIELDS: InformeCreateField[] = [
   { key: "scope_items", label: "No. Items" }
 ];
 
+const GRAIN_SAMPLING_FIELDS: InformeCreateField[] = [
+  { key: "section_selector", label: "Report Header", type: "section" },
+  { key: "cert_no", label: "CERT No." },
+  { key: "service_port", label: "Puerto" },
+  { key: "service_country", label: "Pais" },
+  { key: "place_date", label: "Fecha", type: "date" },
+  { key: "section_main", label: "Main Information", type: "section" },
+  { key: "vessel_name", label: "Buque" },
+  { key: "requested_by", label: "Cliente" },
+  { key: "captain", label: "Capitan" },
+  { key: "chief_officer", label: "Primer Oficial" },
+  { key: "section_ship", label: "2. BUQUE", type: "section" },
+  { key: "ship_flag", label: "2.2 Bandera / Puerto de Registro" },
+  { key: "ship_grt", label: "2.3 GRT" },
+  { key: "ship_nrt", label: "2.4 NRT" },
+  { key: "ship_imo", label: "2.5 IMO No." },
+  { key: "ship_year", label: "2.6 Anio de Construccion" },
+  { key: "section_times", label: "3. TIEMPOS", type: "section" },
+  { key: "arrival_buoy_time", label: "3.1 Arribo Boya de Mar", type: "datetime" },
+  { key: "nor_tendered_time", label: "3.2 N.O.R Tendered", type: "datetime" },
+  { key: "holds_opening_time", label: "3.3 Apertura de Bodegas", type: "datetime" },
+  { key: "surveyors_onboard_time", label: "3.4 Surveyors a bordo", type: "datetime" },
+  { key: "seals_verification_time", label: "3.5 Verificacion de Sellos", type: "datetime" },
+  { key: "sampling_start_time", label: "3.6 Inicio de Muestreo", type: "datetime" },
+  { key: "sampling_end_time", label: "3.7 Finalizacion Muestreo", type: "datetime" },
+  { key: "surveyors_disembark_time", label: "3.8 Surveyors Desembarcando", type: "datetime" },
+  { key: "section_products", label: "PRODUCTOS", type: "section" },
+  { key: "products_total", label: "Tonelaje Total (MT)" },
+  { key: "hold1_product", label: "Bodega 1 Producto" },
+  { key: "hold1_tonnage", label: "Bodega 1 Tonelaje (MT)" },
+  { key: "hold2_product", label: "Bodega 2 Producto" },
+  { key: "hold2_tonnage", label: "Bodega 2 Tonelaje (MT)" },
+  { key: "hold3_product", label: "Bodega 3 Producto" },
+  { key: "hold3_tonnage", label: "Bodega 3 Tonelaje (MT)" },
+  { key: "hold4_product", label: "Bodega 4 Producto" },
+  { key: "hold4_tonnage", label: "Bodega 4 Tonelaje (MT)" },
+  { key: "hold5_product", label: "Bodega 5 Producto" },
+  { key: "hold5_tonnage", label: "Bodega 5 Tonelaje (MT)" },
+  { key: "section_sampling", label: "4. TOMA DE MUESTRAS", type: "section" },
+  { key: "supervision", label: "Fecha Supervision", type: "datetime" },
+  { key: "sample1_hold", label: "Bodega Muestreo 1" },
+  { key: "sample1_proa_babor", label: "M1 Proa Babor" },
+  { key: "sample1_proa_estribor", label: "M1 Proa Estribor" },
+  { key: "sample1_centro", label: "M1 Centro" },
+  { key: "sample1_popa_babor", label: "M1 Popa Babor" },
+  { key: "sample1_popa_estribor", label: "M1 Popa Estribor" },
+  { key: "sample2_hold", label: "Bodega Muestreo 2" },
+  { key: "sample2_proa_babor", label: "M2 Proa Babor" },
+  { key: "sample2_proa_estribor", label: "M2 Proa Estribor" },
+  { key: "sample2_centro", label: "M2 Centro" },
+  { key: "sample2_popa_babor", label: "M2 Popa Babor" },
+  { key: "sample2_popa_estribor", label: "M2 Popa Estribor" },
+  { key: "sample3_hold", label: "Bodega Muestreo 3" },
+  { key: "sample3_proa_babor", label: "M3 Proa Babor" },
+  { key: "sample3_proa_estribor", label: "M3 Proa Estribor" },
+  { key: "sample3_centro", label: "M3 Centro" },
+  { key: "sample3_popa_babor", label: "M3 Popa Babor" },
+  { key: "sample3_popa_estribor", label: "M3 Popa Estribor" },
+  { key: "section_conclusion", label: "Conclusion", type: "section" },
+  { key: "conclusion", label: "Conclusion", type: "multiline" }
+];
+
 const INFORMES_CREATE_CONFIG: InformeCreateConfig[] = [
   {
     key: "container",
@@ -1881,16 +1951,8 @@ const INFORMES_CREATE_CONFIG: InformeCreateConfig[] = [
     group: "Informe buque",
     title: "Muestreo de Granos",
     endpoint: "/vessel-grain-sampling",
-    fields: [
-      { key: "cert_no", label: "CERT No." },
-      { key: "place_date", label: "Place / date" },
-      { key: "requested_by", label: "Requested by" },
-      { key: "vessel_name", label: "Vessel" },
-      { key: "captain", label: "Captain" },
-      { key: "chief_officer", label: "Chief officer" },
-      { key: "supervision", label: "Supervision", type: "multiline" },
-      { key: "conclusion", label: "Conclusion", type: "multiline" }
-    ]
+    dateFormat: "dmy",
+    fields: GRAIN_SAMPLING_FIELDS
   },
   {
     key: "truck-supervision",
@@ -1971,6 +2033,7 @@ function InformesSectionMobile({
   const [createConfig, setCreateConfig] = useState<InformeCreateConfig | null>(null);
   const [createForm, setCreateForm] = useState<Record<string, string>>({});
   const [containerSelectorOpen, setContainerSelectorOpen] = useState(false);
+  const [grainSelectorOpen, setGrainSelectorOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const statusOptions = ["", "Pending", "Pending for review", "Approved", "Rejected", "Approve", "Reject"];
@@ -2104,7 +2167,7 @@ function InformesSectionMobile({
       if (action.file) {
         const rowId = formatValue(selectedRow[config.idField] || selectedRow.id || selectedRow.report_number || selectedRow.cert_no);
         const filename = cleanFilePart(`${config.title}_${action.label}_${rowId}`) + `.${extensionForInformeAction(action)}`;
-        await downloadSessionFile(endpoint, session, filename);
+        await downloadSessionFile(endpoint, session, filename, action.method || "GET", action.body);
         setMessage(`${action.label} generado correctamente.`);
       } else if (action.method === "GET" || !action.method) {
         await apiRequest(endpoint, { session });
@@ -2123,14 +2186,18 @@ function InformesSectionMobile({
 
   function openCreate(configToCreate: InformeCreateConfig) {
     setCreateConfig(configToCreate);
-    setCreateForm(Object.fromEntries(configToCreate.fields
+    const initial = Object.fromEntries(configToCreate.fields
       .filter((field) => field.type !== "section")
       .map((field) => {
         if (field.type === "date") return [field.key, formatYmd(new Date())];
         if (field.type === "datetime") return [field.key, `${formatYmd(new Date())} 00:00`];
         if (field.type === "checkbox") return [field.key, "false"];
         return [field.key, ""];
-      })));
+      }));
+    if (configToCreate.key === "grain-sampling") {
+      for (let index = 1; index <= 5; index += 1) initial[`hold${index}_product`] = "MAIZ AMARILLO";
+    }
+    setCreateForm(initial);
     setGenerateOpen(false);
     setGenerateGroup(null);
   }
@@ -2149,6 +2216,10 @@ function InformesSectionMobile({
       createConfig.fields.forEach((field) => {
         if (field.type === "section") delete payload[field.key];
       });
+      if (createConfig.key === "grain-sampling") {
+        delete payload.service_port;
+        delete payload.service_country;
+      }
       await apiRequest(createConfig.endpoint, { method: "POST", body: payload, session });
       setCreateConfig(null);
       setCreateForm({});
@@ -2190,6 +2261,41 @@ function InformesSectionMobile({
       setMessage(`PORTIA mejoro: ${field.label}.`);
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "PORTIA no pudo mejorar el texto.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function improveGrainSamplingWithPortia() {
+    const originalText = (createForm.conclusion || "").trim();
+    if (!originalText) {
+      setMessage("La conclusion no tiene texto para mejorar.");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      const response = await apiRequest<Record<string, unknown>>("/reports/ai/improve/grain", {
+        method: "POST",
+        session,
+        body: {
+          text: originalText,
+          language: "ES",
+          vessel: createForm.vessel_name || "",
+          location: createForm.service_port || "",
+          product: createForm.hold1_product || "Bulk Grain",
+          authority: createForm.requested_by || ""
+        }
+      });
+      const nextText = formatValue(response.text || response.improved_text || response.result);
+      if (nextText === "-") {
+        setMessage("PORTIA no devolvio texto valido.");
+        return;
+      }
+      setCreateForm((current) => ({ ...current, conclusion: nextText }));
+      setMessage("PORTIA mejoro la conclusion.");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "PORTIA no pudo mejorar la conclusion.");
     } finally {
       setBusy(false);
     }
@@ -2364,6 +2470,13 @@ function InformesSectionMobile({
                     <Text style={styles.selectText}>{createForm[field.key] || "Select service report"}</Text>
                   </Pressable>
                 </View>
+              ) : createConfig.key === "grain-sampling" && field.key === "cert_no" ? (
+                <View key={field.key} style={styles.formField}>
+                  <Text style={styles.label}>{field.label}</Text>
+                  <Pressable style={styles.selectBox} onPress={() => setGrainSelectorOpen(true)}>
+                    <Text style={styles.selectText}>{createForm[field.key] || "Seleccionar informe de servicio"}</Text>
+                  </Pressable>
+                </View>
               ) : field.type === "date" ? (
                 <DateField key={field.key} label={field.label} value={createForm[field.key] || ""} onChange={(value) => setCreateForm((current) => ({ ...current, [field.key]: value }))} />
               ) : field.type === "datetime" ? (
@@ -2390,6 +2503,10 @@ function InformesSectionMobile({
                     <Pressable style={styles.secondaryButton} onPress={() => improveContainerTextWithPortia(field)}>
                       <Text style={styles.secondaryButtonText}>Mejorar con PORTIA</Text>
                     </Pressable>
+                  ) : createConfig.key === "grain-sampling" && field.key === "conclusion" ? (
+                    <Pressable style={styles.secondaryButton} onPress={improveGrainSamplingWithPortia}>
+                      <Text style={styles.secondaryButtonText}>Mejorar con PORTIA</Text>
+                    </Pressable>
                   ) : null}
                 </View>
               )
@@ -2405,6 +2522,15 @@ function InformesSectionMobile({
         onSelect={(report) => {
           setCreateForm((current) => ({ ...current, ...containerFormFromServiceReport(report) }));
           setContainerSelectorOpen(false);
+        }}
+      />
+      <GrainServiceSelectorModal
+        visible={grainSelectorOpen}
+        session={session}
+        onClose={() => setGrainSelectorOpen(false)}
+        onSelect={(report) => {
+          setCreateForm((current) => ({ ...current, ...grainFormFromServiceReport(report) }));
+          setGrainSelectorOpen(false);
         }}
       />
       <ProjectCalculatorModal visible={calculatorOpen} session={session} onClose={() => setCalculatorOpen(false)} />
@@ -2465,9 +2591,38 @@ function containerFormFromServiceReport(row: Record<string, unknown>) {
   };
 }
 
+function grainFormFromServiceReport(row: Record<string, unknown>) {
+  const reportNumber = formatValue(row.num_informe);
+  const client = formatValue(row.cliente);
+  const vessel = formatValue(row.buque_contenedor);
+  const country = formatValue(row.pais);
+  const port = formatValue(row.puerto);
+  const serviceDate = formatValue(row.fecha_inicio);
+  const serviceDateTime = composeServiceDateTime(row);
+  const products = Object.fromEntries(Array.from({ length: 5 }, (_, index) => [`hold${index + 1}_product`, "MAIZ AMARILLO"]));
+
+  return {
+    ...products,
+    cert_no: reportNumber === "-" ? "" : reportNumber,
+    service_port: port === "-" ? "" : port,
+    service_country: country === "-" ? "" : country,
+    place_date: serviceDate === "-" ? formatYmd(new Date()) : serviceDate,
+    vessel_name: vessel === "-" ? "" : vessel,
+    requested_by: client === "-" ? "" : client,
+    sampling_start_time: serviceDateTime,
+    supervision: serviceDateTime
+  };
+}
+
 function arrayFromPayload(payload: unknown, key: string) {
   const obj = asRecord(payload);
   const value = obj?.[key];
+  return Array.isArray(value) ? value.map((item) => formatValue(item)).filter((item) => item !== "-") : [];
+}
+
+function arrayFromNestedPayload(payload: unknown, parentKey: string, key: string) {
+  const parent = asRecord(asRecord(payload)?.[parentKey]);
+  const value = parent?.[key];
   return Array.isArray(value) ? value.map((item) => formatValue(item)).filter((item) => item !== "-") : [];
 }
 
@@ -2635,6 +2790,119 @@ function ContainerReportSelectorModal({
           </View>
           <Text style={styles.tableCount}>{rows.length} reports</Text>
           <HRMiniTable rows={rows} columns={["num_informe", "cliente", "buque_contenedor", "pais", "puerto", "operacion", "fecha_inicio"]} selectedIndex={selected} onSelect={setSelected} />
+          {busy ? <ActivityIndicator color={BLUE} style={styles.loader} /> : null}
+          {message ? <Text style={styles.error}>{message}</Text> : null}
+        </ScrollView>
+      </SafeAreaView>
+    </Modal>
+  );
+}
+
+function GrainServiceSelectorModal({
+  visible,
+  session,
+  onClose,
+  onSelect
+}: {
+  visible: boolean;
+  session: NonNullable<ReturnType<typeof useAuth>["session"]>;
+  onClose: () => void;
+  onSelect: (report: Record<string, unknown>) => void;
+}) {
+  const [filters, setFilters] = useState({
+    year: "",
+    month: "",
+    continente: "",
+    pais: "",
+    puerto: "",
+    cliente: "",
+    buque: "",
+    operacion: ""
+  });
+  const [options, setOptions] = useState<Record<string, string[]>>({});
+  const [rows, setRows] = useState<Record<string, unknown>[]>([]);
+  const [selected, setSelected] = useState<number | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const selectedRow = selected === null ? null : rows[selected] || null;
+
+  async function loadSelector(nextFilters = filters, includeRows = true) {
+    setBusy(true);
+    setMessage("");
+    try {
+      const params = new URLSearchParams();
+      Object.entries(nextFilters).forEach(([key, value]) => {
+        if (value) params.set(key, value);
+      });
+      const payload = await apiRequest(`/vessel-grain-sampling/services-selector${params.toString() ? `?${params.toString()}` : ""}`, { session });
+      setOptions({
+        years: arrayFromNestedPayload(payload, "filters", "years"),
+        months: arrayFromNestedPayload(payload, "filters", "months"),
+        continentes: arrayFromNestedPayload(payload, "filters", "continentes"),
+        paises: arrayFromNestedPayload(payload, "filters", "paises"),
+        puertos: arrayFromNestedPayload(payload, "filters", "puertos"),
+        clientes: arrayFromNestedPayload(payload, "filters", "clientes"),
+        buques: arrayFromNestedPayload(payload, "filters", "buques"),
+        operaciones: arrayFromNestedPayload(payload, "filters", "operaciones")
+      });
+      setRows(includeRows ? rowsFromAny(payload) : []);
+      setSelected(null);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo cargar el selector de Grain Sampling.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function updateFilter(key: keyof typeof filters, value: string) {
+    const next = { ...filters, [key]: value };
+    setFilters(next);
+    loadSelector(next, true);
+  }
+
+  useEffect(() => {
+    if (!visible) return;
+    const initial = { year: "", month: "", continente: "", pais: "", puerto: "", cliente: "", buque: "", operacion: "" };
+    setFilters(initial);
+    setRows([]);
+    setOptions({});
+    setSelected(null);
+    loadSelector(initial, true);
+  }, [visible]);
+
+  return (
+    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+      <SafeAreaView style={styles.modalScreen}>
+        <View style={styles.modalHeader}>
+          <Text style={styles.modalTitle}>Select Grain Sampling Service</Text>
+          <Pressable style={styles.modalClose} onPress={onClose}><Text style={styles.modalCloseText}>Cerrar</Text></Pressable>
+        </View>
+        <ScrollView contentContainerStyle={styles.modalBody}>
+          <SelectField label="Year" value={filters.year} options={options.years || []} onChange={(value) => updateFilter("year", value)} />
+          <SelectField label="Month" value={filters.month} options={options.months || []} onChange={(value) => updateFilter("month", value)} />
+          <SelectField label="Continente" value={filters.continente} options={options.continentes || []} onChange={(value) => updateFilter("continente", value)} />
+          <SelectField label="Pais" value={filters.pais} options={options.paises || []} onChange={(value) => updateFilter("pais", value)} />
+          <SelectField label="Puerto" value={filters.puerto} options={options.puertos || []} onChange={(value) => updateFilter("puerto", value)} />
+          <SelectField label="Cliente" value={filters.cliente} options={options.clientes || []} onChange={(value) => updateFilter("cliente", value)} />
+          <SelectField label="Buque" value={filters.buque} options={options.buques || []} onChange={(value) => updateFilter("buque", value)} />
+          <SelectField label="Operacion" value={filters.operacion} options={options.operaciones || []} onChange={(value) => updateFilter("operacion", value)} />
+          <View style={styles.informesHomeActions}>
+            <Pressable style={styles.actionButton} onPress={() => loadSelector(filters, true)}><Text style={styles.actionButtonText}>Buscar</Text></Pressable>
+            <Pressable
+              style={styles.modalClose}
+              onPress={() => {
+                if (!selectedRow) {
+                  setMessage("Seleccione un informe.");
+                } else {
+                  onSelect(selectedRow);
+                }
+              }}
+            >
+              <Text style={styles.modalCloseText}>Usar informe</Text>
+            </Pressable>
+          </View>
+          <Text style={styles.tableCount}>{rows.length} informes</Text>
+          <HRMiniTable rows={rows} columns={["num_informe", "buque_contenedor", "cliente", "pais", "puerto", "operacion", "fecha_inicio"]} selectedIndex={selected} onSelect={setSelected} />
           {busy ? <ActivityIndicator color={BLUE} style={styles.loader} /> : null}
           {message ? <Text style={styles.error}>{message}</Text> : null}
         </ScrollView>

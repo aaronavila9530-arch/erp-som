@@ -476,7 +476,10 @@ def get_services_for_grain_sampling(
                 pais,
                 puerto,
                 operacion,
-                fecha_inicio
+                fecha_inicio,
+                hora_inicio,
+                contacto,
+                detalle
         """ + base_query + """
             ORDER BY fecha_inicio DESC NULLS LAST
         """
@@ -831,6 +834,53 @@ def update_vessel_grain_sampling_report(
         raise HTTPException(
             status_code=500,
             detail=f"Error updating grain sampling report: {str(e)}"
+        )
+
+    finally:
+        cur.close()
+
+
+# ============================================================
+# REJECT REPORT
+# ============================================================
+
+@router.put("/{report_id}/reject")
+def reject_vessel_grain_sampling_report(
+    report_id: int,
+    conn=Depends(get_db)
+):
+    cur = conn.cursor()
+
+    try:
+        cur.execute("""
+            UPDATE vessel_grain_sampling_reports
+            SET status = 'Rejected',
+                updated_at = NOW()
+            WHERE id = %s
+        """, (report_id,))
+
+        if cur.rowcount == 0:
+            raise HTTPException(
+                status_code=404,
+                detail="Grain sampling report not found"
+            )
+
+        conn.commit()
+
+        return {
+            "success": True,
+            "id": report_id,
+            "status": "Rejected"
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error rejecting grain sampling report: {str(e)}"
         )
 
     finally:
