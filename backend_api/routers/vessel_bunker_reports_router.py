@@ -358,8 +358,9 @@ class VesselBunkerReportRouter:
             payload = self._normalize_common(payload)
             payload["updated_at"] = datetime.utcnow()
 
-            # FULL slots (esto resetea a None lo que no venga)
-            payload = self._ensure_full_slots(payload)
+            # UPDATE debe respetar PATCH-like payloads usados por tabla/review.
+            # El form completo envia todos los slots cuando corresponde; aprobar/rechazar
+            # solo envia status y no debe borrar tanques ni bunker figures existentes.
 
             table_cols = self._get_table_columns(cur)
             blocked_keys = {"id", "created_at"}

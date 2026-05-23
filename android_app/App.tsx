@@ -1508,11 +1508,11 @@ const INFORMES_CONFIG: Record<string, InformeConfig> = {
     updateEndpoint: "/vessel-bunker-reports/{id}",
     createEndpoint: "/vessel-bunker-reports/",
     statusField: "status",
-    columns: ["id", "bunker_cert_no", "vessel", "client", "port", "country", "attendance_date", "status"],
-    filters: ["status", "client", "vessel", "port", "country"],
+    columns: ["id", "bunker_cert_no", "ship_name", "client", "port", "country", "report_date", "status"],
+    filters: ["status", "client", "ship_name", "port", "country", "bunker_cert_no"],
     actions: [
       { key: "excel", label: "Excel", endpoint: "/vessel-bunker-excel/generate/{id}", file: true },
-      { key: "pdf", label: "PDF", endpoint: "/vessel-bunker-excel/generate-pdf/{id}", file: true },
+      { key: "pdf", label: "Final PDF", endpoint: "/vessel-bunker-excel/generate-pdf/{id}", file: true },
       { key: "presentation", label: "Presentacion", endpoint: "/vessel-bunker-reports/presentation/{id}", file: true },
       { key: "approve", label: "Aprobar", endpoint: "/vessel-bunker-reports/{id}", method: "PUT", body: { status: "Approved" } },
       { key: "reject", label: "Rechazar", endpoint: "/vessel-bunker-reports/{id}", method: "PUT", body: { status: "Rejected" } }
@@ -2064,6 +2064,8 @@ function InformesSectionMobile({
   const [grainSelectorOpen, setGrainSelectorOpen] = useState(false);
   const [truckSelectorOpen, setTruckSelectorOpen] = useState(false);
   const [draftSurveyOpen, setDraftSurveyOpen] = useState(false);
+  const [bunkerOpen, setBunkerOpen] = useState(false);
+  const [bunkerReviewId, setBunkerReviewId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const statusOptions = ["", "Pending", "Pending for review", "Approved", "Rejected", "Approve", "Reject"];
@@ -2137,6 +2139,16 @@ function InformesSectionMobile({
   async function openDetail() {
     if (!selectedRow) {
       setMessage("Seleccione una fila.");
+      return;
+    }
+    if (activeKey === "bunker") {
+      const id = formatValue(selectedRow.id);
+      if (id === "-") {
+        setMessage("Seleccione un Vessel Bunker valido.");
+        return;
+      }
+      setBunkerReviewId(id);
+      setBunkerOpen(true);
       return;
     }
     if (!config.detailEndpoint) {
@@ -2513,6 +2525,11 @@ function InformesSectionMobile({
                           setGenerateOpen(false);
                           setGenerateGroup(null);
                           setDraftSurveyOpen(true);
+                        } else if (item.key === "bunker") {
+                          setGenerateOpen(false);
+                          setGenerateGroup(null);
+                          setBunkerReviewId(null);
+                          setBunkerOpen(true);
                         } else {
                           openCreate(item);
                         }
@@ -2639,6 +2656,20 @@ function InformesSectionMobile({
           if (activeKey === "draft-survey") await load();
         }}
       />
+      <VesselBunkerMobileModal
+        visible={bunkerOpen}
+        session={session}
+        initialReportId={bunkerReviewId}
+        onClose={() => {
+          setBunkerOpen(false);
+          setBunkerReviewId(null);
+        }}
+        onSaved={async () => {
+          setBunkerOpen(false);
+          setBunkerReviewId(null);
+          if (activeKey === "bunker") await load();
+        }}
+      />
     </View>
   );
 }
@@ -2745,6 +2776,202 @@ function truckFormFromServiceReport(row: Record<string, unknown>) {
     vessel_name: vessel === "-" ? "" : vessel,
     inspection_date: reportDate
   };
+}
+
+type BunkerTank = {
+  name: string;
+  dist_mtrs: string;
+  gauge_mtrs: string;
+  volume_m3: string;
+  temp_c: string;
+  temp_f: string;
+  density_15c: string;
+  weight_mt: string;
+};
+
+type BunkerFigure = {
+  name: string;
+  ifo: string;
+  vlsfo: string;
+  lsmgo: string;
+};
+
+const BUNKER_CERTIFICATE_OPTIONS = ["ON_HIRE", "OFF_HIRE", "SPOT"];
+const BUNKER_MAIN_FIELDS: Array<[string, string, ("text" | "date" | "select" | "multiline")?]> = [
+  ["bunker_cert_no", "Cert No", "text"],
+  ["certificate", "Type", "select"],
+  ["ship_name", "Ship Name", "text"],
+  ["port_of_registry", "Port of Registry", "text"],
+  ["gross_tonnage", "Gross Tonnage", "text"],
+  ["report_date", "Report Date", "date"],
+  ["client", "Client", "text"],
+  ["port", "Port", "text"],
+  ["country", "Country", "text"],
+  ["report_category", "Report Category", "text"],
+  ["antecedent_arrived_port", "Vessel arrived to", "text"],
+  ["antecedent_arrived_dt", "Arrival Date", "date"],
+  ["antecedent_survey_date_from", "Survey From", "date"],
+  ["antecedent_survey_hour_from", "Survey From HH", "text"],
+  ["antecedent_survey_minute_from", "Survey From MM", "text"],
+  ["antecedent_survey_date_to", "Survey Until", "date"],
+  ["antecedent_survey_hour_to", "Survey Until HH", "text"],
+  ["antecedent_survey_minute_to", "Survey Until MM", "text"],
+  ["inspection_with", "Inspection Joint With", "text"],
+  ["remarks", "3- Remark", "multiline"]
+];
+const BUNKER_DELIVERY_FIELDS: Array<[string, string, ("text" | "date")?]> = [
+  ["dslop_port", "DLOSP Port"],
+  ["dslop_country", "DLOSP Country"],
+  ["dslop_date", "DLOSP Date", "date"],
+  ["dslop_hour", "DLOSP HH"],
+  ["dslop_minute", "DLOSP MM"],
+  ["draft_fwd", "Draft FWD"],
+  ["draft_aft", "Draft AFT"],
+  ["trim", "TRIM"],
+  ["list", "LIST"],
+  ["bunker_delivery_declared", "Bunker Delivery Declared"],
+  ["rob_diff", "ROB Difference"],
+  ["plus_consumption", "Plus Consumption"],
+  ["generator_until_aps", "Generator Until APS"],
+  ["cons_dept", "Cons. Dept"],
+  ["me_to_sea_buoy", "ME to Sea Buoy"]
+];
+const BUNKER_LOG_EVENTS = [
+  ["log_eosp", "E.O.S.P"],
+  ["log_pob", "P.O.B"],
+  ["log_fwe", "F.W.E"],
+  ["log_bunker", "BUNKER ON LOG BOOK FIGURES"],
+  ["log_at_survey", "LOG BOOK FIGURES AT SURVEY"]
+] as const;
+const BUNKER_CONSUMPTION_ROWS = [
+  ["cons_sea_loaded", "AT SEA - LOADED"],
+  ["cons_sea_ballast", "AT SEA - BALLAST"],
+  ["cons_port_ship_gear", "AT PORT - SHIP GEAR IN USE"],
+  ["cons_port_shore_gear", "AT PORT - SHORE GEAR IN USE"]
+] as const;
+const BUNKER_SIGNATURE_FIELDS = [
+  ["surveyor_name", "Surveyor Name"],
+  ["master_name", "Master Name"],
+  ["chief_engineer_name", "C. Engineer"],
+  ["owner_name", "Owner"],
+  ["charterers_name", "Charterers"]
+] as const;
+
+function emptyBunkerForm() {
+  return {
+    bunker_cert_no: "",
+    certificate: "ON_HIRE",
+    ship_name: "",
+    port_of_registry: "",
+    gross_tonnage: "",
+    report_date: formatYmd(new Date()),
+    client: "",
+    port: "",
+    country: "",
+    report_category: "",
+    antecedent_arrived_port: "",
+    antecedent_arrived_dt: formatYmd(new Date()),
+    antecedent_survey_date_from: formatYmd(new Date()),
+    antecedent_survey_hour_from: "08",
+    antecedent_survey_minute_from: "00",
+    antecedent_survey_date_to: formatYmd(new Date()),
+    antecedent_survey_hour_to: "17",
+    antecedent_survey_minute_to: "00",
+    inspection_with: "",
+    remarks: "",
+    dslop_port: "",
+    dslop_country: "",
+    dslop_date: formatYmd(new Date()),
+    dslop_hour: "08",
+    dslop_minute: "00",
+    draft_fwd: "",
+    draft_aft: "",
+    trim: "",
+    list: "",
+    bunker_delivery_declared: "",
+    rob_diff: "",
+    plus_consumption: "",
+    generator_until_aps: "",
+    cons_dept: "",
+    me_to_sea_buoy: "",
+    surveyor_name: "",
+    master_name: "",
+    chief_engineer_name: "",
+    owner_name: "",
+    charterers_name: "",
+    status: "Pending",
+    workflow_status: "Pending Review"
+  } as Record<string, string>;
+}
+
+function emptyBunkerTank(): BunkerTank {
+  return { name: "", dist_mtrs: "", gauge_mtrs: "", volume_m3: "", temp_c: "", temp_f: "", density_15c: "", weight_mt: "" };
+}
+
+function emptyBunkerFigure(): BunkerFigure {
+  return { name: "", ifo: "", vlsfo: "", lsmgo: "" };
+}
+
+function bunkerFormFromServiceReport(row: Record<string, unknown>) {
+  const reportNumber = formatValue(row.num_informe);
+  const client = formatValue(row.cliente);
+  const vessel = formatValue(row.buque_contenedor);
+  const country = formatValue(row.pais);
+  const port = formatValue(row.puerto);
+  const operation = formatValue(row.operacion);
+  const reportDate = monthStartFromService(row);
+
+  return {
+    bunker_cert_no: reportNumber === "-" ? "" : reportNumber,
+    report_category: operation === "-" ? "" : operation,
+    ship_name: vessel === "-" ? "" : vessel,
+    client: client === "-" ? "" : client,
+    port: port === "-" ? "" : port,
+    country: country === "-" ? "" : country,
+    report_date: reportDate,
+    antecedent_arrived_port: port === "-" ? "" : port,
+    antecedent_arrived_dt: reportDate,
+    dslop_port: port === "-" ? "" : port,
+    dslop_country: country === "-" ? "" : country,
+    dslop_date: reportDate
+  };
+}
+
+function normalizeBunkerPayload(payload: Record<string, unknown>) {
+  const base = emptyBunkerForm();
+  Object.entries(payload).forEach(([key, value]) => {
+    if (value === null || value === undefined) return;
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+      base[key] = String(value);
+    }
+  });
+  return base;
+}
+
+function extractBunkerTanks(payload: Record<string, unknown>, prefix: "vlsfo" | "mgo") {
+  const rows: BunkerTank[] = [];
+  for (let index = 1; index <= 20; index += 1) {
+    const tank = emptyBunkerTank();
+    (Object.keys(tank) as Array<keyof BunkerTank>).forEach((key) => {
+      const value = formatValue(payload[`${prefix}_tank_${index}_${key}`]);
+      tank[key] = value === "-" ? "" : value;
+    });
+    if (Object.values(tank).some(Boolean)) rows.push(tank);
+  }
+  return rows;
+}
+
+function extractBunkerFigures(payload: Record<string, unknown>) {
+  const rows: BunkerFigure[] = [];
+  for (let index = 1; index <= 10; index += 1) {
+    const figure = emptyBunkerFigure();
+    (Object.keys(figure) as Array<keyof BunkerFigure>).forEach((key) => {
+      const value = formatValue(payload[`bunker_figure_${index}_${key}`]);
+      figure[key] = value === "-" ? "" : value;
+    });
+    if (Object.values(figure).some(Boolean)) rows.push(figure);
+  }
+  return rows;
 }
 
 function arrayFromPayload(payload: unknown, key: string) {
@@ -3333,6 +3560,332 @@ function extractDraftTanks(data: Record<string, unknown>, prefix: "init" | "fina
     }
   }
   return tanks;
+}
+
+function VesselBunkerMobileModal({
+  visible,
+  session,
+  initialReportId,
+  onClose,
+  onSaved
+}: {
+  visible: boolean;
+  session: NonNullable<ReturnType<typeof useAuth>["session"]>;
+  initialReportId: string | null;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [form, setForm] = useState<Record<string, string>>(emptyBunkerForm());
+  const [vlsfoTanks, setVlsfoTanks] = useState<BunkerTank[]>([]);
+  const [mgoTanks, setMgoTanks] = useState<BunkerTank[]>([]);
+  const [figures, setFigures] = useState<BunkerFigure[]>([]);
+  const [tab, setTab] = useState<"header" | "figures" | "tanks" | "logs" | "final">("header");
+  const [serviceSelectorOpen, setServiceSelectorOpen] = useState(false);
+  const [editing, setEditing] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const readonly = Boolean(initialReportId) && !editing;
+
+  useEffect(() => {
+    if (!visible) return;
+    setForm(emptyBunkerForm());
+    setVlsfoTanks([]);
+    setMgoTanks([]);
+    setFigures([]);
+    setTab("header");
+    setEditing(!initialReportId);
+    setMessage("");
+    if (initialReportId) loadExisting(initialReportId);
+  }, [visible, initialReportId]);
+
+  function setValue(key: string, value: string) {
+    setForm((current) => ({ ...current, [key]: value }));
+  }
+
+  async function loadExisting(reportId: string) {
+    setBusy(true);
+    setMessage("");
+    try {
+      const payload = await apiRequest<Record<string, unknown>>(`/vessel-bunker-reports/${encodeURIComponent(reportId)}`, { session });
+      const data = unwrapRecordPayload(payload) || payload;
+      setForm(normalizeBunkerPayload(data));
+      setVlsfoTanks(extractBunkerTanks(data, "vlsfo"));
+      setMgoTanks(extractBunkerTanks(data, "mgo"));
+      setFigures(extractBunkerFigures(data));
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo cargar Vessel Bunker.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function buildPayload() {
+    const payload: Record<string, unknown> = { ...form };
+    payload.workflow_status = payload.workflow_status || "Pending Review";
+    payload.status = payload.status || "Pending";
+
+    for (let index = 1; index <= 20; index += 1) {
+      const vlsfo = vlsfoTanks[index - 1] || emptyBunkerTank();
+      const mgo = mgoTanks[index - 1] || emptyBunkerTank();
+      (Object.keys(vlsfo) as Array<keyof BunkerTank>).forEach((key) => {
+        payload[`vlsfo_tank_${index}_${key}`] = vlsfo[key] || null;
+        payload[`mgo_tank_${index}_${key}`] = mgo[key] || null;
+      });
+    }
+    for (let index = 1; index <= 10; index += 1) {
+      const figure = figures[index - 1] || emptyBunkerFigure();
+      (Object.keys(figure) as Array<keyof BunkerFigure>).forEach((key) => {
+        payload[`bunker_figure_${index}_${key}`] = figure[key] || null;
+      });
+    }
+    return payload;
+  }
+
+  async function previewExcel() {
+    if (!form.bunker_cert_no || !form.ship_name) {
+      setMessage("Debe seleccionar un reporte y completar buque antes de visualizar.");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      const filename = cleanFilePart(`${form.bunker_cert_no || "Vessel_Bunker"}_preview`) + ".xlsx";
+      await downloadSessionFile("/vessel-bunker-preview/excel", session, filename, "POST", buildPayload());
+      setMessage("Excel preview generado correctamente.");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo generar el Excel preview.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function save(sendToReview: boolean) {
+    if (!form.bunker_cert_no || !form.ship_name || !form.client || !form.port || !form.country) {
+      setMessage("Debe completar Cert No, buque, cliente, puerto y pais.");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      if (initialReportId) {
+        await apiRequest(`/vessel-bunker-reports/${encodeURIComponent(initialReportId)}`, {
+          method: "PUT",
+          session,
+          body: buildPayload()
+        });
+        setEditing(false);
+        setMessage("Vessel Bunker actualizado correctamente.");
+      } else {
+        await apiRequest("/vessel-bunker-reports/", {
+          method: "POST",
+          session,
+          body: { ...buildPayload(), workflow_status: "Pending Review", status: "Pending" }
+        });
+        setMessage("Vessel Bunker enviado a revision.");
+      }
+      if (sendToReview || initialReportId) onSaved();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo guardar Vessel Bunker.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function downloadFinal(kind: "excel" | "pdf" | "presentation") {
+    const id = initialReportId || form.id;
+    if (!id) {
+      setMessage("Primero debe guardar el informe para generar archivos finales.");
+      return;
+    }
+    const endpoint = kind === "excel"
+      ? `/vessel-bunker-excel/generate/${encodeURIComponent(id)}`
+      : kind === "pdf"
+        ? `/vessel-bunker-excel/generate-pdf/${encodeURIComponent(id)}`
+        : `/vessel-bunker-reports/presentation/${encodeURIComponent(id)}`;
+    const extension = kind === "excel" ? "xlsx" : "pdf";
+    setBusy(true);
+    setMessage("");
+    try {
+      await downloadSessionFile(endpoint, session, cleanFilePart(`Vessel_Bunker_${kind}_${id}`) + `.${extension}`);
+      setMessage(`${kind.toUpperCase()} generado correctamente.`);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo generar el archivo.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function renderField(key: string, label: string, type: "text" | "date" | "select" | "multiline" = "text") {
+    if (type === "date") return <DateField key={key} label={label} value={form[key] || ""} onChange={(value) => setValue(key, value)} />;
+    if (type === "select") return <SelectField key={key} label={label} value={form[key] || ""} options={BUNKER_CERTIFICATE_OPTIONS} onChange={(value) => setValue(key, value)} />;
+    return (
+      <View key={key} style={styles.formField}>
+        <Text style={styles.label}>{label}</Text>
+        <TextInput
+          editable={!readonly}
+          style={[styles.input, type === "multiline" && styles.multilineInput, readonly && styles.readonlyInput]}
+          multiline={type === "multiline"}
+          value={form[key] || ""}
+          onChangeText={(value) => setValue(key, value)}
+        />
+      </View>
+    );
+  }
+
+  function renderTankRows(title: string, rows: BunkerTank[], setRows: (rows: BunkerTank[]) => void) {
+    return (
+      <View style={styles.summaryBox}>
+        <Text style={styles.cardTitle}>{title}</Text>
+        {rows.map((tank, index) => (
+          <View key={`${title}-${index}`} style={styles.summaryBox}>
+            {(Object.keys(emptyBunkerTank()) as Array<keyof BunkerTank>).map((key) => (
+              <View key={key} style={styles.formField}>
+                <Text style={styles.label}>{key.replaceAll("_", " ")}</Text>
+                <TextInput
+                  editable={!readonly}
+                  style={[styles.input, readonly && styles.readonlyInput]}
+                  value={tank[key]}
+                  onChangeText={(value) => setRows(rows.map((item, rowIndex) => rowIndex === index ? { ...item, [key]: value } : item))}
+                />
+              </View>
+            ))}
+            <Pressable style={styles.modalClose} onPress={() => setRows(rows.filter((_, rowIndex) => rowIndex !== index))}>
+              <Text style={styles.modalCloseText}>Remove Tank</Text>
+            </Pressable>
+          </View>
+        ))}
+        <Pressable style={styles.secondaryButton} onPress={() => rows.length < 20 && setRows([...rows, emptyBunkerTank()])}>
+          <Text style={styles.secondaryButtonText}>+ Add Tank</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
+  const tabs = [
+    ["header", "Header"],
+    ["figures", "Figures"],
+    ["tanks", "Tanks"],
+    ["logs", "Log Book"],
+    ["final", "Final"]
+  ] as const;
+
+  return (
+    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+      <SafeAreaView style={styles.modalScreen}>
+        <View style={styles.modalHeader}>
+          <Text style={styles.modalTitle}>ON/OFF/SPOT BUNKER SURVEY</Text>
+          <Pressable style={styles.modalClose} onPress={onClose}><Text style={styles.modalCloseText}>Cerrar</Text></Pressable>
+        </View>
+        <View style={styles.financeFilterBox}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.actionBar}>
+            <Pressable style={styles.secondaryButton} onPress={() => setServiceSelectorOpen(true)}><Text style={styles.secondaryButtonText}>Seleccionar Reporte</Text></Pressable>
+            <Pressable style={styles.secondaryButton} onPress={previewExcel}><Text style={styles.secondaryButtonText}>Visualizar Excel</Text></Pressable>
+            {initialReportId ? <Pressable style={styles.secondaryButton} onPress={() => setEditing((value) => !value)}><Text style={styles.secondaryButtonText}>{editing ? "Bloquear" : "Editar"}</Text></Pressable> : null}
+            {initialReportId ? <Pressable style={styles.actionButton} onPress={() => save(false)}><Text style={styles.actionButtonText}>Guardar Cambios</Text></Pressable> : <Pressable style={styles.actionButton} onPress={() => save(true)}><Text style={styles.actionButtonText}>Enviar a revision</Text></Pressable>}
+          </ScrollView>
+          <View style={styles.summaryBox}>
+            <Text style={styles.fieldKey}>Bunker Report</Text>
+            <Text style={styles.fieldValue}>{[form.bunker_cert_no, form.ship_name, form.client, form.port, form.country].filter(Boolean).join(" | ") || "Sin servicio seleccionado"}</Text>
+          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.actionBar}>
+            {tabs.map(([key, label]) => (
+              <Pressable key={key} style={tab === key ? styles.actionButton : styles.modalClose} onPress={() => setTab(key)}>
+                <Text style={tab === key ? styles.actionButtonText : styles.modalCloseText}>{label}</Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+        </View>
+        <ScrollView contentContainerStyle={styles.modalBody} keyboardShouldPersistTaps="handled">
+          {tab === "header" ? (
+            <>
+              {BUNKER_MAIN_FIELDS.map(([key, label, type]) => renderField(key, label, type))}
+              <View style={styles.summaryBox}>
+                <Text style={styles.cardTitle}>Signatures</Text>
+                {BUNKER_SIGNATURE_FIELDS.map(([key, label]) => renderField(key, label))}
+              </View>
+            </>
+          ) : null}
+          {tab === "figures" ? (
+            <>
+              {BUNKER_DELIVERY_FIELDS.map(([key, label, type]) => renderField(key, label, type))}
+              <View style={styles.summaryBox}>
+                <Text style={styles.cardTitle}>Bunker Figures</Text>
+                {figures.map((figure, index) => (
+                  <View key={`figure-${index}`} style={styles.summaryBox}>
+                    {(Object.keys(emptyBunkerFigure()) as Array<keyof BunkerFigure>).map((key) => (
+                      <View key={key} style={styles.formField}>
+                        <Text style={styles.label}>{key.toUpperCase()}</Text>
+                        <TextInput
+                          editable={!readonly}
+                          style={[styles.input, readonly && styles.readonlyInput]}
+                          value={figure[key]}
+                          onChangeText={(value) => setFigures(figures.map((item, rowIndex) => rowIndex === index ? { ...item, [key]: value } : item))}
+                        />
+                      </View>
+                    ))}
+                    <Pressable style={styles.modalClose} onPress={() => setFigures(figures.filter((_, rowIndex) => rowIndex !== index))}>
+                      <Text style={styles.modalCloseText}>Remove Figure</Text>
+                    </Pressable>
+                  </View>
+                ))}
+                <Pressable style={styles.secondaryButton} onPress={() => figures.length < 10 && setFigures([...figures, emptyBunkerFigure()])}>
+                  <Text style={styles.secondaryButtonText}>+ Add Bunker Figure</Text>
+                </Pressable>
+              </View>
+            </>
+          ) : null}
+          {tab === "tanks" ? (
+            <>
+              {renderTankRows("FUEL OIL - VLSFO Tanks", vlsfoTanks, setVlsfoTanks)}
+              {renderTankRows("DIESEL / MGO Tanks", mgoTanks, setMgoTanks)}
+            </>
+          ) : null}
+          {tab === "logs" ? (
+            <>
+              {BUNKER_LOG_EVENTS.map(([prefix, label]) => (
+                <View key={prefix} style={styles.summaryBox}>
+                  <Text style={styles.cardTitle}>{label}</Text>
+                  {renderField(`${prefix}_date`, "Date", "date")}
+                  {renderField(`${prefix}_hour`, "HH")}
+                  {renderField(`${prefix}_minute`, "MM")}
+                  {["vlsfo", "hfso", "mdo", "lsmgo"].map((fuel) => renderField(`${prefix}_${fuel}`, fuel.toUpperCase()))}
+                </View>
+              ))}
+              <View style={styles.summaryBox}>
+                <Text style={styles.cardTitle}>Consumption (MT / DAY)</Text>
+                {BUNKER_CONSUMPTION_ROWS.map(([prefix, label]) => (
+                  <View key={prefix} style={styles.summaryBox}>
+                    <Text style={styles.fieldKey}>{label}</Text>
+                    {["vlsfo", "hfso", "mdo", "lsmgo"].map((fuel) => renderField(`${prefix}_${fuel}`, fuel.toUpperCase()))}
+                  </View>
+                ))}
+              </View>
+            </>
+          ) : null}
+          {tab === "final" ? (
+            <View style={styles.summaryBox}>
+              <Text style={styles.cardTitle}>Crear Informe Final</Text>
+              <Text style={styles.helperText}>Primero guarda o abre un Vessel Bunker desde Review. Luego puedes generar el Excel, el PDF final o la presentacion.</Text>
+              <Pressable style={styles.secondaryButton} onPress={() => downloadFinal("excel")}><Text style={styles.secondaryButtonText}>Generate Excel</Text></Pressable>
+              <Pressable style={styles.secondaryButton} onPress={() => downloadFinal("pdf")}><Text style={styles.secondaryButtonText}>Generate Final Report (Bunker Only)</Text></Pressable>
+              <Pressable style={styles.secondaryButton} onPress={() => downloadFinal("presentation")}><Text style={styles.secondaryButtonText}>Generate Presentation PDF</Text></Pressable>
+            </View>
+          ) : null}
+          {busy ? <ActivityIndicator color={BLUE} style={styles.loader} /> : null}
+          {message ? <Text style={message.includes("correctamente") || message.includes("revision") ? styles.helperText : styles.error}>{message}</Text> : null}
+        </ScrollView>
+        <DraftServiceSelectorModal
+          visible={serviceSelectorOpen}
+          session={session}
+          onClose={() => setServiceSelectorOpen(false)}
+          onSelect={(row) => {
+            setForm((current) => ({ ...current, ...bunkerFormFromServiceReport(row) }));
+            setServiceSelectorOpen(false);
+          }}
+        />
+      </SafeAreaView>
+    </Modal>
+  );
 }
 
 function DraftSurveyMobileModal({
