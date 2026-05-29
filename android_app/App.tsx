@@ -1525,8 +1525,8 @@ const INFORMES_CONFIG: Record<string, InformeConfig> = {
     updateEndpoint: "/vessel-cargo-condition-surveys/{id}",
     createEndpoint: "/vessel-cargo-condition-surveys/",
     statusField: "status",
-    columns: ["id", "report_number", "vessel", "client", "port", "country", "date", "status"],
-    filters: ["status", "client", "vessel", "port", "country"],
+    columns: ["id", "report_number", "vessel", "requested_by", "port", "country", "service_start_date", "status"],
+    filters: ["status", "requested_by", "vessel", "port", "country", "report_number"],
     actions: [
       { key: "word", label: "Word", endpoint: "/vessel-cargo-condition-surveys/word/{id}", file: true },
       { key: "presentation", label: "Presentacion", endpoint: "/vessel-cargo-condition-surveys/presentation/{id}", file: true },
@@ -2066,6 +2066,8 @@ function InformesSectionMobile({
   const [draftSurveyOpen, setDraftSurveyOpen] = useState(false);
   const [bunkerOpen, setBunkerOpen] = useState(false);
   const [bunkerReviewId, setBunkerReviewId] = useState<string | null>(null);
+  const [cargoConditionOpen, setCargoConditionOpen] = useState(false);
+  const [cargoConditionReviewId, setCargoConditionReviewId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const statusOptions = ["", "Pending", "Pending for review", "Approved", "Rejected", "Approve", "Reject"];
@@ -2149,6 +2151,16 @@ function InformesSectionMobile({
       }
       setBunkerReviewId(id);
       setBunkerOpen(true);
+      return;
+    }
+    if (activeKey === "cargo-condition") {
+      const id = formatValue(selectedRow.id);
+      if (id === "-") {
+        setMessage("Seleccione un Cargo Condition valido.");
+        return;
+      }
+      setCargoConditionReviewId(id);
+      setCargoConditionOpen(true);
       return;
     }
     if (!config.detailEndpoint) {
@@ -2530,6 +2542,11 @@ function InformesSectionMobile({
                           setGenerateGroup(null);
                           setBunkerReviewId(null);
                           setBunkerOpen(true);
+                        } else if (item.key === "cargo-condition") {
+                          setGenerateOpen(false);
+                          setGenerateGroup(null);
+                          setCargoConditionReviewId(null);
+                          setCargoConditionOpen(true);
                         } else {
                           openCreate(item);
                         }
@@ -2668,6 +2685,20 @@ function InformesSectionMobile({
           setBunkerOpen(false);
           setBunkerReviewId(null);
           if (activeKey === "bunker") await load();
+        }}
+      />
+      <CargoConditionMobileModal
+        visible={cargoConditionOpen}
+        session={session}
+        initialReportId={cargoConditionReviewId}
+        onClose={() => {
+          setCargoConditionOpen(false);
+          setCargoConditionReviewId(null);
+        }}
+        onSaved={async () => {
+          setCargoConditionOpen(false);
+          setCargoConditionReviewId(null);
+          if (activeKey === "cargo-condition") await load();
         }}
       />
     </View>
@@ -2972,6 +3003,141 @@ function extractBunkerFigures(payload: Record<string, unknown>) {
     if (Object.values(figure).some(Boolean)) rows.push(figure);
   }
   return rows;
+}
+
+type CargoBulletSection = "narrative" | "findings" | "remarks" | "conclusion";
+
+const CARGO_CONDITION_GENERAL_FIELDS: Array<[string, string, ("text" | "date")?]> = [
+  ["report_number", "Report Number"],
+  ["continent", "Continent"],
+  ["operation", "Operation"],
+  ["service_start_date", "Service Start Date", "date"],
+  ["vessel", "Vessel"],
+  ["port", "Port"],
+  ["country", "Country"],
+  ["requested_by", "Survey Requested By"],
+  ["arrival_date", "Date Arrival", "date"],
+  ["arrival_hour", "Arrival HH"],
+  ["arrival_minute", "Arrival MM"],
+  ["inspection_date", "Date/Time Inspection", "date"],
+  ["inspection_hour", "Inspection HH"],
+  ["inspection_minute", "Inspection MM"],
+  ["master", "Master of the Ship"],
+  ["chief_officer", "Chief Officer"],
+  ["cargo_type", "Cargo Type"]
+];
+
+const CARGO_CONDITION_VESSEL_FIELDS = [
+  ["vessel_port_registry_flag", "Port of Registry / Flag"],
+  ["vessel_grt", "GRT"],
+  ["vessel_nrt", "NRT"],
+  ["vessel_imo_no", "IMO No"],
+  ["vessel_year_build", "Year Build"]
+] as const;
+
+const CARGO_CONDITION_TIME_EVENTS = [
+  "Vessel Arrived at sea buoy",
+  "N.O.R Tendered",
+  "Unsealing Inspection",
+  "All fast",
+  "Free pratique",
+  "Surveyor Onboard",
+  "Discharging commenced",
+  "Discharging completed"
+] as const;
+
+const CARGO_BULLET_LABELS: Record<CargoBulletSection, string> = {
+  narrative: "Narrative",
+  findings: "Survey Findings",
+  remarks: "Remarks",
+  conclusion: "Conclusion"
+};
+
+function emptyCargoConditionForm() {
+  const today = formatYmd(new Date());
+  return {
+    report_number: "",
+    continent: "",
+    operation: "",
+    service_start_date: today,
+    vessel: "",
+    port: "",
+    country: "",
+    requested_by: "",
+    arrival_date: today,
+    arrival_hour: "08",
+    arrival_minute: "00",
+    inspection_date: today,
+    inspection_hour: "08",
+    inspection_minute: "00",
+    master: "",
+    chief_officer: "",
+    cargo_type: "",
+    vessel_port_registry_flag: "",
+    vessel_grt: "",
+    vessel_nrt: "",
+    vessel_imo_no: "",
+    vessel_year_build: "",
+    link_picture: "",
+    status: "Pending for review"
+  } as Record<string, string>;
+}
+
+function emptyCargoBullets() {
+  return {
+    narrative: [""],
+    findings: [""],
+    remarks: [""],
+    conclusion: [""]
+  } as Record<CargoBulletSection, string[]>;
+}
+
+function cargoConditionFormFromServiceReport(row: Record<string, unknown>) {
+  const reportNumber = formatValue(row.num_informe);
+  const client = formatValue(row.cliente);
+  const vessel = formatValue(row.buque_contenedor);
+  const country = formatValue(row.pais);
+  const port = formatValue(row.puerto);
+  const continent = formatValue(row.continente);
+  const operation = formatValue(row.operacion);
+  const serviceDate = monthStartFromService(row);
+
+  return {
+    report_number: reportNumber === "-" ? "" : reportNumber,
+    continent: continent === "-" ? "" : continent,
+    operation: operation === "-" ? "" : operation,
+    service_start_date: serviceDate,
+    vessel: vessel === "-" ? "" : vessel,
+    port: port === "-" ? "" : port,
+    country: country === "-" ? "" : country,
+    requested_by: client === "-" ? "" : client,
+    arrival_date: serviceDate,
+    inspection_date: serviceDate
+  };
+}
+
+function normalizeCargoConditionPayload(payload: Record<string, unknown>) {
+  const base = emptyCargoConditionForm();
+  Object.entries(payload).forEach(([key, value]) => {
+    if (value === null || value === undefined) return;
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+      base[key] = String(value);
+    }
+  });
+  return base;
+}
+
+function extractCargoBullets(payload: Record<string, unknown>) {
+  const result = emptyCargoBullets();
+  (Object.keys(CARGO_BULLET_LABELS) as CargoBulletSection[]).forEach((section) => {
+    const rows: string[] = [];
+    for (let index = 1; index <= 10; index += 1) {
+      const value = formatValue(payload[`${section}_${index}`]);
+      if (value !== "-") rows.push(value);
+    }
+    result[section] = rows.length ? rows : [""];
+  });
+  return result;
 }
 
 function arrayFromPayload(payload: unknown, key: string) {
@@ -3560,6 +3726,285 @@ function extractDraftTanks(data: Record<string, unknown>, prefix: "init" | "fina
     }
   }
   return tanks;
+}
+
+function CargoConditionMobileModal({
+  visible,
+  session,
+  initialReportId,
+  onClose,
+  onSaved
+}: {
+  visible: boolean;
+  session: NonNullable<ReturnType<typeof useAuth>["session"]>;
+  initialReportId: string | null;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [form, setForm] = useState<Record<string, string>>(emptyCargoConditionForm());
+  const [bullets, setBullets] = useState<Record<CargoBulletSection, string[]>>(emptyCargoBullets());
+  const [tab, setTab] = useState<"general" | "vessel" | "times" | "text" | "final">("general");
+  const [serviceSelectorOpen, setServiceSelectorOpen] = useState(false);
+  const [editing, setEditing] = useState(true);
+  const [aiLanguage, setAiLanguage] = useState("EN");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const readonly = Boolean(initialReportId) && !editing;
+
+  useEffect(() => {
+    if (!visible) return;
+    setForm(emptyCargoConditionForm());
+    setBullets(emptyCargoBullets());
+    setTab("general");
+    setEditing(!initialReportId);
+    setAiLanguage("EN");
+    setMessage("");
+    if (initialReportId) loadExisting(initialReportId);
+  }, [visible, initialReportId]);
+
+  function setValue(key: string, value: string) {
+    setForm((current) => ({ ...current, [key]: value }));
+  }
+
+  async function loadExisting(reportId: string) {
+    setBusy(true);
+    setMessage("");
+    try {
+      const payload = await apiRequest<Record<string, unknown>>(`/vessel-cargo-condition-surveys/${encodeURIComponent(reportId)}`, { session });
+      const data = unwrapRecordPayload(payload) || payload;
+      setForm(normalizeCargoConditionPayload(data));
+      setBullets(extractCargoBullets(data));
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo cargar Cargo Condition.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function buildPayload() {
+    const payload: Record<string, unknown> = { ...form };
+    (Object.keys(CARGO_BULLET_LABELS) as CargoBulletSection[]).forEach((section) => {
+      for (let index = 1; index <= 10; index += 1) {
+        payload[`${section}_${index}`] = (bullets[section][index - 1] || "").trim() || null;
+      }
+    });
+    CARGO_CONDITION_TIME_EVENTS.forEach((_, index) => {
+      payload[`time_${index}_date`] = form[`time_${index}_date`] || null;
+      payload[`time_${index}_hour`] = form[`time_${index}_hour`] || null;
+      payload[`time_${index}_minute`] = form[`time_${index}_minute`] || null;
+    });
+    payload.status = payload.status || "Pending for review";
+    return payload;
+  }
+
+  async function save() {
+    if (!form.report_number || !form.vessel || !form.requested_by || !form.port || !form.country) {
+      setMessage("Debe completar Report Number, buque, cliente, puerto y pais.");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      if (initialReportId) {
+        await apiRequest(`/vessel-cargo-condition-surveys/${encodeURIComponent(initialReportId)}`, {
+          method: "PUT",
+          session,
+          body: buildPayload()
+        });
+        setEditing(false);
+        setMessage("Cargo Condition actualizado correctamente.");
+      } else {
+        await apiRequest("/vessel-cargo-condition-surveys/", {
+          method: "POST",
+          session,
+          body: { ...buildPayload(), status: "Pending for review" }
+        });
+        setMessage("Cargo Condition enviado a revision.");
+      }
+      onSaved();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo guardar Cargo Condition.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function improveSection(section: CargoBulletSection) {
+    const items = bullets[section].map((item) => item.trim()).filter(Boolean);
+    if (!items.length) {
+      setMessage(`La seccion ${CARGO_BULLET_LABELS[section]} no tiene texto para mejorar.`);
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      const response = await apiRequest<Record<string, unknown>>("/reports/ai/improve/cargo-condition", {
+        method: "POST",
+        session,
+        body: {
+          section,
+          language: aiLanguage,
+          vessel: form.vessel,
+          port: form.port,
+          items
+        }
+      });
+      const nextItems = Array.isArray(response.items) ? response.items.map((item) => formatValue(item)).filter((item) => item !== "-") : [];
+      if (!nextItems.length) throw new Error("PORTIA no devolvio texto valido.");
+      setBullets((current) => ({ ...current, [section]: nextItems }));
+      setMessage(`PORTIA mejoro ${CARGO_BULLET_LABELS[section]}.`);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "PORTIA no pudo mejorar la seccion.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function downloadFile(kind: "word" | "presentation") {
+    const id = initialReportId || form.id;
+    if (!id) {
+      setMessage("Primero debe guardar o abrir el informe desde Review.");
+      return;
+    }
+    const endpoint = kind === "word"
+      ? `/vessel-cargo-condition-surveys/word/${encodeURIComponent(id)}`
+      : `/vessel-cargo-condition-surveys/presentation/${encodeURIComponent(id)}`;
+    const extension = kind === "word" ? "docx" : "pdf";
+    setBusy(true);
+    setMessage("");
+    try {
+      await downloadSessionFile(endpoint, session, cleanFilePart(`Cargo_Condition_${kind}_${id}`) + `.${extension}`);
+      setMessage(`${kind === "word" ? "Word" : "Presentacion"} generado correctamente.`);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo generar el archivo.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function renderField(key: string, label: string, type: "text" | "date" = "text") {
+    if (type === "date") return <DateField key={key} label={label} value={form[key] || ""} onChange={(value) => setValue(key, value)} />;
+    return (
+      <View key={key} style={styles.formField}>
+        <Text style={styles.label}>{label}</Text>
+        <TextInput
+          editable={!readonly}
+          style={[styles.input, readonly && styles.readonlyInput]}
+          value={form[key] || ""}
+          onChangeText={(value) => setValue(key, value)}
+        />
+      </View>
+    );
+  }
+
+  function renderBulletSection(section: CargoBulletSection) {
+    const rows = bullets[section];
+    return (
+      <View style={styles.summaryBox}>
+        <Text style={styles.cardTitle}>{CARGO_BULLET_LABELS[section]}</Text>
+        {rows.map((value, index) => (
+          <View key={`${section}-${index}`} style={styles.formField}>
+            <Text style={styles.label}>Bullet {index + 1}</Text>
+            <TextInput
+              editable={!readonly}
+              style={[styles.input, styles.multilineInput, readonly && styles.readonlyInput]}
+              multiline
+              value={value}
+              onChangeText={(text) => setBullets((current) => ({ ...current, [section]: rows.map((item, rowIndex) => rowIndex === index ? text : item) }))}
+            />
+            <Pressable style={styles.modalClose} onPress={() => setBullets((current) => ({ ...current, [section]: rows.length <= 1 ? [""] : rows.filter((_, rowIndex) => rowIndex !== index) }))}>
+              <Text style={styles.modalCloseText}>Remove</Text>
+            </Pressable>
+          </View>
+        ))}
+        <Pressable style={styles.secondaryButton} onPress={() => rows.length < 10 && setBullets((current) => ({ ...current, [section]: [...rows, ""] }))}>
+          <Text style={styles.secondaryButtonText}>+ Add Bullet</Text>
+        </Pressable>
+        <Pressable style={styles.secondaryButton} onPress={() => improveSection(section)}>
+          <Text style={styles.secondaryButtonText}>Mejorar con PORTIA</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
+  const tabs = [
+    ["general", "General"],
+    ["vessel", "Vessel"],
+    ["times", "Time Sheet"],
+    ["text", "Text"],
+    ["final", "Final"]
+  ] as const;
+
+  return (
+    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+      <SafeAreaView style={styles.modalScreen}>
+        <View style={styles.modalHeader}>
+          <Text style={styles.modalTitle}>CARGO CONDITION SURVEY</Text>
+          <Pressable style={styles.modalClose} onPress={onClose}><Text style={styles.modalCloseText}>Cerrar</Text></Pressable>
+        </View>
+        <View style={styles.financeFilterBox}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.actionBar}>
+            <Pressable style={styles.secondaryButton} onPress={() => setServiceSelectorOpen(true)}><Text style={styles.secondaryButtonText}>Seleccionar Reporte</Text></Pressable>
+            {initialReportId ? <Pressable style={styles.secondaryButton} onPress={() => setEditing((value) => !value)}><Text style={styles.secondaryButtonText}>{editing ? "Bloquear" : "Editar"}</Text></Pressable> : null}
+            <Pressable style={styles.actionButton} onPress={save}><Text style={styles.actionButtonText}>{initialReportId ? "Guardar Cambios" : "Enviar a revision"}</Text></Pressable>
+          </ScrollView>
+          <View style={styles.summaryBox}>
+            <Text style={styles.fieldKey}>Cargo Condition</Text>
+            <Text style={styles.fieldValue}>{[form.report_number, form.vessel, form.requested_by, form.port, form.country].filter(Boolean).join(" | ") || "Sin servicio seleccionado"}</Text>
+          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.actionBar}>
+            {tabs.map(([key, label]) => (
+              <Pressable key={key} style={tab === key ? styles.actionButton : styles.modalClose} onPress={() => setTab(key)}>
+                <Text style={tab === key ? styles.actionButtonText : styles.modalCloseText}>{label}</Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+        </View>
+        <ScrollView contentContainerStyle={styles.modalBody} keyboardShouldPersistTaps="handled">
+          {tab === "general" ? CARGO_CONDITION_GENERAL_FIELDS.map(([key, label, type]) => renderField(key, label, type)) : null}
+          {tab === "vessel" ? (
+            <>
+              {CARGO_CONDITION_VESSEL_FIELDS.map(([key, label]) => renderField(key, label))}
+              {renderField("link_picture", "Image URL")}
+            </>
+          ) : null}
+          {tab === "times" ? CARGO_CONDITION_TIME_EVENTS.map((label, index) => (
+            <View key={label} style={styles.summaryBox}>
+              <Text style={styles.cardTitle}>{label}</Text>
+              {renderField(`time_${index}_date`, "Date", "date")}
+              {renderField(`time_${index}_hour`, "HH")}
+              {renderField(`time_${index}_minute`, "MM")}
+            </View>
+          )) : null}
+          {tab === "text" ? (
+            <>
+              <SelectField label="PORTIA Language" value={aiLanguage} options={["EN", "ES"]} onChange={setAiLanguage} />
+              {(Object.keys(CARGO_BULLET_LABELS) as CargoBulletSection[]).map((section) => renderBulletSection(section))}
+            </>
+          ) : null}
+          {tab === "final" ? (
+            <View style={styles.summaryBox}>
+              <Text style={styles.cardTitle}>Generar Informe Final</Text>
+              <Text style={styles.helperText}>La app genera Word y la presentacion PDF del backend. La union con un PDF externo de condition sigue siendo una accion de escritorio porque requiere seleccionar un archivo local.</Text>
+              <Pressable style={styles.secondaryButton} onPress={() => downloadFile("word")}><Text style={styles.secondaryButtonText}>Generar Word</Text></Pressable>
+              <Pressable style={styles.secondaryButton} onPress={() => downloadFile("presentation")}><Text style={styles.secondaryButtonText}>Generar Presentacion PDF</Text></Pressable>
+            </View>
+          ) : null}
+          {busy ? <ActivityIndicator color={BLUE} style={styles.loader} /> : null}
+          {message ? <Text style={message.includes("correctamente") || message.includes("revision") || message.includes("PORTIA mejoro") ? styles.helperText : styles.error}>{message}</Text> : null}
+        </ScrollView>
+        <DraftServiceSelectorModal
+          visible={serviceSelectorOpen}
+          session={session}
+          onClose={() => setServiceSelectorOpen(false)}
+          onSelect={(row) => {
+            setForm((current) => ({ ...current, ...cargoConditionFormFromServiceReport(row) }));
+            setServiceSelectorOpen(false);
+          }}
+        />
+      </SafeAreaView>
+    </Modal>
+  );
 }
 
 function VesselBunkerMobileModal({
