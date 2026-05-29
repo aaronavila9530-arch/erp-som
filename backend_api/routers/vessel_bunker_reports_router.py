@@ -105,7 +105,7 @@ class VesselBunkerReportRouter:
             float(s)
             return s
         except Exception:
-            return value
+            return None
 
     def _get_table_columns(self, cur):
         cur.execute("""
