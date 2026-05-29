@@ -259,8 +259,6 @@ class VesselBunkerReportRouter:
 
             if key.startswith("vlsfo_tank_") or key.startswith("mgo_tank_"):
                 if key.endswith((
-                    "_dist_mtrs",
-                    "_gauge_mtrs",
                     "_volume_m3",
                     "_temp_c",
                     "_temp_f",
