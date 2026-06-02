@@ -10,6 +10,12 @@ from api_client import set_user_role, get_version_info
 from resource_utils import resource_path
 from update_window import UpdateWindow
 from version import APP_VERSION
+from secure_credentials import (
+    delete_credentials,
+    has_saved_credentials,
+    is_windows_protection_available,
+    load_credentials,
+)
 
 
 class LoginWindow(tk.Toplevel):
@@ -24,6 +30,7 @@ class LoginWindow(tk.Toplevel):
     def __init__(self, parent):
         super().__init__(parent)
         self.parent = parent
+        self.remember_credentials = tk.BooleanVar(value=has_saved_credentials())
 
         # ----------------------------------------------------
         # ICONO VENTANA
@@ -83,17 +90,39 @@ class LoginWindow(tk.Toplevel):
         self.password = ttk.Entry(self.left, width=30, show="*")
         self.password.grid(row=4, column=0, sticky="w")
 
+        ttk.Checkbutton(
+            self.left,
+            text="Guardar credenciales en Windows",
+            variable=self.remember_credentials
+        ).grid(row=5, column=0, sticky="w", pady=(12, 0))
+
         ttk.Button(
             self.left,
             text="Ingresar",
             command=self._login
-        ).grid(row=5, column=0, sticky="w", pady=(30, 10))
+        ).grid(row=6, column=0, sticky="w", pady=(22, 10))
+
+        self.btn_windows_unlock = ttk.Button(
+            self.left,
+            text="Desbloquear con Windows",
+            command=self._unlock_with_windows
+        )
+        self.btn_windows_unlock.grid(row=7, column=0, sticky="w", pady=(0, 10))
+
+        if not has_saved_credentials() or not is_windows_protection_available():
+            self.btn_windows_unlock.state(["disabled"])
+
+        ttk.Button(
+            self.left,
+            text="Borrar credenciales guardadas",
+            command=self._forget_saved_credentials
+        ).grid(row=8, column=0, sticky="w", pady=(0, 10))
 
         ttk.Button(
             self.left,
             text="Olvidé mi contraseña",
             command=self._forgot
-        ).grid(row=6, column=0, sticky="w")
+        ).grid(row=9, column=0, sticky="w")
 
         # ENTER = LOGIN
         self.bind("<Return>", lambda e: self._login())
@@ -270,7 +299,7 @@ class LoginWindow(tk.Toplevel):
     # ====================================================
     def _login(self):
         usuario = self.usuario.get().strip()
-        password = self.password.get().strip()
+        password = self.password.get()
 
         if not usuario or not password:
             messagebox.showwarning(
@@ -295,10 +324,6 @@ class LoginWindow(tk.Toplevel):
         if rol:
             set_user_role(rol)
 
-        # CHECK UPDATE (solo EXE)
-        if not self._check_version_and_update():
-            return
-
         try:
             from otp_window import OTPWindow
         except Exception as e:
@@ -317,7 +342,9 @@ class LoginWindow(tk.Toplevel):
                 usuario=data.get("usuario", usuario),
                 rol=rol,
                 mode="ENROLL_TOTP",
-                qr_bytes=data.get("qr")
+                qr_bytes=data.get("qr"),
+                password=password,
+                remember_credentials=self.remember_credentials.get()
             )
 
         elif action == "VERIFY_TOTP":
@@ -325,7 +352,9 @@ class LoginWindow(tk.Toplevel):
                 self,
                 usuario=data.get("usuario", usuario),
                 rol=rol,
-                mode="VERIFY_TOTP"
+                mode="VERIFY_TOTP",
+                password=password,
+                remember_credentials=self.remember_credentials.get()
             )
         else:
             messagebox.showerror(
@@ -333,6 +362,46 @@ class LoginWindow(tk.Toplevel):
                 "Respuesta inválida del servidor de autenticación.",
                 parent=self
             )
+
+    def _unlock_with_windows(self):
+        try:
+            saved = load_credentials()
+        except Exception as e:
+            messagebox.showerror(
+                "Credenciales guardadas",
+                "No se pudieron desbloquear las credenciales con Windows.\n\n"
+                f"{e}",
+                parent=self
+            )
+            return
+
+        if not saved:
+            messagebox.showinfo(
+                "Credenciales guardadas",
+                "No hay credenciales guardadas para este usuario de Windows.",
+                parent=self
+            )
+            return
+
+        self.usuario.delete(0, tk.END)
+        self.usuario.insert(0, saved.get("usuario", ""))
+        self.password.delete(0, tk.END)
+        self.password.insert(0, saved.get("password", ""))
+        self.remember_credentials.set(True)
+        self._login()
+
+    def _forget_saved_credentials(self):
+        delete_credentials()
+        self.remember_credentials.set(False)
+        try:
+            self.btn_windows_unlock.state(["disabled"])
+        except Exception:
+            pass
+        messagebox.showinfo(
+            "Credenciales guardadas",
+            "Credenciales guardadas eliminadas de este Windows.",
+            parent=self
+        )
 
     # ====================================================
     # RESET PASSWORD

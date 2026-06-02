@@ -1,10 +1,11 @@
 ; =========================================================
-; ERP-SOM — INSTALADOR DEFINITIVO PRODUCCIÓN
-; Limpia carpeta completa antes de instalar
+; ERP-SOM — INSTALADOR PRODUCCIÓN (PyInstaller onedir)
+; Enfocado en copiar el árbol de dist tal cual y evitar
+; efectos de compresión/mezcla que rompan módulos como Informes
 ; =========================================================
 
 #define MyAppName "ERP-SOM"
-#define MyAppVersion "1.2.9"
+#define MyAppVersion "1.5.5"
 #define MyAppPublisher "InnovaCore SRL"
 #define MyAppExeName "ERP-SOM.exe"
 
@@ -14,51 +15,47 @@ AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
 
-DefaultDirName={commonpf64}\{#MyAppName}
+DefaultDirName={localappdata}\Programs\{#MyAppName}
 DefaultGroupName={#MyAppName}
 
 ArchitecturesAllowed=x64
 ArchitecturesInstallIn64BitMode=x64
-PrivilegesRequired=admin
+PrivilegesRequired=lowest
 
 OutputDir=installer
 OutputBaseFilename=ERP-SOM-Setup
 
-Compression=lzma
-SolidCompression=yes
+; IMPORTANTE: para builds PyInstaller onedir, evitar solid compression
+Compression=lzma2
+SolidCompression=no
+InternalCompressLevel=normal
 WizardStyle=modern
 
 SetupIconFile=assets\logo_menu_tareas.ico
-
 UninstallDisplayIcon={app}\{#MyAppExeName}
 
-; =========================================================
-; 🔥 CERRAR APP SI ESTÁ ABIERTA
-; =========================================================
-[Run]
-Filename: "taskkill"; Parameters: "/F /IM {#MyAppExeName}"; Flags: runhidden
+DisableProgramGroupPage=yes
+ChangesAssociations=no
+CloseApplications=yes
+CloseApplicationsFilter={#MyAppExeName}
+RestartApplications=no
 
-; =========================================================
-; 🔥 LIMPIAR COMPLETAMENTE CARPETA ANTES DE COPIAR
-; =========================================================
-[InstallDelete]
-Type: filesandordirs; Name: "{app}"
-
-; =========================================================
-; ARCHIVOS
-; =========================================================
 [Files]
-Source: "dist\ERP-SOM\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs
+; Copia todo el árbol exactamente como sale de dist
+Source: "dist\ERP-SOM\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
-; =========================================================
-; ICONOS
-; =========================================================
 [Icons]
-Name: "{group}\ERP-SOM"; Filename: "{app}\ERP-SOM.exe"
-Name: "{commondesktop}\ERP-SOM"; Filename: "{app}\ERP-SOM.exe"
+Name: "{group}\ERP-SOM"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"
+Name: "{autodesktop}\ERP-SOM"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"
 
-; =========================================================
-; EJECUCIÓN FINAL
-; =========================================================
+[Dirs]
+; Asegura que la carpeta exista antes de copiar
+Name: "{app}"
+
+[InstallDelete]
+; Limpiar SOLO el contenido, no el directorio raíz
+Type: files; Name: "{app}\*"
+Type: filesandordirs; Name: "{app}\*"
+
 [Run]
-Filename: "{app}\ERP-SOM.exe"; Flags: nowait postinstall skipifsilent unchecked
+Filename: "{app}\{#MyAppExeName}"; Description: "Ejecutar {#MyAppName}"; WorkingDir: "{app}"; Flags: nowait postinstall skipifsilent unchecked

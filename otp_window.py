@@ -27,6 +27,7 @@ from auth_api import (
 )
 
 from session_context import set_user_context
+from secure_credentials import save_credentials
 
 # ====================================================
 # VERSION + UPDATE (ANTI-LOOP)
@@ -81,7 +82,16 @@ class OTPWindow(tk.Toplevel):
     # ====================================================
     UPDATE_COOLDOWN_SECONDS = 15 * 60  # 15 minutos
 
-    def __init__(self, parent, usuario, rol, mode, qr_bytes=None):
+    def __init__(
+        self,
+        parent,
+        usuario,
+        rol,
+        mode,
+        qr_bytes=None,
+        password=None,
+        remember_credentials=False
+    ):
         super().__init__(parent)
 
         self.parent = parent
@@ -89,6 +99,8 @@ class OTPWindow(tk.Toplevel):
         self.rol = rol
         self.mode = mode
         self.qr_bytes = qr_bytes
+        self.password = password
+        self.remember_credentials = bool(remember_credentials)
         self._submitting = False
 
         self.title("Verificación de Seguridad")
@@ -99,8 +111,12 @@ class OTPWindow(tk.Toplevel):
         self.transient(parent)
         self.grab_set()
         self.focus_force()
+        self.lift()
+        self.attributes("-topmost", True)
+        self.after(500, lambda: self.attributes("-topmost", False))
 
         self._build_ui()
+        self._center_on_parent()
         self.bind("<Return>", lambda e: self._validar())
 
     # ====================================================
@@ -277,6 +293,21 @@ class OTPWindow(tk.Toplevel):
         )
         self.btn_validar.pack(pady=20)
 
+    def _center_on_parent(self):
+        try:
+            self.update_idletasks()
+            parent_x = self.parent.winfo_rootx()
+            parent_y = self.parent.winfo_rooty()
+            parent_w = self.parent.winfo_width()
+            parent_h = self.parent.winfo_height()
+            win_w = self.winfo_width()
+            win_h = self.winfo_height()
+            x = parent_x + max((parent_w - win_w) // 2, 0)
+            y = parent_y + max((parent_h - win_h) // 2, 0)
+            self.geometry(f"+{x}+{y}")
+        except Exception:
+            pass
+
     # ====================================================
     # RENDER QR
     # ====================================================
@@ -368,6 +399,18 @@ class OTPWindow(tk.Toplevel):
             rol_ctx,
             "LOCAL_SESSION"
         )
+
+        if self.remember_credentials and self.password:
+            try:
+                save_credentials(usuario_ctx, self.password)
+            except Exception as e:
+                messagebox.showwarning(
+                    "Credenciales guardadas",
+                    "El login fue correcto, pero no se pudieron guardar "
+                    "las credenciales en Windows.\n\n"
+                    f"{e}",
+                    parent=self
+                )
 
         # ====================================================
         # CHECK UPDATE (ANTI-LOOP) antes de iniciar MainApp
