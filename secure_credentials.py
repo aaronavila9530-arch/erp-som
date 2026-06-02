@@ -174,21 +174,52 @@ def _split_windows_identity(username: str):
     return username, None
 
 
-def prompt_windows_identity(parent_hwnd: int | None = None) -> bool:
-    """
-    Shows the native Windows Security prompt and validates the entered
-    Windows account password with LogonUser. This is separate from the
-    ERP credential stored with DPAPI.
-    """
-
-    if os.name != "nt":
-        raise RuntimeError("La validacion de Windows solo esta disponible en Windows")
-
+def _make_credui_info(parent_hwnd: int | None):
     info = CREDUI_INFO()
     info.cbSize = sizeof(CREDUI_INFO)
     info.hwndParent = HWND(parent_hwnd or 0)
     info.pszCaptionText = "ERP-SOM"
     info.pszMessageText = "Confirme su usuario de Windows para usar credenciales guardadas"
+    return info
+
+
+def _prompt_current_windows_user(parent_hwnd: int | None = None):
+    info = _make_credui_info(parent_hwnd)
+
+    auth_package = DWORD(0)
+    out_auth_buffer = c_void_p()
+    out_auth_buffer_size = DWORD(0)
+    save = BOOL(False)
+
+    CREDUIWIN_ENUMERATE_CURRENT_USER = 0x00000200
+    CREDUIWIN_SECURE_PROMPT = 0x00001000
+    ERROR_CANCELLED = 1223
+
+    result = windll.credui.CredUIPromptForWindowsCredentialsW(
+        byref(info),
+        0,
+        byref(auth_package),
+        None,
+        0,
+        byref(out_auth_buffer),
+        byref(out_auth_buffer_size),
+        byref(save),
+        CREDUIWIN_ENUMERATE_CURRENT_USER | CREDUIWIN_SECURE_PROMPT,
+    )
+
+    try:
+        if result == ERROR_CANCELLED:
+            return False
+        if result == 0:
+            return True
+        return None
+    finally:
+        if out_auth_buffer:
+            windll.kernel32.CoTaskMemFree(out_auth_buffer)
+
+
+def _prompt_windows_password(parent_hwnd: int | None = None) -> bool:
+    info = _make_credui_info(parent_hwnd)
 
     auth_package = DWORD(0)
     out_auth_buffer = c_void_p()
@@ -274,3 +305,20 @@ def prompt_windows_identity(parent_hwnd: int | None = None) -> bool:
             windll.kernel32.CloseHandle(token)
         if out_auth_buffer:
             windll.kernel32.CoTaskMemFree(out_auth_buffer)
+
+
+def prompt_windows_identity(parent_hwnd: int | None = None) -> bool:
+    """
+    Uses the current Windows credential provider first. That is the path that
+    can show PIN/Windows Hello. If Windows cannot expose that prompt, falls
+    back to the username/password credential dialog.
+    """
+
+    if os.name != "nt":
+        raise RuntimeError("La validacion de Windows solo esta disponible en Windows")
+
+    current_user_result = _prompt_current_windows_user(parent_hwnd)
+    if current_user_result is not None:
+        return current_user_result
+
+    return _prompt_windows_password(parent_hwnd)
