@@ -1,23 +1,63 @@
 from datetime import datetime
+import base64
+
 import bcrypt
+import requests
 
 from backend_api.database import get_conn
 from totp_service import (
     start_totp_enrollment,
     confirm_totp_enrollment,
-    validate_totp
+    validate_totp,
 )
 
 
-# =====================================================
-# LOGIN USUARIO — PASO 1 (usuario + contraseña)
-# =====================================================
+AUTH_BASE_URL = "https://api-som-fastapi-production-e66d.up.railway.app"
+AUTH_TIMEOUT = 20
+
+
+def _api_error(response):
+    try:
+        payload = response.json()
+    except Exception:
+        return response.text or "Error de autenticacion"
+    return payload.get("detail") or payload.get("error") or "Error de autenticacion"
+
+
+def _post_auth(path, payload):
+    response = requests.post(
+        f"{AUTH_BASE_URL}{path}",
+        json=payload,
+        timeout=AUTH_TIMEOUT,
+    )
+    if response.status_code >= 400:
+        return False, {"error": _api_error(response)}
+    return True, response.json()
+
+
 def login_usuario(usuario: str, password: str):
     """
-    Verifica credenciales básicas y decide el siguiente paso:
-    - ENROLL_TOTP → mostrar QR
-    - VERIFY_TOTP → pedir código Authenticator
+    Paso 1 de login.
+
+    En produccion usa la API HTTPS para evitar depender del proxy publico
+    directo a PostgreSQL desde Windows. El acceso local a DB queda como
+    fallback de desarrollo.
     """
+
+    try:
+        ok, data = _post_auth(
+            "/auth/mobile/login",
+            {"usuario": usuario, "password": password},
+        )
+        if not ok:
+            return False, data
+
+        if data.get("action") == "ENROLL_TOTP" and data.get("qr_base64"):
+            data["qr"] = base64.b64decode(data["qr_base64"])
+
+        return True, data
+    except Exception:
+        pass
 
     conn = None
     cur = None
@@ -25,11 +65,14 @@ def login_usuario(usuario: str, password: str):
         conn = get_conn()
         cur = conn.cursor()
 
-        cur.execute("""
+        cur.execute(
+            """
             SELECT pass_hash, rol, activo, totp_enabled
             FROM usuarios
             WHERE usuario=%s
-        """, (usuario,))
+            """,
+            (usuario,),
+        )
         row = cur.fetchone()
 
         if not row:
@@ -41,28 +84,23 @@ def login_usuario(usuario: str, password: str):
             return False, {"error": "Usuario inactivo"}
 
         if not bcrypt.checkpw(password.encode(), pass_hash.encode()):
-            return False, {"error": "Credenciales inválidas"}
+            return False, {"error": "Credenciales invalidas"}
 
-        # 🔐 Usuario válido → decidir flujo
         if not totp_enabled:
-            # Primer login → registrar Authenticator (QR)
             qr_bytes = start_totp_enrollment(usuario)
-
             if not qr_bytes:
                 return False, {"error": "No se pudo iniciar TOTP"}
-
             return True, {
                 "action": "ENROLL_TOTP",
                 "usuario": usuario,
                 "rol": rol,
-                "qr": qr_bytes
+                "qr": qr_bytes,
             }
 
-        # Login normal → pedir código TOTP
         return True, {
             "action": "VERIFY_TOTP",
             "usuario": usuario,
-            "rol": rol
+            "rol": rol,
         }
 
     finally:
@@ -72,49 +110,53 @@ def login_usuario(usuario: str, password: str):
             conn.close()
 
 
-# =====================================================
-# CONFIRMAR REGISTRO TOTP — PASO 2 (QR)
-# =====================================================
 def confirmar_registro_totp(usuario: str, codigo: str):
-    """
-    Confirma el código ingresado tras escanear el QR
-    """
-
     if not codigo or not codigo.strip():
-        return False, {"error": "Código requerido"}
+        return False, {"error": "Codigo requerido"}
+
+    try:
+        return _post_auth(
+            "/auth/mobile/totp/confirm",
+            {"usuario": usuario, "codigo": codigo.strip()},
+        )
+    except Exception:
+        pass
 
     ok = confirm_totp_enrollment(usuario, codigo.strip())
-
     if not ok:
-        return False, {"error": "Código inválido"}
+        return False, {"error": "Codigo invalido"}
 
-    # Registro TOTP completado → acceso permitido
-    return True, {
-        "usuario": usuario
-    }
+    return True, {"usuario": usuario}
 
 
-# =====================================================
-# VALIDAR TOTP — LOGIN / RESET PASSWORD
-# =====================================================
 def validar_totp_login(usuario: str, codigo: str):
-
     if not codigo or not codigo.strip():
-        return False, {"error": "Código requerido"}
+        return False, {"error": "Codigo requerido"}
+
+    try:
+        return _post_auth(
+            "/auth/mobile/totp/verify",
+            {"usuario": usuario, "codigo": codigo.strip()},
+        )
+    except Exception:
+        pass
 
     ok = validate_totp(usuario, codigo.strip())
-
     if not ok:
-        return False, {"error": "Código inválido"}
+        return False, {"error": "Codigo invalido"}
 
     conn = get_conn()
+    cur = None
     try:
         cur = conn.cursor()
-        cur.execute("""
+        cur.execute(
+            """
             SELECT rol
             FROM usuarios
             WHERE usuario=%s
-        """, (usuario,))
+            """,
+            (usuario,),
+        )
         row = cur.fetchone()
 
         if not row:
@@ -122,19 +164,23 @@ def validar_totp_login(usuario: str, codigo: str):
 
         rol = row[0]
 
-        cur.execute("""
+        cur.execute(
+            """
             UPDATE usuarios
             SET last_login=%s
             WHERE usuario=%s
-        """, (datetime.now(), usuario))
+            """,
+            (datetime.now(), usuario),
+        )
         conn.commit()
 
         return True, {
             "usuario": usuario,
             "rol": rol,
-            "token": "LOCAL_SESSION"
+            "token": "LOCAL_SESSION",
         }
 
     finally:
-        cur.close()
+        if cur:
+            cur.close()
         conn.close()
