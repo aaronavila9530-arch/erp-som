@@ -19,8 +19,10 @@ def login_usuario(usuario: str, password: str):
     - VERIFY_TOTP → pedir código Authenticator
     """
 
-    conn = get_conn()
+    conn = None
+    cur = None
     try:
+        conn = get_conn()
         cur = conn.cursor()
 
         cur.execute("""
@@ -64,8 +66,10 @@ def login_usuario(usuario: str, password: str):
         }
 
     finally:
-        cur.close()
-        conn.close()
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
 
 
 # =====================================================

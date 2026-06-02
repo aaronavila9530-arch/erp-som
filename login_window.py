@@ -309,7 +309,16 @@ class LoginWindow(tk.Toplevel):
             )
             return
 
-        ok, data = login_usuario(usuario, password)
+        try:
+            ok, data = login_usuario(usuario, password)
+        except Exception as e:
+            messagebox.showerror(
+                "Error de autenticación",
+                "No se pudo conectar o validar el usuario.\n\n"
+                f"{e}",
+                parent=self
+            )
+            return
 
         if not ok:
             messagebox.showerror(

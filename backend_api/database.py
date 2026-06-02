@@ -25,7 +25,7 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
     DATABASE_URL = (
         "postgresql://postgres:"
-        "IrPzbLzKJFQtUnMlBKcHLHcLIAqagHCT"
+        "LjjyuIUsTSCdiwPVHSSwtIYPOsRQytGX"
         "@tramway.proxy.rlwy.net:15258/"
         "railway?sslmode=require"
     )
