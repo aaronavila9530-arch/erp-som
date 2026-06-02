@@ -31,6 +31,7 @@ hidden_imports += [
     "login_window",
     "otp_window",
     "otp_service",
+    "password_reset_window",
     "auth_api",
     "session_context",
     "secure_credentials",
@@ -46,6 +47,7 @@ hidden_imports += [
 # MODULOS ERP DINAMICOS
 # --------------------------
 hidden_imports += collect_submodules("Modulos")
+hidden_imports += collect_submodules("backend_api")
 
 # --------------------------
 # PILLOW (QR)
@@ -64,8 +66,13 @@ hidden_imports += collect_submodules("requests")
 
 datas = [
     ("assets", "assets"),
+    ("Modulos", "Modulos"),
     ("backend_api", "backend_api"),
-    (os.path.join(python_base, "tcl"), "tcl"),
+    ("desktop_services", "desktop_services"),
+    ("resource_utils.py", "."),
+    ("version.py", "."),
+    (os.path.join(python_base, "tcl", "tcl8.6"), "_tcl_data"),
+    (os.path.join(python_base, "tcl", "tk8.6"), "_tk_data"),
 ]
 
 binaries = [
