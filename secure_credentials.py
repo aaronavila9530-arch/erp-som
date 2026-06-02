@@ -1,6 +1,8 @@
 import base64
 import json
 import os
+import subprocess
+import tempfile
 from ctypes import (
     Structure,
     byref,
@@ -215,7 +217,7 @@ def _prompt_current_windows_user(parent_hwnd: int | None = None):
         return None
     finally:
         if out_auth_buffer:
-            windll.kernel32.CoTaskMemFree(out_auth_buffer)
+            windll.ole32.CoTaskMemFree(out_auth_buffer)
 
 
 def _prompt_windows_password(parent_hwnd: int | None = None) -> bool:
@@ -304,7 +306,104 @@ def _prompt_windows_password(parent_hwnd: int | None = None) -> bool:
         if token:
             windll.kernel32.CloseHandle(token)
         if out_auth_buffer:
-            windll.kernel32.CoTaskMemFree(out_auth_buffer)
+            windll.ole32.CoTaskMemFree(out_auth_buffer)
+
+
+def _prompt_windows_hello() -> bool | None:
+    powershell = os.path.join(
+        os.environ.get("SystemRoot", r"C:\Windows"),
+        "System32",
+        "WindowsPowerShell",
+        "v1.0",
+        "powershell.exe",
+    )
+    if not os.path.exists(powershell):
+        return None
+
+    script = r"""
+Add-Type -AssemblyName System.Runtime.WindowsRuntime
+[void][Windows.Security.Credentials.UI.UserConsentVerifier, Windows.Security.Credentials.UI, ContentType=WindowsRuntime]
+
+function Await-WinRtOperation($Operation, $ResultType) {
+    $method = [System.WindowsRuntimeSystemExtensions].GetMethods() |
+        Where-Object {
+            $_.Name -eq 'AsTask' -and
+            $_.IsGenericMethodDefinition -and
+            $_.GetParameters().Count -eq 1
+        } |
+        Select-Object -First 1
+
+    if (-not $method) {
+        throw 'AsTask generic method not found'
+    }
+
+    $task = $method.MakeGenericMethod($ResultType).Invoke($null, @($Operation))
+    $task.Wait()
+    return $task.Result
+}
+
+$availability = Await-WinRtOperation `
+    ([Windows.Security.Credentials.UI.UserConsentVerifier]::CheckAvailabilityAsync()) `
+    ([Windows.Security.Credentials.UI.UserConsentVerifierAvailability])
+
+if ($availability.ToString() -ne 'Available') {
+    Write-Output ('UNAVAILABLE:' + $availability.ToString())
+    exit 2
+}
+
+$verification = Await-WinRtOperation `
+    ([Windows.Security.Credentials.UI.UserConsentVerifier]::RequestVerificationAsync('ERP-SOM necesita validar Windows para usar credenciales guardadas')) `
+    ([Windows.Security.Credentials.UI.UserConsentVerificationResult])
+
+Write-Output $verification.ToString()
+if ($verification.ToString() -eq 'Verified') {
+    exit 0
+}
+if ($verification.ToString() -eq 'Canceled') {
+    exit 3
+}
+exit 4
+"""
+
+    script_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            suffix=".ps1",
+            delete=False,
+            encoding="utf-8",
+        ) as f:
+            f.write(script)
+            script_path = f.name
+
+        result = subprocess.run(
+            [
+                powershell,
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                script_path,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        output = (result.stdout or result.stderr or "").strip()
+        if result.returncode == 0 and "Verified" in output:
+            return True
+        if result.returncode == 3:
+            return False
+        return None
+    except Exception:
+        return None
+    finally:
+        if script_path:
+            try:
+                os.remove(script_path)
+            except OSError:
+                pass
 
 
 def prompt_windows_identity(parent_hwnd: int | None = None) -> bool:
@@ -316,6 +415,10 @@ def prompt_windows_identity(parent_hwnd: int | None = None) -> bool:
 
     if os.name != "nt":
         raise RuntimeError("La validacion de Windows solo esta disponible en Windows")
+
+    hello_result = _prompt_windows_hello()
+    if hello_result is not None:
+        return hello_result
 
     current_user_result = _prompt_current_windows_user(parent_hwnd)
     if current_user_result is not None:
