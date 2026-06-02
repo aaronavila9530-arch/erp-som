@@ -15,6 +15,7 @@ from secure_credentials import (
     has_saved_credentials,
     is_windows_protection_available,
     load_credentials,
+    prompt_windows_identity,
 )
 
 
@@ -446,6 +447,25 @@ class LoginWindow(tk.Toplevel):
 
     def _unlock_with_windows(self):
         try:
+            parent_hwnd = int(self.winfo_id())
+        except Exception:
+            parent_hwnd = None
+
+        try:
+            confirmed = prompt_windows_identity(parent_hwnd)
+        except Exception as e:
+            messagebox.showerror(
+                "Credenciales guardadas",
+                "Windows no pudo validar la identidad.\n\n"
+                f"{e}",
+                parent=self
+            )
+            return
+
+        if not confirmed:
+            return
+
+        try:
             saved = load_credentials()
         except Exception as e:
             messagebox.showerror(
@@ -470,7 +490,7 @@ class LoginWindow(tk.Toplevel):
         self.password.insert(0, saved.get("password", ""))
         self.remember_credentials.set(True)
         self._draw_credentials_switch()
-        self._login()
+        self.password.focus_set()
 
     # ====================================================
     # RESET PASSWORD

@@ -6,11 +6,14 @@ from ctypes import (
     byref,
     cast,
     create_string_buffer,
+    create_unicode_buffer,
     c_void_p,
+    c_wchar_p,
+    sizeof,
     string_at,
     windll,
 )
-from ctypes.wintypes import DWORD
+from ctypes.wintypes import BOOL, DWORD, HWND
 
 
 APP_DIR_NAME = "ERP-SOM"
@@ -22,6 +25,16 @@ class DATA_BLOB(Structure):
     _fields_ = [
         ("cbData", DWORD),
         ("pbData", c_void_p),
+    ]
+
+
+class CREDUI_INFO(Structure):
+    _fields_ = [
+        ("cbSize", DWORD),
+        ("hwndParent", HWND),
+        ("pszMessageText", c_wchar_p),
+        ("pszCaptionText", c_wchar_p),
+        ("hbmBanner", c_void_p),
     ]
 
 
@@ -151,3 +164,113 @@ def delete_credentials() -> None:
 
 def is_windows_protection_available() -> bool:
     return os.name == "nt"
+
+
+def _split_windows_identity(username: str):
+    username = str(username or "").strip()
+    if "\\" in username:
+        domain, user = username.split("\\", 1)
+        return user, domain or None
+    return username, None
+
+
+def prompt_windows_identity(parent_hwnd: int | None = None) -> bool:
+    """
+    Shows the native Windows Security prompt and validates the entered
+    Windows account password with LogonUser. This is separate from the
+    ERP credential stored with DPAPI.
+    """
+
+    if os.name != "nt":
+        raise RuntimeError("La validacion de Windows solo esta disponible en Windows")
+
+    info = CREDUI_INFO()
+    info.cbSize = sizeof(CREDUI_INFO)
+    info.hwndParent = HWND(parent_hwnd or 0)
+    info.pszCaptionText = "ERP-SOM"
+    info.pszMessageText = "Confirme su usuario de Windows para usar credenciales guardadas"
+
+    auth_package = DWORD(0)
+    out_auth_buffer = c_void_p()
+    out_auth_buffer_size = DWORD(0)
+    save = BOOL(False)
+
+    CREDUIWIN_GENERIC = 0x00000001
+    CREDUIWIN_SECURE_PROMPT = 0x00001000
+    ERROR_CANCELLED = 1223
+
+    result = windll.credui.CredUIPromptForWindowsCredentialsW(
+        byref(info),
+        0,
+        byref(auth_package),
+        None,
+        0,
+        byref(out_auth_buffer),
+        byref(out_auth_buffer_size),
+        byref(save),
+        CREDUIWIN_GENERIC | CREDUIWIN_SECURE_PROMPT,
+    )
+
+    if result == ERROR_CANCELLED:
+        return False
+    if result != 0:
+        raise OSError(f"CredUIPromptForWindowsCredentials failed: {result}")
+
+    username_buf = None
+    domain_buf = None
+    password_buf = None
+    token = c_void_p()
+
+    try:
+        username_size = DWORD(256)
+        domain_size = DWORD(256)
+        password_size = DWORD(256)
+        username_buf = create_unicode_buffer(username_size.value)
+        domain_buf = create_unicode_buffer(domain_size.value)
+        password_buf = create_unicode_buffer(password_size.value)
+
+        ok = windll.credui.CredUnPackAuthenticationBufferW(
+            0,
+            out_auth_buffer,
+            out_auth_buffer_size.value,
+            username_buf,
+            byref(username_size),
+            domain_buf,
+            byref(domain_size),
+            password_buf,
+            byref(password_size),
+        )
+        if not ok:
+            raise OSError("CredUnPackAuthenticationBuffer failed")
+
+        entered_username = username_buf.value
+        entered_domain = domain_buf.value
+        entered_password = password_buf.value
+
+        if not entered_username or not entered_password:
+            raise RuntimeError("Usuario y contrasena de Windows requeridos")
+
+        if not entered_domain:
+            entered_username, entered_domain = _split_windows_identity(entered_username)
+
+        LOGON32_LOGON_INTERACTIVE = 2
+        LOGON32_PROVIDER_DEFAULT = 0
+
+        ok = windll.advapi32.LogonUserW(
+            entered_username,
+            entered_domain,
+            entered_password,
+            LOGON32_LOGON_INTERACTIVE,
+            LOGON32_PROVIDER_DEFAULT,
+            byref(token),
+        )
+        if not ok:
+            raise RuntimeError("Windows no pudo validar esas credenciales")
+
+        return True
+
+    finally:
+        if token:
+            windll.kernel32.CloseHandle(token)
+        if out_auth_buffer:
+            windll.kernel32.CoTaskMemFree(out_auth_buffer)
