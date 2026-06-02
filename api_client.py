@@ -23,6 +23,14 @@ def set_user_role(role: str):
 def get_user_role() -> Optional[str]:
     return _current_user_role
 
+def _get_hhrr_headers(usuario, rol):
+    if not usuario or not rol:
+        raise Exception("HHRR requiere usuario y rol")
+    return {
+        "X-User": str(usuario).strip().lower(),
+        "X-Role": str(rol).strip().lower()
+    }
+
 
 # ============================================================
 # CLIENTES
@@ -1844,7 +1852,7 @@ def post_factura_electronica_xml_api(servicio_id: int, xml_path: str):
             timeout=60
         )
 
-    r.raise_for_status()
+    raise_for_status_with_detail(r)
     return r.json()
 
 
@@ -2007,14 +2015,34 @@ def api_request(method: str, url: str, **kwargs):
         **kwargs
     )
 
+
+def raise_for_status_with_detail(response):
+    try:
+        response.raise_for_status()
+    except requests.exceptions.HTTPError as exc:
+        detail = None
+        try:
+            payload = response.json()
+            detail = payload.get("detail") or payload.get("message") or payload.get("error")
+        except Exception:
+            detail = response.text
+
+        detail = str(detail or exc).strip()
+        if detail:
+            raise requests.exceptions.HTTPError(detail, response=response) from exc
+        raise
+
 # ============================================================
 # HHRR — EVENTS (API REAL)
 # ============================================================
 
 def hr_create_event(data: dict):
+    if not isinstance(data, dict):
+        raise ValueError("data debe ser dict")
+
     resp = api_request(
         "POST",
-        f"{BASE_URL}/hr/events/",
+        "/hr/events/",
         json=data,
         timeout=15
     )
@@ -2027,14 +2055,16 @@ def hr_list_events(event_type=None, status=None, empleado_id=None):
 
     if event_type:
         params["event_type"] = event_type
+
     if status:
         params["status"] = status
+
     if empleado_id:
         params["empleado_id"] = empleado_id
 
     resp = api_request(
         "GET",
-        f"{BASE_URL}/hr/events/",
+        "/hr/events/",
         params=params,
         timeout=15
     )
@@ -2043,9 +2073,12 @@ def hr_list_events(event_type=None, status=None, empleado_id=None):
 
 
 def hr_update_event_status(event_id, status, approved_by):
+    if not event_id:
+        raise ValueError("event_id requerido")
+
     resp = api_request(
         "POST",
-        f"{BASE_URL}/hr/events/{event_id}/status",
+        f"/hr/events/{event_id}/status",
         json={
             "status": status,
             "approved_by": approved_by
@@ -2055,6 +2088,7 @@ def hr_update_event_status(event_id, status, approved_by):
     resp.raise_for_status()
     return resp.json()
 
+
 # ============================================================
 # HHRR — OT LOG (API REAL)
 # ============================================================
@@ -2062,7 +2096,7 @@ def hr_update_event_status(event_id, status, approved_by):
 def hr_create_ot_log(data: dict):
     resp = api_request(
         "POST",
-        f"{BASE_URL}/hr/ot-log/",
+        "/hr/ot-log/",
         json=data,
         timeout=15
     )
@@ -2080,34 +2114,13 @@ def hr_list_ot_logs(
     tipo=None,
     estado=None
 ):
-
     try:
+        page = int(page) if str(page).isdigit() else 1
+        page_size = int(page_size) if str(page_size).isdigit() else 50
 
-        # -------------------------------------------------
-        # SANITIZE PAGINATION
-        # -------------------------------------------------
-        try:
-            page = int(page)
-        except Exception:
-            page = 1
+        page = max(page, 1)
+        page_size = min(max(page_size, 1), 500)
 
-        try:
-            page_size = int(page_size)
-        except Exception:
-            page_size = 50
-
-        if page < 1:
-            page = 1
-
-        if page_size < 1:
-            page_size = 50
-
-        if page_size > 500:
-            page_size = 500
-
-        # -------------------------------------------------
-        # BUILD PARAMS
-        # -------------------------------------------------
         params = {
             "page": page,
             "page_size": page_size
@@ -2122,72 +2135,33 @@ def hr_list_ot_logs(
         if estado:
             params["estado"] = str(estado).strip()
 
-        # -------------------------------------------------
-        # API CALL (USANDO WRAPPER AUTENTICADO)
-        # -------------------------------------------------
-        response = api_request(
+        resp = api_request(
             "GET",
-            f"{BASE_URL}/hr/ot-log",
+            "/hr/ot-log",
             params=params,
             timeout=30
         )
 
-        # -------------------------------------------------
-        # STATUS VALIDATION
-        # -------------------------------------------------
-        if response.status_code != 200:
-            raise Exception(
-                f"HTTP {response.status_code} - {response.text}"
-            )
+        resp.raise_for_status()
 
-        # -------------------------------------------------
-        # PARSE RESPONSE
-        # -------------------------------------------------
-        try:
-            data = response.json()
-        except Exception:
-            raise Exception("Invalid JSON response from server")
+        data = resp.json()
 
-        # -------------------------------------------------
-        # HARDEN RESPONSE STRUCTURE
-        # -------------------------------------------------
         if not isinstance(data, dict):
-            raise Exception("Invalid response structure")
+            return {"data": [], "total": 0}
 
-        if "data" not in data or not isinstance(data["data"], list):
-            data["data"] = []
-
-        if "total" not in data:
-            data["total"] = len(data["data"])
+        data.setdefault("data", [])
+        data.setdefault("total", len(data["data"]))
 
         return data
 
-    # -------------------------------------------------
-    # NETWORK ERRORS
-    # -------------------------------------------------
-    except requests.exceptions.Timeout:
-        raise Exception("Server timeout")
-
-    except requests.exceptions.ConnectionError:
-        raise Exception("Cannot connect to server")
-
-    except requests.exceptions.RequestException as e:
-        raise Exception(f"Connection error: {str(e)}")
-
-    # -------------------------------------------------
-    # GENERIC ERRORS
-    # -------------------------------------------------
     except Exception as e:
         raise Exception(str(e))
-
-
-
 
 
 def hr_delete_ot_log(log_id: int):
     resp = api_request(
         "DELETE",
-        f"{BASE_URL}/hr/ot-log/{log_id}",
+        f"/hr/ot-log/{log_id}",
         timeout=15
     )
     resp.raise_for_status()
@@ -2197,7 +2171,7 @@ def hr_delete_ot_log(log_id: int):
 def hr_update_ot_status(log_id: int, estado: str):
     resp = api_request(
         "PUT",
-        f"{BASE_URL}/hr/ot-log/{log_id}/estado",
+        f"/hr/ot-log/{log_id}/estado",
         json={"estado": estado},
         timeout=15
     )
@@ -2207,35 +2181,33 @@ def hr_update_ot_status(log_id: int, estado: str):
 
 def hr_get_my_summary(year=None, month=None):
     params = {}
-    if year is not None:
+
+    if year:
         params["year"] = year
-    if month is not None:
+
+    if month:
         params["month"] = month
 
     resp = api_request(
         "GET",
-        f"{BASE_URL}/hr/ot-log/me/summary",
+        "/hr/ot-log/me/summary",
         params=params,
         timeout=15
     )
     resp.raise_for_status()
     return resp.json()
 
+
 # ============================================================
-# ALIASES LEGACY — UI EXISTENTE (NO BORRAR)
+# ALIASES LEGACY — UI EXISTENTE
 # ============================================================
 
 def listar_eventos_hr(*args, **kwargs):
     return hr_list_events(*args, **kwargs)
 
 def actualizar_estado_evento_hr(event_id, status, approved_by):
-    return hr_update_event_status(
-        event_id=event_id,
-        status=status,
-        approved_by=approved_by
-    )
+    return hr_update_event_status(event_id, status, approved_by)
 
-# OT LOG
 def crear_ot_log(data: dict):
     return hr_create_ot_log(data)
 
@@ -2247,36 +2219,17 @@ def listar_ot_logs(*args, **kwargs):
 # HHRR — PAYROLL
 # ============================================================
 
-# ------------------------------------------------------------
-# 1️⃣ LISTAR EMPLEADOS PARA PAYROLL (TABLA BASE)
-# GET /hr/payroll/employees
-# ------------------------------------------------------------
 def hr_list_payroll_employees():
-    """
-    Retorna empleados ACTIVOS con data fija para la tabla Payroll.
-    """
     resp = api_request(
         "GET",
-        f"{BASE_URL}/hr/payroll/employees",
+        "/hr/payroll/employees",
         timeout=15
     )
     resp.raise_for_status()
     return resp.json()
 
 
-# ------------------------------------------------------------
-# 2️⃣ PREVIEW / CÁLCULO DE PLANILLA (NO GUARDA)
-# GET /hr/payroll/calculate
-# ------------------------------------------------------------
-def hr_calculate_payroll(
-    usuario: str,
-    year: int,
-    month: int
-):
-    """
-    Calcula planilla del empleado para un mes específico.
-    NO guarda datos.
-    """
+def hr_calculate_payroll(usuario: str, year: int, month: int):
     params = {
         "usuario": usuario,
         "year": year,
@@ -2285,7 +2238,7 @@ def hr_calculate_payroll(
 
     resp = api_request(
         "GET",
-        f"{BASE_URL}/hr/payroll/calculate",
+        "/hr/payroll/calculate",
         params=params,
         timeout=15
     )
@@ -2293,77 +2246,10 @@ def hr_calculate_payroll(
     return resp.json()
 
 
-# ------------------------------------------------------------
-# 3️⃣ CONFIRMAR / POSTEAR PLANILLA
-# PUT /hr/payroll/post
-# ------------------------------------------------------------
 def hr_post_payroll(payload: dict):
-    """
-    Confirma la planilla del mes (resultado del preview).
-
-    payload esperado:
-    {
-        usuario: str,
-        year: int,
-        month: int,
-        salario_neto: float,
-        pdf_path: str   # URL lógica (/hr/payroll/files/...)
-    }
-    """
-
-
-
-# ------------------------------------------------------------
-# 4️⃣ (FUTURO) LISTAR PLANILLAS GENERADAS
-# GET /hr/payroll/runs
-# ------------------------------------------------------------
-def hr_list_payroll_runs(
-    year: int | None = None,
-    month: int | None = None,
-    usuario: str | None = None
-):
-    """
-    Historial de planillas confirmadas.
-    (Preparado para cuando exista el endpoint)
-    """
-    params = {}
-
-    if year is not None:
-        params["year"] = year
-    if month is not None:
-        params["month"] = month
-    if usuario:
-        params["usuario"] = usuario
-
-    resp = api_request(
-        "GET",
-        f"{BASE_URL}/hr/payroll/runs",
-        params=params,
-        timeout=15
-    )
-    resp.raise_for_status()
-    return resp.json()
-
-# ------------------------------------------------------------
-# 3️⃣ CONFIRMAR / POSTEAR PLANILLA
-# PUT /hr/payroll/post
-# ------------------------------------------------------------
-def hr_post_payroll(payload: dict):
-    """
-    Confirma la planilla del mes (resultado del preview).
-
-    payload esperado:
-    {
-        usuario: str,
-        year: int,
-        month: int,
-        salario_neto: float,
-        pdf_path: str
-    }
-    """
     resp = api_request(
         "PUT",
-        f"{BASE_URL}/hr/payroll/post",
+        "/hr/payroll/post",
         json=payload,
         timeout=15
     )
@@ -2371,135 +2257,103 @@ def hr_post_payroll(payload: dict):
     return resp.json()
 
 
-# ============================================================
-# LISTAR COLILLAS DE PAGO (PAGINADO + FILTROS)
-# GET /hr/payroll/payslips
-# ============================================================
-def get_payslips_api(
-    page: int = 1,
-    page_size: int = 20,
-    year: int | None = None,
-    month: int | None = None
-):
-    """
-    Obtiene colillas de pago según permisos del usuario autenticado.
+def hr_list_payroll_runs(year=None, month=None, usuario=None):
+    params = {}
 
-    Reglas (en backend):
-    - employee → solo sus colillas
-    - admin / master → todas
-
-    Filtros opcionales:
-    - year  (int, ej: 2026)
-    - month (int, 1-12)
-    """
-
-    params = {
-        "page": page,
-        "page_size": page_size
-    }
-
-    # ----------------------------
-    # AÑO
-    # ----------------------------
-    if year is not None:
+    if year:
         params["year"] = year
 
-    # ----------------------------
-    # MES
-    # ----------------------------
-    if month is not None:
+    if month:
         params["month"] = month
 
-    resp = api_request(
-        "GET",
-        f"{BASE_URL}/hr/payroll/payslips",
-        params=params,
-        timeout=20
-    )
-
-    resp.raise_for_status()
-    return resp.json()
-
-
-
-# ============================================================
-# PAYROLL — DESCARGAR COLILLA (RECONSTRUCCIÓN ON-DEMAND)
-# ============================================================
-
-def hr_download_payslip_pdf(
-    year: int,
-    month: int,
-    usuario: str | None = None,
-    timeout: int = 30
-):
-    """
-    Descarga la colilla de pago reconstruida en tiempo real.
-    
-    - Employee: descarga solo la suya
-    - Admin/Master: puede indicar usuario
-    """
-
-    params = {}
     if usuario:
         params["usuario"] = usuario
 
     resp = api_request(
         "GET",
-        f"{BASE_URL}/hr/payroll/payslips/{year}/{month}/pdf",
+        "/hr/payroll/runs",
         params=params,
-        stream=True,
-        timeout=timeout
+        timeout=15
     )
-
-    resp.raise_for_status()
-    return resp
-
-
-
-# ============================================================
-# HHRR — LISTAR SOLICITUDES
-# GET /hr/events
-# ============================================================
-def listar_eventos_hr():
-    """
-    - user        → solo sus solicitudes
-    - admin/master → todas
-    """
-    resp = api_request(
-        "GET",
-        f"{BASE_URL}/hr/events/"
-    )
-
     resp.raise_for_status()
     return resp.json()
 
 
+def get_payslips_api(page=1, page_size=20, year=None, month=None):
+    params = {
+        "page": page,
+        "page_size": page_size
+    }
+
+    if year:
+        params["year"] = year
+
+    if month:
+        params["month"] = month
+
+    resp = api_request(
+        "GET",
+        "/hr/payroll/payslips",
+        params=params,
+        timeout=20
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+def hr_download_payslip_pdf(year, month, usuario=None, timeout=30):
+    params = {}
+
+    if usuario:
+        params["usuario"] = usuario
+
+    resp = api_request(
+        "GET",
+        f"/hr/payroll/payslips/{year}/{month}/pdf",
+        params=params,
+        stream=True,
+        timeout=timeout
+    )
+    resp.raise_for_status()
+    return resp
+
+
 # ============================================================
-# HHRR — CREAR SOLICITUD
-# POST /hr/events
+# HHRR — EVENTS UI (CON HEADERS)
 # ============================================================
+
+def listar_eventos_hr(usuario, rol):
+    headers = {
+        "X-User": str(usuario).strip().lower(),
+        "X-Role": str(rol).strip().lower()
+    }
+
+    resp = api_request(
+        "GET",
+        "/hr/events/",
+        headers=headers,
+        timeout=15
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
 def crear_evento_hr(
-    event_type: str,
-    payload: dict,
-    event_date: str | None = None
+    event_type,
+    payload,
+    event_date=None,
+    usuario=None,
+    rol=None
 ):
-    """
-    event_type:
-        - VACACIONES
-        - CONSTANCIA_SALARIAL
-        - CONSTANCIA_LABORAL
-        - INCAPACIDAD
-        - LICENCIA
-
-    payload: dict dinámico según tipo
-    event_date: YYYY-MM-DD (opcional)
-    """
-
     if not event_type:
         raise ValueError("event_type requerido")
 
-    if payload is not None and not isinstance(payload, dict):
-        raise ValueError("payload debe ser dict")
+    headers = None
+    if usuario and rol:
+        headers = {
+            "X-User": str(usuario).strip().lower(),
+            "X-Role": str(rol).strip().lower()
+        }
 
     data = {
         "event_type": event_type,
@@ -2511,8 +2365,9 @@ def crear_evento_hr(
 
     resp = api_request(
         "POST",
-        f"{BASE_URL}/hr/events/",
+        "/hr/events/",
         json=data,
+        headers=headers,
         timeout=15
     )
 
@@ -2520,70 +2375,41 @@ def crear_evento_hr(
     return resp.json()
 
 
-# ============================================================
-# HHRR — APROBAR SOLICITUD
-# PATCH /hr/events/{id}/approve
-# ============================================================
-def aprobar_evento_hr(event_id: int, comentario: str | None = None):
-    """
-    Solo admin / master
-    comentario es opcional
-    """
-    if not event_id:
-        raise ValueError("event_id requerido")
-
+def aprobar_evento_hr(event_id, comentario=None):
     data = {}
     if comentario:
         data["comentario"] = comentario
 
     resp = api_request(
         "PATCH",
-        f"{BASE_URL}/hr/events/{event_id}/approve",
+        f"/hr/events/{event_id}/approve",
         json=data,
         timeout=15
     )
-
     resp.raise_for_status()
     return resp.json()
 
 
-# ============================================================
-# HHRR — RECHAZAR SOLICITUD
-# PATCH /hr/events/{id}/reject
-# ============================================================
-def rechazar_evento_hr(event_id: int, comentario: str):
-    """
-    Solo admin / master
-    """
+def rechazar_evento_hr(event_id, comentario):
     if not comentario:
         raise ValueError("comentario requerido")
 
-    data = {
-        "comentario": comentario
-    }
-
     resp = api_request(
         "PATCH",
-        f"{BASE_URL}/hr/events/{event_id}/reject",
-        json=data,
+        f"/hr/events/{event_id}/reject",
+        json={"comentario": comentario},
         timeout=15
     )
-
     resp.raise_for_status()
     return resp.json()
 
 
-# ============================================================
-# HHRR — VACACIONES DISPONIBLES
-# GET /hr/events/vacaciones/disponibles
-# ============================================================
 def obtener_vacaciones_disponibles():
     resp = api_request(
         "GET",
-        f"{BASE_URL}/hr/events/vacaciones/disponibles",
+        "/hr/events/vacaciones/disponibles",
         timeout=15
     )
-
     resp.raise_for_status()
     return resp.json()
 
@@ -2592,19 +2418,7 @@ def obtener_vacaciones_disponibles():
 # HHRR — EMPLEADOS
 # ============================================================
 
-def hr_listar_empleados(
-    page: int = 1,
-    page_size: int = 50,
-    nombre: str | None = None,
-    codigo: str | None = None,
-    estado: str | None = None,
-    usuario: str | None = None
-):
-    """
-    Lista empleados (ADMIN / MASTER)
-    Lazy + paginado + filtros
-    """
-
+def hr_listar_empleados(page=1, page_size=50, nombre=None, codigo=None, estado=None, usuario=None):
     params = {
         "page": page,
         "page_size": page_size
@@ -2624,183 +2438,106 @@ def hr_listar_empleados(
 
     resp = api_request(
         "GET",
-        f"{BASE_URL}/hr/employees",
+        "/hr/employees",
         params=params
     )
-
     resp.raise_for_status()
     return resp.json()
 
 
 def hr_crear_empleado(payload: dict):
-    """
-    Crea un nuevo empleado
-    """
-
     resp = api_request(
         "POST",
-        f"{BASE_URL}/hr/employees",
+        "/hr/employees",
         json=payload
     )
-
     resp.raise_for_status()
     return resp.json()
 
 
-
-def hr_actualizar_empleado(empleado_id: int, payload: dict):
-    """
-    Actualiza datos de un empleado
-    """
-
+def hr_actualizar_empleado(empleado_id, payload):
     resp = api_request(
         "PUT",
-        f"{BASE_URL}/hr/employees/{empleado_id}",
+        f"/hr/employees/{empleado_id}",
         json=payload
     )
-
     resp.raise_for_status()
     return resp.json()
 
 
 # ============================================================
-# NOTICIAS — HHRR
+# NOTICIAS
 # ============================================================
 
-def hr_publicar_noticias(
-    noticia_1: str | None = None,
-    noticia_2: str | None = None,
-    noticia_3: str | None = None,
-    noticia_4: str | None = None,
-    noticia_5: str | None = None,
-):
-    """
-    Publica un bloque de noticias.
-    Requiere rol: admin / master
-    """
-
-    payload = {
-        "noticia_1": noticia_1,
-        "noticia_2": noticia_2,
-        "noticia_3": noticia_3,
-        "noticia_4": noticia_4,
-        "noticia_5": noticia_5,
-    }
-
+def hr_publicar_noticias(**payload):
     resp = api_request(
         "POST",
-        f"{BASE_URL}/noticias",
+        "/noticias",
         json=payload,
         timeout=15
     )
-
     resp.raise_for_status()
     return resp.json()
 
 
 def hr_obtener_ultima_noticia():
-    """
-    Retorna el último bloque de noticias publicado.
-    Acceso: cualquier usuario autenticado
-    """
-
     resp = api_request(
         "GET",
-        f"{BASE_URL}/noticias/latest",
+        "/noticias/latest",
         timeout=15
     )
-
     resp.raise_for_status()
     return resp.json()
 
+
 # ============================================================
-# HHRR — POLÍTICAS DE LA EMPRESA
+# POLÍTICAS
 # ============================================================
 
-def listar_politicas_hr(
-    categoria: str | None = None,
-    solo_activas: bool = True
-):
-    """
-    GET /hr/policies
-
-    Acceso:
-    - employee
-    - admin
-    - master
-    """
-
-    params = {
-        "solo_activas": solo_activas
-    }
+def listar_politicas_hr(categoria=None, solo_activas=True):
+    params = {"solo_activas": solo_activas}
 
     if categoria:
         params["categoria"] = categoria
 
     resp = api_request(
         "GET",
-        f"{BASE_URL}/hr/policies",
+        "/hr/policies",
         params=params,
         timeout=15
     )
-
     resp.raise_for_status()
     return resp.json()
 
 
-def crear_politica_hr(payload: dict):
-    """
-    POST /hr/policies
-
-    Acceso:
-    - admin / master
-    """
-
+def crear_politica_hr(payload):
     resp = api_request(
         "POST",
-        f"{BASE_URL}/hr/policies",
+        "/hr/policies",
         json=payload,
         timeout=15
     )
-
     resp.raise_for_status()
     return resp.json()
 
 
-def actualizar_politica_hr(policy_id: int, payload: dict):
-    """
-    PUT /hr/policies/{policy_id}
-
-    Acceso:
-    - admin / master
-    """
-
+def actualizar_politica_hr(policy_id, payload):
     resp = api_request(
         "PUT",
-        f"{BASE_URL}/hr/policies/{policy_id}",
+        f"/hr/policies/{policy_id}",
         json=payload,
         timeout=15
     )
-
     resp.raise_for_status()
     return resp.json()
 
 
-def eliminar_politica_hr(policy_id: int):
-    """
-    DELETE /hr/policies/{policy_id}
-    (Soft delete)
-
-    Acceso:
-    - admin / master
-    """
-
+def eliminar_politica_hr(policy_id):
     resp = api_request(
         "DELETE",
-        f"{BASE_URL}/hr/policies/{policy_id}",
+        f"/hr/policies/{policy_id}",
         timeout=15
     )
-
     resp.raise_for_status()
     return resp.json()
 
@@ -5920,38 +5657,105 @@ def get_draft_survey_by_id_api(general_id: int):
         return {"success": False, "error": str(e)}
 
 # =========================================================
-# DRAFT SURVEY — UPDATE
+# DRAFT SURVEY — UPDATE FULL (BLINDADO REAL)
 # =========================================================
-
-def update_draft_survey_api(general_id: int, payload: dict):
+def update_full_draft_survey_api(general_id, payload):
     """
     PUT /draft-survey/{general_id}
 
-    Si payload incluye:
-        "status": "Approved"
-    entonces el backend actualizará a Approved.
+    - Usa api_request() para respetar headers de sesión
+    - Soporta general_id (int) o draft_report_number (str)
+    - Devuelve JSON consistente
+    - No rompe si la respuesta no viene en JSON
     """
 
     try:
-        response = requests.put(
-            f"{BASE_URL}/draft-survey/{general_id}",
+        if general_id is None or str(general_id).strip() == "":
+            return {
+                "success": False,
+                "error": "general_id vacío o inválido"
+            }
+
+        if not isinstance(payload, dict):
+            return {
+                "success": False,
+                "error": "payload inválido: debe ser dict"
+            }
+
+        identifier = str(general_id).strip()
+        url = f"{BASE_URL}/draft-survey/{identifier}"
+
+        print("===================================")
+        print("UPDATE FULL DRAFT SURVEY API")
+        print("URL:", url)
+        print("IDENTIFIER:", identifier)
+        print("PAYLOAD:")
+        print(payload)
+        print("===================================")
+
+        response = api_request(
+            "PUT",
+            url,
             json=payload,
             timeout=60
         )
+
+        print("===================================")
+        print("STATUS CODE PUT:", response.status_code)
+        print("RESPONSE TEXT PUT:")
+        print(response.text)
+        print("===================================")
+
+        try:
+            data = response.json()
+        except Exception:
+            data = None
 
         if response.status_code != 200:
             return {
                 "success": False,
                 "error": f"HTTP {response.status_code}",
-                "detail": response.text
+                "detail": data if isinstance(data, dict) else response.text
             }
 
-        return response.json()
+        if isinstance(data, dict):
+            return data
+
+        return {
+            "success": False,
+            "error": "Respuesta inválida del backend",
+            "detail": response.text
+        }
+
+    except requests.Timeout:
+        return {
+            "success": False,
+            "error": "Timeout al actualizar Draft Survey"
+        }
+
+    except requests.RequestException as e:
+        return {
+            "success": False,
+            "error": f"Error de red: {str(e)}"
+        }
 
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {
+            "success": False,
+            "error": str(e)
+        }
 
+# =========================================================
+# 🔥 COMPAT WRAPPER (NO ROMPE UI EXISTENTE)
+# =========================================================
 
+def update_draft_survey_api(general_id, payload: dict):
+    """
+    Wrapper para mantener compatibilidad con UI existente.
+    Acepta general_id o draft_report_number.
+    """
+
+    return update_full_draft_survey_api(str(general_id), payload)
 
 # =========================================================
 # preview excel draft survey
@@ -5986,9 +5790,13 @@ def preview_draft_survey_excel_api(payload: dict):
 # BALLAST — CREATE
 # POST /draft-survey-extra/ballast/{draft_survey_id}
 # =========================================================
-def create_draft_survey_ballast_api(draft_survey_id: int, payload: dict):
+def create_draft_survey_ballast_api(draft_survey_id, payload: dict):
     """
     Crea/guarda Ballast para un Draft Survey.
+
+    SOPORTA:
+      - general_id (int)
+      - draft_report_number (str)
 
     Retorna SIEMPRE un dict con:
       - success: bool
@@ -6000,11 +5808,11 @@ def create_draft_survey_ballast_api(draft_survey_id: int, payload: dict):
     # -------------------------
     # Validaciones rápidas
     # -------------------------
-    if not isinstance(draft_survey_id, int) or draft_survey_id <= 0:
+    if draft_survey_id is None or str(draft_survey_id).strip() == "":
         return {
             "success": False,
             "data": None,
-            "error": "draft_survey_id inválido (debe ser int > 0)",
+            "error": "draft_survey_id inválido (vacío)",
             "status_code": None
         }
 
@@ -6019,13 +5827,26 @@ def create_draft_survey_ballast_api(draft_survey_id: int, payload: dict):
             "status_code": None
         }
 
-    url = f"{BASE_URL}/draft-survey-extra/ballast/{draft_survey_id}"
+    identifier = str(draft_survey_id).strip()
+    url = f"{BASE_URL}/draft-survey-extra/ballast/{identifier}"
+
+    # -------------------------
+    # DEBUG
+    # -------------------------
+    print("===================================")
+    print("CREATE BALLAST API")
+    print("URL:", url)
+    print("IDENTIFIER:", identifier)
+    print("PAYLOAD:")
+    print(payload)
+    print("===================================")
 
     # -------------------------
     # Request
     # -------------------------
     try:
-        response = requests.post(
+        response = api_request(
+            "POST",
             url,
             json=payload,
             headers={
@@ -6037,6 +5858,12 @@ def create_draft_survey_ballast_api(draft_survey_id: int, payload: dict):
 
         status = response.status_code
 
+        print("===================================")
+        print("BALLAST CREATE STATUS:", status)
+        print("BALLAST CREATE RESPONSE TEXT:")
+        print(response.text)
+        print("===================================")
+
         # Intentar parsear JSON (aunque venga error)
         try:
             data = response.json()
@@ -6045,10 +5872,13 @@ def create_draft_survey_ballast_api(draft_survey_id: int, payload: dict):
 
         # Si HTTP no fue OK
         if not response.ok:
-            # Si backend ya manda {detail: "..."} o {error: "..."} lo aprovechamos
             backend_msg = None
             if isinstance(data, dict):
-                backend_msg = data.get("detail") or data.get("error") or data.get("message")
+                backend_msg = (
+                    data.get("detail")
+                    or data.get("error")
+                    or data.get("message")
+                )
 
             return {
                 "success": False,
@@ -6120,19 +5950,138 @@ def get_draft_survey_ballast_api(draft_survey_id: int):
 # BALLAST — UPDATE
 # PUT /draft-survey-extra/ballast/{draft_survey_id}
 # =========================================================
+def update_draft_survey_ballast_api(draft_survey_id, payload: dict):
+    """
+    Actualiza Ballast para un Draft Survey.
 
-def update_draft_survey_ballast_api(draft_survey_id: int, payload: dict):
+    SOPORTA:
+      - general_id (int)
+      - draft_report_number (str)
 
+    Retorna SIEMPRE:
+      - success: bool
+      - data: dict | None
+      - error: str | None
+      - status_code: int | None
+    """
+
+    # -----------------------------------------------------
+    # VALIDACIONES
+    # -----------------------------------------------------
+    if draft_survey_id is None or str(draft_survey_id).strip() == "":
+        return {
+            "success": False,
+            "data": None,
+            "error": "draft_survey_id inválido",
+            "status_code": None
+        }
+
+    if payload is None:
+        payload = {}
+
+    if not isinstance(payload, dict):
+        return {
+            "success": False,
+            "data": None,
+            "error": "payload inválido (debe ser dict)",
+            "status_code": None
+        }
+
+    identifier = str(draft_survey_id).strip()
+    url = f"{BASE_URL}/draft-survey-extra/ballast/{identifier}"
+
+    # -----------------------------------------------------
+    # DEBUG
+    # -----------------------------------------------------
+    print("===================================")
+    print("UPDATE BALLAST API")
+    print("URL:", url)
+    print("IDENTIFIER:", identifier)
+    print("PAYLOAD:")
+    print(payload)
+    print("===================================")
+
+    # -----------------------------------------------------
+    # REQUEST
+    # -----------------------------------------------------
     try:
-        response = requests.put(
-            f"{BASE_URL}/draft-survey-extra/ballast/{draft_survey_id}",
+        response = api_request(
+            "PUT",
+            url,
             json=payload,
-            timeout=60
+            timeout=(10, 60)
         )
-        return response.json()
+
+        status = response.status_code
+
+        print("===================================")
+        print("BALLAST UPDATE STATUS:", status)
+        print("BALLAST UPDATE RESPONSE TEXT:")
+        print(response.text)
+        print("===================================")
+
+        # Intentar parsear JSON
+        try:
+            data = response.json()
+        except ValueError:
+            data = None
+
+        # HTTP error
+        if not response.ok:
+            backend_msg = None
+            if isinstance(data, dict):
+                backend_msg = (
+                    data.get("detail")
+                    or data.get("error")
+                    or data.get("message")
+                )
+
+            return {
+                "success": False,
+                "data": data,
+                "error": backend_msg or f"HTTP {status} al actualizar ballast",
+                "status_code": status
+            }
+
+        # OK
+        return {
+            "success": True,
+            "data": data,
+            "error": None,
+            "status_code": status
+        }
+
+    except requests.exceptions.Timeout:
+        return {
+            "success": False,
+            "data": None,
+            "error": "Timeout al actualizar ballast",
+            "status_code": None
+        }
+
+    except requests.exceptions.ConnectionError:
+        return {
+            "success": False,
+            "data": None,
+            "error": "No se pudo conectar al backend",
+            "status_code": None
+        }
+
+    except requests.RequestException as e:
+        return {
+            "success": False,
+            "data": None,
+            "error": f"RequestException: {str(e)}",
+            "status_code": None
+        }
 
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {
+            "success": False,
+            "data": None,
+            "error": f"Error inesperado: {str(e)}",
+            "status_code": None
+        }
 
 
 
@@ -6634,6 +6583,74 @@ def _safe_json_response(response):
         }
 
 
+def _clean_bunker_numeric_payload(payload: dict) -> dict:
+    cleaned = dict(payload or {})
+
+    fixed_numeric_fields = {
+        "gross_tonnage",
+        "bunker_delivery_declared",
+        "rob_diff",
+        "plus_consumption",
+        "generator_until_aps",
+        "cons_dept",
+        "me_to_sea_buoy",
+        "draft",
+        "draft_fwd",
+        "draft_aft",
+        "trim",
+        "list",
+        "log_eosp_vlsfo", "log_eosp_hfso", "log_eosp_mdo", "log_eosp_lsmgo",
+        "log_pob_vlsfo", "log_pob_hfso", "log_pob_mdo", "log_pob_lsmgo",
+        "log_fwe_vlsfo", "log_fwe_hfso", "log_fwe_mdo", "log_fwe_lsmgo",
+        "log_bunker_vlsfo", "log_bunker_hfso", "log_bunker_mdo", "log_bunker_lsmgo",
+        "log_at_survey_vlsfo", "log_at_survey_hfso", "log_at_survey_mdo", "log_at_survey_lsmgo",
+        "cons_sea_loaded_vlsfo", "cons_sea_loaded_hfso", "cons_sea_loaded_mdo", "cons_sea_loaded_lsmgo",
+        "cons_sea_ballast_vlsfo", "cons_sea_ballast_hfso", "cons_sea_ballast_mdo", "cons_sea_ballast_lsmgo",
+        "cons_port_ship_gear_vlsfo", "cons_port_ship_gear_hfso", "cons_port_ship_gear_mdo", "cons_port_ship_gear_lsmgo",
+        "cons_port_shore_gear_vlsfo", "cons_port_shore_gear_hfso", "cons_port_shore_gear_mdo", "cons_port_shore_gear_lsmgo",
+    }
+    numeric_suffixes = (
+        "_volume_m3",
+        "_temp_c",
+        "_temp_f",
+        "_density_15c",
+        "_weight_mt",
+    )
+
+    def normalize(value):
+        if value is None:
+            return None
+        text = str(value).strip().replace(" ", "")
+        if not text:
+            return None
+        if "," in text and "." in text:
+            if text.rfind(",") > text.rfind("."):
+                text = text.replace(".", "").replace(",", ".")
+            else:
+                text = text.replace(",", "")
+        elif "," in text:
+            text = text.replace(",", ".")
+        try:
+            float(text)
+            return text
+        except Exception:
+            return None
+
+    for key in list(cleaned.keys()):
+        is_tank_numeric = (
+            key.startswith(("vlsfo_tank_", "mgo_tank_"))
+            and key.endswith(numeric_suffixes)
+        )
+        is_figure_numeric = (
+            key.startswith("bunker_figure_")
+            and key.endswith(("_ifo", "_vlsfo", "_lsmgo"))
+        )
+        if key in fixed_numeric_fields or is_tank_numeric or is_figure_numeric:
+            cleaned[key] = normalize(cleaned.get(key))
+
+    return cleaned
+
+
 # =========================================================
 # CREATE
 # POST /vessel-bunker-reports/
@@ -6641,9 +6658,10 @@ def _safe_json_response(response):
 def create_vessel_bunker_report_api(payload: dict):
 
     try:
+        payload = _clean_bunker_numeric_payload(payload)
         response = requests.post(
             f"{BASE_URL}/vessel-bunker-reports/",
-            json=(payload or {}),
+            json=payload,
             timeout=60
         )
 
@@ -6667,9 +6685,10 @@ def create_vessel_bunker_report_api(payload: dict):
 def update_vessel_bunker_report_api(report_id: int, payload: dict):
 
     try:
+        payload = _clean_bunker_numeric_payload(payload)
         response = requests.put(
             f"{BASE_URL}/vessel-bunker-reports/{int(report_id)}",
-            json=(payload or {}),
+            json=payload,
             timeout=60
         )
 
@@ -7517,3 +7536,1418 @@ def improve_crane_inspection_ai_api(section, language, vessel, port, items):
             "success": False,
             "error": str(e)
         }
+
+
+
+# =========================================================
+# CREATE VESSEL CONDITION SURVEY
+# =========================================================
+
+def create_vessel_condition_survey_api(payload):
+
+    r = requests.post(
+        f"{BASE_URL}/vessel-condition-surveys",
+        json=payload,
+        timeout=TIMEOUT
+    )
+
+    r.raise_for_status()
+
+    return r.json()
+
+
+# =========================================================
+# UPDATE VESSEL CONDITION SURVEY
+# =========================================================
+
+def update_vessel_condition_survey_api(record_id: int, payload: dict):
+
+    r = requests.put(
+        f"{BASE_URL}/vessel-condition-surveys/id/{int(record_id)}",
+        json=payload,
+        timeout=TIMEOUT
+    )
+
+    r.raise_for_status()
+    return r.json()
+
+
+# =========================================================
+# GET VESSEL CONDITION SURVEY
+# =========================================================
+
+def get_vessel_condition_survey_api(report_number):
+
+    r = requests.get(
+        f"{BASE_URL}/vessel-condition-surveys/{report_number}",
+        timeout=TIMEOUT
+    )
+
+    r.raise_for_status()
+
+    return r.json()
+
+
+def get_vessel_condition_survey_by_id_api(record_id: int):
+    r = requests.get(
+        f"{BASE_URL}/vessel-condition-surveys/id/{record_id}",
+        timeout=TIMEOUT
+    )
+    r.raise_for_status()
+    return r.json()
+
+
+# =========================================================
+# GET ALL VESSEL CONDITION SURVEYS
+# =========================================================
+
+def get_all_vessel_condition_surveys_api():
+
+    r = requests.get(
+        f"{BASE_URL}/vessel-condition-surveys",
+        timeout=TIMEOUT
+    )
+
+    r.raise_for_status()
+
+    return r.json()
+
+
+
+# =========================================================
+# VESSEL CONDITION SURVEY AI
+# =========================================================
+def improve_vessel_condition_text_api(payload):
+
+    r = requests.post(
+        f"{BASE_URL}/reports/ai/improve/vessel-condition",
+        json=payload,
+        timeout=TIMEOUT
+    )
+
+    r.raise_for_status()
+
+    return r.json()
+
+
+# =========================================================
+# DOWNLOAD VESSEL CONDITION SURVEY WORD
+# =========================================================
+
+def download_vessel_condition_survey_word(report_id):
+
+    url = f"{BASE_URL}/vessel-condition-surveys/word/{report_id}"
+
+    response = requests.get(
+        url,
+        timeout=TIMEOUT
+    )
+
+    if response.status_code != 200:
+        raise Exception(
+            f"Error generating Word report: {response.text}"
+        )
+
+    filename = f"vessel_condition_survey_{report_id}.docx"
+
+    temp_path = os.path.join(
+        tempfile.gettempdir(),
+        filename
+    )
+
+    with open(temp_path, "wb") as f:
+        f.write(response.content)
+
+    return temp_path
+
+
+# =========================================================
+# PORT CAPTANCY POST
+# =========================================================
+
+def create_port_captancy_report_api(payload: dict):
+
+    url = f"{BASE_URL}/port-captancy-reports"
+
+    response = requests.post(
+        url,
+        json=payload,
+        timeout=TIMEOUT
+    )
+
+    response.raise_for_status()
+
+    return response.json()
+
+
+# =========================================================
+# PORT CAPTANCY PUT
+# =========================================================
+
+def update_port_captancy_report_api(report_number: str, payload: dict):
+
+    url = f"{BASE_URL}/port-captancy-reports/{report_number}"
+
+    response = requests.put(
+        url,
+        json=payload,
+        timeout=TIMEOUT
+    )
+
+    response.raise_for_status()
+
+    return response.json()
+
+
+# =========================================================
+# PORT CAPTANCY GET
+# =========================================================
+
+def get_port_captancy_report_api(report_number: str):
+
+    url = f"{BASE_URL}/port-captancy-reports/{report_number}"
+
+    response = requests.get(
+        url,
+        timeout=TIMEOUT
+    )
+
+    response.raise_for_status()
+
+    data = response.json()
+
+    if isinstance(data, dict) and "data" in data:
+        return data["data"]
+
+    return data
+
+# =========================================================
+# PORT CAPTANCY GET ALL
+# =========================================================
+
+def get_all_port_captancy_reports_api():
+
+    url = f"{BASE_URL}/port-captancy-reports"
+
+    response = requests.get(
+        url,
+        timeout=TIMEOUT
+    )
+
+    response.raise_for_status()
+
+    return response.json()
+
+
+
+# =========================================================
+# PORT CAPTANCY AI
+# =========================================================
+def improve_port_captancy_api(payload):
+
+    url = f"{BASE_URL}/reports/ai/improve/port-captancy"
+
+    response = requests.post(
+        url,
+        json=payload,
+        timeout=TIMEOUT
+    )
+
+    response.raise_for_status()
+
+    return response.json()
+
+
+
+# =========================================================
+# VESSEL CONDITION SURVEY
+# GENERATE PRESENTATION PDF
+# =========================================================
+
+def generate_vessel_condition_presentation_api(record_id: int):
+
+    try:
+
+        import requests
+        import os
+        import tempfile
+
+        url = f"{BASE_URL}/vessel-condition-surveys/presentation/{record_id}"
+
+        response = requests.get(url, stream=True)
+
+        if response.status_code != 200:
+            raise Exception(
+                f"API Error {response.status_code}: {response.text}"
+            )
+
+        temp_dir = tempfile.gettempdir()
+
+        file_path = os.path.join(
+            temp_dir,
+            f"vessel_condition_presentation_{record_id}.pdf"
+        )
+
+        with open(file_path, "wb") as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                if chunk:
+                    f.write(chunk)
+
+        return file_path
+
+    except Exception as e:
+
+        raise Exception(
+            f"No se pudo generar la presentación:\n{str(e)}"
+        )
+
+
+# =========================================================
+# VESSEL CONDITION SURVEY
+# GET BY ID (USADO POR POPUPS)
+# =========================================================
+
+def get_vessel_condition_survey_by_id_api(record_id: int):
+
+    try:
+
+        import requests
+
+        url = f"{BASE_URL}/vessel-condition-surveys/id/{record_id}"
+
+        r = requests.get(url, timeout=TIMEOUT)
+
+        if r.status_code != 200:
+            return {
+                "success": False,
+                "error": r.text
+            }
+
+        return r.json()
+
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+def get_vessel_condition_survey_by_id_wrapped_api(record_id):
+
+    import requests
+
+    url = f"{BASE_URL}/vessel-condition-surveys/by-id/{record_id}"
+
+    r = requests.get(url)
+
+    if r.status_code != 200:
+        return {
+            "success": False,
+            "error": r.text
+        }
+
+    return r.json()
+
+
+
+
+# =========================================================
+# GENERATE PORT CAPTANCY WORD
+# =========================================================
+
+def generate_port_captancy_word_api(record_id: int):
+
+    import os
+    import tempfile
+    import requests
+
+    url = f"{BASE_URL}/port-captancy-reports/{record_id}/word"
+
+    r = requests.get(url)
+
+    if r.status_code != 200:
+        raise Exception(r.text)
+
+    temp_dir = tempfile.gettempdir()
+
+    file_path = os.path.join(
+        temp_dir,
+        f"port_captancy_{record_id}.docx"
+    )
+
+    with open(file_path, "wb") as f:
+        f.write(r.content)
+
+    return file_path
+
+
+# =========================================================
+# GENERATE PORT CAPTANCY PRESENTATION
+# =========================================================
+
+def generate_port_captancy_presentation_api(record_id: int):
+
+    import os
+    import tempfile
+    import requests
+
+    url = f"{BASE_URL}/port-captancy-reports/presentation/{record_id}"
+
+    r = requests.get(url)
+
+    if r.status_code != 200:
+        raise Exception(r.text)
+
+    temp_dir = tempfile.gettempdir()
+
+    file_path = os.path.join(
+        temp_dir,
+        f"port_captancy_presentation_{record_id}.pdf"
+    )
+
+    with open(file_path, "wb") as f:
+        f.write(r.content)
+
+    return file_path
+
+
+# =========================================================
+# GET PORT CAPTANCY BY ID
+# =========================================================
+
+def get_port_captancy_report_api(record_id: int):
+
+    import requests
+
+    url = f"{BASE_URL}/port-captancy-reports/id/{record_id}"
+
+    r = requests.get(url)
+
+    if r.status_code != 200:
+        raise Exception(r.text)
+
+    return r.json()
+
+
+# =========================================================
+# WEIGHT CERTIFICATES — CREATE
+# =========================================================
+
+def create_weight_certificate_api(payload: dict):
+
+    url = f"{BASE_URL}/weight-certificates"
+
+    r = requests.post(
+        url,
+        json=payload,
+        timeout=60
+    )
+
+    r.raise_for_status()
+
+    return r.json()
+
+
+# =========================================================
+# WEIGHT CERTIFICATES — UPDATE
+# =========================================================
+
+def update_weight_certificate_api(record_id: int, payload: dict):
+
+    url = f"{BASE_URL}/weight-certificates/{record_id}"
+
+    r = requests.put(
+        url,
+        json=payload,
+        timeout=60
+    )
+
+    r.raise_for_status()
+
+    return r.json()
+
+
+# =========================================================
+# WEIGHT CERTIFICATES — GET ALL
+# =========================================================
+
+def get_weight_certificates_api():
+
+    url = f"{BASE_URL}/weight-certificates"
+
+    r = requests.get(
+        url,
+        timeout=60
+    )
+
+    r.raise_for_status()
+
+    return r.json()
+
+
+# =========================================================
+# WEIGHT CERTIFICATES — GET BY ID
+# =========================================================
+
+def get_weight_certificate_api(record_id: int):
+
+    url = f"{BASE_URL}/weight-certificates/{record_id}"
+
+    r = requests.get(
+        url,
+        timeout=60
+    )
+
+    r.raise_for_status()
+
+    return r.json()
+
+
+# =========================================================
+# WEIGHT CERTIFICATE — GENERATE WORD
+# =========================================================
+
+def generate_weight_certificate_word_api(record_id):
+
+    url = f"{BASE_URL}/weight-certificates/{record_id}/word"
+
+    r = requests.get(
+        url,
+        timeout=120
+    )
+
+    r.raise_for_status()
+
+    return r.content
+
+
+
+# =========================================================
+# WEIGHT CERTIFICATE — GENERATE PDF
+# =========================================================
+
+def generate_weight_certificate_pdf_api(record_id):
+
+    url = f"{BASE_URL}/weight-certificates/{record_id}/pdf"
+
+    r = requests.get(
+        url,
+        timeout=120
+    )
+
+    r.raise_for_status()
+
+    return r.content
+
+
+# =========================================================
+# VESSEL HOLDS INSPECTION CERTIFICATES
+# =========================================================
+
+def create_vessel_holds_certificate_api(payload):
+
+    r = requests.post(
+        f"{BASE_URL}/vessel-holds-inspection-certificates",
+        json=payload
+    )
+
+    if r.status_code != 200:
+        raise Exception(r.text)
+
+    return r.json()
+
+
+# =========================================================
+
+def update_vessel_holds_certificate_api(record_id, payload):
+
+    r = requests.put(
+        f"{BASE_URL}/vessel-holds-inspection-certificates/{record_id}",
+        json=payload
+    )
+
+    if r.status_code != 200:
+        raise Exception(r.text)
+
+    return r.json()
+
+
+# =========================================================
+
+def get_vessel_holds_certificates_api():
+
+    r = requests.get(
+        f"{BASE_URL}/vessel-holds-inspection-certificates"
+    )
+
+    if r.status_code != 200:
+        raise Exception(r.text)
+
+    return r.json()
+
+
+# =========================================================
+
+def get_vessel_holds_certificate_api(record_id):
+
+    r = requests.get(
+        f"{BASE_URL}/vessel-holds-inspection-certificates/{record_id}"
+    )
+
+    if r.status_code != 200:
+        raise Exception(r.text)
+
+    return r.json()
+
+
+# =========================================================
+# GENERATE HOLDS EXCEL
+# =========================================================
+
+def generate_holds_excel_api(record_id):
+
+    import requests
+
+    url = f"{BASE_URL}/vessel-holds-inspection-certificates/{record_id}/excel"
+
+    response = requests.get(url)
+
+    if response.status_code != 200:
+        raise Exception(response.text)
+
+    return response.content
+
+
+# =========================================================
+# GENERATE HOLDS INSPECTION CERTIFICATE PDF
+# =========================================================
+
+def generate_vessel_holds_pdf_api(record_id):
+
+    url = f"{BASE_URL}/vessel-holds-inspection-certificates/{record_id}/pdf"
+
+    response = requests.get(
+        url,
+        timeout=TIMEOUT
+    )
+
+    if response.status_code != 200:
+        raise Exception(response.text)
+
+    return response.content
+
+
+# =========================================================
+# SAMPLING CERTIFICATES
+# =========================================================
+
+def create_sampling_certificate_api(payload):
+
+    url = f"{BASE_URL}/sampling-certificates"
+
+    r = requests.post(url, json=payload, timeout=TIMEOUT)
+
+    if r.status_code != 200:
+        raise Exception(r.text)
+
+    return r.json()
+
+
+def update_sampling_certificate_api(record_id, payload):
+
+    url = f"{BASE_URL}/sampling-certificates/{record_id}"
+
+    r = requests.put(url, json=payload, timeout=TIMEOUT)
+
+    if r.status_code != 200:
+        raise Exception(r.text)
+
+    return r.json()
+
+
+def get_sampling_certificates_api():
+
+    url = f"{BASE_URL}/sampling-certificates"
+
+    r = requests.get(url, timeout=TIMEOUT)
+
+    if r.status_code != 200:
+        raise Exception(r.text)
+
+    return r.json()
+
+
+def get_sampling_certificate_api(record_id):
+
+    url = f"{BASE_URL}/sampling-certificates/{record_id}"
+
+    r = requests.get(url, timeout=TIMEOUT)
+
+    if r.status_code != 200:
+        raise Exception(r.text)
+
+    return r.json()
+
+
+# =========================================================
+# GENERATE EXCEL
+# =========================================================
+
+def generate_sampling_excel_api(record_id):
+
+    url = f"{BASE_URL}/sampling-certificates/{record_id}/excel"
+
+    r = requests.get(url, timeout=TIMEOUT)
+
+    if r.status_code != 200:
+        raise Exception(r.text)
+
+    return r.content
+
+
+# =========================================================
+# GENERATE PDF
+# =========================================================
+
+def generate_sampling_pdf_api(record_id):
+
+    url = f"{BASE_URL}/sampling-certificates/{record_id}/pdf"
+
+    r = requests.get(url, timeout=TIMEOUT)
+
+    if r.status_code != 200:
+        raise Exception(r.text)
+
+    return r.content
+
+
+
+# =========================================================
+# SEALING CERTIFICATES
+# =========================================================
+
+def get_sealing_certificates_api():
+    """
+    GET ALL sealing certificates
+    Siempre devuelve LIST
+    """
+
+    url = f"{BASE_URL}/sealing-certificates"
+
+    try:
+
+        response = requests.get(
+            url,
+            timeout=TIMEOUT
+        )
+
+    except requests.RequestException as e:
+        raise Exception(f"Connection error: {str(e)}")
+
+    if response.status_code != 200:
+        raise Exception(response.text)
+
+    try:
+        data = response.json()
+    except Exception:
+        raise Exception("Invalid JSON response from API")
+
+    if data is None:
+        return []
+
+    if isinstance(data, list):
+        return data
+
+    if isinstance(data, dict):
+        return [data]
+
+    return []
+
+
+# =========================================================
+
+def get_sealing_certificate_api(record_id: int):
+    """
+    GET sealing certificate by id
+    Siempre devuelve DICT
+    """
+
+    url = f"{BASE_URL}/sealing-certificates/{record_id}"
+
+    try:
+
+        response = requests.get(
+            url,
+            timeout=TIMEOUT
+        )
+
+    except requests.RequestException as e:
+        raise Exception(f"Connection error: {str(e)}")
+
+    if response.status_code != 200:
+        raise Exception(response.text)
+
+    try:
+        data = response.json()
+    except Exception:
+        raise Exception("Invalid JSON response from API")
+
+    if data is None:
+        return {}
+
+    if isinstance(data, dict):
+        return data
+
+    if isinstance(data, list) and len(data) > 0:
+
+        first = data[0]
+
+        if isinstance(first, dict):
+            return first
+
+    raise Exception(f"Unexpected API response: {data}")
+
+
+# =========================================================
+
+def create_sealing_certificate_api(payload: dict):
+    """
+    POST create sealing certificate
+    Siempre devuelve DICT con id
+    """
+
+    url = f"{BASE_URL}/sealing-certificates"
+
+    try:
+
+        response = requests.post(
+            url,
+            json=payload,
+            timeout=TIMEOUT
+        )
+
+    except requests.RequestException as e:
+        raise Exception(f"Connection error: {str(e)}")
+
+    if response.status_code not in (200, 201):
+        raise Exception(response.text)
+
+    try:
+        data = response.json()
+    except Exception:
+        raise Exception("Invalid JSON response from API")
+
+    # -------------------------------
+    # RESPUESTA NORMAL
+    # -------------------------------
+    if isinstance(data, dict):
+        return data
+
+    # -------------------------------
+    # LISTA
+    # -------------------------------
+    if isinstance(data, list):
+
+        if len(data) == 0:
+            return {}
+
+        first = data[0]
+
+        if isinstance(first, dict):
+            return first
+
+        if isinstance(first, int):
+            return {"id": first}
+
+    # -------------------------------
+    # DESCONOCIDO
+    # -------------------------------
+    raise Exception(f"Unexpected API response: {data}")
+
+
+# =========================================================
+
+def update_sealing_certificate_api(record_id: int, payload: dict):
+    """
+    PUT update sealing certificate
+    Siempre devuelve DICT
+    """
+
+    url = f"{BASE_URL}/sealing-certificates/{record_id}"
+
+    try:
+
+        response = requests.put(
+            url,
+            json=payload,
+            timeout=TIMEOUT
+        )
+
+    except requests.RequestException as e:
+        raise Exception(f"Connection error: {str(e)}")
+
+    if response.status_code not in (200, 201):
+        raise Exception(response.text)
+
+    try:
+        data = response.json()
+    except Exception:
+        raise Exception("Invalid JSON response from API")
+
+    if isinstance(data, dict):
+        return data
+
+    if isinstance(data, list) and len(data) > 0:
+
+        first = data[0]
+
+        if isinstance(first, dict):
+            return first
+
+    return {"success": True}
+
+
+# ============================================================
+# GENERATE SEALING CERTIFICATE EXCEL
+# ============================================================
+
+def generate_sealing_excel_api(record_id: int):
+
+    url = f"{BASE_URL}/sealing-certificates/{record_id}/excel"
+
+    response = requests.get(
+        url,
+        timeout=TIMEOUT
+    )
+
+    if response.status_code != 200:
+        raise Exception(response.text)
+
+    return response.content
+
+
+
+
+# ============================================================
+# GENERATE SEALING CERTIFICATE PDF
+# ============================================================
+
+def generate_sealing_pdf_api(record_id: int):
+
+    url = f"{BASE_URL}/sealing-certificates/{record_id}/pdf"
+
+    response = requests.get(
+        url,
+        timeout=TIMEOUT
+    )
+
+    if response.status_code != 200:
+        raise Exception(response.text)
+
+    return response.content
+
+
+
+
+# ============================================================
+# CREATE LASHING CERTIFICATE
+# ============================================================
+
+def create_lashing_certificate_api(payload: dict):
+
+    url = f"{BASE_URL}/lashing-certificates/"
+
+    r = requests.post(
+        url,
+        json=payload,
+        timeout=TIMEOUT
+    )
+
+    if r.status_code not in (200, 201):
+        raise Exception(r.text)
+
+    try:
+        return r.json()
+    except Exception:
+        raise Exception("Invalid API response")
+
+
+# ============================================================
+# GENERATE LASHING CERTIFICATE WORD
+# ============================================================
+
+def generate_lashing_certificate_word_api(record_id):
+
+    url = f"{BASE_URL}/lashing-certificates/{record_id}/word"
+
+    r = requests.get(
+        url,
+        timeout=TIMEOUT
+    )
+
+    if r.status_code != 200:
+        raise Exception(r.text)
+
+    return r.content
+
+
+# ============================================================
+# GENERATE LASHING CERTIFICATE PDF
+# ============================================================
+
+def generate_lashing_certificate_pdf_api(record_id):
+
+    url = f"{BASE_URL}/lashing-certificates/{record_id}/pdf"
+
+    r = requests.get(
+        url,
+        timeout=TIMEOUT
+    )
+
+    if r.status_code != 200:
+        raise Exception(r.text)
+
+    return r.content
+
+
+
+# ============================================================
+# LASHING CERTIFICATES
+# ============================================================
+
+def get_lashing_certificates_api():
+
+    url = f"{BASE_URL}/lashing-certificates"
+
+    r = requests.get(url, timeout=TIMEOUT)
+
+    if r.status_code != 200:
+        raise Exception(r.text)
+
+    return r.json()
+
+
+# ============================================================
+
+def get_lashing_certificate_api(record_id):
+
+    url = f"{BASE_URL}/lashing-certificates/{record_id}"
+
+    r = requests.get(url, timeout=TIMEOUT)
+
+    if r.status_code != 200:
+        raise Exception(r.text)
+
+    return r.json()
+
+
+# ============================================================
+
+def create_lashing_certificate_api(payload: dict):
+
+    url = f"{BASE_URL}/lashing-certificates/"
+
+    r = requests.post(
+        url,
+        json=payload,
+        timeout=TIMEOUT
+    )
+
+    if r.status_code not in (200, 201):
+        raise Exception(r.text)
+
+    return r.json()
+
+
+# ============================================================
+
+def update_lashing_certificate_api(record_id, payload: dict):
+
+    url = f"{BASE_URL}/lashing-certificates/{record_id}"
+
+    r = requests.put(
+        url,
+        json=payload,
+        timeout=TIMEOUT
+    )
+
+    if r.status_code != 200:
+        raise Exception(r.text)
+
+    return r.json()
+
+
+# ============================================================
+# GENERATE WORD
+# ============================================================
+
+def generate_lashing_certificate_word_api(record_id):
+
+    url = f"{BASE_URL}/lashing-certificates/{record_id}/word"
+
+    r = requests.get(
+        url,
+        timeout=TIMEOUT
+    )
+
+    if r.status_code != 200:
+        raise Exception(r.text)
+
+    return r.content
+
+
+# ============================================================
+# GENERATE PDF
+# ============================================================
+
+def generate_lashing_certificate_pdf_api(record_id):
+
+    url = f"{BASE_URL}/lashing-certificates/{record_id}/pdf"
+
+    r = requests.get(
+        url,
+        timeout=TIMEOUT
+    )
+
+    if r.status_code != 200:
+        raise Exception(r.text)
+
+    return r.content
+
+
+# =========================================================
+# DASHBOARD SERVICIOS
+# =========================================================
+
+def get_dashboard_servicios_api(
+    anio=None,
+    pais=None,
+    puerto=None,
+    cliente=None
+):
+
+    import requests
+
+    url = f"{BASE_URL}/dashboard/servicios"
+
+    params = {}
+
+    if anio:
+        params["anio"] = anio
+
+    if pais:
+        params["pais"] = pais
+
+    if puerto:
+        params["puerto"] = puerto
+
+    if cliente:
+        params["cliente"] = cliente
+
+    response = requests.get(
+        url,
+        params=params,
+        timeout=TIMEOUT
+    )
+
+    if response.status_code != 200:
+        raise Exception(response.text)
+
+    return response.json()
+
+
+# ============================================================
+# DASHBOARD FINANZAS
+# ============================================================
+
+def get_dashboard_finanzas_resumen_api(
+    anio: Optional[int] = None,
+    cliente: Optional[str] = None
+):
+
+    url = f"{BASE_URL}/dashboard-finanzas/resumen"
+
+    params = {}
+
+    if anio:
+        params["anio"] = anio
+
+    if cliente:
+        params["cliente"] = cliente
+
+    resp = api_request(
+        "GET",
+        url,
+        params=params
+    )
+
+    return resp.json()
+
+
+
+# ============================================================
+# DASHBOARD COMERCIAL
+# ============================================================
+
+def get_dashboard_comercial_filtros_api(
+    anio: Optional[int] = None,
+    pais: Optional[str] = None,
+    puerto: Optional[str] = None,
+    cliente: Optional[str] = None,
+    operacion: Optional[str] = None
+):
+
+    url = f"{BASE_URL}/dashboard-comercial/filtros"
+
+    params = {}
+
+    if anio:
+        params["anio"] = anio
+
+    if pais:
+        params["pais"] = pais
+
+    if puerto:
+        params["puerto"] = puerto
+
+    if cliente:
+        params["cliente"] = cliente
+
+    if operacion:
+        params["operacion"] = operacion
+
+    resp = api_request(
+        "GET",
+        url,
+        params=params
+    )
+
+    return resp.json()
+
+
+def get_dashboard_comercial_resumen_api(
+    anio: Optional[int] = None,
+    pais: Optional[str] = None,
+    puerto: Optional[str] = None,
+    cliente: Optional[str] = None,
+    operacion: Optional[str] = None
+):
+
+    url = f"{BASE_URL}/dashboard-comercial/resumen"
+
+    params = {}
+
+    if anio:
+        params["anio"] = anio
+
+    if pais:
+        params["pais"] = pais
+
+    if puerto:
+        params["puerto"] = puerto
+
+    if cliente:
+        params["cliente"] = cliente
+
+    if operacion:
+        params["operacion"] = operacion
+
+    resp = api_request(
+        "GET",
+        url,
+        params=params
+    )
+
+    return resp.json()
+
+
+# ============================================================
+# DASHBOARD INFORMES
+# ============================================================
+
+def get_dashboard_informes_filtros_api(
+    anio=None,
+    pais=None,
+    puerto=None,
+    cliente=None,
+    operacion=None,
+    tipo_informe=None
+):
+
+    url = f"{BASE_URL}/dashboard-informes/filtros"
+
+    params = {}
+
+    if anio:
+        params["anio"] = anio
+    if pais:
+        params["pais"] = pais
+    if puerto:
+        params["puerto"] = puerto
+    if cliente:
+        params["cliente"] = cliente
+    if operacion:
+        params["operacion"] = operacion
+    if tipo_informe:
+        params["tipo_informe"] = tipo_informe
+
+    resp = api_request("GET", url, params=params)
+
+    return resp.json()
+
+
+def get_dashboard_informes_resumen_api(
+    anio=None,
+    pais=None,
+    puerto=None,
+    cliente=None,
+    operacion=None,
+    tipo_informe=None
+):
+
+    url = f"{BASE_URL}/dashboard-informes/resumen"
+
+    params = {}
+
+    if anio:
+        params["anio"] = anio
+    if pais:
+        params["pais"] = pais
+    if puerto:
+        params["puerto"] = puerto
+    if cliente:
+        params["cliente"] = cliente
+    if operacion:
+        params["operacion"] = operacion
+    if tipo_informe:
+        params["tipo_informe"] = tipo_informe
+
+    try:
+
+        resp = api_request(
+            "GET",
+            url,
+            params=params
+        )
+
+        if resp is None:
+            raise Exception("El servidor no respondió")
+
+        if resp.status_code != 200:
+
+            try:
+                data = resp.json()
+                msg = data.get("detail", str(data))
+            except Exception:
+                msg = resp.text
+
+            raise Exception(msg)
+
+        try:
+            data = resp.json()
+        except Exception:
+            raise Exception("Respuesta inválida del servidor")
+
+        if data is None:
+            raise Exception("El servidor devolvió datos vacíos")
+
+        if not isinstance(data, dict):
+            raise Exception(f"Respuesta inesperada del API: {data}")
+
+        return data
+
+    except Exception as e:
+
+        if str(e) == "None":
+            raise Exception("Error interno del API")
+
+        raise
+
+
+# =========================================================
+# SERVICIOS SURVEYORS (FLAT)
+# =========================================================
+
+def get_servicio_surveyors_api(consec: int):
+    """
+    GET surveyors por servicio
+    """
+    try:
+        url = f"{BASE_URL}/servicios-surveyors/{consec}"
+
+        response = requests.get(
+            url,
+            timeout=TIMEOUT
+        )
+
+        if response.status_code != 200:
+            raise Exception(response.text)
+
+        return response.json()
+
+    except Exception as e:
+        raise Exception(f"Error GET surveyors: {e}")
+
+
+def save_servicio_surveyors_api(consec: int, payload: dict):
+    """
+    POST / PUT surveyors (usa PUT para reemplazar)
+    """
+    try:
+        url = f"{BASE_URL}/servicios-surveyors/{consec}"
+
+        response = requests.put(
+            url,
+            json=payload,
+            timeout=TIMEOUT
+        )
+
+        if response.status_code not in (200, 201):
+            raise Exception(response.text)
+
+        return response.json()
+
+    except Exception as e:
+        raise Exception(f"Error SAVE surveyors: {e}")
+
+
+def create_servicio_surveyors_api(consec: int, payload: dict):
+    """
+    POST inicial (opcional)
+    """
+    try:
+        url = f"{BASE_URL}/servicios-surveyors/{consec}"
+
+        response = requests.post(
+            url,
+            json=payload,
+            timeout=TIMEOUT
+        )
+
+        if response.status_code not in (200, 201):
+            raise Exception(response.text)
+
+        return response.json()
+
+    except Exception as e:
+        raise Exception(f"Error CREATE surveyors: {e}")
+
+
+def get_surveyors_catalog_api():
+    """
+    GET catálogo surveyors
+    """
+    try:
+        url = f"{BASE_URL}/servicios-surveyors/catalogo/lista"
+
+        response = requests.get(
+            url,
+            timeout=TIMEOUT
+        )
+
+        if response.status_code != 200:
+            raise Exception(response.text)
+
+        return response.json()
+
+    except Exception as e:
+        raise Exception(f"Error GET catalogo surveyors: {e}")
