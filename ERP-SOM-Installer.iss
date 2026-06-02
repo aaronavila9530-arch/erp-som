@@ -33,6 +33,7 @@ WizardStyle=modern
 
 SetupIconFile=assets\logo_menu_tareas.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
+LicenseFile=EULA.rtf
 
 DisableProgramGroupPage=yes
 ChangesAssociations=no
