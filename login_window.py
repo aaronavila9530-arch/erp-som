@@ -31,6 +31,8 @@ class LoginWindow(tk.Toplevel):
         super().__init__(parent)
         self.parent = parent
         self.remember_credentials = tk.BooleanVar(value=has_saved_credentials())
+        self._switch_canvas = None
+        self._switch_label = None
 
         # ----------------------------------------------------
         # ICONO VENTANA
@@ -90,11 +92,7 @@ class LoginWindow(tk.Toplevel):
         self.password = ttk.Entry(self.left, width=30, show="*")
         self.password.grid(row=4, column=0, sticky="w")
 
-        ttk.Checkbutton(
-            self.left,
-            text="Guardar credenciales en Windows",
-            variable=self.remember_credentials
-        ).grid(row=5, column=0, sticky="w", pady=(12, 0))
+        self._build_credentials_switch(row=5)
 
         ttk.Button(
             self.left,
@@ -104,7 +102,7 @@ class LoginWindow(tk.Toplevel):
 
         self.btn_windows_unlock = ttk.Button(
             self.left,
-            text="Desbloquear con Windows",
+            text="Usar credenciales guardadas",
             command=self._unlock_with_windows
         )
         self.btn_windows_unlock.grid(row=7, column=0, sticky="w", pady=(0, 10))
@@ -114,15 +112,9 @@ class LoginWindow(tk.Toplevel):
 
         ttk.Button(
             self.left,
-            text="Borrar credenciales guardadas",
-            command=self._forget_saved_credentials
-        ).grid(row=8, column=0, sticky="w", pady=(0, 10))
-
-        ttk.Button(
-            self.left,
             text="Olvidé mi contraseña",
             command=self._forgot
-        ).grid(row=9, column=0, sticky="w")
+        ).grid(row=8, column=0, sticky="w")
 
         # ENTER = LOGIN
         self.bind("<Return>", lambda e: self._login())
@@ -149,6 +141,86 @@ class LoginWindow(tk.Toplevel):
                 bg="white",
                 text="",
             ).pack(fill="both", expand=True)
+
+    def _build_credentials_switch(self, row: int):
+        frame = tk.Frame(self.left, bg="white")
+        frame.grid(row=row, column=0, sticky="w", pady=(12, 0))
+
+        self._switch_canvas = tk.Canvas(
+            frame,
+            width=48,
+            height=26,
+            bg="white",
+            highlightthickness=0,
+            cursor="hand2",
+        )
+        self._switch_canvas.grid(row=0, column=0, sticky="w")
+        self._switch_canvas.bind(
+            "<Button-1>",
+            lambda _e: self._toggle_credentials_switch(),
+        )
+
+        self._switch_label = tk.Label(
+            frame,
+            text="Guardar credenciales en Windows",
+            bg="white",
+            fg="#1F2937",
+            cursor="hand2",
+        )
+        self._switch_label.grid(row=0, column=1, sticky="w", padx=(10, 0))
+        self._switch_label.bind(
+            "<Button-1>",
+            lambda _e: self._toggle_credentials_switch(),
+        )
+        self._draw_credentials_switch()
+
+    def _draw_credentials_switch(self):
+        if not self._switch_canvas:
+            return
+
+        enabled = bool(self.remember_credentials.get())
+        bg = "#0B64C0" if enabled else "#B8BEC8"
+        knob_x = 35 if enabled else 13
+
+        self._switch_canvas.delete("all")
+        self._switch_canvas.create_oval(1, 1, 25, 25, fill=bg, outline=bg)
+        self._switch_canvas.create_oval(23, 1, 47, 25, fill=bg, outline=bg)
+        self._switch_canvas.create_rectangle(13, 1, 35, 25, fill=bg, outline=bg)
+        self._switch_canvas.create_oval(
+            knob_x - 10,
+            3,
+            knob_x + 10,
+            23,
+            fill="white",
+            outline="#E5E7EB",
+        )
+
+    def _toggle_credentials_switch(self):
+        next_value = not bool(self.remember_credentials.get())
+        self.remember_credentials.set(next_value)
+        self._draw_credentials_switch()
+
+        if not next_value and has_saved_credentials():
+            try:
+                delete_credentials()
+            except Exception as e:
+                messagebox.showerror(
+                    "Credenciales guardadas",
+                    "No se pudieron quitar las credenciales guardadas.\n\n"
+                    f"{e}",
+                    parent=self,
+                )
+
+        self._refresh_saved_credentials_button()
+
+    def _refresh_saved_credentials_button(self):
+        try:
+            if has_saved_credentials() and is_windows_protection_available():
+                self.btn_windows_unlock.state(["!disabled"])
+            else:
+                self.btn_windows_unlock.state(["disabled"])
+        except Exception:
+            pass
 
     # ====================================================
     # UPDATE STATE (ANTI-LOOP)
@@ -378,7 +450,7 @@ class LoginWindow(tk.Toplevel):
         except Exception as e:
             messagebox.showerror(
                 "Credenciales guardadas",
-                "No se pudieron desbloquear las credenciales con Windows.\n\n"
+                "No se pudieron usar las credenciales guardadas en Windows.\n\n"
                 f"{e}",
                 parent=self
             )
@@ -397,20 +469,8 @@ class LoginWindow(tk.Toplevel):
         self.password.delete(0, tk.END)
         self.password.insert(0, saved.get("password", ""))
         self.remember_credentials.set(True)
+        self._draw_credentials_switch()
         self._login()
-
-    def _forget_saved_credentials(self):
-        delete_credentials()
-        self.remember_credentials.set(False)
-        try:
-            self.btn_windows_unlock.state(["disabled"])
-        except Exception:
-            pass
-        messagebox.showinfo(
-            "Credenciales guardadas",
-            "Credenciales guardadas eliminadas de este Windows.",
-            parent=self
-        )
 
     # ====================================================
     # RESET PASSWORD
