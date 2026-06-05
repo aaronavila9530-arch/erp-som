@@ -38,7 +38,7 @@ def generar_factura_manual_pdf(data: dict) -> str:
 
     # ==================== HELPERS SEGUROS ====================
     def safe(val, default=""):
-        return default if val in (None, "") else val
+        return default if val in (None, "") else str(val).strip()
 
     numero_factura = safe(data.get("numero_factura"), "—")
     cliente = safe(data.get("cliente"))
@@ -95,8 +95,18 @@ def generar_factura_manual_pdf(data: dict) -> str:
     c.rect(1.5 * cm, y, width - 3 * cm, 2.8 * cm, fill=1)
     c.setFillColor(black)
 
+    factura_label = f"FACTURA N° {numero_factura}"
+    factura_font_size = 10
+    max_factura_width = width - 4 * cm
+    while (
+        factura_font_size > 7
+        and c.stringWidth(factura_label, "Helvetica-Bold", factura_font_size) > max_factura_width
+    ):
+        factura_font_size -= 1
+
+    c.setFont("Helvetica-Bold", factura_font_size)
+    c.drawString(2 * cm, y + 2.1 * cm, factura_label)
     c.setFont("Helvetica-Bold", 10)
-    c.drawString(2 * cm, y + 2.1 * cm, f"FACTURA N° {numero_factura}")
     c.drawString(2 * cm, y + 1.5 * cm, f"Cliente: {cliente}")
 
     c.setFont("Helvetica", 9)

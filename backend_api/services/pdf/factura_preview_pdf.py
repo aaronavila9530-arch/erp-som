@@ -31,6 +31,17 @@ def generar_factura_preview_pdf(data: dict, output_path: str) -> str:
         c.drawString(20 * mm, y, str(text))
         y -= 7 * mm
 
+    def draw_fitted(text, font_name="Helvetica", max_size=10, min_size=7):
+        nonlocal y
+        value = str(text)
+        font_size = max_size
+        max_width = width - 40 * mm
+        while font_size > min_size and c.stringWidth(value, font_name, font_size) > max_width:
+            font_size -= 1
+        c.setFont(font_name, font_size)
+        c.drawString(20 * mm, y, value)
+        y -= 7 * mm
+
     # ===============================
     # HEADER
     # ===============================
@@ -47,7 +58,8 @@ def generar_factura_preview_pdf(data: dict, output_path: str) -> str:
     # ===============================
     c.setFont("Helvetica", 10)
 
-    draw(f"Número documento: {data.get('numero_documento', '-')}")
+    draw_fitted(f"Número documento: {data.get('numero_documento', '-')}")
+    c.setFont("Helvetica", 10)
     draw(f"Fecha emisión: {data.get('fecha_emision', '-')}")
     draw(f"Cliente: {data.get('cliente', '-')}")
     draw(f"Buque / Contenedor: {data.get('buque_contenedor', '-')}")

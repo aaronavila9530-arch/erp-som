@@ -1,22 +1,16 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
-from typing import List, Optional
-import psycopg2
+from typing import List
 
-# =========================================================
-# CONFIG
-# =========================================================
-DB_URL = "postgresql://postgres:IrPzbLzKJFQtUnMlBKcHLHcLIAqagHCT@tramway.proxy.rlwy.net:15258/railway"
+import database
+
 
 router = APIRouter(
     prefix="/servicios-surveyors",
-    tags=["Servicios Surveyors Flat"]
+    tags=["Servicios Surveyors Flat"],
 )
 
 
-# =========================================================
-# SCHEMAS
-# =========================================================
 class SurveyorItem(BaseModel):
     surveyor_nombre: str = Field(..., min_length=1)
     honorario: float = Field(ge=0)
@@ -26,28 +20,53 @@ class SurveyorsPayload(BaseModel):
     surveyors: List[SurveyorItem]
 
 
-# =========================================================
-# DB
-# =========================================================
-def get_conn():
-    return psycopg2.connect(DB_URL)
+@router.get("/catalogo/lista")
+def get_catalogo():
+    try:
+        rows = database.sql(
+            """
+            SELECT codigo, nombre, apellidos
+            FROM surveyor
+            WHERE COALESCE(TRIM(nombre), '') <> ''
+            ORDER BY nombre, apellidos, codigo
+            """,
+            fetch=True,
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error obteniendo catalogo surveyors: {str(e)}",
+        )
+
+    data = []
+    seen = set()
+    for codigo, nombre, apellidos in rows:
+        display = f"{nombre or ''} {apellidos or ''}".strip()
+        if not display:
+            continue
+
+        key = display.lower()
+        if key in seen:
+            continue
+
+        seen.add(key)
+        data.append(
+            {
+                "id": codigo,
+                "codigo": codigo,
+                "nombre": display,
+                "apellidos": "",
+            }
+        )
+
+    return {"data": data}
 
 
-# =========================================================
-# GET POR SERVICIO (FIX REAL - SIN ROMPER POST)
-# =========================================================
 @router.get("/{consec}")
 def get_surveyors(consec: int):
-
-    conn = None
-    cur = None
-
     try:
-        conn = get_conn()
-        cur = conn.cursor()
-
-        # 🔥 IMPORTANTE: evitar SELECT *
-        cur.execute("""
+        rows = database.sql(
+            """
             SELECT
                 surveyor_1, honorario_1,
                 surveyor_2, honorario_2,
@@ -61,113 +80,85 @@ def get_surveyors(consec: int):
                 surveyor_10, honorario_10
             FROM servicio_surveyors_flat
             WHERE servicio_consec = %s
-        """, (consec,))
+            """,
+            (consec,),
+            fetch=True,
+        )
 
-        row = cur.fetchone()
-
-        if not row:
+        if not rows:
             return {"data": []}
 
+        row = rows[0]
         surveyors = []
-
-        # 🔥 reconstrucción correcta (pares nombre/honorario)
         for i in range(0, 20, 2):
-
             nombre = row[i]
             honorario = row[i + 1]
+            if not nombre or str(nombre).strip() == "":
+                continue
 
-            if nombre and str(nombre).strip() != "":
+            try:
+                honorario_val = float(honorario or 0)
+            except Exception:
+                honorario_val = 0
 
-                try:
-                    honorario_val = float(honorario or 0)
-                except Exception:
-                    honorario_val = 0
-
-                surveyors.append({
+            surveyors.append(
+                {
                     "surveyor_nombre": str(nombre).strip(),
                     "honorario": honorario_val,
-                    "orden": (i // 2) + 1
-                })
+                    "orden": (i // 2) + 1,
+                }
+            )
 
         return {"data": surveyors}
 
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"Error obteniendo surveyors: {str(e)}"
+            detail=f"Error obteniendo surveyors: {str(e)}",
         )
 
-    finally:
-        if cur:
-            cur.close()
-        if conn:
-            conn.close()
 
-
-# =========================================================
-# POST (CREAR)  ✅ NO TOCADO
-# =========================================================
 @router.post("/{consec}")
 def create_surveyors(consec: int, payload: SurveyorsPayload):
     return _save(consec, payload)
 
 
-# =========================================================
-# PUT (REEMPLAZAR)  ✅ NO TOCADO
-# =========================================================
 @router.put("/{consec}")
 def update_surveyors(consec: int, payload: SurveyorsPayload):
     return _save(consec, payload)
 
 
-# =========================================================
-# CORE SAVE  ✅ NO TOCADO
-# =========================================================
 def _save(consec: int, payload: SurveyorsPayload):
-
     surveyors = payload.surveyors
 
     if len(surveyors) > 10:
         raise HTTPException(
             status_code=400,
-            detail="Máximo 10 surveyors permitidos"
+            detail="Maximo 10 surveyors permitidos",
         )
 
-    conn = get_conn()
-    cur = conn.cursor()
-
-    # =====================================================
-    # TRAER SERVICIO
-    # =====================================================
-    cur.execute("""
+    servicio_rows = database.sql(
+        """
         SELECT num_informe, cliente, pais, puerto, operacion
         FROM servicios
         WHERE consec = %s
-    """, (consec,))
+        """,
+        (consec,),
+        fetch=True,
+    )
 
-    servicio = cur.fetchone()
+    if not servicio_rows:
+        raise HTTPException(status_code=404, detail="Servicio no encontrado")
 
-    if not servicio:
-        raise HTTPException(
-            status_code=404,
-            detail="Servicio no encontrado"
-        )
+    num_informe, cliente, pais, puerto, operacion = servicio_rows[0]
 
-    num_informe, cliente, pais, puerto, operacion = servicio
-
-    # =====================================================
-    # ARMAR SLOTS
-    # =====================================================
     slots = []
     total = 0
-
     for i in range(10):
         if i < len(surveyors):
-            s = surveyors[i]
-
-            nombre = s.surveyor_nombre
-            honorario = float(s.honorario or 0)
-
+            item = surveyors[i]
+            nombre = item.surveyor_nombre
+            honorario = float(item.honorario or 0)
             slots.append((nombre, honorario))
             total += honorario
         else:
@@ -175,94 +166,77 @@ def _save(consec: int, payload: SurveyorsPayload):
 
     cantidad = len(surveyors)
 
-    # =====================================================
-    # UPSERT
-    # =====================================================
-    cur.execute("""
-    INSERT INTO servicio_surveyors_flat (
-        servicio_consec,
-        num_informe,
-        cliente,
-        pais,
-        puerto,
-        operacion,
-
-        surveyor_1, honorario_1,
-        surveyor_2, honorario_2,
-        surveyor_3, honorario_3,
-        surveyor_4, honorario_4,
-        surveyor_5, honorario_5,
-        surveyor_6, honorario_6,
-        surveyor_7, honorario_7,
-        surveyor_8, honorario_8,
-        surveyor_9, honorario_9,
-        surveyor_10, honorario_10,
-
-        total_honorarios,
-        cantidad_surveyors
+    database.sql(
+        """
+        INSERT INTO servicio_surveyors_flat (
+            servicio_consec,
+            num_informe,
+            cliente,
+            pais,
+            puerto,
+            operacion,
+            surveyor_1, honorario_1,
+            surveyor_2, honorario_2,
+            surveyor_3, honorario_3,
+            surveyor_4, honorario_4,
+            surveyor_5, honorario_5,
+            surveyor_6, honorario_6,
+            surveyor_7, honorario_7,
+            surveyor_8, honorario_8,
+            surveyor_9, honorario_9,
+            surveyor_10, honorario_10,
+            total_honorarios,
+            cantidad_surveyors
+        )
+        VALUES (
+            %s,%s,%s,%s,%s,%s,
+            %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+            %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+            %s,%s
+        )
+        ON CONFLICT (servicio_consec)
+        DO UPDATE SET
+            num_informe = EXCLUDED.num_informe,
+            cliente = EXCLUDED.cliente,
+            pais = EXCLUDED.pais,
+            puerto = EXCLUDED.puerto,
+            operacion = EXCLUDED.operacion,
+            surveyor_1 = EXCLUDED.surveyor_1,
+            honorario_1 = EXCLUDED.honorario_1,
+            surveyor_2 = EXCLUDED.surveyor_2,
+            honorario_2 = EXCLUDED.honorario_2,
+            surveyor_3 = EXCLUDED.surveyor_3,
+            honorario_3 = EXCLUDED.honorario_3,
+            surveyor_4 = EXCLUDED.surveyor_4,
+            honorario_4 = EXCLUDED.honorario_4,
+            surveyor_5 = EXCLUDED.surveyor_5,
+            honorario_5 = EXCLUDED.honorario_5,
+            surveyor_6 = EXCLUDED.surveyor_6,
+            honorario_6 = EXCLUDED.honorario_6,
+            surveyor_7 = EXCLUDED.surveyor_7,
+            honorario_7 = EXCLUDED.honorario_7,
+            surveyor_8 = EXCLUDED.surveyor_8,
+            honorario_8 = EXCLUDED.honorario_8,
+            surveyor_9 = EXCLUDED.surveyor_9,
+            honorario_9 = EXCLUDED.honorario_9,
+            surveyor_10 = EXCLUDED.surveyor_10,
+            honorario_10 = EXCLUDED.honorario_10,
+            total_honorarios = EXCLUDED.total_honorarios,
+            cantidad_surveyors = EXCLUDED.cantidad_surveyors
+        """,
+        (
+            consec,
+            num_informe,
+            cliente,
+            pais,
+            puerto,
+            operacion,
+            *[value for pair in slots for value in pair],
+            total,
+            cantidad,
+        ),
     )
-    VALUES (
-        %s,%s,%s,%s,%s,%s,
-        %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
-        %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
-        %s,%s
-    )
-    ON CONFLICT (servicio_consec)
-    DO UPDATE SET
 
-        num_informe = EXCLUDED.num_informe,
-        cliente = EXCLUDED.cliente,
-        pais = EXCLUDED.pais,
-        puerto = EXCLUDED.puerto,
-        operacion = EXCLUDED.operacion,
-
-        surveyor_1 = EXCLUDED.surveyor_1,
-        honorario_1 = EXCLUDED.honorario_1,
-
-        surveyor_2 = EXCLUDED.surveyor_2,
-        honorario_2 = EXCLUDED.honorario_2,
-
-        surveyor_3 = EXCLUDED.surveyor_3,
-        honorario_3 = EXCLUDED.honorario_3,
-
-        surveyor_4 = EXCLUDED.surveyor_4,
-        honorario_4 = EXCLUDED.honorario_4,
-
-        surveyor_5 = EXCLUDED.surveyor_5,
-        honorario_5 = EXCLUDED.honorario_5,
-
-        surveyor_6 = EXCLUDED.surveyor_6,
-        honorario_6 = EXCLUDED.honorario_6,
-
-        surveyor_7 = EXCLUDED.surveyor_7,
-        honorario_7 = EXCLUDED.honorario_7,
-
-        surveyor_8 = EXCLUDED.surveyor_8,
-        honorario_8 = EXCLUDED.honorario_8,
-
-        surveyor_9 = EXCLUDED.surveyor_9,
-        honorario_9 = EXCLUDED.honorario_9,
-
-        surveyor_10 = EXCLUDED.surveyor_10,
-        honorario_10 = EXCLUDED.honorario_10,
-
-        total_honorarios = EXCLUDED.total_honorarios,
-        cantidad_surveyors = EXCLUDED.cantidad_surveyors;
-    """, (
-        consec,
-        num_informe,
-        cliente,
-        pais,
-        puerto,
-        operacion,
-        *[item for pair in slots for item in pair],
-        total,
-        cantidad
-    ))
-
-    # =====================================================
-    # UPDATE SERVICIOS
-    # =====================================================
     if cantidad == 0:
         resumen = ""
     elif cantidad == 1:
@@ -270,50 +244,18 @@ def _save(consec: int, payload: SurveyorsPayload):
     else:
         resumen = f"Varios ({cantidad})"
 
-    cur.execute("""
+    database.sql(
+        """
         UPDATE servicios
         SET surveyor = %s,
             honorarios = %s
         WHERE consec = %s
-    """, (resumen, total, consec))
-
-    conn.commit()
-    cur.close()
-    conn.close()
+        """,
+        (resumen, total, consec),
+    )
 
     return {
         "status": "ok",
         "total": total,
-        "cantidad": cantidad
+        "cantidad": cantidad,
     }
-
-
-# =========================================================
-# CATÁLOGO SURVEYORS
-# =========================================================
-@router.get("/catalogo/lista")
-def get_catalogo():
-
-    conn = get_conn()
-    cur = conn.cursor()
-
-    cur.execute("""
-        SELECT id, nombre, apellidos
-        FROM surveyor
-        ORDER BY nombre
-    """)
-
-    rows = cur.fetchall()
-
-    cur.close()
-    conn.close()
-
-    data = [
-        {
-            "id": r[0],
-            "nombre": f"{r[1]} {r[2] or ''}".strip()
-        }
-        for r in rows
-    ]
-
-    return {"data": data}

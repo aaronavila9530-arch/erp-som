@@ -315,7 +315,7 @@ def listar_cotizaciones(
                 created_at
             FROM public.cotizaciones
             {where_clause}
-            ORDER BY created_at DESC;
+            ORDER BY id DESC;
         """, params)
 
         data = cur.fetchall() or []

@@ -15,6 +15,60 @@ router = APIRouter(
     tags=["Status Informes"]
 )
 
+REPORT_NUMBER_CANDIDATES = [
+    ("container_reports", "report_no"),
+    ("container_reports", "linked_report_number"),
+    ("vessel_grain_sampling_reports", "cert_no"),
+    ("vessel_truck_supervision_reports", "cert_no"),
+    ("general_draft_survey", "draft_report_number"),
+    ("draft_survey", "draft_report_number"),
+    ("vessel_bunker_reports", "bunker_cert_no"),
+    ("vessel_cargo_condition_surveys", "report_number"),
+    ("vessel_crane_inspection_reports", "report_number"),
+    ("vessel_condition_surveys", "report_number"),
+    ("port_captancy_reports", "report_number"),
+    ("weight_certificates", "report_number"),
+    ("vessel_holds_inspection_certificates", "report_number"),
+    ("sampling_certificates", "report_number"),
+    ("sampling_certificates", "certificate_no"),
+    ("sealing_certificates", "report_number"),
+    ("sealing_certificates", "certificate_no"),
+    ("lashing_certificates", "report_no"),
+]
+
+
+def _existing_reports_sql(cur):
+    selects = []
+
+    for table_name, column_name in REPORT_NUMBER_CANDIDATES:
+        cur.execute(
+            """
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = %s
+              AND column_name = %s
+            LIMIT 1
+            """,
+            (table_name, column_name)
+        )
+
+        if cur.fetchone():
+            selects.append(
+                f"""
+                SELECT NULLIF(TRIM({column_name}::text), '') AS num_informe
+                FROM {table_name}
+                WHERE {column_name} IS NOT NULL
+                  AND TRIM({column_name}::text) <> ''
+                  AND LOWER(TRIM({column_name}::text)) <> 'none'
+                """
+            )
+
+    if not selects:
+        return "SELECT NULL::text AS num_informe WHERE FALSE"
+
+    return "\nUNION\n".join(selects)
+
 
 # ============================================================
 # GET — GRID SERVICIOS INFORMES
@@ -42,68 +96,76 @@ def list_status_informes(
 
     try:
 
+        existing_reports = _existing_reports_sql(cur)
+
         # ====================================================
         # BASE QUERY
         # ====================================================
-        query = """
+        query = f"""
+            WITH existing_reports AS (
+                {existing_reports}
+            )
             SELECT
-                consec,
-                num_informe,
-                buque_contenedor,
-                cliente,
-                detalle,
-                continente,
-                pais,
-                puerto,
-                operacion,
-                fecha_inicio,
-                EXTRACT(YEAR FROM fecha_inicio)  AS year,
-                EXTRACT(MONTH FROM fecha_inicio) AS month,
-                status_informe
-            FROM servicios
-            WHERE tipo = 'Buque'
-              AND num_informe IS NOT NULL
-              AND TRIM(num_informe) <> ''
-              AND LOWER(TRIM(num_informe)) <> 'none'
+                s.consec,
+                s.num_informe,
+                s.buque_contenedor,
+                s.cliente,
+                s.detalle,
+                s.continente,
+                s.pais,
+                s.puerto,
+                s.operacion,
+                s.fecha_inicio,
+                EXTRACT(YEAR FROM s.fecha_inicio)  AS year,
+                EXTRACT(MONTH FROM s.fecha_inicio) AS month,
+                COALESCE(NULLIF(TRIM(s.status_informe), ''), 'Pending') AS status_informe
+            FROM servicios s
+            WHERE LOWER(TRIM(COALESCE(s.estado, ''))) = 'finalizado'
+              AND s.num_informe IS NOT NULL
+              AND TRIM(s.num_informe) <> ''
+              AND LOWER(TRIM(s.num_informe)) <> 'none'
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM existing_reports er
+                  WHERE TRIM(er.num_informe) = TRIM(s.num_informe)
+              )
         """
 
         conditions = []
         params = []
 
         # ====================================================
-        # STATUS (DEFAULT: Pending)
+        # STATUS
         # ====================================================
         if status:
-            conditions.append("status_informe = %s")
+            conditions.append("COALESCE(NULLIF(TRIM(s.status_informe), ''), 'Pending') = %s")
             params.append(status)
-        else:
-            conditions.append("status_informe = 'Pending'")
 
         # ====================================================
         # OPTIONAL FILTERS
         # ====================================================
         if continente:
-            conditions.append("continente = %s")
+            conditions.append("s.continente = %s")
             params.append(continente)
 
         if pais:
-            conditions.append("pais = %s")
+            conditions.append("s.pais = %s")
             params.append(pais)
 
         if puerto:
-            conditions.append("puerto = %s")
+            conditions.append("s.puerto = %s")
             params.append(puerto)
 
         if operacion:
-            conditions.append("operacion = %s")
+            conditions.append("s.operacion = %s")
             params.append(operacion)
 
         if year:
-            conditions.append("EXTRACT(YEAR FROM fecha_inicio) = %s")
+            conditions.append("EXTRACT(YEAR FROM s.fecha_inicio) = %s")
             params.append(year)
 
         if month:
-            conditions.append("EXTRACT(MONTH FROM fecha_inicio) = %s")
+            conditions.append("EXTRACT(MONTH FROM s.fecha_inicio) = %s")
             params.append(month)
 
         # ====================================================
@@ -113,8 +175,8 @@ def list_status_informes(
             query += " AND " + " AND ".join(conditions)
 
         query += """
-            ORDER BY fecha_inicio DESC NULLS LAST,
-                     consec DESC
+            ORDER BY s.fecha_inicio DESC NULLS LAST,
+                     s.consec DESC
         """
 
         # ====================================================
