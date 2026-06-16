@@ -3,7 +3,10 @@ import tempfile
 import subprocess
 from pathlib import Path
 from openpyxl import load_workbook
-from backend_api.services.template_autofit import apply_workbook_autofit
+try:
+    from services.template_autofit import apply_workbook_autofit
+except ModuleNotFoundError:
+    from backend_api.services.template_autofit import apply_workbook_autofit
 
 
 class VesselHoldsInspectionExcelService:

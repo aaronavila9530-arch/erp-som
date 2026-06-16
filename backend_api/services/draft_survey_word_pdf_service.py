@@ -3,7 +3,10 @@ import tempfile
 import subprocess
 from pathlib import Path
 from docx import Document
-from backend_api.services.template_autofit import apply_docx_autofit
+try:
+    from services.template_autofit import apply_docx_autofit
+except ModuleNotFoundError:
+    from backend_api.services.template_autofit import apply_docx_autofit
 
 
 # ============================================================

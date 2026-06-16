@@ -5,7 +5,10 @@ from datetime import datetime, date
 from pathlib import Path
 
 from openpyxl import load_workbook
-from backend_api.services.template_autofit import apply_workbook_autofit
+try:
+    from services.template_autofit import apply_workbook_autofit
+except ModuleNotFoundError:
+    from backend_api.services.template_autofit import apply_workbook_autofit
 from openpyxl.worksheet.worksheet import Worksheet
 from psycopg2.extras import RealDictCursor
 
