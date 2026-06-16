@@ -1,6 +1,7 @@
 import os
 import tempfile
 from docx import Document
+from backend_api.services.template_autofit import apply_docx_autofit
 
 
 # ============================================================
@@ -123,6 +124,8 @@ def generate_vessel_truck_supervision_doc(data: dict) -> str:
         f"{data.get('cert_no', 'truck_supervision')}.docx"
     )
 
+    apply_docx_autofit(doc)
     doc.save(output_path)
 
     return output_path
+

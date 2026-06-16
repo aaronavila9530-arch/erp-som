@@ -2,6 +2,7 @@ import os
 import tempfile
 from datetime import datetime, date
 from docx import Document
+from backend_api.services.template_autofit import apply_docx_autofit
 
 
 class VesselCargoConditionWordService:
@@ -32,6 +33,7 @@ class VesselCargoConditionWordService:
 
         output_path = self._build_output_path(data)
 
+        apply_docx_autofit(doc)
         doc.save(output_path)
 
         return output_path

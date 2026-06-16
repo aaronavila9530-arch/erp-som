@@ -2,6 +2,7 @@ import os
 import tempfile
 import subprocess
 from docx import Document
+from backend_api.services.template_autofit import apply_docx_autofit
 
 
 # =====================================================
@@ -18,7 +19,7 @@ TEMPLATE_PATH = os.path.abspath(
 
 
 # =====================================================
-# INTERNAL — SAFE REPLACE (RUN-LEVEL, 1 PASADA)
+# INTERNAL â€” SAFE REPLACE (RUN-LEVEL, 1 PASADA)
 # =====================================================
 def _replace_in_paragraphs(paragraphs, placeholders: dict):
     """
@@ -37,7 +38,7 @@ def _replace_in_paragraphs(paragraphs, placeholders: dict):
 
 
 # =====================================================
-# INTERNAL — TABLES (RECURSIVO SEGURO)
+# INTERNAL â€” TABLES (RECURSIVO SEGURO)
 # =====================================================
 def _replace_in_tables(tables, placeholders):
     for table in tables:
@@ -49,18 +50,18 @@ def _replace_in_tables(tables, placeholders):
 
 
 # =====================================================
-# MAIN — GENERATE PRESENTATION PDF
+# MAIN â€” GENERATE PRESENTATION PDF
 # =====================================================
 def generate_presentation_pdf(data: dict) -> str:
     """
     Genera PDF desde presentation_containers.docx
     Respeta EXACTAMENTE:
-    - tamaño
+    - tamaÃ±o
     - color
     - fuente
     - negrita
-    - alineación
-    - imágenes
+    - alineaciÃ³n
+    - imÃ¡genes
     """
 
     # -----------------------------
@@ -72,7 +73,7 @@ def generate_presentation_pdf(data: dict) -> str:
         )
 
     if not isinstance(data, dict):
-        raise ValueError("Invalid data payload — expected dict")
+        raise ValueError("Invalid data payload â€” expected dict")
 
     # -----------------------------
     # LOAD TEMPLATE
@@ -108,6 +109,7 @@ def generate_presentation_pdf(data: dict) -> str:
     # -----------------------------
     fd, docx_path = tempfile.mkstemp(suffix=".docx")
     os.close(fd)
+    apply_docx_autofit(doc)
     doc.save(docx_path)
 
     output_dir = tempfile.mkdtemp()
@@ -131,7 +133,7 @@ def generate_presentation_pdf(data: dict) -> str:
             check=True,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
-            timeout=60  # 🔒 evita cuelgues
+            timeout=60  # ðŸ”’ evita cuelgues
         )
 
     except subprocess.TimeoutExpired:
@@ -156,6 +158,7 @@ def generate_presentation_pdf(data: dict) -> str:
     )
 
     if not os.path.exists(pdf_path):
-        raise RuntimeError("PDF generation failed — output file not found")
+        raise RuntimeError("PDF generation failed â€” output file not found")
 
     return pdf_path
+

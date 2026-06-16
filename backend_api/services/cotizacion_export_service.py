@@ -2,6 +2,7 @@ from datetime import date
 from pathlib import Path
 
 from docx import Document
+from backend_api.services.template_autofit import apply_docx_autofit
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Inches
 from reportlab.lib.pagesizes import LETTER
@@ -70,6 +71,7 @@ def export_cotizacion_word(data: dict, output_path: str):
         "Phone (506) 8814-07-84 - (506) 4052-8382"
     )
 
+    apply_docx_autofit(doc)
     doc.save(output_path)
 
 
@@ -143,3 +145,4 @@ def export_cotizacion_pdf(data: dict, output_path: str):
     c.setFont("Helvetica", 8)
     c.drawCentredString(width / 2, footer_y, "Head Office - Costa Rica, Alajuela, Plaza Aeropuerto G-14 - Phone (506) 8814-07-84 - (506) 4052-8382")
     c.save()
+

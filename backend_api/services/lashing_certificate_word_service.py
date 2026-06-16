@@ -1,5 +1,6 @@
 from pathlib import Path
 from docx import Document
+from backend_api.services.template_autofit import apply_docx_autofit
 from io import BytesIO
 from fastapi.responses import StreamingResponse
 import subprocess
@@ -68,6 +69,7 @@ class LashingCertificateWordService:
 
         buffer = BytesIO()
 
+        apply_docx_autofit(doc)
         doc.save(buffer)
 
         buffer.seek(0)
@@ -97,6 +99,7 @@ class LashingCertificateWordService:
 
             self._replace_placeholders(doc, data)
 
+            apply_docx_autofit(doc)
             doc.save(word_path)
 
             subprocess.run([

@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 
 from docx import Document
+from backend_api.services.template_autofit import apply_docx_autofit
 
 print("==== DraftSurveyApprovePdfService LOADED ====")
 print("FILE:", __file__)
@@ -109,6 +110,7 @@ class DraftSurveyApprovePdfService:
             self._replace_in_container(section.footer, replacements)
 
         print("  -> [W4] Saving DOCX...")
+        apply_docx_autofit(doc)
         doc.save(tmp_docx)
 
         print("  -> [W5] Converting DOCX to PDF...")

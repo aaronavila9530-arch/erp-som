@@ -1,6 +1,7 @@
 import os
 import tempfile
 from openpyxl import load_workbook
+from backend_api.services.template_autofit import apply_workbook_autofit
 from openpyxl.worksheet.worksheet import Worksheet
 from datetime import datetime
 from openpyxl.styles import Alignment
@@ -265,5 +266,7 @@ def generate_container_report_excel(report: dict) -> str:
     )
     os.close(fd)
 
+    apply_workbook_autofit(wb)
     wb.save(output_path)
     return output_path
+

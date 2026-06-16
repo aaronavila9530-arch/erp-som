@@ -3,6 +3,7 @@ import tempfile
 import subprocess
 from datetime import datetime, date
 from docx import Document
+from backend_api.services.template_autofit import apply_docx_autofit
 
 
 class PortCaptancyPresentationService:
@@ -48,6 +49,7 @@ class PortCaptancyPresentationService:
             f"port_captancy_presentation_{record_id}.pdf"
         )
 
+        apply_docx_autofit(doc)
         doc.save(docx_path)
 
         self._convert_to_pdf(docx_path, temp_dir)

@@ -2,6 +2,7 @@ import os
 import tempfile
 from datetime import datetime, date
 from openpyxl import load_workbook
+from backend_api.services.template_autofit import apply_workbook_autofit
 from openpyxl.worksheet.worksheet import Worksheet
 
 
@@ -149,6 +150,7 @@ class VesselBunkerExcelGenerator:
         tmp_dir = tempfile.mkdtemp(prefix="bunker_excel_")
         tmp_path = os.path.join(tmp_dir, "vessel_bunker_report.xlsx")
 
+        apply_workbook_autofit(wb)
         wb.save(tmp_path)
 
         return tmp_path

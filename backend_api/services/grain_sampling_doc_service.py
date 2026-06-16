@@ -1,6 +1,7 @@
 import os
 import tempfile
 from docx import Document
+from backend_api.services.template_autofit import apply_docx_autofit
 from datetime import datetime
 
 
@@ -188,6 +189,7 @@ def generate_grain_sampling_doc(data: dict) -> str:
         f"{data.get('cert_no', 'grain_sampling')}.docx"
     )
 
+    apply_docx_autofit(doc)
     doc.save(output_path)
 
     return output_path

@@ -3,6 +3,7 @@ import tempfile
 import subprocess
 from pathlib import Path
 from openpyxl import load_workbook
+from backend_api.services.template_autofit import apply_workbook_autofit
 
 
 class SamplingCertificateExcelService:
@@ -85,6 +86,7 @@ class SamplingCertificateExcelService:
                 f"sampling_certificate_{data.get('id')}.xlsx"
             )
 
+            apply_workbook_autofit(wb)
             wb.save(excel_path)
 
             return excel_path
@@ -202,6 +204,7 @@ class SamplingCertificateExcelService:
 
             wb.calculation.fullCalcOnLoad = True
 
+            apply_workbook_autofit(wb)
             wb.save(excel_path)
 
         finally:

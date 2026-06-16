@@ -3,6 +3,7 @@ import tempfile
 import subprocess
 from pathlib import Path
 from openpyxl import load_workbook
+from backend_api.services.template_autofit import apply_workbook_autofit
 
 
 class VesselHoldsInspectionExcelService:
@@ -81,6 +82,7 @@ class VesselHoldsInspectionExcelService:
                 f"holds_inspection_certificate_{data.get('id')}.xlsx"
             )
 
+            apply_workbook_autofit(wb)
             wb.save(excel_path)
 
             return excel_path
@@ -197,6 +199,7 @@ class VesselHoldsInspectionExcelService:
 
             wb.calculation.fullCalcOnLoad = True
 
+            apply_workbook_autofit(wb)
             wb.save(excel_path)
 
         finally:

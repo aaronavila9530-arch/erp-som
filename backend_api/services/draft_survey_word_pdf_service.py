@@ -3,6 +3,7 @@ import tempfile
 import subprocess
 from pathlib import Path
 from docx import Document
+from backend_api.services.template_autofit import apply_docx_autofit
 
 
 # ============================================================
@@ -163,6 +164,7 @@ def generate_draft_survey_word_pdf(data: dict) -> str:
         f"{draft_report_number}.docx"
     )
 
+    apply_docx_autofit(doc)
     doc.save(temp_docx)
 
     # ========================================================

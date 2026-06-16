@@ -3,6 +3,7 @@ import tempfile
 import subprocess
 from typing import Dict
 from docx import Document
+from backend_api.services.template_autofit import apply_docx_autofit
 
 
 # ============================================================
@@ -134,6 +135,7 @@ def generate_truck_supervision_presentation_pdf(data: dict) -> str:
     # --------------------------------------------------------
     fd, temp_docx = tempfile.mkstemp(suffix=".docx")
     os.close(fd)
+    apply_docx_autofit(doc)
     doc.save(temp_docx)
 
     output_dir = tempfile.mkdtemp()
@@ -186,3 +188,4 @@ def generate_truck_supervision_presentation_pdf(data: dict) -> str:
         raise RuntimeError("PDF generation failed — output file not found.")
 
     return pdf_path
+

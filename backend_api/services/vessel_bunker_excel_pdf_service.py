@@ -4,6 +4,7 @@ import subprocess
 from pathlib import Path
 
 from openpyxl import load_workbook
+from backend_api.services.template_autofit import apply_workbook_autofit
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.page import PageMargins
 
@@ -129,6 +130,7 @@ class VesselBunkerExcelPdfService:
                 ws.page_setup.horizontalCentered = False
                 ws.page_setup.verticalCentered = False
 
+            apply_workbook_autofit(wb)
             wb.save(excel_path)
 
         finally:

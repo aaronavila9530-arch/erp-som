@@ -2,6 +2,7 @@ import os
 import tempfile
 from datetime import datetime, date
 from openpyxl import load_workbook
+from backend_api.services.template_autofit import apply_workbook_autofit
 from openpyxl.worksheet.worksheet import Worksheet
 
 
@@ -85,7 +86,7 @@ class DraftSurveyExcelGenerator:
             "fields": {
 
                 # =====================================================
-                # INITIAL — TOP
+                # INITIAL â€” TOP
                 # =====================================================
 
                 "init_date": "T2",
@@ -96,7 +97,7 @@ class DraftSurveyExcelGenerator:
                 "port_to": "AB4",
 
                 # =====================================================
-                # INITIAL — DRAFT READINGS
+                # INITIAL â€” DRAFT READINGS
                 # =====================================================
 
                 "init_draft_fwd_port": "A8",
@@ -114,7 +115,7 @@ class DraftSurveyExcelGenerator:
                 "init_lpp": "M13",
 
                 # =====================================================
-                # INITIAL — FIGURES
+                # INITIAL â€” FIGURES
                 # =====================================================
 
                 "init_tpc_p": "Q16",
@@ -122,7 +123,7 @@ class DraftSurveyExcelGenerator:
                 "init_bl_figure": "M35",
 
                 # =====================================================
-                # INITIAL — DEDUCTIONS
+                # INITIAL â€” DEDUCTIONS
                 # =====================================================
 
                 "init_ballast": "G18",
@@ -135,7 +136,7 @@ class DraftSurveyExcelGenerator:
                 "init_others": "G25",
 
                 # =====================================================
-                # INITIAL — HYDRO 1 (CUADRO 1)
+                # INITIAL â€” HYDRO 1 (CUADRO 1)
                 # 4 filas EXACTAS:
                 #   F1: draft/disp/tpc/lcf
                 #   F2: draft/disp/tpc/lcf
@@ -166,7 +167,7 @@ class DraftSurveyExcelGenerator:
 
 
                 # =====================================================
-                # INITIAL — HYDRO 2 (CUADRO 2)
+                # INITIAL â€” HYDRO 2 (CUADRO 2)
                 # MISMA ESTRUCTURA, SOLO CAMBIA EL BLOQUE DE CELDAS
                 # =====================================================
 
@@ -192,7 +193,7 @@ class DraftSurveyExcelGenerator:
                 "init_hydro2_mtc_m50_2":  "BJ42",
 
                 # =====================================================
-                # FINAL — TOP
+                # FINAL â€” TOP
                 # =====================================================
 
                 "final_date": "AS2",
@@ -200,7 +201,7 @@ class DraftSurveyExcelGenerator:
                 "final_time_to": "AS4",
 
                 # =====================================================
-                # FINAL — DRAFT READINGS
+                # FINAL â€” DRAFT READINGS
                 # =====================================================
 
                 "final_draft_fwd_port": "Z8",
@@ -218,7 +219,7 @@ class DraftSurveyExcelGenerator:
                 "final_lpp": "AL13",
 
                 # =====================================================
-                # FINAL — FIGURES
+                # FINAL â€” FIGURES
                 # =====================================================
 
                 "final_tpc_p": "AP16",
@@ -226,7 +227,7 @@ class DraftSurveyExcelGenerator:
                 "final_bl_figure": "AG35",
 
                 # =====================================================
-                # FINAL — DEDUCTIONS
+                # FINAL â€” DEDUCTIONS
                 # =====================================================
 
                 "final_fuel_oil": "AS20",
@@ -237,7 +238,7 @@ class DraftSurveyExcelGenerator:
                 "final_others": "AS25",
 
                 # =====================================================
-                # FINAL — HYDRO 1 (CUADRO 1 — 4 FILAS)
+                # FINAL â€” HYDRO 1 (CUADRO 1 â€” 4 FILAS)
                 # =====================================================
 
                 # Fila 1
@@ -263,7 +264,7 @@ class DraftSurveyExcelGenerator:
 
 
                 # =====================================================
-                # FINAL — HYDRO 2 (CUADRO 2 — 4 FILAS)
+                # FINAL â€” HYDRO 2 (CUADRO 2 â€” 4 FILAS)
                 # =====================================================
 
                 # Fila 1
@@ -295,7 +296,7 @@ class DraftSurveyExcelGenerator:
                 "master": "AN32",
                 "msl_surveyor": "AN35",
             }
-        }   # ← cierra "Draft"
+        }   # â† cierra "Draft"
         ,
 
         "Deductions": {
@@ -318,7 +319,7 @@ class DraftSurveyExcelGenerator:
         if isinstance(value, bool):
             value = "YES" if value else "NO"
 
-        # Intentar convertir a número si es numérico
+        # Intentar convertir a nÃºmero si es numÃ©rico
         try:
             if isinstance(value, str):
                 v = value.replace(",", ".")
@@ -345,13 +346,13 @@ class DraftSurveyExcelGenerator:
 
         try:
             # -------------------------------------------------
-            # 1) Si ya es datetime o date → usar directo
+            # 1) Si ya es datetime o date â†’ usar directo
             # -------------------------------------------------
             if isinstance(value, (datetime, date)):
                 parsed = value
 
             # -------------------------------------------------
-            # 2) Si es string → intentar múltiples formatos
+            # 2) Si es string â†’ intentar mÃºltiples formatos
             # -------------------------------------------------
             elif isinstance(value, str):
 
@@ -359,7 +360,7 @@ class DraftSurveyExcelGenerator:
 
                 # Intentar formatos comunes usados en el ERP
                 date_formats = [
-                    "%m-%d-%Y",  # 02-20-2026  ← DateEntry actual
+                    "%m-%d-%Y",  # 02-20-2026  â† DateEntry actual
                     "%d-%m-%Y",  # 20-02-2026
                     "%Y-%m-%d",  # 2026-02-20
                     "%m/%d/%Y",
@@ -378,7 +379,7 @@ class DraftSurveyExcelGenerator:
             parsed = None
 
         # -------------------------------------------------
-        # Si no logró parsear, salir silenciosamente
+        # Si no logrÃ³ parsear, salir silenciosamente
         # -------------------------------------------------
         if not parsed:
             return
@@ -401,7 +402,7 @@ class DraftSurveyExcelGenerator:
 
 
     # =========================================================
-    # GENERATE EXCEL FROM TEMPLATE (PUBLIC METHOD) — BLINDADO
+    # GENERATE EXCEL FROM TEMPLATE (PUBLIC METHOD) â€” BLINDADO
     # =========================================================
     def generate(self, payload: dict) -> str:
 
@@ -433,7 +434,7 @@ class DraftSurveyExcelGenerator:
                     self._safe_set(ws, cell, value)
 
         # =====================================================
-        # 2) DEDUCTIONS — DYNAMIC (ALINEADO CON FRONTEND)
+        # 2) DEDUCTIONS â€” DYNAMIC (ALINEADO CON FRONTEND)
         # payload["ballast"]["init"/"final"]
         # payload["fresh_water"]["init"/"final"]
         # =====================================================
@@ -542,6 +543,7 @@ class DraftSurveyExcelGenerator:
         tmp_dir = tempfile.mkdtemp(prefix="draft_excel_")
         tmp_path = os.path.join(tmp_dir, "draft_survey.xlsx")
 
+        apply_workbook_autofit(wb)
         wb.save(tmp_path)
 
         return tmp_path
@@ -553,7 +555,7 @@ class DraftSurveyExcelGenerator:
     def _visualizar_draft(self):
 
         # -----------------------------------------------------
-        # 🔒 Forzar actualización de widgets
+        # ðŸ”’ Forzar actualizaciÃ³n de widgets
         # -----------------------------------------------------
         try:
             self.update_idletasks()
@@ -595,11 +597,11 @@ class DraftSurveyExcelGenerator:
             sanitized_payload = payload
 
         # -----------------------------------------------------
-        # 4) Validación mínima
+        # 4) ValidaciÃ³n mÃ­nima
         # -----------------------------------------------------
         if not sanitized_payload.get("vessel_mv"):
             messagebox.showwarning(
-                "Validación",
+                "ValidaciÃ³n",
                 "Debe seleccionar un servicio antes de visualizar."
             )
             return
@@ -614,7 +616,7 @@ class DraftSurveyExcelGenerator:
             tmp_path = generator.generate(sanitized_payload)
 
             if not tmp_path or not os.path.exists(tmp_path):
-                raise Exception("No se generó archivo temporal válido.")
+                raise Exception("No se generÃ³ archivo temporal vÃ¡lido.")
 
         except Exception as e:
             messagebox.showerror(
@@ -656,7 +658,7 @@ class DraftSurveyExcelGenerator:
             )
 
             # -------------------------------------------------
-            # Determinar título
+            # Determinar tÃ­tulo
             # -------------------------------------------------
             variant_norm = (variant or "").strip().lower()
             if variant_norm == "intermediate":
@@ -795,7 +797,7 @@ class DraftSurveyExcelGenerator:
         except Exception as e:
             messagebox.showwarning(
                 "Aviso",
-                f"El Excel se abrió, pero no se pudo aplicar el modo bloqueado completo:\n{e}"
+                f"El Excel se abriÃ³, pero no se pudo aplicar el modo bloqueado completo:\n{e}"
             )
 
 

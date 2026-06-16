@@ -5,6 +5,7 @@ import subprocess
 from typing import Dict
 from datetime import datetime
 from docx import Document
+from backend_api.services.template_autofit import apply_docx_autofit
 
 
 # =====================================================
@@ -228,6 +229,7 @@ def generate_draft_survey_presentation_pdf(data: dict) -> str:
 
     fd, temp_docx = tempfile.mkstemp(suffix=".docx")
     os.close(fd)
+    apply_docx_autofit(doc)
     doc.save(temp_docx)
 
     output_dir = tempfile.mkdtemp()

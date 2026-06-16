@@ -1,5 +1,6 @@
 from pathlib import Path
 from docx import Document
+from backend_api.services.template_autofit import apply_docx_autofit
 from io import BytesIO
 from datetime import datetime
 from fastapi.responses import StreamingResponse
@@ -69,6 +70,7 @@ class WeightCertificateWordService:
 
         buffer = BytesIO()
 
+        apply_docx_autofit(doc)
         doc.save(buffer)
 
         buffer.seek(0)
@@ -98,6 +100,7 @@ class WeightCertificateWordService:
 
             self._replace_placeholders(doc, data)
 
+            apply_docx_autofit(doc)
             doc.save(word_path)
 
             # LibreOffice conversion
