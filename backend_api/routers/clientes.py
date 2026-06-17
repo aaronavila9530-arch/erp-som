@@ -3,8 +3,47 @@ from fastapi import APIRouter, HTTPException
 import database
 from fastapi import APIRouter, HTTPException, Depends, Header
 from rbac_service import has_permission
+from datetime import date, datetime
 
 router = APIRouter(prefix="/clientes", tags=["Clientes"])
+
+
+def _normalize_fecha_pago(value):
+    if value is None:
+        return None
+
+    if isinstance(value, datetime):
+        return value.date()
+
+    if isinstance(value, date):
+        return value
+
+    text = str(value).strip()
+    if not text:
+        return None
+
+    normalized = " ".join(text.replace(",", " ").split())
+    for fmt in (
+        "%Y-%m-%d",
+        "%Y/%m/%d",
+        "%d-%m-%Y",
+        "%d/%m/%Y",
+        "%m/%d/%Y",
+        "%b %d %Y",
+        "%B %d %Y",
+    ):
+        try:
+            return datetime.strptime(normalized, fmt).date()
+        except Exception:
+            continue
+
+    try:
+        return datetime.fromisoformat(text[:10]).date()
+    except Exception:
+        raise HTTPException(
+            status_code=400,
+            detail=f"FechaDePago invalida: {value}"
+        )
 
 def require_permission(module: str, action: str):
     def checker(
@@ -21,6 +60,8 @@ def require_permission(module: str, action: str):
 
 @router.post("/add")
 def add_cliente(data: dict):
+    data = dict(data)
+    data["FechaDePago"] = _normalize_fecha_pago(data.get("FechaDePago"))
     sql = """
         INSERT INTO cliente (
             codigo,
@@ -198,6 +239,8 @@ def get_cliente(codigo: str):
 
 @router.put("/update")
 def update_cliente(data: dict):
+    data = dict(data)
+    data["FechaDePago"] = _normalize_fecha_pago(data.get("FechaDePago"))
     sql = """
         UPDATE cliente SET
             nombrejuridico = %(NombreJuridico)s,

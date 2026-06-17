@@ -172,6 +172,7 @@ def get_all_vessel_holds_certificates(conn=Depends(get_db)):
                     hose_test_start,
                     hose_test_end,
                     remarks,
+                    master_chief_officer,
                     created_at,
                     updated_at,
                     status
@@ -227,6 +228,7 @@ def get_vessel_holds_certificate(record_id: int, conn=Depends(get_db)):
                     hose_test_start,
                     hose_test_end,
                     remarks,
+                    master_chief_officer,
                     created_at,
                     updated_at,
                     status

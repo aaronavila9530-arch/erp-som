@@ -29,6 +29,52 @@ class DemoraUpdate(BaseModel):
     total: str
 
 
+def _num_informe_con_fecha(num_informe: str | None, fecha_inicio: str | None) -> str | None:
+    """Conserva el prefijo del informe y recalcula DDMM-YYYY desde fecha_inicio."""
+    if not num_informe or not fecha_inicio:
+        return num_informe
+
+    parts = str(num_informe).strip().split("-")
+    if len(parts) != 3 or not parts[0]:
+        return num_informe
+
+    try:
+        fecha_dt = _parse_service_date(fecha_inicio)
+    except Exception:
+        return num_informe
+
+    return f"{parts[0]}-{fecha_dt.strftime('%d%m')}-{fecha_dt.strftime('%Y')}"
+
+
+def _parse_service_date(value):
+    text = str(value or "").strip()
+    if not text:
+        raise ValueError("Fecha vacia")
+
+    normalized = " ".join(text.replace(",", " ").split())
+    for fmt in (
+        "%Y-%m-%d",
+        "%Y/%m/%d",
+        "%d-%m-%Y",
+        "%d/%m/%Y",
+        "%m/%d/%Y",
+        "%b %d %Y",
+        "%B %d %Y",
+    ):
+        try:
+            return datetime.strptime(normalized, fmt)
+        except Exception:
+            continue
+
+    return datetime.fromisoformat(text[:10])
+
+
+def _normalize_service_date(value):
+    if value in (None, ""):
+        return value
+    return _parse_service_date(value).strftime("%Y-%m-%d")
+
+
 
 # ============================================================
 # MODELO DE INSERCIÓN DESDE POPUP
@@ -56,6 +102,8 @@ class ServicioCreate(BaseModel):
 # ============================================================
 @router.post("/add")
 def add_servicio(data: ServicioCreate):
+    payload = data.dict()
+    payload["fecha_inicio"] = _normalize_service_date(payload.get("fecha_inicio"))
 
     sql = """
         INSERT INTO servicios (
@@ -76,7 +124,7 @@ def add_servicio(data: ServicioCreate):
     """
 
     try:
-        result = database.sql(sql, data.dict(), fetch=True)
+        result = database.sql(sql, payload, fetch=True)
         new_id = result[0][0]
         return {"status": "OK", "msg": "Servicio creado", "consec": new_id}
     except Exception as e:
@@ -350,7 +398,7 @@ def confirmar_servicio(consec: int, data: dict):
             fetch=False
         )
 
-        fecha_inicio = data.get("fecha_inicio")
+        fecha_inicio = _normalize_service_date(data.get("fecha_inicio"))
         hora_inicio  = data.get("hora_inicio")
 
         if not fecha_inicio or not hora_inicio:
@@ -381,21 +429,23 @@ def confirmar_servicio(consec: int, data: dict):
         # 3. Si ya tiene consecutivo → solo actualizar estado
         # --------------------------------------------------
         if num_existente:
+            num_actualizado = _num_informe_con_fecha(num_existente, fecha_inicio)
             database.sql(
                 """
                 UPDATE servicios
                 SET
                     fecha_inicio = %s,
                     hora_inicio  = %s,
+                    num_informe  = %s,
                     estado       = 'En Operación'
                 WHERE consec = %s
                 """,
-                (fecha_inicio, hora_inicio, consec)
+                (fecha_inicio, hora_inicio, num_actualizado, consec)
             )
 
             return {
                 "status": "ok",
-                "num_informe": num_existente,
+                "num_informe": num_actualizado,
                 "generated_now": False
             }
 
@@ -428,10 +478,7 @@ def confirmar_servicio(consec: int, data: dict):
         # --------------------------------------------------
         # 5. Construir num_informe usando fecha_inicio
         # --------------------------------------------------
-        fecha_dt = datetime.strptime(
-            fecha_inicio[:10],
-            "%Y-%m-%d"
-        )
+        fecha_dt = _parse_service_date(fecha_inicio)
 
         num_informe = f"{candidato}-{fecha_dt.strftime('%d%m')}-{fecha_dt.strftime('%Y')}"
 
@@ -509,6 +556,24 @@ def actualizar_demoras(consec: int, payload: DemoraUpdate):
 @router.put("/editar/{consec}")
 def editar_servicio(consec: int, data: dict):
     try:
+        data = dict(data)
+        data["fecha_inicio"] = _normalize_service_date(data.get("fecha_inicio"))
+
+        row = database.sql(
+            """
+            SELECT num_informe
+            FROM servicios
+            WHERE consec = %s
+            """,
+            (consec,),
+            fetch=True
+        )
+
+        if not row:
+            raise HTTPException(404, "Servicio no encontrado")
+
+        num_actualizado = _num_informe_con_fecha(row[0][0], data.get("fecha_inicio"))
+
         sql = """
             UPDATE servicios SET
                 surveyor = %(surveyor)s,
@@ -516,7 +581,8 @@ def editar_servicio(consec: int, data: dict):
                 costo_operativo = %(costo_operativo)s,
                 costo_tarjetas = %(costo_tarjetas)s,
                 fecha_inicio = %(fecha_inicio)s,
-                hora_inicio = %(hora_inicio)s
+                hora_inicio = %(hora_inicio)s,
+                num_informe = %(num_informe)s
             WHERE consec = %(consec)s
         """
 
@@ -527,6 +593,7 @@ def editar_servicio(consec: int, data: dict):
             "costo_tarjetas": data.get("costo_tarjetas"),
             "fecha_inicio": data.get("fecha_inicio"),
             "hora_inicio": data.get("hora_inicio"),
+            "num_informe": num_actualizado,
             "consec": consec
         }
 
@@ -544,7 +611,7 @@ def editar_servicio(consec: int, data: dict):
 @router.put("/cerrar/{consec}")
 def cerrar_operacion(consec: int, data: dict):
 
-    fecha_fin = data.get("fecha_fin")
+    fecha_fin = _normalize_service_date(data.get("fecha_fin"))
     hora_fin = data.get("hora_fin")
 
     if not fecha_fin or not hora_fin:
