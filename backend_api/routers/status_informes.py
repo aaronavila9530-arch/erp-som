@@ -6,6 +6,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from psycopg2.extras import RealDictCursor
 from typing import Optional
+from datetime import datetime
 
 from database import get_db
 
@@ -137,6 +138,8 @@ def list_status_informes(
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     try:
+        year = year or datetime.now().year
+        status = status or "Pending"
 
         existing_reports = _existing_reports_sql(cur)
 
@@ -179,9 +182,8 @@ def list_status_informes(
         # ====================================================
         # STATUS
         # ====================================================
-        if status:
-            conditions.append("COALESCE(NULLIF(TRIM(s.status_informe), ''), 'Pending') = %s")
-            params.append(status)
+        conditions.append("COALESCE(NULLIF(TRIM(s.status_informe), ''), 'Pending') = %s")
+        params.append(status)
 
         # ====================================================
         # OPTIONAL FILTERS
