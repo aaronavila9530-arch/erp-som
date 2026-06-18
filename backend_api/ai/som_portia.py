@@ -38,9 +38,99 @@ def _has_financial_context(fin: dict) -> bool:
     return any(fin.get(key) not in (None, "") for key in keys)
 
 
-def _local_answer(question: str, context: dict) -> str:
+def _local_answer(question: str, context: dict, scope: str = "erp") -> str:
     q = (question or "").lower()
     has_context = bool(context)
+
+    if scope == "general_chat":
+        return (
+            "PORTIA puede responder preguntas generales cuando el backend tiene OpenAI configurado. "
+            "En modo local no tengo navegador ni busqueda web en vivo dentro del ERP. "
+            "Para consultas con datos reales de SOM, cambia el alcance a Datos ERP; para manuales, usa Manual Q&A SOM."
+        )
+
+    if scope == "qa":
+        stopwords = {"que", "es", "el", "la", "los", "las", "un", "una", "de", "del", "para", "en", "como"}
+        q_words = {word.strip(" ?.,:;") for word in q.split()} - stopwords
+        specific_aliases = {
+            "estado de cuenta": "estado de cuenta",
+            "estados de cuenta": "estado de cuenta",
+            "disputa": "disputa",
+            "disputas": "disputa",
+            "aplicar pago": "aplicar pagos",
+            "aplicar pagos": "aplicar pagos",
+            "nota de credito": "nota de credito",
+            "billing": "billing",
+            "facturar manual": "facturar manualmente",
+            "xml": "xml",
+            "bank reconciliation": "bank reconciliation",
+            "conciliar": "conciliar",
+            "accounting": "accounting",
+            "asientos": "asientos",
+            "container": "container",
+            "contenedor": "container",
+            "containers": "container",
+            "grain": "grain",
+            "muestreo": "grain sampling",
+            "truck": "truck",
+            "camiones": "truck",
+            "draft": "draft",
+            "bunker": "bunker",
+            "vessel condition": "vessel condition",
+            "condition": "vessel condition",
+            "port captancy": "port captancy",
+            "captancy": "port captancy",
+            "crane": "crane",
+            "grua": "crane",
+            "cargo condition": "cargo condition",
+            "holds": "holds",
+            "sampling certificate": "sampling certificate",
+            "sealing": "sealing",
+            "lashing": "lashing",
+            "review": "review",
+            "aprobar": "aprobar",
+            "rechazar": "rechazar",
+        }
+        for alias, target in specific_aliases.items():
+            if alias in q:
+                for item in SOM_QA:
+                    if target in item["category"].lower():
+                        return f"{item['category']} - {item['question']}\n\n{item['answer']}"
+                for item in SOM_QA:
+                    item_text = f"{item['category']} {item['question']}".lower()
+                    if target in item_text:
+                        return f"{item['category']} - {item['question']}\n\n{item['answer']}"
+        category_aliases = {
+            "servicios": "Servicios",
+            "servicio": "Servicios",
+            "finanzas": "Finanzas",
+            "finanza": "Finanzas",
+            "informes": "Informes",
+            "informe": "Informes",
+            "comercial": "Comercial",
+            "hhrr": "HHRR",
+            "recursos humanos": "HHRR",
+            "master data": "Master Data",
+            "dashboard": "Dashboard",
+            "portia": "PORTIA",
+        }
+        for alias, category in category_aliases.items():
+            if alias in q:
+                for item in SOM_QA:
+                    if item["category"] == category:
+                        return f"{item['category']} - {item['question']}\n\n{item['answer']}"
+        best = None
+        best_score = 0
+        for item in SOM_QA:
+            item_text = f"{item['category']} {item['question']} {item['answer']}".lower()
+            item_words = {word.strip(" ?.,:;") for word in item_text.split()} - stopwords
+            score = len(q_words & item_words)
+            if score > best_score:
+                best = item
+                best_score = score
+        if best and best_score:
+            return f"{best['category']} - {best['question']}\n\n{best['answer']}"
+        return "No encontre una entrada exacta en el manual Q&A SOM. Intenta preguntar por Servicios, Finanzas, Informes, HHRR, Comercial, Master Data o PORTIA."
 
     if any(word in q for word in ("finanza", "financ", "factura", "cobrar", "cobranza", "saldo")):
         fin = context.get("finanzas", {})
@@ -162,15 +252,35 @@ def _local_answer(question: str, context: dict) -> str:
     )
 
 
-def answer_som_portia(question: str, context: dict, qa: list[dict]) -> dict:
+def answer_som_portia(question: str, context: dict, qa: list[dict], scope: str = "erp") -> dict:
     if not os.getenv("OPENAI_API_KEY"):
         return {
-            "answer": _local_answer(question, context),
+            "answer": _local_answer(question, context, scope=scope),
             "mode": "local",
             "sources": ["SOM_QA", "database_snapshot"],
         }
 
-    system = """
+    if scope == "general_chat":
+        system = """
+You are PORTIA for ERP SOM in general assistant mode.
+Answer in Spanish unless the user asks otherwise.
+You may answer general business, software, finance, maritime administration or productivity questions.
+You do not claim to have live internet browsing. If the user asks for current/latest web facts, say that live web search is not available in this ERP mode and give a careful general answer.
+You do not modify ERP data.
+Be practical, clear and helpful.
+""".strip()
+        payload = {"question": question}
+    elif scope == "qa":
+        system = """
+You are PORTIA for ERP SOM in internal manual mode.
+Answer in Spanish.
+Use the Q&A/manual base as the primary source.
+Give step-by-step instructions. Do not modify data.
+If the manual does not include the topic, say what is missing and suggest the closest module.
+""".strip()
+        payload = {"question": question, "qa_base": qa or SOM_QA}
+    else:
+        system = """
 You are PORTIA for ERP SOM.
 You answer in Spanish unless the user asks otherwise.
 You are a consultative ERP assistant for financial, commercial, services,
@@ -180,12 +290,11 @@ You do not modify data.
 Use only the provided ERP context and Q&A base. If data is missing, say it.
 Be concise, executive and practical.
 """.strip()
-
-    payload = {
-        "question": question,
-        "database_snapshot": context,
-        "qa_base": qa,
-    }
+        payload = {
+            "question": question,
+            "database_snapshot": context,
+            "qa_base": qa,
+        }
 
     try:
         client = _get_openai_client()
@@ -200,16 +309,16 @@ Be concise, executive and practical.
 
         answer = (response.choices[0].message.content or "").strip()
         if not answer:
-            answer = _local_answer(question, context)
+            answer = _local_answer(question, context, scope=scope)
 
         return {
             "answer": answer,
             "mode": "openai",
-            "sources": ["SOM_QA", "database_snapshot"],
+            "sources": ["SOM_QA", "database_snapshot"] if scope == "erp" else ["PORTIA"],
         }
     except Exception as exc:
         return {
-            "answer": _local_answer(question, context),
+            "answer": _local_answer(question, context, scope=scope),
             "mode": "local-fallback",
             "sources": ["SOM_QA", "database_snapshot"],
             "warning": str(exc),

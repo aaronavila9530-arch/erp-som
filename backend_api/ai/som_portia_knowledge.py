@@ -327,6 +327,385 @@ SOM_QA = [
             "7. Para informacion financiera, valida siempre contra Finanzas antes de tomar decisiones criticas."
         ),
     },
+    {
+        "category": "Finanzas - Collections",
+        "question": "Manual Collections: Como generar estados de cuenta?",
+        "answer": (
+            "El estado de cuenta resume facturas, saldos, pagos y vencimientos por cliente.\n"
+            "Paso a paso:\n"
+            "1. Entra a Finanzas > Collections.\n"
+            "2. Filtra por cliente antes de generar el documento.\n"
+            "3. Revisa que las facturas mostradas correspondan al cliente correcto.\n"
+            "4. Verifica numero de factura, fecha de emision, fecha de vencimiento, dias vencidos, total, pagos aplicados y saldo pendiente.\n"
+            "5. Si necesitas un corte especifico, ajusta filtros de fecha o estado antes de exportar.\n"
+            "6. Presiona Estado de Cuenta, Exportar PDF o Exportar Word segun la opcion disponible.\n"
+            "7. Antes de enviarlo al cliente, valida que los numeros de factura largos se muestren completos y no en notacion cientifica.\n"
+            "8. Si una factura no aparece, sincroniza Collections desde Invoicing y vuelve a filtrar."
+        ),
+    },
+    {
+        "category": "Finanzas - Collections",
+        "question": "Manual Collections: Como crear una disputa?",
+        "answer": (
+            "Una disputa documenta una factura o saldo que el cliente cuestiona.\n"
+            "Paso a paso:\n"
+            "1. Entra a Finanzas > Collections.\n"
+            "2. Busca la factura por cliente, numero de factura, estado o vencimiento.\n"
+            "3. Selecciona la linea correcta.\n"
+            "4. Presiona Crear Disputa o Dispute, segun la pantalla.\n"
+            "5. Indica motivo: precio, servicio, documento, impuesto, diferencia de pago u otro.\n"
+            "6. Escribe una descripcion clara con evidencia o comentario del cliente.\n"
+            "7. Adjunta o referencia documentos si el flujo lo permite.\n"
+            "8. Guarda la disputa.\n"
+            "9. Verifica que el estado de la factura refleje la disputa o que aparezca en el modulo Disputes.\n"
+            "10. Da seguimiento hasta resolver, cancelar o cerrar la disputa."
+        ),
+    },
+    {
+        "category": "Finanzas - Collections",
+        "question": "Manual Collections: Como aplicar pagos?",
+        "answer": (
+            "Aplicar pagos reduce el saldo pendiente de una factura o cuenta por cobrar.\n"
+            "Paso a paso:\n"
+            "1. Entra a Finanzas > Collections.\n"
+            "2. Filtra por cliente o factura.\n"
+            "3. Selecciona la factura con saldo pendiente.\n"
+            "4. Presiona Aplicar Pago o Pago.\n"
+            "5. Selecciona origen del pago: Bank Reconciliation, Incoming Payment o pago manual.\n"
+            "6. Confirma fecha de pago, monto, moneda, banco y referencia.\n"
+            "7. Si el pago es parcial, registra solo el monto recibido.\n"
+            "8. Si el pago cubre todo, el saldo debe quedar en cero y el estado debe pasar a pagado/cerrado.\n"
+            "9. Guarda y vuelve a consultar la factura para confirmar saldo pendiente actualizado.\n"
+            "10. Sincroniza con Accounting si el flujo contable lo requiere."
+        ),
+    },
+    {
+        "category": "Finanzas - Collections",
+        "question": "Manual Collections: Como aplicar una nota de credito?",
+        "answer": (
+            "La nota de credito disminuye el saldo de una factura sin registrar un pago bancario.\n"
+            "Paso a paso:\n"
+            "1. Entra a Finanzas > Collections.\n"
+            "2. Busca y selecciona la factura afectada.\n"
+            "3. Presiona Aplicar Nota de Credito.\n"
+            "4. Ingresa numero de nota, fecha, monto y motivo.\n"
+            "5. Verifica que el monto no exceda el saldo pendiente salvo que el flujo lo permita.\n"
+            "6. Guarda la nota.\n"
+            "7. Revisa que el saldo pendiente se haya reducido.\n"
+            "8. Exporta estado de cuenta actualizado si debes enviarlo al cliente.\n"
+            "9. Valida impacto contable en Accounting cuando aplique."
+        ),
+    },
+    {
+        "category": "Finanzas - Billing",
+        "question": "Manual Billing: Como facturar manualmente un servicio finalizado?",
+        "answer": (
+            "Billing manual se usa cuando el servicio esta finalizado y aun no tiene factura.\n"
+            "Paso a paso:\n"
+            "1. Entra a Finanzas > Billing.\n"
+            "2. Selecciona el cliente en el combo/filtro.\n"
+            "3. Revisa servicios finalizados sin numero de factura.\n"
+            "4. Selecciona el servicio a facturar.\n"
+            "5. Presiona Factura Manual.\n"
+            "6. Ingresa numero de factura completo como texto, fecha de factura, termino de pago, vencimiento, moneda y monto.\n"
+            "7. Revisa impuestos o cargos si la pantalla los solicita.\n"
+            "8. Guarda.\n"
+            "9. Verifica que el servicio quede con factura asignada.\n"
+            "10. Sincroniza Invoicing y Collections para que la factura aparezca en cobranza."
+        ),
+    },
+    {
+        "category": "Finanzas - Invoicing",
+        "question": "Manual Invoicing: Como subir factura electronica XML?",
+        "answer": (
+            "La carga XML registra factura electronica desde archivo.\n"
+            "Paso a paso:\n"
+            "1. Entra a Finanzas > Invoicing o Billing segun el flujo.\n"
+            "2. Selecciona cliente y servicio si la pantalla lo solicita.\n"
+            "3. Presiona Cargar XML o Factura Electronica.\n"
+            "4. Selecciona el archivo XML correcto.\n"
+            "5. El sistema debe leer numero de factura, emisor, receptor, fecha, moneda y monto.\n"
+            "6. Verifica que el cliente del XML coincida con el servicio/cliente del ERP.\n"
+            "7. Guarda el registro.\n"
+            "8. Si hay error 400, revisa detalle del backend: cliente no encontrado, XML invalido, factura duplicada o servicio sin datos requeridos.\n"
+            "9. Confirma que Invoicing muestre la factura y que Collections reciba el saldo."
+        ),
+    },
+    {
+        "category": "Finanzas - Bank Reconciliation",
+        "question": "Manual Bank Reconciliation: Como conciliar un pago bancario?",
+        "answer": (
+            "La conciliacion une el movimiento bancario con una cuenta por cobrar o pago recibido.\n"
+            "Paso a paso:\n"
+            "1. Entra a Finanzas > Bank Reconciliation.\n"
+            "2. Filtra por referencia, cliente, banco, fecha o monto.\n"
+            "3. Selecciona el movimiento bancario.\n"
+            "4. Presiona Ver Aplicados o Aplicar segun corresponda.\n"
+            "5. Busca la factura o collection relacionada.\n"
+            "6. Valida que monto, moneda, referencia y cliente coincidan.\n"
+            "7. Aplica el pago total o parcial.\n"
+            "8. Guarda la conciliacion.\n"
+            "9. Revisa que Collections reduzca saldo y que Incoming Payments tenga el registro.\n"
+            "10. Si aplicaste mal, usa reversa/anulacion solo si tu rol lo permite."
+        ),
+    },
+    {
+        "category": "Finanzas - Accounting",
+        "question": "Manual Accounting: Como generar asientos y descargar reportes?",
+        "answer": (
+            "Accounting convierte eventos financieros en asientos y reportes.\n"
+            "Paso a paso:\n"
+            "1. Entra a Finanzas > Accounting.\n"
+            "2. Confirma que el periodo actual se cargue automaticamente.\n"
+            "3. Presiona Obtener TC o Validar Tipo de Cambio.\n"
+            "4. No generes asientos hasta que el TC este confirmado.\n"
+            "5. Ejecuta sincronizacion desde Collections, Invoicing o Invoice to Pay segun corresponda.\n"
+            "6. Filtra asientos por periodo, origen, estado o cuenta.\n"
+            "7. Revisa debitos y creditos antes de exportar.\n"
+            "8. Descarga Diario/Reporte en Excel o PDF.\n"
+            "9. Si el boton no descarga, revisa permisos, periodo seleccionado y respuesta del backend.\n"
+            "10. Cierra periodo desde Closing dentro de Accounting solo cuando todo este validado."
+        ),
+    },
+    {
+        "category": "Informes - Containers",
+        "question": "Manual Informes Containers: Como crear un container report?",
+        "answer": (
+            "Container Report se crea desde servicios finalizados pendientes de informe.\n"
+            "Paso a paso:\n"
+            "1. Entra a Informes.\n"
+            "2. Presiona Generar Informe.\n"
+            "3. Selecciona Contenedor.\n"
+            "4. Abre el popup selector de num_informe.\n"
+            "5. Selecciona el informe correspondiente al servicio finalizado.\n"
+            "6. El formulario debe cargar cliente, num_informe, pais, puerto, fecha y datos base desde Servicios.\n"
+            "7. Completa datos de contenedor, producto, hallazgos, proceso, conclusion y anexos.\n"
+            "8. Usa PORTIA para mejorar textos si el campo narrativo lo permite.\n"
+            "9. Presiona Enviar a Revision para crear con POST.\n"
+            "10. Si se abre desde Review, usa Editar y Guardar Cambios con PUT."
+        ),
+    },
+    {
+        "category": "Informes - Grain Sampling",
+        "question": "Manual Grain Sampling: Como crear informe de muestreo de granos?",
+        "answer": (
+            "Grain Sampling documenta supervision de muestras de granos/carga agricola.\n"
+            "Paso a paso:\n"
+            "1. Entra a Informes > Generar Informe > Buque.\n"
+            "2. Selecciona Grain Sampling o Sampling Supervision.\n"
+            "3. Selecciona num_informe desde el selector.\n"
+            "4. Confirma cliente, buque, puerto, pais, fecha y operacion.\n"
+            "5. Completa antecedentes, alcance de supervision y metodo de muestreo.\n"
+            "6. Registra producto, lotes, bodegas, puntos de muestreo o unidades segun aplique.\n"
+            "7. Documenta hallazgos, incidentes, observaciones y conclusion.\n"
+            "8. Usa PORTIA solo para mejorar redaccion, sin cambiar hechos.\n"
+            "9. Envia a revision.\n"
+            "10. En Review, valida informacion, edita si aplica, guarda con PUT y luego aprueba/rechaza."
+        ),
+    },
+    {
+        "category": "Informes - Truck Supervision",
+        "question": "Manual Truck Supervision: Como crear informe de supervision de camiones?",
+        "answer": (
+            "Truck Supervision documenta control de camiones, guias, placas e incidencias.\n"
+            "Paso a paso:\n"
+            "1. Entra a Informes > Generar Informe > Buque.\n"
+            "2. Selecciona Truck Supervision o Logistics Supervision.\n"
+            "3. Selecciona num_informe desde Servicios.\n"
+            "4. Verifica cliente, buque, puerto, pais y fecha.\n"
+            "5. Completa representantes, tiempos, proceso de supervision y detalle operativo.\n"
+            "6. Registra hallazgos documentales, control operativo e incidentes.\n"
+            "7. Completa conclusion clara y objetiva.\n"
+            "8. Usa PORTIA para mejorar textos si es necesario.\n"
+            "9. En creacion, solo Enviar a Revision.\n"
+            "10. En Review, Editar y Guardar Cambios deben estar habilitados y usar PUT."
+        ),
+    },
+    {
+        "category": "Informes - Draft Survey",
+        "question": "Manual Draft Survey: Como crear o abrir un draft survey?",
+        "answer": (
+            "Draft Survey requiere escoger entre crear nuevo o abrir previo.\n"
+            "Paso a paso:\n"
+            "1. Entra a Informes > Generar Informe > Buque > Draft Survey.\n"
+            "2. El sistema debe preguntar si deseas crear desde cero o abrir uno previo.\n"
+            "3. Si abres previo, busca por num_informe/buque/cliente y carga el registro.\n"
+            "4. Si creas nuevo, selecciona el servicio desde el selector.\n"
+            "5. Completa header, datos del buque, puertos, fechas y representantes.\n"
+            "6. Carga lecturas draft, tanques, correcciones, densidades y constantes.\n"
+            "7. Usa abrir Excel/previsualizar para revisar calculos cuando aplique.\n"
+            "8. Valida totales, initial/final/intermediate y diferencias.\n"
+            "9. Envia a revision solo cuando formulas y datos coincidan.\n"
+            "10. En Review, corrige con Editar/Guardar Cambios usando PUT."
+        ),
+    },
+    {
+        "category": "Informes - Bunker",
+        "question": "Manual Bunker Survey: Como crear informe on hire/off hire bunker?",
+        "answer": (
+            "Bunker Survey registra combustible, tanques y datos de hire.\n"
+            "Paso a paso:\n"
+            "1. Entra a Informes > Generar Informe > Buque > Bunker Survey.\n"
+            "2. Selecciona num_informe o reporte previo.\n"
+            "3. Escoge tipo: On Hire, Off Hire, Spot o Condition segun servicio.\n"
+            "4. Completa certificado, buque, cliente, puerto, pais, fecha y categoria.\n"
+            "5. Completa texto de certificado y antecedentes.\n"
+            "6. En tanques Fuel Oil/Diesel MGO, ingresa dist, gauge, volumen, temperatura, densidad y peso.\n"
+            "7. Si un campo debe contener GAUGE o GAUGES, guardalo como texto valido.\n"
+            "8. Completa engine log book y consumos declarados.\n"
+            "9. Visualiza antes de enviar.\n"
+            "10. Envia a revision y corrige desde Review si aplica."
+        ),
+    },
+    {
+        "category": "Informes - Vessel Condition",
+        "question": "Manual Vessel Condition: Como crear vessel condition survey?",
+        "answer": (
+            "Vessel Condition documenta condicion general del buque.\n"
+            "Paso a paso:\n"
+            "1. Entra a Informes > Generar Informe > Buque > Vessel Condition.\n"
+            "2. Selecciona el num_informe del servicio.\n"
+            "3. Verifica datos del buque, cliente, puerto, pais y fecha.\n"
+            "4. Completa secciones de condicion, inspeccion visual, observaciones y hallazgos.\n"
+            "5. Agrega comentarios por area del buque segun el formulario.\n"
+            "6. Usa PORTIA para mejorar narrativa sin alterar hechos.\n"
+            "7. Guarda/Envia a revision.\n"
+            "8. Si requiere presentacion, abre el popup y confirma que el boton generar sea visible.\n"
+            "9. Revisa documento final antes de aprobar.\n"
+            "10. En Review, usa PUT para cambios."
+        ),
+    },
+    {
+        "category": "Informes - Port Captancy",
+        "question": "Manual Port Captancy: Como crear informe port captancy?",
+        "answer": (
+            "Port Captancy documenta supervision portuaria/captancy segun servicio.\n"
+            "Paso a paso:\n"
+            "1. Entra a Informes > Generar Informe > Buque > Port Captancy.\n"
+            "2. Selecciona num_informe desde Servicios.\n"
+            "3. Confirma cliente, buque, pais, puerto y fechas.\n"
+            "4. Completa alcance, actividades supervisadas, eventos, tiempos y hallazgos.\n"
+            "5. Agrega comentarios de coordinacion, operacion y cierre.\n"
+            "6. Usa PORTIA para mejorar textos.\n"
+            "7. Envia a revision.\n"
+            "8. Desde Review, valida, edita, guarda cambios y aprueba/rechaza segun corresponda."
+        ),
+    },
+    {
+        "category": "Informes - Crane Inspection",
+        "question": "Manual Crane Inspection: Como crear crane inspection?",
+        "answer": (
+            "Crane Inspection registra inspeccion de gruas/equipos asociados al servicio.\n"
+            "Paso a paso:\n"
+            "1. Entra a Informes > Generar Informe > Buque > Crane Inspection.\n"
+            "2. Selecciona el num_informe correspondiente.\n"
+            "3. Verifica cliente, puerto, pais, buque y fecha.\n"
+            "4. Completa identificacion de grua/equipo, estado visual y puntos de inspeccion.\n"
+            "5. Registra observaciones, hallazgos, riesgos y recomendaciones.\n"
+            "6. Adjunta o referencia evidencia si el flujo lo permite.\n"
+            "7. Usa PORTIA para mejorar redaccion tecnica.\n"
+            "8. Envia a revision.\n"
+            "9. Desde Review, usa GET para abrir y PUT para guardar correcciones."
+        ),
+    },
+    {
+        "category": "Informes - Cargo Condition",
+        "question": "Manual Cargo Condition Survey: Como crear cargo condition?",
+        "answer": (
+            "Cargo Condition documenta condicion de la carga observada.\n"
+            "Paso a paso:\n"
+            "1. Entra a Informes > Generar Informe > Buque > Cargo Condition Survey.\n"
+            "2. Selecciona num_informe desde el servicio.\n"
+            "3. Confirma cliente, buque, producto, puerto, pais y fecha.\n"
+            "4. Describe condicion de la carga, empaque, humedad, contaminacion, danos o anomalias.\n"
+            "5. Registra hallazgos con lenguaje objetivo.\n"
+            "6. Completa conclusion y recomendaciones.\n"
+            "7. Envia a revision.\n"
+            "8. Genera documento final solo despues de revisar datos y textos."
+        ),
+    },
+    {
+        "category": "Informes - Certificados",
+        "question": "Manual Holds Inspection Certificate: Como crear certificado de bodegas?",
+        "answer": (
+            "Holds Inspection Certificate certifica condicion/aptitud de bodegas.\n"
+            "Paso a paso:\n"
+            "1. Entra a Informes > Generar Informe > Certificados.\n"
+            "2. Selecciona Holds Inspection Certificate.\n"
+            "3. Selecciona num_informe/servicio desde el selector.\n"
+            "4. Verifica buque, cliente, puerto, pais y fecha.\n"
+            "5. Completa bodegas inspeccionadas y condicion observada.\n"
+            "6. Registra observaciones o restricciones.\n"
+            "7. Envia a revision.\n"
+            "8. Desde Review, edita si aplica y genera certificado final."
+        ),
+    },
+    {
+        "category": "Informes - Certificados",
+        "question": "Manual Sampling Certificate: Como crear certificado de muestreo?",
+        "answer": (
+            "Sampling Certificate certifica toma o supervision de muestras.\n"
+            "Paso a paso:\n"
+            "1. Entra a Informes > Generar Informe > Certificados.\n"
+            "2. Selecciona Sampling Certificate.\n"
+            "3. Selecciona el servicio/num_informe.\n"
+            "4. Confirma cliente, producto, buque, puerto y fecha.\n"
+            "5. Indica metodo, cantidad de muestras, ubicacion y responsable.\n"
+            "6. Registra observaciones si existieron incidencias.\n"
+            "7. Envia a revision.\n"
+            "8. Genera documento final despues de aprobar."
+        ),
+    },
+    {
+        "category": "Informes - Certificados",
+        "question": "Manual Sealing Certificate: Como crear certificado de sellado?",
+        "answer": (
+            "Sealing Certificate documenta sellos aplicados o verificados.\n"
+            "Paso a paso:\n"
+            "1. Entra a Informes > Generar Informe > Certificados.\n"
+            "2. Selecciona Sealing Certificate.\n"
+            "3. Selecciona num_informe.\n"
+            "4. Confirma cliente, puerto, pais, buque/contenedor y fecha.\n"
+            "5. Ingresa numeros de sello, unidades, bodegas o contenedores segun aplique.\n"
+            "6. Verifica que los numeros no tengan errores.\n"
+            "7. Completa observaciones.\n"
+            "8. Envia a revision y genera certificado al aprobar."
+        ),
+    },
+    {
+        "category": "Informes - Certificados",
+        "question": "Manual Lashing Certificate: Como crear certificado de lashing?",
+        "answer": (
+            "Lashing Certificate certifica sujecion/aseguramiento de carga.\n"
+            "Paso a paso:\n"
+            "1. Entra a Informes > Generar Informe > Certificados.\n"
+            "2. Selecciona Lashing Certificate.\n"
+            "3. Selecciona servicio o num_informe.\n"
+            "4. Confirma datos de cliente, buque, puerto, pais y fecha.\n"
+            "5. Completa descripcion de carga, tipo de lashing, condicion y observaciones.\n"
+            "6. Registra hallazgos o restricciones si existen.\n"
+            "7. Envia a revision.\n"
+            "8. Desde Review, edita con PUT y genera certificado final."
+        ),
+    },
+    {
+        "category": "Informes - Revision",
+        "question": "Manual Informes Review: Como aprobar, rechazar o corregir informes?",
+        "answer": (
+            "Review controla calidad antes del documento final.\n"
+            "Paso a paso:\n"
+            "1. Entra a Informes > Revisar Informes.\n"
+            "2. Selecciona tipo de informe.\n"
+            "3. Busca por num_informe, cliente, puerto, status o fecha.\n"
+            "4. Presiona Review o doble click sobre el registro.\n"
+            "5. El formulario debe abrir con GET y mostrar datos existentes.\n"
+            "6. Presiona Editar para habilitar campos.\n"
+            "7. Corrige informacion y presiona Guardar Cambios para PUT.\n"
+            "8. Si esta correcto, aprueba.\n"
+            "9. Si requiere correccion, rechaza e indica motivo.\n"
+            "10. Genera informe/presentacion solo con informacion revisada."
+        ),
+    },
 ]
 
 

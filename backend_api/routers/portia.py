@@ -12,7 +12,7 @@ router = APIRouter(prefix="/portia", tags=["PORTIA SOM"])
 
 class PortiaQuestion(BaseModel):
     question: str
-    scope: str | None = "general"
+    scope: str | None = "erp"
 
 
 @router.get("/qa")
@@ -33,7 +33,7 @@ def get_portia_context(db=Depends(get_db)):
 @router.post("/ask")
 def ask_portia(payload: PortiaQuestion, db=Depends(get_db)):
     context = build_som_portia_context(db)
-    result = answer_som_portia(payload.question, context, SOM_QA)
+    result = answer_som_portia(payload.question, context, SOM_QA, scope=payload.scope or "erp")
     return {
         "question": payload.question,
         "scope": payload.scope,
