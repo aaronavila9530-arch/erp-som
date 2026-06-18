@@ -90,9 +90,268 @@ def _local_answer(question: str, context: dict, scope: str = "erp") -> str:
             "review": "review",
             "aprobar": "aprobar",
             "rechazar": "rechazar",
+            "hhrr noticias": "noticias",
+            "recursos humanos noticias": "noticias",
+            "publicar noticia": "noticias",
+            "hhrr empleados": "empleados",
+            "empleados hhrr": "empleados",
+            "nuevo empleado hhrr": "empleados",
+            "editar empleado hhrr": "empleados",
+            "formulario empleado hhrr": "formulario",
+            "hhrr solicitudes": "solicitudes",
+            "nueva solicitud": "solicitudes",
+            "solicitud vacaciones": "solicitudes",
+            "aprobar solicitud": "aprobar",
+            "rechazar solicitud": "rechazar",
+            "registro horas": "registro horas",
+            "registrar horas": "registro horas",
+            "horas admin": "admin",
+            "aprobar horas": "admin",
+            "rechazar horas": "admin",
+            "colillas": "colillas",
+            "descargar colilla": "colillas",
+            "planilla": "planilla",
+            "generar planilla": "planilla",
+            "politicas hhrr": "politicas",
+            "politicas recursos humanos": "politicas",
+            "liquidacion laboral": "liquidacion",
+            "permisos hhrr": "permisos",
+            "botones master data": "pantalla principal",
+            "filtros master data": "pantalla principal",
+            "tabla master data": "tablas",
+            "ver editar eliminar": "tablas",
+            "clientes": "clientes",
+            "cliente": "clientes",
+            "proveedores": "proveedores",
+            "proveedor": "proveedores",
+            "empleados": "empleados",
+            "empleado": "empleados",
+            "surveyors": "surveyors",
+            "surveyor": "surveyors",
+            "servicio maestro": "servicios",
+            "agregar servicio": "agregar",
+            "nuevo servicio": "agregar",
+            "+ servicio": "agregar",
+            "editar servicio": "editar",
+            "generar consecutivo": "consecutivo",
+            "num informe": "consecutivo",
+            "num_informe": "consecutivo",
+            "consecutivo": "consecutivo",
+            "costos": "costos",
+            "costo operativo": "costos",
+            "costo tarjetas": "costos",
+            "honorarios": "costos",
+            "varios surveyors": "surveyors",
+            "agregar surveyor": "surveyors",
+            "demoras": "demoras",
+            "finalizar servicio": "finalizar",
+            "ver servicio": "ver y abrir informes",
+            "abrir informe": "ver y abrir informes",
+            "cancelar servicio": "cancelar y eliminar",
+            "eliminar servicio": "cancelar y eliminar",
+            "exportar servicios": "exportar",
+            "invoicing": "invoicing",
+            "billing": "billing",
+            "factura manual": "factura manual",
+            "facturacion anticipada": "facturacion anticipada",
+            "facturación anticipada": "facturacion anticipada",
+            "nota de credito independiente": "nota de credito independiente",
+            "nota de crédito independiente": "nota de credito independiente",
+            "collections": "collections",
+            "sincronizar facturas": "sincronizar",
+            "estado de cuenta collections": "estado de cuenta",
+            "aplicar pago collections": "aplicar pago",
+            "bank reconciliation": "bank reconciliation",
+            "registrar pago manual": "registrar pago manual",
+            "disputes": "disputes",
+            "gestionar disputa": "gestionar disputas",
+            "credit hold": "credit hold",
+            "order hold": "credit hold",
+            "credit order": "credit hold",
+            "limite credito": "credito",
+            "límite crédito": "credito",
+            "exposicion crediticia": "exposicion",
+            "exposición crediticia": "exposicion",
+            "invoice to pay": "invoice to pay",
+            "obligacion": "obligacion",
+            "obligación": "obligacion",
+            "cuentas por pagar": "invoice to pay",
+            "aplicar pago itp": "aplicar pago",
+            "buscar tc": "tc",
+            "tipo de cambio": "tc",
+            "reporte accounting": "reportes",
+            "reportes accounting": "reportes",
+            "cierre contable": "cierre",
+            "asiento manual": "asiento manual",
+            "reversar asiento": "reversar",
+            "ajustar asiento": "ajustar",
+            "pizarra comercial": "pizarra",
+            "comercial pizarra": "pizarra",
+            "cliente comercial": "clientes",
+            "clientes comercial": "clientes",
+            "analytics cliente": "clientes",
+            "puerto comercial": "puertos",
+            "puertos comercial": "puertos",
+            "cobertura puertos": "cobertura",
+            "servicios comercial": "servicios",
+            "servicios no ofrecidos": "no ofrecidos",
+            "costos por surveyor": "costos por surveyor",
+            "precio comercial": "precios",
+            "precios comercial": "precios",
+            "agregar precio": "agregar precio",
+            "editar precio": "editar",
+            "desactivar precio": "desactivar",
+            "eliminar precio": "precios",
+            "cotizaciones comercial": "cotizaciones",
+            "cotizacion comercial": "cotizaciones",
+            "crear cotizacion": "nueva cotizacion",
+            "nueva cotizacion": "nueva cotizacion",
+            "agregar cotizacion": "nueva cotizacion",
+            "preview cotizacion": "preview",
+            "exportar cotizacion": "preview",
+            "word cotizacion": "preview",
+            "pdf cotizacion": "preview",
+            "aprobar cotizacion": "aprobar",
+            "cancelar cotizacion": "cancelar",
         }
+        priority_matches = [
+            (("factura manual",), "Finanzas", "factura manual"),
+            (("facturacion anticipada", "facturación anticipada", "nota de credito independiente", "nota de crédito independiente"), "Finanzas", "facturacion anticipada"),
+            (("xml", "factura electronica", "factura electrónica"), "Finanzas", "xml"),
+            (("collections", "aplicar pago"), "Finanzas", "que campos se llenan"),
+            (("collections", "estado de cuenta"), "Finanzas", "estado de cuenta"),
+            (("collections", "disputa"), "Finanzas", "disputar"),
+            (("bank reconciliation", "registrar pago manual"), "Finanzas", "registrar pago manual"),
+            (("disputes", "gestionar"), "Finanzas", "gestionar disputas"),
+            (("invoice to pay", "registrar"), "Finanzas", "registrar obligacion"),
+            (("invoice to pay", "obligacion"), "Finanzas", "registrar obligacion"),
+            (("accounting", "reporte"), "Finanzas", "reportes"),
+            (("accounting", "reportes"), "Finanzas", "reportes"),
+            (("accounting", "asiento manual"), "Finanzas", "asiento manual"),
+            (("accounting", "reversar"), "Finanzas", "reversar"),
+            (("accounting", "ajustar"), "Finanzas", "ajustar"),
+            (("pizarra", "comercial"), "Comercial", "pizarra"),
+            (("comercial", "clientes"), "Comercial", "clientes"),
+            (("analytics", "cliente"), "Comercial", "clientes"),
+            (("comercial", "puertos"), "Comercial", "puertos"),
+            (("cobertura", "puertos"), "Comercial", "cobertura"),
+            (("comercial", "servicios"), "Comercial", "servicios"),
+            (("servicios", "no ofrecidos"), "Comercial", "no ofrecidos"),
+            (("costos", "surveyor"), "Comercial", "costos por surveyor"),
+            (("comercial", "precios"), "Comercial", "precios"),
+            (("agregar precio",), "Comercial", "agregar precio"),
+            (("editar precio",), "Comercial", "editar o desactivar"),
+            (("desactivar precio",), "Comercial", "editar o desactivar"),
+            (("comercial", "cotizaciones"), "Comercial", "cotizaciones"),
+            (("crear cotizacion",), "Comercial", "nueva cotizacion"),
+            (("nueva cotizacion",), "Comercial", "nueva cotizacion"),
+            (("preview", "cotizacion"), "Comercial", "preview"),
+            (("exportar", "cotizacion"), "Comercial", "preview"),
+            (("aprobar cotizacion",), "Comercial", "que pasa al aprobar"),
+            (("cancelar cotizacion",), "Comercial", "cancelar"),
+            (("selector", "informe"), "Informes", "flujo general"),
+            (("generar", "informe"), "Informes", "generar informes"),
+            (("review", "informe"), "Informes", "revision"),
+            (("contenedor", "campos"), "Informes", "despues de seleccionar"),
+            (("contenedor", "informe"), "Informes", "containers"),
+            (("container", "report"), "Informes", "containers"),
+            (("puntos", "muestreo"), "Informes", "puntos de muestreo"),
+            (("grain", "sampling"), "Informes", "grain sampling"),
+            (("truck", "hallazgos"), "Informes", "hallazgos"),
+            (("draft", "abrir"), "Informes", "abrir previo"),
+            (("draft", "previo"), "Informes", "abrir previo"),
+            (("draft", "header"), "Informes", "header"),
+            (("draft", "buque"), "Informes", "header"),
+            (("draft", "drafts"), "Informes", "drafts"),
+            (("draft", "constantes"), "Informes", "constantes"),
+            (("draft", "correcciones"), "Informes", "correcciones"),
+            (("draft", "ballast"), "Informes", "ballast"),
+            (("draft", "tanques"), "Informes", "ballast"),
+            (("draft", "fuel"), "Informes", "ballast"),
+            (("draft", "validar"), "Informes", "validar resultado"),
+            (("draft", "excel"), "Informes", "validar resultado"),
+            (("bunker", "tanques"), "Informes", "tanques, engine log"),
+            (("bunker", "engine"), "Informes", "tanques, engine log"),
+            (("bunker", "consumos"), "Informes", "tanques, engine log"),
+            (("bunker", "gauge"), "Informes", "tanques, engine log"),
+            (("bullets", "informes"), "Informes", "bullets"),
+            (("add bullet",), "Informes", "bullets"),
+            (("certificados", "informes"), "Informes", "escoger y llenar certificados"),
+            (("weight certificate",), "Informes", "weight certificate"),
+            (("holds inspection",), "Informes", "holds inspection"),
+            (("sampling certificate",), "Informes", "sampling certificate"),
+            (("sealing certificate",), "Informes", "sealing certificate"),
+            (("lashing certificate",), "Informes", "lashing certificate"),
+            (("hhrr", "noticias"), "HHRR", "noticias"),
+            (("publicar", "noticia"), "HHRR", "noticias"),
+            (("campos empleado",), "HHRR", "formulario"),
+            (("formulario empleado",), "HHRR", "formulario"),
+            (("hhrr", "empleado"), "HHRR", "empleados"),
+            (("nuevo empleado",), "HHRR", "empleados"),
+            (("editar empleado",), "HHRR", "empleados"),
+            (("hhrr", "solicitudes"), "HHRR", "solicitudes"),
+            (("nueva solicitud",), "HHRR", "llenar"),
+            (("aprobar solicitud",), "HHRR", "aprobar"),
+            (("rechazar solicitud",), "HHRR", "rechazar"),
+            (("registro horas",), "HHRR", "registro horas"),
+            (("registrar horas",), "HHRR", "registro horas"),
+            (("horas admin",), "HHRR", "admin"),
+            (("aprobar horas",), "HHRR", "admin"),
+            (("rechazar horas",), "HHRR", "admin"),
+            (("descargar colilla",), "HHRR", "colillas"),
+            (("colillas",), "HHRR", "colillas"),
+            (("generar planilla",), "HHRR", "planilla"),
+            (("planilla",), "HHRR", "planilla"),
+            (("politicas", "hhrr"), "HHRR", "politicas"),
+            (("liquidacion",), "HHRR", "liquidacion"),
+            (("permisos", "hhrr"), "HHRR", "permisos"),
+        ]
+        for required, category_prefix, target in priority_matches:
+            if all(part in q for part in required):
+                for item in SOM_QA:
+                    if item["category"].startswith(category_prefix) and target in item["category"].lower():
+                        return f"{item['category']} - {item['question']}\n\n{item['answer']}"
+                for item in SOM_QA:
+                    item_text = f"{item['category']} {item['question']}".lower()
+                    if item["category"].startswith(category_prefix) and target in item_text:
+                        return f"{item['category']} - {item['question']}\n\n{item['answer']}"
         for alias, target in specific_aliases.items():
             if alias in q:
+                if any(com_word in q for com_word in ("comercial", "cotizacion", "cotizaciones", "precio", "precios", "pizarra", "puerto", "puertos", "cliente", "clientes", "coverage", "cobertura", "no ofrecidos")):
+                    for item in SOM_QA:
+                        item_text = f"{item['category']} {item['question']}".lower()
+                        if item["category"].startswith("Comercial") and target in item["category"].lower():
+                            return f"{item['category']} - {item['question']}\n\n{item['answer']}"
+                    for item in SOM_QA:
+                        item_text = f"{item['category']} {item['question']}".lower()
+                        if item["category"].startswith("Comercial") and target in item_text:
+                            return f"{item['category']} - {item['question']}\n\n{item['answer']}"
+                if any(hr_word in q for hr_word in ("hhrr", "recursos humanos", "noticia", "solicitud", "horas", "colilla", "planilla", "politica", "politicas", "empleado", "liquidacion")):
+                    for item in SOM_QA:
+                        item_text = f"{item['category']} {item['question']}".lower()
+                        if item["category"].startswith("HHRR") and target in item["category"].lower():
+                            return f"{item['category']} - {item['question']}\n\n{item['answer']}"
+                    for item in SOM_QA:
+                        item_text = f"{item['category']} {item['question']}".lower()
+                        if item["category"].startswith("HHRR") and target in item_text:
+                            return f"{item['category']} - {item['question']}\n\n{item['answer']}"
+                if any(fin_word in q for fin_word in ("finanza", "finanzas", "billing", "invoicing", "collections", "bank", "dispute", "credit", "invoice to pay", "accounting", "factura", "pago", "tc", "asiento", "cierre")):
+                    for item in SOM_QA:
+                        item_text = f"{item['category']} {item['question']}".lower()
+                        if item["category"].startswith("Finanzas") and target in item["category"].lower():
+                            return f"{item['category']} - {item['question']}\n\n{item['answer']}"
+                    for item in SOM_QA:
+                        item_text = f"{item['category']} {item['question']}".lower()
+                        if item["category"].startswith("Finanzas") and target in item_text:
+                            return f"{item['category']} - {item['question']}\n\n{item['answer']}"
+                if "servicio" in q or "servicios" in q:
+                    for item in SOM_QA:
+                        if item["category"].startswith("Servicios") and target in item["category"].lower():
+                            return f"{item['category']} - {item['question']}\n\n{item['answer']}"
+                    for item in SOM_QA:
+                        item_text = f"{item['category']} {item['question']}".lower()
+                        if item["category"].startswith("Servicios") and target in item_text:
+                            return f"{item['category']} - {item['question']}\n\n{item['answer']}"
                 for item in SOM_QA:
                     if target in item["category"].lower():
                         return f"{item['category']} - {item['question']}\n\n{item['answer']}"
