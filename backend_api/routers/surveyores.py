@@ -4,6 +4,122 @@ from fastapi import APIRouter, HTTPException, Depends, Header
 from rbac_service import has_permission
 
 router = APIRouter(prefix="/surveyores", tags=["Surveyores"])
+_tarifas_table_checked = False
+
+
+def _ensure_tarifas_table():
+    global _tarifas_table_checked
+    if _tarifas_table_checked:
+        return
+    database.sql("""
+        CREATE TABLE IF NOT EXISTS surveyor_tarifas (
+            id SERIAL PRIMARY KEY,
+            surveyor_codigo TEXT NOT NULL,
+            puerto TEXT NOT NULL,
+            servicio TEXT NOT NULL,
+            honorario NUMERIC(14, 2),
+            moneda TEXT DEFAULT 'USD',
+            activo BOOLEAN DEFAULT TRUE,
+            created_at TIMESTAMP DEFAULT NOW(),
+            updated_at TIMESTAMP DEFAULT NOW(),
+            UNIQUE (surveyor_codigo, puerto, servicio)
+        )
+    """)
+    _tarifas_table_checked = True
+
+
+def _clean_tarifas(data: dict) -> list[dict]:
+    tarifas = data.get("tarifas")
+    if not isinstance(tarifas, list):
+        return []
+
+    cleaned = []
+    for item in tarifas:
+        if not isinstance(item, dict):
+            continue
+        puerto = str(item.get("puerto") or "").strip()
+        servicio = str(item.get("servicio") or item.get("operacion") or "").strip()
+        honorario_raw = str(item.get("honorario") or "").strip().replace(",", "")
+        moneda = str(item.get("moneda") or data.get("moneda") or "USD").strip() or "USD"
+        if not puerto and not servicio and not honorario_raw:
+            continue
+        honorario = None
+        if honorario_raw:
+            try:
+                honorario = float(honorario_raw)
+            except ValueError:
+                raise HTTPException(status_code=400, detail=f"Honorario invalido: {honorario_raw}")
+        cleaned.append({
+            "puerto": puerto,
+            "servicio": servicio,
+            "honorario": honorario,
+            "moneda": moneda,
+        })
+    return cleaned
+
+
+def _sync_legacy_fields(data: dict) -> dict:
+    tarifas = _clean_tarifas(data)
+    if tarifas:
+        first = tarifas[0]
+        data["puerto"] = data.get("puerto") or first["puerto"]
+        data["operacion"] = data.get("operacion") or first["servicio"]
+        data["honorario"] = data.get("honorario") or ("" if first["honorario"] is None else first["honorario"])
+    data.setdefault("puerto", "")
+    data.setdefault("operacion", "")
+    data.setdefault("honorario", None)
+    if str(data.get("honorario") or "").strip() == "":
+        data["honorario"] = None
+    data["_tarifas_clean"] = tarifas
+    return data
+
+
+def _save_tarifas(codigo: str, tarifas: list[dict]):
+    _ensure_tarifas_table()
+    database.sql("DELETE FROM surveyor_tarifas WHERE surveyor_codigo = %s", (codigo,))
+    for item in tarifas:
+        if not item["puerto"] and not item["servicio"]:
+            continue
+        database.sql("""
+            INSERT INTO surveyor_tarifas (
+                surveyor_codigo, puerto, servicio, honorario, moneda, activo, updated_at
+            )
+            VALUES (%s, %s, %s, %s, %s, TRUE, NOW())
+            ON CONFLICT (surveyor_codigo, puerto, servicio)
+            DO UPDATE SET
+                honorario = EXCLUDED.honorario,
+                moneda = EXCLUDED.moneda,
+                activo = TRUE,
+                updated_at = NOW()
+        """, (
+            codigo,
+            item["puerto"],
+            item["servicio"],
+            item["honorario"],
+            item["moneda"],
+        ))
+
+
+def _get_tarifas(codigo: str) -> list[dict]:
+    try:
+        _ensure_tarifas_table()
+        rows = database.sql("""
+            SELECT puerto, servicio, honorario, moneda
+            FROM surveyor_tarifas
+            WHERE surveyor_codigo = %s AND COALESCE(activo, TRUE) = TRUE
+            ORDER BY puerto ASC, servicio ASC
+        """, (codigo,), fetch=True)
+    except Exception:
+        rows = []
+    return [
+        {
+            "puerto": r[0],
+            "servicio": r[1],
+            "honorario": float(r[2]) if r[2] is not None else None,
+            "moneda": r[3] or "USD",
+        }
+        for r in rows
+    ]
 
 def require_permission(module: str, action: str):
     def checker(
@@ -77,7 +193,9 @@ def add_surveyor(data: dict):
             %(puerto)s
         );
         """
+        data = _sync_legacy_fields(data)
         database.sql(sql, data)
+        _save_tarifas(data["codigo"], data.get("_tarifas_clean", []))
         return {"status": "OK", "msg": "Surveyor registrado 💾✔"}
 
     except Exception as e:
@@ -146,6 +264,7 @@ def get_surveyores(page: int = 1, page_size: int = 50):
             "contacto_emergencia": r[22],
             "telefono_emergencia": r[23],
             "puerto": r[24],
+            "tarifas": _get_tarifas(r[0]),
         }
         for r in rows
     ]
@@ -199,7 +318,20 @@ def get_surveyor(codigo: str):
         "contacto_emergencia": r[22],
         "telefono_emergencia": r[23],
         "puerto": r[24],
+        "tarifas": _get_tarifas(codigo),
     }
+
+
+@router.get("/{codigo}/tarifas")
+def get_surveyor_tarifas(codigo: str):
+    return {"data": _get_tarifas(codigo)}
+
+
+@router.put("/{codigo}/tarifas")
+def update_surveyor_tarifas(codigo: str, data: dict):
+    tarifas = _clean_tarifas(data)
+    _save_tarifas(codigo, tarifas)
+    return {"status": "OK", "data": _get_tarifas(codigo)}
 
 
 # ============================================================
@@ -236,7 +368,9 @@ def update_surveyor(data: dict):
         WHERE codigo = %(codigo)s
     """
     try:
+        data = _sync_legacy_fields(data)
         database.sql(sql, data)
+        _save_tarifas(data["codigo"], data.get("_tarifas_clean", []))
         return {"status": "OK", "msg": "Surveyor actualizado ✔"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
