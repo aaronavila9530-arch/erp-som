@@ -9,6 +9,71 @@ router = APIRouter(
     prefix="/servicios-surveyors",
     tags=["Servicios Surveyors Flat"],
 )
+_flat_table_checked = False
+
+
+def _ensure_flat_table():
+    global _flat_table_checked
+    if _flat_table_checked:
+        return
+
+    database.sql("""
+        CREATE TABLE IF NOT EXISTS servicio_surveyors_flat (
+            servicio_consec INTEGER PRIMARY KEY,
+            num_informe TEXT,
+            cliente TEXT,
+            pais TEXT,
+            puerto TEXT,
+            operacion TEXT,
+            surveyor_1 TEXT,
+            honorario_1 NUMERIC(14, 2),
+            surveyor_2 TEXT,
+            honorario_2 NUMERIC(14, 2),
+            surveyor_3 TEXT,
+            honorario_3 NUMERIC(14, 2),
+            surveyor_4 TEXT,
+            honorario_4 NUMERIC(14, 2),
+            surveyor_5 TEXT,
+            honorario_5 NUMERIC(14, 2),
+            surveyor_6 TEXT,
+            honorario_6 NUMERIC(14, 2),
+            surveyor_7 TEXT,
+            honorario_7 NUMERIC(14, 2),
+            surveyor_8 TEXT,
+            honorario_8 NUMERIC(14, 2),
+            surveyor_9 TEXT,
+            honorario_9 NUMERIC(14, 2),
+            surveyor_10 TEXT,
+            honorario_10 NUMERIC(14, 2),
+            total_honorarios NUMERIC(14, 2) DEFAULT 0,
+            cantidad_surveyors INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT NOW(),
+            updated_at TIMESTAMP DEFAULT NOW()
+        )
+    """)
+
+    for i in range(1, 11):
+        database.sql(f"ALTER TABLE servicio_surveyors_flat ADD COLUMN IF NOT EXISTS surveyor_{i} TEXT")
+        database.sql(f"ALTER TABLE servicio_surveyors_flat ADD COLUMN IF NOT EXISTS honorario_{i} NUMERIC(14, 2)")
+
+    for column, definition in (
+        ("num_informe", "TEXT"),
+        ("cliente", "TEXT"),
+        ("pais", "TEXT"),
+        ("puerto", "TEXT"),
+        ("operacion", "TEXT"),
+        ("total_honorarios", "NUMERIC(14, 2) DEFAULT 0"),
+        ("cantidad_surveyors", "INTEGER DEFAULT 0"),
+        ("created_at", "TIMESTAMP DEFAULT NOW()"),
+        ("updated_at", "TIMESTAMP DEFAULT NOW()"),
+    ):
+        database.sql(f"ALTER TABLE servicio_surveyors_flat ADD COLUMN IF NOT EXISTS {column} {definition}")
+
+    database.sql("""
+        CREATE UNIQUE INDEX IF NOT EXISTS ux_servicio_surveyors_flat_consec
+        ON servicio_surveyors_flat (servicio_consec)
+    """)
+    _flat_table_checked = True
 
 
 class SurveyorItem(BaseModel):
@@ -65,6 +130,7 @@ def get_catalogo():
 @router.get("/{consec}")
 def get_surveyors(consec: int):
     try:
+        _ensure_flat_table()
         rows = database.sql(
             """
             SELECT
@@ -129,6 +195,7 @@ def update_surveyors(consec: int, payload: SurveyorsPayload):
 
 
 def _save(consec: int, payload: SurveyorsPayload):
+    _ensure_flat_table()
     surveyors = payload.surveyors
 
     if len(surveyors) > 10:
@@ -222,7 +289,8 @@ def _save(consec: int, payload: SurveyorsPayload):
             surveyor_10 = EXCLUDED.surveyor_10,
             honorario_10 = EXCLUDED.honorario_10,
             total_honorarios = EXCLUDED.total_honorarios,
-            cantidad_surveyors = EXCLUDED.cantidad_surveyors
+            cantidad_surveyors = EXCLUDED.cantidad_surveyors,
+            updated_at = NOW()
         """,
         (
             consec,

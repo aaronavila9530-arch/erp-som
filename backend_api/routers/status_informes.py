@@ -34,13 +34,55 @@ REPORT_NUMBER_CANDIDATES = [
     ("sealing_certificates", "report_number"),
     ("sealing_certificates", "certificate_no"),
     ("lashing_certificates", "report_no"),
+    ("draft_survey_word_report", "draft_report_number"),
+    ("draft_survey_ballast", "draft_report_number"),
 ]
+
+REPORT_TABLE_KEYWORDS = (
+    "report",
+    "reports",
+    "certificate",
+    "certificates",
+    "survey",
+    "surveys",
+    "captancy",
+)
+
+REPORT_COLUMN_CANDIDATES = (
+    "num_informe",
+    "report_no",
+    "report_number",
+    "linked_report_number",
+    "cert_no",
+    "certificate_no",
+    "draft_report_number",
+    "bunker_cert_no",
+    "survey_no",
+)
 
 
 def _existing_reports_sql(cur):
-    selects = []
+    pairs = set(REPORT_NUMBER_CANDIDATES)
 
-    for table_name, column_name in REPORT_NUMBER_CANDIDATES:
+    cur.execute(
+        """
+        SELECT table_name, column_name
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND column_name = ANY(%s)
+        """,
+        (list(REPORT_COLUMN_CANDIDATES),)
+    )
+
+    for table_name, column_name in cur.fetchall() or []:
+        table_l = str(table_name or "").lower()
+        if table_l == "servicios":
+            continue
+        if any(keyword in table_l for keyword in REPORT_TABLE_KEYWORDS):
+            pairs.add((table_name, column_name))
+
+    selects = []
+    for table_name, column_name in sorted(pairs):
         cur.execute(
             """
             SELECT 1
@@ -56,7 +98,7 @@ def _existing_reports_sql(cur):
         if cur.fetchone():
             selects.append(
                 f"""
-                SELECT NULLIF(TRIM({column_name}::text), '') AS num_informe
+                SELECT UPPER(REGEXP_REPLACE(NULLIF(TRIM({column_name}::text), ''), '\\s+', '', 'g')) AS num_informe
                 FROM {table_name}
                 WHERE {column_name} IS NOT NULL
                   AND TRIM({column_name}::text) <> ''
@@ -127,7 +169,7 @@ def list_status_informes(
               AND NOT EXISTS (
                   SELECT 1
                   FROM existing_reports er
-                  WHERE TRIM(er.num_informe) = TRIM(s.num_informe)
+                  WHERE er.num_informe = UPPER(REGEXP_REPLACE(TRIM(s.num_informe), '\\s+', '', 'g'))
               )
         """
 
