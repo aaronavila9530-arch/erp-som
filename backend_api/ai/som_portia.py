@@ -6,7 +6,7 @@ try:
     from ai.som_portia_knowledge import SOM_QA
 except ImportError:
     from backend_api.ai.maritime_ai import _get_openai_client
-from backend_api.ai.som_portia_knowledge import SOM_QA
+    from backend_api.ai.som_portia_knowledge import SOM_QA
 
 
 def _money(value) -> str:
