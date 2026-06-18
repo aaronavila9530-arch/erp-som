@@ -101,6 +101,7 @@ from routers.dashboard_servicios_router import router as dashboard_servicios_rou
 from routers.dashboard_finanzas_router import router as dashboard_finanzas_router
 from routers.dashboard_comercial_router import router as dashboard_comercial_router
 from routers.dashboard_informes_router import router as dashboard_informes_router
+from routers.portia import router as portia_router
 
 
 # ============================================================
@@ -272,6 +273,7 @@ app.include_router(dashboard_servicios_router)
 app.include_router(dashboard_finanzas_router)
 app.include_router(dashboard_comercial_router)
 app.include_router(dashboard_informes_router)
+app.include_router(portia_router)
 
 
 # ============================================================
