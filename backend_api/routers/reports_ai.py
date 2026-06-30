@@ -419,3 +419,78 @@ def improve_port_captancy(payload: dict):
             status_code=500,
             detail=str(e)
         )
+
+
+# =========================================================
+# LOGRA PORTIA
+# =========================================================
+@router.post("/improve/logra")
+def improve_logra(payload: dict):
+    try:
+        language = (payload.get("language") or "EN").upper()
+        if language not in ("ES", "EN"):
+            language = "EN"
+
+        section = payload.get("section") or "logra"
+        category = payload.get("category") or "logra"
+        items = payload.get("items")
+
+        def _fallback(text: str) -> str:
+            clean = " ".join((text or "").split())
+            if language == "EN":
+                return clean
+            return clean
+
+        if isinstance(items, list):
+            improved = []
+            for item in items:
+                text = (item or "").strip()
+                if not text:
+                    improved.append("")
+                    continue
+                try:
+                    result = improve_port_captancy_text(
+                        user_text=text,
+                        vessel="LOGRA",
+                        port=category,
+                        operation="Meeting log",
+                        section=section,
+                        language=language,
+                    )
+                except Exception:
+                    result = _fallback(text)
+                improved.append(result)
+
+            return {
+                "success": True,
+                "language": language,
+                "items": improved,
+            }
+
+        user_text = (payload.get("text") or "").strip()
+        if not user_text:
+            raise HTTPException(status_code=400, detail="Text or items are required")
+
+        try:
+            result = improve_port_captancy_text(
+                user_text=user_text,
+                vessel="LOGRA",
+                port=category,
+                operation="Meeting log",
+                section=section,
+                language=language,
+            )
+        except Exception:
+            result = _fallback(user_text)
+
+        return {
+            "success": True,
+            "language": language,
+            "text": result,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print("PORTIA LOGRA ERROR:", repr(e))
+        raise HTTPException(status_code=500, detail=str(e))
