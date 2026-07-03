@@ -1,5 +1,5 @@
 import * as LocalAuthentication from "expo-local-authentication";
-import * as FileSystem from "expo-file-system";
+import * as FileSystem from "expo-file-system/legacy";
 import * as DocumentPicker from "expo-document-picker";
 import * as Sharing from "expo-sharing";
 import * as SecureStore from "expo-secure-store";
@@ -2049,7 +2049,7 @@ async function downloadSessionFile(
   method: "GET" | "POST" | "PUT" = "GET",
   body?: Record<string, unknown>
 ) {
-  const file = new FileSystem.File(FileSystem.Paths.cache, filename);
+  const fileUri = `${FileSystem.cacheDirectory || ""}${cleanFilePart(filename)}`;
   const headers: Record<string, string> = session
     ? {
         Accept: "application/octet-stream, application/pdf, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, */*",
@@ -2079,14 +2079,21 @@ async function downloadSessionFile(
     throw new Error(detail);
   }
 
-  file.write(bytes);
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
+  }
+  await FileSystem.writeAsStringAsync(fileUri, btoa(binary), {
+    encoding: FileSystem.EncodingType.Base64
+  });
 
   if (await Sharing.isAvailableAsync()) {
-    await Sharing.shareAsync(file.uri);
+    await Sharing.shareAsync(fileUri);
     return;
   }
 
-  await Linking.openURL(file.uri);
+  await Linking.openURL(fileUri);
 }
 
 function unwrapRecordPayload(payload: unknown) {
@@ -4107,15 +4114,26 @@ function LograMobileModal({
               <Pressable style={styles.modalClose} onPress={() => setAgendaStatusOpen(false)}><Text style={styles.modalCloseText}>Cerrar</Text></Pressable>
             </View>
             <ScrollView contentContainerStyle={styles.modalBody}>
-              <SelectField
-                label="Status"
-                value={selectedAgenda !== null ? String(agendaItems[selectedAgenda]?.status || "Pendiente") : "Pendiente"}
-                options={["Pendiente", "En proceso", "Completado"]}
-                onChange={(status) => {
-                  setAgendaItems((current) => current.map((item, index) => index === selectedAgenda ? { ...item, status } : item));
-                  setAgendaStatusOpen(false);
-                }}
-              />
+              <Text style={styles.label}>Status</Text>
+              <Text style={styles.helperText}>
+                Actual: {selectedAgenda !== null ? String(agendaItems[selectedAgenda]?.status || "Pendiente") : "Selecciona una linea"}
+              </Text>
+              {["Pendiente", "En proceso", "Completado"].map((status) => (
+                <Pressable
+                  key={status}
+                  style={selectedAgenda !== null && agendaItems[selectedAgenda]?.status === status ? styles.actionButton : styles.secondaryButton}
+                  onPress={() => {
+                    if (selectedAgenda === null) {
+                      Alert.alert("Agenda LOGRA", "Selecciona una linea de agenda.");
+                      return;
+                    }
+                    setAgendaItems((current) => current.map((item, index) => index === selectedAgenda ? { ...item, status } : item));
+                    setAgendaStatusOpen(false);
+                  }}
+                >
+                  <Text style={selectedAgenda !== null && agendaItems[selectedAgenda]?.status === status ? styles.actionButtonText : styles.secondaryButtonText}>{status}</Text>
+                </Pressable>
+              ))}
             </ScrollView>
           </SafeAreaView>
         </Modal>
