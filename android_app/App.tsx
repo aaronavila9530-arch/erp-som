@@ -3541,6 +3541,7 @@ function LograMobileModal({
   const [agendaNotes, setAgendaNotes] = useState("");
   const [selectedAgenda, setSelectedAgenda] = useState<number | null>(null);
   const [attachments, setAttachments] = useState<LograAttachment[]>([]);
+  const [agendaOpen, setAgendaOpen] = useState(false);
   const [portiaOpen, setPortiaOpen] = useState(false);
   const [portiaForm, setPortiaForm] = useState(LOGRA_QUESTIONNAIRES[0]?.title || "");
   const [portiaSection, setPortiaSection] = useState<keyof typeof LOGRA_SECTION_LABELS>("critical_questions");
@@ -3697,6 +3698,53 @@ function LograMobileModal({
     ]);
   }
 
+  function changeAgendaStatus() {
+    if (selectedAgenda === null || !agendaItems[selectedAgenda]) {
+      Alert.alert("Agenda LOGRA", "Selecciona una linea de agenda.");
+      return;
+    }
+    const currentStatus = String(agendaItems[selectedAgenda].status || "Pendiente");
+    const nextStatus = currentStatus === "Pendiente" ? "En proceso" : currentStatus === "En proceso" ? "Completado" : "Pendiente";
+    setAgendaItems((current) => current.map((item, index) => index === selectedAgenda ? { ...item, status: nextStatus } : item));
+  }
+
+  async function searchAgenda() {
+    setBusy(true);
+    setMessage("");
+    try {
+      const payload = await apiRequest<Record<string, unknown>>("/logra-reports", { session });
+      const reports = rowsFromAny(payload);
+      const nextItems: LograAgendaItem[] = [];
+      reports.forEach((report) => {
+        const reportTitle = formatValue(report.title);
+        const items = Array.isArray(report.agenda_items) ? report.agenda_items : [];
+        items.forEach((item) => {
+          const record = asRecord(item);
+          if (!record || nextItems.length >= 150) return;
+          const dateIso = formatValue(record.date_iso || record.date).slice(0, 10);
+          nextItems.push({
+            ...(record as LograAgendaItem),
+            date_iso: dateIso === "-" ? formatYmd(new Date()) : dateIso,
+            date: longEnglishDate(dateIso === "-" ? formatYmd(new Date()) : dateIso),
+            company: formatValue(record.company || record.company_role),
+            topic: formatValue(record.topic) === "-" ? reportTitle : formatValue(record.topic)
+          });
+        });
+      });
+      setAgendaItems(nextItems);
+      setSelectedAgenda(null);
+      setMessage(nextItems.length ? `Agenda cargada: ${nextItems.length} linea(s).` : "No hay agendas LOGRA guardadas en backend.");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo buscar agenda LOGRA.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveAgendaOnly() {
+    await saveLogra(false);
+  }
+
   function buildAnswersPayload() {
     const payload: Array<Record<string, unknown>> = [];
     LOGRA_QUESTIONNAIRES.forEach((form) => {
@@ -3719,7 +3767,7 @@ function LograMobileModal({
     return payload;
   }
 
-  async function saveLogra() {
+  async function saveLogra(closeAfterSave = true) {
     setBusy(true);
     setMessage("");
     try {
@@ -3746,7 +3794,7 @@ function LograMobileModal({
         if (nextId !== "-") setReportId(nextId);
       }
       setMessage(isQueuedOffline(result) ? "Sin internet: LOGRA guardado en cache local para sincronizar." : "LOGRA guardado correctamente.");
-      await onSaved();
+      if (closeAfterSave) await onSaved();
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "No se pudo guardar LOGRA.");
     } finally {
@@ -3825,57 +3873,19 @@ function LograMobileModal({
         <ScrollView contentContainerStyle={styles.modalBody} keyboardShouldPersistTaps="handled">
           <View style={styles.actionBar}>
             <Pressable style={styles.secondaryButton} onPress={() => setPortiaOpen(true)}><Text style={styles.secondaryButtonText}>Mejorar con PORTIA</Text></Pressable>
-            <Pressable style={styles.actionButton} onPress={saveLogra}><Text style={styles.actionButtonText}>Guardar</Text></Pressable>
+            <Pressable style={styles.actionButton} onPress={() => saveLogra()}><Text style={styles.actionButtonText}>Guardar</Text></Pressable>
           </View>
           <SelectField label="Formulario" value={formTitle} options={LOGRA_QUESTIONNAIRES.map((item) => item.title)} onChange={setFormTitle} />
           <SelectField label="Seccion" value={section} options={Object.keys(LOGRA_SECTION_LABELS)} onChange={(value) => setSection(value as keyof typeof LOGRA_SECTION_LABELS)} />
           <Text style={styles.helperText}>{LOGRA_SECTION_LABELS[section]} | Apertura: {selectedForm?.critical_questions.length || 0} | Por tema: {selectedForm?.detailed_questions.length || 0} | Total: {(selectedForm?.critical_questions.length || 0) + (selectedForm?.detailed_questions.length || 0)}</Text>
           <Text style={styles.label}>Buscar</Text>
           <TextInput style={styles.input} value={search} onChangeText={setSearch} placeholder="Palabra clave" />
-
           <View style={styles.summaryBox}>
             <Text style={styles.cardTitle}>Agenda LOGRA</Text>
-            <DateField label="Fecha" value={agendaDraft.date_iso || formatYmd(new Date())} onChange={(date_iso) => setAgendaDraft((current) => ({ ...current, date_iso, date: longEnglishDate(date_iso) }))} />
-            <Text style={styles.helperText}>{longEnglishDate(agendaDraft.date_iso || formatYmd(new Date()))}</Text>
-            <View style={styles.inlineFields}>
-              <TextInput style={[styles.input, styles.timePartInput]} value={(agendaDraft.start_time || "09:00").slice(0, 2)} keyboardType="number-pad" maxLength={2} onChangeText={(hour) => setAgendaDraft((current) => ({ ...current, start_time: `${hour.padStart(2, "0").slice(0, 2)}:${(current.start_time || "09:00").slice(3, 5)}` }))} />
-              <TextInput style={[styles.input, styles.timePartInput]} value={(agendaDraft.start_time || "09:00").slice(3, 5)} keyboardType="number-pad" maxLength={2} onChangeText={(minute) => setAgendaDraft((current) => ({ ...current, start_time: `${(current.start_time || "09:00").slice(0, 2)}:${minute.padStart(2, "0").slice(0, 2)}` }))} />
-              <Text style={styles.helperText}>a</Text>
-              <TextInput style={[styles.input, styles.timePartInput]} value={(agendaDraft.end_time || "10:00").slice(0, 2)} keyboardType="number-pad" maxLength={2} onChangeText={(hour) => setAgendaDraft((current) => ({ ...current, end_time: `${hour.padStart(2, "0").slice(0, 2)}:${(current.end_time || "10:00").slice(3, 5)}` }))} />
-              <TextInput style={[styles.input, styles.timePartInput]} value={(agendaDraft.end_time || "10:00").slice(3, 5)} keyboardType="number-pad" maxLength={2} onChangeText={(minute) => setAgendaDraft((current) => ({ ...current, end_time: `${(current.end_time || "10:00").slice(0, 2)}:${minute.padStart(2, "0").slice(0, 2)}` }))} />
-            </View>
-            {["place", "person", "company", "topic"].map((field) => (
-              <View key={field} style={styles.formField}>
-                <Text style={styles.label}>{field === "place" ? "Lugar" : field === "person" ? "Persona" : field === "company" ? "Empresa/Rol" : "Tema"}</Text>
-                <TextInput style={styles.input} value={String(agendaDraft[field as keyof LograAgendaItem] || "")} onChangeText={(value) => setAgendaDraft((current) => ({ ...current, [field]: value }))} />
-              </View>
-            ))}
-            <SelectField label="Prioridad" value={String(agendaDraft.priority || "Media")} options={["Alta", "Media", "Baja"]} onChange={(priority) => setAgendaDraft((current) => ({ ...current, priority }))} />
-            <SelectField label="Status" value={String(agendaDraft.status || "Pendiente")} options={["Pendiente", "En proceso", "Completado"]} onChange={(status) => setAgendaDraft((current) => ({ ...current, status }))} />
-            <Text style={styles.label}>Recordar min</Text>
-            <TextInput style={styles.input} keyboardType="number-pad" value={String(agendaDraft.reminder_minutes || 30)} onChangeText={(reminder_minutes) => setAgendaDraft((current) => ({ ...current, reminder_minutes }))} />
-            <View style={styles.actionBar}>
-              <Pressable style={styles.secondaryButton} onPress={addAgendaLine}><Text style={styles.secondaryButtonText}>+ Linea</Text></Pressable>
-              <Pressable style={styles.modalClose} onPress={removeAgendaLine}><Text style={styles.modalCloseText}>- Linea</Text></Pressable>
-            </View>
-            <ScrollView horizontal>
-              <View>
-                {agendaItems.map((item, index) => (
-                  <Pressable key={`${index}-${item.date_iso}-${item.start_time}`} style={[styles.lograAgendaRow, { backgroundColor: lograTint(item.status || item.priority) }, selectedAgenda === index && styles.selectedRow]} onPress={() => setSelectedAgenda(index)}>
-                    <Text style={styles.lograAgendaCell}>{longEnglishDate(String(item.date_iso || item.date || ""))}</Text>
-                    <Text style={styles.lograAgendaCell}>{item.start_time} - {item.end_time}</Text>
-                    <Text style={styles.lograAgendaCell}>{item.place}</Text>
-                    <Text style={styles.lograAgendaCell}>{item.person}</Text>
-                    <Text style={styles.lograAgendaCell}>{item.company || item.company_role}</Text>
-                    <Text style={styles.lograAgendaCell}>{item.topic}</Text>
-                    <Text style={styles.lograAgendaCell}>{item.priority}</Text>
-                    <Text style={styles.lograAgendaCell}>{item.status}</Text>
-                  </Pressable>
-                ))}
-              </View>
-            </ScrollView>
-            <Text style={styles.label}>Anotaciones generales</Text>
-            <TextInput style={[styles.input, styles.multilineInput]} multiline value={agendaNotes} onChangeText={setAgendaNotes} />
+            <Text style={styles.helperText}>{agendaItems.length} linea(s) de agenda cargadas.</Text>
+            <Pressable style={styles.secondaryButton} onPress={() => setAgendaOpen(true)}>
+              <Text style={styles.secondaryButtonText}>Abrir agenda</Text>
+            </Pressable>
           </View>
 
           <View style={styles.actionBar}>
@@ -3917,6 +3927,74 @@ function LograMobileModal({
           {busy ? <ActivityIndicator color={BLUE} style={styles.loader} /> : null}
           {message ? <Text style={styles.error}>{message}</Text> : null}
         </ScrollView>
+
+        <Modal visible={agendaOpen} animationType="slide" onRequestClose={() => setAgendaOpen(false)}>
+          <SafeAreaView style={styles.modalScreen}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Agenda LOGRA</Text>
+              <Pressable style={styles.modalClose} onPress={() => setAgendaOpen(false)}><Text style={styles.modalCloseText}>Cerrar</Text></Pressable>
+            </View>
+            <ScrollView contentContainerStyle={styles.modalBody} keyboardShouldPersistTaps="handled">
+              <View style={styles.summaryBox}>
+                <Text style={styles.cardTitle}>Meeting details</Text>
+                <DateField label="Date" value={agendaDraft.date_iso || formatYmd(new Date())} onChange={(date_iso) => setAgendaDraft((current) => ({ ...current, date_iso, date: longEnglishDate(date_iso) }))} />
+                <Text style={styles.helperText}>{longEnglishDate(agendaDraft.date_iso || formatYmd(new Date()))}</Text>
+                <Text style={styles.label}>Start</Text>
+                <View style={styles.inlineFields}>
+                  <TextInput style={[styles.input, styles.timePartInput]} value={(agendaDraft.start_time || "09:00").slice(0, 2)} keyboardType="number-pad" maxLength={2} onChangeText={(hour) => setAgendaDraft((current) => ({ ...current, start_time: `${hour.padStart(2, "0").slice(0, 2)}:${(current.start_time || "09:00").slice(3, 5)}` }))} />
+                  <Text style={styles.helperText}>:</Text>
+                  <TextInput style={[styles.input, styles.timePartInput]} value={(agendaDraft.start_time || "09:00").slice(3, 5)} keyboardType="number-pad" maxLength={2} onChangeText={(minute) => setAgendaDraft((current) => ({ ...current, start_time: `${(current.start_time || "09:00").slice(0, 2)}:${minute.padStart(2, "0").slice(0, 2)}` }))} />
+                </View>
+                <Text style={styles.label}>End</Text>
+                <View style={styles.inlineFields}>
+                  <TextInput style={[styles.input, styles.timePartInput]} value={(agendaDraft.end_time || "10:00").slice(0, 2)} keyboardType="number-pad" maxLength={2} onChangeText={(hour) => setAgendaDraft((current) => ({ ...current, end_time: `${hour.padStart(2, "0").slice(0, 2)}:${(current.end_time || "10:00").slice(3, 5)}` }))} />
+                  <Text style={styles.helperText}>:</Text>
+                  <TextInput style={[styles.input, styles.timePartInput]} value={(agendaDraft.end_time || "10:00").slice(3, 5)} keyboardType="number-pad" maxLength={2} onChangeText={(minute) => setAgendaDraft((current) => ({ ...current, end_time: `${(current.end_time || "10:00").slice(0, 2)}:${minute.padStart(2, "0").slice(0, 2)}` }))} />
+                </View>
+                {["place", "person", "company", "topic"].map((field) => (
+                  <View key={field} style={styles.formField}>
+                    <Text style={styles.label}>{field === "place" ? "Place" : field === "person" ? "Person" : field === "company" ? "Company/Role" : "Topic"}</Text>
+                    <TextInput style={styles.input} value={String(agendaDraft[field as keyof LograAgendaItem] || "")} onChangeText={(value) => setAgendaDraft((current) => ({ ...current, [field]: value }))} />
+                  </View>
+                ))}
+                <SelectField label="Priority" value={String(agendaDraft.priority || "Media")} options={["Alta", "Media", "Baja"]} onChange={(priority) => setAgendaDraft((current) => ({ ...current, priority }))} />
+                <SelectField label="Status" value={String(agendaDraft.status || "Pendiente")} options={["Pendiente", "En proceso", "Completado"]} onChange={(status) => setAgendaDraft((current) => ({ ...current, status }))} />
+                <Text style={styles.label}>Reminder min</Text>
+                <TextInput style={styles.input} keyboardType="number-pad" value={String(agendaDraft.reminder_minutes || 30)} onChangeText={(reminder_minutes) => setAgendaDraft((current) => ({ ...current, reminder_minutes }))} />
+              </View>
+
+              <View style={styles.actionBar}>
+                <Pressable style={styles.secondaryButton} onPress={searchAgenda}><Text style={styles.secondaryButtonText}>Buscar</Text></Pressable>
+                <Pressable style={styles.secondaryButton} onPress={addAgendaLine}><Text style={styles.secondaryButtonText}>+ Linea</Text></Pressable>
+                <Pressable style={styles.modalClose} onPress={removeAgendaLine}><Text style={styles.modalCloseText}>- Linea</Text></Pressable>
+                <Pressable style={styles.secondaryButton} onPress={changeAgendaStatus}><Text style={styles.secondaryButtonText}>Cambiar status</Text></Pressable>
+                <Pressable style={styles.actionButton} onPress={saveAgendaOnly}><Text style={styles.actionButtonText}>Guardar agenda</Text></Pressable>
+              </View>
+
+              <ScrollView horizontal>
+                <View>
+                  {agendaItems.map((item, index) => (
+                    <Pressable key={`${index}-${item.date_iso}-${item.start_time}`} style={[styles.lograAgendaRow, { backgroundColor: lograTint(item.status || item.priority) }, selectedAgenda === index && styles.selectedRow]} onPress={() => setSelectedAgenda(index)}>
+                      <Text style={styles.lograAgendaCell}>{longEnglishDate(String(item.date_iso || item.date || ""))}</Text>
+                      <Text style={styles.lograAgendaCell}>{item.start_time} - {item.end_time}</Text>
+                      <Text style={styles.lograAgendaCell}>{item.place}</Text>
+                      <Text style={styles.lograAgendaCell}>{item.person}</Text>
+                      <Text style={styles.lograAgendaCell}>{item.company || item.company_role}</Text>
+                      <Text style={styles.lograAgendaCell}>{item.topic}</Text>
+                      <Text style={styles.lograAgendaCell}>{item.priority}</Text>
+                      <Text style={styles.lograAgendaCell}>{item.status}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+              </ScrollView>
+
+              <Text style={styles.label}>Anotaciones generales</Text>
+              <TextInput style={[styles.input, styles.multilineInput]} multiline value={agendaNotes} onChangeText={setAgendaNotes} />
+              {busy ? <ActivityIndicator color={BLUE} style={styles.loader} /> : null}
+              {message ? <Text style={styles.error}>{message}</Text> : null}
+            </ScrollView>
+          </SafeAreaView>
+        </Modal>
 
         <Modal visible={portiaOpen} animationType="slide" onRequestClose={() => setPortiaOpen(false)}>
           <SafeAreaView style={styles.modalScreen}>
