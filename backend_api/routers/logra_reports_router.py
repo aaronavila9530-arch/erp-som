@@ -33,7 +33,27 @@ def _ensure_schema(conn):
         """)
         cur.execute("""
             ALTER TABLE logra_reports
+            ADD COLUMN IF NOT EXISTS title TEXT
+        """)
+        cur.execute("""
+            ALTER TABLE logra_reports
+            ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'Draft'
+        """)
+        cur.execute("""
+            ALTER TABLE logra_reports
             ADD COLUMN IF NOT EXISTS agenda_items JSONB NOT NULL DEFAULT '[]'::jsonb
+        """)
+        cur.execute("""
+            ALTER TABLE logra_reports
+            ADD COLUMN IF NOT EXISTS created_by TEXT
+        """)
+        cur.execute("""
+            ALTER TABLE logra_reports
+            ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW()
+        """)
+        cur.execute("""
+            ALTER TABLE logra_reports
+            ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW()
         """)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS logra_answers (
