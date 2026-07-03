@@ -673,6 +673,7 @@ class PopupLograOpen(tk.Toplevel):
 class PopupLograAgenda(tk.Toplevel):
     MAX_ITEMS = 150
     COLUMNS = (
+        "report_title",
         "date",
         "start_time",
         "end_time",
@@ -685,6 +686,7 @@ class PopupLograAgenda(tk.Toplevel):
         "reminder_minutes",
     )
     HEADERS = {
+        "report_title": "Report",
         "date": "Date",
         "start_time": "Start",
         "end_time": "End",
@@ -790,6 +792,7 @@ class PopupLograAgenda(tk.Toplevel):
 
         self.tree = ttk.Treeview(table_box, columns=self.COLUMNS, show="headings", height=16)
         widths = {
+            "report_title": 240,
             "date": 150,
             "start_time": 70,
             "end_time": 70,
@@ -894,29 +897,34 @@ class PopupLograAgenda(tk.Toplevel):
             )
 
     def _search_backend(self):
-        if self.form_instance.report_id:
-            resp = api_client.get_logra_report_api(self.form_instance.report_id)
-        else:
-            listing = api_client.list_logra_reports_api()
-            rows = listing.get("data") or []
-            if not rows:
-                messagebox.showinfo("Agenda LOGRA", "No hay agendas LOGRA guardadas en backend.")
-                return
-            current_title = f"LOGRA - {self.form_instance.form_var.get() or 'Cuestionarios'}"
-            selected = next((row for row in rows if row.get("title") == current_title), rows[0])
-            self.form_instance.report_id = selected.get("id")
-            resp = api_client.get_logra_report_api(self.form_instance.report_id)
-
-        if resp.get("success") is False:
-            messagebox.showerror("Agenda LOGRA", f"No se pudo buscar la agenda:\n{resp.get('error') or resp}")
+        listing = api_client.list_logra_reports_api()
+        if listing.get("success") is False:
+            messagebox.showerror("Agenda LOGRA", f"No se pudo buscar la agenda:\n{listing.get('error') or listing}")
             return
 
-        report = resp.get("report") or {}
-        self.items = [dict(item) for item in (report.get("agenda_items") or [])]
+        rows = listing.get("data") or []
+        if not rows:
+            self.items = []
+            self.form_instance.agenda_items = []
+            self._render()
+            messagebox.showinfo("Agenda LOGRA", "No hay agendas LOGRA guardadas en backend.")
+            return
+
+        all_items = []
+        for report in rows:
+            report_title = report.get("title") or f"LOGRA #{report.get('id')}"
+            for item in report.get("agenda_items") or []:
+                if not isinstance(item, dict):
+                    continue
+                row = dict(item)
+                row["report_id"] = report.get("id")
+                row["report_title"] = report_title
+                all_items.append(row)
+
+        self.items = all_items
         self.form_instance.agenda_items = [dict(item) for item in self.items]
-        self.form_instance.agenda_notes = report.get("agenda_notes") or ""
         self._render()
-        messagebox.showinfo("Agenda LOGRA", f"Agenda cargada desde backend. Lineas: {len(self.items)}")
+        messagebox.showinfo("Agenda LOGRA", f"Agendas cargadas desde backend. Lineas: {len(self.items)}")
 
     def _add(self):
         if len(self.items) >= self.MAX_ITEMS:
@@ -934,6 +942,7 @@ class PopupLograAgenda(tk.Toplevel):
             messagebox.showwarning("Agenda LOGRA", "Reminder min debe ser un numero entero.")
             return
         item = {
+            "report_title": f"LOGRA - {self.form_instance.form_var.get() or 'Cuestionarios'}",
             "date": self.date_long_var.get(),
             "date_iso": self.selected_date.isoformat(),
             "start_time": start,
@@ -1045,14 +1054,16 @@ class PopupLograAgenda(tk.Toplevel):
             cell.fill = header_fill
             cell.alignment = Alignment(horizontal="center")
         colors = {"Alta": "F8D7DA", "Media": "FFF3CD", "Baja": "D1E7DD", "Pendiente": "F8D7DA", "En proceso": "FFF3CD", "Completado": "D1E7DD"}
+        priority_index = self.COLUMNS.index("priority")
+        status_index = self.COLUMNS.index("status")
         for row in ws.iter_rows(min_row=header_row + 1):
-            fill = colors.get(row[8].value) or colors.get(row[7].value)
+            fill = colors.get(row[status_index].value) or colors.get(row[priority_index].value)
             if fill:
                 for cell in row:
                     cell.fill = PatternFill("solid", fgColor=fill)
             for cell in row:
                 cell.alignment = Alignment(wrap_text=True, vertical="top")
-        widths = [18, 10, 10, 22, 22, 22, 42, 12, 14]
+        widths = [28, 18, 10, 10, 22, 22, 22, 42, 12, 14, 14]
         for idx, width in enumerate(widths, start=1):
             ws.column_dimensions[chr(64 + idx)].width = width
         wb.save(path)
