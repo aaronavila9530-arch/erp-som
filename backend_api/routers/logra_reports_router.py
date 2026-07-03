@@ -25,10 +25,15 @@ def _ensure_schema(conn):
                 id SERIAL PRIMARY KEY,
                 title TEXT,
                 status TEXT DEFAULT 'Draft',
+                agenda_items JSONB NOT NULL DEFAULT '[]'::jsonb,
                 created_by TEXT,
                 created_at TIMESTAMP DEFAULT NOW(),
                 updated_at TIMESTAMP DEFAULT NOW()
             )
+        """)
+        cur.execute("""
+            ALTER TABLE logra_reports
+            ADD COLUMN IF NOT EXISTS agenda_items JSONB NOT NULL DEFAULT '[]'::jsonb
         """)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS logra_answers (
@@ -81,7 +86,7 @@ def list_logra_reports(conn=Depends(get_db)):
     _ensure_schema(conn)
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute("""
-            SELECT id, title, status, created_by, created_at, updated_at
+            SELECT id, title, status, agenda_items, created_by, created_at, updated_at
             FROM logra_reports
             ORDER BY updated_at DESC, id DESC
             LIMIT 200
@@ -129,25 +134,28 @@ def save_logra_report(payload: dict, conn=Depends(get_db)):
     title = payload.get("title") or "LOGRA Questionnaire"
     created_by = payload.get("created_by")
     answers = payload.get("answers") or []
+    agenda_items = payload.get("agenda_items") or []
+    if not isinstance(agenda_items, list):
+        agenda_items = []
 
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             if report_id:
                 cur.execute("""
                     UPDATE logra_reports
-                    SET title = %s, updated_at = %s
+                    SET title = %s, agenda_items = %s, updated_at = %s
                     WHERE id = %s
                     RETURNING *
-                """, (title, datetime.utcnow(), report_id))
+                """, (title, Json(agenda_items), datetime.utcnow(), report_id))
                 report = cur.fetchone()
                 if not report:
                     raise HTTPException(status_code=404, detail="LOGRA report not found")
             else:
                 cur.execute("""
-                    INSERT INTO logra_reports (title, created_by, created_at, updated_at)
-                    VALUES (%s, %s, %s, %s)
+                    INSERT INTO logra_reports (title, agenda_items, created_by, created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s)
                     RETURNING *
-                """, (title, created_by, datetime.utcnow(), datetime.utcnow()))
+                """, (title, Json(agenda_items), created_by, datetime.utcnow(), datetime.utcnow()))
                 report = cur.fetchone()
                 report_id = report["id"]
 
