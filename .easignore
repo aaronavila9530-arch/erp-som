@@ -1,0 +1,13 @@
+*
+!android_app/
+!android_app/**
+
+android_app/node_modules/
+android_app/.expo/
+android_app/.expo-export-test/
+android_app/dist/
+android_app/build/
+android_app/*.log
+android_app/npm-debug.log*
+android_app/yarn-debug.log*
+android_app/yarn-error.log*
