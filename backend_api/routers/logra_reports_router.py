@@ -26,7 +26,7 @@ def _ensure_schema(conn):
                 title TEXT,
                 category TEXT DEFAULT 'LOGRA',
                 meeting_date DATE DEFAULT CURRENT_DATE,
-                meeting_time TEXT DEFAULT '',
+                meeting_time TEXT DEFAULT '00:00',
                 meeting_start_time TEXT DEFAULT '',
                 meeting_end_time TEXT DEFAULT '',
                 meeting_location TEXT DEFAULT '',
@@ -75,16 +75,16 @@ def _ensure_schema(conn):
         """)
         cur.execute("""
             ALTER TABLE logra_reports
-            ADD COLUMN IF NOT EXISTS meeting_time TEXT DEFAULT ''
+            ADD COLUMN IF NOT EXISTS meeting_time TEXT DEFAULT '00:00'
         """)
         cur.execute("""
             UPDATE logra_reports
-            SET meeting_time = ''
+            SET meeting_time = '00:00'
             WHERE meeting_time IS NULL
         """)
         cur.execute("""
             ALTER TABLE logra_reports
-            ALTER COLUMN meeting_time SET DEFAULT ''
+            ALTER COLUMN meeting_time SET DEFAULT '00:00'
         """)
         cur.execute("""
             ALTER TABLE logra_reports
@@ -290,7 +290,7 @@ def save_logra_report(payload: dict, conn=Depends(get_db)):
     meeting_date = first_meeting.get("date_iso") or datetime.utcnow().date().isoformat()
     meeting_start_time = first_meeting.get("start_time") or ""
     meeting_end_time = first_meeting.get("end_time") or ""
-    meeting_time = meeting_start_time
+    meeting_time = meeting_start_time or "00:00"
     meeting_location = first_meeting.get("place") or ""
     meeting_person = first_meeting.get("person") or ""
 
