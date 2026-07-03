@@ -16,6 +16,7 @@ router = APIRouter(
 )
 
 STORAGE_ROOT = Path("storage") / "logra"
+MAX_AGENDA_ITEMS = 150
 
 
 def _ensure_schema(conn):
@@ -286,6 +287,8 @@ def save_logra_report(payload: dict, conn=Depends(get_db)):
     agenda_notes = payload.get("agenda_notes") or ""
     if not isinstance(agenda_items, list):
         agenda_items = []
+    if len(agenda_items) > MAX_AGENDA_ITEMS:
+        raise HTTPException(status_code=400, detail="LOGRA agenda supports up to 150 items")
     first_meeting = agenda_items[0] if agenda_items and isinstance(agenda_items[0], dict) else {}
     meeting_date = first_meeting.get("date_iso") or datetime.utcnow().date().isoformat()
     meeting_start_time = first_meeting.get("start_time") or ""

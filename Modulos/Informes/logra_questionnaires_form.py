@@ -671,6 +671,7 @@ class PopupLograOpen(tk.Toplevel):
 
 
 class PopupLograAgenda(tk.Toplevel):
+    MAX_ITEMS = 150
     COLUMNS = (
         "date",
         "start_time",
@@ -893,11 +894,19 @@ class PopupLograAgenda(tk.Toplevel):
             )
 
     def _search_backend(self):
-        if not self.form_instance.report_id:
-            PopupLograAgendaSearch(self, self)
-            return
+        if self.form_instance.report_id:
+            resp = api_client.get_logra_report_api(self.form_instance.report_id)
+        else:
+            listing = api_client.list_logra_reports_api()
+            rows = listing.get("data") or []
+            if not rows:
+                messagebox.showinfo("Agenda LOGRA", "No hay agendas LOGRA guardadas en backend.")
+                return
+            current_title = f"LOGRA - {self.form_instance.form_var.get() or 'Cuestionarios'}"
+            selected = next((row for row in rows if row.get("title") == current_title), rows[0])
+            self.form_instance.report_id = selected.get("id")
+            resp = api_client.get_logra_report_api(self.form_instance.report_id)
 
-        resp = api_client.get_logra_report_api(self.form_instance.report_id)
         if resp.get("success") is False:
             messagebox.showerror("Agenda LOGRA", f"No se pudo buscar la agenda:\n{resp.get('error') or resp}")
             return
@@ -907,9 +916,12 @@ class PopupLograAgenda(tk.Toplevel):
         self.form_instance.agenda_items = [dict(item) for item in self.items]
         self.form_instance.agenda_notes = report.get("agenda_notes") or ""
         self._render()
-        messagebox.showinfo("Agenda LOGRA", "Agenda cargada desde backend.")
+        messagebox.showinfo("Agenda LOGRA", f"Agenda cargada desde backend. Lineas: {len(self.items)}")
 
     def _add(self):
+        if len(self.items) >= self.MAX_ITEMS:
+            messagebox.showwarning("Agenda LOGRA", "La agenda permite maximo 150 lineas.")
+            return
         self._sync_long_date()
         start = self._compose_time(self.start_hour_var, self.start_minute_var)
         end = self._compose_time(self.end_hour_var, self.end_minute_var)
@@ -988,10 +1000,11 @@ class PopupLograAgenda(tk.Toplevel):
 
     def _save(self):
         self.form_instance.agenda_items = [dict(item) for item in self.items]
-        if self.form_instance._save_report(silent=True):
+        if len(self.form_instance.agenda_items) > self.MAX_ITEMS:
+            messagebox.showwarning("Agenda LOGRA", "La agenda permite maximo 150 lineas.")
+            return
+        if self.form_instance._save_report(silent=False):
             messagebox.showinfo("Agenda LOGRA", "Agenda guardada correctamente.")
-        else:
-            messagebox.showerror("Agenda LOGRA", "No se pudo guardar la agenda. Revisa el backend.")
 
     def _rows_for_export(self):
         return [[item.get(col, "") for col in self.COLUMNS] for item in self.items]
