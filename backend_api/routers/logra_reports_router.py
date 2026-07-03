@@ -86,9 +86,22 @@ def list_logra_reports(conn=Depends(get_db)):
     _ensure_schema(conn)
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute("""
-            SELECT id, title, status, agenda_items, created_by, created_at, updated_at
-            FROM logra_reports
-            ORDER BY updated_at DESC, id DESC
+            SELECT
+                r.id,
+                r.title,
+                r.status,
+                r.agenda_items,
+                r.created_by,
+                r.created_at,
+                r.updated_at,
+                COALESCE(a.attachment_count, 0) AS attachment_count
+            FROM logra_reports r
+            LEFT JOIN (
+                SELECT report_id, COUNT(*) AS attachment_count
+                FROM logra_attachments
+                GROUP BY report_id
+            ) a ON a.report_id = r.id
+            ORDER BY r.updated_at DESC, r.id DESC
             LIMIT 200
         """)
         return {"data": cur.fetchall()}
