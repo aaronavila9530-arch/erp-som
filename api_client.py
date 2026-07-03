@@ -4,6 +4,8 @@ from datetime import datetime
 from session_context import get_user, get_rol
 import os
 import tempfile
+from email.message import Message
+from urllib.parse import unquote
 
 BASE_URL = "https://api-som-fastapi-production-e66d.up.railway.app"
 TIMEOUT = 30
@@ -1435,14 +1437,40 @@ def open_logra_attachment_api(attachment_id: int):
 
         filename = "logra_attachment"
         content_disposition = r.headers.get("content-disposition", "")
-        if "filename=" in content_disposition:
-            filename = content_disposition.split("filename=", 1)[1].strip("\"")
+        if content_disposition:
+            msg = Message()
+            msg["content-disposition"] = content_disposition
+            parsed = msg.get_filename()
+            if parsed:
+                filename = parsed
+            elif "filename*=" in content_disposition:
+                raw = content_disposition.split("filename*=", 1)[1].split(";", 1)[0].strip().strip("\"")
+                if "''" in raw:
+                    raw = raw.split("''", 1)[1]
+                filename = unquote(raw)
+            elif "filename=" in content_disposition:
+                filename = content_disposition.split("filename=", 1)[1].split(";", 1)[0].strip().strip("\"")
+
+        filename = os.path.basename(filename or "logra_attachment")
+        root, ext = os.path.splitext(filename)
+        if not ext:
+            content_type = (r.headers.get("content-type") or "").split(";", 1)[0].lower()
+            ext_map = {
+                "application/pdf": ".pdf",
+                "application/vnd.ms-excel": ".xls",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+                "application/msword": ".doc",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+                "image/jpeg": ".jpg",
+                "image/png": ".png",
+            }
+            filename = f"{root or 'logra_attachment'}{ext_map.get(content_type, '')}"
 
         path = os.path.join(tempfile.gettempdir(), filename)
         with open(path, "wb") as f:
             f.write(r.content)
 
-        os.startfile(path)
+        os.startfile(path, "open")
         return {"success": True, "path": path}
     except Exception as e:
         return {"success": False, "error": str(e)}

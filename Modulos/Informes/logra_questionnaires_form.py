@@ -14,6 +14,7 @@ from session_context import get_user
 class LograQuestionnairesForm(ttk.Frame):
     ITEMS_PER_PAGE = 5
     MAX_BULLETS = 20
+    MAX_ATTACHMENTS_PER_QUESTION = 10
 
     SECTION_LABELS = {
         "critical_questions": "Preguntas de apertura",
@@ -413,7 +414,7 @@ class LograQuestionnairesForm(ttk.Frame):
         box = ttk.Frame(parent)
         box.grid(row=4, column=0, sticky="ew", pady=(8, 0))
         ttk.Label(box, text="Adjuntos:", foreground="#555555").pack(side="left", padx=(0, 6))
-        for att in attachments[:5]:
+        for att in attachments[:self.MAX_ATTACHMENTS_PER_QUESTION]:
             ttk.Button(
                 box,
                 text=att.get("original_filename") or f"Adjunto {att.get('id')}",
@@ -490,6 +491,19 @@ class LograQuestionnairesForm(ttk.Frame):
                     "No se pudo guardar el reporte antes de adjuntar. Revisa que el backend este corriendo."
                 )
                 return
+
+        existing = api_client.list_logra_attachments_api(
+            self.report_id,
+            form["slug"],
+            section,
+            self._item_key(item)
+        ).get("data") or []
+        if len(existing) >= self.MAX_ATTACHMENTS_PER_QUESTION:
+            messagebox.showwarning(
+                "LOGRA",
+                f"Cada pregunta permite maximo {self.MAX_ATTACHMENTS_PER_QUESTION} adjuntos."
+            )
+            return
 
         path = filedialog.askopenfilename(title="Seleccionar adjunto")
         if not path:

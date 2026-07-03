@@ -17,6 +17,7 @@ router = APIRouter(
 
 STORAGE_ROOT = Path("storage") / "logra"
 MAX_AGENDA_ITEMS = 150
+MAX_ATTACHMENTS_PER_QUESTION = 10
 
 
 def _ensure_schema(conn):
@@ -396,6 +397,17 @@ def upload_logra_attachment(
         cur.execute("SELECT id FROM logra_reports WHERE id = %s", (report_id,))
         if not cur.fetchone():
             raise HTTPException(status_code=404, detail="LOGRA report not found")
+        cur.execute("""
+            SELECT COUNT(*) AS total
+            FROM logra_attachments
+            WHERE report_id = %s
+              AND form_slug = %s
+              AND section = %s
+              AND item_key = %s
+        """, (report_id, form_slug, section, item_key))
+        total = (cur.fetchone() or {}).get("total") or 0
+        if total >= MAX_ATTACHMENTS_PER_QUESTION:
+            raise HTTPException(status_code=400, detail="Each LOGRA question supports up to 10 attachments")
 
     folder = STORAGE_ROOT / str(report_id) / form_slug / section / item_key
     folder.mkdir(parents=True, exist_ok=True)
