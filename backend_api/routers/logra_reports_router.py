@@ -25,8 +25,14 @@ def _ensure_schema(conn):
                 id SERIAL PRIMARY KEY,
                 title TEXT,
                 category TEXT DEFAULT 'LOGRA',
+                meeting_date DATE DEFAULT CURRENT_DATE,
+                meeting_start_time TEXT DEFAULT '',
+                meeting_end_time TEXT DEFAULT '',
+                meeting_location TEXT DEFAULT '',
+                meeting_person TEXT DEFAULT '',
                 status TEXT DEFAULT 'Draft',
                 agenda_items JSONB NOT NULL DEFAULT '[]'::jsonb,
+                agenda_notes TEXT DEFAULT '',
                 created_by TEXT,
                 created_at TIMESTAMP DEFAULT NOW(),
                 updated_at TIMESTAMP DEFAULT NOW()
@@ -55,7 +61,85 @@ def _ensure_schema(conn):
         """)
         cur.execute("""
             ALTER TABLE logra_reports
+            ADD COLUMN IF NOT EXISTS meeting_date DATE DEFAULT CURRENT_DATE
+        """)
+        cur.execute("""
+            UPDATE logra_reports
+            SET meeting_date = CURRENT_DATE
+            WHERE meeting_date IS NULL
+        """)
+        cur.execute("""
+            ALTER TABLE logra_reports
+            ALTER COLUMN meeting_date SET DEFAULT CURRENT_DATE
+        """)
+        cur.execute("""
+            ALTER TABLE logra_reports
+            ADD COLUMN IF NOT EXISTS meeting_start_time TEXT DEFAULT ''
+        """)
+        cur.execute("""
+            UPDATE logra_reports
+            SET meeting_start_time = ''
+            WHERE meeting_start_time IS NULL
+        """)
+        cur.execute("""
+            ALTER TABLE logra_reports
+            ALTER COLUMN meeting_start_time SET DEFAULT ''
+        """)
+        cur.execute("""
+            ALTER TABLE logra_reports
+            ADD COLUMN IF NOT EXISTS meeting_end_time TEXT DEFAULT ''
+        """)
+        cur.execute("""
+            UPDATE logra_reports
+            SET meeting_end_time = ''
+            WHERE meeting_end_time IS NULL
+        """)
+        cur.execute("""
+            ALTER TABLE logra_reports
+            ALTER COLUMN meeting_end_time SET DEFAULT ''
+        """)
+        cur.execute("""
+            ALTER TABLE logra_reports
+            ADD COLUMN IF NOT EXISTS meeting_location TEXT DEFAULT ''
+        """)
+        cur.execute("""
+            UPDATE logra_reports
+            SET meeting_location = ''
+            WHERE meeting_location IS NULL
+        """)
+        cur.execute("""
+            ALTER TABLE logra_reports
+            ALTER COLUMN meeting_location SET DEFAULT ''
+        """)
+        cur.execute("""
+            ALTER TABLE logra_reports
+            ADD COLUMN IF NOT EXISTS meeting_person TEXT DEFAULT ''
+        """)
+        cur.execute("""
+            UPDATE logra_reports
+            SET meeting_person = ''
+            WHERE meeting_person IS NULL
+        """)
+        cur.execute("""
+            ALTER TABLE logra_reports
+            ALTER COLUMN meeting_person SET DEFAULT ''
+        """)
+        cur.execute("""
+            ALTER TABLE logra_reports
             ADD COLUMN IF NOT EXISTS agenda_items JSONB NOT NULL DEFAULT '[]'::jsonb
+        """)
+        cur.execute("""
+            ALTER TABLE logra_reports
+            ADD COLUMN IF NOT EXISTS agenda_notes TEXT DEFAULT ''
+        """)
+        cur.execute("""
+            UPDATE logra_reports
+            SET agenda_notes = ''
+            WHERE agenda_notes IS NULL
+        """)
+        cur.execute("""
+            ALTER TABLE logra_reports
+            ALTER COLUMN agenda_notes SET DEFAULT ''
         """)
         cur.execute("""
             ALTER TABLE logra_reports
@@ -126,6 +210,7 @@ def list_logra_reports(conn=Depends(get_db)):
                 r.category,
                 r.status,
                 r.agenda_items,
+                r.agenda_notes,
                 r.created_by,
                 r.created_at,
                 r.updated_at,
@@ -184,27 +269,55 @@ def save_logra_report(payload: dict, conn=Depends(get_db)):
     created_by = payload.get("created_by")
     answers = payload.get("answers") or []
     agenda_items = payload.get("agenda_items") or []
+    agenda_notes = payload.get("agenda_notes") or ""
     if not isinstance(agenda_items, list):
         agenda_items = []
+    first_meeting = agenda_items[0] if agenda_items and isinstance(agenda_items[0], dict) else {}
+    meeting_date = first_meeting.get("date_iso") or datetime.utcnow().date().isoformat()
+    meeting_start_time = first_meeting.get("start_time") or ""
+    meeting_end_time = first_meeting.get("end_time") or ""
+    meeting_location = first_meeting.get("place") or ""
+    meeting_person = first_meeting.get("person") or ""
 
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             if report_id:
                 cur.execute("""
                     UPDATE logra_reports
-                    SET title = %s, category = %s, agenda_items = %s, updated_at = %s
+                    SET title = %s,
+                        category = %s,
+                        meeting_date = %s,
+                        meeting_start_time = %s,
+                        meeting_end_time = %s,
+                        meeting_location = %s,
+                        meeting_person = %s,
+                        agenda_items = %s,
+                        agenda_notes = %s,
+                        updated_at = %s
                     WHERE id = %s
                     RETURNING *
-                """, (title, category, Json(agenda_items), datetime.utcnow(), report_id))
+                """, (
+                    title, category, meeting_date, meeting_start_time, meeting_end_time,
+                    meeting_location, meeting_person, Json(agenda_items), agenda_notes,
+                    datetime.utcnow(), report_id
+                ))
                 report = cur.fetchone()
                 if not report:
                     raise HTTPException(status_code=404, detail="LOGRA report not found")
             else:
                 cur.execute("""
-                    INSERT INTO logra_reports (title, category, agenda_items, created_by, created_at, updated_at)
-                    VALUES (%s, %s, %s, %s, %s, %s)
+                    INSERT INTO logra_reports (
+                        title, category, meeting_date, meeting_start_time, meeting_end_time,
+                        meeting_location, meeting_person, agenda_items, agenda_notes,
+                        created_by, created_at, updated_at
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING *
-                """, (title, category, Json(agenda_items), created_by, datetime.utcnow(), datetime.utcnow()))
+                """, (
+                    title, category, meeting_date, meeting_start_time, meeting_end_time,
+                    meeting_location, meeting_person, Json(agenda_items), agenda_notes,
+                    created_by, datetime.utcnow(), datetime.utcnow()
+                ))
                 report = cur.fetchone()
                 report_id = report["id"]
 
