@@ -8,9 +8,11 @@ import sys
 import ctypes
 import tkinter as tk
 from tkinter import messagebox
+from datetime import datetime, timedelta
 
 from resource_utils import resource_path
 from splash_screen import SplashScreen
+import api_client
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 BACKEND_DIR = os.path.join(BASE_DIR, "backend_api")
@@ -65,6 +67,7 @@ class MainApp(tk.Frame):
         parent.protocol("WM_DELETE_WINDOW", self.on_close)
 
         self.menu_visible = True
+        self._logra_alert_last = {}
 
         self._build_menu_lateral()
         self._build_content_area()
@@ -79,6 +82,7 @@ class MainApp(tk.Frame):
         ).pack(pady=(5, 15))
 
         self.cambiar_modulo("Dashboard")
+        self._start_logra_global_alerts()
 
     # --------------------------------------------------------
     # Menú lateral (RBAC)
@@ -105,6 +109,8 @@ class MainApp(tk.Frame):
             ("HHRR", "hhrre"),
             ("Comercial", "comercial"),
             ("Informes", "informes"),
+            ("PORTIA", "portia"),
+            ("Q&A SOM", "qa_som"),
         ]
 
         for label, module_code in modules_config:
@@ -148,6 +154,8 @@ class MainApp(tk.Frame):
             "HHRR": "hhrre",
             "Comercial": "comercial",
             "Informes": "informes",
+            "PORTIA": "portia",
+            "Q&A SOM": "qa_som",
         }
 
         module_code = module_map.get(modulo)
@@ -164,9 +172,15 @@ class MainApp(tk.Frame):
             w.destroy()
 
         if modulo == "Dashboard":
-            from Modulos.Dashboard.ui_dashboard import DashboardUI
-            DashboardUI(self.content, go_back_callback=self.mostrar_menu)\
-                .pack(fill="both", expand=True)
+
+            from Modulos.Dashboards.dashboards_home_ui import DashboardsHomeUI
+
+            DashboardsHomeUI(
+                parent=self.content
+            ).pack(
+                fill="both",
+                expand=True
+            )
 
         elif modulo == "Master Data":
             from Modulos.MasterData.ui_masterdata import MasterDataUI
@@ -216,6 +230,24 @@ class MainApp(tk.Frame):
                 rol=self.rol
             ).pack(fill="both", expand=True)
 
+        elif modulo == "PORTIA":
+            from Modulos.Portia.portia_ui import PortiaUI
+            PortiaUI(
+                parent=self.content,
+                usuario=self.usuario,
+                rol=self.rol,
+                on_back=self.mostrar_menu
+            ).pack(fill="both", expand=True)
+
+        elif modulo == "Q&A SOM":
+            from Modulos.Portia.qa_ui import QASomUI
+            QASomUI(
+                parent=self.content,
+                usuario=self.usuario,
+                rol=self.rol,
+                on_back=self.mostrar_menu
+            ).pack(fill="both", expand=True)
+
     # --------------------------------------------------------
     # Utilidades generales
     # --------------------------------------------------------
@@ -250,6 +282,94 @@ class MainApp(tk.Frame):
 
     def mostrar_menu(self):
         self.cambiar_modulo("Dashboard")
+
+    # =========================================================
+    # LOGRA global agenda alerts
+    # =========================================================
+    def _start_logra_global_alerts(self):
+        self.after(15000, self._check_logra_global_alerts)
+
+    def _parse_logra_agenda_datetime(self, item, time_key):
+        date_value = item.get("date_iso") or item.get("date") or ""
+        time_value = item.get(time_key) or ""
+        for date_format in ("%Y-%m-%d", "%B %d, %Y"):
+            try:
+                parsed_date = datetime.strptime(date_value, date_format).date()
+                parsed_time = datetime.strptime(time_value, "%H:%M").time()
+                return datetime.combine(parsed_date, parsed_time)
+            except Exception:
+                continue
+        return None
+
+    def _should_show_logra_alert(self, key, cooldown_minutes=5):
+        now = datetime.now()
+        last = self._logra_alert_last.get(key)
+        if last and now - last < timedelta(minutes=cooldown_minutes):
+            return False
+        self._logra_alert_last[key] = now
+        return True
+
+    def _check_logra_global_alerts(self):
+        try:
+            resp = api_client.list_logra_reports_api()
+            rows = resp.get("data") or []
+            now = datetime.now()
+            for report in rows:
+                report_title = report.get("title") or f"LOGRA #{report.get('id')}"
+                for idx, item in enumerate(report.get("agenda_items") or []):
+                    if not isinstance(item, dict):
+                        continue
+                    if str(item.get("status") or "").strip().lower() == "completado":
+                        continue
+
+                    start = self._parse_logra_agenda_datetime(item, "start_time")
+                    end = self._parse_logra_agenda_datetime(item, "end_time")
+                    if not start:
+                        continue
+                    try:
+                        reminder = int(item.get("reminder_minutes") or 0)
+                    except Exception:
+                        reminder = 0
+
+                    label = item.get("topic") or item.get("person") or "Reunion LOGRA"
+                    base_key = (
+                        report.get("id"),
+                        idx,
+                        item.get("date_iso") or item.get("date"),
+                        item.get("start_time"),
+                    )
+
+                    if reminder > 0 and start - timedelta(minutes=reminder) <= now < start:
+                        key = base_key + ("before",)
+                        if self._should_show_logra_alert(key):
+                            messagebox.showinfo(
+                                "Agenda LOGRA",
+                                f"{report_title}\n\n'{label}' inicia en menos de {reminder} minutos.",
+                                parent=self.parent
+                            )
+
+                    if start <= now and (not end or now <= end):
+                        key = base_key + ("current",)
+                        if self._should_show_logra_alert(key):
+                            messagebox.showinfo(
+                                "Agenda LOGRA",
+                                f"{report_title}\n\n'{label}' esta en curso.",
+                                parent=self.parent
+                            )
+
+                    if end and now > end:
+                        key = base_key + ("late",)
+                        if self._should_show_logra_alert(key):
+                            messagebox.showwarning(
+                                "Agenda LOGRA",
+                                f"{report_title}\n\n'{label}' ya paso y no esta marcada como completada.",
+                                parent=self.parent
+                            )
+        except Exception:
+            pass
+        finally:
+            if self.winfo_exists():
+                self.after(60000, self._check_logra_global_alerts)
 
     # =========================================================
     # INFORMES — callbacks
@@ -293,37 +413,92 @@ class MainApp(tk.Frame):
 
 
     # --------------------------------------------------------
-    # RBAC LOCAL (SOLO VISUAL — SEGURIDAD REAL EN BACKEND)
+    # RBAC LOCAL (VISUAL UI)
     # --------------------------------------------------------
     def _has_permission(self, module_code: str, action: str) -> bool:
-        """
-        Control visual de permisos basado en rol.
-        La seguridad real se valida en backend.
-        """
 
-        # Master / Admin → acceso total
-        if self.rol.lower() in ("master", "admin"):
+        usuario = (self.usuario or "").lower()
+        rol = (self.rol or "").lower()
+        module_code = (module_code or "").lower()
+        action = (action or "").lower()
+
+        # Q&A SOM es la base de conocimiento/manual y queda disponible para todos.
+        if module_code == "qa_som" and action == "view":
             return True
 
-        # Ejemplo básico de roles
+        # ====================================================
+        # ADMINISTRADORES → ACCESO TOTAL
+        # ====================================================
+
+        if usuario in ("gerencia1", "captain", "aaron01", "admin"):
+            return True
+
+        # ====================================================
+        # SURVEYORS
+        # SOLO PUEDEN VER:
+        # Comercial / HHRR / Informes
+        # ====================================================
+
+        if usuario in ("surveyor01", "surveyor02"):
+
+            allowed_modules = {
+                "comercial",
+                "hhrre",
+                "informes",
+                "qa_som",
+            }
+
+            if module_code in allowed_modules and action == "view":
+                return True
+
+            return False
+
+        # ====================================================
+        # CONTADOR
+        # SOLO PUEDE VER:
+        # Finanzas / HHRR
+        # ====================================================
+
+        if usuario == "contador01":
+
+            allowed_modules = {
+                "finanzas",
+                "hhrre",
+                "qa_som",
+            }
+
+            if module_code in allowed_modules and action == "view":
+                return True
+
+            return False
+
+        # ====================================================
+        # FALLBACK POR ROL
+        # ====================================================
+
+        if rol in ("master", "admin"):
+            return True
+
         role_permissions = {
             "user": {
                 "dashboard": ["view"],
                 "servicios": ["view"],
                 "informes": ["view"],
+                "qa_som": ["view"],
             },
             "finance": {
                 "dashboard": ["view"],
                 "finanzas": ["view"],
-                "informes": ["view"],
+                "qa_som": ["view"],
             },
             "hr": {
                 "dashboard": ["view"],
                 "hhrre": ["view"],
+                "qa_som": ["view"],
             }
         }
 
-        allowed = role_permissions.get(self.rol.lower(), {})
+        allowed = role_permissions.get(rol, {})
         actions = allowed.get(module_code, [])
 
         return action in actions

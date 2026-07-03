@@ -415,11 +415,20 @@ class LograQuestionnairesForm(ttk.Frame):
         box.grid(row=4, column=0, sticky="ew", pady=(8, 0))
         ttk.Label(box, text="Adjuntos:", foreground="#555555").pack(side="left", padx=(0, 6))
         for att in attachments[:self.MAX_ATTACHMENTS_PER_QUESTION]:
+            item_box = ttk.Frame(box)
+            item_box.pack(side="left", padx=3)
             ttk.Button(
-                box,
+                item_box,
                 text=att.get("original_filename") or f"Adjunto {att.get('id')}",
                 command=lambda a=att: self._open_attachment(a)
-            ).pack(side="left", padx=3)
+            ).pack(side="left")
+            if not self.review_mode:
+                ttk.Button(
+                    item_box,
+                    text="-",
+                    width=2,
+                    command=lambda a=att: self._delete_attachment(a)
+                ).pack(side="left", padx=(2, 0))
 
     # =========================================================
     # Actions
@@ -527,6 +536,17 @@ class LograQuestionnairesForm(ttk.Frame):
         resp = api_client.open_logra_attachment_api(attachment.get("id"))
         if not resp.get("success"):
             messagebox.showerror("LOGRA", f"No se pudo abrir el adjunto:\n{resp.get('error') or resp}")
+
+    def _delete_attachment(self, attachment):
+        name = attachment.get("original_filename") or f"Adjunto {attachment.get('id')}"
+        if not messagebox.askyesno("LOGRA", f"Eliminar adjunto?\n\n{name}"):
+            return
+        resp = api_client.delete_logra_attachment_api(attachment.get("id"))
+        if not resp.get("success"):
+            messagebox.showerror("LOGRA", f"No se pudo eliminar el adjunto:\n{resp.get('error') or resp}")
+            return
+        messagebox.showinfo("LOGRA", "Adjunto eliminado correctamente.")
+        self._render_current_page()
 
     def _open_agenda(self):
         PopupLograAgenda(self, self)
@@ -927,11 +947,12 @@ class PopupLograAgenda(tk.Toplevel):
         all_items = []
         for report in rows:
             report_title = report.get("title") or f"LOGRA #{report.get('id')}"
-            for item in report.get("agenda_items") or []:
+            for agenda_index, item in enumerate(report.get("agenda_items") or []):
                 if not isinstance(item, dict):
                     continue
                 row = dict(item)
                 row["report_id"] = report.get("id")
+                row["agenda_index"] = agenda_index
                 row["report_title"] = report_title
                 all_items.append(row)
 
@@ -1016,10 +1037,25 @@ class PopupLograAgenda(tk.Toplevel):
         if not selected:
             messagebox.showwarning("Agenda LOGRA", "Selecciona una linea.")
             return
+        if not messagebox.askyesno("Agenda LOGRA", "Deseas eliminar la linea seleccionada de la agenda?"):
+            return
+
         for index in sorted((int(i) for i in selected), reverse=True):
             if 0 <= index < len(self.items):
+                item = self.items[index]
+                report_id = item.get("report_id")
+                agenda_index = item.get("agenda_index")
+                if report_id is not None and agenda_index is not None:
+                    resp = api_client.delete_logra_agenda_item_api(report_id, agenda_index)
+                    if not resp.get("success"):
+                        messagebox.showerror(
+                            "Agenda LOGRA",
+                            f"No se pudo eliminar en backend:\n{resp.get('error') or resp}"
+                        )
+                        continue
                 self.items.pop(index)
         self._render()
+        messagebox.showinfo("Agenda LOGRA", "Linea eliminada correctamente.")
 
     def _save(self):
         self.form_instance.agenda_items = [dict(item) for item in self.items]

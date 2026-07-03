@@ -482,6 +482,74 @@ def list_logra_attachments(
         return {"data": cur.fetchall()}
 
 
+@router.delete("/{report_id}/agenda-items/{agenda_index}")
+def delete_logra_agenda_item(report_id: int, agenda_index: int, conn=Depends(get_db)):
+    _ensure_schema(conn)
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT agenda_items FROM logra_reports WHERE id = %s", (report_id,))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="LOGRA report not found")
+
+            items = row.get("agenda_items") or []
+            if not isinstance(items, list):
+                items = []
+            if agenda_index < 0 or agenda_index >= len(items):
+                raise HTTPException(status_code=404, detail="Agenda item not found")
+
+            items.pop(agenda_index)
+            cur.execute("""
+                UPDATE logra_reports
+                SET agenda_items = %s, updated_at = %s
+                WHERE id = %s
+                RETURNING id, agenda_items, updated_at
+            """, (Json(items), datetime.utcnow(), report_id))
+            updated = cur.fetchone()
+        conn.commit()
+        return {"success": True, "report": updated}
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as exc:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"LOGRA agenda delete error: {exc}")
+
+
+@router.delete("/attachments/{attachment_id}")
+def delete_logra_attachment(attachment_id: int, conn=Depends(get_db)):
+    _ensure_schema(conn)
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT id, stored_path
+                FROM logra_attachments
+                WHERE id = %s
+            """, (attachment_id,))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Attachment not found")
+
+            cur.execute("DELETE FROM logra_attachments WHERE id = %s", (attachment_id,))
+
+        conn.commit()
+
+        path = Path(row["stored_path"])
+        try:
+            if path.exists():
+                path.unlink()
+        except Exception:
+            pass
+
+        return {"success": True}
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as exc:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"LOGRA attachment delete error: {exc}")
+
+
 @router.get("/attachments/{attachment_id}/download")
 def download_logra_attachment(attachment_id: int, conn=Depends(get_db)):
     _ensure_schema(conn)
