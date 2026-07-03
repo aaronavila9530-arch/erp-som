@@ -584,12 +584,34 @@ export const ERP_MODULES: AppModule[] = [
       { key: "holds-certificate", label: "Holds inspection certificate", endpoint: "/vessel-holds-inspection-certificates" },
       { key: "sampling-certificate", label: "Sampling certificate", endpoint: "/sampling-certificates" },
       { key: "sealing-certificate", label: "Sealing certificate", endpoint: "/sealing-certificates" },
-      { key: "lashing-certificate", label: "Lashing certificate", endpoint: "/lashing-certificates" }
+      { key: "lashing-certificate", label: "Lashing certificate", endpoint: "/lashing-certificates" },
+      { key: "logra", label: "LOGRA", endpoint: "/logra-reports" }
+    ]
+  },
+  {
+    code: "qa_som",
+    label: "Q&A SOM",
+    sections: [
+      { key: "portia-qa", label: "Manual Q&A", endpoint: "/portia/qa" }
+    ]
+  },
+  {
+    code: "portia",
+    label: "PORTIA",
+    sections: [
+      { key: "portia-chat", label: "Consultas", endpoint: "/portia/suggestions" }
     ]
   }
 ];
 
-export function getAllowedModules(allowedCodes: string[]) {
+export function getAllowedModules(allowedCodes: string[], role = "") {
   const allowed = new Set(allowedCodes);
-  return ERP_MODULES.filter((module) => allowed.has(module.code));
+  const normalizedRole = role.trim().toLowerCase();
+  const canUsePortia = normalizedRole === "admin" || normalizedRole === "master";
+
+  return ERP_MODULES.filter((module) => {
+    if (module.code === "qa_som") return true;
+    if (module.code === "portia") return canUsePortia;
+    return allowed.has(module.code);
+  });
 }

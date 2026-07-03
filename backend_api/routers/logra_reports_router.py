@@ -282,6 +282,7 @@ def save_logra_report(payload: dict, conn=Depends(get_db)):
     report_id = payload.get("id")
     title = payload.get("title") or "LOGRA Questionnaire"
     category = payload.get("category") or "LOGRA"
+    status = payload.get("status") or "Draft"
     created_by = payload.get("created_by")
     answers = payload.get("answers") or []
     agenda_items = payload.get("agenda_items") or []
@@ -305,6 +306,7 @@ def save_logra_report(payload: dict, conn=Depends(get_db)):
                     UPDATE logra_reports
                     SET title = %s,
                         category = %s,
+                        status = %s,
                         meeting_date = %s,
                         meeting_time = %s,
                         meeting_start_time = %s,
@@ -317,7 +319,7 @@ def save_logra_report(payload: dict, conn=Depends(get_db)):
                     WHERE id = %s
                     RETURNING *
                 """, (
-                    title, category, meeting_date, meeting_time, meeting_start_time, meeting_end_time,
+                    title, category, status, meeting_date, meeting_time, meeting_start_time, meeting_end_time,
                     meeting_location, meeting_person, Json(agenda_items), agenda_notes,
                     datetime.utcnow(), report_id
                 ))
@@ -327,14 +329,14 @@ def save_logra_report(payload: dict, conn=Depends(get_db)):
             else:
                 cur.execute("""
                     INSERT INTO logra_reports (
-                        title, category, meeting_date, meeting_time, meeting_start_time, meeting_end_time,
+                        title, category, status, meeting_date, meeting_time, meeting_start_time, meeting_end_time,
                         meeting_location, meeting_person, agenda_items, agenda_notes,
                         created_by, created_at, updated_at
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING *
                 """, (
-                    title, category, meeting_date, meeting_time, meeting_start_time, meeting_end_time,
+                    title, category, status, meeting_date, meeting_time, meeting_start_time, meeting_end_time,
                     meeting_location, meeting_person, Json(agenda_items), agenda_notes,
                     created_by, datetime.utcnow(), datetime.utcnow()
                 ))

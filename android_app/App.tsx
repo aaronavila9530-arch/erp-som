@@ -2,6 +2,7 @@ import * as LocalAuthentication from "expo-local-authentication";
 import * as FileSystem from "expo-file-system";
 import * as Sharing from "expo-sharing";
 import * as SecureStore from "expo-secure-store";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import React, { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -21,21 +22,179 @@ import {
   View
 } from "react-native";
 
-import { API_BASE_URL, apiRequest, confirmTotp, login, LoginResponse, verifyTotp } from "./src/api/client";
+import { API_BASE_URL, apiRequest, confirmTotp, login, LoginResponse, Session, verifyTotp } from "./src/api/client";
 import { AuthProvider, useAuth } from "./src/auth/AuthContext";
 import { AppModule, AppSection, TableAction, getAllowedModules } from "./src/config/modules";
+import { LOGRA_QUESTIONNAIRES, LograQuestion, LograQuestionnaire } from "./src/config/lograQuestionnaires";
 
 const BLUE = "#003A75";
 const BORDER = "#D7DEE8";
 const CREDS_KEY = "erp_som_saved_credentials";
+const OFFLINE_QUEUE_KEY = "erp_som_offline_queue";
 
 type SavedCredentials = {
   usuario: string;
   password: string;
 };
 
+type OfflineQueueItem = {
+  id: string;
+  path: string;
+  method: "POST" | "PUT" | "PATCH" | "DELETE";
+  body?: unknown;
+  session: Session;
+  label: string;
+  createdAt: string;
+  lastError?: string;
+};
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+function isNetworkFailure(err: unknown) {
+  const message = err instanceof Error ? err.message : String(err || "");
+  return /network request failed|failed to fetch|network|internet|timeout|timed out|offline/i.test(message);
+}
+
+async function readOfflineQueue(): Promise<OfflineQueueItem[]> {
+  try {
+    const raw = await AsyncStorage.getItem(OFFLINE_QUEUE_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.filter((item) => asRecord(item)) as OfflineQueueItem[] : [];
+  } catch {
+    return [];
+  }
+}
+
+async function writeOfflineQueue(items: OfflineQueueItem[]) {
+  await AsyncStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(items));
+}
+
+async function queueOfflineRequest({
+  path,
+  method,
+  body,
+  session,
+  label
+}: {
+  path: string;
+  method: "POST" | "PUT" | "PATCH" | "DELETE";
+  body?: unknown;
+  session: Session;
+  label: string;
+}) {
+  const queue = await readOfflineQueue();
+  const item: OfflineQueueItem = {
+    id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    path,
+    method,
+    body,
+    session,
+    label,
+    createdAt: new Date().toISOString()
+  };
+  await writeOfflineQueue([...queue, item]);
+  return item;
+}
+
+async function offlineApiRequest<T>(
+  path: string,
+  options: {
+    method: "POST" | "PUT" | "PATCH" | "DELETE";
+    body?: unknown;
+    session: Session;
+    offlineLabel: string;
+  }
+): Promise<T | { queuedOffline: true; queuedId: string }> {
+  try {
+    return await apiRequest<T>(path, options);
+  } catch (err) {
+    if (!isNetworkFailure(err)) throw err;
+    const queued = await queueOfflineRequest({
+      path,
+      method: options.method,
+      body: options.body,
+      session: options.session,
+      label: options.offlineLabel
+    });
+    return { queuedOffline: true, queuedId: queued.id };
+  }
+}
+
+function isQueuedOffline(value: unknown): value is { queuedOffline: true; queuedId: string } {
+  return Boolean(asRecord(value)?.queuedOffline);
+}
+
+async function syncOfflineQueue(currentSession?: Session | null) {
+  const queue = await readOfflineQueue();
+  if (!queue.length) return { sent: 0, pending: 0, errors: [] as string[] };
+
+  const remaining: OfflineQueueItem[] = [];
+  const errors: string[] = [];
+  let sent = 0;
+
+  for (const item of queue) {
+    try {
+      await apiRequest(item.path, {
+        method: item.method,
+        body: item.body,
+        session: item.session || currentSession
+      });
+      sent += 1;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "No se pudo sincronizar";
+      remaining.push({ ...item, lastError: message });
+      errors.push(`${item.label}: ${message}`);
+    }
+  }
+
+  await writeOfflineQueue(remaining);
+  return { sent, pending: remaining.length, errors };
+}
+
+function useOfflineSync(session: Session | null) {
+  const [pendingCount, setPendingCount] = useState(0);
+  const [syncing, setSyncing] = useState(false);
+  const [message, setMessage] = useState("");
+
+  async function refreshCount() {
+    const queue = await readOfflineQueue();
+    setPendingCount(queue.length);
+  }
+
+  async function syncNow(showMessage = true) {
+    if (!session || syncing) return;
+    setSyncing(true);
+    try {
+      const result = await syncOfflineQueue(session);
+      setPendingCount(result.pending);
+      if (showMessage) {
+        if (result.sent && !result.pending) setMessage(`Sincronizado: ${result.sent} pendiente(s) enviados.`);
+        else if (result.sent || result.pending) setMessage(`Sync: ${result.sent} enviados, ${result.pending} pendientes.`);
+        else setMessage("No hay datos pendientes por sincronizar.");
+      }
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  useEffect(() => {
+    refreshCount();
+  }, [session?.usuario]);
+
+  useEffect(() => {
+    if (!session) return;
+    const timer = setInterval(() => {
+      readOfflineQueue().then((queue) => {
+        setPendingCount(queue.length);
+        if (queue.length) syncNow(false);
+      });
+    }, 15000);
+    return () => clearInterval(timer);
+  }, [session?.usuario, syncing]);
+
+  return { pendingCount, syncing, message, setMessage, refreshCount, syncNow };
 }
 
 function extractRows(payload: unknown): Record<string, unknown>[] {
@@ -282,10 +441,11 @@ function Shell() {
   const [payload, setPayload] = useState<unknown>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const offlineSync = useOfflineSync(session);
 
   const modules = useMemo(
-    () => getAllowedModules(session?.modules.map((module) => module.code) ?? []),
-    [session?.modules]
+    () => getAllowedModules(session?.modules.map((module) => module.code) ?? [], session?.rol ?? ""),
+    [session?.modules, session?.rol]
   );
 
   useEffect(() => {
@@ -295,7 +455,11 @@ function Shell() {
   useEffect(() => {
     if (activeModule?.code !== "informes" || activeSection || !session) return;
     const statusSection = activeModule.sections.find((section) => section.key === "status-informes");
-    if (statusSection) openSection(statusSection);
+    if (statusSection) {
+      setActiveSection(statusSection);
+      setPayload({ data: [] });
+      setError("");
+    }
   }, [activeModule, activeSection, session]);
 
   async function openSection(section: AppSection) {
@@ -337,6 +501,14 @@ function Shell() {
           <Pressable style={styles.headerButton} onPress={logout}>
             <Text style={styles.headerButtonText}>Salir</Text>
           </Pressable>
+        </View>
+        <View style={styles.syncRow}>
+          <Pressable style={styles.syncButton} onPress={() => offlineSync.syncNow(true)} disabled={offlineSync.syncing}>
+            <Text style={styles.syncButtonText}>
+              {offlineSync.syncing ? "Sincronizando..." : `Sync${offlineSync.pendingCount ? ` (${offlineSync.pendingCount})` : ""}`}
+            </Text>
+          </Pressable>
+          {offlineSync.message ? <Text style={styles.syncMessage}>{offlineSync.message}</Text> : null}
         </View>
 
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.moduleTabs}>
@@ -432,6 +604,10 @@ function DataView({
 
   if (moduleCode === "informes" && section) {
     return <InformesSectionMobile section={section} initialPayload={payload} session={session} />;
+  }
+
+  if ((moduleCode === "portia" || moduleCode === "qa_som") && section) {
+    return <PortiaSectionMobile section={section} initialPayload={payload} session={session} />;
   }
 
   if (section?.key === "credit-hold") {
@@ -1386,6 +1562,176 @@ function ComercialKpisView({
   );
 }
 
+function PortiaSectionMobile({
+  section,
+  initialPayload,
+  session
+}: {
+  section: AppSection;
+  initialPayload: unknown;
+  session: NonNullable<ReturnType<typeof useAuth>["session"]>;
+}) {
+  const [question, setQuestion] = useState("");
+  const [scope, setScope] = useState("erp");
+  const [answer, setAnswer] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const [qaRows, setQaRows] = useState<Record<string, unknown>[]>([]);
+  const [searchText, setSearchText] = useState("");
+  const [appliedSearch, setAppliedSearch] = useState("");
+
+  const suggestions = useMemo(() => {
+    const rows = extractRows(initialPayload);
+    if (rows.length) return rows.map((row) => formatValue(row.question || row.value || row.text)).filter((item) => item !== "-");
+    const obj = asRecord(initialPayload);
+    const data = obj?.data;
+    return Array.isArray(data) ? data.map((item) => formatValue(item)).filter((item) => item !== "-") : [];
+  }, [initialPayload]);
+
+  useEffect(() => {
+    setMessage("");
+    setAnswer("");
+    setAppliedSearch("");
+    if (section.key !== "portia-qa") return;
+    const rows = extractRows(initialPayload);
+    if (rows.length) {
+      setQaRows(rows);
+      return;
+    }
+    apiRequest<Record<string, unknown>>("/portia/qa", { session })
+      .then((payload) => setQaRows(extractRows(payload)))
+      .catch((err) => setMessage(err instanceof Error ? err.message : "No se pudo cargar Q&A SOM."));
+  }, [section.key, initialPayload, session.usuario]);
+
+  async function askPortia(nextQuestion?: string, nextScope = scope) {
+    const cleanQuestion = (nextQuestion ?? question).trim();
+    if (!cleanQuestion) {
+      setMessage("Escriba una pregunta para PORTIA.");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      const payload = await apiRequest<Record<string, unknown>>("/portia/ask", {
+        method: "POST",
+        session,
+        body: { question: cleanQuestion, scope: nextScope }
+      });
+      setQuestion(cleanQuestion);
+      setAnswer(formatValue(payload.answer));
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "PORTIA no pudo responder.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const filteredQa = useMemo(() => {
+    const term = appliedSearch.trim().toLowerCase();
+    if (!term) return qaRows;
+    return qaRows.filter((row) => {
+      const text = `${formatValue(row.category)} ${formatValue(row.question)} ${formatValue(row.answer)}`.toLowerCase();
+      return text.includes(term);
+    });
+  }, [qaRows, appliedSearch]);
+
+  if (section.key === "portia-qa") {
+    return (
+      <View style={styles.tableShell}>
+        <Text style={styles.cardTitle}>Q&A SOM</Text>
+        <Text style={styles.helperText}>Manual funcional por modulo. Escriba un termino y presione Buscar.</Text>
+        <View style={styles.financeFilterBox}>
+          <Text style={styles.label}>Buscar en la base Q&A</Text>
+          <TextInput
+            style={styles.input}
+            value={searchText}
+            onChangeText={setSearchText}
+            placeholder="Ej. draft ballast, collections pagos, agregar servicio"
+            returnKeyType="search"
+            onSubmitEditing={() => setAppliedSearch(searchText)}
+          />
+          <View style={styles.financeFilterActions}>
+            <Pressable style={styles.actionButton} onPress={() => setAppliedSearch(searchText)}>
+              <Text style={styles.actionButtonText}>Buscar</Text>
+            </Pressable>
+            <Pressable
+              style={styles.modalClose}
+              onPress={() => {
+                setSearchText("");
+                setAppliedSearch("");
+              }}
+            >
+              <Text style={styles.modalCloseText}>Limpiar</Text>
+            </Pressable>
+          </View>
+        </View>
+        <Text style={styles.tableCount}>{filteredQa.length} resultado(s)</Text>
+        {message ? <Text style={styles.error}>{message}</Text> : null}
+        <View style={styles.list}>
+          {filteredQa.slice(0, 80).map((row, index) => (
+            <Pressable
+              key={`${formatValue(row.category)}-${index}`}
+              style={styles.rowCard}
+              onPress={() => setAnswer(formatValue(row.answer))}
+            >
+              <Text style={styles.kpiLabel}>{formatValue(row.category)}</Text>
+              <Text style={styles.rowTitle}>{formatValue(row.question)}</Text>
+              <Text style={styles.helperText} numberOfLines={3}>{formatValue(row.answer)}</Text>
+            </Pressable>
+          ))}
+        </View>
+        {answer ? (
+          <View style={styles.summaryBox}>
+            <Text style={styles.cardTitle}>Respuesta seleccionada</Text>
+            <Text style={styles.helperText}>{answer}</Text>
+          </View>
+        ) : null}
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.tableShell}>
+      <Text style={styles.cardTitle}>PORTIA SOM</Text>
+      <Text style={styles.helperText}>Consulta datos del ERP, el manual Q&A o preguntas generales si el backend tiene IA configurada.</Text>
+      <View style={styles.financeFilterBox}>
+        <SelectField
+          label="Alcance"
+          value={scope}
+          options={["erp", "qa", "general_chat"]}
+          onChange={setScope}
+        />
+        <Text style={styles.label}>Pregunta</Text>
+        <TextInput
+          multiline
+          style={[styles.input, styles.multilineInput]}
+          value={question}
+          onChangeText={setQuestion}
+          placeholder="Ej. Resume el estado financiero actual"
+        />
+        <PrimaryButton label="Preguntar a PORTIA" loading={busy} onPress={() => askPortia()} />
+      </View>
+      {suggestions.length ? (
+        <View style={styles.list}>
+          <Text style={styles.cardTitle}>Consultas sugeridas</Text>
+          {suggestions.slice(0, 20).map((item, index) => (
+            <Pressable key={`${item}-${index}`} style={styles.rowCard} onPress={() => askPortia(item, "erp")}>
+              <Text style={styles.rowTitle}>{item}</Text>
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
+      {answer ? (
+        <View style={styles.summaryBox}>
+          <Text style={styles.cardTitle}>Respuesta de PORTIA</Text>
+          <Text style={styles.helperText}>{answer}</Text>
+        </View>
+      ) : null}
+      {message ? <Text style={styles.error}>{message}</Text> : null}
+    </View>
+  );
+}
+
 type InformeAction = {
   key: string;
   label: string;
@@ -1415,7 +1761,7 @@ type InformeCreateField = {
 
 type InformeCreateConfig = {
   key: string;
-  group: "Informe contenedor" | "Informe buque" | "Certificados";
+  group: "Informe contenedor" | "Informe buque" | "Certificados" | "LOGRA";
   title: string;
   endpoint: string;
   dateFormat?: "ymd" | "dmy";
@@ -1541,9 +1887,11 @@ const INFORMES_CONFIG: Record<string, InformeConfig> = {
     updateEndpoint: "/vessel-crane-inspection/{id}",
     createEndpoint: "/vessel-crane-inspection/",
     statusField: "status",
-    columns: ["id", "report_number", "vessel", "client", "port", "country", "inspection_date", "status"],
-    filters: ["status", "client", "vessel", "port", "country"],
+    columns: ["id", "report_number", "vessel", "client", "port", "country", "report_date", "status"],
+    filters: ["status", "customer", "vessel", "port", "country"],
     actions: [
+      { key: "word", label: "Word", endpoint: "/vessel-crane-inspection-reports/{id}/generate-word", file: true },
+      { key: "presentation", label: "Presentacion PDF", endpoint: "/vessel-crane-inspection-reports/{id}/presentation", file: true },
       { key: "approve", label: "Aprobar", endpoint: "/vessel-crane-inspection/{id}", method: "PUT", body: { status: "Approved" } },
       { key: "reject", label: "Rechazar", endpoint: "/vessel-crane-inspection/{id}", method: "PUT", body: { status: "Rejected" } }
     ]
@@ -1576,8 +1924,8 @@ const INFORMES_CONFIG: Record<string, InformeConfig> = {
     actions: [
       { key: "word", label: "Word", endpoint: "/port-captancy-reports/{id}/word", file: true },
       { key: "presentation", label: "Presentacion", endpoint: "/port-captancy-reports/presentation/{id}", file: true },
-      { key: "approve", label: "Aprobar", endpoint: "/port-captancy-reports/{id}", method: "PUT", body: { status: "Approved" } },
-      { key: "reject", label: "Rechazar", endpoint: "/port-captancy-reports/{id}", method: "PUT", body: { status: "Rejected" } }
+      { key: "approve", label: "Aprobar", endpoint: "/port-captancy-reports/{report_number}", method: "PUT", body: { action: "approve" } },
+      { key: "reject", label: "Rechazar", endpoint: "/port-captancy-reports/{report_number}", method: "PUT", body: { action: "reject" } }
     ]
   },
   "weight-certificate": {
@@ -1587,13 +1935,13 @@ const INFORMES_CONFIG: Record<string, InformeConfig> = {
     updateEndpoint: "/weight-certificates/{id}",
     createEndpoint: "/weight-certificates",
     statusField: "status",
-    columns: ["id", "certificate_no", "vessel", "client", "port", "country", "date", "status"],
+    columns: ["id", "report_number", "vessel", "port", "country", "date", "status"],
     filters: ["status", "client", "vessel", "port", "country"],
     actions: [
       { key: "word", label: "Word", endpoint: "/weight-certificates/{id}/word", file: true },
       { key: "pdf", label: "PDF", endpoint: "/weight-certificates/{id}/pdf", file: true },
-      { key: "approve", label: "Aprobar", endpoint: "/weight-certificates/{id}", method: "PUT", body: { status: "approve" } },
-      { key: "reject", label: "Rechazar", endpoint: "/weight-certificates/{id}", method: "PUT", body: { status: "reject" } }
+      { key: "approve", label: "Aprobar", endpoint: "/weight-certificates/{id}", method: "PUT", body: { action: "approve" } },
+      { key: "reject", label: "Rechazar", endpoint: "/weight-certificates/{id}", method: "PUT", body: { action: "reject" } }
     ]
   },
   "holds-certificate": {
@@ -1603,7 +1951,7 @@ const INFORMES_CONFIG: Record<string, InformeConfig> = {
     updateEndpoint: "/vessel-holds-inspection-certificates/{id}",
     createEndpoint: "/vessel-holds-inspection-certificates",
     statusField: "status",
-    columns: ["id", "certificate_no", "vessel", "client", "port", "country", "date", "status"],
+    columns: ["id", "report_number", "vessel", "port", "country", "date", "status"],
     filters: ["status", "client", "vessel", "port", "country"],
     actions: [
       { key: "excel", label: "Excel", endpoint: "/vessel-holds-inspection-certificates/{id}/excel", file: true },
@@ -1619,7 +1967,7 @@ const INFORMES_CONFIG: Record<string, InformeConfig> = {
     updateEndpoint: "/sampling-certificates/{id}",
     createEndpoint: "/sampling-certificates",
     statusField: "status",
-    columns: ["id", "certificate_no", "vessel", "client", "port", "country", "date", "status"],
+    columns: ["id", "report_no", "vessel", "port", "country", "date", "status"],
     filters: ["status", "client", "vessel", "port", "country"],
     actions: [
       { key: "excel", label: "Excel", endpoint: "/sampling-certificates/{id}/excel", file: true },
@@ -1635,8 +1983,8 @@ const INFORMES_CONFIG: Record<string, InformeConfig> = {
     updateEndpoint: "/sealing-certificates/{id}",
     createEndpoint: "/sealing-certificates",
     statusField: "status",
-    columns: ["id", "certificate_no", "vessel", "client", "port", "country", "date", "status"],
-    filters: ["status", "client", "vessel", "port", "country"],
+    columns: ["id", "report_no", "vessel", "customer", "port", "country", "date", "status"],
+    filters: ["status", "customer", "vessel", "port", "country"],
     actions: [
       { key: "excel", label: "Excel", endpoint: "/sealing-certificates/{id}/excel", file: true },
       { key: "pdf", label: "PDF", endpoint: "/sealing-certificates/{id}/pdf", file: true },
@@ -1649,16 +1997,27 @@ const INFORMES_CONFIG: Record<string, InformeConfig> = {
     idField: "id",
     detailEndpoint: "/lashing-certificates/{id}",
     updateEndpoint: "/lashing-certificates/{id}",
-    createEndpoint: "/lashing-certificates",
+    createEndpoint: "/lashing-certificates/",
     statusField: "status",
-    columns: ["id", "certificate_no", "vessel", "client", "port", "country", "date", "status"],
-    filters: ["status", "client", "vessel", "port", "country"],
+    columns: ["id", "report_no", "customer", "flat_rack_container", "cargo_type", "port", "country", "date", "status"],
+    filters: ["status", "customer", "flat_rack_container", "cargo_type", "port", "country"],
     actions: [
       { key: "word", label: "Word", endpoint: "/lashing-certificates/{id}/word", file: true },
       { key: "pdf", label: "PDF", endpoint: "/lashing-certificates/{id}/pdf", file: true },
       { key: "approve", label: "Aprobar", endpoint: "/lashing-certificates/{id}", method: "PUT", body: { status: "Approve" } },
       { key: "reject", label: "Rechazar", endpoint: "/lashing-certificates/{id}", method: "PUT", body: { status: "Reject" } }
     ]
+  },
+  logra: {
+    title: "Informe LOGRA",
+    idField: "id",
+    detailEndpoint: "/logra-reports/{id}",
+    updateEndpoint: "/logra-reports",
+    createEndpoint: "/logra-reports",
+    statusField: "status",
+    columns: ["id", "title", "category", "status", "attachment_count", "updated_at"],
+    filters: ["title", "category", "status", "created_by"],
+    actions: []
   }
 };
 
@@ -1752,7 +2111,8 @@ const INFORME_REVIEW_OPTIONS = [
   { key: "holds-certificate", label: "Informe Vessel Holds Inspection" },
   { key: "sampling-certificate", label: "Informe Sampling Certificate" },
   { key: "sealing-certificate", label: "Informe Sealing Certificate" },
-  { key: "lashing-certificate", label: "Informe Lashing Certificate" }
+  { key: "lashing-certificate", label: "Informe Lashing Certificate" },
+  { key: "logra", label: "Informe LOGRA" }
 ];
 
 const COMMON_REPORT_FIELDS: InformeCreateField[] = [
@@ -1975,6 +2335,30 @@ const TRUCK_SUPERVISION_FIELDS: InformeCreateField[] = [
   { key: "conclusion_text", label: "Conclusion", type: "multiline" }
 ];
 
+const LOGRA_FIELDS: InformeCreateField[] = [
+  { key: "section_header", label: "LOGRA", type: "section" },
+  { key: "title", label: "Titulo" },
+  { key: "category", label: "Categoria" },
+  { key: "status", label: "Status" },
+  { key: "section_agenda", label: "Agenda", type: "section" },
+  { key: "meeting_date", label: "Fecha", type: "date" },
+  { key: "meeting_start_time", label: "Inicio HH:MM" },
+  { key: "meeting_end_time", label: "Fin HH:MM" },
+  { key: "meeting_location", label: "Lugar" },
+  { key: "meeting_person", label: "Persona" },
+  { key: "company_role", label: "Empresa/Rol" },
+  { key: "topic", label: "Tema" },
+  { key: "priority", label: "Prioridad" },
+  { key: "reminder_minutes", label: "Recordar min" },
+  { key: "agenda_notes", label: "Anotaciones generales", type: "multiline" },
+  { key: "section_questionnaire", label: "Cuestionario", type: "section" },
+  { key: "form_title", label: "Formulario" },
+  { key: "question_text", label: "Pregunta" },
+  { key: "bullet_1", label: "Bullet 1", type: "multiline" },
+  { key: "bullet_2", label: "Bullet 2", type: "multiline" },
+  { key: "bullet_3", label: "Bullet 3", type: "multiline" }
+];
+
 const INFORMES_CREATE_CONFIG: InformeCreateConfig[] = [
   {
     key: "container",
@@ -2009,7 +2393,8 @@ const INFORMES_CREATE_CONFIG: InformeCreateConfig[] = [
   { key: "holds-certificate", group: "Certificados", title: "Holds Inspection Certificate", endpoint: "/vessel-holds-inspection-certificates", fields: COMMON_REPORT_FIELDS },
   { key: "sampling-certificate", group: "Certificados", title: "Sampling Certificate", endpoint: "/sampling-certificates", fields: COMMON_REPORT_FIELDS },
   { key: "sealing-certificate", group: "Certificados", title: "Sealing Certificate", endpoint: "/sealing-certificates", fields: COMMON_REPORT_FIELDS },
-  { key: "lashing-certificate", group: "Certificados", title: "Lashing Certificate", endpoint: "/lashing-certificates", fields: COMMON_REPORT_FIELDS }
+  { key: "lashing-certificate", group: "Certificados", title: "Lashing Certificate", endpoint: "/lashing-certificates", fields: COMMON_REPORT_FIELDS },
+  { key: "logra", group: "LOGRA", title: "LOGRA", endpoint: "/logra-reports", fields: LOGRA_FIELDS }
 ];
 
 function toDmy(value: string) {
@@ -2068,9 +2453,27 @@ function InformesSectionMobile({
   const [bunkerReviewId, setBunkerReviewId] = useState<string | null>(null);
   const [cargoConditionOpen, setCargoConditionOpen] = useState(false);
   const [cargoConditionReviewId, setCargoConditionReviewId] = useState<string | null>(null);
+  const [vesselConditionOpen, setVesselConditionOpen] = useState(false);
+  const [vesselConditionReviewId, setVesselConditionReviewId] = useState<string | null>(null);
+  const [portCaptancyOpen, setPortCaptancyOpen] = useState(false);
+  const [portCaptancyReviewId, setPortCaptancyReviewId] = useState<string | null>(null);
+  const [craneInspectionOpen, setCraneInspectionOpen] = useState(false);
+  const [craneInspectionReviewId, setCraneInspectionReviewId] = useState<string | null>(null);
+  const [weightCertificateOpen, setWeightCertificateOpen] = useState(false);
+  const [weightCertificateReviewId, setWeightCertificateReviewId] = useState<string | null>(null);
+  const [holdsCertificateOpen, setHoldsCertificateOpen] = useState(false);
+  const [holdsCertificateReviewId, setHoldsCertificateReviewId] = useState<string | null>(null);
+  const [samplingCertificateOpen, setSamplingCertificateOpen] = useState(false);
+  const [samplingCertificateReviewId, setSamplingCertificateReviewId] = useState<string | null>(null);
+  const [sealingCertificateOpen, setSealingCertificateOpen] = useState(false);
+  const [sealingCertificateReviewId, setSealingCertificateReviewId] = useState<string | null>(null);
+  const [lashingCertificateOpen, setLashingCertificateOpen] = useState(false);
+  const [lashingCertificateReviewId, setLashingCertificateReviewId] = useState<string | null>(null);
+  const [lograOpen, setLograOpen] = useState(false);
+  const [lograReviewId, setLograReviewId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
-  const statusOptions = ["", "Pending", "Pending for review", "Approved", "Rejected", "Approve", "Reject"];
+  const statusOptions = ["", "Draft", "Pendiente", "En curso", "Completado", "Pending", "Pending for review", "Approved", "Rejected", "Approve", "Reject"];
 
   const visibleRows = rows.filter((row) => {
     const statusField = config.statusField || "status";
@@ -2163,6 +2566,96 @@ function InformesSectionMobile({
       setCargoConditionOpen(true);
       return;
     }
+    if (activeKey === "vessel-condition") {
+      const id = formatValue(selectedRow.id);
+      if (id === "-") {
+        setMessage("Seleccione un Vessel Condition valido.");
+        return;
+      }
+      setVesselConditionReviewId(id);
+      setVesselConditionOpen(true);
+      return;
+    }
+    if (activeKey === "port-captancy") {
+      const id = formatValue(selectedRow.id);
+      if (id === "-") {
+        setMessage("Seleccione un Port Captancy valido.");
+        return;
+      }
+      setPortCaptancyReviewId(id);
+      setPortCaptancyOpen(true);
+      return;
+    }
+    if (activeKey === "crane-inspection") {
+      const id = formatValue(selectedRow.id);
+      if (id === "-") {
+        setMessage("Seleccione un Crane Inspection valido.");
+        return;
+      }
+      setCraneInspectionReviewId(id);
+      setCraneInspectionOpen(true);
+      return;
+    }
+    if (activeKey === "weight-certificate") {
+      const id = formatValue(selectedRow.id);
+      if (id === "-") {
+        setMessage("Seleccione un Weight Certificate valido.");
+        return;
+      }
+      setWeightCertificateReviewId(id);
+      setWeightCertificateOpen(true);
+      return;
+    }
+    if (activeKey === "holds-certificate") {
+      const id = formatValue(selectedRow.id);
+      if (id === "-") {
+        setMessage("Seleccione un Holds Inspection Certificate valido.");
+        return;
+      }
+      setHoldsCertificateReviewId(id);
+      setHoldsCertificateOpen(true);
+      return;
+    }
+    if (activeKey === "sampling-certificate") {
+      const id = formatValue(selectedRow.id);
+      if (id === "-") {
+        setMessage("Seleccione un Sampling Certificate valido.");
+        return;
+      }
+      setSamplingCertificateReviewId(id);
+      setSamplingCertificateOpen(true);
+      return;
+    }
+    if (activeKey === "sealing-certificate") {
+      const id = formatValue(selectedRow.id);
+      if (id === "-") {
+        setMessage("Seleccione un Sealing Certificate valido.");
+        return;
+      }
+      setSealingCertificateReviewId(id);
+      setSealingCertificateOpen(true);
+      return;
+    }
+    if (activeKey === "lashing-certificate") {
+      const id = formatValue(selectedRow.id);
+      if (id === "-") {
+        setMessage("Seleccione un Lashing Certificate valido.");
+        return;
+      }
+      setLashingCertificateReviewId(id);
+      setLashingCertificateOpen(true);
+      return;
+    }
+    if (activeKey === "logra") {
+      const id = formatValue(selectedRow.id);
+      if (id === "-") {
+        setMessage("Seleccione un LOGRA valido.");
+        return;
+      }
+      setLograReviewId(id);
+      setLograOpen(true);
+      return;
+    }
     if (!config.detailEndpoint) {
       setDetail(selectedRow);
       setDetailForm(recordToEditableForm(selectedRow));
@@ -2184,6 +2677,10 @@ function InformesSectionMobile({
 
   async function saveDetail() {
     if (!detail) return;
+    if (activeKey === "logra") {
+      setMessage("LOGRA se puede revisar desde mobile. Para editar cuestionario, agenda y adjuntos use la pantalla LOGRA completa del ERP.");
+      return;
+    }
     const updateEndpoint = config.updateEndpoint || config.detailEndpoint;
     if (!updateEndpoint) {
       setMessage("Este informe no tiene endpoint de actualizacion.");
@@ -2193,15 +2690,16 @@ function InformesSectionMobile({
     setMessage("");
     try {
       const row = { ...detail, ...detailForm };
-      await apiRequest(endpointForRow(updateEndpoint, row, config.idField), {
+      const result = await offlineApiRequest(endpointForRow(updateEndpoint, row, config.idField), {
         method: "PUT",
         body: detailForm,
-        session
+        session,
+        offlineLabel: `Actualizar ${config.title}`
       });
-      setMessage("Informe actualizado correctamente.");
+      setMessage(isQueuedOffline(result) ? "Sin internet: cambios guardados en cache local para sincronizar." : "Informe actualizado correctamente.");
       setDetail(null);
       setDetailForm({});
-      await load();
+      if (!isQueuedOffline(result)) await load();
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "No se pudo guardar cambios.");
     } finally {
@@ -2227,9 +2725,14 @@ function InformesSectionMobile({
         await apiRequest(endpoint, { session });
         setMessage("Accion ejecutada correctamente.");
       } else {
-        await apiRequest(endpoint, { method: action.method, body: action.body, session });
-        setMessage("Accion ejecutada correctamente.");
-        await load();
+        const result = await offlineApiRequest(endpoint, {
+          method: action.method,
+          body: action.body,
+          session,
+          offlineLabel: `${action.label} ${config.title}`
+        });
+        setMessage(isQueuedOffline(result) ? "Sin internet: accion guardada en cache local para sincronizar." : "Accion ejecutada correctamente.");
+        if (!isQueuedOffline(result)) await load();
       }
     } catch (err) {
       setMessage(err instanceof Error ? err.message : `No se pudo ejecutar ${action.label}.`);
@@ -2251,6 +2754,17 @@ function InformesSectionMobile({
     if (configToCreate.key === "grain-sampling") {
       for (let index = 1; index <= 5; index += 1) initial[`hold${index}_product`] = "MAIZ AMARILLO";
     }
+    if (configToCreate.key === "logra") {
+      initial.title = "LOGRA";
+      initial.category = "LOGRA";
+      initial.status = "Pendiente";
+      initial.meeting_date = formatYmd(new Date());
+      initial.meeting_start_time = "09:00";
+      initial.meeting_end_time = "10:00";
+      initial.priority = "Media";
+      initial.reminder_minutes = "30";
+      initial.form_title = "LOGRA Mobile";
+    }
     setCreateForm(initial);
     setGenerateOpen(false);
     setGenerateGroup(null);
@@ -2262,6 +2776,53 @@ function InformesSectionMobile({
     setMessage("");
     try {
       const payload: Record<string, string> = { ...createForm, status: "Pending for review" };
+      if (createConfig.key === "logra") {
+        const bullets = [createForm.bullet_1, createForm.bullet_2, createForm.bullet_3].map((value) => (value || "").trim()).filter(Boolean);
+        const lograPayload = {
+          title: createForm.title || "LOGRA",
+          category: createForm.category || "LOGRA",
+          status: createForm.status || "Pendiente",
+          created_by: session.usuario,
+          agenda_notes: createForm.agenda_notes || "",
+          agenda_items: [
+            {
+              date_iso: createForm.meeting_date || formatYmd(new Date()),
+              start_time: createForm.meeting_start_time || "09:00",
+              end_time: createForm.meeting_end_time || "10:00",
+              place: createForm.meeting_location || "",
+              person: createForm.meeting_person || "",
+              company_role: createForm.company_role || "",
+              topic: createForm.topic || "",
+              priority: createForm.priority || "Media",
+              status: createForm.status || "Pendiente",
+              reminder_minutes: Number(createForm.reminder_minutes || 30)
+            }
+          ],
+          answers: createForm.question_text
+            ? [
+                {
+                  form_slug: "mobile-logra",
+                  form_title: createForm.form_title || "LOGRA Mobile",
+                  section: "Mobile",
+                  item_key: "mobile-1",
+                  question_text: createForm.question_text,
+                  bullets
+                }
+              ]
+            : []
+        };
+        const result = await offlineApiRequest(createConfig.endpoint, {
+          method: "POST",
+          body: lograPayload,
+          session,
+          offlineLabel: "Crear LOGRA"
+        });
+        setCreateConfig(null);
+        setCreateForm({});
+        setMessage(isQueuedOffline(result) ? "Sin internet: LOGRA guardado en cache local para sincronizar." : "LOGRA creado correctamente.");
+        if (activeKey === "logra" && !isQueuedOffline(result)) await load();
+        return;
+      }
       if (createConfig.dateFormat === "dmy") {
         createConfig.fields.forEach((field) => {
           if (field.type === "date" && payload[field.key]) payload[field.key] = toDmy(payload[field.key]);
@@ -2274,11 +2835,16 @@ function InformesSectionMobile({
         delete payload.service_port;
         delete payload.service_country;
       }
-      await apiRequest(createConfig.endpoint, { method: "POST", body: payload, session });
+      const result = await offlineApiRequest(createConfig.endpoint, {
+        method: "POST",
+        body: payload,
+        session,
+        offlineLabel: `Crear ${createConfig.title}`
+      });
       setCreateConfig(null);
       setCreateForm({});
-      setMessage("Informe creado y enviado a revision.");
-      if (activeKey === createConfig.key) await load();
+      setMessage(isQueuedOffline(result) ? "Sin internet: informe guardado en cache local para sincronizar." : "Informe creado y enviado a revision.");
+      if (activeKey === createConfig.key && !isQueuedOffline(result)) await load();
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "No se pudo crear el informe.");
     } finally {
@@ -2520,6 +3086,17 @@ function InformesSectionMobile({
                 <Pressable style={styles.secondaryButton} onPress={() => setGenerateGroup("Certificados")}>
                   <Text style={styles.secondaryButtonText}>Certificado</Text>
                 </Pressable>
+                <Pressable
+                  style={styles.secondaryButton}
+                  onPress={() => {
+                    setGenerateOpen(false);
+                    setGenerateGroup(null);
+                    setLograReviewId(null);
+                    setLograOpen(true);
+                  }}
+                >
+                  <Text style={styles.secondaryButtonText}>LOGRA</Text>
+                </Pressable>
               </>
             ) : (
               <>
@@ -2547,6 +3124,51 @@ function InformesSectionMobile({
                           setGenerateGroup(null);
                           setCargoConditionReviewId(null);
                           setCargoConditionOpen(true);
+                        } else if (item.key === "vessel-condition") {
+                          setGenerateOpen(false);
+                          setGenerateGroup(null);
+                          setVesselConditionReviewId(null);
+                          setVesselConditionOpen(true);
+                        } else if (item.key === "port-captancy") {
+                          setGenerateOpen(false);
+                          setGenerateGroup(null);
+                          setPortCaptancyReviewId(null);
+                          setPortCaptancyOpen(true);
+                        } else if (item.key === "crane-inspection") {
+                          setGenerateOpen(false);
+                          setGenerateGroup(null);
+                          setCraneInspectionReviewId(null);
+                          setCraneInspectionOpen(true);
+                        } else if (item.key === "weight-certificate") {
+                          setGenerateOpen(false);
+                          setGenerateGroup(null);
+                          setWeightCertificateReviewId(null);
+                          setWeightCertificateOpen(true);
+                        } else if (item.key === "holds-certificate") {
+                          setGenerateOpen(false);
+                          setGenerateGroup(null);
+                          setHoldsCertificateReviewId(null);
+                          setHoldsCertificateOpen(true);
+                        } else if (item.key === "sampling-certificate") {
+                          setGenerateOpen(false);
+                          setGenerateGroup(null);
+                          setSamplingCertificateReviewId(null);
+                          setSamplingCertificateOpen(true);
+                        } else if (item.key === "sealing-certificate") {
+                          setGenerateOpen(false);
+                          setGenerateGroup(null);
+                          setSealingCertificateReviewId(null);
+                          setSealingCertificateOpen(true);
+                        } else if (item.key === "lashing-certificate") {
+                          setGenerateOpen(false);
+                          setGenerateGroup(null);
+                          setLashingCertificateReviewId(null);
+                          setLashingCertificateOpen(true);
+                        } else if (item.key === "logra") {
+                          setGenerateOpen(false);
+                          setGenerateGroup(null);
+                          setLograReviewId(null);
+                          setLograOpen(true);
                         } else {
                           openCreate(item);
                         }
@@ -2701,7 +3323,645 @@ function InformesSectionMobile({
           if (activeKey === "cargo-condition") await load();
         }}
       />
+      <CraneInspectionMobileModal
+        visible={craneInspectionOpen}
+        session={session}
+        initialReportId={craneInspectionReviewId}
+        onClose={() => {
+          setCraneInspectionOpen(false);
+          setCraneInspectionReviewId(null);
+        }}
+        onSaved={async () => {
+          setCraneInspectionOpen(false);
+          setCraneInspectionReviewId(null);
+          if (activeKey === "crane-inspection") await load();
+        }}
+      />
+      <WeightCertificateMobileModal
+        visible={weightCertificateOpen}
+        session={session}
+        initialReportId={weightCertificateReviewId}
+        onClose={() => {
+          setWeightCertificateOpen(false);
+          setWeightCertificateReviewId(null);
+        }}
+        onSaved={async () => {
+          setWeightCertificateOpen(false);
+          setWeightCertificateReviewId(null);
+          if (activeKey === "weight-certificate") await load();
+        }}
+      />
+      <HoldsInspectionCertificateMobileModal
+        visible={holdsCertificateOpen}
+        session={session}
+        initialReportId={holdsCertificateReviewId}
+        onClose={() => {
+          setHoldsCertificateOpen(false);
+          setHoldsCertificateReviewId(null);
+        }}
+        onSaved={async () => {
+          setHoldsCertificateOpen(false);
+          setHoldsCertificateReviewId(null);
+          if (activeKey === "holds-certificate") await load();
+        }}
+      />
+      <SamplingCertificateMobileModal
+        visible={samplingCertificateOpen}
+        session={session}
+        initialReportId={samplingCertificateReviewId}
+        onClose={() => {
+          setSamplingCertificateOpen(false);
+          setSamplingCertificateReviewId(null);
+        }}
+        onSaved={async () => {
+          setSamplingCertificateOpen(false);
+          setSamplingCertificateReviewId(null);
+          if (activeKey === "sampling-certificate") await load();
+        }}
+      />
+      <SealingCertificateMobileModal
+        visible={sealingCertificateOpen}
+        session={session}
+        initialReportId={sealingCertificateReviewId}
+        onClose={() => {
+          setSealingCertificateOpen(false);
+          setSealingCertificateReviewId(null);
+        }}
+        onSaved={async () => {
+          setSealingCertificateOpen(false);
+          setSealingCertificateReviewId(null);
+          if (activeKey === "sealing-certificate") await load();
+        }}
+      />
+      <LashingCertificateMobileModal
+        visible={lashingCertificateOpen}
+        session={session}
+        initialReportId={lashingCertificateReviewId}
+        onClose={() => {
+          setLashingCertificateOpen(false);
+          setLashingCertificateReviewId(null);
+        }}
+        onSaved={async () => {
+          setLashingCertificateOpen(false);
+          setLashingCertificateReviewId(null);
+          if (activeKey === "lashing-certificate") await load();
+        }}
+      />
+      <VesselConditionMobileModal
+        visible={vesselConditionOpen}
+        session={session}
+        initialReportId={vesselConditionReviewId}
+        onClose={() => {
+          setVesselConditionOpen(false);
+          setVesselConditionReviewId(null);
+        }}
+        onSaved={async () => {
+          setVesselConditionOpen(false);
+          setVesselConditionReviewId(null);
+          if (activeKey === "vessel-condition") await load();
+        }}
+      />
+      <PortCaptancyMobileModal
+        visible={portCaptancyOpen}
+        session={session}
+        initialReportId={portCaptancyReviewId}
+        onClose={() => {
+          setPortCaptancyOpen(false);
+          setPortCaptancyReviewId(null);
+        }}
+        onSaved={async () => {
+          setPortCaptancyOpen(false);
+          setPortCaptancyReviewId(null);
+          if (activeKey === "port-captancy") await load();
+        }}
+      />
+      <LograMobileModal
+        visible={lograOpen}
+        session={session}
+        initialReportId={lograReviewId}
+        onClose={() => {
+          setLograOpen(false);
+          setLograReviewId(null);
+        }}
+        onSaved={async () => {
+          setLograOpen(false);
+          setLograReviewId(null);
+          if (activeKey === "logra") await load();
+        }}
+      />
     </View>
+  );
+}
+
+type LograAgendaItem = {
+  date?: string;
+  date_iso?: string;
+  start_time?: string;
+  end_time?: string;
+  place?: string;
+  person?: string;
+  company?: string;
+  company_role?: string;
+  topic?: string;
+  priority?: string;
+  status?: string;
+  reminder_minutes?: number | string;
+};
+
+type LograAttachment = {
+  id: number;
+  form_slug: string;
+  section: string;
+  item_key: string;
+  bullet_index?: number | null;
+  original_filename: string;
+  created_at?: string;
+};
+
+const LOGRA_SECTION_LABELS: Record<"critical_questions" | "detailed_questions", string> = {
+  critical_questions: "Preguntas de apertura",
+  detailed_questions: "Preguntas por tema"
+};
+
+const LOGRA_ITEMS_PER_PAGE = 5;
+const LOGRA_MAX_BULLETS = 20;
+
+function lograQuestionKey(form: LograQuestionnaire, section: keyof typeof LOGRA_SECTION_LABELS, item: LograQuestion) {
+  return `${form.slug}|${section}|${String(item.id || item.number || "").trim()}`;
+}
+
+function lograItemKey(item: LograQuestion) {
+  return String(item.id || item.number || "").trim();
+}
+
+function lograTint(value?: string) {
+  const normalized = (value || "").toLowerCase();
+  if (normalized.includes("alta") || normalized.includes("pendiente") || normalized.includes("late")) return "#F8D7DA";
+  if (normalized.includes("media") || normalized.includes("proceso") || normalized.includes("curso")) return "#FFF3CD";
+  if (normalized.includes("baja") || normalized.includes("complet")) return "#D1E7DD";
+  return "#FFFFFF";
+}
+
+function blankAgendaItem(): LograAgendaItem {
+  return {
+    date_iso: formatYmd(new Date()),
+    start_time: "09:00",
+    end_time: "10:00",
+    place: "",
+    person: "",
+    company: "",
+    topic: "",
+    priority: "Media",
+    status: "Pendiente",
+    reminder_minutes: 30
+  };
+}
+
+function LograMobileModal({
+  visible,
+  session,
+  initialReportId,
+  onClose,
+  onSaved
+}: {
+  visible: boolean;
+  session: Session;
+  initialReportId: string | null;
+  onClose: () => void;
+  onSaved: () => void | Promise<void>;
+}) {
+  const [reportId, setReportId] = useState<string | null>(initialReportId);
+  const [formTitle, setFormTitle] = useState(LOGRA_QUESTIONNAIRES[0]?.title || "");
+  const [section, setSection] = useState<keyof typeof LOGRA_SECTION_LABELS>("critical_questions");
+  const [search, setSearch] = useState("");
+  const [page, setPage] = useState(0);
+  const [answers, setAnswers] = useState<Record<string, string[]>>({});
+  const [agendaItems, setAgendaItems] = useState<LograAgendaItem[]>([]);
+  const [agendaDraft, setAgendaDraft] = useState<LograAgendaItem>(() => blankAgendaItem());
+  const [agendaNotes, setAgendaNotes] = useState("");
+  const [selectedAgenda, setSelectedAgenda] = useState<number | null>(null);
+  const [attachments, setAttachments] = useState<LograAttachment[]>([]);
+  const [portiaOpen, setPortiaOpen] = useState(false);
+  const [portiaForm, setPortiaForm] = useState(LOGRA_QUESTIONNAIRES[0]?.title || "");
+  const [portiaSection, setPortiaSection] = useState<keyof typeof LOGRA_SECTION_LABELS>("critical_questions");
+  const [portiaQuestionKey, setPortiaQuestionKey] = useState("");
+  const [portiaBullet, setPortiaBullet] = useState("0");
+  const [portiaLanguage, setPortiaLanguage] = useState("ES");
+  const [portiaResult, setPortiaResult] = useState<{ original: string; improved: string; answerKey: string; bulletIndex: number } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+
+  const selectedForm = LOGRA_QUESTIONNAIRES.find((item) => item.title === formTitle) || LOGRA_QUESTIONNAIRES[0];
+  const allItems = selectedForm ? selectedForm[section] || [] : [];
+  const filteredItems = allItems.filter((item) => {
+    const needle = search.trim().toLowerCase();
+    if (!needle) return true;
+    return [item.id, item.number, item.block, item.question].map((value) => String(value || "").toLowerCase()).some((value) => value.includes(needle));
+  });
+  const totalPages = Math.max(1, Math.ceil(filteredItems.length / LOGRA_ITEMS_PER_PAGE));
+  const pageItems = filteredItems.slice(page * LOGRA_ITEMS_PER_PAGE, page * LOGRA_ITEMS_PER_PAGE + LOGRA_ITEMS_PER_PAGE);
+  const portiaSelectedForm = LOGRA_QUESTIONNAIRES.find((item) => item.title === portiaForm) || LOGRA_QUESTIONNAIRES[0];
+  const portiaQuestions = portiaSelectedForm ? portiaSelectedForm[portiaSection] || [] : [];
+  const portiaSelectedQuestion = portiaQuestions.find((item) => lograItemKey(item) === portiaQuestionKey) || portiaQuestions[0];
+  const portiaAnswerKey = portiaSelectedForm && portiaSelectedQuestion ? lograQuestionKey(portiaSelectedForm, portiaSection, portiaSelectedQuestion) : "";
+  const portiaBullets = answers[portiaAnswerKey] || [""];
+
+  useEffect(() => {
+    if (!visible) return;
+    setReportId(initialReportId);
+    setFormTitle(LOGRA_QUESTIONNAIRES[0]?.title || "");
+    setPortiaForm(LOGRA_QUESTIONNAIRES[0]?.title || "");
+    setSection("critical_questions");
+    setPortiaSection("critical_questions");
+    setSearch("");
+    setPage(0);
+    setAnswers({});
+    setAgendaItems([]);
+    setAgendaDraft(blankAgendaItem());
+    setAgendaNotes("");
+    setAttachments([]);
+    setMessage("");
+    if (initialReportId) loadReport(initialReportId);
+  }, [visible, initialReportId]);
+
+  useEffect(() => {
+    setPage(0);
+  }, [formTitle, section, search]);
+
+  useEffect(() => {
+    const first = portiaQuestions[0];
+    setPortiaQuestionKey(first ? lograItemKey(first) : "");
+    setPortiaBullet("0");
+  }, [portiaForm, portiaSection]);
+
+  async function loadReport(id: string) {
+    setBusy(true);
+    setMessage("");
+    try {
+      const payload = await apiRequest<Record<string, unknown>>(`/logra-reports/${encodeURIComponent(id)}`, { session });
+      const report = asRecord(payload.report) || {};
+      const nextAnswers: Record<string, string[]> = {};
+      const rawAnswers = Array.isArray(payload.answers) ? payload.answers : [];
+      rawAnswers.forEach((entry) => {
+        const record = asRecord(entry);
+        if (!record) return;
+        const key = `${formatValue(record.form_slug)}|${formatValue(record.section)}|${formatValue(record.item_key)}`;
+        const bullets = Array.isArray(record.bullets) ? record.bullets.map((value) => String(value || "")) : [""];
+        nextAnswers[key] = bullets.length ? bullets : [""];
+      });
+      setReportId(id);
+      setAnswers(nextAnswers);
+      setAgendaItems(Array.isArray(report.agenda_items) ? report.agenda_items as LograAgendaItem[] : []);
+      setAgendaNotes(formatValue(report.agenda_notes) === "-" ? "" : formatValue(report.agenda_notes));
+      setAttachments((Array.isArray(payload.attachments) ? payload.attachments : []).filter((item) => asRecord(item)) as LograAttachment[]);
+      const title = formatValue(report.title);
+      const matched = LOGRA_QUESTIONNAIRES.find((form) => title.includes(form.title));
+      if (matched) {
+        setFormTitle(matched.title);
+        setPortiaForm(matched.title);
+      }
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo cargar LOGRA.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function getBullets(form: LograQuestionnaire, selectedSection: keyof typeof LOGRA_SECTION_LABELS, item: LograQuestion) {
+    const key = lograQuestionKey(form, selectedSection, item);
+    return answers[key] || [""];
+  }
+
+  function setBullet(form: LograQuestionnaire, selectedSection: keyof typeof LOGRA_SECTION_LABELS, item: LograQuestion, index: number, value: string) {
+    const key = lograQuestionKey(form, selectedSection, item);
+    setAnswers((current) => {
+      const next = [...(current[key] || [""])];
+      next[index] = value;
+      return { ...current, [key]: next };
+    });
+  }
+
+  function addBullet(form: LograQuestionnaire, selectedSection: keyof typeof LOGRA_SECTION_LABELS, item: LograQuestion) {
+    const key = lograQuestionKey(form, selectedSection, item);
+    setAnswers((current) => {
+      const next = [...(current[key] || [""])];
+      if (next.length >= LOGRA_MAX_BULLETS) {
+        Alert.alert("LOGRA", "Cada pregunta permite maximo 20 bullet points.");
+        return current;
+      }
+      next.push("");
+      return { ...current, [key]: next };
+    });
+  }
+
+  function removeBullet(form: LograQuestionnaire, selectedSection: keyof typeof LOGRA_SECTION_LABELS, item: LograQuestion) {
+    const key = lograQuestionKey(form, selectedSection, item);
+    setAnswers((current) => {
+      const next = [...(current[key] || [""])];
+      if (next.length <= 1) next[0] = "";
+      else next.pop();
+      return { ...current, [key]: next };
+    });
+  }
+
+  function addAgendaLine() {
+    const hasValue = [agendaDraft.place, agendaDraft.person, agendaDraft.topic].some((value) => String(value || "").trim());
+    if (!hasValue) {
+      Alert.alert("Agenda LOGRA", "Agrega al menos persona, tema o lugar.");
+      return;
+    }
+    if (agendaItems.length >= 150) {
+      Alert.alert("Agenda LOGRA", "La agenda soporta hasta 150 lineas.");
+      return;
+    }
+    const dateIso = agendaDraft.date_iso || formatYmd(new Date());
+    setAgendaItems((current) => [...current, { ...agendaDraft, date: longEnglishDate(dateIso), date_iso: dateIso }]);
+    setAgendaDraft(blankAgendaItem());
+  }
+
+  function removeAgendaLine() {
+    if (selectedAgenda === null || !agendaItems[selectedAgenda]) {
+      Alert.alert("Agenda LOGRA", "Selecciona una linea de agenda.");
+      return;
+    }
+    Alert.alert("Agenda LOGRA", "Desea eliminar la linea seleccionada?", [
+      { text: "Cancelar", style: "cancel" },
+      {
+        text: "Eliminar",
+        style: "destructive",
+        onPress: () => {
+          setAgendaItems((current) => current.filter((_, index) => index !== selectedAgenda));
+          setSelectedAgenda(null);
+        }
+      }
+    ]);
+  }
+
+  function buildAnswersPayload() {
+    const payload: Array<Record<string, unknown>> = [];
+    LOGRA_QUESTIONNAIRES.forEach((form) => {
+      (Object.keys(LOGRA_SECTION_LABELS) as Array<keyof typeof LOGRA_SECTION_LABELS>).forEach((selectedSection) => {
+        form[selectedSection].forEach((item) => {
+          const key = lograQuestionKey(form, selectedSection, item);
+          const bullets = (answers[key] || []).map((value) => value.trim()).filter(Boolean).slice(0, LOGRA_MAX_BULLETS);
+          if (!bullets.length) return;
+          payload.push({
+            form_slug: form.slug,
+            form_title: form.title,
+            section: selectedSection,
+            item_key: lograItemKey(item),
+            question_text: item.question,
+            bullets
+          });
+        });
+      });
+    });
+    return payload;
+  }
+
+  async function saveLogra() {
+    setBusy(true);
+    setMessage("");
+    try {
+      const payload = {
+        id: reportId,
+        title: `LOGRA - ${formTitle || "Cuestionarios"}`,
+        category: "LOGRA",
+        status: "Draft",
+        created_by: session.usuario,
+        agenda_items: agendaItems,
+        agenda_notes: agendaNotes,
+        answers: buildAnswersPayload()
+      };
+      const result = await offlineApiRequest("/logra-reports", {
+        method: "POST",
+        body: payload,
+        session,
+        offlineLabel: "Guardar LOGRA"
+      });
+      if (!isQueuedOffline(result)) {
+        const record = asRecord(result);
+        const report = asRecord(record?.report);
+        const nextId = formatValue(report?.id);
+        if (nextId !== "-") setReportId(nextId);
+      }
+      setMessage(isQueuedOffline(result) ? "Sin internet: LOGRA guardado en cache local para sincronizar." : "LOGRA guardado correctamente.");
+      await onSaved();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo guardar LOGRA.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function runPortia() {
+    if (!portiaSelectedForm || !portiaSelectedQuestion) return;
+    const bulletIndex = Number(portiaBullet || 0);
+    const currentText = (portiaBullets[bulletIndex] || "").trim();
+    if (!currentText) {
+      Alert.alert("PORTIA", "El bullet seleccionado esta vacio.");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      const response = await apiRequest<Record<string, unknown>>("/reports/ai/improve/logra", {
+        method: "POST",
+        session,
+        body: {
+          text: currentText,
+          language: portiaLanguage,
+          report_type: LOGRA_SECTION_LABELS[portiaSection],
+          form_title: portiaSelectedForm.title,
+          question: portiaSelectedQuestion.question
+        }
+      });
+      const improved = formatValue(response.text || response.improved_text || response.result);
+      if (improved === "-") {
+        setMessage("PORTIA no devolvio texto valido.");
+        return;
+      }
+      setPortiaResult({ original: currentText, improved, answerKey: portiaAnswerKey, bulletIndex });
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "PORTIA no pudo mejorar el texto.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function openAttachment(attachment: LograAttachment) {
+    try {
+      await downloadSessionFile(`/logra-reports/attachments/${attachment.id}/download`, session, attachment.original_filename || `logra_${attachment.id}.bin`);
+    } catch (err) {
+      Alert.alert("LOGRA", err instanceof Error ? err.message : "No se pudo abrir el adjunto.");
+    }
+  }
+
+  function deleteAttachment(attachment: LograAttachment) {
+    Alert.alert("LOGRA", `Eliminar adjunto?\n\n${attachment.original_filename}`, [
+      { text: "Cancelar", style: "cancel" },
+      {
+        text: "Eliminar",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            await apiRequest(`/logra-reports/attachments/${attachment.id}`, { method: "DELETE", session });
+            setAttachments((current) => current.filter((item) => item.id !== attachment.id));
+          } catch (err) {
+            Alert.alert("LOGRA", err instanceof Error ? err.message : "No se pudo eliminar el adjunto.");
+          }
+        }
+      }
+    ]);
+  }
+
+  return (
+    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+      <SafeAreaView style={styles.modalScreen}>
+        <View style={styles.modalHeader}>
+          <Text style={styles.modalTitle}>LOGRA - Cuestionarios</Text>
+          <Pressable style={styles.modalClose} onPress={onClose}><Text style={styles.modalCloseText}>Cerrar</Text></Pressable>
+        </View>
+        <ScrollView contentContainerStyle={styles.modalBody} keyboardShouldPersistTaps="handled">
+          <View style={styles.actionBar}>
+            <Pressable style={styles.secondaryButton} onPress={() => setPortiaOpen(true)}><Text style={styles.secondaryButtonText}>Mejorar con PORTIA</Text></Pressable>
+            <Pressable style={styles.actionButton} onPress={saveLogra}><Text style={styles.actionButtonText}>Guardar</Text></Pressable>
+          </View>
+          <SelectField label="Formulario" value={formTitle} options={LOGRA_QUESTIONNAIRES.map((item) => item.title)} onChange={setFormTitle} />
+          <SelectField label="Seccion" value={section} options={Object.keys(LOGRA_SECTION_LABELS)} onChange={(value) => setSection(value as keyof typeof LOGRA_SECTION_LABELS)} />
+          <Text style={styles.helperText}>{LOGRA_SECTION_LABELS[section]} | Apertura: {selectedForm?.critical_questions.length || 0} | Por tema: {selectedForm?.detailed_questions.length || 0} | Total: {(selectedForm?.critical_questions.length || 0) + (selectedForm?.detailed_questions.length || 0)}</Text>
+          <Text style={styles.label}>Buscar</Text>
+          <TextInput style={styles.input} value={search} onChangeText={setSearch} placeholder="Palabra clave" />
+
+          <View style={styles.summaryBox}>
+            <Text style={styles.cardTitle}>Agenda LOGRA</Text>
+            <DateField label="Fecha" value={agendaDraft.date_iso || formatYmd(new Date())} onChange={(date_iso) => setAgendaDraft((current) => ({ ...current, date_iso, date: longEnglishDate(date_iso) }))} />
+            <Text style={styles.helperText}>{longEnglishDate(agendaDraft.date_iso || formatYmd(new Date()))}</Text>
+            <View style={styles.inlineFields}>
+              <TextInput style={[styles.input, styles.timePartInput]} value={(agendaDraft.start_time || "09:00").slice(0, 2)} keyboardType="number-pad" maxLength={2} onChangeText={(hour) => setAgendaDraft((current) => ({ ...current, start_time: `${hour.padStart(2, "0").slice(0, 2)}:${(current.start_time || "09:00").slice(3, 5)}` }))} />
+              <TextInput style={[styles.input, styles.timePartInput]} value={(agendaDraft.start_time || "09:00").slice(3, 5)} keyboardType="number-pad" maxLength={2} onChangeText={(minute) => setAgendaDraft((current) => ({ ...current, start_time: `${(current.start_time || "09:00").slice(0, 2)}:${minute.padStart(2, "0").slice(0, 2)}` }))} />
+              <Text style={styles.helperText}>a</Text>
+              <TextInput style={[styles.input, styles.timePartInput]} value={(agendaDraft.end_time || "10:00").slice(0, 2)} keyboardType="number-pad" maxLength={2} onChangeText={(hour) => setAgendaDraft((current) => ({ ...current, end_time: `${hour.padStart(2, "0").slice(0, 2)}:${(current.end_time || "10:00").slice(3, 5)}` }))} />
+              <TextInput style={[styles.input, styles.timePartInput]} value={(agendaDraft.end_time || "10:00").slice(3, 5)} keyboardType="number-pad" maxLength={2} onChangeText={(minute) => setAgendaDraft((current) => ({ ...current, end_time: `${(current.end_time || "10:00").slice(0, 2)}:${minute.padStart(2, "0").slice(0, 2)}` }))} />
+            </View>
+            {["place", "person", "company", "topic"].map((field) => (
+              <View key={field} style={styles.formField}>
+                <Text style={styles.label}>{field === "place" ? "Lugar" : field === "person" ? "Persona" : field === "company" ? "Empresa/Rol" : "Tema"}</Text>
+                <TextInput style={styles.input} value={String(agendaDraft[field as keyof LograAgendaItem] || "")} onChangeText={(value) => setAgendaDraft((current) => ({ ...current, [field]: value }))} />
+              </View>
+            ))}
+            <SelectField label="Prioridad" value={String(agendaDraft.priority || "Media")} options={["Alta", "Media", "Baja"]} onChange={(priority) => setAgendaDraft((current) => ({ ...current, priority }))} />
+            <SelectField label="Status" value={String(agendaDraft.status || "Pendiente")} options={["Pendiente", "En proceso", "Completado"]} onChange={(status) => setAgendaDraft((current) => ({ ...current, status }))} />
+            <Text style={styles.label}>Recordar min</Text>
+            <TextInput style={styles.input} keyboardType="number-pad" value={String(agendaDraft.reminder_minutes || 30)} onChangeText={(reminder_minutes) => setAgendaDraft((current) => ({ ...current, reminder_minutes }))} />
+            <View style={styles.actionBar}>
+              <Pressable style={styles.secondaryButton} onPress={addAgendaLine}><Text style={styles.secondaryButtonText}>+ Linea</Text></Pressable>
+              <Pressable style={styles.modalClose} onPress={removeAgendaLine}><Text style={styles.modalCloseText}>- Linea</Text></Pressable>
+            </View>
+            <ScrollView horizontal>
+              <View>
+                {agendaItems.map((item, index) => (
+                  <Pressable key={`${index}-${item.date_iso}-${item.start_time}`} style={[styles.lograAgendaRow, { backgroundColor: lograTint(item.status || item.priority) }, selectedAgenda === index && styles.selectedRow]} onPress={() => setSelectedAgenda(index)}>
+                    <Text style={styles.lograAgendaCell}>{longEnglishDate(String(item.date_iso || item.date || ""))}</Text>
+                    <Text style={styles.lograAgendaCell}>{item.start_time} - {item.end_time}</Text>
+                    <Text style={styles.lograAgendaCell}>{item.place}</Text>
+                    <Text style={styles.lograAgendaCell}>{item.person}</Text>
+                    <Text style={styles.lograAgendaCell}>{item.company || item.company_role}</Text>
+                    <Text style={styles.lograAgendaCell}>{item.topic}</Text>
+                    <Text style={styles.lograAgendaCell}>{item.priority}</Text>
+                    <Text style={styles.lograAgendaCell}>{item.status}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            </ScrollView>
+            <Text style={styles.label}>Anotaciones generales</Text>
+            <TextInput style={[styles.input, styles.multilineInput]} multiline value={agendaNotes} onChangeText={setAgendaNotes} />
+          </View>
+
+          <View style={styles.actionBar}>
+            <Pressable style={styles.modalClose} onPress={() => setPage((current) => Math.max(0, current - 1))}><Text style={styles.modalCloseText}>Anterior</Text></Pressable>
+            <Text style={styles.helperText}>Pagina {page + 1} de {totalPages} - {filteredItems.length} preguntas</Text>
+            <Pressable style={styles.modalClose} onPress={() => setPage((current) => Math.min(totalPages - 1, current + 1))}><Text style={styles.modalCloseText}>Siguiente</Text></Pressable>
+          </View>
+
+          {pageItems.map((item) => {
+            const bullets = selectedForm ? getBullets(selectedForm, section, item) : [""];
+            const itemKey = lograItemKey(item);
+            const questionAttachments = attachments.filter((att) => att.form_slug === selectedForm.slug && att.section === section && att.item_key === itemKey);
+            return (
+              <View key={`${selectedForm.slug}-${section}-${itemKey}`} style={styles.summaryBox}>
+                <Text style={styles.cardTitle}>{itemKey}</Text>
+                {item.block ? <Text style={styles.helperText}>{item.block}</Text> : null}
+                <Text style={styles.fieldValue}>{item.question}</Text>
+                {bullets.map((bullet, index) => (
+                  <View key={index} style={styles.formField}>
+                    <Text style={styles.label}>{index + 1}.</Text>
+                    <TextInput style={[styles.input, styles.multilineInput]} multiline value={bullet} onChangeText={(value) => setBullet(selectedForm, section, item, index, value)} />
+                  </View>
+                ))}
+                <View style={styles.actionBar}>
+                  <Pressable style={styles.secondaryButton} onPress={() => addBullet(selectedForm, section, item)}><Text style={styles.secondaryButtonText}>+ Bullet</Text></Pressable>
+                  <Pressable style={styles.modalClose} onPress={() => removeBullet(selectedForm, section, item)}><Text style={styles.modalCloseText}>- Bullet</Text></Pressable>
+                </View>
+                {questionAttachments.length ? <Text style={styles.label}>Adjuntos</Text> : null}
+                {questionAttachments.map((attachment) => (
+                  <View key={attachment.id} style={styles.inlineFields}>
+                    <Pressable style={styles.secondaryButton} onPress={() => openAttachment(attachment)}><Text style={styles.secondaryButtonText}>{attachment.original_filename}</Text></Pressable>
+                    <Pressable style={styles.modalClose} onPress={() => deleteAttachment(attachment)}><Text style={styles.modalCloseText}>-</Text></Pressable>
+                  </View>
+                ))}
+                <Text style={styles.helperText}>Adjuntar nuevos archivos desde mobile requiere nuevo build con selector nativo de documentos; ver/eliminar adjuntos ya funciona por backend.</Text>
+              </View>
+            );
+          })}
+          {busy ? <ActivityIndicator color={BLUE} style={styles.loader} /> : null}
+          {message ? <Text style={styles.error}>{message}</Text> : null}
+        </ScrollView>
+
+        <Modal visible={portiaOpen} animationType="slide" onRequestClose={() => setPortiaOpen(false)}>
+          <SafeAreaView style={styles.modalScreen}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Mejorar con PORTIA - LOGRA</Text>
+              <Pressable style={styles.modalClose} onPress={() => setPortiaOpen(false)}><Text style={styles.modalCloseText}>Cerrar</Text></Pressable>
+            </View>
+            <ScrollView contentContainerStyle={styles.modalBody}>
+              <SelectField label="Formulario" value={portiaForm} options={LOGRA_QUESTIONNAIRES.map((item) => item.title)} onChange={setPortiaForm} />
+              <SelectField label="Tipo" value={portiaSection} options={Object.keys(LOGRA_SECTION_LABELS)} onChange={(value) => setPortiaSection(value as keyof typeof LOGRA_SECTION_LABELS)} />
+              <SelectField label="Pregunta" value={portiaQuestionKey} options={portiaQuestions.map(lograItemKey)} onChange={(value) => { setPortiaQuestionKey(value); setPortiaBullet("0"); }} />
+              {portiaSelectedQuestion ? <Text style={styles.fieldValue}>{portiaSelectedQuestion.question}</Text> : null}
+              <SelectField label="Bullet" value={portiaBullet} options={portiaBullets.map((_, index) => String(index))} onChange={setPortiaBullet} />
+              <SelectField label="Salida" value={portiaLanguage} options={["ES", "EN"]} onChange={setPortiaLanguage} />
+              <Pressable style={styles.actionButton} onPress={runPortia}><Text style={styles.actionButtonText}>Mejorar con PORTIA</Text></Pressable>
+              {portiaResult ? (
+                <View style={styles.summaryBox}>
+                  <Text style={styles.cardTitle}>Comparacion</Text>
+                  <Text style={styles.label}>Original</Text>
+                  <Text style={styles.fieldValue}>{portiaResult.original}</Text>
+                  <Text style={styles.label}>PORTIA</Text>
+                  <Text style={styles.fieldValue}>{portiaResult.improved}</Text>
+                  <Pressable
+                    style={styles.actionButton}
+                    onPress={() => {
+                      setAnswers((current) => {
+                        const next = [...(current[portiaResult.answerKey] || [""])];
+                        while (next.length <= portiaResult.bulletIndex) next.push("");
+                        next[portiaResult.bulletIndex] = portiaResult.improved;
+                        return { ...current, [portiaResult.answerKey]: next };
+                      });
+                      setPortiaResult(null);
+                      setPortiaOpen(false);
+                    }}
+                  >
+                    <Text style={styles.actionButtonText}>Aceptar texto</Text>
+                  </Pressable>
+                </View>
+              ) : null}
+              {message ? <Text style={styles.error}>{message}</Text> : null}
+            </ScrollView>
+          </SafeAreaView>
+        </Modal>
+      </SafeAreaView>
+    </Modal>
   );
 }
 
@@ -2806,6 +4066,238 @@ function truckFormFromServiceReport(row: Record<string, unknown>) {
     report_date: reportDate,
     vessel_name: vessel === "-" ? "" : vessel,
     inspection_date: reportDate
+  };
+}
+
+function emptyWeightCertificateForm() {
+  return {
+    report_number: "",
+    continent: "",
+    country: "",
+    port: "",
+    operation: "",
+    vessel: "",
+    voyage: "",
+    commodity: "",
+    bl_figure: "",
+    cargo_hold: "",
+    shipper: "",
+    consignee: "",
+    terminal: "",
+    loading_port: "",
+    weight_determination: "",
+    date: formatYmd(new Date()),
+    quantity: "",
+    remarks: ""
+  } as Record<string, string>;
+}
+
+function weightCertificateFormFromServiceReport(row: Record<string, unknown>) {
+  const reportNumber = formatValue(row.num_informe);
+  const vessel = formatValue(row.buque_contenedor);
+  const continent = formatValue(row.continente);
+  const country = formatValue(row.pais);
+  const port = formatValue(row.puerto);
+  const operation = formatValue(row.operacion);
+  const detail = formatValue(row.detalle);
+  const serviceDate = monthStartFromService(row);
+
+  return {
+    report_number: reportNumber === "-" ? "" : reportNumber,
+    vessel: vessel === "-" ? "" : vessel,
+    continent: continent === "-" ? "" : continent,
+    country: country === "-" ? "" : country,
+    port: port === "-" ? "" : port,
+    operation: operation === "-" ? "" : operation,
+    commodity: detail === "-" ? "" : detail,
+    loading_port: port === "-" ? "" : port,
+    date: serviceDate
+  };
+}
+
+function emptyHoldsInspectionCertificateForm() {
+  return {
+    report_number: "",
+    port: "",
+    country: "",
+    vessel: "",
+    voyage: "",
+    load_port: "",
+    place: "",
+    installation: "",
+    product: "",
+    date: formatYmd(new Date()),
+    inspection_time: "",
+    vessel_holds: "",
+    vessel_holds_status: "",
+    cargo_holds: "",
+    accepted_time: "",
+    place_location: "",
+    place_date: formatYmd(new Date()),
+    hose_test_start: "",
+    hose_test_end: "",
+    remarks: "",
+    master_chief_officer: ""
+  } as Record<string, string>;
+}
+
+function holdsInspectionCertificateFormFromServiceReport(row: Record<string, unknown>) {
+  const reportNumber = formatValue(row.num_informe);
+  const vessel = formatValue(row.buque_contenedor);
+  const country = formatValue(row.pais);
+  const port = formatValue(row.puerto);
+  const detail = formatValue(row.detalle);
+  const serviceDate = monthStartFromService(row);
+
+  return {
+    report_number: reportNumber === "-" ? "" : reportNumber,
+    port: port === "-" ? "" : port,
+    country: country === "-" ? "" : country,
+    vessel: vessel === "-" ? "" : vessel,
+    load_port: port === "-" ? "" : port,
+    place: port === "-" ? "" : port,
+    place_location: port === "-" ? "" : port,
+    product: detail === "-" ? "" : detail,
+    date: serviceDate,
+    place_date: serviceDate
+  };
+}
+
+function emptySamplingCertificateForm() {
+  const base = {
+    report_no: "",
+    port: "",
+    country: "",
+    customer: "",
+    certificate_no: "",
+    vessel: "",
+    date: formatYmd(new Date()),
+    place: "",
+    cargo: "",
+    holds_inspected: "",
+    observations: "",
+    closing_date: formatYmd(new Date()),
+    closing_time: "",
+    master: ""
+  } as Record<string, string>;
+  for (let index = 1; index <= 10; index += 1) {
+    base[`hold_${index}_seal`] = "";
+  }
+  return base;
+}
+
+function samplingCertificateFormFromServiceReport(row: Record<string, unknown>) {
+  const reportNumber = formatValue(row.num_informe);
+  const vessel = formatValue(row.buque_contenedor);
+  const client = formatValue(row.cliente);
+  const country = formatValue(row.pais);
+  const port = formatValue(row.puerto);
+  const detail = formatValue(row.detalle);
+  const serviceDate = monthStartFromService(row);
+  const place = [port, country].filter((item) => item !== "-").join(", ");
+
+  return {
+    report_no: reportNumber === "-" ? "" : reportNumber,
+    certificate_no: reportNumber === "-" ? "" : reportNumber,
+    port: port === "-" ? "" : port,
+    country: country === "-" ? "" : country,
+    customer: client === "-" ? "" : client,
+    vessel: vessel === "-" ? "" : vessel,
+    place,
+    cargo: detail === "-" ? "" : detail,
+    date: serviceDate,
+    closing_date: serviceDate
+  };
+}
+
+function emptySealingCertificateForm() {
+  const base = {
+    report_no: "",
+    port: "",
+    country: "",
+    customer: "",
+    certificate_no: "",
+    vessel: "",
+    date: formatYmd(new Date()),
+    location: "",
+    cargo: "",
+    remarks: "",
+    chief_officer: "",
+    closing_date: formatYmd(new Date()),
+    closing_time: ""
+  } as Record<string, string>;
+  for (let index = 1; index <= 6; index += 1) {
+    base[`hold_${index}_fwd_escape`] = "";
+    base[`hold_${index}_fwd_aft_hatch`] = "";
+    base[`hold_${index}_aft_escape`] = "";
+  }
+  return base;
+}
+
+function sealingCertificateFormFromServiceReport(row: Record<string, unknown>) {
+  const reportNumber = formatValue(row.num_informe);
+  const vessel = formatValue(row.buque_contenedor);
+  const client = formatValue(row.cliente);
+  const country = formatValue(row.pais);
+  const port = formatValue(row.puerto);
+  const detail = formatValue(row.detalle);
+  const serviceDate = monthStartFromService(row);
+  const location = [port, country].filter((item) => item !== "-").join(", ");
+
+  return {
+    report_no: reportNumber === "-" ? "" : reportNumber,
+    certificate_no: reportNumber === "-" ? "" : reportNumber,
+    port: port === "-" ? "" : port,
+    country: country === "-" ? "" : country,
+    customer: client === "-" ? "" : client,
+    vessel: vessel === "-" ? "" : vessel,
+    location,
+    cargo: detail === "-" ? "" : detail,
+    date: serviceDate,
+    closing_date: serviceDate
+  };
+}
+
+function emptyLashingCertificateForm() {
+  return {
+    report_no: "",
+    customer: "",
+    port: "",
+    country: "",
+    flat_rack_container: "",
+    cargo_type: "",
+    lashing_material: "",
+    place: "",
+    date: formatYmd(new Date()),
+    ratchet_quantity: "",
+    where_carry_out: "",
+    completion_date: formatYmd(new Date()),
+    status: "Draft"
+  } as Record<string, string>;
+}
+
+function lashingCertificateFormFromServiceReport(row: Record<string, unknown>) {
+  const reportNumber = formatValue(row.num_informe);
+  const client = formatValue(row.cliente);
+  const country = formatValue(row.pais);
+  const port = formatValue(row.puerto);
+  const detail = formatValue(row.detalle);
+  const container = formatValue(row.buque_contenedor);
+  const serviceDate = monthStartFromService(row);
+  const place = [port, country].filter((item) => item !== "-").join(", ");
+
+  return {
+    report_no: reportNumber === "-" ? "" : reportNumber,
+    customer: client === "-" ? "" : client,
+    port: port === "-" ? "" : port,
+    country: country === "-" ? "" : country,
+    flat_rack_container: container === "-" ? "" : container,
+    cargo_type: detail === "-" ? "" : detail,
+    place,
+    where_carry_out: place,
+    date: serviceDate,
+    completion_date: serviceDate,
+    status: "Draft"
   };
 }
 
@@ -3133,6 +4625,481 @@ function extractCargoBullets(payload: Record<string, unknown>) {
     const rows: string[] = [];
     for (let index = 1; index <= 10; index += 1) {
       const value = formatValue(payload[`${section}_${index}`]);
+      if (value !== "-") rows.push(value);
+    }
+    result[section] = rows.length ? rows : [""];
+  });
+  return result;
+}
+
+type VesselConditionBulletSection = "narrative" | "survey_findings" | "remarks" | "conclusion";
+
+const VESSEL_CONDITION_REPORT_TYPES = [
+  "Cargo Holds Condition",
+  "Hull Condition",
+  "Mooring Lines Condition (Mooring Ropes)",
+  "P&I Vessel Condition Survey"
+];
+
+const VESSEL_CONDITION_GENERAL_FIELDS: Array<[string, string, ("text" | "date" | "select")?]> = [
+  ["report_number", "Report Number"],
+  ["continent", "Continent"],
+  ["country", "Country"],
+  ["port", "Port"],
+  ["popup_operation", "Operation (popup)"],
+  ["service_start_date", "Service Start Date", "date"],
+  ["report_type", "Report Type", "select"],
+  ["requested_by", "Survey Requested By"],
+  ["arrival_date", "Date of Arrival", "date"],
+  ["arrival_hour", "Arrival HH"],
+  ["arrival_minute", "Arrival MM"],
+  ["inspection_date", "Date/Time of Inspection", "date"],
+  ["inspection_hour", "Inspection HH"],
+  ["inspection_minute", "Inspection MM"],
+  ["master_of_ship", "Master of the Ship"],
+  ["chief_officer", "Chief Officer"]
+];
+
+const VESSEL_CONDITION_VESSEL_FIELDS = [
+  ["vessel", "Name"],
+  ["port_registry_flag", "Port of Registry / Flag"],
+  ["grt", "GRT"],
+  ["nrt", "NRT"],
+  ["imo_no", "IMO No"],
+  ["year_built", "Year Built"]
+] as const;
+
+const VESSEL_CONDITION_TIME_EVENTS = [
+  ["ts_1", "Vessel Arrived at sea buoy"],
+  ["ts_2", "N.O.R Tendered"],
+  ["ts_3", "Vessel Berthed"],
+  ["ts_4", "Discharge / Charging commenced"],
+  ["ts_5", "Surveyor on board"],
+  ["ts_6", "Master Meeting"],
+  ["ts_7", "Visual Inspection"],
+  ["ts_8", "Surveyor off"]
+] as const;
+
+const VESSEL_CONDITION_BULLET_LABELS: Record<VesselConditionBulletSection, string> = {
+  narrative: "4. Narrative",
+  survey_findings: "5. Survey Findings",
+  remarks: "6. Remarks",
+  conclusion: "7. Conclusion"
+};
+
+function emptyVesselConditionForm() {
+  const today = formatYmd(new Date());
+  const form: Record<string, string> = {
+    report_number: "",
+    continent: "",
+    country: "",
+    port: "",
+    popup_operation: "",
+    service_start_date: today,
+    report_type: "P&I Vessel Condition Survey",
+    requested_by: "",
+    arrival_date: today,
+    arrival_hour: "08",
+    arrival_minute: "00",
+    inspection_date: today,
+    inspection_hour: "08",
+    inspection_minute: "00",
+    master_of_ship: "",
+    chief_officer: "",
+    vessel: "",
+    port_registry_flag: "",
+    grt: "",
+    nrt: "",
+    imo_no: "",
+    year_built: "",
+    operation: "",
+    ts_4_operation: "Discharge",
+    link_picture: "",
+    status: "Pending for review"
+  };
+
+  VESSEL_CONDITION_TIME_EVENTS.forEach(([key]) => {
+    form[`${key}_date`] = today;
+    form[`${key}_hour`] = "08";
+    form[`${key}_minute`] = "00";
+  });
+
+  return form;
+}
+
+function emptyVesselConditionBullets() {
+  return {
+    narrative: [""],
+    survey_findings: [""],
+    remarks: [""],
+    conclusion: [""]
+  } as Record<VesselConditionBulletSection, string[]>;
+}
+
+function vesselConditionFormFromServiceReport(row: Record<string, unknown>) {
+  const reportNumber = formatValue(row.num_informe);
+  const client = formatValue(row.cliente);
+  const vessel = formatValue(row.buque_contenedor);
+  const country = formatValue(row.pais);
+  const port = formatValue(row.puerto);
+  const continent = formatValue(row.continente);
+  const operation = formatValue(row.operacion);
+  const serviceDate = monthStartFromService(row);
+  const normalizedOperation = /carga|loading|charge|charging/i.test(operation) ? "Charging" : /descarga|discharge|unloading/i.test(operation) ? "Discharge" : "";
+
+  return {
+    report_number: reportNumber === "-" ? "" : reportNumber,
+    vessel: vessel === "-" ? "" : vessel,
+    requested_by: client === "-" ? "" : client,
+    continent: continent === "-" ? "" : continent,
+    country: country === "-" ? "" : country,
+    port: port === "-" ? "" : port,
+    popup_operation: operation === "-" ? "" : operation,
+    operation: normalizedOperation,
+    ts_4_operation: normalizedOperation || "Discharge",
+    service_start_date: serviceDate,
+    arrival_date: serviceDate,
+    inspection_date: serviceDate,
+    ts_1_date: serviceDate,
+    ts_2_date: serviceDate,
+    ts_3_date: serviceDate,
+    ts_4_date: serviceDate,
+    ts_5_date: serviceDate,
+    ts_6_date: serviceDate,
+    ts_7_date: serviceDate,
+    ts_8_date: serviceDate
+  };
+}
+
+function normalizeVesselConditionPayload(payload: Record<string, unknown>) {
+  const base = emptyVesselConditionForm();
+  Object.entries(payload).forEach(([key, value]) => {
+    if (value === null || value === undefined) return;
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+      base[key] = String(value);
+    }
+  });
+  if (!base.ts_4_operation && base.operation) base.ts_4_operation = base.operation;
+  return base;
+}
+
+function extractVesselConditionBullets(payload: Record<string, unknown>) {
+  const result = emptyVesselConditionBullets();
+  (Object.keys(VESSEL_CONDITION_BULLET_LABELS) as VesselConditionBulletSection[]).forEach((section) => {
+    const listValue = payload[section];
+    const rows = Array.isArray(listValue)
+      ? listValue.map((item) => formatValue(item)).filter((item) => item !== "-")
+      : [];
+    if (!rows.length) {
+      for (let index = 1; index <= 20; index += 1) {
+        const value = formatValue(payload[`${section}_${index}`]);
+        if (value !== "-") rows.push(value);
+      }
+    }
+    result[section] = rows.length ? rows : [""];
+  });
+  return result;
+}
+
+type PortCaptancyBulletSection = "operation_summary" | "remarks" | "conclusion";
+
+const PORT_CAPTANCY_GENERAL_FIELDS: Array<[string, string, ("text" | "date")?]> = [
+  ["report_number", "Report Number"],
+  ["continent", "Continent"],
+  ["country", "Country"],
+  ["port", "Port"],
+  ["operation", "Operation"],
+  ["report_type", "Report Type"],
+  ["requested_by", "Survey Requested By"],
+  ["arrival_date", "Date of Arrival", "date"],
+  ["arrival_hour", "Arrival HH"],
+  ["arrival_minute", "Arrival MM"],
+  ["inspection_date", "Inspection Date", "date"],
+  ["inspection_hour", "Inspection HH"],
+  ["inspection_minute", "Inspection MM"],
+  ["master", "Master of the Ship"],
+  ["chief", "Chief Officer"]
+];
+
+const PORT_CAPTANCY_VESSEL_FIELDS = [
+  ["vessel", "Name"],
+  ["flag", "Port of Registry / Flag"],
+  ["grt", "GRT"],
+  ["nrt", "NRT"],
+  ["imo", "IMO"],
+  ["year_built", "Year Built"]
+] as const;
+
+const PORT_CAPTANCY_TIME_EVENTS = [
+  "Vessel Arrive",
+  "NOR Tendered",
+  "ALL Fast",
+  "Supervision commenced",
+  "Supervision completed"
+] as const;
+
+const PORT_CAPTANCY_BULLET_LABELS: Record<PortCaptancyBulletSection, string> = {
+  operation_summary: "4. Operation Summary",
+  remarks: "5. Remarks",
+  conclusion: "6. Conclusion"
+};
+
+function emptyPortCaptancyForm() {
+  const today = formatYmd(new Date());
+  const form: Record<string, string> = {
+    report_number: "",
+    continent: "",
+    country: "",
+    port: "",
+    operation: "",
+    report_type: "Port Captancy",
+    vessel: "",
+    requested_by: "",
+    arrival_date: today,
+    arrival_hour: "08",
+    arrival_minute: "00",
+    inspection_date: today,
+    inspection_hour: "08",
+    inspection_minute: "00",
+    master: "",
+    chief: "",
+    flag: "",
+    grt: "",
+    nrt: "",
+    imo: "",
+    year_built: "",
+    link_picture: "",
+    status: "Pending for review"
+  };
+
+  PORT_CAPTANCY_TIME_EVENTS.forEach((_, index) => {
+    form[`ts_date_${index}`] = today;
+    form[`ts_hour_${index}`] = "08";
+    form[`ts_min_${index}`] = "00";
+  });
+
+  return form;
+}
+
+function emptyPortCaptancyBullets() {
+  return {
+    operation_summary: [""],
+    remarks: [""],
+    conclusion: [""]
+  } as Record<PortCaptancyBulletSection, string[]>;
+}
+
+function portCaptancyFormFromServiceReport(row: Record<string, unknown>) {
+  const reportNumber = formatValue(row.num_informe);
+  const client = formatValue(row.cliente);
+  const vessel = formatValue(row.buque_contenedor);
+  const country = formatValue(row.pais);
+  const port = formatValue(row.puerto);
+  const continent = formatValue(row.continente);
+  const operation = formatValue(row.operacion);
+  const serviceDate = monthStartFromService(row);
+
+  const values: Record<string, string> = {
+    report_number: reportNumber === "-" ? "" : reportNumber,
+    vessel: vessel === "-" ? "" : vessel,
+    requested_by: client === "-" ? "" : client,
+    continent: continent === "-" ? "" : continent,
+    country: country === "-" ? "" : country,
+    port: port === "-" ? "" : port,
+    operation: operation === "-" ? "" : operation,
+    arrival_date: serviceDate,
+    inspection_date: serviceDate
+  };
+  PORT_CAPTANCY_TIME_EVENTS.forEach((_, index) => {
+    values[`ts_date_${index}`] = serviceDate;
+  });
+  return values;
+}
+
+function normalizePortCaptancyPayload(payload: Record<string, unknown>) {
+  const base = emptyPortCaptancyForm();
+  Object.entries(payload).forEach(([key, value]) => {
+    if (value === null || value === undefined) return;
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+      base[key] = String(value);
+    }
+  });
+  return base;
+}
+
+function extractPortCaptancyBullets(payload: Record<string, unknown>) {
+  const result = emptyPortCaptancyBullets();
+  (Object.keys(PORT_CAPTANCY_BULLET_LABELS) as PortCaptancyBulletSection[]).forEach((section) => {
+    const rows: string[] = [];
+    for (let index = 1; index <= 15; index += 1) {
+      const value = formatValue(payload[`${section}_${index}`]);
+      if (value !== "-") rows.push(value);
+    }
+    result[section] = rows.length ? rows : [""];
+  });
+  return result;
+}
+
+const CRANE_STATUS_OPTIONS = [
+  "",
+  "Clean and no obstacles",
+  "Clean",
+  "Working",
+  "Not working",
+  "Greased",
+  "Negative impressions",
+  "Free to rotate / Unreadable scale",
+  "No trunnion"
+];
+
+const CRANE_CHECKLIST = [
+  ["crane_access", "1. Crane Access"],
+  ["crane_machinery_space", "2. Crane machinery space"],
+  ["crane_operator_cabin", "3. Crane operator cabin"],
+  ["crane_jib_head_sheaves", "4. Crane jib head sheaves"],
+  ["hoisting_wire_end_pin", "5. Hoisting wire end pin"],
+  ["luffing_wire_end_pin", "6. Luffing wire end pin"],
+  ["crane_wire_visual", "7. Crane wire rope visual inspection"],
+  ["crane_housing_sheaves", "8. Crane housing top sheaves"],
+  ["luffing_center_sheave", "9. Luffing center sheave visual inspection"],
+  ["cargo_block_sheave", "10. Cargo block sheave shaft"],
+  ["slack_hoisting_limit", "11. Slack hoisting wire limit"],
+  ["crane_jib_angle_limits", "12. Crane jib angle limits"],
+  ["crane_jib_angle_indicator", "13. Crane jib angle indicator"],
+  ["crane_hoisting_limits", "14. Crane hoisting wire limits (upper/slack)"],
+  ["pedestal_light_project", "15. Pedestal / Light project"]
+] as const;
+
+const CRANE_GENERAL_FIELDS: Array<[string, string, ("text" | "date")?]> = [
+  ["report_number", "Report Number"],
+  ["vessel", "Vessel Name"],
+  ["grt", "GRT"],
+  ["nrt", "NRT"],
+  ["client", "Client"],
+  ["port", "Port"],
+  ["country", "Country"],
+  ["report_date", "Report Date", "date"]
+];
+
+const CRANE_TIME_FIELDS: Array<[string, string]> = [
+  ["intro_inspection", "Inspection Date"],
+  ["gear_start", "Survey Start"],
+  ["gear_end", "Survey End"]
+];
+
+type CraneBulletSection = "recommendations" | "grabs_condition" | "conclusion";
+type CraneRemarks = Record<"1" | "2" | "3" | "4", string[]>;
+
+const CRANE_BULLET_LABELS: Record<CraneBulletSection, string> = {
+  recommendations: "Recommendations",
+  grabs_condition: "GRABS CONDITION SURVEY",
+  conclusion: "CONCLUSION"
+};
+
+function emptyCraneInspectionForm() {
+  const today = formatYmd(new Date());
+  const form: Record<string, string> = {
+    report_number: "",
+    vessel: "",
+    grt: "",
+    nrt: "",
+    client: "",
+    port: "",
+    country: "",
+    report_date: today,
+    intro_text: "",
+    intro_inspection_date: today,
+    intro_inspection_hour: "08",
+    intro_inspection_minute: "00",
+    gear_start_date: today,
+    gear_start_hour: "08",
+    gear_start_minute: "00",
+    gear_end_date: today,
+    gear_end_hour: "17",
+    gear_end_minute: "00",
+    gear_condition: "",
+    gear_wires: "",
+    gear_sheaves: "",
+    gear_operability: "",
+    link_picture: "",
+    status: "Pending for review"
+  };
+
+  CRANE_CHECKLIST.forEach(([prefix]) => {
+    form[`${prefix}_done`] = "false";
+    form[`${prefix}_status`] = "";
+    form[`${prefix}_status1`] = "";
+    form[`${prefix}_status2`] = "";
+    form[`${prefix}_status3`] = "";
+  });
+
+  return form;
+}
+
+function emptyCraneRemarks(): CraneRemarks {
+  return { "1": [""], "2": [""], "3": [""], "4": [""] };
+}
+
+function emptyCraneBullets() {
+  return {
+    recommendations: [""],
+    grabs_condition: [""],
+    conclusion: [""]
+  } as Record<CraneBulletSection, string[]>;
+}
+
+function craneInspectionFormFromServiceReport(row: Record<string, unknown>) {
+  const reportNumber = formatValue(row.num_informe);
+  const vessel = formatValue(row.buque_contenedor);
+  const client = formatValue(row.cliente);
+  const country = formatValue(row.pais);
+  const port = formatValue(row.puerto);
+  const serviceDate = monthStartFromService(row);
+
+  return {
+    report_number: reportNumber === "-" ? "" : reportNumber,
+    vessel: vessel === "-" ? "" : vessel,
+    client: client === "-" ? "" : client,
+    port: port === "-" ? "" : port,
+    country: country === "-" ? "" : country,
+    report_date: serviceDate,
+    intro_inspection_date: serviceDate,
+    gear_start_date: serviceDate,
+    gear_end_date: serviceDate
+  };
+}
+
+function normalizeCraneInspectionPayload(payload: Record<string, unknown>) {
+  const base = emptyCraneInspectionForm();
+  Object.entries(payload).forEach(([key, value]) => {
+    if (value === null || value === undefined) return;
+    if (typeof value === "boolean") base[key] = value ? "true" : "false";
+    else if (typeof value === "string" || typeof value === "number") base[key] = String(value);
+  });
+  return base;
+}
+
+function extractCraneRemarks(payload: Record<string, unknown>) {
+  const result = emptyCraneRemarks();
+  (["1", "2", "3", "4"] as const).forEach((crane) => {
+    const rows: string[] = [];
+    for (let index = 1; index <= 10; index += 1) {
+      const value = formatValue(payload[`crane${crane}_remark_${index}`]);
+      if (value !== "-") rows.push(value);
+    }
+    result[crane] = rows.length ? rows : [""];
+  });
+  return result;
+}
+
+function extractCraneBullets(payload: Record<string, unknown>) {
+  const result = emptyCraneBullets();
+  (Object.keys(CRANE_BULLET_LABELS) as CraneBulletSection[]).forEach((section) => {
+    const rows: string[] = [];
+    const max = section === "conclusion" ? 20 : 10;
+    const prefix = section === "recommendations" ? "recommendation" : section;
+    for (let index = 1; index <= max; index += 1) {
+      const value = formatValue(payload[`${prefix}_${index}`]);
       if (value !== "-") rows.push(value);
     }
     result[section] = rows.length ? rows : [""];
@@ -3728,6 +5695,386 @@ function extractDraftTanks(data: Record<string, unknown>, prefix: "init" | "fina
   return tanks;
 }
 
+function CraneInspectionMobileModal({
+  visible,
+  session,
+  initialReportId,
+  onClose,
+  onSaved
+}: {
+  visible: boolean;
+  session: NonNullable<ReturnType<typeof useAuth>["session"]>;
+  initialReportId: string | null;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [form, setForm] = useState<Record<string, string>>(emptyCraneInspectionForm());
+  const [remarks, setRemarks] = useState<CraneRemarks>(emptyCraneRemarks());
+  const [bullets, setBullets] = useState<Record<CraneBulletSection, string[]>>(emptyCraneBullets());
+  const [tab, setTab] = useState<"header" | "gear" | "checklist" | "remarks" | "final">("header");
+  const [serviceSelectorOpen, setServiceSelectorOpen] = useState(false);
+  const [editing, setEditing] = useState(true);
+  const [aiLanguage, setAiLanguage] = useState("EN");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const readonly = Boolean(initialReportId) && !editing;
+
+  useEffect(() => {
+    if (!visible) return;
+    setForm(emptyCraneInspectionForm());
+    setRemarks(emptyCraneRemarks());
+    setBullets(emptyCraneBullets());
+    setTab("header");
+    setEditing(!initialReportId);
+    setAiLanguage("EN");
+    setMessage("");
+    if (initialReportId) loadExisting(initialReportId);
+  }, [visible, initialReportId]);
+
+  function setValue(key: string, value: string) {
+    setForm((current) => ({ ...current, [key]: value }));
+  }
+
+  async function loadExisting(reportId: string) {
+    setBusy(true);
+    setMessage("");
+    try {
+      const payload = await apiRequest<Record<string, unknown>>(`/vessel-crane-inspection/${encodeURIComponent(reportId)}`, { session });
+      const data = unwrapRecordPayload(payload) || payload;
+      setForm(normalizeCraneInspectionPayload(data));
+      setRemarks(extractCraneRemarks(data));
+      setBullets(extractCraneBullets(data));
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo cargar Crane Inspection.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function buildPayload() {
+    const payload: Record<string, unknown> = { ...form };
+
+    CRANE_CHECKLIST.forEach(([prefix]) => {
+      payload[`${prefix}_done`] = form[`${prefix}_done`] === "true";
+      payload[`${prefix}_status`] = form[`${prefix}_status`] || null;
+      payload[`${prefix}_status1`] = form[`${prefix}_status1`] || null;
+      payload[`${prefix}_status2`] = form[`${prefix}_status2`] || null;
+      payload[`${prefix}_status3`] = form[`${prefix}_status3`] || null;
+    });
+
+    (["1", "2", "3", "4"] as const).forEach((crane) => {
+      for (let index = 1; index <= 10; index += 1) {
+        payload[`crane${crane}_remark_${index}`] = (remarks[crane][index - 1] || "").trim() || null;
+      }
+    });
+
+    (Object.keys(CRANE_BULLET_LABELS) as CraneBulletSection[]).forEach((section) => {
+      const max = section === "conclusion" ? 20 : 10;
+      const prefix = section === "recommendations" ? "recommendation" : section;
+      for (let index = 1; index <= max; index += 1) {
+        payload[`${prefix}_${index}`] = (bullets[section][index - 1] || "").trim() || null;
+      }
+    });
+
+    payload.status = payload.status || "Pending for review";
+    return payload;
+  }
+
+  async function save() {
+    if (!form.report_number || !form.vessel || !form.client || !form.port || !form.country) {
+      setMessage("Debe completar Report Number, buque, cliente, puerto y pais.");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      if (initialReportId) {
+        const result = await offlineApiRequest(`/vessel-crane-inspection/${encodeURIComponent(initialReportId)}`, {
+          method: "PUT",
+          session,
+          body: buildPayload(),
+          offlineLabel: `Actualizar Crane Inspection ${initialReportId}`
+        });
+        setEditing(isQueuedOffline(result) ? editing : false);
+        setMessage(isQueuedOffline(result) ? "Sin internet: Crane Inspection guardado en cache local." : "Crane Inspection actualizado correctamente.");
+      } else {
+        const result = await offlineApiRequest("/vessel-crane-inspection", {
+          method: "POST",
+          session,
+          body: { ...buildPayload(), status: "Pending for review" },
+          offlineLabel: `Crear Crane Inspection ${form.report_number || form.vessel}`
+        });
+        setMessage(isQueuedOffline(result) ? "Sin internet: Crane Inspection guardado en cache local." : "Crane Inspection enviado a revision.");
+      }
+      onSaved();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo guardar Crane Inspection.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function improveItems(section: string, items: string[], apply: (nextItems: string[]) => void) {
+    const cleanItems = items.map((item) => item.trim()).filter(Boolean);
+    if (!cleanItems.length) {
+      setMessage("La seccion seleccionada no tiene texto para mejorar.");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      const response = await apiRequest<Record<string, unknown>>("/reports/ai/improve/crane-inspection", {
+        method: "POST",
+        session,
+        body: {
+          section,
+          language: aiLanguage,
+          vessel: form.vessel,
+          port: form.port,
+          items: cleanItems
+        }
+      });
+      const nextItems = Array.isArray(response.items) ? response.items.map((item) => formatValue(item)).filter((item) => item !== "-") : [];
+      if (!nextItems.length) throw new Error("PORTIA no devolvio texto valido.");
+      apply(nextItems);
+      setMessage(`PORTIA mejoro ${section}.`);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "PORTIA no pudo mejorar la seccion.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function downloadFile(kind: "word" | "presentation") {
+    const id = initialReportId || form.id;
+    if (!id) {
+      setMessage("Primero debe guardar o abrir el informe desde Review.");
+      return;
+    }
+    const endpoint = kind === "word"
+      ? `/vessel-crane-inspection-reports/${encodeURIComponent(id)}/generate-word`
+      : `/vessel-crane-inspection-reports/${encodeURIComponent(id)}/presentation`;
+    const extension = kind === "word" ? "docx" : "pdf";
+    setBusy(true);
+    setMessage("");
+    try {
+      await downloadSessionFile(endpoint, session, cleanFilePart(`Crane_Inspection_${kind}_${id}`) + `.${extension}`);
+      setMessage(`${kind === "word" ? "Word" : "Presentacion"} generado correctamente.`);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo generar el archivo.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function renderField(key: string, label: string, type: "text" | "date" | "multiline" = "text") {
+    if (type === "date") return <DateField key={key} label={label} value={form[key] || ""} onChange={(value) => setValue(key, value)} />;
+    return (
+      <View key={key} style={styles.formField}>
+        <Text style={styles.label}>{label}</Text>
+        <TextInput
+          editable={!readonly}
+          style={[styles.input, type === "multiline" && styles.multilineInput, readonly && styles.readonlyInput]}
+          multiline={type === "multiline"}
+          value={form[key] || ""}
+          onChangeText={(value) => setValue(key, value)}
+        />
+      </View>
+    );
+  }
+
+  function renderTime(prefix: string, label: string) {
+    return (
+      <View key={prefix} style={styles.summaryBox}>
+        <Text style={styles.cardTitle}>{label}</Text>
+        {renderField(`${prefix}_date`, "Date", "date")}
+        {renderField(`${prefix}_hour`, "HH")}
+        {renderField(`${prefix}_minute`, "MM")}
+      </View>
+    );
+  }
+
+  function renderChecklist() {
+    return CRANE_CHECKLIST.map(([prefix, label]) => (
+      <View key={prefix} style={styles.summaryBox}>
+        <View style={styles.rememberRow}>
+          <Text style={styles.rememberText}>{label}</Text>
+          <Switch
+            disabled={readonly}
+            value={form[`${prefix}_done`] === "true"}
+            onValueChange={(value) => setValue(`${prefix}_done`, value ? "true" : "false")}
+            trackColor={{ true: BLUE }}
+          />
+        </View>
+        <SelectField label="Estado" value={form[`${prefix}_status`] || ""} options={CRANE_STATUS_OPTIONS} onChange={(value) => setValue(`${prefix}_status`, value)} />
+        <SelectField label="Comentario 1" value={form[`${prefix}_status1`] || ""} options={CRANE_STATUS_OPTIONS} onChange={(value) => setValue(`${prefix}_status1`, value)} />
+        <SelectField label="Comentario 2" value={form[`${prefix}_status2`] || ""} options={CRANE_STATUS_OPTIONS} onChange={(value) => setValue(`${prefix}_status2`, value)} />
+        <SelectField label="Comentario 3" value={form[`${prefix}_status3`] || ""} options={CRANE_STATUS_OPTIONS} onChange={(value) => setValue(`${prefix}_status3`, value)} />
+      </View>
+    ));
+  }
+
+  function renderRemarkCrane(crane: "1" | "2" | "3" | "4") {
+    const rows = remarks[crane];
+    return (
+      <View style={styles.summaryBox}>
+        <Text style={styles.cardTitle}>Crane {crane}</Text>
+        {rows.map((value, index) => (
+          <View key={`crane-${crane}-${index}`} style={styles.formField}>
+            <Text style={styles.label}>Remark {index + 1}</Text>
+            <TextInput
+              editable={!readonly}
+              style={[styles.input, styles.multilineInput, readonly && styles.readonlyInput]}
+              multiline
+              value={value}
+              onChangeText={(text) => setRemarks((current) => ({ ...current, [crane]: rows.map((item, rowIndex) => rowIndex === index ? text : item) }))}
+            />
+            <Pressable style={styles.modalClose} onPress={() => setRemarks((current) => ({ ...current, [crane]: rows.length <= 1 ? [""] : rows.filter((_, rowIndex) => rowIndex !== index) }))}>
+              <Text style={styles.modalCloseText}>Remove</Text>
+            </Pressable>
+          </View>
+        ))}
+        <Pressable style={styles.secondaryButton} onPress={() => rows.length < 10 && setRemarks((current) => ({ ...current, [crane]: [...rows, ""] }))}>
+          <Text style={styles.secondaryButtonText}>+ Add Remark</Text>
+        </Pressable>
+        <Pressable style={styles.secondaryButton} onPress={() => improveItems(`Crane ${crane} remarks`, rows, (next) => setRemarks((current) => ({ ...current, [crane]: next })))}>
+          <Text style={styles.secondaryButtonText}>Mejorar con PORTIA</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
+  function renderBulletSection(section: CraneBulletSection) {
+    const rows = bullets[section];
+    const max = section === "conclusion" ? 20 : 10;
+    return (
+      <View style={styles.summaryBox}>
+        <Text style={styles.cardTitle}>{CRANE_BULLET_LABELS[section]}</Text>
+        {rows.map((value, index) => (
+          <View key={`${section}-${index}`} style={styles.formField}>
+            <Text style={styles.label}>Bullet {index + 1}</Text>
+            <TextInput
+              editable={!readonly}
+              style={[styles.input, styles.multilineInput, readonly && styles.readonlyInput]}
+              multiline
+              value={value}
+              onChangeText={(text) => setBullets((current) => ({ ...current, [section]: rows.map((item, rowIndex) => rowIndex === index ? text : item) }))}
+            />
+            <Pressable style={styles.modalClose} onPress={() => setBullets((current) => ({ ...current, [section]: rows.length <= 1 ? [""] : rows.filter((_, rowIndex) => rowIndex !== index) }))}>
+              <Text style={styles.modalCloseText}>Remove</Text>
+            </Pressable>
+          </View>
+        ))}
+        <Pressable style={styles.secondaryButton} onPress={() => rows.length < max && setBullets((current) => ({ ...current, [section]: [...rows, ""] }))}>
+          <Text style={styles.secondaryButtonText}>+ Add Bullet</Text>
+        </Pressable>
+        <Pressable style={styles.secondaryButton} onPress={() => improveItems(CRANE_BULLET_LABELS[section], rows, (next) => setBullets((current) => ({ ...current, [section]: next })))}>
+          <Text style={styles.secondaryButtonText}>Mejorar con PORTIA</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
+  const tabs = [
+    ["header", "Header"],
+    ["gear", "Gear Survey"],
+    ["checklist", "Checklist"],
+    ["remarks", "Remarks"],
+    ["final", "Final"]
+  ] as const;
+
+  return (
+    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+      <SafeAreaView style={styles.modalScreen}>
+        <View style={styles.modalHeader}>
+          <Text style={styles.modalTitle}>CRANE INSPECTION SURVEY</Text>
+          <Pressable style={styles.modalClose} onPress={onClose}><Text style={styles.modalCloseText}>Cerrar</Text></Pressable>
+        </View>
+        <View style={styles.financeFilterBox}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.actionBar}>
+            <Pressable style={styles.secondaryButton} onPress={() => setServiceSelectorOpen(true)}><Text style={styles.secondaryButtonText}>Seleccionar Reporte</Text></Pressable>
+            {initialReportId ? <Pressable style={styles.secondaryButton} onPress={() => setEditing((value) => !value)}><Text style={styles.secondaryButtonText}>{editing ? "Bloquear" : "Editar"}</Text></Pressable> : null}
+            <Pressable style={styles.actionButton} onPress={save}><Text style={styles.actionButtonText}>{initialReportId ? "Guardar Cambios" : "Enviar a revision"}</Text></Pressable>
+          </ScrollView>
+          <View style={styles.summaryBox}>
+            <Text style={styles.fieldKey}>Crane Inspection</Text>
+            <Text style={styles.fieldValue}>{[form.report_number, form.vessel, form.client, form.port, form.country].filter(Boolean).join(" | ") || "Sin servicio seleccionado"}</Text>
+          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.actionBar}>
+            {tabs.map(([key, label]) => (
+              <Pressable key={key} style={tab === key ? styles.actionButton : styles.modalClose} onPress={() => setTab(key)}>
+                <Text style={tab === key ? styles.actionButtonText : styles.modalCloseText}>{label}</Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+        </View>
+        <ScrollView contentContainerStyle={styles.modalBody} keyboardShouldPersistTaps="handled">
+          {tab === "header" ? (
+            <>
+              {CRANE_GENERAL_FIELDS.map(([key, label, type]) => renderField(key, label, type))}
+              {CRANE_TIME_FIELDS.slice(0, 1).map(([prefix, label]) => renderTime(prefix, label))}
+              {renderField("intro_text", "Introduction Text", "multiline")}
+              <Pressable
+                style={styles.secondaryButton}
+                onPress={() => {
+                  const text = `On ${form.intro_inspection_date || "[DATE]"}, we were appointed to carry out a crane inspection survey in MV ${form.vessel || "[VESSEL]"} at ${form.port || "[PORT]"}, ${form.country || "[COUNTRY]"}.`;
+                  setValue("intro_text", text);
+                }}
+              >
+                <Text style={styles.secondaryButtonText}>Auto-fill Introduction</Text>
+              </Pressable>
+              <Pressable style={styles.secondaryButton} onPress={() => improveItems("Introduction", [form.intro_text], (next) => setValue("intro_text", next[0] || ""))}>
+                <Text style={styles.secondaryButtonText}>Mejorar con PORTIA</Text>
+              </Pressable>
+            </>
+          ) : null}
+          {tab === "gear" ? (
+            <>
+              {CRANE_TIME_FIELDS.slice(1).map(([prefix, label]) => renderTime(prefix, label))}
+              {renderField("gear_condition", "2. Condition (shortcomings / notes)", "multiline")}
+              {renderField("gear_wires", "3. Hoisting & Luffing Wires (found as)", "multiline")}
+              {renderField("gear_sheaves", "4. Hoisting & Luffing Sheaves (impressions)", "multiline")}
+              {renderField("gear_operability", "5. Operability Inspection (notes)", "multiline")}
+              {["gear_condition", "gear_wires", "gear_sheaves", "gear_operability"].map((key) => (
+                <Pressable key={key} style={styles.secondaryButton} onPress={() => improveItems(key.replaceAll("_", " "), [form[key]], (next) => setValue(key, next[0] || ""))}>
+                  <Text style={styles.secondaryButtonText}>Mejorar {key.replaceAll("_", " ")} con PORTIA</Text>
+                </Pressable>
+              ))}
+            </>
+          ) : null}
+          {tab === "checklist" ? renderChecklist() : null}
+          {tab === "remarks" ? (
+            <>
+              <SelectField label="PORTIA Language" value={aiLanguage} options={["EN", "ES"]} onChange={setAiLanguage} />
+              {(["1", "2", "3", "4"] as const).map((crane) => renderRemarkCrane(crane))}
+              {(Object.keys(CRANE_BULLET_LABELS) as CraneBulletSection[]).map((section) => renderBulletSection(section))}
+            </>
+          ) : null}
+          {tab === "final" ? (
+            <View style={styles.summaryBox}>
+              <Text style={styles.cardTitle}>Enclosure / Final Report</Text>
+              {renderField("link_picture", "Link Picture")}
+              <Pressable style={styles.secondaryButton} onPress={() => downloadFile("word")}><Text style={styles.secondaryButtonText}>Generar Word</Text></Pressable>
+              <Pressable style={styles.secondaryButton} onPress={() => downloadFile("presentation")}><Text style={styles.secondaryButtonText}>Generar Presentacion PDF</Text></Pressable>
+            </View>
+          ) : null}
+          {busy ? <ActivityIndicator color={BLUE} style={styles.loader} /> : null}
+          {message ? <Text style={message.includes("correctamente") || message.includes("revision") || message.includes("PORTIA mejoro") ? styles.helperText : styles.error}>{message}</Text> : null}
+        </ScrollView>
+        <DraftServiceSelectorModal
+          visible={serviceSelectorOpen}
+          session={session}
+          onClose={() => setServiceSelectorOpen(false)}
+          onSelect={(row) => {
+            setForm((current) => ({ ...current, ...craneInspectionFormFromServiceReport(row) }));
+            setServiceSelectorOpen(false);
+          }}
+        />
+      </SafeAreaView>
+    </Modal>
+  );
+}
+
 function CargoConditionMobileModal({
   visible,
   session,
@@ -3806,20 +6153,22 @@ function CargoConditionMobileModal({
     setMessage("");
     try {
       if (initialReportId) {
-        await apiRequest(`/vessel-cargo-condition-surveys/${encodeURIComponent(initialReportId)}`, {
+        const result = await offlineApiRequest(`/vessel-cargo-condition-surveys/${encodeURIComponent(initialReportId)}`, {
           method: "PUT",
           session,
-          body: buildPayload()
+          body: buildPayload(),
+          offlineLabel: `Actualizar Cargo Condition ${initialReportId}`
         });
-        setEditing(false);
-        setMessage("Cargo Condition actualizado correctamente.");
+        setEditing(isQueuedOffline(result) ? editing : false);
+        setMessage(isQueuedOffline(result) ? "Sin internet: Cargo Condition guardado en cache local." : "Cargo Condition actualizado correctamente.");
       } else {
-        await apiRequest("/vessel-cargo-condition-surveys/", {
+        const result = await offlineApiRequest("/vessel-cargo-condition-surveys/", {
           method: "POST",
           session,
-          body: { ...buildPayload(), status: "Pending for review" }
+          body: { ...buildPayload(), status: "Pending for review" },
+          offlineLabel: `Crear Cargo Condition ${form.report_number || form.vessel}`
         });
-        setMessage("Cargo Condition enviado a revision.");
+        setMessage(isQueuedOffline(result) ? "Sin internet: Cargo Condition guardado en cache local." : "Cargo Condition enviado a revision.");
       }
       onSaved();
     } catch (err) {
@@ -4007,6 +6356,571 @@ function CargoConditionMobileModal({
   );
 }
 
+function VesselConditionMobileModal({
+  visible,
+  session,
+  initialReportId,
+  onClose,
+  onSaved
+}: {
+  visible: boolean;
+  session: NonNullable<ReturnType<typeof useAuth>["session"]>;
+  initialReportId: string | null;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [form, setForm] = useState<Record<string, string>>(emptyVesselConditionForm());
+  const [bullets, setBullets] = useState<Record<VesselConditionBulletSection, string[]>>(emptyVesselConditionBullets());
+  const [tab, setTab] = useState<"general" | "vessel" | "times" | "text" | "final">("general");
+  const [serviceSelectorOpen, setServiceSelectorOpen] = useState(false);
+  const [editing, setEditing] = useState(true);
+  const [aiLanguage, setAiLanguage] = useState("EN");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const readonly = Boolean(initialReportId) && !editing;
+
+  useEffect(() => {
+    if (!visible) return;
+    setForm(emptyVesselConditionForm());
+    setBullets(emptyVesselConditionBullets());
+    setTab("general");
+    setEditing(!initialReportId);
+    setAiLanguage("EN");
+    setMessage("");
+    if (initialReportId) loadExisting(initialReportId);
+  }, [visible, initialReportId]);
+
+  function setValue(key: string, value: string) {
+    setForm((current) => ({ ...current, [key]: value }));
+  }
+
+  async function loadExisting(reportId: string) {
+    setBusy(true);
+    setMessage("");
+    try {
+      const payload = await apiRequest<Record<string, unknown>>(`/vessel-condition-surveys/id/${encodeURIComponent(reportId)}`, { session });
+      const data = unwrapRecordPayload(payload) || payload;
+      setForm(normalizeVesselConditionPayload(data));
+      setBullets(extractVesselConditionBullets(data));
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo cargar Vessel Condition.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function buildPayload() {
+    const payload: Record<string, unknown> = { ...form };
+    payload.operation = form.ts_4_operation || form.operation || null;
+    (Object.keys(VESSEL_CONDITION_BULLET_LABELS) as VesselConditionBulletSection[]).forEach((section) => {
+      const rows = bullets[section].map((item) => item.trim()).filter(Boolean).slice(0, 20);
+      payload[section] = rows;
+      for (let index = 1; index <= 20; index += 1) {
+        payload[`${section}_${index}`] = rows[index - 1] || null;
+      }
+    });
+    payload.status = payload.status || "Pending for review";
+    return payload;
+  }
+
+  async function save() {
+    if (!form.report_number || !form.vessel || !form.requested_by || !form.port || !form.country) {
+      setMessage("Debe completar Report Number, buque, cliente, puerto y pais.");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      if (initialReportId) {
+        const result = await offlineApiRequest(`/vessel-condition-surveys/id/${encodeURIComponent(initialReportId)}`, {
+          method: "PUT",
+          session,
+          body: buildPayload(),
+          offlineLabel: `Actualizar Vessel Condition ${initialReportId}`
+        });
+        setEditing(isQueuedOffline(result) ? editing : false);
+        setMessage(isQueuedOffline(result) ? "Sin internet: Vessel Condition guardado en cache local." : "Vessel Condition actualizado correctamente.");
+      } else {
+        const result = await offlineApiRequest("/vessel-condition-surveys", {
+          method: "POST",
+          session,
+          body: { ...buildPayload(), status: "Pending for review" },
+          offlineLabel: `Crear Vessel Condition ${form.report_number || form.vessel}`
+        });
+        setMessage(isQueuedOffline(result) ? "Sin internet: Vessel Condition guardado en cache local." : "Vessel Condition enviado a revision.");
+      }
+      onSaved();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo guardar Vessel Condition.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function improveSection(section: VesselConditionBulletSection) {
+    const items = bullets[section].map((item) => item.trim()).filter(Boolean);
+    if (!items.length) {
+      setMessage(`La seccion ${VESSEL_CONDITION_BULLET_LABELS[section]} no tiene texto para mejorar.`);
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      const response = await apiRequest<Record<string, unknown>>("/reports/ai/improve/vessel-condition", {
+        method: "POST",
+        session,
+        body: {
+          section,
+          language: aiLanguage,
+          vessel: form.vessel,
+          port: form.port,
+          report_type: form.report_type,
+          items
+        }
+      });
+      const nextItems = Array.isArray(response.items) ? response.items.map((item) => formatValue(item)).filter((item) => item !== "-") : [];
+      if (!nextItems.length) throw new Error("PORTIA no devolvio texto valido.");
+      setBullets((current) => ({ ...current, [section]: nextItems.slice(0, 20) }));
+      setMessage(`PORTIA mejoro ${VESSEL_CONDITION_BULLET_LABELS[section]}.`);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "PORTIA no pudo mejorar la seccion.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function downloadFile(kind: "word" | "presentation") {
+    const id = initialReportId || form.id;
+    if (!id) {
+      setMessage("Primero debe guardar o abrir el informe desde Review.");
+      return;
+    }
+    const endpoint = kind === "word"
+      ? `/vessel-condition-surveys/word/${encodeURIComponent(id)}`
+      : `/vessel-condition-surveys/presentation/${encodeURIComponent(id)}`;
+    const extension = kind === "word" ? "docx" : "pdf";
+    setBusy(true);
+    setMessage("");
+    try {
+      await downloadSessionFile(endpoint, session, cleanFilePart(`Vessel_Condition_${kind}_${id}`) + `.${extension}`);
+      setMessage(`${kind === "word" ? "Word" : "Presentacion"} generado correctamente.`);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo generar el archivo.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function renderField(key: string, label: string, type: "text" | "date" | "select" = "text") {
+    if (type === "date") return <DateField key={key} label={label} value={form[key] || ""} onChange={(value) => setValue(key, value)} />;
+    if (type === "select") return <SelectField key={key} label={label} value={form[key] || ""} options={VESSEL_CONDITION_REPORT_TYPES} onChange={(value) => setValue(key, value)} />;
+    return (
+      <View key={key} style={styles.formField}>
+        <Text style={styles.label}>{label}</Text>
+        <TextInput
+          editable={!readonly}
+          style={[styles.input, readonly && styles.readonlyInput]}
+          value={form[key] || ""}
+          onChangeText={(value) => setValue(key, value)}
+        />
+      </View>
+    );
+  }
+
+  function renderTimeEvent(key: string, label: string) {
+    return (
+      <View key={key} style={styles.summaryBox}>
+        <Text style={styles.cardTitle}>{label}</Text>
+        {key === "ts_4" ? <SelectField label="Operation" value={form.ts_4_operation || "Discharge"} options={["Discharge", "Charging"]} onChange={(value) => setValue("ts_4_operation", value)} /> : null}
+        {renderField(`${key}_date`, "Date", "date")}
+        {renderField(`${key}_hour`, "HH")}
+        {renderField(`${key}_minute`, "MM")}
+      </View>
+    );
+  }
+
+  function renderBulletSection(section: VesselConditionBulletSection) {
+    const rows = bullets[section];
+    return (
+      <View style={styles.summaryBox}>
+        <Text style={styles.cardTitle}>{VESSEL_CONDITION_BULLET_LABELS[section]}</Text>
+        {rows.map((value, index) => (
+          <View key={`${section}-${index}`} style={styles.formField}>
+            <Text style={styles.label}>Bullet {index + 1}</Text>
+            <TextInput
+              editable={!readonly}
+              style={[styles.input, styles.multilineInput, readonly && styles.readonlyInput]}
+              multiline
+              value={value}
+              onChangeText={(text) => setBullets((current) => ({ ...current, [section]: rows.map((item, rowIndex) => rowIndex === index ? text : item) }))}
+            />
+            <Pressable style={styles.modalClose} onPress={() => setBullets((current) => ({ ...current, [section]: rows.length <= 1 ? [""] : rows.filter((_, rowIndex) => rowIndex !== index) }))}>
+              <Text style={styles.modalCloseText}>Remove</Text>
+            </Pressable>
+          </View>
+        ))}
+        <Pressable style={styles.secondaryButton} onPress={() => rows.length < 20 && setBullets((current) => ({ ...current, [section]: [...rows, ""] }))}>
+          <Text style={styles.secondaryButtonText}>+ Add Bullet</Text>
+        </Pressable>
+        <Pressable style={styles.secondaryButton} onPress={() => improveSection(section)}>
+          <Text style={styles.secondaryButtonText}>Mejorar con PORTIA</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
+  const tabs = [
+    ["general", "General"],
+    ["vessel", "Vessel"],
+    ["times", "Time Sheet"],
+    ["text", "Text"],
+    ["final", "Final"]
+  ] as const;
+
+  return (
+    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+      <SafeAreaView style={styles.modalScreen}>
+        <View style={styles.modalHeader}>
+          <Text style={styles.modalTitle}>VESSEL CONDITION SURVEY</Text>
+          <Pressable style={styles.modalClose} onPress={onClose}><Text style={styles.modalCloseText}>Cerrar</Text></Pressable>
+        </View>
+        <View style={styles.financeFilterBox}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.actionBar}>
+            <Pressable style={styles.secondaryButton} onPress={() => setServiceSelectorOpen(true)}><Text style={styles.secondaryButtonText}>Seleccionar Reporte</Text></Pressable>
+            {initialReportId ? <Pressable style={styles.secondaryButton} onPress={() => setEditing((value) => !value)}><Text style={styles.secondaryButtonText}>{editing ? "Bloquear" : "Editar"}</Text></Pressable> : null}
+            <Pressable style={styles.actionButton} onPress={save}><Text style={styles.actionButtonText}>{initialReportId ? "Guardar Cambios" : "Enviar a revision"}</Text></Pressable>
+          </ScrollView>
+          <View style={styles.summaryBox}>
+            <Text style={styles.fieldKey}>Vessel Condition</Text>
+            <Text style={styles.fieldValue}>{[form.report_number, form.vessel, form.requested_by, form.port, form.country].filter(Boolean).join(" | ") || "Sin servicio seleccionado"}</Text>
+          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.actionBar}>
+            {tabs.map(([key, label]) => (
+              <Pressable key={key} style={tab === key ? styles.actionButton : styles.modalClose} onPress={() => setTab(key)}>
+                <Text style={tab === key ? styles.actionButtonText : styles.modalCloseText}>{label}</Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+        </View>
+        <ScrollView contentContainerStyle={styles.modalBody} keyboardShouldPersistTaps="handled">
+          {tab === "general" ? VESSEL_CONDITION_GENERAL_FIELDS.map(([key, label, type]) => renderField(key, label, type)) : null}
+          {tab === "vessel" ? (
+            <>
+              {VESSEL_CONDITION_VESSEL_FIELDS.map(([key, label]) => renderField(key, label))}
+              {renderField("link_picture", "8.1 Link Picture")}
+            </>
+          ) : null}
+          {tab === "times" ? VESSEL_CONDITION_TIME_EVENTS.map(([key, label]) => renderTimeEvent(key, label)) : null}
+          {tab === "text" ? (
+            <>
+              <SelectField label="PORTIA Language" value={aiLanguage} options={["EN", "ES"]} onChange={setAiLanguage} />
+              {(Object.keys(VESSEL_CONDITION_BULLET_LABELS) as VesselConditionBulletSection[]).map((section) => renderBulletSection(section))}
+            </>
+          ) : null}
+          {tab === "final" ? (
+            <View style={styles.summaryBox}>
+              <Text style={styles.cardTitle}>Generate Vessel Condition Report</Text>
+              <Pressable style={styles.secondaryButton} onPress={() => downloadFile("word")}><Text style={styles.secondaryButtonText}>Generar Word</Text></Pressable>
+              <Pressable style={styles.secondaryButton} onPress={() => downloadFile("presentation")}><Text style={styles.secondaryButtonText}>Generar Presentacion PDF</Text></Pressable>
+            </View>
+          ) : null}
+          {busy ? <ActivityIndicator color={BLUE} style={styles.loader} /> : null}
+          {message ? <Text style={message.includes("correctamente") || message.includes("revision") || message.includes("PORTIA mejoro") ? styles.helperText : styles.error}>{message}</Text> : null}
+        </ScrollView>
+        <DraftServiceSelectorModal
+          visible={serviceSelectorOpen}
+          session={session}
+          onClose={() => setServiceSelectorOpen(false)}
+          onSelect={(row) => {
+            setForm((current) => ({ ...current, ...vesselConditionFormFromServiceReport(row) }));
+            setServiceSelectorOpen(false);
+          }}
+        />
+      </SafeAreaView>
+    </Modal>
+  );
+}
+
+function PortCaptancyMobileModal({
+  visible,
+  session,
+  initialReportId,
+  onClose,
+  onSaved
+}: {
+  visible: boolean;
+  session: NonNullable<ReturnType<typeof useAuth>["session"]>;
+  initialReportId: string | null;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [form, setForm] = useState<Record<string, string>>(emptyPortCaptancyForm());
+  const [bullets, setBullets] = useState<Record<PortCaptancyBulletSection, string[]>>(emptyPortCaptancyBullets());
+  const [tab, setTab] = useState<"general" | "vessel" | "times" | "text" | "final">("general");
+  const [serviceSelectorOpen, setServiceSelectorOpen] = useState(false);
+  const [editing, setEditing] = useState(true);
+  const [aiLanguage, setAiLanguage] = useState("EN");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const readonly = Boolean(initialReportId) && !editing;
+
+  useEffect(() => {
+    if (!visible) return;
+    setForm(emptyPortCaptancyForm());
+    setBullets(emptyPortCaptancyBullets());
+    setTab("general");
+    setEditing(!initialReportId);
+    setAiLanguage("EN");
+    setMessage("");
+    if (initialReportId) loadExisting(initialReportId);
+  }, [visible, initialReportId]);
+
+  function setValue(key: string, value: string) {
+    setForm((current) => ({ ...current, [key]: value }));
+  }
+
+  async function loadExisting(reportId: string) {
+    setBusy(true);
+    setMessage("");
+    try {
+      const payload = await apiRequest<Record<string, unknown>>(`/port-captancy-reports/id/${encodeURIComponent(reportId)}`, { session });
+      const data = unwrapRecordPayload(payload) || payload;
+      setForm(normalizePortCaptancyPayload(data));
+      setBullets(extractPortCaptancyBullets(data));
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo cargar Port Captancy.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function buildPayload() {
+    const payload: Record<string, unknown> = { ...form };
+    (Object.keys(PORT_CAPTANCY_BULLET_LABELS) as PortCaptancyBulletSection[]).forEach((section) => {
+      const rows = bullets[section].map((item) => item.trim()).filter(Boolean).slice(0, 15);
+      for (let index = 1; index <= 15; index += 1) {
+        payload[`${section}_${index}`] = rows[index - 1] || null;
+      }
+    });
+    return payload;
+  }
+
+  async function save() {
+    if (!form.report_number || !form.vessel || !form.requested_by || !form.port || !form.country) {
+      setMessage("Debe completar Report Number, buque, cliente, puerto y pais.");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      if (initialReportId) {
+        const result = await offlineApiRequest(`/port-captancy-reports/${encodeURIComponent(form.report_number)}`, {
+          method: "PUT",
+          session,
+          body: buildPayload(),
+          offlineLabel: `Actualizar Port Captancy ${form.report_number}`
+        });
+        setEditing(isQueuedOffline(result) ? editing : false);
+        setMessage(isQueuedOffline(result) ? "Sin internet: Port Captancy guardado en cache local." : "Port Captancy actualizado correctamente.");
+      } else {
+        const result = await offlineApiRequest("/port-captancy-reports", {
+          method: "POST",
+          session,
+          body: buildPayload(),
+          offlineLabel: `Crear Port Captancy ${form.report_number || form.vessel}`
+        });
+        setMessage(isQueuedOffline(result) ? "Sin internet: Port Captancy guardado en cache local." : "Port Captancy enviado a revision.");
+      }
+      onSaved();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo guardar Port Captancy.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function improveSection(section: PortCaptancyBulletSection) {
+    const items = bullets[section].map((item) => item.trim()).filter(Boolean);
+    if (!items.length) {
+      setMessage(`La seccion ${PORT_CAPTANCY_BULLET_LABELS[section]} no tiene texto para mejorar.`);
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      const response = await apiRequest<Record<string, unknown>>("/reports/ai/improve/port-captancy", {
+        method: "POST",
+        session,
+        body: {
+          section,
+          language: aiLanguage,
+          vessel: form.vessel,
+          port: form.port,
+          operation: form.operation,
+          items
+        }
+      });
+      const nextItems = Array.isArray(response.items) ? response.items.map((item) => formatValue(item)).filter((item) => item !== "-") : [];
+      if (!nextItems.length) throw new Error("PORTIA no devolvio texto valido.");
+      setBullets((current) => ({ ...current, [section]: nextItems.slice(0, 15) }));
+      setMessage(`PORTIA mejoro ${PORT_CAPTANCY_BULLET_LABELS[section]}.`);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "PORTIA no pudo mejorar la seccion.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function downloadFile(kind: "word" | "presentation") {
+    const id = initialReportId || form.id;
+    if (!id) {
+      setMessage("Primero debe guardar o abrir el informe desde Review.");
+      return;
+    }
+    const endpoint = kind === "word"
+      ? `/port-captancy-reports/${encodeURIComponent(id)}/word`
+      : `/port-captancy-reports/presentation/${encodeURIComponent(id)}`;
+    const extension = kind === "word" ? "docx" : "pdf";
+    setBusy(true);
+    setMessage("");
+    try {
+      await downloadSessionFile(endpoint, session, cleanFilePart(`Port_Captancy_${kind}_${id}`) + `.${extension}`);
+      setMessage(`${kind === "word" ? "Word" : "Presentacion"} generado correctamente.`);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo generar el archivo.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function renderField(key: string, label: string, type: "text" | "date" = "text") {
+    if (type === "date") return <DateField key={key} label={label} value={form[key] || ""} onChange={(value) => setValue(key, value)} />;
+    return (
+      <View key={key} style={styles.formField}>
+        <Text style={styles.label}>{label}</Text>
+        <TextInput
+          editable={!readonly}
+          style={[styles.input, readonly && styles.readonlyInput]}
+          value={form[key] || ""}
+          onChangeText={(value) => setValue(key, value)}
+        />
+      </View>
+    );
+  }
+
+  function renderTimeEvent(label: string, index: number) {
+    return (
+      <View key={label} style={styles.summaryBox}>
+        <Text style={styles.cardTitle}>{label}</Text>
+        {renderField(`ts_date_${index}`, "Date", "date")}
+        {renderField(`ts_hour_${index}`, "HH")}
+        {renderField(`ts_min_${index}`, "MM")}
+      </View>
+    );
+  }
+
+  function renderBulletSection(section: PortCaptancyBulletSection) {
+    const rows = bullets[section];
+    return (
+      <View style={styles.summaryBox}>
+        <Text style={styles.cardTitle}>{PORT_CAPTANCY_BULLET_LABELS[section]}</Text>
+        {rows.map((value, index) => (
+          <View key={`${section}-${index}`} style={styles.formField}>
+            <Text style={styles.label}>Bullet {index + 1}</Text>
+            <TextInput
+              editable={!readonly}
+              style={[styles.input, styles.multilineInput, readonly && styles.readonlyInput]}
+              multiline
+              value={value}
+              onChangeText={(text) => setBullets((current) => ({ ...current, [section]: rows.map((item, rowIndex) => rowIndex === index ? text : item) }))}
+            />
+            <Pressable style={styles.modalClose} onPress={() => setBullets((current) => ({ ...current, [section]: rows.length <= 1 ? [""] : rows.filter((_, rowIndex) => rowIndex !== index) }))}>
+              <Text style={styles.modalCloseText}>Remove</Text>
+            </Pressable>
+          </View>
+        ))}
+        <Pressable style={styles.secondaryButton} onPress={() => rows.length < 15 && setBullets((current) => ({ ...current, [section]: [...rows, ""] }))}>
+          <Text style={styles.secondaryButtonText}>+ Add Bullet</Text>
+        </Pressable>
+        <Pressable style={styles.secondaryButton} onPress={() => improveSection(section)}>
+          <Text style={styles.secondaryButtonText}>Mejorar con PORTIA</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
+  const tabs = [
+    ["general", "General"],
+    ["vessel", "Vessel"],
+    ["times", "Time Sheet"],
+    ["text", "Text"],
+    ["final", "Final"]
+  ] as const;
+
+  return (
+    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+      <SafeAreaView style={styles.modalScreen}>
+        <View style={styles.modalHeader}>
+          <Text style={styles.modalTitle}>PORT CAPTANCY REPORT</Text>
+          <Pressable style={styles.modalClose} onPress={onClose}><Text style={styles.modalCloseText}>Cerrar</Text></Pressable>
+        </View>
+        <View style={styles.financeFilterBox}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.actionBar}>
+            <Pressable style={styles.secondaryButton} onPress={() => setServiceSelectorOpen(true)}><Text style={styles.secondaryButtonText}>Seleccionar Informe</Text></Pressable>
+            {initialReportId ? <Pressable style={styles.secondaryButton} onPress={() => setEditing((value) => !value)}><Text style={styles.secondaryButtonText}>{editing ? "Bloquear" : "Editar"}</Text></Pressable> : null}
+            <Pressable style={styles.actionButton} onPress={save}><Text style={styles.actionButtonText}>{initialReportId ? "Guardar Cambios" : "Enviar a revision"}</Text></Pressable>
+          </ScrollView>
+          <View style={styles.summaryBox}>
+            <Text style={styles.fieldKey}>Port Captancy</Text>
+            <Text style={styles.fieldValue}>{[form.report_number, form.vessel, form.requested_by, form.port, form.country].filter(Boolean).join(" | ") || "Sin servicio seleccionado"}</Text>
+          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.actionBar}>
+            {tabs.map(([key, label]) => (
+              <Pressable key={key} style={tab === key ? styles.actionButton : styles.modalClose} onPress={() => setTab(key)}>
+                <Text style={tab === key ? styles.actionButtonText : styles.modalCloseText}>{label}</Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+        </View>
+        <ScrollView contentContainerStyle={styles.modalBody} keyboardShouldPersistTaps="handled">
+          {tab === "general" ? PORT_CAPTANCY_GENERAL_FIELDS.map(([key, label, type]) => renderField(key, label, type)) : null}
+          {tab === "vessel" ? (
+            <>
+              {PORT_CAPTANCY_VESSEL_FIELDS.map(([key, label]) => renderField(key, label))}
+              {renderField("link_picture", "7. Link Picture")}
+            </>
+          ) : null}
+          {tab === "times" ? PORT_CAPTANCY_TIME_EVENTS.map((label, index) => renderTimeEvent(label, index)) : null}
+          {tab === "text" ? (
+            <>
+              <SelectField label="PORTIA Language" value={aiLanguage} options={["EN", "ES"]} onChange={setAiLanguage} />
+              {(Object.keys(PORT_CAPTANCY_BULLET_LABELS) as PortCaptancyBulletSection[]).map((section) => renderBulletSection(section))}
+            </>
+          ) : null}
+          {tab === "final" ? (
+            <View style={styles.summaryBox}>
+              <Text style={styles.cardTitle}>Generate Port Captancy Report</Text>
+              <Pressable style={styles.secondaryButton} onPress={() => downloadFile("word")}><Text style={styles.secondaryButtonText}>Generar Word</Text></Pressable>
+              <Pressable style={styles.secondaryButton} onPress={() => downloadFile("presentation")}><Text style={styles.secondaryButtonText}>Generar Presentacion PDF</Text></Pressable>
+            </View>
+          ) : null}
+          {busy ? <ActivityIndicator color={BLUE} style={styles.loader} /> : null}
+          {message ? <Text style={message.includes("correctamente") || message.includes("revision") || message.includes("PORTIA mejoro") ? styles.helperText : styles.error}>{message}</Text> : null}
+        </ScrollView>
+        <DraftServiceSelectorModal
+          visible={serviceSelectorOpen}
+          session={session}
+          onClose={() => setServiceSelectorOpen(false)}
+          onSelect={(row) => {
+            setForm((current) => ({ ...current, ...portCaptancyFormFromServiceReport(row) }));
+            setServiceSelectorOpen(false);
+          }}
+        />
+      </SafeAreaView>
+    </Modal>
+  );
+}
+
 function VesselBunkerMobileModal({
   visible,
   session,
@@ -4113,20 +7027,22 @@ function VesselBunkerMobileModal({
     setMessage("");
     try {
       if (initialReportId) {
-        await apiRequest(`/vessel-bunker-reports/${encodeURIComponent(initialReportId)}`, {
+        const result = await offlineApiRequest(`/vessel-bunker-reports/${encodeURIComponent(initialReportId)}`, {
           method: "PUT",
           session,
-          body: buildPayload()
+          body: buildPayload(),
+          offlineLabel: `Actualizar Vessel Bunker ${initialReportId}`
         });
-        setEditing(false);
-        setMessage("Vessel Bunker actualizado correctamente.");
+        setEditing(isQueuedOffline(result) ? editing : false);
+        setMessage(isQueuedOffline(result) ? "Sin internet: Vessel Bunker guardado en cache local." : "Vessel Bunker actualizado correctamente.");
       } else {
-        await apiRequest("/vessel-bunker-reports/", {
+        const result = await offlineApiRequest("/vessel-bunker-reports/", {
           method: "POST",
           session,
-          body: { ...buildPayload(), workflow_status: "Pending Review", status: "Pending" }
+          body: { ...buildPayload(), workflow_status: "Pending Review", status: "Pending" },
+          offlineLabel: `Crear Vessel Bunker ${form.bunker_cert_no || form.ship_name}`
         });
-        setMessage("Vessel Bunker enviado a revision.");
+        setMessage(isQueuedOffline(result) ? "Sin internet: Vessel Bunker guardado en cache local." : "Vessel Bunker enviado a revision.");
       }
       if (sendToReview || initialReportId) onSaved();
     } catch (err) {
@@ -4450,29 +7366,57 @@ function DraftSurveyMobileModal({
     setMessage("");
     try {
       if (mode === "existing") {
-        await apiRequest(`/draft-survey/${encodeURIComponent(draftNumber)}`, { method: "PUT", session, body: payload });
-        await apiRequest(`/draft-survey-extra/ballast/${encodeURIComponent(draftNumber)}`, {
+        const mainResult = await offlineApiRequest(`/draft-survey/${encodeURIComponent(draftNumber)}`, {
           method: "PUT",
           session,
-          body: { ballast, fresh_water: freshWater }
+          body: payload,
+          offlineLabel: `Actualizar Draft Survey ${draftNumber}`
         });
-        await apiRequest(`/draft-survey-extra/word/${encodeURIComponent(draftNumber)}`, { method: "POST", session, body: buildWordPayload() });
-        setMessage("Draft actualizado correctamente.");
-        setEditing(false);
-      } else {
-        const created = await apiRequest<Record<string, unknown>>("/draft-survey/", { method: "POST", session, body: payload });
-        const generalId = formatValue(created.general_id);
-        if (generalId === "-") throw new Error("El backend no devolvio general_id.");
-        await apiRequest(`/draft-survey-extra/ballast/${encodeURIComponent(generalId)}`, {
+        const ballastResult = await offlineApiRequest(`/draft-survey-extra/ballast/${encodeURIComponent(draftNumber)}`, {
+          method: "PUT",
+          session,
+          body: { ballast, fresh_water: freshWater },
+          offlineLabel: `Actualizar tanques Draft Survey ${draftNumber}`
+        });
+        const wordResult = await offlineApiRequest(`/draft-survey-extra/word/${encodeURIComponent(draftNumber)}`, {
           method: "POST",
           session,
-          body: { ballast, fresh_water: freshWater }
+          body: buildWordPayload(),
+          offlineLabel: `Actualizar Word Draft Survey ${draftNumber}`
         });
-        await apiRequest(`/draft-survey-extra/word/${encodeURIComponent(generalId)}`, { method: "POST", session, body: buildWordPayload() });
+        const queued = [mainResult, ballastResult, wordResult].some(isQueuedOffline);
+        setMessage(queued ? "Sin internet: Draft Survey guardado en cache local." : "Draft actualizado correctamente.");
+        if (!queued) setEditing(false);
+      } else {
+        const created = await offlineApiRequest<Record<string, unknown>>("/draft-survey/", {
+          method: "POST",
+          session,
+          body: payload,
+          offlineLabel: `Crear Draft Survey ${payload["draft_report_number"] || payload["vessel_mv"]}`
+        });
+        if (isQueuedOffline(created)) {
+          setMessage("Sin internet: Draft Survey guardado en cache local para sincronizar.");
+          return;
+        }
+        const generalId = formatValue(created.general_id);
+        if (generalId === "-") throw new Error("El backend no devolvio general_id.");
+        const ballastResult = await offlineApiRequest(`/draft-survey-extra/ballast/${encodeURIComponent(generalId)}`, {
+          method: "POST",
+          session,
+          body: { ballast, fresh_water: freshWater },
+          offlineLabel: `Crear tanques Draft Survey ${generalId}`
+        });
+        const wordResult = await offlineApiRequest(`/draft-survey-extra/word/${encodeURIComponent(generalId)}`, {
+          method: "POST",
+          session,
+          body: buildWordPayload(),
+          offlineLabel: `Crear Word Draft Survey ${generalId}`
+        });
         setForm((current) => ({ ...current, general_id: generalId }));
         setMode("existing");
-        setEditing(false);
-        setMessage(sendToReview ? "Draft enviado a revision." : "Draft guardado correctamente.");
+        const queued = [ballastResult, wordResult].some(isQueuedOffline);
+        if (!queued) setEditing(false);
+        setMessage(queued ? "Sin internet: extras de Draft Survey guardados en cache local." : sendToReview ? "Draft enviado a revision." : "Draft guardado correctamente.");
       }
       if (sendToReview) onSaved();
     } catch (err) {
@@ -4651,16 +7595,1052 @@ function DraftSurveyMobileModal({
   );
 }
 
+function WeightCertificateMobileModal({
+  visible,
+  session,
+  initialReportId,
+  onClose,
+  onSaved
+}: {
+  visible: boolean;
+  session: NonNullable<ReturnType<typeof useAuth>["session"]>;
+  initialReportId?: string | null;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const isReview = Boolean(initialReportId);
+  const [form, setForm] = useState(emptyWeightCertificateForm());
+  const [serviceSelectorOpen, setServiceSelectorOpen] = useState(false);
+  const [editEnabled, setEditEnabled] = useState(!isReview);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    if (!visible) return;
+    setMessage("");
+    setEditEnabled(!initialReportId);
+    if (!initialReportId) {
+      setForm(emptyWeightCertificateForm());
+      return;
+    }
+    setBusy(true);
+    apiRequest<Record<string, unknown>>(`/weight-certificates/${initialReportId}`, { session })
+      .then((payload) => {
+        const next = emptyWeightCertificateForm();
+        Object.entries(payload).forEach(([key, value]) => {
+          if (value === null || value === undefined) return;
+          if (key in next && (typeof value === "string" || typeof value === "number" || typeof value === "boolean")) {
+            next[key] = String(value);
+          }
+        });
+        setForm(next);
+      })
+      .catch((err) => setMessage(err instanceof Error ? err.message : "No se pudo cargar Weight Certificate."))
+      .finally(() => setBusy(false));
+  }, [initialReportId, session, visible]);
+
+  function setValue(key: string, value: string) {
+    setForm((current) => ({ ...current, [key]: value }));
+  }
+
+  function buildPayload() {
+    return Object.fromEntries(
+      Object.entries(form).map(([key, value]) => [key, value.trim() ? value.trim() : null])
+    );
+  }
+
+  async function save() {
+    if (!form.report_number.trim()) {
+      setMessage("Seleccione un servicio primero.");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      const endpoint = initialReportId ? `/weight-certificates/${initialReportId}` : "/weight-certificates";
+      const result = await offlineApiRequest(endpoint, {
+        method: initialReportId ? "PUT" : "POST",
+        body: buildPayload(),
+        session,
+        offlineLabel: `${initialReportId ? "Actualizar" : "Crear"} Weight Certificate ${form.report_number}`
+      });
+      setMessage(isQueuedOffline(result) ? "Sin internet: Weight Certificate guardado en cache local para sincronizar." : initialReportId ? "Cambios guardados correctamente." : "Weight Certificate enviado a revision.");
+      if (!isQueuedOffline(result)) await onSaved();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo guardar Weight Certificate.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function download(kind: "word" | "pdf") {
+    if (!initialReportId) {
+      setMessage("Primero debe enviar el certificado a revision.");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      await downloadSessionFile(
+        `/weight-certificates/${initialReportId}/${kind}`,
+        session,
+        cleanFilePart(`Weight_Certificate_${form.report_number || initialReportId}`) + `.${kind === "word" ? "docx" : "pdf"}`
+      );
+      setMessage(`${kind.toUpperCase()} generado correctamente.`);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : `No se pudo generar ${kind.toUpperCase()}.`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function renderField(key: string, label: string, type: "text" | "date" | "multiline" = "text") {
+    if (type === "date") {
+      if (!editEnabled) {
+        return (
+          <View key={key} style={styles.formField}>
+            <Text style={styles.label}>{label}</Text>
+            <TextInput editable={false} style={[styles.input, styles.readonlyInput]} value={form[key] || ""} />
+          </View>
+        );
+      }
+      return <DateField key={key} label={label} value={form[key] || ""} onChange={(value) => setValue(key, value)} />;
+    }
+    return (
+      <View key={key} style={styles.formField}>
+        <Text style={styles.label}>{label}</Text>
+        <TextInput
+          editable={editEnabled}
+          style={[styles.input, type === "multiline" && styles.multilineInput, !editEnabled && styles.readonlyInput]}
+          multiline={type === "multiline"}
+          value={form[key] || ""}
+          onChangeText={(value) => setValue(key, value)}
+        />
+      </View>
+    );
+  }
+
+  return (
+    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+      <SafeAreaView style={styles.modalScreen}>
+        <View style={styles.modalHeader}>
+          <Text style={styles.modalTitle}>WEIGHT CERTIFICATE</Text>
+          <Pressable style={styles.modalClose} onPress={onClose}><Text style={styles.modalCloseText}>Cerrar</Text></Pressable>
+        </View>
+        <ScrollView contentContainerStyle={styles.modalBody} keyboardShouldPersistTaps="handled">
+          <View style={styles.informesHomeActions}>
+            {!isReview ? (
+              <Pressable style={styles.actionButton} onPress={() => setServiceSelectorOpen(true)}>
+                <Text style={styles.actionButtonText}>Seleccionar Servicio</Text>
+              </Pressable>
+            ) : (
+              <Pressable style={styles.actionButton} onPress={() => setEditEnabled(true)}>
+                <Text style={styles.actionButtonText}>Editar</Text>
+              </Pressable>
+            )}
+            {isReview ? (
+              <>
+                <Pressable style={styles.secondaryButton} onPress={() => download("word")}><Text style={styles.secondaryButtonText}>Word</Text></Pressable>
+                <Pressable style={styles.secondaryButton} onPress={() => download("pdf")}><Text style={styles.secondaryButtonText}>PDF</Text></Pressable>
+              </>
+            ) : null}
+          </View>
+
+          <View style={styles.summaryBox}><Text style={styles.cardTitle}>Header</Text></View>
+          {renderField("report_number", "Report Number")}
+          {renderField("continent", "Continent")}
+          {renderField("country", "Country")}
+          {renderField("port", "Port")}
+          {renderField("operation", "Operation")}
+
+          <View style={styles.summaryBox}><Text style={styles.cardTitle}>Weight Certificate Data</Text></View>
+          {renderField("vessel", "Vessel")}
+          {renderField("voyage", "Voyage Number")}
+          {renderField("commodity", "Commodity Described As")}
+          {renderField("bl_figure", "Bill of Lading Figure")}
+          {renderField("cargo_hold", "Cargo Hold")}
+          {renderField("shipper", "Shipper")}
+          {renderField("consignee", "Consignee")}
+          {renderField("terminal", "Terminal")}
+          {renderField("loading_port", "Loading Port")}
+          {renderField("weight_determination", "Weight Determination")}
+          {renderField("date", "Date", "date")}
+
+          <View style={styles.summaryBox}><Text style={styles.cardTitle}>Loaded Quantity</Text></View>
+          {renderField("quantity", "Metric Tons")}
+
+          <View style={styles.summaryBox}><Text style={styles.cardTitle}>Remarks</Text></View>
+          {renderField("remarks", "Remarks", "multiline")}
+
+          <Pressable style={styles.actionButton} onPress={save}>
+            <Text style={styles.actionButtonText}>{isReview ? "Guardar Cambios" : "Enviar a Revision"}</Text>
+          </Pressable>
+          {busy ? <ActivityIndicator color={BLUE} style={styles.loader} /> : null}
+          {message ? <Text style={styles.error}>{message}</Text> : null}
+        </ScrollView>
+        <DraftServiceSelectorModal
+          visible={serviceSelectorOpen}
+          session={session}
+          title="Buscar Servicio - Weight Certificate"
+          onClose={() => setServiceSelectorOpen(false)}
+          onSelect={(report) => {
+            setForm((current) => ({ ...current, ...weightCertificateFormFromServiceReport(report) }));
+            setServiceSelectorOpen(false);
+          }}
+        />
+      </SafeAreaView>
+    </Modal>
+  );
+}
+
+function HoldsInspectionCertificateMobileModal({
+  visible,
+  session,
+  initialReportId,
+  onClose,
+  onSaved
+}: {
+  visible: boolean;
+  session: NonNullable<ReturnType<typeof useAuth>["session"]>;
+  initialReportId?: string | null;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const isReview = Boolean(initialReportId);
+  const [form, setForm] = useState(emptyHoldsInspectionCertificateForm());
+  const [serviceSelectorOpen, setServiceSelectorOpen] = useState(false);
+  const [editEnabled, setEditEnabled] = useState(!isReview);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    if (!visible) return;
+    setMessage("");
+    setEditEnabled(!initialReportId);
+    if (!initialReportId) {
+      setForm(emptyHoldsInspectionCertificateForm());
+      return;
+    }
+    setBusy(true);
+    apiRequest<Record<string, unknown>>(`/vessel-holds-inspection-certificates/${initialReportId}`, { session })
+      .then((payload) => {
+        const next = emptyHoldsInspectionCertificateForm();
+        Object.entries(payload).forEach(([key, value]) => {
+          if (value === null || value === undefined) return;
+          if (key in next && (typeof value === "string" || typeof value === "number" || typeof value === "boolean")) {
+            next[key] = String(value);
+          }
+        });
+        setForm(next);
+      })
+      .catch((err) => setMessage(err instanceof Error ? err.message : "No se pudo cargar Holds Inspection Certificate."))
+      .finally(() => setBusy(false));
+  }, [initialReportId, session, visible]);
+
+  function setValue(key: string, value: string) {
+    setForm((current) => ({ ...current, [key]: value }));
+  }
+
+  function buildPayload() {
+    return Object.fromEntries(
+      Object.entries(form).map(([key, value]) => [key, value.trim() ? value.trim() : null])
+    );
+  }
+
+  async function save() {
+    if (!form.report_number.trim()) {
+      setMessage("Seleccione un informe primero.");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      const endpoint = initialReportId ? `/vessel-holds-inspection-certificates/${initialReportId}` : "/vessel-holds-inspection-certificates";
+      const result = await offlineApiRequest(endpoint, {
+        method: initialReportId ? "PUT" : "POST",
+        body: buildPayload(),
+        session,
+        offlineLabel: `${initialReportId ? "Actualizar" : "Crear"} Holds Inspection Certificate ${form.report_number}`
+      });
+      setMessage(isQueuedOffline(result) ? "Sin internet: Holds Certificate guardado en cache local para sincronizar." : initialReportId ? "Cambios guardados correctamente." : "Holds Certificate enviado a revision.");
+      if (!isQueuedOffline(result)) await onSaved();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo guardar Holds Inspection Certificate.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function download(kind: "excel" | "pdf") {
+    if (!initialReportId) {
+      setMessage("Primero debe enviar el certificado a revision.");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      await downloadSessionFile(
+        `/vessel-holds-inspection-certificates/${initialReportId}/${kind}`,
+        session,
+        cleanFilePart(`Holds_Inspection_Certificate_${form.report_number || initialReportId}`) + `.${kind === "excel" ? "xlsx" : "pdf"}`
+      );
+      setMessage(`${kind.toUpperCase()} generado correctamente.`);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : `No se pudo generar ${kind.toUpperCase()}.`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function renderField(key: string, label: string, type: "text" | "date" | "time" | "multiline" = "text") {
+    if (type === "date") {
+      if (!editEnabled) {
+        return (
+          <View key={key} style={styles.formField}>
+            <Text style={styles.label}>{label}</Text>
+            <TextInput editable={false} style={[styles.input, styles.readonlyInput]} value={form[key] || ""} />
+          </View>
+        );
+      }
+      return <DateField key={key} label={label} value={form[key] || ""} onChange={(value) => setValue(key, value)} />;
+    }
+    if (type === "time") {
+      return (
+        <View key={key} style={styles.formField}>
+          <Text style={styles.label}>{label}</Text>
+          <TextInput
+            editable={editEnabled}
+            placeholder="HH:MM"
+            style={[styles.input, !editEnabled && styles.readonlyInput]}
+            value={form[key] || ""}
+            onChangeText={(value) => setValue(key, value)}
+          />
+        </View>
+      );
+    }
+    return (
+      <View key={key} style={styles.formField}>
+        <Text style={styles.label}>{label}</Text>
+        <TextInput
+          editable={editEnabled}
+          style={[styles.input, type === "multiline" && styles.multilineInput, !editEnabled && styles.readonlyInput]}
+          multiline={type === "multiline"}
+          value={form[key] || ""}
+          onChangeText={(value) => setValue(key, value)}
+        />
+      </View>
+    );
+  }
+
+  return (
+    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+      <SafeAreaView style={styles.modalScreen}>
+        <View style={styles.modalHeader}>
+          <Text style={styles.modalTitle}>VESSEL HOLDS INSPECTION CERTIFICATE</Text>
+          <Pressable style={styles.modalClose} onPress={onClose}><Text style={styles.modalCloseText}>Cerrar</Text></Pressable>
+        </View>
+        <ScrollView contentContainerStyle={styles.modalBody} keyboardShouldPersistTaps="handled">
+          <View style={styles.informesHomeActions}>
+            {!isReview ? (
+              <Pressable style={styles.actionButton} onPress={() => setServiceSelectorOpen(true)}>
+                <Text style={styles.actionButtonText}>Seleccionar Informe</Text>
+              </Pressable>
+            ) : (
+              <Pressable style={styles.actionButton} onPress={() => setEditEnabled(true)}>
+                <Text style={styles.actionButtonText}>Editar</Text>
+              </Pressable>
+            )}
+            {isReview ? (
+              <>
+                <Pressable style={styles.secondaryButton} onPress={() => download("excel")}><Text style={styles.secondaryButtonText}>Excel</Text></Pressable>
+                <Pressable style={styles.secondaryButton} onPress={() => download("pdf")}><Text style={styles.secondaryButtonText}>PDF</Text></Pressable>
+              </>
+            ) : null}
+          </View>
+
+          <View style={styles.summaryBox}><Text style={styles.cardTitle}>Report Header</Text></View>
+          {renderField("report_number", "Report Number")}
+          {renderField("port", "Port")}
+          {renderField("country", "Country")}
+
+          <View style={styles.summaryBox}><Text style={styles.cardTitle}>Certificate Header</Text></View>
+          {renderField("vessel", "Vessel")}
+          {renderField("voyage", "Voyage")}
+          {renderField("load_port", "Load Port")}
+          {renderField("place", "Place")}
+          {renderField("installation", "Installation")}
+          {renderField("product", "Product")}
+          {renderField("date", "Date", "date")}
+
+          <View style={styles.summaryBox}><Text style={styles.cardTitle}>Survey Information</Text></View>
+          {renderField("inspection_time", "Inspection Time", "time")}
+          {renderField("vessel_holds", "Vessel Holds")}
+          {renderField("vessel_holds_status", "Vessel Holds Status", "multiline")}
+
+          <View style={styles.summaryBox}><Text style={styles.cardTitle}>Cargo</Text></View>
+          {renderField("cargo_holds", "Cargo Holds")}
+          {renderField("accepted_time", "Accepted Time", "time")}
+
+          <View style={styles.summaryBox}><Text style={styles.cardTitle}>Location</Text></View>
+          {renderField("place_location", "Place")}
+          {renderField("place_date", "Date", "date")}
+
+          <View style={styles.summaryBox}><Text style={styles.cardTitle}>Water Tightness / Hose Test</Text></View>
+          {renderField("hose_test_start", "Hose Test Start", "time")}
+          {renderField("hose_test_end", "Hose Test End", "time")}
+
+          <View style={styles.summaryBox}><Text style={styles.cardTitle}>Remarks</Text></View>
+          {renderField("remarks", "Remarks", "multiline")}
+          {renderField("master_chief_officer", "MASTER / CHIEF OFFICER")}
+
+          <Pressable style={styles.actionButton} onPress={save}>
+            <Text style={styles.actionButtonText}>{isReview ? "Guardar Cambios" : "Enviar a Revision"}</Text>
+          </Pressable>
+          {busy ? <ActivityIndicator color={BLUE} style={styles.loader} /> : null}
+          {message ? <Text style={styles.error}>{message}</Text> : null}
+        </ScrollView>
+        <DraftServiceSelectorModal
+          visible={serviceSelectorOpen}
+          session={session}
+          title="Buscar Servicio - Holds Inspection Certificate"
+          onClose={() => setServiceSelectorOpen(false)}
+          onSelect={(report) => {
+            setForm((current) => ({ ...current, ...holdsInspectionCertificateFormFromServiceReport(report) }));
+            setServiceSelectorOpen(false);
+          }}
+        />
+      </SafeAreaView>
+    </Modal>
+  );
+}
+
+function SamplingCertificateMobileModal({
+  visible,
+  session,
+  initialReportId,
+  onClose,
+  onSaved
+}: {
+  visible: boolean;
+  session: NonNullable<ReturnType<typeof useAuth>["session"]>;
+  initialReportId?: string | null;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const isReview = Boolean(initialReportId);
+  const [form, setForm] = useState(emptySamplingCertificateForm());
+  const [serviceSelectorOpen, setServiceSelectorOpen] = useState(false);
+  const [editEnabled, setEditEnabled] = useState(!isReview);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    if (!visible) return;
+    setMessage("");
+    setEditEnabled(!initialReportId);
+    if (!initialReportId) {
+      setForm(emptySamplingCertificateForm());
+      return;
+    }
+    setBusy(true);
+    apiRequest<Record<string, unknown>>(`/sampling-certificates/${initialReportId}`, { session })
+      .then((payload) => {
+        const next = emptySamplingCertificateForm();
+        Object.entries(payload).forEach(([key, value]) => {
+          if (value === null || value === undefined) return;
+          if (key in next && (typeof value === "string" || typeof value === "number" || typeof value === "boolean")) {
+            next[key] = String(value);
+          }
+        });
+        setForm(next);
+      })
+      .catch((err) => setMessage(err instanceof Error ? err.message : "No se pudo cargar Sampling Certificate."))
+      .finally(() => setBusy(false));
+  }, [initialReportId, session, visible]);
+
+  function setValue(key: string, value: string) {
+    setForm((current) => ({ ...current, [key]: value }));
+  }
+
+  function buildPayload() {
+    const payload: Record<string, unknown> = Object.fromEntries(
+      Object.entries(form).map(([key, value]) => [key, value.trim() ? value.trim() : null])
+    );
+    payload.holds = Array.from({ length: 10 }, (_, index) => {
+      const hold = index + 1;
+      const seal = form[`hold_${hold}_seal`]?.trim();
+      return seal ? { hold, seal } : null;
+    }).filter(Boolean);
+    return payload;
+  }
+
+  async function save() {
+    if (!form.report_no.trim()) {
+      setMessage("Seleccione un informe primero.");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      const endpoint = initialReportId ? `/sampling-certificates/${initialReportId}` : "/sampling-certificates";
+      const result = await offlineApiRequest(endpoint, {
+        method: initialReportId ? "PUT" : "POST",
+        body: buildPayload(),
+        session,
+        offlineLabel: `${initialReportId ? "Actualizar" : "Crear"} Sampling Certificate ${form.report_no}`
+      });
+      setMessage(isQueuedOffline(result) ? "Sin internet: Sampling Certificate guardado en cache local para sincronizar." : initialReportId ? "Cambios guardados correctamente." : "Sampling Certificate enviado a revision.");
+      if (!isQueuedOffline(result)) await onSaved();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo guardar Sampling Certificate.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function download(kind: "excel" | "pdf") {
+    if (!initialReportId) {
+      setMessage("Primero debe enviar el certificado a revision.");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      await downloadSessionFile(
+        `/sampling-certificates/${initialReportId}/${kind}`,
+        session,
+        cleanFilePart(`Sampling_Certificate_${form.report_no || initialReportId}`) + `.${kind === "excel" ? "xlsx" : "pdf"}`
+      );
+      setMessage(`${kind.toUpperCase()} generado correctamente.`);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : `No se pudo generar ${kind.toUpperCase()}.`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function renderField(key: string, label: string, type: "text" | "date" | "time" | "multiline" = "text") {
+    if (type === "date") {
+      if (!editEnabled) {
+        return (
+          <View key={key} style={styles.formField}>
+            <Text style={styles.label}>{label}</Text>
+            <TextInput editable={false} style={[styles.input, styles.readonlyInput]} value={form[key] || ""} />
+          </View>
+        );
+      }
+      return <DateField key={key} label={label} value={form[key] || ""} onChange={(value) => setValue(key, value)} />;
+    }
+    return (
+      <View key={key} style={styles.formField}>
+        <Text style={styles.label}>{label}</Text>
+        <TextInput
+          editable={editEnabled}
+          placeholder={type === "time" ? "HH:MM" : undefined}
+          style={[styles.input, type === "multiline" && styles.multilineInput, !editEnabled && styles.readonlyInput]}
+          multiline={type === "multiline"}
+          value={form[key] || ""}
+          onChangeText={(value) => setValue(key, value)}
+        />
+      </View>
+    );
+  }
+
+  return (
+    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+      <SafeAreaView style={styles.modalScreen}>
+        <View style={styles.modalHeader}>
+          <Text style={styles.modalTitle}>SAMPLING CERTIFICATE</Text>
+          <Pressable style={styles.modalClose} onPress={onClose}><Text style={styles.modalCloseText}>Cerrar</Text></Pressable>
+        </View>
+        <ScrollView contentContainerStyle={styles.modalBody} keyboardShouldPersistTaps="handled">
+          <View style={styles.informesHomeActions}>
+            {!isReview ? (
+              <Pressable style={styles.actionButton} onPress={() => setServiceSelectorOpen(true)}>
+                <Text style={styles.actionButtonText}>SELECT REPORT</Text>
+              </Pressable>
+            ) : (
+              <Pressable style={styles.actionButton} onPress={() => setEditEnabled(true)}>
+                <Text style={styles.actionButtonText}>Editar</Text>
+              </Pressable>
+            )}
+            {isReview ? (
+              <>
+                <Pressable style={styles.secondaryButton} onPress={() => download("excel")}><Text style={styles.secondaryButtonText}>Excel</Text></Pressable>
+                <Pressable style={styles.secondaryButton} onPress={() => download("pdf")}><Text style={styles.secondaryButtonText}>PDF</Text></Pressable>
+              </>
+            ) : null}
+          </View>
+
+          <View style={styles.summaryBox}><Text style={styles.cardTitle}>Report Header</Text></View>
+          {renderField("report_no", "Report No")}
+          {renderField("port", "Port")}
+          {renderField("country", "Country")}
+          {renderField("customer", "Customer")}
+
+          <View style={styles.summaryBox}><Text style={styles.cardTitle}>Sampling Certificate</Text></View>
+          {renderField("certificate_no", "Certificate No")}
+          {renderField("vessel", "Vessel")}
+          {renderField("date", "Date", "date")}
+          {renderField("place", "Place")}
+          {renderField("cargo", "Cargo")}
+
+          <View style={styles.summaryBox}><Text style={styles.cardTitle}>Holds Inspected</Text></View>
+          {renderField("holds_inspected", "Holds")}
+
+          <View style={styles.summaryBox}><Text style={styles.cardTitle}>Holds and Seal Numbers</Text></View>
+          {Array.from({ length: 10 }, (_, index) => {
+            const hold = index + 1;
+            return renderField(`hold_${hold}_seal`, `HOLD ${hold}`);
+          })}
+
+          <View style={styles.summaryBox}><Text style={styles.cardTitle}>Observations</Text></View>
+          {renderField("observations", "Observations", "multiline")}
+
+          <View style={styles.summaryBox}><Text style={styles.cardTitle}>Closing</Text></View>
+          {renderField("closing_date", "Date", "date")}
+          {renderField("closing_time", "Time", "time")}
+
+          <View style={styles.summaryBox}><Text style={styles.cardTitle}>Signed By</Text></View>
+          {renderField("master", "Master / Chief Officer")}
+
+          <Pressable style={styles.actionButton} onPress={save}>
+            <Text style={styles.actionButtonText}>{isReview ? "Guardar Cambios" : "Enviar a Revision"}</Text>
+          </Pressable>
+          {busy ? <ActivityIndicator color={BLUE} style={styles.loader} /> : null}
+          {message ? <Text style={styles.error}>{message}</Text> : null}
+        </ScrollView>
+        <DraftServiceSelectorModal
+          visible={serviceSelectorOpen}
+          session={session}
+          title="Buscar Servicio - Sampling Certificate"
+          onClose={() => setServiceSelectorOpen(false)}
+          onSelect={(report) => {
+            setForm((current) => ({ ...current, ...samplingCertificateFormFromServiceReport(report) }));
+            setServiceSelectorOpen(false);
+          }}
+        />
+      </SafeAreaView>
+    </Modal>
+  );
+}
+
+function SealingCertificateMobileModal({
+  visible,
+  session,
+  initialReportId,
+  onClose,
+  onSaved
+}: {
+  visible: boolean;
+  session: NonNullable<ReturnType<typeof useAuth>["session"]>;
+  initialReportId?: string | null;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const isReview = Boolean(initialReportId);
+  const [form, setForm] = useState(emptySealingCertificateForm());
+  const [serviceSelectorOpen, setServiceSelectorOpen] = useState(false);
+  const [editEnabled, setEditEnabled] = useState(!isReview);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    if (!visible) return;
+    setMessage("");
+    setEditEnabled(!initialReportId);
+    if (!initialReportId) {
+      setForm(emptySealingCertificateForm());
+      return;
+    }
+    setBusy(true);
+    apiRequest<Record<string, unknown>>(`/sealing-certificates/${initialReportId}`, { session })
+      .then((payload) => {
+        const next = emptySealingCertificateForm();
+        Object.entries(payload).forEach(([key, value]) => {
+          if (value === null || value === undefined) return;
+          if (key in next && (typeof value === "string" || typeof value === "number" || typeof value === "boolean")) {
+            next[key] = String(value);
+          }
+        });
+        setForm(next);
+      })
+      .catch((err) => setMessage(err instanceof Error ? err.message : "No se pudo cargar Sealing Certificate."))
+      .finally(() => setBusy(false));
+  }, [initialReportId, session, visible]);
+
+  function setValue(key: string, value: string) {
+    setForm((current) => ({ ...current, [key]: value }));
+  }
+
+  function buildPayload() {
+    return Object.fromEntries(
+      Object.entries(form).map(([key, value]) => [key, value.trim() ? value.trim() : null])
+    );
+  }
+
+  async function save() {
+    if (!form.report_no.trim()) {
+      setMessage("Seleccione un informe primero.");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      const endpoint = initialReportId ? `/sealing-certificates/${initialReportId}` : "/sealing-certificates";
+      const result = await offlineApiRequest(endpoint, {
+        method: initialReportId ? "PUT" : "POST",
+        body: buildPayload(),
+        session,
+        offlineLabel: `${initialReportId ? "Actualizar" : "Crear"} Sealing Certificate ${form.report_no}`
+      });
+      setMessage(isQueuedOffline(result) ? "Sin internet: Sealing Certificate guardado en cache local para sincronizar." : initialReportId ? "Cambios guardados correctamente." : "Sealing Certificate enviado a revision.");
+      if (!isQueuedOffline(result)) await onSaved();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo guardar Sealing Certificate.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function download(kind: "excel" | "pdf") {
+    if (!initialReportId) {
+      setMessage("Primero debe enviar el certificado a revision.");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      await downloadSessionFile(
+        `/sealing-certificates/${initialReportId}/${kind}`,
+        session,
+        cleanFilePart(`Sealing_Certificate_${form.report_no || initialReportId}`) + `.${kind === "excel" ? "xlsx" : "pdf"}`
+      );
+      setMessage(`${kind.toUpperCase()} generado correctamente.`);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : `No se pudo generar ${kind.toUpperCase()}.`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function renderField(key: string, label: string, type: "text" | "date" | "time" | "multiline" = "text") {
+    if (type === "date") {
+      if (!editEnabled) {
+        return (
+          <View key={key} style={styles.formField}>
+            <Text style={styles.label}>{label}</Text>
+            <TextInput editable={false} style={[styles.input, styles.readonlyInput]} value={form[key] || ""} />
+          </View>
+        );
+      }
+      return <DateField key={key} label={label} value={form[key] || ""} onChange={(value) => setValue(key, value)} />;
+    }
+    return (
+      <View key={key} style={styles.formField}>
+        <Text style={styles.label}>{label}</Text>
+        <TextInput
+          editable={editEnabled}
+          placeholder={type === "time" ? "HH:MM" : undefined}
+          style={[styles.input, type === "multiline" && styles.multilineInput, !editEnabled && styles.readonlyInput]}
+          multiline={type === "multiline"}
+          value={form[key] || ""}
+          onChangeText={(value) => setValue(key, value)}
+        />
+      </View>
+    );
+  }
+
+  return (
+    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+      <SafeAreaView style={styles.modalScreen}>
+        <View style={styles.modalHeader}>
+          <Text style={styles.modalTitle}>SEALING CERTIFICATE</Text>
+          <Pressable style={styles.modalClose} onPress={onClose}><Text style={styles.modalCloseText}>Cerrar</Text></Pressable>
+        </View>
+        <ScrollView contentContainerStyle={styles.modalBody} keyboardShouldPersistTaps="handled">
+          <View style={styles.informesHomeActions}>
+            {!isReview ? (
+              <Pressable style={styles.actionButton} onPress={() => setServiceSelectorOpen(true)}>
+                <Text style={styles.actionButtonText}>SELECT REPORT</Text>
+              </Pressable>
+            ) : (
+              <Pressable style={styles.actionButton} onPress={() => setEditEnabled(true)}>
+                <Text style={styles.actionButtonText}>Editar</Text>
+              </Pressable>
+            )}
+            {isReview ? (
+              <>
+                <Pressable style={styles.secondaryButton} onPress={() => download("excel")}><Text style={styles.secondaryButtonText}>Excel</Text></Pressable>
+                <Pressable style={styles.secondaryButton} onPress={() => download("pdf")}><Text style={styles.secondaryButtonText}>PDF</Text></Pressable>
+              </>
+            ) : null}
+          </View>
+
+          <View style={styles.summaryBox}><Text style={styles.cardTitle}>Report Header</Text></View>
+          {renderField("report_no", "Report No")}
+          {renderField("port", "Port")}
+          {renderField("country", "Country")}
+          {renderField("customer", "Customer")}
+
+          <View style={styles.summaryBox}><Text style={styles.cardTitle}>Sealing Certificate</Text></View>
+          {renderField("certificate_no", "Certificate No")}
+          {renderField("vessel", "Vessel")}
+          {renderField("date", "Date", "date")}
+          {renderField("location", "Location")}
+          {renderField("cargo", "Cargo")}
+
+          <View style={styles.summaryBox}>
+            <Text style={styles.cardTitle}>Seal Placement</Text>
+            <Text style={styles.helperText}>The seals of hatch covers were placed in Port/Std. Side positions.</Text>
+          </View>
+
+          <View style={styles.summaryBox}><Text style={styles.cardTitle}>Holds</Text></View>
+          {Array.from({ length: 6 }, (_, index) => {
+            const hold = index + 1;
+            return (
+              <View key={hold} style={styles.summaryBox}>
+                <Text style={styles.fieldKey}>HOLD #{hold}</Text>
+                {renderField(`hold_${hold}_fwd_escape`, "FWD ESCAPE")}
+                {renderField(`hold_${hold}_fwd_aft_hatch`, "FWD/AFT HATCH")}
+                {renderField(`hold_${hold}_aft_escape`, "AFT ESCAPE")}
+              </View>
+            );
+          })}
+
+          <View style={styles.summaryBox}><Text style={styles.cardTitle}>Remarks</Text></View>
+          {renderField("remarks", "Remarks", "multiline")}
+
+          <View style={styles.summaryBox}><Text style={styles.cardTitle}>Witnessed / Closing</Text></View>
+          {renderField("chief_officer", "Chief Officer")}
+          {renderField("closing_date", "Date", "date")}
+          {renderField("closing_time", "Time", "time")}
+
+          <Pressable style={styles.actionButton} onPress={save}>
+            <Text style={styles.actionButtonText}>{isReview ? "Guardar Cambios" : "Enviar a Revision"}</Text>
+          </Pressable>
+          {busy ? <ActivityIndicator color={BLUE} style={styles.loader} /> : null}
+          {message ? <Text style={styles.error}>{message}</Text> : null}
+        </ScrollView>
+        <DraftServiceSelectorModal
+          visible={serviceSelectorOpen}
+          session={session}
+          title="Buscar Servicio - Sealing Certificate"
+          onClose={() => setServiceSelectorOpen(false)}
+          onSelect={(report) => {
+            setForm((current) => ({ ...current, ...sealingCertificateFormFromServiceReport(report) }));
+            setServiceSelectorOpen(false);
+          }}
+        />
+      </SafeAreaView>
+    </Modal>
+  );
+}
+
+function LashingCertificateMobileModal({
+  visible,
+  session,
+  initialReportId,
+  onClose,
+  onSaved
+}: {
+  visible: boolean;
+  session: NonNullable<ReturnType<typeof useAuth>["session"]>;
+  initialReportId?: string | null;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const isReview = Boolean(initialReportId);
+  const [form, setForm] = useState(emptyLashingCertificateForm());
+  const [serviceSelectorOpen, setServiceSelectorOpen] = useState(false);
+  const [editEnabled, setEditEnabled] = useState(!isReview);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    if (!visible) return;
+    setMessage("");
+    setEditEnabled(!initialReportId);
+    if (!initialReportId) {
+      setForm(emptyLashingCertificateForm());
+      return;
+    }
+    setBusy(true);
+    apiRequest<Record<string, unknown>>(`/lashing-certificates/${initialReportId}`, { session })
+      .then((payload) => {
+        const next = emptyLashingCertificateForm();
+        Object.entries(payload).forEach(([key, value]) => {
+          if (value === null || value === undefined) return;
+          if (key in next && (typeof value === "string" || typeof value === "number" || typeof value === "boolean")) {
+            next[key] = String(value);
+          }
+        });
+        if (!next.status) next.status = "Draft";
+        setForm(next);
+      })
+      .catch((err) => setMessage(err instanceof Error ? err.message : "No se pudo cargar Lashing Certificate."))
+      .finally(() => setBusy(false));
+  }, [initialReportId, session, visible]);
+
+  function setValue(key: string, value: string) {
+    setForm((current) => ({ ...current, [key]: value }));
+  }
+
+  function buildPayload() {
+    const payload = Object.fromEntries(
+      Object.entries(form).map(([key, value]) => [key, value.trim() ? value.trim() : null])
+    ) as Record<string, unknown>;
+    payload.status = form.status?.trim() || "Draft";
+    return payload;
+  }
+
+  async function save() {
+    if (!form.report_no.trim()) {
+      setMessage("Seleccione un informe primero.");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      const endpoint = initialReportId ? `/lashing-certificates/${initialReportId}` : "/lashing-certificates/";
+      const result = await offlineApiRequest(endpoint, {
+        method: initialReportId ? "PUT" : "POST",
+        body: buildPayload(),
+        session,
+        offlineLabel: `${initialReportId ? "Actualizar" : "Crear"} Lashing Certificate ${form.report_no}`
+      });
+      setMessage(isQueuedOffline(result) ? "Sin internet: Lashing Certificate guardado en cache local para sincronizar." : initialReportId ? "Cambios guardados correctamente." : "Lashing Certificate enviado a revision.");
+      if (!isQueuedOffline(result)) await onSaved();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo guardar Lashing Certificate.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function download(kind: "word" | "pdf") {
+    if (!initialReportId) {
+      setMessage("Primero debe enviar el certificado a revision.");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      await downloadSessionFile(
+        `/lashing-certificates/${initialReportId}/${kind}`,
+        session,
+        cleanFilePart(`Lashing_Certificate_${form.report_no || initialReportId}`) + `.${kind === "word" ? "docx" : "pdf"}`
+      );
+      setMessage(`${kind.toUpperCase()} generado correctamente.`);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : `No se pudo generar ${kind.toUpperCase()}.`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function renderField(key: string, label: string, type: "text" | "date" = "text") {
+    if (type === "date") {
+      if (!editEnabled) {
+        return (
+          <View key={key} style={styles.formField}>
+            <Text style={styles.label}>{label}</Text>
+            <TextInput editable={false} style={[styles.input, styles.readonlyInput]} value={form[key] || ""} />
+          </View>
+        );
+      }
+      return <DateField key={key} label={label} value={form[key] || ""} onChange={(value) => setValue(key, value)} />;
+    }
+    return (
+      <View key={key} style={styles.formField}>
+        <Text style={styles.label}>{label}</Text>
+        <TextInput
+          editable={editEnabled}
+          style={[styles.input, !editEnabled && styles.readonlyInput]}
+          value={form[key] || ""}
+          onChangeText={(value) => setValue(key, value)}
+        />
+      </View>
+    );
+  }
+
+  return (
+    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+      <SafeAreaView style={styles.modalScreen}>
+        <View style={styles.modalHeader}>
+          <Text style={styles.modalTitle}>LASHING CERTIFICATE</Text>
+          <Pressable style={styles.modalClose} onPress={onClose}><Text style={styles.modalCloseText}>Cerrar</Text></Pressable>
+        </View>
+        <ScrollView contentContainerStyle={styles.modalBody} keyboardShouldPersistTaps="handled">
+          <View style={styles.informesHomeActions}>
+            {!isReview ? (
+              <Pressable style={styles.actionButton} onPress={() => setServiceSelectorOpen(true)}>
+                <Text style={styles.actionButtonText}>SELECT REPORT</Text>
+              </Pressable>
+            ) : (
+              <Pressable style={styles.actionButton} onPress={() => setEditEnabled(true)}>
+                <Text style={styles.actionButtonText}>Editar</Text>
+              </Pressable>
+            )}
+            {isReview ? (
+              <>
+                <Pressable style={styles.secondaryButton} onPress={() => download("word")}><Text style={styles.secondaryButtonText}>Word</Text></Pressable>
+                <Pressable style={styles.secondaryButton} onPress={() => download("pdf")}><Text style={styles.secondaryButtonText}>PDF</Text></Pressable>
+              </>
+            ) : null}
+          </View>
+
+          <View style={styles.summaryBox}><Text style={styles.cardTitle}>Report Header</Text></View>
+          {renderField("report_no", "Report No")}
+          {renderField("customer", "Customer")}
+          {renderField("port", "Port")}
+          {renderField("country", "Country")}
+
+          <View style={styles.summaryBox}><Text style={styles.cardTitle}>Lashing Details</Text></View>
+          {renderField("flat_rack_container", "Flat Rack Container No")}
+          {renderField("cargo_type", "Type of Cargo")}
+          {renderField("lashing_material", "Lashing Material")}
+          {renderField("date", "Date", "date")}
+          {renderField("place", "Place")}
+
+          <View style={styles.summaryBox}><Text style={styles.cardTitle}>Ratchet Lashings</Text></View>
+          {renderField("ratchet_quantity", "Ratchet Lashing Quantity")}
+          {renderField("where_carry_out", "Where Was Carry Out")}
+          {renderField("completion_date", "Completion Date", "date")}
+
+          <Pressable style={styles.actionButton} onPress={save}>
+            <Text style={styles.actionButtonText}>{isReview ? "Guardar Cambios" : "Enviar a Revision"}</Text>
+          </Pressable>
+          {busy ? <ActivityIndicator color={BLUE} style={styles.loader} /> : null}
+          {message ? <Text style={styles.error}>{message}</Text> : null}
+        </ScrollView>
+        <DraftServiceSelectorModal
+          visible={serviceSelectorOpen}
+          session={session}
+          title="Buscar Servicio - Lashing Certificate"
+          onClose={() => setServiceSelectorOpen(false)}
+          onSelect={(report) => {
+            setForm((current) => ({ ...current, ...lashingCertificateFormFromServiceReport(report) }));
+            setServiceSelectorOpen(false);
+          }}
+        />
+      </SafeAreaView>
+    </Modal>
+  );
+}
+
 function DraftServiceSelectorModal({
   visible,
   session,
   onClose,
-  onSelect
+  onSelect,
+  title = "Buscar Servicio - Draft Survey"
 }: {
   visible: boolean;
   session: NonNullable<ReturnType<typeof useAuth>["session"]>;
   onClose: () => void;
   onSelect: (report: Record<string, unknown>) => void;
+  title?: string;
 }) {
   const [filters, setFilters] = useState({ year: "", month: "", continente: "", pais: "", puerto: "", cliente: "", operacion: "" });
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
@@ -4710,7 +8690,7 @@ function DraftServiceSelectorModal({
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
       <SafeAreaView style={styles.modalScreen}>
-        <View style={styles.modalHeader}><Text style={styles.modalTitle}>Buscar Servicio - Draft Survey</Text><Pressable style={styles.modalClose} onPress={onClose}><Text style={styles.modalCloseText}>Cerrar</Text></Pressable></View>
+        <View style={styles.modalHeader}><Text style={styles.modalTitle}>{title}</Text><Pressable style={styles.modalClose} onPress={onClose}><Text style={styles.modalCloseText}>Cerrar</Text></Pressable></View>
         <ScrollView contentContainerStyle={styles.modalBody}>
           <SelectField label="Anio" value={filters.year} options={options.years} onChange={(value) => updateFilter("year", value)} />
           <SelectField label="Mes" value={filters.month} options={options.months} onChange={(value) => updateFilter("month", value)} />
@@ -5256,13 +9236,41 @@ function isOperationalServicesTable(section: AppSection, table: NonNullable<AppS
 
 const PHONE_PREFIXES_FULL = [
   "+1",
+  "+1242",
+  "+1246",
+  "+1264",
+  "+1268",
+  "+1284",
+  "+1340",
+  "+1345",
+  "+1441",
+  "+1473",
+  "+1649",
+  "+1664",
+  "+1670",
+  "+1671",
+  "+1684",
+  "+1721",
+  "+1758",
+  "+1767",
+  "+1784",
+  "+1787",
+  "+1809",
+  "+1829",
+  "+1849",
+  "+1868",
+  "+1869",
+  "+1876",
+  "+1939",
   "+51",
   "+52",
+  "+53",
   "+54",
   "+55",
   "+56",
   "+57",
   "+58",
+  "+500",
   "+501",
   "+502",
   "+503",
@@ -5270,14 +9278,20 @@ const PHONE_PREFIXES_FULL = [
   "+505",
   "+506",
   "+507",
+  "+509",
+  "+590",
   "+591",
+  "+592",
   "+593",
+  "+594",
   "+595",
+  "+596",
   "+597",
-  "+598"
+  "+598",
+  "+599"
 ];
-const PHONE_PREFIXES_SHORT = ["+506", "+507", "+51", "+52", "+53", "+54", "+57", "+58"];
-const PHONE_PREFIXES_EMPLOYEE = ["+506", "+57", "+1"];
+const PHONE_PREFIXES_SHORT = PHONE_PREFIXES_FULL;
+const PHONE_PREFIXES_EMPLOYEE = PHONE_PREFIXES_FULL;
 const CIVIL_STATUS = ["Soltero", "Casado", "Union libre", "Divorciado", "Separado", "Viudo", "Otro"];
 const GENDERS = ["Masculino", "Femenino", "Otro"];
 const WORKDAYS = ["Tiempo completo", "Medio tiempo", "Por horas"];
@@ -5831,7 +9845,7 @@ function HRMiniTable({
             >
               {columns.map((column) => (
                 <Text key={column} style={styles.tableCell} numberOfLines={1}>
-                  {formatValue(row[column])}
+                  {formatDateColumnValue(column, row[column])}
                 </Text>
               ))}
             </Pressable>
@@ -5846,6 +9860,16 @@ function formatYmd(date: Date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
+function formatDateColumnValue(column: string, value: unknown) {
+  const raw = formatValue(value);
+  if (raw === "-") return raw;
+  const key = column.toLowerCase();
+  const looksLikeDateColumn = key === "date" || key.startsWith("fecha_") || key.endsWith("_date");
+  if (!looksLikeDateColumn) return raw;
+  const date = parseYmd(raw.slice(0, 10));
+  return date ? longEnglishDate(formatYmd(date)) : raw;
+}
+
 function parseYmd(value: string) {
   if (!value) return null;
   const [year, month, day] = value.split("-").map(Number);
@@ -5858,10 +9882,9 @@ function longEnglishDate(value: string) {
   const date = parseYmd(value);
   if (!date) return "Select date";
   return date.toLocaleDateString("en-US", {
-    weekday: "long",
-    year: "numeric",
     month: "long",
-    day: "numeric"
+    day: "numeric",
+    year: "numeric"
   });
 }
 
@@ -8023,16 +12046,21 @@ function ServiceCreateModal({
     setBusy(true);
     setMessage("");
     try {
-      await apiRequest("/servicios/add", {
+      const result = await offlineApiRequest("/servicios/add", {
         method: "POST",
         session,
+        offlineLabel: `Crear Servicio ${form.cliente || form.buque_contenedor}`,
         body: {
           ...form,
           honorarios: Number(String(form.honorarios || "0").replace(",", "")),
           costo_operativo: Number(String(form.costo_operativo || "0").replace(",", ""))
         }
       });
-      onSaved();
+      if (isQueuedOffline(result)) {
+        setMessage("Sin internet: servicio guardado en cache local para sincronizar.");
+      } else {
+        onSaved();
+      }
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "No se pudo guardar el servicio.");
     } finally {
@@ -8078,8 +12106,7 @@ function ServiceCreateModal({
           <TextInput style={[styles.input, styles.readonlyInput]} editable={false} value={form.honorarios} />
           <Text style={styles.label}>Costo operativo</Text>
           <TextInput keyboardType="decimal-pad" style={styles.input} value={form.costo_operativo} onChangeText={(value) => update("costo_operativo", value)} />
-          <Text style={styles.label}>Fecha inicio</Text>
-          <TextInput style={styles.input} value={form.fecha_inicio} onChangeText={(value) => update("fecha_inicio", value)} placeholder="YYYY-MM-DD" />
+          <DateField label="Fecha inicio" value={form.fecha_inicio} onChange={(value) => update("fecha_inicio", value)} />
           <Text style={styles.label}>Hora inicio</Text>
           <TextInput style={styles.input} value={form.hora_inicio} onChangeText={(value) => update("hora_inicio", value)} placeholder="HH:MM" />
           <PrimaryButton label="Guardar Servicio" loading={busy} onPress={save} />
@@ -8115,16 +12142,20 @@ function ServiceActionModal({
   useEffect(() => {
     if (!visible || !service) return;
     setMessage("");
+    const cleanField = (value: unknown) => {
+      const formatted = formatValue(value);
+      return formatted === "-" ? "" : formatted;
+    };
     setForm({
-      surveyor: formatValue(service.surveyor),
-      honorarios: formatValue(service.honorarios),
-      costo_operativo: formatValue(service.costo_operativo),
-      costo_tarjetas: formatValue(service.costo_tarjetas),
-      fecha_inicio: formatValue(service.fecha_inicio),
-      hora_inicio: formatValue(service.hora_inicio),
-      fecha_fin: formatValue(service.fecha_fin),
-      hora_fin: formatValue(service.hora_fin),
-      demoras: formatValue(service.demoras),
+      surveyor: cleanField(service.surveyor),
+      honorarios: cleanField(service.honorarios),
+      costo_operativo: cleanField(service.costo_operativo),
+      costo_tarjetas: cleanField(service.costo_tarjetas),
+      fecha_inicio: cleanField(service.fecha_inicio),
+      hora_inicio: cleanField(service.hora_inicio),
+      fecha_fin: cleanField(service.fecha_fin),
+      hora_fin: cleanField(service.hora_fin),
+      demoras: cleanField(service.demoras),
       razon_cancelacion: "",
       comentario_cancelacion: ""
     });
@@ -8149,7 +12180,7 @@ function ServiceActionModal({
   }
 
   function validateRequiredDateTime(dateValue: string, timeValue: string, label: string) {
-    if (!dateValue.trim() || !timeValue.trim()) {
+    if (!dateValue.trim() || dateValue.trim() === "-" || !timeValue.trim() || timeValue.trim() === "-") {
       setMessage(`Debe ingresar fecha y hora de ${label}.`);
       return false;
     }
@@ -8230,9 +12261,10 @@ function ServiceActionModal({
     try {
       if (mode === "edit") {
         const cardCostAllowed = allowsCardCost();
-        await apiRequest(`/servicios/editar/${consec}`, {
+        const result = await offlineApiRequest(`/servicios/editar/${consec}`, {
           method: "PUT",
           session,
+          offlineLabel: `Editar Servicio ${consec}`,
           body: {
             surveyor: form.surveyor,
             honorarios: toNumber(form.honorarios),
@@ -8242,35 +12274,63 @@ function ServiceActionModal({
             hora_inicio: form.hora_inicio
           }
         });
+        if (isQueuedOffline(result)) {
+          setMessage("Sin internet: cambios del servicio guardados en cache local.");
+          return;
+        }
       } else if (mode === "Generar Consecutivo") {
-        await apiRequest(`/servicios/confirmar/${consec}`, {
+        const result = await offlineApiRequest(`/servicios/confirmar/${consec}`, {
           method: "PUT",
           session,
+          offlineLabel: `Generar consecutivo Servicio ${consec}`,
           body: { fecha_inicio: form.fecha_inicio, hora_inicio: form.hora_inicio }
         });
+        if (isQueuedOffline(result)) {
+          setMessage("Sin internet: consecutivo guardado en cache local.");
+          return;
+        }
       } else if (mode === "Finalizar") {
-        await apiRequest(`/servicios/cerrar/${consec}`, {
+        const closeResult = await offlineApiRequest(`/servicios/cerrar/${consec}`, {
           method: "PUT",
           session,
+          offlineLabel: `Finalizar Servicio ${consec}`,
           body: { fecha_fin: form.fecha_fin, hora_fin: form.hora_fin }
         });
-        await apiRequest(`/servicios/generar_informe/${consec}`, { method: "PUT", session });
-      } else if (mode === "Cancelar") {
-        await apiRequest(`/servicios/cancelar/${consec}`, {
+        const reportResult = await offlineApiRequest(`/servicios/generar_informe/${consec}`, {
           method: "PUT",
           session,
+          offlineLabel: `Generar informe Servicio ${consec}`
+        });
+        if ([closeResult, reportResult].some(isQueuedOffline)) {
+          setMessage("Sin internet: finalizacion del servicio guardada en cache local.");
+          return;
+        }
+      } else if (mode === "Cancelar") {
+        const result = await offlineApiRequest(`/servicios/cancelar/${consec}`, {
+          method: "PUT",
+          session,
+          offlineLabel: `Cancelar Servicio ${consec}`,
           body: {
             estado: "Cancelado",
             razon_cancelacion: form.razon_cancelacion,
             comentario_cancelacion: form.comentario_cancelacion
           }
         });
+        if (isQueuedOffline(result)) {
+          setMessage("Sin internet: cancelacion guardada en cache local.");
+          return;
+        }
       } else if (mode === "Demoras") {
-        await apiRequest(`/servicios/demoras/${consec}`, {
+        const result = await offlineApiRequest(`/servicios/demoras/${consec}`, {
           method: "PUT",
           session,
+          offlineLabel: `Demoras Servicio ${consec}`,
           body: { total: String(delayTotal ?? 0) }
         });
+        if (isQueuedOffline(result)) {
+          setMessage("Sin internet: demoras guardadas en cache local.");
+          return;
+        }
       }
       onSaved();
     } catch (err) {
@@ -8300,7 +12360,7 @@ function ServiceActionModal({
             ? Object.entries(service).map(([key, value]) => (
                 <View key={key} style={styles.fieldRow}>
                   <Text style={styles.fieldKey}>{key.replaceAll("_", " ")}</Text>
-                  <Text style={styles.fieldValue}>{formatValue(value)}</Text>
+                  <Text style={styles.fieldValue}>{formatDateColumnValue(key, value)}</Text>
                 </View>
               ))
             : null}
@@ -8321,8 +12381,7 @@ function ServiceActionModal({
                 value={cardCostAllowed ? form.costo_tarjetas : ""}
                 onChangeText={(value) => setValue("costo_tarjetas", value)}
               />
-              <Text style={styles.label}>Fecha inicio</Text>
-              <TextInput style={styles.input} value={form.fecha_inicio} onChangeText={(value) => setValue("fecha_inicio", value)} placeholder="YYYY-MM-DD" />
+              <DateField label="Fecha inicio" value={form.fecha_inicio} onChange={(value) => setValue("fecha_inicio", value)} />
               <Text style={styles.label}>Hora inicio</Text>
               <TextInput style={styles.input} value={form.hora_inicio} onChangeText={(value) => setValue("hora_inicio", value)} placeholder="HH:MM" />
             </>
@@ -8331,8 +12390,7 @@ function ServiceActionModal({
           {mode === "Generar Consecutivo" ? (
             <>
               <Text style={styles.helperText}>El backend asignara num_informe y pasara el servicio a En Operacion.</Text>
-              <Text style={styles.label}>Fecha inicio</Text>
-              <TextInput style={styles.input} value={form.fecha_inicio} onChangeText={(value) => setValue("fecha_inicio", value)} placeholder="YYYY-MM-DD" />
+              <DateField label="Fecha inicio" value={form.fecha_inicio} onChange={(value) => setValue("fecha_inicio", value)} />
               <Text style={styles.label}>Hora inicio</Text>
               <TextInput style={styles.input} value={form.hora_inicio} onChangeText={(value) => setValue("hora_inicio", value)} placeholder="HH:MM" />
             </>
@@ -8344,12 +12402,11 @@ function ServiceActionModal({
                 {["cliente", "buque_contenedor", "operacion", "detalle", "surveyor", "pais", "honorarios", "costo_operativo", "costo_tarjetas", "fecha_inicio", "hora_inicio"].map((key) => (
                   <View key={key} style={styles.fieldRow}>
                     <Text style={styles.fieldKey}>{key.replaceAll("_", " ")}</Text>
-                    <Text style={styles.fieldValue}>{formatValue(service?.[key])}</Text>
+                    <Text style={styles.fieldValue}>{formatDateColumnValue(key, service?.[key])}</Text>
                   </View>
                 ))}
               </View>
-              <Text style={styles.label}>Fecha finalizacion</Text>
-              <TextInput style={styles.input} value={form.fecha_fin} onChangeText={(value) => setValue("fecha_fin", value)} placeholder="YYYY-MM-DD" />
+              <DateField label="Fecha finalizacion" value={form.fecha_fin} onChange={(value) => setValue("fecha_fin", value)} />
               <Text style={styles.label}>Hora finalizacion</Text>
               <TextInput style={styles.input} value={form.hora_fin} onChangeText={(value) => setValue("hora_fin", value)} placeholder="HH:MM" />
             </>
@@ -8386,12 +12443,10 @@ function ServiceActionModal({
                       </Pressable>
                     ) : null}
                   </View>
-                  <Text style={styles.label}>Fecha inicio</Text>
-                  <TextInput style={styles.input} value={row.f1} onChangeText={(value) => updateDelayRow(index, "f1", value)} placeholder="YYYY-MM-DD" />
+                  <DateField label="Fecha inicio" value={row.f1} onChange={(value) => updateDelayRow(index, "f1", value)} />
                   <Text style={styles.label}>Hora inicio</Text>
                   <TextInput style={styles.input} value={row.h1} onChangeText={(value) => updateDelayRow(index, "h1", value)} placeholder="HH:MM" />
-                  <Text style={styles.label}>Fecha fin</Text>
-                  <TextInput style={styles.input} value={row.f2} onChangeText={(value) => updateDelayRow(index, "f2", value)} placeholder="YYYY-MM-DD" />
+                  <DateField label="Fecha fin" value={row.f2} onChange={(value) => updateDelayRow(index, "f2", value)} />
                   <Text style={styles.label}>Hora fin</Text>
                   <TextInput style={styles.input} value={row.h2} onChangeText={(value) => updateDelayRow(index, "h2", value)} placeholder="HH:MM" />
                 </View>
@@ -8577,6 +12632,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 11
   },
+  inlineFields: { alignItems: "center", flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 10 },
   kpiCard: {
     backgroundColor: "white",
     borderColor: BORDER,
@@ -8591,6 +12647,8 @@ const styles = StyleSheet.create({
   label: { color: "#344054", fontSize: 13, fontWeight: "700", marginBottom: 6 },
   list: { marginTop: 12 },
   loader: { marginTop: 16 },
+  lograAgendaCell: { color: "#101828", fontSize: 11, fontWeight: "700", paddingHorizontal: 8, paddingVertical: 8, width: 132 },
+  lograAgendaRow: { borderBottomColor: BORDER, borderBottomWidth: 1, flexDirection: "row", minWidth: 1056 },
   loadingScreen: { alignItems: "center", flex: 1, justifyContent: "center" },
   loginLogo: { alignSelf: "center", height: 82, marginBottom: 10, width: 82 },
   loginWrap: { flexGrow: 1, justifyContent: "center", padding: 22 },
@@ -8691,6 +12749,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12
   },
   selectText: { color: "#101828", fontSize: 14, fontWeight: "700" },
+  selectedRow: { borderColor: BLUE, borderWidth: 2 },
   summaryBox: {
     backgroundColor: "white",
     borderColor: BORDER,
@@ -8767,6 +12826,7 @@ const styles = StyleSheet.create({
   },
   tableToolbar: { alignItems: "center", flexDirection: "row", gap: 10, marginBottom: 10 },
   timePart: { flex: 1 },
+  timePartInput: { marginBottom: 0, paddingHorizontal: 8, textAlign: "center", width: 48 },
   timeRow: { flexDirection: "row", gap: 10 },
   subtitle: { color: "#101828", fontSize: 18, fontWeight: "800", marginBottom: 14 },
   title: { color: "#101828", fontSize: 22, fontWeight: "800", marginBottom: 16, textAlign: "center" },
@@ -8777,5 +12837,20 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingHorizontal: 16,
     paddingTop: 12
-  }
+  },
+  syncRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingTop: 8
+  },
+  syncButton: {
+    backgroundColor: "#00B8D9",
+    borderRadius: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8
+  },
+  syncButtonText: { color: "#FFFFFF", fontSize: 12, fontWeight: "800" },
+  syncMessage: { color: "#D6F7FF", flex: 1, fontSize: 12 }
 });
