@@ -37,6 +37,11 @@ from Modulos.Informes.vessel_condition_survey.vessel_condition_survey_form impor
     VesselConditionSurveyForm
 )
 
+# ✅ NUEVO — PORT CAPTANCY REPORT
+from Modulos.Informes.port_captancy.port_captancy_form import (
+    PortCaptancyForm
+)
+
 
 class PopupVesselReportSelector(tk.Toplevel):
     """
@@ -142,19 +147,15 @@ class PopupVesselReportSelector(tk.Toplevel):
             command=self._open_vessel_condition
         )
 
-
-        # ================= OTROS DESHABILITADOS =================
-
-        self._build_button(container, text="Port Captancy", enabled=False)
-        self._build_button(container, text="Lashing Certificate", enabled=False)
-
-        ttk.Separator(container).pack(fill="x", pady=20)
-
-        ttk.Button(
+        # =========================================================
+        # PORT CAPTANCY — NUEVO
+        # =========================================================
+        self._build_button(
             container,
-            text="Cancel",
-            command=self.destroy
-        ).pack(anchor="e")
+            text="🧭 Port Captancy",
+            enabled=True,
+            command=self._open_port_captancy
+        )
 
     # =========================================================
     # HELPERS
@@ -196,7 +197,8 @@ class PopupVesselReportSelector(tk.Toplevel):
             self.parent,
             usuario=self.usuario,
             rol=self.rol,
-            on_back=self._back_to_parent
+            on_back=self._back_to_parent,
+            mode="create"
         )
 
     # =========================================================
@@ -309,6 +311,21 @@ class PopupVesselReportSelector(tk.Toplevel):
         self._clear_parent()
 
         VesselConditionSurveyForm(
+            self.parent,
+            usuario=self.usuario,
+            rol=self.rol,
+            on_back=self._back_to_parent
+        )
+
+    # =========================================================
+    # PORT CAPTANCY REPORT
+    # =========================================================
+    def _open_port_captancy(self):
+
+        self.destroy()
+        self._clear_parent()
+
+        PortCaptancyForm(
             self.parent,
             usuario=self.usuario,
             rol=self.rol,

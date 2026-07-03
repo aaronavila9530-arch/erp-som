@@ -1,5 +1,5 @@
 import requests
-from typing import Optional
+from typing import Optional, Any
 from datetime import datetime
 from session_context import get_user, get_rol
 import os
@@ -7,6 +7,262 @@ import tempfile
 
 BASE_URL = "https://api-som-fastapi-production-e66d.up.railway.app"
 TIMEOUT = 30
+
+
+# ============================================================
+# PORTIA SOM — CONSULTAS ERP
+# ============================================================
+def _portia_safe_float(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except Exception:
+        return None
+
+
+def _portia_num(value: Any) -> float:
+    parsed = _portia_safe_float(value)
+    return parsed if parsed is not None else 0.0
+
+
+def _portia_safe_int(value: Any) -> int:
+    try:
+        return int(value or 0)
+    except Exception:
+        return 0
+
+
+def _portia_rows(payload: Any) -> list[dict]:
+    if isinstance(payload, list):
+        return [x for x in payload if isinstance(x, dict)]
+    if isinstance(payload, dict):
+        for key in ("data", "rows", "items", "results"):
+            rows = payload.get(key)
+            if isinstance(rows, list):
+                return [x for x in rows if isinstance(x, dict)]
+    return []
+
+
+def _portia_total(payload: Any) -> int:
+    if isinstance(payload, dict):
+        for key in ("total", "count", "total_count"):
+            if key in payload:
+                return _portia_safe_int(payload.get(key))
+        return len(_portia_rows(payload))
+    if isinstance(payload, list):
+        return len(payload)
+    return 0
+
+
+def _portia_call(fn, default=None):
+    try:
+        return fn()
+    except Exception:
+        return default
+
+
+def _portia_has_financial_data(context: dict) -> bool:
+    if not isinstance(context, dict):
+        return False
+    fin = context.get("finanzas", {})
+    if not isinstance(fin, dict):
+        return False
+    keys = (
+        "facturado_total",
+        "cuentas_por_cobrar",
+        "pagos_recibidos",
+        "cuentas_por_pagar_pendientes",
+    )
+    return any(_portia_num(fin.get(key)) != 0 for key in keys)
+
+
+def _portia_weak_answer(answer: str) -> bool:
+    normalized = (answer or "").lower()
+    weak_markers = (
+        "portia no devolvio respuesta",
+        "facturado total: 0.00",
+        "cuentas por cobrar: 0.00",
+        "pagos recibidos: 0.00",
+        "contexto vivo del backend no esta disponible",
+    )
+    return any(marker in normalized for marker in weak_markers)
+
+
+def _build_portia_context_from_existing_apis() -> dict:
+    year = datetime.now().year
+    context = {
+        "generated_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        "year": year,
+        "source": "desktop_existing_apis",
+        "servicios": {},
+        "finanzas": {},
+        "comercial": {},
+        "master_data": {},
+        "informes": {},
+        "top_clientes_ar": [],
+        "actividad_puertos": [],
+    }
+
+    fin_dash = _portia_call(lambda: get_dashboard_finanzas_resumen_api(anio=year), {}) or {}
+    fin_kpis = fin_dash.get("kpis", {}) if isinstance(fin_dash, dict) else {}
+    context["finanzas"] = {
+        "facturado_total": _portia_num(fin_kpis.get("revenue_total")),
+        "cuentas_por_cobrar": _portia_num(fin_kpis.get("ar_total")),
+        "pagos_recibidos": _portia_num(fin_kpis.get("payments_total")),
+        "cuentas_por_pagar_pendientes": _portia_num(fin_kpis.get("ap_total")),
+    }
+
+    top_clientes = fin_dash.get("top_clientes_deuda", []) if isinstance(fin_dash, dict) else []
+    context["top_clientes_ar"] = [
+        {
+            "cliente": row.get("nombre_cliente") or row.get("cliente") or "N/D",
+            "saldo": _portia_num(row.get("deuda") or row.get("saldo")),
+        }
+        for row in top_clientes
+        if isinstance(row, dict)
+    ][:8]
+
+    svc_rows = _portia_call(lambda: get_servicios_api(page=1, page_size=500, year=year), {}) or {}
+    rows = _portia_rows(svc_rows)
+    finalizados = [
+        r for r in rows
+        if str(r.get("estado") or r.get("status") or "").strip().upper() == "FINALIZADO"
+    ]
+    pendientes_factura = [
+        r for r in finalizados
+        if not str(r.get("factura") or r.get("numero_factura") or "").strip()
+    ]
+    context["servicios"] = {
+        "total": _portia_total(svc_rows),
+        "actual_year": len(rows),
+        "finalizados": len(finalizados),
+        "pendientes_factura": len(pendientes_factura),
+        "valor_factura_total": sum(
+            _portia_num(r.get("valor_factura") or r.get("monto") or r.get("precio"))
+            for r in rows
+        ),
+    }
+
+    puerto_count: dict[tuple[str, str], int] = {}
+    for row in rows:
+        pais = str(row.get("pais") or "").strip()
+        puerto = str(row.get("puerto") or "").strip()
+        if puerto:
+            key = (pais, puerto)
+            puerto_count[key] = puerto_count.get(key, 0) + 1
+    context["actividad_puertos"] = [
+        {"pais": pais, "puerto": puerto, "servicios": total}
+        for (pais, puerto), total in sorted(puerto_count.items(), key=lambda item: item[1], reverse=True)[:10]
+    ]
+
+    com_dash = _portia_call(lambda: get_dashboard_comercial_resumen_api(anio=year), {}) or {}
+    com_kpis = com_dash.get("kpis", {}) if isinstance(com_dash, dict) else {}
+    cotizaciones = _portia_call(get_comercial_cotizaciones_api, []) or []
+    cot_rows = _portia_rows(cotizaciones)
+    approved_statuses = {"APROBADO", "APROBADA", "APPROVED"}
+    context["comercial"] = {
+        "cotizaciones": len(cot_rows) or _portia_safe_int(com_kpis.get("cotizaciones")),
+        "cotizaciones_aprobadas": sum(
+            1 for row in cot_rows
+            if str(row.get("status") or row.get("estado") or "").strip().upper() in approved_statuses
+        ),
+        "precios_activos": _portia_safe_int(com_kpis.get("precios_activos")),
+        "revenue_total": _portia_num(com_kpis.get("revenue_total")),
+        "margen_neto_usd": _portia_num(com_kpis.get("margen_neto_usd")),
+        "margen_neto_pct": _portia_num(com_kpis.get("margen_neto_pct")),
+        "clientes_activos": _portia_safe_int(com_kpis.get("clientes_activos")),
+        "paises_activos": _portia_safe_int(com_kpis.get("paises_activos")),
+    }
+
+    clientes = _portia_call(
+        lambda: api_request("GET", f"{BASE_URL}/clientes", params={"page": 1, "page_size": 1}, timeout=15).json(),
+        {},
+    ) or {}
+    proveedores = _portia_call(
+        lambda: api_request("GET", f"{BASE_URL}/proveedores", params={"page": 1, "page_size": 1}, timeout=15).json(),
+        {},
+    ) or {}
+    empleados = _portia_call(
+        lambda: api_request("GET", f"{BASE_URL}/empleados", params={"page": 1, "page_size": 1}, timeout=15).json(),
+        {},
+    ) or {}
+    surveyors = _portia_call(get_surveyores_api, []) or []
+    puertos = _portia_call(lambda: api_request("GET", f"{BASE_URL}/puertos", timeout=15).json(), []) or []
+    context["master_data"] = {
+        "clientes": _portia_total(clientes),
+        "proveedores": _portia_total(proveedores),
+        "empleados": _portia_total(empleados),
+        "surveyors": _portia_total(surveyors),
+        "puertos": _portia_total(puertos),
+    }
+
+    informes = _portia_call(lambda: get_dashboard_informes_resumen_api(anio=year), {}) or {}
+    inf_kpis = informes.get("kpis", {}) if isinstance(informes, dict) else {}
+    context["informes"] = {
+        "total": _portia_safe_int(inf_kpis.get("total_informes") or inf_kpis.get("total")),
+        "pendientes": _portia_safe_int(inf_kpis.get("pendientes")),
+        "aprobados": _portia_safe_int(inf_kpis.get("aprobados")),
+        "rechazados": _portia_safe_int(inf_kpis.get("rechazados")),
+    }
+
+    return context
+
+
+def get_portia_qa_api():
+    url = f"{BASE_URL}/portia/qa"
+    try:
+        return api_request("GET", url, timeout=20).json()
+    except Exception:
+        from backend_api.ai.som_portia_knowledge import SOM_QA
+        return {"data": SOM_QA}
+
+
+def get_portia_suggestions_api():
+    url = f"{BASE_URL}/portia/suggestions"
+    try:
+        return api_request("GET", url, timeout=20).json()
+    except Exception:
+        from backend_api.ai.som_portia_knowledge import PORTIA_SUGGESTED_QUESTIONS
+        return {"data": PORTIA_SUGGESTED_QUESTIONS}
+
+
+def get_portia_context_api():
+    url = f"{BASE_URL}/portia/context"
+    try:
+        payload = api_request("GET", url, timeout=30).json()
+        if isinstance(payload, dict) and payload.get("data"):
+            return payload
+    except Exception:
+        pass
+    return {"data": _build_portia_context_from_existing_apis()}
+
+
+def ask_portia_api(question: str, scope: str = "erp"):
+    url = f"{BASE_URL}/portia/ask"
+    payload = {
+        "question": question,
+        "scope": scope,
+    }
+    try:
+        response = api_request("POST", url, json=payload, timeout=60).json()
+        if isinstance(response, dict) and response.get("answer"):
+            if _portia_weak_answer(response.get("answer", "")):
+                context = get_portia_context_api().get("data", {})
+                if _portia_has_financial_data(context):
+                    from backend_api.ai.som_portia import answer_som_portia
+                    result = answer_som_portia(question, context, [], scope=scope)
+                    result["context"] = context
+                    return result
+            return response
+    except Exception:
+        pass
+
+    from backend_api.ai.som_portia import answer_som_portia
+    context = get_portia_context_api().get("data", {})
+    result = answer_som_portia(question, context, [], scope=scope)
+    result["context"] = context
+    return result
 
 # ============================================================
 # USER ROLE (RBAC)
@@ -1067,6 +1323,145 @@ def post_invoice_to_pay_upload_pdf_api(
 # ============================================================
 # INVOICE TO PAY — DELETE OBLIGATION
 # ============================================================
+# ============================================================
+# LOGRA QUESTIONNAIRES
+# ============================================================
+def save_logra_report_api(payload: dict):
+    try:
+        r = api_request(
+            "POST",
+            f"{BASE_URL}/logra-reports",
+            json=payload,
+            timeout=30
+        )
+        r.raise_for_status()
+        return r.json()
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def list_logra_reports_api():
+    try:
+        r = api_request(
+            "GET",
+            f"{BASE_URL}/logra-reports",
+            timeout=20
+        )
+        r.raise_for_status()
+        return r.json()
+    except Exception as e:
+        return {"data": [], "error": str(e)}
+
+
+def get_logra_report_api(report_id: int):
+    try:
+        r = api_request(
+            "GET",
+            f"{BASE_URL}/logra-reports/{int(report_id)}",
+            timeout=20
+        )
+        r.raise_for_status()
+        return r.json()
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def upload_logra_attachment_api(
+    report_id: int,
+    form_slug: str,
+    section: str,
+    item_key: str,
+    file_path: str,
+    bullet_index=None
+):
+    try:
+        data = {
+            "form_slug": form_slug,
+            "section": section,
+            "item_key": item_key,
+        }
+        if bullet_index is not None:
+            data["bullet_index"] = str(bullet_index)
+
+        with open(file_path, "rb") as f:
+            r = api_request(
+                "POST",
+                f"{BASE_URL}/logra-reports/{int(report_id)}/attachments",
+                data=data,
+                files={"file": f},
+                timeout=60
+            )
+            r.raise_for_status()
+            return r.json()
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def list_logra_attachments_api(
+    report_id: int,
+    form_slug: str | None = None,
+    section: str | None = None,
+    item_key: str | None = None
+):
+    try:
+        params = {}
+        if form_slug:
+            params["form_slug"] = form_slug
+        if section:
+            params["section"] = section
+        if item_key:
+            params["item_key"] = item_key
+
+        r = api_request(
+            "GET",
+            f"{BASE_URL}/logra-reports/{int(report_id)}/attachments",
+            params=params,
+            timeout=20
+        )
+        r.raise_for_status()
+        return r.json()
+    except Exception as e:
+        return {"data": [], "error": str(e)}
+
+
+def open_logra_attachment_api(attachment_id: int):
+    try:
+        r = api_request(
+            "GET",
+            f"{BASE_URL}/logra-reports/attachments/{int(attachment_id)}/download",
+            timeout=60
+        )
+        r.raise_for_status()
+
+        filename = "logra_attachment"
+        content_disposition = r.headers.get("content-disposition", "")
+        if "filename=" in content_disposition:
+            filename = content_disposition.split("filename=", 1)[1].strip("\"")
+
+        path = os.path.join(tempfile.gettempdir(), filename)
+        with open(path, "wb") as f:
+            f.write(r.content)
+
+        os.startfile(path)
+        return {"success": True, "path": path}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def improve_logra_text_api(payload: dict):
+    try:
+        r = api_request(
+            "POST",
+            f"{BASE_URL}/reports/ai/improve/logra",
+            json=payload,
+            timeout=60
+        )
+        r.raise_for_status()
+        return r.json()
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
 def delete_invoice_to_pay_api(obligation_id: int):
     try:
         r = api_request(
@@ -7914,7 +8309,7 @@ def generate_port_captancy_presentation_api(record_id: int):
 # GET PORT CAPTANCY BY ID
 # =========================================================
 
-def get_port_captancy_report_api(record_id: int):
+def get_port_captancy_report_by_id_api(record_id: int):
 
     import requests
 
@@ -8874,7 +9269,8 @@ def get_servicio_surveyors_api(consec: int):
     try:
         url = f"{BASE_URL}/servicios-surveyors/{consec}"
 
-        response = requests.get(
+        response = api_request(
+            "GET",
             url,
             timeout=TIMEOUT
         )
@@ -8895,7 +9291,8 @@ def save_servicio_surveyors_api(consec: int, payload: dict):
     try:
         url = f"{BASE_URL}/servicios-surveyors/{consec}"
 
-        response = requests.put(
+        response = api_request(
+            "PUT",
             url,
             json=payload,
             timeout=TIMEOUT
@@ -8917,7 +9314,8 @@ def create_servicio_surveyors_api(consec: int, payload: dict):
     try:
         url = f"{BASE_URL}/servicios-surveyors/{consec}"
 
-        response = requests.post(
+        response = api_request(
+            "POST",
             url,
             json=payload,
             timeout=TIMEOUT
@@ -8939,7 +9337,8 @@ def get_surveyors_catalog_api():
     try:
         url = f"{BASE_URL}/servicios-surveyors/catalogo/lista"
 
-        response = requests.get(
+        response = api_request(
+            "GET",
             url,
             timeout=TIMEOUT
         )
@@ -8950,4 +9349,39 @@ def get_surveyors_catalog_api():
         return response.json()
 
     except Exception as e:
-        raise Exception(f"Error GET catalogo surveyors: {e}")
+        try:
+            rows = get_surveyores_full_api()
+            data = []
+            seen = set()
+
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+
+                nombre = (row.get("nombre") or "").strip()
+                apellidos = (row.get("apellidos") or "").strip()
+                codigo = (row.get("codigo") or "").strip()
+                display = " ".join([nombre, apellidos]).strip() or nombre or codigo
+
+                if not display:
+                    continue
+
+                key = display.lower()
+                if key in seen:
+                    continue
+
+                seen.add(key)
+                data.append(
+                    {
+                        "id": codigo,
+                        "codigo": codigo,
+                        "nombre": display,
+                        "apellidos": "",
+                    }
+                )
+
+            return {"data": data}
+        except Exception as fallback_error:
+            raise Exception(
+                f"Error GET catalogo surveyors: {e}; fallback /surveyores: {fallback_error}"
+            )

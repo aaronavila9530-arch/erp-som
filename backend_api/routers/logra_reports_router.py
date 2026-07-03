@@ -1,223 +1,306 @@
-import json
 from datetime import datetime
+import os
+import shutil
+from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
-from psycopg2.extras import RealDictCursor
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse
+from psycopg2.extras import Json, RealDictCursor
 
 from database import get_db
 
 
-router = APIRouter(prefix="/logra-reports", tags=["LOGRA Reports"])
+router = APIRouter(
+    prefix="/logra-reports",
+    tags=["LOGRA Reports"]
+)
+
+STORAGE_ROOT = Path("storage") / "logra"
 
 
-DEFAULT_QUESTIONS = {
-    "capitanes": [
-        "Condicion operativa observada durante la reunion",
-        "Riesgos o restricciones comunicadas por capitania",
-        "Acciones acordadas y responsables",
-    ],
-    "draga": [
-        "Estado de avance de dragado informado",
-        "Limitaciones operativas o climaticas",
-        "Coordinaciones requeridas con terminal o autoridad",
-    ],
-    "naviera": [
-        "Expectativas operativas de la naviera",
-        "Riesgos comerciales u operativos levantados",
-        "Compromisos y siguientes pasos",
-    ],
-}
-
-
-def _ensure_table(db):
-    with db.cursor() as cur:
-        cur.execute(
-            """
+def _ensure_schema(conn):
+    with conn.cursor() as cur:
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS logra_reports (
                 id SERIAL PRIMARY KEY,
-                category VARCHAR(40) NOT NULL,
-                meeting_date DATE NOT NULL,
-                meeting_time TIME NOT NULL,
-                location TEXT,
-                subject TEXT,
-                attendees JSONB NOT NULL DEFAULT '[]'::jsonb,
-                questions JSONB NOT NULL DEFAULT '[]'::jsonb,
-                status VARCHAR(30) NOT NULL DEFAULT 'Pending',
-                created_by VARCHAR(120),
-                created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-                updated_at TIMESTAMP NOT NULL DEFAULT NOW()
-            );
-            """
-        )
-        cur.execute(
-            "CREATE INDEX IF NOT EXISTS idx_logra_reports_category ON logra_reports(category);"
-        )
-        cur.execute(
-            "CREATE INDEX IF NOT EXISTS idx_logra_reports_status ON logra_reports(status);"
-        )
-        cur.execute(
-            "CREATE INDEX IF NOT EXISTS idx_logra_reports_meeting_date ON logra_reports(meeting_date);"
-        )
-    db.commit()
-
-
-def _json_value(value, fallback):
-    if value in (None, ""):
-        return fallback
-    if isinstance(value, str):
-        try:
-            return json.loads(value)
-        except Exception:
-            return fallback
-    return value
-
-
-def _normalize_category(value):
-    category = (value or "").strip().lower()
-    if category not in DEFAULT_QUESTIONS:
-        raise HTTPException(status_code=400, detail="Invalid LOGRA category")
-    return category
-
-
-def _normalize_payload(payload):
-    category = _normalize_category(payload.get("category"))
-    questions = _json_value(payload.get("questions"), [])
-    attendees = _json_value(payload.get("attendees"), [])
-
-    if not isinstance(questions, list):
-        questions = []
-    if not isinstance(attendees, list):
-        attendees = []
-
-    meeting_date = payload.get("meeting_date")
-    meeting_time = payload.get("meeting_time")
-    if not meeting_date:
-        raise HTTPException(status_code=400, detail="Meeting date is required")
-    if not meeting_time:
-        raise HTTPException(status_code=400, detail="Meeting time is required")
-
-    return {
-        "category": category,
-        "meeting_date": meeting_date,
-        "meeting_time": meeting_time,
-        "location": payload.get("location") or "",
-        "subject": payload.get("subject") or "",
-        "attendees": attendees,
-        "questions": questions,
-        "status": payload.get("status") or "Pending",
-        "created_by": payload.get("created_by") or "",
-    }
-
-
-def _row_to_dict(row):
-    data = dict(row)
-    data["attendees"] = _json_value(data.get("attendees"), [])
-    data["questions"] = _json_value(data.get("questions"), [])
-    for key in ("meeting_date", "meeting_time", "created_at", "updated_at"):
-        if data.get(key) is not None:
-            data[key] = str(data[key])
-    return data
-
-
-@router.get("/defaults")
-def get_logra_defaults():
-    return {"categories": list(DEFAULT_QUESTIONS.keys()), "questions": DEFAULT_QUESTIONS}
-
-
-@router.get("/")
-def list_logra_reports(db=Depends(get_db)):
-    _ensure_table(db)
-    with db.cursor(cursor_factory=RealDictCursor) as cur:
-        cur.execute(
-            """
-            SELECT id, category, meeting_date, meeting_time, location, subject,
-                   status, created_by, created_at, updated_at
-            FROM logra_reports
-            ORDER BY meeting_date DESC, meeting_time DESC, id DESC;
-            """
-        )
-        rows = [_row_to_dict(row) for row in cur.fetchall()]
-    return {"data": rows}
-
-
-@router.get("/{record_id}")
-def get_logra_report(record_id: int, db=Depends(get_db)):
-    _ensure_table(db)
-    with db.cursor(cursor_factory=RealDictCursor) as cur:
-        cur.execute("SELECT * FROM logra_reports WHERE id = %s;", (record_id,))
-        row = cur.fetchone()
-    if not row:
-        raise HTTPException(status_code=404, detail="LOGRA report not found")
-    return _row_to_dict(row)
-
-
-@router.post("/")
-def create_logra_report(payload: dict, db=Depends(get_db)):
-    _ensure_table(db)
-    data = _normalize_payload(payload)
-    with db.cursor(cursor_factory=RealDictCursor) as cur:
-        cur.execute(
-            """
-            INSERT INTO logra_reports (
-                category, meeting_date, meeting_time, location, subject,
-                attendees, questions, status, created_by
+                title TEXT,
+                status TEXT DEFAULT 'Draft',
+                created_by TEXT,
+                created_at TIMESTAMP DEFAULT NOW(),
+                updated_at TIMESTAMP DEFAULT NOW()
             )
-            VALUES (%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb,%s,%s)
-            RETURNING *;
-            """,
-            (
-                data["category"],
-                data["meeting_date"],
-                data["meeting_time"],
-                data["location"],
-                data["subject"],
-                json.dumps(data["attendees"], ensure_ascii=False),
-                json.dumps(data["questions"], ensure_ascii=False),
-                data["status"],
-                data["created_by"],
-            ),
-        )
-        row = cur.fetchone()
-    db.commit()
-    return _row_to_dict(row)
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS logra_answers (
+                id SERIAL PRIMARY KEY,
+                report_id INTEGER NOT NULL REFERENCES logra_reports(id) ON DELETE CASCADE,
+                form_slug TEXT NOT NULL,
+                form_title TEXT,
+                section TEXT NOT NULL,
+                item_key TEXT NOT NULL,
+                question_text TEXT NOT NULL,
+                bullets JSONB NOT NULL DEFAULT '[]'::jsonb,
+                updated_at TIMESTAMP DEFAULT NOW(),
+                UNIQUE(report_id, form_slug, section, item_key)
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS logra_attachments (
+                id SERIAL PRIMARY KEY,
+                report_id INTEGER NOT NULL REFERENCES logra_reports(id) ON DELETE CASCADE,
+                form_slug TEXT NOT NULL,
+                section TEXT NOT NULL,
+                item_key TEXT NOT NULL,
+                bullet_index INTEGER,
+                original_filename TEXT NOT NULL,
+                stored_path TEXT NOT NULL,
+                content_type TEXT,
+                file_size BIGINT,
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_logra_answers_report
+            ON logra_answers(report_id)
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_logra_attachments_lookup
+            ON logra_attachments(report_id, form_slug, section, item_key)
+        """)
+    conn.commit()
 
 
-@router.put("/{record_id}")
-def update_logra_report(record_id: int, payload: dict, db=Depends(get_db)):
-    _ensure_table(db)
-    data = _normalize_payload(payload)
-    with db.cursor(cursor_factory=RealDictCursor) as cur:
-        cur.execute(
-            """
-            UPDATE logra_reports
-            SET category=%s,
-                meeting_date=%s,
-                meeting_time=%s,
-                location=%s,
-                subject=%s,
-                attendees=%s::jsonb,
-                questions=%s::jsonb,
-                status=%s,
-                updated_at=NOW()
-            WHERE id=%s
-            RETURNING *;
-            """,
-            (
-                data["category"],
-                data["meeting_date"],
-                data["meeting_time"],
-                data["location"],
-                data["subject"],
-                json.dumps(data["attendees"], ensure_ascii=False),
-                json.dumps(data["questions"], ensure_ascii=False),
-                data["status"],
-                record_id,
-            ),
-        )
+def _safe_filename(filename: str) -> str:
+    base = os.path.basename(filename or "attachment")
+    safe = "".join(ch if ch.isalnum() or ch in "._- " else "_" for ch in base).strip()
+    return safe or "attachment"
+
+
+@router.get("")
+def list_logra_reports(conn=Depends(get_db)):
+    _ensure_schema(conn)
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("""
+            SELECT id, title, status, created_by, created_at, updated_at
+            FROM logra_reports
+            ORDER BY updated_at DESC, id DESC
+            LIMIT 200
+        """)
+        return {"data": cur.fetchall()}
+
+
+
+
+
+@router.get("/{report_id}")
+def get_logra_report(report_id: int, conn=Depends(get_db)):
+    _ensure_schema(conn)
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("SELECT * FROM logra_reports WHERE id = %s", (report_id,))
+        report = cur.fetchone()
+        if not report:
+            raise HTTPException(status_code=404, detail="LOGRA report not found")
+
+        cur.execute("""
+            SELECT form_slug, form_title, section, item_key, question_text, bullets
+            FROM logra_answers
+            WHERE report_id = %s
+            ORDER BY form_slug, section, item_key
+        """, (report_id,))
+        answers = cur.fetchall()
+
+        cur.execute("""
+            SELECT id, form_slug, section, item_key, bullet_index, original_filename,
+                   content_type, file_size, created_at
+            FROM logra_attachments
+            WHERE report_id = %s
+            ORDER BY created_at DESC, id DESC
+        """, (report_id,))
+        attachments = cur.fetchall()
+
+    return {"report": report, "answers": answers, "attachments": attachments}
+
+
+@router.post("")
+def save_logra_report(payload: dict, conn=Depends(get_db)):
+    _ensure_schema(conn)
+    payload = payload or {}
+    report_id = payload.get("id")
+    title = payload.get("title") or "LOGRA Questionnaire"
+    created_by = payload.get("created_by")
+    answers = payload.get("answers") or []
+
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            if report_id:
+                cur.execute("""
+                    UPDATE logra_reports
+                    SET title = %s, updated_at = %s
+                    WHERE id = %s
+                    RETURNING *
+                """, (title, datetime.utcnow(), report_id))
+                report = cur.fetchone()
+                if not report:
+                    raise HTTPException(status_code=404, detail="LOGRA report not found")
+            else:
+                cur.execute("""
+                    INSERT INTO logra_reports (title, created_by, created_at, updated_at)
+                    VALUES (%s, %s, %s, %s)
+                    RETURNING *
+                """, (title, created_by, datetime.utcnow(), datetime.utcnow()))
+                report = cur.fetchone()
+                report_id = report["id"]
+
+            cur.execute("DELETE FROM logra_answers WHERE report_id = %s", (report_id,))
+
+            for item in answers:
+                bullets = item.get("bullets") or []
+                if not isinstance(bullets, list):
+                    bullets = []
+                bullets = [str(value).strip() for value in bullets[:20] if str(value or "").strip()]
+                cur.execute("""
+                    INSERT INTO logra_answers (
+                        report_id, form_slug, form_title, section, item_key,
+                        question_text, bullets, updated_at
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (report_id, form_slug, section, item_key)
+                    DO UPDATE SET
+                        form_title = EXCLUDED.form_title,
+                        question_text = EXCLUDED.question_text,
+                        bullets = EXCLUDED.bullets,
+                        updated_at = EXCLUDED.updated_at
+                """, (
+                    report_id,
+                    item.get("form_slug"),
+                    item.get("form_title"),
+                    item.get("section"),
+                    item.get("item_key"),
+                    item.get("question_text") or "",
+                    Json(bullets),
+                    datetime.utcnow(),
+                ))
+
+        conn.commit()
+        return {"success": True, "report": report}
+
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as exc:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"LOGRA save error: {exc}")
+
+
+@router.post("/{report_id}/attachments")
+def upload_logra_attachment(
+    report_id: int,
+    form_slug: str = Form(...),
+    section: str = Form(...),
+    item_key: str = Form(...),
+    bullet_index: int | None = Form(None),
+    file: UploadFile = File(...),
+    conn=Depends(get_db)
+):
+    _ensure_schema(conn)
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("SELECT id FROM logra_reports WHERE id = %s", (report_id,))
+        if not cur.fetchone():
+            raise HTTPException(status_code=404, detail="LOGRA report not found")
+
+    folder = STORAGE_ROOT / str(report_id) / form_slug / section / item_key
+    folder.mkdir(parents=True, exist_ok=True)
+
+    original = _safe_filename(file.filename)
+    stored_name = f"{int(datetime.utcnow().timestamp())}_{original}"
+    stored_path = folder / stored_name
+
+    try:
+        with open(stored_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        file_size = stored_path.stat().st_size
+
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                INSERT INTO logra_attachments (
+                    report_id, form_slug, section, item_key, bullet_index,
+                    original_filename, stored_path, content_type, file_size, created_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id, original_filename, content_type, file_size, created_at
+            """, (
+                report_id,
+                form_slug,
+                section,
+                item_key,
+                bullet_index,
+                original,
+                str(stored_path),
+                file.content_type,
+                file_size,
+                datetime.utcnow(),
+            ))
+            row = cur.fetchone()
+        conn.commit()
+        return {"success": True, "attachment": row}
+
+    except Exception as exc:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"LOGRA upload error: {exc}")
+
+
+@router.get("/{report_id}/attachments")
+def list_logra_attachments(
+    report_id: int,
+    form_slug: str | None = Query(None),
+    section: str | None = Query(None),
+    item_key: str | None = Query(None),
+    conn=Depends(get_db)
+):
+    _ensure_schema(conn)
+    filters = ["report_id = %s"]
+    params = [report_id]
+    if form_slug:
+        filters.append("form_slug = %s")
+        params.append(form_slug)
+    if section:
+        filters.append("section = %s")
+        params.append(section)
+    if item_key:
+        filters.append("item_key = %s")
+        params.append(item_key)
+
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(f"""
+            SELECT id, form_slug, section, item_key, bullet_index, original_filename,
+                   content_type, file_size, created_at
+            FROM logra_attachments
+            WHERE {" AND ".join(filters)}
+            ORDER BY created_at DESC, id DESC
+        """, params)
+        return {"data": cur.fetchall()}
+
+
+@router.get("/attachments/{attachment_id}/download")
+def download_logra_attachment(attachment_id: int, conn=Depends(get_db)):
+    _ensure_schema(conn)
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("""
+            SELECT original_filename, stored_path, content_type
+            FROM logra_attachments
+            WHERE id = %s
+        """, (attachment_id,))
         row = cur.fetchone()
+
     if not row:
-        db.rollback()
-        raise HTTPException(status_code=404, detail="LOGRA report not found")
-    db.commit()
-    return _row_to_dict(row)
+        raise HTTPException(status_code=404, detail="Attachment not found")
 
+    path = Path(row["stored_path"])
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Attachment file is missing")
+
+    return FileResponse(
+        path=str(path),
+        filename=row["original_filename"],
+        media_type=row.get("content_type") or "application/octet-stream"
+    )

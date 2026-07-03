@@ -6,7 +6,8 @@ from ai.maritime_ai import (
     improve_cargo_condition_text,
     improve_crane_inspection_text,
     improve_vessel_condition_text,
-    improve_port_captancy_text
+    improve_port_captancy_text,
+    improve_logra_questionnaire_text
 )
 
 router = APIRouter(
@@ -426,71 +427,36 @@ def improve_port_captancy(payload: dict):
 # =========================================================
 @router.post("/improve/logra")
 def improve_logra(payload: dict):
+
     try:
-        language = (payload.get("language") or "EN").upper()
-        if language not in ("ES", "EN"):
-            language = "EN"
-
-        section = payload.get("section") or "logra"
-        category = payload.get("category") or "logra"
-        items = payload.get("items")
-
-        def _fallback(text: str) -> str:
-            clean = " ".join((text or "").split())
-            if language == "EN":
-                return clean
-            return clean
-
-        if isinstance(items, list):
-            improved = []
-            for item in items:
-                text = (item or "").strip()
-                if not text:
-                    improved.append("")
-                    continue
-                try:
-                    result = improve_port_captancy_text(
-                        user_text=text,
-                        vessel="LOGRA",
-                        port=category,
-                        operation="Meeting log",
-                        section=section,
-                        language=language,
-                    )
-                except Exception:
-                    result = _fallback(text)
-                improved.append(result)
-
-            return {
-                "success": True,
-                "language": language,
-                "items": improved,
-            }
-
         user_text = (payload.get("text") or "").strip()
         if not user_text:
-            raise HTTPException(status_code=400, detail="Text or items are required")
+            raise HTTPException(status_code=400, detail="Text is required")
 
-        try:
-            result = improve_port_captancy_text(
-                user_text=user_text,
-                vessel="LOGRA",
-                port=category,
-                operation="Meeting log",
-                section=section,
-                language=language,
-            )
-        except Exception:
-            result = _fallback(user_text)
+        language = (payload.get("language") or "ES").upper()
+        if language not in ("ES", "EN"):
+            language = "ES"
+
+        result = improve_logra_questionnaire_text(
+            user_text=user_text,
+            report_type=payload.get("report_type"),
+            question=payload.get("question"),
+            form_title=payload.get("form_title"),
+            language=language
+        )
 
         return {
             "success": True,
             "language": language,
-            "text": result,
+            "text": result
         }
 
     except HTTPException:
         raise
+
     except Exception as e:
         print("PORTIA LOGRA ERROR:", repr(e))
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail=f"PORTIA LOGRA improvement failed: {str(e)}"
+        )

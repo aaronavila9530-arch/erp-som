@@ -5,6 +5,14 @@ from Modulos.Informes.popup.popup_vessel_report_selector import (
     PopupVesselReportSelector
 )
 
+from Modulos.Informes.popup.popup_certificate_report_selector import (
+    PopupCertificateReportSelector
+)
+
+from Modulos.Informes.logra_questionnaires_form import (
+    LograQuestionnairesForm
+)
+
 
 class ReportTypeSelector(ttk.Frame):
     """
@@ -136,6 +144,32 @@ class ReportTypeSelector(ttk.Frame):
             disabled=False
         )
 
+        self._build_option_card(
+            row=5,
+            title="📜 Certificates",
+            description=(
+                "Certificados operativos generados a partir de inspecciones "
+                "y registros portuarios.\n"
+                "Incluye Weight Certificates, cargo verification "
+                "y otros certificados oficiales."
+            ),
+            button_text="Seleccionar Tipo de Certificado",
+            command=self._open_certificate_selector,
+            disabled=False
+        )
+
+        self._build_option_card(
+            row=6,
+            title="LOGRA",
+            description=(
+                "Cuestionarios de factibilidad nautica y portuaria con preguntas "
+                "criticas, cuestionario detallado, bullets dinamicos, PORTIA y adjuntos."
+            ),
+            button_text="Abrir Cuestionarios LOGRA",
+            command=self._open_logra_questionnaires,
+            disabled=False
+        )
+
     # =========================================================
     # CARDS
     # =========================================================
@@ -190,4 +224,28 @@ class ReportTypeSelector(ttk.Frame):
             self,
             usuario=self.usuario,
             rol=self.rol
+        )
+
+
+    # =========================================================
+    # CERTIFICATE SELECTOR → POPUP
+    # =========================================================
+    def _open_certificate_selector(self):
+
+        PopupCertificateReportSelector(
+            self,
+            usuario=self.usuario,
+            rol=self.rol
+        )
+
+    def _open_logra_questionnaires(self):
+
+        for widget in self.parent.winfo_children():
+            widget.destroy()
+
+        LograQuestionnairesForm(
+            self.parent,
+            usuario=self.usuario,
+            rol=self.rol,
+            on_back=self.on_back
         )

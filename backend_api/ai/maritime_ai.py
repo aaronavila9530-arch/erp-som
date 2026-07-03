@@ -249,6 +249,73 @@ def improve_truck_supervision_text(
 
 
 # =========================================================
+# LOGRA QUESTIONNAIRE PORTIA LOGIC
+# =========================================================
+def improve_logra_questionnaire_text(
+    user_text: str,
+    report_type: Optional[str],
+    question: Optional[str],
+    form_title: Optional[str],
+    language: str = "ES"
+) -> str:
+
+    if not user_text or not user_text.strip():
+        raise ValueError("El texto de entrada esta vacio.")
+
+    client = _get_openai_client()
+
+    language = (language or "ES").upper()
+    if language not in ("ES", "EN"):
+        language = "ES"
+
+    if language == "EN":
+        language_instruction = (
+            "Rewrite the bullet in professional maritime English. "
+            "Keep it concise, factual, technically precise, and suitable for a feasibility questionnaire. "
+            "Do not invent facts, dates, measurements, vessel names, documents, or conclusions."
+        )
+    else:
+        language_instruction = (
+            "Mejora el bullet en espanol tecnico profesional maritimo. "
+            "Mantenlo conciso, factual, preciso y apto para un cuestionario de factibilidad. "
+            "No inventes hechos, fechas, medidas, nombres de buques, documentos ni conclusiones."
+        )
+
+    prompt = f"""
+You are PORTIA, a senior maritime survey and port feasibility writing assistant.
+
+LOGRA questionnaire context:
+- Formulario: {form_title or "N/A"}
+- Tipo / seccion: {report_type or "N/A"}
+- Pregunta: {question or "N/A"}
+
+Instruction:
+{language_instruction}
+
+Original bullet:
+\"\"\"
+{user_text.strip()}
+\"\"\"
+
+Return only the improved bullet text. No headings, no markdown, no extra commentary.
+""".strip()
+
+    response = client.responses.create(
+        model="gpt-4o-mini",
+        input=prompt,
+        temperature=0.15,
+        max_output_tokens=500
+    )
+
+    output_text = getattr(response, "output_text", None)
+
+    if not output_text or not output_text.strip():
+        raise RuntimeError("PORTIA devolvio una respuesta vacia.")
+
+    return output_text.strip()
+
+
+# =========================================================
 # CLEAN CARGO CONDITION PORTIA OUTPUT
 # =========================================================
 def _clean_cargo_condition_ai_output(output_text: str, section: str) -> str:
