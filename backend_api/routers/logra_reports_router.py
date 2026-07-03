@@ -26,6 +26,7 @@ def _ensure_schema(conn):
                 title TEXT,
                 category TEXT DEFAULT 'LOGRA',
                 meeting_date DATE DEFAULT CURRENT_DATE,
+                meeting_time TEXT DEFAULT '',
                 meeting_start_time TEXT DEFAULT '',
                 meeting_end_time TEXT DEFAULT '',
                 meeting_location TEXT DEFAULT '',
@@ -71,6 +72,19 @@ def _ensure_schema(conn):
         cur.execute("""
             ALTER TABLE logra_reports
             ALTER COLUMN meeting_date SET DEFAULT CURRENT_DATE
+        """)
+        cur.execute("""
+            ALTER TABLE logra_reports
+            ADD COLUMN IF NOT EXISTS meeting_time TEXT DEFAULT ''
+        """)
+        cur.execute("""
+            UPDATE logra_reports
+            SET meeting_time = ''
+            WHERE meeting_time IS NULL
+        """)
+        cur.execute("""
+            ALTER TABLE logra_reports
+            ALTER COLUMN meeting_time SET DEFAULT ''
         """)
         cur.execute("""
             ALTER TABLE logra_reports
@@ -276,6 +290,7 @@ def save_logra_report(payload: dict, conn=Depends(get_db)):
     meeting_date = first_meeting.get("date_iso") or datetime.utcnow().date().isoformat()
     meeting_start_time = first_meeting.get("start_time") or ""
     meeting_end_time = first_meeting.get("end_time") or ""
+    meeting_time = meeting_start_time
     meeting_location = first_meeting.get("place") or ""
     meeting_person = first_meeting.get("person") or ""
 
@@ -287,6 +302,7 @@ def save_logra_report(payload: dict, conn=Depends(get_db)):
                     SET title = %s,
                         category = %s,
                         meeting_date = %s,
+                        meeting_time = %s,
                         meeting_start_time = %s,
                         meeting_end_time = %s,
                         meeting_location = %s,
@@ -297,7 +313,7 @@ def save_logra_report(payload: dict, conn=Depends(get_db)):
                     WHERE id = %s
                     RETURNING *
                 """, (
-                    title, category, meeting_date, meeting_start_time, meeting_end_time,
+                    title, category, meeting_date, meeting_time, meeting_start_time, meeting_end_time,
                     meeting_location, meeting_person, Json(agenda_items), agenda_notes,
                     datetime.utcnow(), report_id
                 ))
@@ -307,14 +323,14 @@ def save_logra_report(payload: dict, conn=Depends(get_db)):
             else:
                 cur.execute("""
                     INSERT INTO logra_reports (
-                        title, category, meeting_date, meeting_start_time, meeting_end_time,
+                        title, category, meeting_date, meeting_time, meeting_start_time, meeting_end_time,
                         meeting_location, meeting_person, agenda_items, agenda_notes,
                         created_by, created_at, updated_at
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING *
                 """, (
-                    title, category, meeting_date, meeting_start_time, meeting_end_time,
+                    title, category, meeting_date, meeting_time, meeting_start_time, meeting_end_time,
                     meeting_location, meeting_person, Json(agenda_items), agenda_notes,
                     created_by, datetime.utcnow(), datetime.utcnow()
                 ))

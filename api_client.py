@@ -1334,7 +1334,7 @@ def save_logra_report_api(payload: dict):
             json=payload,
             timeout=30
         )
-        r.raise_for_status()
+        raise_for_status_with_detail(r)
         return r.json()
     except Exception as e:
         return {"success": False, "error": str(e)}
@@ -1347,7 +1347,7 @@ def list_logra_reports_api():
             f"{BASE_URL}/logra-reports",
             timeout=20
         )
-        r.raise_for_status()
+        raise_for_status_with_detail(r)
         return r.json()
     except Exception as e:
         return {"data": [], "error": str(e)}
@@ -1360,7 +1360,7 @@ def get_logra_report_api(report_id: int):
             f"{BASE_URL}/logra-reports/{int(report_id)}",
             timeout=20
         )
-        r.raise_for_status()
+        raise_for_status_with_detail(r)
         return r.json()
     except Exception as e:
         return {"success": False, "error": str(e)}
@@ -1391,7 +1391,7 @@ def upload_logra_attachment_api(
                 files={"file": f},
                 timeout=60
             )
-            r.raise_for_status()
+            raise_for_status_with_detail(r)
             return r.json()
     except Exception as e:
         return {"success": False, "error": str(e)}
@@ -1418,7 +1418,7 @@ def list_logra_attachments_api(
             params=params,
             timeout=20
         )
-        r.raise_for_status()
+        raise_for_status_with_detail(r)
         return r.json()
     except Exception as e:
         return {"data": [], "error": str(e)}
@@ -1431,7 +1431,7 @@ def open_logra_attachment_api(attachment_id: int):
             f"{BASE_URL}/logra-reports/attachments/{int(attachment_id)}/download",
             timeout=60
         )
-        r.raise_for_status()
+        raise_for_status_with_detail(r)
 
         filename = "logra_attachment"
         content_disposition = r.headers.get("content-disposition", "")
@@ -1456,7 +1456,7 @@ def improve_logra_text_api(payload: dict):
             json=payload,
             timeout=60
         )
-        r.raise_for_status()
+        raise_for_status_with_detail(r)
         return r.json()
     except Exception as e:
         return {"success": False, "error": str(e)}
