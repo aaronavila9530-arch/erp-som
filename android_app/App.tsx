@@ -3465,6 +3465,7 @@ type LograAgendaItem = {
   topic?: string;
   priority?: string;
   status?: string;
+  notes?: string;
   reminder_minutes?: number | string;
 };
 
@@ -3542,6 +3543,9 @@ function LograMobileModal({
   const [selectedAgenda, setSelectedAgenda] = useState<number | null>(null);
   const [attachments, setAttachments] = useState<LograAttachment[]>([]);
   const [agendaOpen, setAgendaOpen] = useState(false);
+  const [agendaStatusOpen, setAgendaStatusOpen] = useState(false);
+  const [agendaNotesOpen, setAgendaNotesOpen] = useState(false);
+  const [agendaLineNote, setAgendaLineNote] = useState("");
   const [portiaOpen, setPortiaOpen] = useState(false);
   const [portiaForm, setPortiaForm] = useState(LOGRA_QUESTIONNAIRES[0]?.title || "");
   const [portiaSection, setPortiaSection] = useState<keyof typeof LOGRA_SECTION_LABELS>("critical_questions");
@@ -3703,9 +3707,22 @@ function LograMobileModal({
       Alert.alert("Agenda LOGRA", "Selecciona una linea de agenda.");
       return;
     }
-    const currentStatus = String(agendaItems[selectedAgenda].status || "Pendiente");
-    const nextStatus = currentStatus === "Pendiente" ? "En proceso" : currentStatus === "En proceso" ? "Completado" : "Pendiente";
-    setAgendaItems((current) => current.map((item, index) => index === selectedAgenda ? { ...item, status: nextStatus } : item));
+    setAgendaStatusOpen(true);
+  }
+
+  function openAgendaNotes() {
+    if (selectedAgenda === null || !agendaItems[selectedAgenda]) {
+      Alert.alert("Agenda LOGRA", "Selecciona una linea de agenda.");
+      return;
+    }
+    setAgendaLineNote(String(agendaItems[selectedAgenda].notes || ""));
+    setAgendaNotesOpen(true);
+  }
+
+  function saveAgendaLineNote() {
+    if (selectedAgenda === null) return;
+    setAgendaItems((current) => current.map((item, index) => index === selectedAgenda ? { ...item, notes: agendaLineNote } : item));
+    setAgendaNotesOpen(false);
   }
 
   async function searchAgenda() {
@@ -3912,6 +3929,15 @@ function LograMobileModal({
                 <View style={styles.actionBar}>
                   <Pressable style={styles.secondaryButton} onPress={() => addBullet(selectedForm, section, item)}><Text style={styles.secondaryButtonText}>+ Bullet</Text></Pressable>
                   <Pressable style={styles.modalClose} onPress={() => removeBullet(selectedForm, section, item)}><Text style={styles.modalCloseText}>- Bullet</Text></Pressable>
+                  <Pressable
+                    style={styles.secondaryButton}
+                    onPress={() => Alert.alert(
+                      "LOGRA",
+                      "El boton Adjuntar requiere agregar el selector nativo de documentos en un nuevo build mobile. Ver y eliminar adjuntos existentes ya funciona por OTA."
+                    )}
+                  >
+                    <Text style={styles.secondaryButtonText}>Adjuntar</Text>
+                  </Pressable>
                 </View>
                 {questionAttachments.length ? <Text style={styles.label}>Adjuntos</Text> : null}
                 {questionAttachments.map((attachment) => (
@@ -3920,7 +3946,6 @@ function LograMobileModal({
                     <Pressable style={styles.modalClose} onPress={() => deleteAttachment(attachment)}><Text style={styles.modalCloseText}>-</Text></Pressable>
                   </View>
                 ))}
-                <Text style={styles.helperText}>Adjuntar nuevos archivos desde mobile requiere nuevo build con selector nativo de documentos; ver/eliminar adjuntos ya funciona por backend.</Text>
               </View>
             );
           })}
@@ -3968,11 +3993,22 @@ function LograMobileModal({
                 <Pressable style={styles.secondaryButton} onPress={addAgendaLine}><Text style={styles.secondaryButtonText}>+ Linea</Text></Pressable>
                 <Pressable style={styles.modalClose} onPress={removeAgendaLine}><Text style={styles.modalCloseText}>- Linea</Text></Pressable>
                 <Pressable style={styles.secondaryButton} onPress={changeAgendaStatus}><Text style={styles.secondaryButtonText}>Cambiar status</Text></Pressable>
+                <Pressable style={styles.secondaryButton} onPress={openAgendaNotes}><Text style={styles.secondaryButtonText}>Anotaciones</Text></Pressable>
                 <Pressable style={styles.actionButton} onPress={saveAgendaOnly}><Text style={styles.actionButtonText}>Guardar agenda</Text></Pressable>
               </View>
 
               <ScrollView horizontal>
                 <View>
+                  <View style={[styles.lograAgendaRow, styles.lograAgendaHeader]}>
+                    <Text style={[styles.lograAgendaCell, styles.lograAgendaHeaderCell]}>Date</Text>
+                    <Text style={[styles.lograAgendaCell, styles.lograAgendaHeaderCell]}>Time</Text>
+                    <Text style={[styles.lograAgendaCell, styles.lograAgendaHeaderCell]}>Place</Text>
+                    <Text style={[styles.lograAgendaCell, styles.lograAgendaHeaderCell]}>Person</Text>
+                    <Text style={[styles.lograAgendaCell, styles.lograAgendaHeaderCell]}>Company/Role</Text>
+                    <Text style={[styles.lograAgendaCell, styles.lograAgendaHeaderCell]}>Topic</Text>
+                    <Text style={[styles.lograAgendaCell, styles.lograAgendaHeaderCell]}>Priority</Text>
+                    <Text style={[styles.lograAgendaCell, styles.lograAgendaHeaderCell]}>Status</Text>
+                  </View>
                   {agendaItems.map((item, index) => (
                     <Pressable key={`${index}-${item.date_iso}-${item.start_time}`} style={[styles.lograAgendaRow, { backgroundColor: lograTint(item.status || item.priority) }, selectedAgenda === index && styles.selectedRow]} onPress={() => setSelectedAgenda(index)}>
                       <Text style={styles.lograAgendaCell}>{longEnglishDate(String(item.date_iso || item.date || ""))}</Text>
@@ -3987,11 +4023,46 @@ function LograMobileModal({
                   ))}
                 </View>
               </ScrollView>
-
-              <Text style={styles.label}>Anotaciones generales</Text>
-              <TextInput style={[styles.input, styles.multilineInput]} multiline value={agendaNotes} onChangeText={setAgendaNotes} />
               {busy ? <ActivityIndicator color={BLUE} style={styles.loader} /> : null}
               {message ? <Text style={styles.error}>{message}</Text> : null}
+            </ScrollView>
+          </SafeAreaView>
+        </Modal>
+
+        <Modal visible={agendaStatusOpen} animationType="slide" onRequestClose={() => setAgendaStatusOpen(false)}>
+          <SafeAreaView style={styles.modalScreen}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Cambiar status</Text>
+              <Pressable style={styles.modalClose} onPress={() => setAgendaStatusOpen(false)}><Text style={styles.modalCloseText}>Cerrar</Text></Pressable>
+            </View>
+            <ScrollView contentContainerStyle={styles.modalBody}>
+              <SelectField
+                label="Status"
+                value={selectedAgenda !== null ? String(agendaItems[selectedAgenda]?.status || "Pendiente") : "Pendiente"}
+                options={["Pendiente", "En proceso", "Completado"]}
+                onChange={(status) => {
+                  setAgendaItems((current) => current.map((item, index) => index === selectedAgenda ? { ...item, status } : item));
+                  setAgendaStatusOpen(false);
+                }}
+              />
+            </ScrollView>
+          </SafeAreaView>
+        </Modal>
+
+        <Modal visible={agendaNotesOpen} animationType="slide" onRequestClose={() => setAgendaNotesOpen(false)}>
+          <SafeAreaView style={styles.modalScreen}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Anotaciones de agenda</Text>
+              <Pressable style={styles.modalClose} onPress={() => setAgendaNotesOpen(false)}><Text style={styles.modalCloseText}>Cerrar</Text></Pressable>
+            </View>
+            <ScrollView contentContainerStyle={styles.modalBody}>
+              <Text style={styles.helperText}>
+                {selectedAgenda !== null && agendaItems[selectedAgenda]
+                  ? `${agendaItems[selectedAgenda].topic || "Reunion LOGRA"} - ${agendaItems[selectedAgenda].person || ""}`
+                  : "Selecciona una linea de agenda."}
+              </Text>
+              <TextInput style={[styles.input, styles.multilineInput]} multiline value={agendaLineNote} onChangeText={setAgendaLineNote} />
+              <Pressable style={styles.actionButton} onPress={saveAgendaLineNote}><Text style={styles.actionButtonText}>Guardar anotaciones</Text></Pressable>
             </ScrollView>
           </SafeAreaView>
         </Modal>
@@ -12726,6 +12797,8 @@ const styles = StyleSheet.create({
   list: { marginTop: 12 },
   loader: { marginTop: 16 },
   lograAgendaCell: { color: "#101828", fontSize: 11, fontWeight: "700", paddingHorizontal: 8, paddingVertical: 8, width: 132 },
+  lograAgendaHeader: { backgroundColor: BLUE },
+  lograAgendaHeaderCell: { color: "white", fontWeight: "900" },
   lograAgendaRow: { borderBottomColor: BORDER, borderBottomWidth: 1, flexDirection: "row", minWidth: 1056 },
   loadingScreen: { alignItems: "center", flex: 1, justifyContent: "center" },
   loginLogo: { alignSelf: "center", height: 82, marginBottom: 10, width: 82 },
