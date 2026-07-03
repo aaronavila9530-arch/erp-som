@@ -359,6 +359,7 @@ class LograQuestionnairesForm(ttk.Frame):
                     item.get("end_time") or "",
                     item.get("place") or "",
                     item.get("person") or "",
+                    item.get("phone") or item.get("telefono") or "",
                     item.get("company") or "",
                     item.get("topic") or "",
                     priority,
@@ -374,6 +375,7 @@ class LograQuestionnairesForm(ttk.Frame):
             "end_time": self.agenda_end.get(),
             "place": self.agenda_place.get().strip(),
             "person": self.agenda_person.get().strip(),
+            "phone": getattr(self, "agenda_phone", tk.StringVar()).get().strip(),
             "company": self.agenda_company.get().strip(),
             "topic": self.agenda_topic.get().strip(),
             "priority": self.agenda_priority.get(),
@@ -713,6 +715,7 @@ class PopupLograAgenda(tk.Toplevel):
         "end_time",
         "place",
         "person",
+        "phone",
         "company",
         "topic",
         "priority",
@@ -726,6 +729,7 @@ class PopupLograAgenda(tk.Toplevel):
         "end_time": "End",
         "place": "Place",
         "person": "Person",
+        "phone": "Phone",
         "company": "Company/Role",
         "topic": "Topic",
         "priority": "Priority",
@@ -750,6 +754,7 @@ class PopupLograAgenda(tk.Toplevel):
         self.end_minute_var = tk.StringVar(value="00")
         self.place_var = tk.StringVar()
         self.person_var = tk.StringVar()
+        self.phone_var = tk.StringVar()
         self.company_var = tk.StringVar()
         self.topic_var = tk.StringVar()
         self.priority_var = tk.StringVar(value="Media")
@@ -788,14 +793,15 @@ class PopupLograAgenda(tk.Toplevel):
         ttk.Entry(time_box, textvariable=self.end_minute_var, width=3, justify="center").pack(side="left")
         self._field(top, "Place", ttk.Entry(top, textvariable=self.place_var, width=24), 0, 7)
         self._field(top, "Person", ttk.Entry(top, textvariable=self.person_var), 1, 0)
-        self._field(top, "Company/Role", ttk.Entry(top, textvariable=self.company_var), 1, 2)
-        self._field(top, "Topic", ttk.Entry(top, textvariable=self.topic_var), 1, 4)
+        self._field(top, "Phone", ttk.Entry(top, textvariable=self.phone_var), 1, 2)
+        self._field(top, "Company/Role", ttk.Entry(top, textvariable=self.company_var), 1, 4)
+        self._field(top, "Topic", ttk.Entry(top, textvariable=self.topic_var), 1, 6)
         self._field(
             top,
             "Priority",
             ttk.Combobox(top, textvariable=self.priority_var, state="readonly", values=["Alta", "Media", "Baja"], width=10),
             1,
-            6,
+            8,
         )
         self._field(
             top,
@@ -832,6 +838,7 @@ class PopupLograAgenda(tk.Toplevel):
             "end_time": 70,
             "place": 140,
             "person": 150,
+            "phone": 120,
             "company": 140,
             "topic": 300,
             "priority": 90,
@@ -984,6 +991,7 @@ class PopupLograAgenda(tk.Toplevel):
             "end_time": end,
             "place": self.place_var.get().strip(),
             "person": self.person_var.get().strip(),
+            "phone": self.phone_var.get().strip(),
             "company": self.company_var.get().strip(),
             "topic": self.topic_var.get().strip(),
             "priority": self.priority_var.get(),
@@ -1113,7 +1121,7 @@ class PopupLograAgenda(tk.Toplevel):
                     cell.fill = PatternFill("solid", fgColor=fill)
             for cell in row:
                 cell.alignment = Alignment(wrap_text=True, vertical="top")
-        widths = [28, 18, 10, 10, 22, 22, 22, 42, 12, 14, 14]
+        widths = [28, 18, 10, 10, 22, 22, 18, 22, 42, 12, 14, 14]
         for idx, width in enumerate(widths, start=1):
             ws.column_dimensions[chr(64 + idx)].width = width
         wb.save(path)

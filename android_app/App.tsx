@@ -2354,6 +2354,7 @@ const LOGRA_FIELDS: InformeCreateField[] = [
   { key: "meeting_end_time", label: "Fin HH:MM" },
   { key: "meeting_location", label: "Lugar" },
   { key: "meeting_person", label: "Persona" },
+  { key: "meeting_phone", label: "Telefono" },
   { key: "company_role", label: "Empresa/Rol" },
   { key: "topic", label: "Tema" },
   { key: "priority", label: "Prioridad" },
@@ -2799,6 +2800,7 @@ function InformesSectionMobile({
               end_time: createForm.meeting_end_time || "10:00",
               place: createForm.meeting_location || "",
               person: createForm.meeting_person || "",
+              phone: createForm.meeting_phone || "",
               company_role: createForm.company_role || "",
               topic: createForm.topic || "",
               priority: createForm.priority || "Media",
@@ -3468,6 +3470,8 @@ type LograAgendaItem = {
   end_time?: string;
   place?: string;
   person?: string;
+  phone?: string;
+  telefono?: string;
   company?: string;
   company_role?: string;
   topic?: string;
@@ -3518,6 +3522,7 @@ function blankAgendaItem(): LograAgendaItem {
     end_time: "10:00",
     place: "",
     person: "",
+    phone: "",
     company: "",
     topic: "",
     priority: "Media",
@@ -3751,6 +3756,7 @@ function LograMobileModal({
             ...(record as LograAgendaItem),
             date_iso: dateIso === "-" ? formatYmd(new Date()) : dateIso,
             date: longEnglishDate(dateIso === "-" ? formatYmd(new Date()) : dateIso),
+            phone: formatValue(record.phone || record.telefono),
             company: formatValue(record.company || record.company_role),
             topic: formatValue(record.topic) === "-" ? reportTitle : formatValue(record.topic)
           });
@@ -3875,7 +3881,27 @@ function LograMobileModal({
 
   async function openAttachment(attachment: LograAttachment) {
     try {
-      await downloadSessionFile(`/logra-reports/attachments/${attachment.id}/download`, session, attachment.original_filename || `logra_${attachment.id}.bin`);
+      const filename = cleanFilePart(attachment.original_filename || `logra_${attachment.id}.bin`);
+      const fileUri = `${FileSystem.cacheDirectory || ""}${Date.now()}_${filename}`;
+      const headers = {
+        Accept: "application/octet-stream, application/pdf, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, */*",
+        "X-User": session.usuario,
+        "X-Role": session.rol,
+        "X-User-Role": session.rol
+      };
+      const result = await FileSystem.downloadAsync(
+        `${API_BASE_URL}/logra-reports/attachments/${attachment.id}/download`,
+        fileUri,
+        { headers }
+      );
+      if (result.status < 200 || result.status >= 300) {
+        throw new Error(`No se pudo descargar el adjunto (${result.status}).`);
+      }
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(result.uri, { dialogTitle: attachment.original_filename || "Adjunto LOGRA" });
+        return;
+      }
+      await Linking.openURL(result.uri);
     } catch (err) {
       Alert.alert("LOGRA", err instanceof Error ? err.message : "No se pudo abrir el adjunto.");
     }
@@ -4054,9 +4080,9 @@ function LograMobileModal({
                   <Text style={styles.helperText}>:</Text>
                   <TextInput style={[styles.input, styles.timePartInput]} value={(agendaDraft.end_time || "10:00").slice(3, 5)} keyboardType="number-pad" maxLength={2} onChangeText={(minute) => setAgendaDraft((current) => ({ ...current, end_time: `${(current.end_time || "10:00").slice(0, 2)}:${minute.padStart(2, "0").slice(0, 2)}` }))} />
                 </View>
-                {["place", "person", "company", "topic"].map((field) => (
+                {["place", "person", "phone", "company", "topic"].map((field) => (
                   <View key={field} style={styles.formField}>
-                    <Text style={styles.label}>{field === "place" ? "Place" : field === "person" ? "Person" : field === "company" ? "Company/Role" : "Topic"}</Text>
+                    <Text style={styles.label}>{field === "place" ? "Place" : field === "person" ? "Person" : field === "phone" ? "Phone" : field === "company" ? "Company/Role" : "Topic"}</Text>
                     <TextInput style={styles.input} value={String(agendaDraft[field as keyof LograAgendaItem] || "")} onChangeText={(value) => setAgendaDraft((current) => ({ ...current, [field]: value }))} />
                   </View>
                 ))}
@@ -4082,6 +4108,7 @@ function LograMobileModal({
                     <Text style={[styles.lograAgendaCell, styles.lograAgendaHeaderCell]}>Time</Text>
                     <Text style={[styles.lograAgendaCell, styles.lograAgendaHeaderCell]}>Place</Text>
                     <Text style={[styles.lograAgendaCell, styles.lograAgendaHeaderCell]}>Person</Text>
+                    <Text style={[styles.lograAgendaCell, styles.lograAgendaHeaderCell]}>Phone</Text>
                     <Text style={[styles.lograAgendaCell, styles.lograAgendaHeaderCell]}>Company/Role</Text>
                     <Text style={[styles.lograAgendaCell, styles.lograAgendaHeaderCell]}>Topic</Text>
                     <Text style={[styles.lograAgendaCell, styles.lograAgendaHeaderCell]}>Priority</Text>
@@ -4093,6 +4120,7 @@ function LograMobileModal({
                       <Text style={styles.lograAgendaCell}>{item.start_time} - {item.end_time}</Text>
                       <Text style={styles.lograAgendaCell}>{item.place}</Text>
                       <Text style={styles.lograAgendaCell}>{item.person}</Text>
+                      <Text style={styles.lograAgendaCell}>{item.phone || item.telefono}</Text>
                       <Text style={styles.lograAgendaCell}>{item.company || item.company_role}</Text>
                       <Text style={styles.lograAgendaCell}>{item.topic}</Text>
                       <Text style={styles.lograAgendaCell}>{item.priority}</Text>
@@ -12888,7 +12916,7 @@ const styles = StyleSheet.create({
   lograAgendaCell: { color: "#101828", fontSize: 11, fontWeight: "700", paddingHorizontal: 8, paddingVertical: 8, width: 132 },
   lograAgendaHeader: { backgroundColor: BLUE },
   lograAgendaHeaderCell: { color: "white", fontWeight: "900" },
-  lograAgendaRow: { borderBottomColor: BORDER, borderBottomWidth: 1, flexDirection: "row", minWidth: 1056 },
+  lograAgendaRow: { borderBottomColor: BORDER, borderBottomWidth: 1, flexDirection: "row", minWidth: 1188 },
   loadingScreen: { alignItems: "center", flex: 1, justifyContent: "center" },
   loginLogo: { alignSelf: "center", height: 82, marginBottom: 10, width: 82 },
   loginWrap: { flexGrow: 1, justifyContent: "center", padding: 22 },
