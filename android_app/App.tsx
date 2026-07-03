@@ -1,5 +1,6 @@
 import * as LocalAuthentication from "expo-local-authentication";
 import * as FileSystem from "expo-file-system";
+import * as DocumentPicker from "expo-document-picker";
 import * as Sharing from "expo-sharing";
 import * as SecureStore from "expo-secure-store";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -3758,10 +3759,6 @@ function LograMobileModal({
     }
   }
 
-  async function saveAgendaOnly() {
-    await saveLogra(false);
-  }
-
   function buildAnswersPayload() {
     const payload: Array<Record<string, unknown>> = [];
     LOGRA_QUESTIONNAIRES.forEach((form) => {
@@ -3784,20 +3781,28 @@ function LograMobileModal({
     return payload;
   }
 
+  function buildLograPayload(targetReportId: string | null = reportId) {
+    return {
+      id: targetReportId,
+      title: `LOGRA - ${formTitle || "Cuestionarios"}`,
+      category: "LOGRA",
+      status: "Draft",
+      created_by: session.usuario,
+      agenda_items: agendaItems,
+      agenda_notes: agendaNotes,
+      answers: buildAnswersPayload()
+    };
+  }
+
+  async function saveAgendaOnly() {
+    await saveLogra(false);
+  }
+
   async function saveLogra(closeAfterSave = true) {
     setBusy(true);
     setMessage("");
     try {
-      const payload = {
-        id: reportId,
-        title: `LOGRA - ${formTitle || "Cuestionarios"}`,
-        category: "LOGRA",
-        status: "Draft",
-        created_by: session.usuario,
-        agenda_items: agendaItems,
-        agenda_notes: agendaNotes,
-        answers: buildAnswersPayload()
-      };
+      const payload = buildLograPayload();
       const result = await offlineApiRequest("/logra-reports", {
         method: "POST",
         body: payload,
@@ -3808,12 +3813,19 @@ function LograMobileModal({
         const record = asRecord(result);
         const report = asRecord(record?.report);
         const nextId = formatValue(report?.id);
-        if (nextId !== "-") setReportId(nextId);
+        if (nextId !== "-") {
+          setReportId(nextId);
+          setMessage("LOGRA guardado correctamente.");
+          if (closeAfterSave) await onSaved();
+          return nextId;
+        }
       }
       setMessage(isQueuedOffline(result) ? "Sin internet: LOGRA guardado en cache local para sincronizar." : "LOGRA guardado correctamente.");
       if (closeAfterSave) await onSaved();
+      return reportId;
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "No se pudo guardar LOGRA.");
+      return null;
     } finally {
       setBusy(false);
     }
@@ -3859,6 +3871,68 @@ function LograMobileModal({
       await downloadSessionFile(`/logra-reports/attachments/${attachment.id}/download`, session, attachment.original_filename || `logra_${attachment.id}.bin`);
     } catch (err) {
       Alert.alert("LOGRA", err instanceof Error ? err.message : "No se pudo abrir el adjunto.");
+    }
+  }
+
+  async function attachLograFile(form: LograQuestionnaire, selectedSection: keyof typeof LOGRA_SECTION_LABELS, item: LograQuestion) {
+    const itemKey = lograItemKey(item);
+    const existing = attachments.filter((att) => att.form_slug === form.slug && att.section === selectedSection && att.item_key === itemKey);
+    if (existing.length >= 10) {
+      Alert.alert("LOGRA", "Cada pregunta permite maximo 10 adjuntos.");
+      return;
+    }
+
+    const picked = await DocumentPicker.getDocumentAsync({
+      copyToCacheDirectory: true,
+      multiple: false,
+      type: "*/*"
+    });
+    if (picked.canceled) return;
+
+    const asset = picked.assets?.[0];
+    if (!asset?.uri) {
+      Alert.alert("LOGRA", "No se selecciono un archivo valido.");
+      return;
+    }
+
+    setBusy(true);
+    setMessage("");
+    try {
+      const savedId = await saveLogra(false);
+      if (!savedId) throw new Error("Primero se debe guardar LOGRA para adjuntar archivos.");
+
+      const formData = new FormData();
+      formData.append("form_slug", form.slug);
+      formData.append("section", selectedSection);
+      formData.append("item_key", itemKey);
+      formData.append("file", {
+        uri: asset.uri,
+        name: asset.name || "logra_attachment",
+        type: asset.mimeType || "application/octet-stream"
+      } as unknown as Blob);
+
+      const response = await fetch(`${API_BASE_URL}/logra-reports/${encodeURIComponent(savedId)}/attachments`, {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "X-User": session.usuario,
+          "X-Role": session.rol,
+          "X-User-Role": session.rol
+        },
+        body: formData
+      });
+      const text = await response.text();
+      const payload = text ? JSON.parse(text) as Record<string, unknown> : {};
+      if (!response.ok) {
+        throw new Error(formatValue(payload.detail || payload.error || payload.message || `Error ${response.status}`));
+      }
+
+      await loadReport(savedId);
+      setMessage("Adjunto guardado correctamente.");
+    } catch (err) {
+      Alert.alert("LOGRA", err instanceof Error ? err.message : "No se pudo adjuntar el archivo.");
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -3931,10 +4005,7 @@ function LograMobileModal({
                   <Pressable style={styles.modalClose} onPress={() => removeBullet(selectedForm, section, item)}><Text style={styles.modalCloseText}>- Bullet</Text></Pressable>
                   <Pressable
                     style={styles.secondaryButton}
-                    onPress={() => Alert.alert(
-                      "LOGRA",
-                      "El boton Adjuntar requiere agregar el selector nativo de documentos en un nuevo build mobile. Ver y eliminar adjuntos existentes ya funciona por OTA."
-                    )}
+                    onPress={() => attachLograFile(selectedForm, section, item)}
                   >
                     <Text style={styles.secondaryButtonText}>Adjuntar</Text>
                   </Pressable>
