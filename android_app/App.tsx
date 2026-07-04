@@ -2080,8 +2080,13 @@ async function openDownloadedFile(uri: string, filename: string, mimeType?: stri
         flags: 1
       });
       return;
-    } catch {
-      // Fall back to the platform share sheet when no native viewer is available.
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err || "");
+      throw new Error(
+        message.includes("No Activity found")
+          ? `No hay una aplicacion instalada para abrir ${filename}.`
+          : `No se pudo abrir ${filename}: ${message}`
+      );
     }
   }
   if (await Sharing.isAvailableAsync()) {
