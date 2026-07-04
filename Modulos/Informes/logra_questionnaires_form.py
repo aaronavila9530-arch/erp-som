@@ -761,6 +761,8 @@ class PopupLograAgenda(tk.Toplevel):
         self.status_var = tk.StringVar(value="Pendiente")
         self.reminder_var = tk.StringVar(value="30")
         self.export_var = tk.StringVar(value="PDF")
+        self.view_mode = tk.StringVar(value="list")
+        self.calendar_month = datetime.now().date().replace(day=1)
         self._build_ui()
         self._sync_long_date()
         self._render()
@@ -815,6 +817,8 @@ class PopupLograAgenda(tk.Toplevel):
         actions = ttk.Frame(root)
         actions.grid(row=1, column=0, sticky="ew", pady=(10, 8))
         ttk.Button(actions, text="Buscar", command=self._search_backend).pack(side="left", padx=(0, 4))
+        self.view_button = ttk.Button(actions, text="Calendario", command=self._toggle_view)
+        self.view_button.pack(side="left", padx=(0, 4))
         ttk.Button(actions, text="+ Linea", command=self._add).pack(side="left", padx=(0, 4))
         ttk.Button(actions, text="- Linea", command=self._remove).pack(side="left", padx=(0, 14))
         ttk.Button(actions, text="Cambiar status", command=self._change_selected_status).pack(side="left", padx=4)
@@ -825,12 +829,12 @@ class PopupLograAgenda(tk.Toplevel):
         ttk.Button(actions, text="Guardar agenda", command=self._save).pack(side="right", padx=4)
         ttk.Button(actions, text="Cerrar", command=self.destroy).pack(side="right")
 
-        table_box = ttk.Frame(root)
-        table_box.grid(row=2, column=0, sticky="nsew")
-        table_box.rowconfigure(0, weight=1)
-        table_box.columnconfigure(0, weight=1)
+        self.table_box = ttk.Frame(root)
+        self.table_box.grid(row=2, column=0, sticky="nsew")
+        self.table_box.rowconfigure(0, weight=1)
+        self.table_box.columnconfigure(0, weight=1)
 
-        self.tree = ttk.Treeview(table_box, columns=self.COLUMNS, show="headings", height=16)
+        self.tree = ttk.Treeview(self.table_box, columns=self.COLUMNS, show="headings", height=16)
         widths = {
             "report_title": 240,
             "date": 150,
@@ -849,9 +853,9 @@ class PopupLograAgenda(tk.Toplevel):
             self.tree.heading(col, text=self.HEADERS[col])
             self.tree.column(col, width=widths[col], anchor="w")
         self.tree.grid(row=0, column=0, sticky="nsew")
-        yscroll = ttk.Scrollbar(table_box, orient="vertical", command=self.tree.yview)
+        yscroll = ttk.Scrollbar(self.table_box, orient="vertical", command=self.tree.yview)
         yscroll.grid(row=0, column=1, sticky="ns")
-        xscroll = ttk.Scrollbar(table_box, orient="horizontal", command=self.tree.xview)
+        xscroll = ttk.Scrollbar(self.table_box, orient="horizontal", command=self.tree.xview)
         xscroll.grid(row=1, column=0, sticky="ew")
         self.tree.configure(yscrollcommand=yscroll.set, xscrollcommand=xscroll.set)
         self.tree.tag_configure("Alta", background="#F8D7DA")
@@ -861,9 +865,55 @@ class PopupLograAgenda(tk.Toplevel):
         self.tree.tag_configure("En proceso", background="#FFF3CD")
         self.tree.tag_configure("Completado", background="#D1E7DD")
 
+        self.calendar_box = ttk.Frame(root)
+        self.calendar_box.grid(row=2, column=0, sticky="nsew")
+        self.calendar_box.columnconfigure(0, weight=1)
+        self.calendar_box.rowconfigure(1, weight=1)
+        self._build_calendar_shell()
+        self.table_box.tkraise()
+
     def _field(self, parent, label, widget, row, col):
         ttk.Label(parent, text=label).grid(row=row, column=col, sticky="w", padx=(0, 4), pady=3)
         widget.grid(row=row, column=col + 1, sticky="ew", padx=(0, 12), pady=3)
+
+    def _build_calendar_shell(self):
+        header = ttk.Frame(self.calendar_box)
+        header.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        header.columnconfigure(1, weight=1)
+        ttk.Button(header, text="Anterior", command=lambda: self._move_calendar_month(-1)).grid(row=0, column=0, sticky="w")
+        self.calendar_title = ttk.Label(header, text="", anchor="center", font=("Segoe UI", 13, "bold"))
+        self.calendar_title.grid(row=0, column=1, sticky="ew")
+        ttk.Button(header, text="Siguiente", command=lambda: self._move_calendar_month(1)).grid(row=0, column=2, sticky="e")
+
+        self.calendar_grid = ttk.Frame(self.calendar_box)
+        self.calendar_grid.grid(row=1, column=0, sticky="nsew")
+        for col in range(7):
+            self.calendar_grid.columnconfigure(col, weight=1, uniform="calendar")
+        for row in range(7):
+            self.calendar_grid.rowconfigure(row, weight=1)
+
+    def _toggle_view(self):
+        if self.view_mode.get() == "list":
+            self.view_mode.set("calendar")
+            self.view_button.configure(text="Lista")
+            self.calendar_box.tkraise()
+            self._render_calendar()
+        else:
+            self.view_mode.set("list")
+            self.view_button.configure(text="Calendario")
+            self.table_box.tkraise()
+
+    def _move_calendar_month(self, delta):
+        year = self.calendar_month.year
+        month = self.calendar_month.month + delta
+        while month < 1:
+            month += 12
+            year -= 1
+        while month > 12:
+            month -= 12
+            year += 1
+        self.calendar_month = self.calendar_month.replace(year=year, month=month, day=1)
+        self._render_calendar()
 
     def _sync_long_date(self):
         try:
@@ -924,6 +974,100 @@ class PopupLograAgenda(tk.Toplevel):
             return None
         return f"{hour}:{minute}"
 
+    def _agenda_item_date(self, item):
+        date_value = str(item.get("date_iso") or item.get("date") or "").strip()
+        for date_format in ("%Y-%m-%d", "%B %d, %Y"):
+            try:
+                return datetime.strptime(date_value, date_format).date()
+            except Exception:
+                continue
+        return None
+
+    def _calendar_color(self, item):
+        return {
+            "Pendiente": "#F8D7DA",
+            "En proceso": "#FFF3CD",
+            "Completado": "#D1E7DD",
+            "Alta": "#F8D7DA",
+            "Media": "#FFF3CD",
+            "Baja": "#D1E7DD",
+        }.get(item.get("status") or item.get("priority"), "#FFFFFF")
+
+    def _select_calendar_item(self, index):
+        if 0 <= index < len(self.items):
+            self.tree.selection_set(str(index))
+            self.tree.see(str(index))
+            item_date = self._agenda_item_date(self.items[index])
+            if item_date:
+                self.selected_date = item_date
+                self._sync_long_date()
+
+    def _render_calendar(self):
+        if not hasattr(self, "calendar_grid"):
+            return
+        for widget in self.calendar_grid.winfo_children():
+            widget.destroy()
+
+        self.calendar_title.configure(text=self.calendar_month.strftime("%B %Y"))
+        weekdays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+        for col, day in enumerate(weekdays):
+            ttk.Label(self.calendar_grid, text=day, anchor="center", font=("Segoe UI", 9, "bold")).grid(
+                row=0, column=col, sticky="ew", padx=1, pady=(0, 3)
+            )
+
+        by_date = {}
+        for index, item in enumerate(self.items):
+            item_date = self._agenda_item_date(item)
+            if not item_date:
+                continue
+            by_date.setdefault(item_date, []).append((index, item))
+
+        first = self.calendar_month
+        cursor = first - timedelta(days=(first.weekday() + 1) % 7)
+        for cell in range(42):
+            day = cursor + timedelta(days=cell)
+            row = (cell // 7) + 1
+            col = cell % 7
+            frame = tk.Frame(
+                self.calendar_grid,
+                bd=1,
+                relief="solid",
+                background="#FFFFFF" if day.month == self.calendar_month.month else "#F2F4F7",
+                padx=4,
+                pady=3,
+            )
+            frame.grid(row=row, column=col, sticky="nsew", padx=1, pady=1)
+            frame.columnconfigure(0, weight=1)
+            tk.Label(
+                frame,
+                text=str(day.day),
+                background=frame.cget("background"),
+                foreground="#101828" if day.month == self.calendar_month.month else "#98A2B3",
+                font=("Segoe UI", 9, "bold"),
+                anchor="w",
+            ).grid(row=0, column=0, sticky="ew")
+
+            for meeting_row, (index, item) in enumerate(by_date.get(day, [])[:3], start=1):
+                text = f"{item.get('start_time') or '--:--'} {item.get('topic') or item.get('person') or 'Meeting'}"
+                tk.Button(
+                    frame,
+                    text=text,
+                    anchor="w",
+                    relief="flat",
+                    background=self._calendar_color(item),
+                    command=lambda i=index: self._select_calendar_item(i),
+                    font=("Segoe UI", 8),
+                ).grid(row=meeting_row, column=0, sticky="ew", pady=(2, 0))
+            extra = len(by_date.get(day, [])) - 3
+            if extra > 0:
+                tk.Label(
+                    frame,
+                    text=f"+{extra} mas",
+                    background=frame.cget("background"),
+                    foreground="#003A75",
+                    font=("Segoe UI", 8, "bold"),
+                ).grid(row=4, column=0, sticky="w", pady=(2, 0))
+
     def _render(self):
         for row in self.tree.get_children():
             self.tree.delete(row)
@@ -936,6 +1080,8 @@ class PopupLograAgenda(tk.Toplevel):
                 values=tuple(item.get(col, "") for col in self.COLUMNS),
                 tags=(tag,)
             )
+        if getattr(self, "view_mode", None) and self.view_mode.get() == "calendar":
+            self._render_calendar()
 
     def _search_backend(self):
         listing = api_client.list_logra_reports_api()
