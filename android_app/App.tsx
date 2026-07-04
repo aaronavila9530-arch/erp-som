@@ -4242,16 +4242,35 @@ function LograMobileModal({
                 <TextInput style={styles.input} keyboardType="number-pad" value={String(agendaDraft.reminder_minutes || 30)} onChangeText={(reminder_minutes) => setAgendaDraft((current) => ({ ...current, reminder_minutes }))} />
               </View>
 
-              <View style={styles.actionBar}>
-                <Pressable style={styles.secondaryButton} onPress={searchAgenda}><Text style={styles.secondaryButtonText}>Buscar</Text></Pressable>
-                <Pressable style={styles.secondaryButton} onPress={() => setAgendaView((current) => current === "list" ? "calendar" : "list")}>
-                  <Text style={styles.secondaryButtonText}>{agendaView === "list" ? "Calendario" : "Lista"}</Text>
-                </Pressable>
-                <Pressable style={styles.secondaryButton} onPress={addAgendaLine}><Text style={styles.secondaryButtonText}>+ Linea</Text></Pressable>
-                <Pressable style={styles.modalClose} onPress={removeAgendaLine}><Text style={styles.modalCloseText}>- Linea</Text></Pressable>
-                <Pressable style={styles.secondaryButton} onPress={changeAgendaStatus}><Text style={styles.secondaryButtonText}>Cambiar status</Text></Pressable>
-                <Pressable style={styles.secondaryButton} onPress={openAgendaNotes}><Text style={styles.secondaryButtonText}>Anotaciones</Text></Pressable>
-                <Pressable style={styles.actionButton} onPress={saveAgendaOnly}><Text style={styles.actionButtonText}>Guardar agenda</Text></Pressable>
+              <View style={styles.lograAgendaToolbar}>
+                <View style={styles.lograToolbarHeader}>
+                  <Pressable style={styles.secondaryButtonCompact} onPress={searchAgenda}><Text style={styles.secondaryButtonText}>Buscar</Text></Pressable>
+                  <View style={styles.segmentedControl}>
+                    <Pressable style={[styles.segmentedOption, agendaView === "list" && styles.segmentedOptionActive]} onPress={() => setAgendaView("list")}>
+                      <Text style={agendaView === "list" ? styles.segmentedTextActive : styles.segmentedText}>Lista</Text>
+                    </Pressable>
+                    <Pressable style={[styles.segmentedOption, agendaView === "calendar" && styles.segmentedOptionActive]} onPress={() => setAgendaView("calendar")}>
+                      <Text style={agendaView === "calendar" ? styles.segmentedTextActive : styles.segmentedText}>Calendario</Text>
+                    </Pressable>
+                  </View>
+                  <Pressable style={styles.actionButton} onPress={saveAgendaOnly}><Text style={styles.actionButtonText}>Guardar</Text></Pressable>
+                </View>
+
+                <View style={styles.contextActionPanel}>
+                  <Text style={styles.contextActionTitle}>Reunion</Text>
+                  <View style={styles.contextActionRow}>
+                    <Pressable style={styles.secondaryButtonCompact} onPress={addAgendaLine}><Text style={styles.secondaryButtonText}>+ Nueva</Text></Pressable>
+                    {selectedAgenda !== null && agendaItems[selectedAgenda] ? (
+                      <>
+                        <Pressable style={styles.secondaryButtonCompact} onPress={changeAgendaStatus}><Text style={styles.secondaryButtonText}>Status</Text></Pressable>
+                        <Pressable style={styles.secondaryButtonCompact} onPress={openAgendaNotes}><Text style={styles.secondaryButtonText}>Notas</Text></Pressable>
+                        <Pressable style={styles.modalCloseCompact} onPress={removeAgendaLine}><Text style={styles.modalCloseText}>Eliminar</Text></Pressable>
+                      </>
+                    ) : (
+                      <Text style={styles.helperText}>Selecciona una linea para status, notas o eliminar.</Text>
+                    )}
+                  </View>
+                </View>
               </View>
 
               {agendaView === "calendar" ? (
@@ -13115,6 +13134,7 @@ const styles = StyleSheet.create({
   lograAgendaHeader: { backgroundColor: BLUE },
   lograAgendaHeaderCell: { color: "white", fontWeight: "900" },
   lograAgendaRow: { borderBottomColor: BORDER, borderBottomWidth: 1, flexDirection: "row", minWidth: 1188 },
+  lograAgendaToolbar: { backgroundColor: "#F8FAFC", borderColor: BORDER, borderRadius: 8, borderWidth: 1, gap: 10, marginBottom: 12, padding: 10 },
   lograCalendarDay: {
     borderBottomWidth: 1,
     borderColor: BORDER,
@@ -13135,6 +13155,7 @@ const styles = StyleSheet.create({
   lograCalendarTitle: { color: BLUE, fontSize: 16, fontWeight: "900" },
   lograCalendarWeekday: { color: "#475467", fontSize: 11, fontWeight: "900", paddingBottom: 6, textAlign: "center", width: "14.285%" },
   lograCalendarWeekRow: { flexDirection: "row" },
+  lograToolbarHeader: { alignItems: "center", flexDirection: "row", flexWrap: "wrap", gap: 8, justifyContent: "space-between" },
   loadingScreen: { alignItems: "center", flex: 1, justifyContent: "center" },
   loginLogo: { alignSelf: "center", height: 82, marginBottom: 10, width: 82 },
   loginWrap: { flexGrow: 1, justifyContent: "center", padding: 22 },
@@ -13176,7 +13197,13 @@ const styles = StyleSheet.create({
   rowTitle: { color: "#101828", fontSize: 15, fontWeight: "800", marginBottom: 4 },
   screen: { flex: 1, backgroundColor: "#F5F7FA" },
   secondaryButton: { alignItems: "center", borderColor: BLUE, borderRadius: 6, borderWidth: 1, marginTop: 10, paddingVertical: 12 },
+  secondaryButtonCompact: { alignItems: "center", borderColor: BLUE, borderRadius: 6, borderWidth: 1, paddingHorizontal: 12, paddingVertical: 8 },
   secondaryButtonText: { color: BLUE, fontSize: 14, fontWeight: "800" },
+  segmentedControl: { alignSelf: "flex-start", borderColor: BLUE, borderRadius: 6, borderWidth: 1, flexDirection: "row", overflow: "hidden" },
+  segmentedOption: { paddingHorizontal: 12, paddingVertical: 8 },
+  segmentedOptionActive: { backgroundColor: BLUE },
+  segmentedText: { color: BLUE, fontSize: 13, fontWeight: "800" },
+  segmentedTextActive: { color: "white", fontSize: 13, fontWeight: "800" },
   smallDangerButton: { alignItems: "center", backgroundColor: "#F4CCCC", borderRadius: 4, height: 28, justifyContent: "center", width: 32 },
   smallDangerButtonText: { color: "#7A271A", fontSize: 13, fontWeight: "900" },
   actionBar: { gap: 8, paddingVertical: 12 },
@@ -13194,6 +13221,9 @@ const styles = StyleSheet.create({
   statusChipActive: { backgroundColor: BLUE, borderColor: BLUE },
   statusChipText: { color: "#344054", fontSize: 12, fontWeight: "800" },
   statusChipTextActive: { color: "white" },
+  contextActionPanel: { borderColor: BORDER, borderRadius: 8, borderWidth: 1, padding: 10 },
+  contextActionRow: { alignItems: "center", flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  contextActionTitle: { color: "#344054", fontSize: 12, fontWeight: "900", marginBottom: 8, textTransform: "uppercase" },
   accountingTcBox: {
     backgroundColor: "#F8FAFC",
     borderColor: BORDER,
@@ -13208,6 +13238,7 @@ const styles = StyleSheet.create({
   helperText: { color: "#667085", fontSize: 13, fontWeight: "700", marginBottom: 12 },
   modalBody: { padding: 16, paddingBottom: 36 },
   modalClose: { borderColor: BLUE, borderRadius: 6, borderWidth: 1, paddingHorizontal: 12, paddingVertical: 8 },
+  modalCloseCompact: { borderColor: "#B42318", borderRadius: 6, borderWidth: 1, paddingHorizontal: 12, paddingVertical: 8 },
   modalCloseText: { color: BLUE, fontSize: 13, fontWeight: "800" },
   modalHeader: {
     alignItems: "center",
