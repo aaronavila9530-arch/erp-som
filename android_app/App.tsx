@@ -2031,7 +2031,10 @@ const INFORMES_CONFIG: Record<string, InformeConfig> = {
     statusField: "status",
     columns: ["id", "title", "category", "status", "attachment_count", "updated_at"],
     filters: ["title", "category", "status", "created_by"],
-    actions: []
+    actions: [
+      { key: "logra-word", label: "Exportar Word", endpoint: "" },
+      { key: "logra-pdf", label: "Exportar PDF", endpoint: "" }
+    ]
   }
 };
 
@@ -2058,6 +2061,7 @@ function extensionForInformeAction(action: InformeAction) {
 function mimeFromFilename(filename: string, fallback = "application/octet-stream") {
   const lower = filename.toLowerCase();
   if (lower.endsWith(".pdf")) return "application/pdf";
+  if (lower.endsWith(".html") || lower.endsWith(".htm")) return "text/html";
   if (lower.endsWith(".xlsx")) return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
   if (lower.endsWith(".xls")) return "application/vnd.ms-excel";
   if (lower.endsWith(".docx")) return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
@@ -2067,6 +2071,131 @@ function mimeFromFilename(filename: string, fallback = "application/octet-stream
   if (lower.endsWith(".webp")) return "image/webp";
   if (lower.endsWith(".txt")) return "text/plain";
   return fallback;
+}
+
+function escapeHtml(value: unknown) {
+  return formatValue(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function lograSectionLabel(section: string) {
+  return section === "critical_questions" ? "Preguntas de apertura" : section === "detailed_questions" ? "Preguntas por tema" : section;
+}
+
+function orderedLograAnswers(payload: Record<string, unknown>) {
+  const rawAnswers = Array.isArray(payload.answers) ? payload.answers : [];
+  const answers = new Map<string, Record<string, unknown>>();
+  rawAnswers.forEach((item) => {
+    const record = asRecord(item);
+    if (!record) return;
+    const key = `${formatValue(record.form_slug)}|${formatValue(record.section)}|${formatValue(record.item_key)}`;
+    answers.set(key, record);
+  });
+  const ordered: Array<{ form: LograQuestionnaire; section: "critical_questions" | "detailed_questions"; question: LograQuestion; answer: Record<string, unknown> }> = [];
+  LOGRA_QUESTIONNAIRES.forEach((form) => {
+    (["critical_questions", "detailed_questions"] as Array<"critical_questions" | "detailed_questions">).forEach((section) => {
+      const questions = Array.isArray(form[section]) ? form[section] as LograQuestion[] : [];
+      questions.forEach((question) => {
+        const itemKey = formatValue(question.id || question.number);
+        const answer = answers.get(`${form.slug}|${section}|${itemKey}`);
+        if (answer) ordered.push({ form, section, question, answer });
+      });
+    });
+  });
+  return ordered;
+}
+
+function buildLograReportHtml(payload: Record<string, unknown>) {
+  const report = asRecord(payload.report) || {};
+  const rawAttachments = Array.isArray(payload.attachments) ? payload.attachments : [];
+  const attachments = new Map<string, string[]>();
+  rawAttachments.forEach((item) => {
+    const record = asRecord(item);
+    if (!record) return;
+    const key = `${formatValue(record.form_slug)}|${formatValue(record.section)}|${formatValue(record.item_key)}`;
+    const filename = formatValue(record.original_filename || record.id);
+    attachments.set(key, [...(attachments.get(key) || []), filename]);
+  });
+  const agenda = Array.isArray(report.agenda_items) ? report.agenda_items.map((item) => asRecord(item)).filter(Boolean) as Record<string, unknown>[] : [];
+  const rows = orderedLograAnswers(payload);
+  let currentForm = "";
+  let currentSection = "";
+  const body: string[] = [];
+  rows.forEach(({ form, section, question, answer }) => {
+    if (currentForm !== form.slug) {
+      body.push(`<h2>${escapeHtml(form.title)}</h2>`);
+      currentForm = form.slug;
+      currentSection = "";
+    }
+    if (currentSection !== section) {
+      body.push(`<h3>${escapeHtml(lograSectionLabel(section))}</h3>`);
+      currentSection = section;
+    }
+    const itemKey = formatValue(question.id || question.number || answer.item_key);
+    const questionText = formatValue(answer.question_text || question.question);
+    const bullets = Array.isArray(answer.bullets) ? answer.bullets : [];
+    const attachmentNames = attachments.get(`${form.slug}|${section}|${itemKey}`) || [];
+    body.push(`<section class="question"><p class="question-title">${escapeHtml(itemKey)}. ${escapeHtml(questionText)}</p>`);
+    if (bullets.length) {
+      body.push("<ul>");
+      bullets.forEach((bullet) => body.push(`<li>${escapeHtml(bullet)}</li>`));
+      body.push("</ul>");
+    } else {
+      body.push('<p class="empty">Sin respuesta registrada.</p>');
+    }
+    if (attachmentNames.length) {
+      body.push(`<p class="attachments"><strong>Adjuntos:</strong> ${attachmentNames.map(escapeHtml).join(", ")}</p>`);
+    }
+    body.push("</section>");
+  });
+  const agendaRows = agenda.map((item) => `
+    <tr>
+      <td>${escapeHtml(item.date || item.date_long || item.date_iso)}</td>
+      <td>${escapeHtml(item.start_time)}</td>
+      <td>${escapeHtml(item.end_time)}</td>
+      <td>${escapeHtml(item.place)}</td>
+      <td>${escapeHtml(item.person)}</td>
+      <td>${escapeHtml(item.company_role || item.company)}</td>
+      <td>${escapeHtml(item.topic)}</td>
+    </tr>
+  `).join("");
+  return `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>${escapeHtml(report.title || "LOGRA Report")}</title>
+<style>
+  body { font-family: Arial, sans-serif; color: #172033; margin: 28px; }
+  h1 { color: #003A75; text-align: center; margin-bottom: 4px; }
+  h2 { color: #003A75; border-bottom: 2px solid #003A75; padding-bottom: 4px; margin-top: 26px; }
+  h3 { color: #4B6478; margin-top: 18px; }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0; }
+  td, th { border: 1px solid #B8C1CA; padding: 6px; font-size: 11px; vertical-align: top; }
+  th, .meta-label { background: #E9EEF3; font-weight: bold; }
+  .subtitle { text-align: center; color: #667085; margin-bottom: 18px; }
+  .question { break-inside: avoid; margin-bottom: 10px; }
+  .question-title { font-weight: bold; margin-bottom: 4px; }
+  li { margin-bottom: 3px; }
+  .attachments, .empty { color: #667085; font-size: 11px; }
+</style>
+</head>
+<body>
+<h1>${escapeHtml(report.title || "LOGRA Report")}</h1>
+<p class="subtitle">Professional LOGRA Questionnaire Report</p>
+<table>
+  <tr><td class="meta-label">ID</td><td>${escapeHtml(report.id)}</td></tr>
+  <tr><td class="meta-label">Categoria</td><td>${escapeHtml(report.category || "LOGRA")}</td></tr>
+  <tr><td class="meta-label">Status</td><td>${escapeHtml(report.status)}</td></tr>
+  <tr><td class="meta-label">Agenda</td><td>${agenda.length} reuniones</td></tr>
+  <tr><td class="meta-label">Actualizado</td><td>${escapeHtml(report.updated_at)}</td></tr>
+</table>
+${agendaRows ? `<h2>Meeting Agenda</h2><table><tr><th>Date</th><th>Start</th><th>End</th><th>Place</th><th>Person</th><th>Company/Role</th><th>Topic</th></tr>${agendaRows}</table>` : ""}
+${body.join("\n")}
+</body>
+</html>`;
 }
 
 async function openDownloadedFile(uri: string, filename: string, mimeType?: string | null) {
@@ -2529,6 +2658,7 @@ function InformesSectionMobile({
   const [lashingCertificateReviewId, setLashingCertificateReviewId] = useState<string | null>(null);
   const [lograOpen, setLograOpen] = useState(false);
   const [lograReviewId, setLograReviewId] = useState<string | null>(null);
+  const [reviewActionKey, setReviewActionKey] = useState("Review");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const statusOptions = ["", "Draft", "Pendiente", "En curso", "Completado", "Pending", "Pending for review", "Approved", "Rejected", "Approve", "Reject"];
@@ -2547,6 +2677,23 @@ function InformesSectionMobile({
     return fields.some((field) => formatValue(row[field]).toLowerCase().includes(needle));
   });
   const selectedRow = selected === null ? null : visibleRows[selected] || null;
+  const reviewActionOptions = ["Review", ...config.actions.map((action) => action.label)];
+
+  useEffect(() => {
+    setReviewActionKey("Review");
+  }, [activeKey]);
+
+  function selectedReviewAction() {
+    if (reviewActionKey === "Review") return null;
+    return config.actions.find((action) => action.key === reviewActionKey || action.label === reviewActionKey) || null;
+  }
+
+  async function runSelectedReviewAction() {
+    const action = selectedReviewAction();
+    if (action) await runInformeAction(action);
+    else await openDetail();
+  }
+
   async function load() {
     const endpoint = getInformeEndpoint(activeKey, section, activeSection);
     if (!endpoint) return;
@@ -2770,6 +2917,10 @@ function InformesSectionMobile({
       setMessage("Seleccione una fila.");
       return;
     }
+    if (activeKey === "logra" && (action.key === "logra-word" || action.key === "logra-pdf")) {
+      await exportLograMobile(action.key === "logra-word" ? "word" : "pdf");
+      return;
+    }
     const endpoint = endpointForRow(action.endpoint, selectedRow, config.idField);
     setBusy(true);
     setMessage("");
@@ -2794,6 +2945,36 @@ function InformesSectionMobile({
       }
     } catch (err) {
       setMessage(err instanceof Error ? err.message : `No se pudo ejecutar ${action.label}.`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function exportLograMobile(kind: "word" | "pdf") {
+    if (!selectedRow) {
+      setMessage("Seleccione un LOGRA.");
+      return;
+    }
+    const id = formatValue(selectedRow.id);
+    if (id === "-") {
+      setMessage("Seleccione un LOGRA valido.");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      const payload = await apiRequest<Record<string, unknown>>(`/logra-reports/${encodeURIComponent(id)}`, { session });
+      const html = buildLograReportHtml(payload);
+      const report = asRecord(payload.report) || selectedRow;
+      const title = cleanFilePart(formatValue(report.title || `LOGRA_${id}`));
+      const extension = kind === "word" ? "doc" : "html";
+      const filename = `${title}_${kind === "word" ? "WORD" : "PDF"}.${extension}`;
+      const uri = `${FileSystem.cacheDirectory || ""}${filename}`;
+      await FileSystem.writeAsStringAsync(uri, html);
+      await openDownloadedFile(uri, filename, kind === "word" ? "application/msword" : "text/html");
+      setMessage(kind === "word" ? "Word LOGRA generado correctamente." : "Reporte LOGRA abierto. Use imprimir/guardar como PDF desde el telefono.");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo exportar LOGRA.");
     } finally {
       setBusy(false);
     }
@@ -3065,14 +3246,14 @@ function InformesSectionMobile({
       </View>
       <Text style={styles.tableCount}>{visibleRows.length} registros</Text>
       <HRMiniTable rows={visibleRows} columns={config.columns} selectedIndex={selected} onSelect={setSelected} />
-      <ScrollView horizontal contentContainerStyle={styles.actionBar}>
-        <Pressable style={styles.actionButton} onPress={openDetail}><Text style={styles.actionButtonText}>Review</Text></Pressable>
-        {config.actions.map((action) => (
-          <Pressable key={action.key} style={action.key === "reject" ? styles.modalClose : styles.actionButton} onPress={() => runInformeAction(action)}>
-            <Text style={action.key === "reject" ? styles.modalCloseText : styles.actionButtonText}>{action.label}</Text>
+      <View style={styles.financeFilterBox}>
+        <SelectField label="Acciones" value={reviewActionKey} options={reviewActionOptions} onChange={setReviewActionKey} />
+        <View style={styles.financeFilterActions}>
+          <Pressable style={selectedReviewAction()?.key === "reject" ? styles.modalClose : styles.actionButton} onPress={runSelectedReviewAction}>
+            <Text style={selectedReviewAction()?.key === "reject" ? styles.modalCloseText : styles.actionButtonText}>Ejecutar</Text>
           </Pressable>
-        ))}
-      </ScrollView>
+        </View>
+      </View>
       {busy ? <ActivityIndicator color={BLUE} style={styles.loader} /> : null}
       {message ? <Text style={styles.error}>{message}</Text> : null}
       <Modal visible={detail !== null} animationType="slide" onRequestClose={() => setDetail(null)}>
