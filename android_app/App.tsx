@@ -3598,6 +3598,22 @@ function lograAgendaStartDate(item: LograAgendaItem) {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
+function monthName(date: Date) {
+  return date.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+}
+
+function calendarDaysForMonth(monthDate: Date) {
+  const year = monthDate.getFullYear();
+  const month = monthDate.getMonth();
+  const first = new Date(year, month, 1);
+  const start = new Date(year, month, 1 - first.getDay());
+  return Array.from({ length: 42 }, (_, index) => {
+    const date = new Date(start);
+    date.setDate(start.getDate() + index);
+    return date;
+  });
+}
+
 async function syncLograAgendaNotifications(items: LograAgendaItem[]) {
   try {
     const previous = await AsyncStorage.getItem(LOGRA_NOTIFICATION_IDS_KEY);
@@ -3678,6 +3694,8 @@ function LograMobileModal({
   const [selectedAgenda, setSelectedAgenda] = useState<number | null>(null);
   const [attachments, setAttachments] = useState<LograAttachment[]>([]);
   const [agendaOpen, setAgendaOpen] = useState(false);
+  const [agendaView, setAgendaView] = useState<"list" | "calendar">("list");
+  const [calendarMonth, setCalendarMonth] = useState(() => new Date());
   const [agendaStatusOpen, setAgendaStatusOpen] = useState(false);
   const [agendaNotesOpen, setAgendaNotesOpen] = useState(false);
   const [agendaLineNote, setAgendaLineNote] = useState("");
@@ -3705,6 +3723,14 @@ function LograMobileModal({
   const portiaSelectedQuestion = portiaQuestions.find((item) => lograItemKey(item) === portiaQuestionKey) || portiaQuestions[0];
   const portiaAnswerKey = portiaSelectedForm && portiaSelectedQuestion ? lograQuestionKey(portiaSelectedForm, portiaSection, portiaSelectedQuestion) : "";
   const portiaBullets = answers[portiaAnswerKey] || [""];
+  const calendarDays = calendarDaysForMonth(calendarMonth);
+  const agendaByDate = agendaItems.reduce<Record<string, LograAgendaItem[]>>((acc, item) => {
+    const key = String(item.date_iso || item.date || "").slice(0, 10);
+    if (!key) return acc;
+    if (!acc[key]) acc[key] = [];
+    acc[key].push(item);
+    return acc;
+  }, {});
 
   useEffect(() => {
     if (!visible) return;
@@ -3719,6 +3745,8 @@ function LograMobileModal({
     setAgendaItems([]);
     setAgendaDraft(blankAgendaItem());
     setAgendaNotes("");
+    setAgendaView("list");
+    setCalendarMonth(new Date());
     setAttachments([]);
     setMessage("");
     if (initialReportId) loadReport(initialReportId);
@@ -3751,7 +3779,9 @@ function LograMobileModal({
       });
       setReportId(id);
       setAnswers(nextAnswers);
-      setAgendaItems(Array.isArray(report.agenda_items) ? report.agenda_items as LograAgendaItem[] : []);
+      const loadedAgenda = Array.isArray(report.agenda_items) ? report.agenda_items as LograAgendaItem[] : [];
+      setAgendaItems(loadedAgenda);
+      await syncLograAgendaNotifications(loadedAgenda);
       setAgendaNotes(formatValue(report.agenda_notes) === "-" ? "" : formatValue(report.agenda_notes));
       setAttachments((Array.isArray(payload.attachments) ? payload.attachments : []).filter((item) => asRecord(item)) as LograAttachment[]);
       const title = formatValue(report.title);
@@ -4214,6 +4244,9 @@ function LograMobileModal({
 
               <View style={styles.actionBar}>
                 <Pressable style={styles.secondaryButton} onPress={searchAgenda}><Text style={styles.secondaryButtonText}>Buscar</Text></Pressable>
+                <Pressable style={styles.secondaryButton} onPress={() => setAgendaView((current) => current === "list" ? "calendar" : "list")}>
+                  <Text style={styles.secondaryButtonText}>{agendaView === "list" ? "Calendario" : "Lista"}</Text>
+                </Pressable>
                 <Pressable style={styles.secondaryButton} onPress={addAgendaLine}><Text style={styles.secondaryButtonText}>+ Linea</Text></Pressable>
                 <Pressable style={styles.modalClose} onPress={removeAgendaLine}><Text style={styles.modalCloseText}>- Linea</Text></Pressable>
                 <Pressable style={styles.secondaryButton} onPress={changeAgendaStatus}><Text style={styles.secondaryButtonText}>Cambiar status</Text></Pressable>
@@ -4221,34 +4254,79 @@ function LograMobileModal({
                 <Pressable style={styles.actionButton} onPress={saveAgendaOnly}><Text style={styles.actionButtonText}>Guardar agenda</Text></Pressable>
               </View>
 
-              <ScrollView horizontal>
-                <View>
-                  <View style={[styles.lograAgendaRow, styles.lograAgendaHeader]}>
-                    <Text style={[styles.lograAgendaCell, styles.lograAgendaHeaderCell]}>Date</Text>
-                    <Text style={[styles.lograAgendaCell, styles.lograAgendaHeaderCell]}>Time</Text>
-                    <Text style={[styles.lograAgendaCell, styles.lograAgendaHeaderCell]}>Place</Text>
-                    <Text style={[styles.lograAgendaCell, styles.lograAgendaHeaderCell]}>Person</Text>
-                    <Text style={[styles.lograAgendaCell, styles.lograAgendaHeaderCell]}>Phone</Text>
-                    <Text style={[styles.lograAgendaCell, styles.lograAgendaHeaderCell]}>Company/Role</Text>
-                    <Text style={[styles.lograAgendaCell, styles.lograAgendaHeaderCell]}>Topic</Text>
-                    <Text style={[styles.lograAgendaCell, styles.lograAgendaHeaderCell]}>Priority</Text>
-                    <Text style={[styles.lograAgendaCell, styles.lograAgendaHeaderCell]}>Status</Text>
-                  </View>
-                  {agendaItems.map((item, index) => (
-                    <Pressable key={`${index}-${item.date_iso}-${item.start_time}`} style={[styles.lograAgendaRow, { backgroundColor: lograTint(item.status || item.priority) }, selectedAgenda === index && styles.selectedRow]} onPress={() => setSelectedAgenda(index)}>
-                      <Text style={styles.lograAgendaCell}>{longEnglishDate(String(item.date_iso || item.date || ""))}</Text>
-                      <Text style={styles.lograAgendaCell}>{item.start_time} - {item.end_time}</Text>
-                      <Text style={styles.lograAgendaCell}>{item.place}</Text>
-                      <Text style={styles.lograAgendaCell}>{item.person}</Text>
-                      <Text style={styles.lograAgendaCell}>{item.phone || item.telefono}</Text>
-                      <Text style={styles.lograAgendaCell}>{item.company || item.company_role}</Text>
-                      <Text style={styles.lograAgendaCell}>{item.topic}</Text>
-                      <Text style={styles.lograAgendaCell}>{item.priority}</Text>
-                      <Text style={styles.lograAgendaCell}>{item.status}</Text>
+              {agendaView === "calendar" ? (
+                <View style={styles.lograCalendarPanel}>
+                  <View style={styles.lograCalendarHeader}>
+                    <Pressable style={styles.modalClose} onPress={() => setCalendarMonth((current) => new Date(current.getFullYear(), current.getMonth() - 1, 1))}>
+                      <Text style={styles.modalCloseText}>Anterior</Text>
                     </Pressable>
-                  ))}
+                    <Text style={styles.lograCalendarTitle}>{monthName(calendarMonth)}</Text>
+                    <Pressable style={styles.modalClose} onPress={() => setCalendarMonth((current) => new Date(current.getFullYear(), current.getMonth() + 1, 1))}>
+                      <Text style={styles.modalCloseText}>Siguiente</Text>
+                    </Pressable>
+                  </View>
+                  <View style={styles.lograCalendarWeekRow}>
+                    {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => <Text key={day} style={styles.lograCalendarWeekday}>{day}</Text>)}
+                  </View>
+                  <View style={styles.lograCalendarGrid}>
+                    {calendarDays.map((day) => {
+                      const dayKey = formatYmd(day);
+                      const meetings = agendaByDate[dayKey] || [];
+                      const inMonth = day.getMonth() === calendarMonth.getMonth();
+                      return (
+                        <Pressable
+                          key={dayKey}
+                          style={[styles.lograCalendarDay, !inMonth && styles.lograCalendarDayMuted]}
+                          onPress={() => {
+                            setAgendaDraft((current) => ({ ...current, date_iso: dayKey, date: longEnglishDate(dayKey) }));
+                            if (meetings[0]) {
+                              const agendaIndex = agendaItems.findIndex((item) => lograAgendaKey(item) === lograAgendaKey(meetings[0]));
+                              if (agendaIndex >= 0) setSelectedAgenda(agendaIndex);
+                            }
+                          }}
+                        >
+                          <Text style={[styles.lograCalendarDayNumber, !inMonth && styles.lograCalendarDayNumberMuted]}>{day.getDate()}</Text>
+                          {meetings.slice(0, 3).map((meeting, meetingIndex) => (
+                            <View key={`${dayKey}-${meetingIndex}-${meeting.start_time}`} style={[styles.lograCalendarMeeting, { backgroundColor: lograTint(meeting.status || meeting.priority) }]}>
+                              <Text numberOfLines={1} style={styles.lograCalendarMeetingText}>{meeting.start_time || "--:--"} {meeting.topic || meeting.person || "Meeting"}</Text>
+                            </View>
+                          ))}
+                          {meetings.length > 3 ? <Text style={styles.lograCalendarMoreText}>+{meetings.length - 3} mas</Text> : null}
+                        </Pressable>
+                      );
+                    })}
+                  </View>
                 </View>
-              </ScrollView>
+              ) : (
+                <ScrollView horizontal>
+                  <View>
+                    <View style={[styles.lograAgendaRow, styles.lograAgendaHeader]}>
+                      <Text style={[styles.lograAgendaCell, styles.lograAgendaHeaderCell]}>Date</Text>
+                      <Text style={[styles.lograAgendaCell, styles.lograAgendaHeaderCell]}>Time</Text>
+                      <Text style={[styles.lograAgendaCell, styles.lograAgendaHeaderCell]}>Place</Text>
+                      <Text style={[styles.lograAgendaCell, styles.lograAgendaHeaderCell]}>Person</Text>
+                      <Text style={[styles.lograAgendaCell, styles.lograAgendaHeaderCell]}>Phone</Text>
+                      <Text style={[styles.lograAgendaCell, styles.lograAgendaHeaderCell]}>Company/Role</Text>
+                      <Text style={[styles.lograAgendaCell, styles.lograAgendaHeaderCell]}>Topic</Text>
+                      <Text style={[styles.lograAgendaCell, styles.lograAgendaHeaderCell]}>Priority</Text>
+                      <Text style={[styles.lograAgendaCell, styles.lograAgendaHeaderCell]}>Status</Text>
+                    </View>
+                    {agendaItems.map((item, index) => (
+                      <Pressable key={`${index}-${item.date_iso}-${item.start_time}`} style={[styles.lograAgendaRow, { backgroundColor: lograTint(item.status || item.priority) }, selectedAgenda === index && styles.selectedRow]} onPress={() => setSelectedAgenda(index)}>
+                        <Text style={styles.lograAgendaCell}>{longEnglishDate(String(item.date_iso || item.date || ""))}</Text>
+                        <Text style={styles.lograAgendaCell}>{item.start_time} - {item.end_time}</Text>
+                        <Text style={styles.lograAgendaCell}>{item.place}</Text>
+                        <Text style={styles.lograAgendaCell}>{item.person}</Text>
+                        <Text style={styles.lograAgendaCell}>{item.phone || item.telefono}</Text>
+                        <Text style={styles.lograAgendaCell}>{item.company || item.company_role}</Text>
+                        <Text style={styles.lograAgendaCell}>{item.topic}</Text>
+                        <Text style={styles.lograAgendaCell}>{item.priority}</Text>
+                        <Text style={styles.lograAgendaCell}>{item.status}</Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                </ScrollView>
+              )}
               {busy ? <ActivityIndicator color={BLUE} style={styles.loader} /> : null}
               {message ? <Text style={styles.error}>{message}</Text> : null}
             </ScrollView>
@@ -13037,6 +13115,26 @@ const styles = StyleSheet.create({
   lograAgendaHeader: { backgroundColor: BLUE },
   lograAgendaHeaderCell: { color: "white", fontWeight: "900" },
   lograAgendaRow: { borderBottomColor: BORDER, borderBottomWidth: 1, flexDirection: "row", minWidth: 1188 },
+  lograCalendarDay: {
+    borderBottomWidth: 1,
+    borderColor: BORDER,
+    borderRightWidth: 1,
+    minHeight: 88,
+    padding: 5,
+    width: "14.285%"
+  },
+  lograCalendarDayMuted: { backgroundColor: "#F2F4F7" },
+  lograCalendarDayNumber: { color: "#101828", fontSize: 12, fontWeight: "900" },
+  lograCalendarDayNumberMuted: { color: "#98A2B3" },
+  lograCalendarGrid: { borderColor: BORDER, borderLeftWidth: 1, borderTopWidth: 1, flexDirection: "row", flexWrap: "wrap" },
+  lograCalendarHeader: { alignItems: "center", flexDirection: "row", justifyContent: "space-between", marginBottom: 10 },
+  lograCalendarMeeting: { borderRadius: 6, marginTop: 4, paddingHorizontal: 4, paddingVertical: 3 },
+  lograCalendarMeetingText: { color: "#101828", fontSize: 9, fontWeight: "800" },
+  lograCalendarMoreText: { color: BLUE, fontSize: 9, fontWeight: "900", marginTop: 4 },
+  lograCalendarPanel: { backgroundColor: "white", borderColor: BORDER, borderRadius: 8, borderWidth: 1, padding: 10 },
+  lograCalendarTitle: { color: BLUE, fontSize: 16, fontWeight: "900" },
+  lograCalendarWeekday: { color: "#475467", fontSize: 11, fontWeight: "900", paddingBottom: 6, textAlign: "center", width: "14.285%" },
+  lograCalendarWeekRow: { flexDirection: "row" },
   loadingScreen: { alignItems: "center", flex: 1, justifyContent: "center" },
   loginLogo: { alignSelf: "center", height: 82, marginBottom: 10, width: 82 },
   loginWrap: { flexGrow: 1, justifyContent: "center", padding: 22 },
