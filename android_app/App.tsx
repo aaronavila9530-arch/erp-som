@@ -1,6 +1,8 @@
 import * as LocalAuthentication from "expo-local-authentication";
 import * as FileSystem from "expo-file-system/legacy";
 import * as DocumentPicker from "expo-document-picker";
+import * as IntentLauncher from "expo-intent-launcher";
+import * as Notifications from "expo-notifications";
 import * as Sharing from "expo-sharing";
 import * as SecureStore from "expo-secure-store";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -11,6 +13,7 @@ import {
   Image,
   Linking,
   Modal,
+  Platform,
   Pressable,
   SafeAreaView,
   ScrollView,
@@ -32,6 +35,16 @@ const BLUE = "#003A75";
 const BORDER = "#D7DEE8";
 const CREDS_KEY = "erp_som_saved_credentials";
 const OFFLINE_QUEUE_KEY = "erp_som_offline_queue";
+const LOGRA_NOTIFICATION_IDS_KEY = "erp_som_logra_notification_ids";
+
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowBanner: true,
+    shouldShowList: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false
+  })
+});
 
 type SavedCredentials = {
   usuario: string;
@@ -2042,6 +2055,42 @@ function extensionForInformeAction(action: InformeAction) {
   return "bin";
 }
 
+function mimeFromFilename(filename: string, fallback = "application/octet-stream") {
+  const lower = filename.toLowerCase();
+  if (lower.endsWith(".pdf")) return "application/pdf";
+  if (lower.endsWith(".xlsx")) return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+  if (lower.endsWith(".xls")) return "application/vnd.ms-excel";
+  if (lower.endsWith(".docx")) return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  if (lower.endsWith(".doc")) return "application/msword";
+  if (lower.endsWith(".png")) return "image/png";
+  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+  if (lower.endsWith(".webp")) return "image/webp";
+  if (lower.endsWith(".txt")) return "text/plain";
+  return fallback;
+}
+
+async function openDownloadedFile(uri: string, filename: string, mimeType?: string | null) {
+  const type = mimeType || mimeFromFilename(filename);
+  if (Platform.OS === "android") {
+    try {
+      const contentUri = await FileSystem.getContentUriAsync(uri);
+      await IntentLauncher.startActivityAsync("android.intent.action.VIEW", {
+        data: contentUri,
+        type,
+        flags: 1
+      });
+      return;
+    } catch {
+      // Fall back to the platform share sheet when no native viewer is available.
+    }
+  }
+  if (await Sharing.isAvailableAsync()) {
+    await Sharing.shareAsync(uri, { dialogTitle: filename, mimeType: type, UTI: type });
+    return;
+  }
+  await Linking.openURL(uri);
+}
+
 async function downloadSessionFile(
   endpoint: string,
   session: LoginResponse | null | { usuario: string; rol: string },
@@ -2088,12 +2137,7 @@ async function downloadSessionFile(
     encoding: FileSystem.EncodingType.Base64
   });
 
-  if (await Sharing.isAvailableAsync()) {
-    await Sharing.shareAsync(fileUri);
-    return;
-  }
-
-  await Linking.openURL(fileUri);
+  await openDownloadedFile(fileUri, filename);
 }
 
 function unwrapRecordPayload(payload: unknown) {
@@ -3488,6 +3532,7 @@ type LograAttachment = {
   item_key: string;
   bullet_index?: number | null;
   original_filename: string;
+  content_type?: string | null;
   created_at?: string;
 };
 
@@ -3529,6 +3574,83 @@ function blankAgendaItem(): LograAgendaItem {
     status: "Pendiente",
     reminder_minutes: 30
   };
+}
+
+function lograAgendaKey(item: LograAgendaItem, reportTitle = "") {
+  return [
+    reportTitle,
+    item.date_iso || item.date || "",
+    item.start_time || "",
+    item.end_time || "",
+    item.place || "",
+    item.person || "",
+    item.phone || item.telefono || "",
+    item.company || item.company_role || "",
+    item.topic || ""
+  ].map((value) => String(value || "").trim().toLowerCase()).join("|");
+}
+
+function lograAgendaStartDate(item: LograAgendaItem) {
+  const date = String(item.date_iso || item.date || "").slice(0, 10);
+  const time = String(item.start_time || "00:00").slice(0, 5);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:\d{2}$/.test(time)) return null;
+  const parsed = new Date(`${date}T${time}:00`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+async function syncLograAgendaNotifications(items: LograAgendaItem[]) {
+  try {
+    const previous = await AsyncStorage.getItem(LOGRA_NOTIFICATION_IDS_KEY);
+    const previousIds = previous ? JSON.parse(previous) as string[] : [];
+    await Promise.all(previousIds.map((id) => Notifications.cancelScheduledNotificationAsync(id).catch(() => undefined)));
+
+    if (Platform.OS === "android") {
+      await Notifications.setNotificationChannelAsync("logra-agenda", {
+        name: "LOGRA Agenda",
+        importance: Notifications.AndroidImportance.HIGH,
+        sound: "default",
+        vibrationPattern: [0, 500, 250, 500]
+      });
+    }
+
+    const permission = await Notifications.requestPermissionsAsync();
+    if (!permission.granted) {
+      await AsyncStorage.setItem(LOGRA_NOTIFICATION_IDS_KEY, JSON.stringify([]));
+      return;
+    }
+
+    const now = Date.now();
+    const nextIds: string[] = [];
+    for (const item of items.slice(0, 150)) {
+      if (String(item.status || "").toLowerCase().includes("complet")) continue;
+      const start = lograAgendaStartDate(item);
+      if (!start) continue;
+      const reminderMinutes = Math.max(0, Number(item.reminder_minutes || 0) || 0);
+      const title = item.topic || item.person || "Reunion LOGRA";
+      const detail = [item.person, item.phone || item.telefono, item.place].filter(Boolean).join(" | ");
+      const reminderAt = new Date(start.getTime() - reminderMinutes * 60 * 1000);
+      const triggers = [
+        reminderMinutes > 0 ? { date: reminderAt, body: `Inicia en ${reminderMinutes} min. ${detail}` } : null,
+        { date: start, body: `La reunion esta en curso. ${detail}` }
+      ].filter(Boolean) as Array<{ date: Date; body: string }>;
+      for (const trigger of triggers) {
+        if (trigger.date.getTime() <= now) continue;
+        const id = await Notifications.scheduleNotificationAsync({
+          content: {
+            title: `Agenda LOGRA: ${title}`,
+            body: trigger.body,
+            sound: "default",
+            data: { type: "logra-agenda" }
+          },
+          trigger: { type: "date", date: trigger.date, channelId: "logra-agenda" } as Notifications.NotificationTriggerInput
+        });
+        nextIds.push(id);
+      }
+    }
+    await AsyncStorage.setItem(LOGRA_NOTIFICATION_IDS_KEY, JSON.stringify(nextIds));
+  } catch {
+    // Notifications should never block saving or loading the agenda.
+  }
 }
 
 function LograMobileModal({
@@ -3745,6 +3867,7 @@ function LograMobileModal({
       const payload = await apiRequest<Record<string, unknown>>("/logra-reports", { session });
       const reports = rowsFromAny(payload);
       const nextItems: LograAgendaItem[] = [];
+      const seen = new Set<string>();
       reports.forEach((report) => {
         const reportTitle = formatValue(report.title);
         const items = Array.isArray(report.agenda_items) ? report.agenda_items : [];
@@ -3752,18 +3875,23 @@ function LograMobileModal({
           const record = asRecord(item);
           if (!record || nextItems.length >= 150) return;
           const dateIso = formatValue(record.date_iso || record.date).slice(0, 10);
-          nextItems.push({
+          const nextItem = {
             ...(record as LograAgendaItem),
             date_iso: dateIso === "-" ? formatYmd(new Date()) : dateIso,
             date: longEnglishDate(dateIso === "-" ? formatYmd(new Date()) : dateIso),
             phone: formatValue(record.phone || record.telefono),
             company: formatValue(record.company || record.company_role),
             topic: formatValue(record.topic) === "-" ? reportTitle : formatValue(record.topic)
-          });
+          };
+          const key = lograAgendaKey(nextItem, reportTitle);
+          if (seen.has(key)) return;
+          seen.add(key);
+          nextItems.push(nextItem);
         });
       });
       setAgendaItems(nextItems);
       setSelectedAgenda(null);
+      await syncLograAgendaNotifications(nextItems);
       setMessage(nextItems.length ? `Agenda cargada: ${nextItems.length} linea(s).` : "No hay agendas LOGRA guardadas en backend.");
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "No se pudo buscar agenda LOGRA.");
@@ -3828,6 +3956,7 @@ function LograMobileModal({
         const nextId = formatValue(report?.id);
         if (nextId !== "-") {
           setReportId(nextId);
+          await syncLograAgendaNotifications(agendaItems);
           setMessage("LOGRA guardado correctamente.");
           if (closeAfterSave) await onSaved();
           return nextId;
@@ -3897,11 +4026,7 @@ function LograMobileModal({
       if (result.status < 200 || result.status >= 300) {
         throw new Error(`No se pudo descargar el adjunto (${result.status}).`);
       }
-      if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(result.uri, { dialogTitle: attachment.original_filename || "Adjunto LOGRA" });
-        return;
-      }
-      await Linking.openURL(result.uri);
+      await openDownloadedFile(result.uri, filename, attachment.content_type);
     } catch (err) {
       Alert.alert("LOGRA", err instanceof Error ? err.message : "No se pudo abrir el adjunto.");
     }
@@ -3996,6 +4121,7 @@ function LograMobileModal({
         </View>
         <ScrollView contentContainerStyle={styles.modalBody} keyboardShouldPersistTaps="handled">
           <View style={styles.actionBar}>
+            <Pressable style={styles.secondaryButton} onPress={() => setAgendaOpen(true)}><Text style={styles.secondaryButtonText}>Agenda LOGRA</Text></Pressable>
             <Pressable style={styles.secondaryButton} onPress={() => setPortiaOpen(true)}><Text style={styles.secondaryButtonText}>Mejorar con PORTIA</Text></Pressable>
             <Pressable style={styles.actionButton} onPress={() => saveLogra()}><Text style={styles.actionButtonText}>Guardar</Text></Pressable>
           </View>
@@ -4004,13 +4130,7 @@ function LograMobileModal({
           <Text style={styles.helperText}>{LOGRA_SECTION_LABELS[section]} | Apertura: {selectedForm?.critical_questions.length || 0} | Por tema: {selectedForm?.detailed_questions.length || 0} | Total: {(selectedForm?.critical_questions.length || 0) + (selectedForm?.detailed_questions.length || 0)}</Text>
           <Text style={styles.label}>Buscar</Text>
           <TextInput style={styles.input} value={search} onChangeText={setSearch} placeholder="Palabra clave" />
-          <View style={styles.summaryBox}>
-            <Text style={styles.cardTitle}>Agenda LOGRA</Text>
-            <Text style={styles.helperText}>{agendaItems.length} linea(s) de agenda cargadas.</Text>
-            <Pressable style={styles.secondaryButton} onPress={() => setAgendaOpen(true)}>
-              <Text style={styles.secondaryButtonText}>Abrir agenda</Text>
-            </Pressable>
-          </View>
+          <Text style={styles.helperText}>Agenda LOGRA: {agendaItems.length} linea(s) cargadas.</Text>
 
           <View style={styles.actionBar}>
             <Pressable style={styles.modalClose} onPress={() => setPage((current) => Math.max(0, current - 1))}><Text style={styles.modalCloseText}>Anterior</Text></Pressable>
