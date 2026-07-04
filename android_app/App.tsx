@@ -4046,6 +4046,11 @@ function LograMobileModal({
   async function openAttachment(attachment: LograAttachment) {
     try {
       const filename = cleanFilePart(attachment.original_filename || `logra_${attachment.id}.bin`);
+      const downloadUrl = `${API_BASE_URL}/logra-reports/attachments/${attachment.id}/download`;
+      if (Platform.OS === "android") {
+        await Linking.openURL(downloadUrl);
+        return;
+      }
       const fileUri = `${FileSystem.cacheDirectory || ""}${Date.now()}_${filename}`;
       const headers = {
         Accept: "application/octet-stream, application/pdf, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, */*",
@@ -4054,7 +4059,7 @@ function LograMobileModal({
         "X-User-Role": session.rol
       };
       const result = await FileSystem.downloadAsync(
-        `${API_BASE_URL}/logra-reports/attachments/${attachment.id}/download`,
+        downloadUrl,
         fileUri,
         { headers }
       );
