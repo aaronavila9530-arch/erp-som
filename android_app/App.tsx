@@ -3979,8 +3979,9 @@ function LograMobileModal({
     setMessage("");
     try {
       const payload = buildLograPayload();
-      const result = await offlineApiRequest("/logra-reports", {
-        method: "POST",
+      const endpoint = reportId ? `/logra-reports/${encodeURIComponent(reportId)}` : "/logra-reports";
+      const result = await offlineApiRequest(endpoint, {
+        method: reportId ? "PUT" : "POST",
         body: payload,
         session,
         offlineLabel: "Guardar LOGRA"

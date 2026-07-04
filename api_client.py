@@ -1330,9 +1330,12 @@ def post_invoice_to_pay_upload_pdf_api(
 # ============================================================
 def save_logra_report_api(payload: dict):
     try:
+        report_id = payload.get("id") if isinstance(payload, dict) else None
+        method = "PUT" if report_id else "POST"
+        url = f"{BASE_URL}/logra-reports/{int(report_id)}" if report_id else f"{BASE_URL}/logra-reports"
         r = api_request(
-            "POST",
-            f"{BASE_URL}/logra-reports",
+            method,
+            url,
             json=payload,
             timeout=30
         )

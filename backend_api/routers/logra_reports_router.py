@@ -384,6 +384,13 @@ def save_logra_report(payload: dict, conn=Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"LOGRA save error: {exc}")
 
 
+@router.put("/{report_id}")
+def update_logra_report(report_id: int, payload: dict, conn=Depends(get_db)):
+    payload = dict(payload or {})
+    payload["id"] = report_id
+    return save_logra_report(payload, conn)
+
+
 @router.post("/{report_id}/attachments")
 def upload_logra_attachment(
     report_id: int,
