@@ -609,9 +609,22 @@ export function getAllowedModules(allowedCodes: string[], role = "") {
   const normalizedRole = role.trim().toLowerCase();
   const canUsePortia = normalizedRole === "admin" || normalizedRole === "master";
 
-  return ERP_MODULES.filter((module) => {
+  const modules = ERP_MODULES.filter((module) => {
     if (module.code === "qa_som") return true;
     if (module.code === "portia") return canUsePortia;
     return allowed.has(module.code);
   });
+
+  if (!allowed.has("informes")) {
+    const informes = ERP_MODULES.find((module) => module.code === "informes");
+    const logra = informes?.sections.find((section) => section.key === "logra");
+    if (informes && logra && !modules.some((module) => module.code === "informes")) {
+      modules.push({
+        ...informes,
+        sections: [logra]
+      });
+    }
+  }
+
+  return modules;
 }

@@ -212,8 +212,10 @@ class MainApp(tk.Frame):
                 parent=self.content,
                 usuario=self.usuario,
                 rol=self.rol,
+                logra_only=not self._has_permission("informes", "view", include_logra_override=False),
                 callbacks={
                     "open_report_selector": self._open_report_selector,
+                    "open_logra": self._open_logra_questionnaires,
                     "fetch_reports": self._fetch_reports,
                     "preview_report": self._preview_report,
                     "edit_report": self._edit_report,
@@ -384,6 +386,17 @@ class MainApp(tk.Frame):
             on_back=lambda: self.cambiar_modulo("Informes")
         ).pack(fill="both", expand=True)
 
+    def _open_logra_questionnaires(self):
+        from Modulos.Informes.logra_questionnaires_form import LograQuestionnairesForm
+        for w in self.content.winfo_children():
+            w.destroy()
+        LograQuestionnairesForm(
+            parent=self.content,
+            usuario=self.usuario,
+            rol=self.rol,
+            on_back=lambda: self.cambiar_modulo("Informes")
+        ).pack(fill="both", expand=True)
+
     def _open_container_report_form(self):
         from Modulos.Informes.container_report_form import ContainerReportForm
         for w in self.content.winfo_children():
@@ -415,12 +428,17 @@ class MainApp(tk.Frame):
     # --------------------------------------------------------
     # RBAC LOCAL (VISUAL UI)
     # --------------------------------------------------------
-    def _has_permission(self, module_code: str, action: str) -> bool:
+    def _has_permission(self, module_code: str, action: str, include_logra_override: bool = True) -> bool:
 
         usuario = (self.usuario or "").lower()
         rol = (self.rol or "").lower()
         module_code = (module_code or "").lower()
         action = (action or "").lower()
+
+        # LOGRA queda disponible para todo usuario. Visualmente se expone por
+        # Informes, pero usuarios sin permiso general solo ven LOGRA.
+        if include_logra_override and module_code == "informes" and action == "view":
+            return True
 
         # Q&A SOM es la base de conocimiento/manual y queda disponible para todos.
         if module_code == "qa_som" and action == "view":

@@ -468,9 +468,11 @@ function Shell() {
 
   useEffect(() => {
     if (activeModule?.code !== "informes" || activeSection || !session) return;
-    const statusSection = activeModule.sections.find((section) => section.key === "status-informes");
-    if (statusSection) {
-      setActiveSection(statusSection);
+    const defaultSection = activeModule.sections.find((section) => section.key === "status-informes")
+      || activeModule.sections.find((section) => section.key === "logra")
+      || activeModule.sections[0];
+    if (defaultSection) {
+      setActiveSection(defaultSection);
       setPayload({ data: [] });
       setError("");
     }
