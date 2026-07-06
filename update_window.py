@@ -79,8 +79,10 @@ class UpdateWindow(tk.Toplevel):
         threading.Thread(target=self._download_install_relaunch, daemon=True).start()
 
     def _installed_exe_path(self) -> str:
-        program_files = os.environ.get("ProgramFiles", r"C:\Program Files")
-        return os.path.join(program_files, "ERP-SOM", "ERP-SOM.exe")
+        local_appdata = os.environ.get("LOCALAPPDATA")
+        if local_appdata:
+            return os.path.join(local_appdata, "Programs", "ERP-SOM", "ERP-SOM.exe")
+        return os.path.join(os.path.expanduser("~"), "AppData", "Local", "Programs", "ERP-SOM", "ERP-SOM.exe")
 
     def _run_inno_and_wait(self, installer_path: str) -> int:
         """

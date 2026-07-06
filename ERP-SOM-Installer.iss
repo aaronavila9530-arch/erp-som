@@ -25,7 +25,7 @@ ArchitecturesInstallIn64BitMode=x64
 PrivilegesRequired=lowest
 
 OutputDir=installer
-OutputBaseFilename=ERP-SOM-Setup
+OutputBaseFilename=ERP-SOM-Setup-{#MyAppVersion}
 
 ; IMPORTANTE: para builds PyInstaller onedir, evitar solid compression
 Compression=lzma2
@@ -48,6 +48,8 @@ DisableFinishedPage=no
 [Files]
 ; Copia todo el árbol exactamente como sale de dist
 Source: "dist\ERP-SOM\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "dist\ERP-SOM\_internal\Modulos\Informes\informes_home_ui.py"; DestDir: "{app}\_internal\Modulos\Informes"; Flags: ignoreversion
+Source: "dist\ERP-SOM\_internal\Modulos\Informes\report_type_selector.py"; DestDir: "{app}\_internal\Modulos\Informes"; Flags: ignoreversion
 Source: "dist\ERP-SOM\_internal\Modulos\Informes\logra_questionnaires_data.py"; DestDir: "{app}\_internal\Modulos\Informes"; Flags: ignoreversion
 Source: "dist\ERP-SOM\_internal\Modulos\Informes\logra_questionnaires_form.py"; DestDir: "{app}\_internal\Modulos\Informes"; Flags: ignoreversion
 Source: "dist\ERP-SOM\_internal\Modulos\Informes\logra_reports_table.py"; DestDir: "{app}\_internal\Modulos\Informes"; Flags: ignoreversion
@@ -67,6 +69,8 @@ Type: files; Name: "{app}\*"
 Type: filesandordirs; Name: "{app}\*"
 Type: filesandordirs; Name: "{app}\_internal\Modulos\Informes\__pycache__"
 Type: filesandordirs; Name: "{app}\_internal\backend_api\routers\__pycache__"
+Type: files; Name: "{app}\_internal\Modulos\Informes\informes_home_ui.py"
+Type: files; Name: "{app}\_internal\Modulos\Informes\report_type_selector.py"
 Type: files; Name: "{app}\_internal\Modulos\Informes\logra_questionnaires_data.py"
 Type: files; Name: "{app}\_internal\Modulos\Informes\logra_questionnaires_form.py"
 Type: files; Name: "{app}\_internal\Modulos\Informes\logra_reports_table.py"
@@ -109,4 +113,4 @@ begin
 end;
 
 [Run]
-Filename: "{app}\{#MyAppExeName}"; Description: "Abrir {#MyAppName}"; WorkingDir: "{app}"; Flags: nowait runascurrentuser
+Filename: "{app}\{#MyAppExeName}"; Description: "Abrir {#MyAppName}"; WorkingDir: "{app}"; Flags: nowait runascurrentuser skipifsilent

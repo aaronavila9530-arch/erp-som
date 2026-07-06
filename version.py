@@ -11,4 +11,4 @@
 # 👉 Cambia este valor SOLO cuando generes un nuevo EXE
 # ============================================================
 
-APP_VERSION = "1.5.6"
+APP_VERSION = "1.6.2"
