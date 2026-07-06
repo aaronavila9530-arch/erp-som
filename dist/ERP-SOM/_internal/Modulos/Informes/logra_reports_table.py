@@ -4,7 +4,7 @@ from html import escape
 from tkinter import filedialog, ttk, messagebox
 
 import api_client
-from Modulos.Informes.logra_questionnaires_data import LOGRA_QUESTIONNAIRES
+from Modulos.Informes.logra_questionnaires_data import ONG_QUESTIONNAIRES
 
 
 class LograReportsTable(ttk.Frame):
@@ -99,7 +99,7 @@ class LograReportsTable(ttk.Frame):
     def _review_selected(self):
         report_id = self._selected_report_id()
         if not report_id:
-            messagebox.showwarning("LOGRA", "Selecciona un reporte LOGRA.")
+            messagebox.showwarning("ONG", "Selecciona un reporte ONG.")
             return
         from Modulos.Informes.logra_questionnaires_form import LograQuestionnairesForm
 
@@ -111,11 +111,11 @@ class LograReportsTable(ttk.Frame):
     def _selected_payload(self):
         report_id = self._selected_report_id()
         if not report_id:
-            messagebox.showwarning("LOGRA", "Selecciona un reporte LOGRA.")
+            messagebox.showwarning("ONG", "Selecciona un reporte ONG.")
             return None
         resp = api_client.get_logra_report_api(report_id)
         if resp.get("error") or not resp.get("report"):
-            messagebox.showerror("LOGRA", f"No se pudo cargar el reporte:\n{resp.get('error') or resp}")
+            messagebox.showerror("ONG", f"No se pudo cargar el reporte:\n{resp.get('error') or resp}")
             return None
         return resp
 
@@ -129,7 +129,7 @@ class LograReportsTable(ttk.Frame):
             for item in payload.get("answers") or []
         }
         ordered = []
-        for form in LOGRA_QUESTIONNAIRES:
+        for form in ONG_QUESTIONNAIRES:
             for section in ("critical_questions", "detailed_questions"):
                 for question in form.get(section, []):
                     key = (
@@ -155,9 +155,9 @@ class LograReportsTable(ttk.Frame):
 
     def _safe_report_filename(self, payload, extension):
         report = payload.get("report") or {}
-        title = str(report.get("title") or f"LOGRA_{report.get('id') or 'report'}")
+        title = str(report.get("title") or f"ONG_{report.get('id') or 'report'}")
         safe = "".join(ch if ch.isalnum() or ch in (" ", "-", "_") else "_" for ch in title).strip()
-        return f"{safe or 'LOGRA_report'}.{extension}"
+        return f"{safe or 'ONG_report'}.{extension}"
 
     def _export_selected_word(self):
         payload = self._selected_payload()
@@ -172,9 +172,9 @@ class LograReportsTable(ttk.Frame):
             return
         try:
             self._build_word_report(payload, path)
-            messagebox.showinfo("LOGRA", "Reporte Word generado correctamente.")
+            messagebox.showinfo("ONG", "Reporte Word generado correctamente.")
         except Exception as exc:
-            messagebox.showerror("LOGRA", f"No se pudo generar Word:\n{exc}")
+            messagebox.showerror("ONG", f"No se pudo generar Word:\n{exc}")
 
     def _export_selected_pdf(self):
         payload = self._selected_payload()
@@ -189,9 +189,9 @@ class LograReportsTable(ttk.Frame):
             return
         try:
             self._build_pdf_report(payload, path)
-            messagebox.showinfo("LOGRA", "Reporte PDF generado correctamente.")
+            messagebox.showinfo("ONG", "Reporte PDF generado correctamente.")
         except Exception as exc:
-            messagebox.showerror("LOGRA", f"No se pudo generar PDF:\n{exc}")
+            messagebox.showerror("ONG", f"No se pudo generar PDF:\n{exc}")
 
     def _report_meta_rows(self, payload):
         report = payload.get("report") or {}
@@ -199,7 +199,7 @@ class LograReportsTable(ttk.Frame):
         return [
             ("Reporte", report.get("title") or ""),
             ("ID", report.get("id") or ""),
-            ("Categoria", report.get("category") or "LOGRA"),
+            ("Categoria", report.get("category") or "ONG"),
             ("Status", report.get("status") or ""),
             ("Agenda", f"{len(agenda)} reuniones"),
             ("Actualizado", str(report.get("updated_at") or "")),
@@ -226,14 +226,14 @@ class LograReportsTable(ttk.Frame):
 
         title = doc.add_paragraph()
         title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        run = title.add_run(str(report.get("title") or "LOGRA Report"))
+        run = title.add_run(str(report.get("title") or "ONG Report"))
         run.bold = True
         run.font.size = Pt(16)
         run.font.color.rgb = RGBColor(0, 59, 113)
 
         subtitle = doc.add_paragraph()
         subtitle.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        subtitle.add_run("Professional LOGRA Questionnaire Report").italic = True
+        subtitle.add_run("Professional ONG Questionnaire Report").italic = True
 
         meta = doc.add_table(rows=0, cols=2)
         meta.style = "Table Grid"
@@ -314,7 +314,7 @@ class LograReportsTable(ttk.Frame):
             leftMargin=0.55 * inch,
             topMargin=0.55 * inch,
             bottomMargin=0.55 * inch,
-            title=str(report.get("title") or "LOGRA Report")
+            title=str(report.get("title") or "ONG Report")
         )
         styles = getSampleStyleSheet()
         styles.add(ParagraphStyle(
@@ -362,8 +362,8 @@ class LograReportsTable(ttk.Frame):
         ))
 
         story = [
-            Paragraph(escape(str(report.get("title") or "LOGRA Report")), styles["LograTitle"]),
-            Paragraph("Professional LOGRA Questionnaire Report", styles["Normal"]),
+            Paragraph(escape(str(report.get("title") or "ONG Report")), styles["LograTitle"]),
+            Paragraph("Professional ONG Questionnaire Report", styles["Normal"]),
             Spacer(1, 8),
         ]
         meta_data = [[Paragraph(f"<b>{escape(str(label))}</b>", styles["Normal"]), Paragraph(escape(str(value)), styles["Normal"])]

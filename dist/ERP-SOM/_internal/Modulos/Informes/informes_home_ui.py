@@ -121,7 +121,7 @@ class InformesHomeUI(ttk.Frame):
             textvariable=self.review_option,
             state="readonly",
             width=30,
-            values=(["Informe LOGRA"] if self.logra_only else [
+            values=(["Informe ONG"] if self.logra_only else [
                 "Informes de contenedores",
                 "Informe de muestreos de granos",
                 "Informe Truck Supervision",
@@ -136,7 +136,7 @@ class InformesHomeUI(ttk.Frame):
                 "Informe Sampling Certificate",
                 "Informe Sealing Certificate",
                 "Informe Lashing Certificate",
-                "Informe LOGRA"
+                "Informe ONG"
             ])
         )
         self.review_cb.pack(side="left", padx=(0, 15))
@@ -147,7 +147,7 @@ class InformesHomeUI(ttk.Frame):
         # -----------------------------------------------------
         ttk.Button(
             actions,
-            text="➕ Generar LOGRA" if self.logra_only else "➕ Generar Informe",
+            text="➕ Generar ONG" if self.logra_only else "➕ Generar Informe",
             command=self._on_generate_report
         ).pack(side="left", padx=(0, 10))
 
@@ -186,7 +186,7 @@ class InformesHomeUI(ttk.Frame):
         # MAIN SCREEN FIJO (NO DEPENDE DEL COMBO)
         # -----------------------------------------------------
         if self.logra_only:
-            self.review_option.set("Informe LOGRA")
+            self.review_option.set("Informe ONG")
             self._load_logra_reports()
         else:
             self._load_status_informes()
@@ -246,7 +246,7 @@ class InformesHomeUI(ttk.Frame):
         elif selection == "Informe Lashing Certificate":
             self._load_lashing_certificate()
 
-        elif selection == "Informe LOGRA":
+        elif selection == "Informe ONG":
             self._load_logra_reports()
 
     # ---------------------------------------------------------

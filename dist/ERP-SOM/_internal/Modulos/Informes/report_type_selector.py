@@ -164,12 +164,12 @@ class ReportTypeSelector(ttk.Frame):
 
         self._build_option_card(
             row=6,
-            title="LOGRA",
+            title="ONG",
             description=(
                 "Cuestionarios de factibilidad nautica y portuaria con agenda, "
                 "preguntas del documento, bullets dinamicos, PORTIA y adjuntos."
             ),
-            button_text="Abrir Cuestionarios LOGRA",
+            button_text="Abrir Cuestionarios ONG",
             command=self._open_logra_questionnaires,
             disabled=False
         )
