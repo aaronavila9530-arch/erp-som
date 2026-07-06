@@ -227,11 +227,7 @@ class OTPWindow(tk.Toplevel):
                 return True
 
             # Anti-loop
-            if self._should_skip_update_due_to_loop(latest_clean):
-                return True
-
             if download_url:
-                self._write_update_state(latest_clean)
                 UpdateWindow(
                     parent=self,
                     current_version=str(current_version).strip(),
