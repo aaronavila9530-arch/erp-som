@@ -12,6 +12,29 @@ router = APIRouter(
 GITHUB_REPO = "aaronavila9530-arch/erp-som"
 GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 
+
+def _find_installer_asset(assets, latest_version: str):
+    if not isinstance(assets, list):
+        return None
+
+    version = str(latest_version or "").strip()
+    exact_names = {
+        f"erp-som-setup-{version}.exe",
+        f"erp-som-setup-v{version}.exe",
+    }
+
+    for asset in assets:
+        name = str(asset.get("name", "")).strip().lower()
+        if name in exact_names:
+            return asset
+
+    for asset in assets:
+        name = str(asset.get("name", "")).strip().lower()
+        if name.endswith(".exe") and name.startswith("erp-som-setup-") and version.lower() in name:
+            return asset
+
+    return None
+
 # ============================================================
 # VERSION CHECK (BACKEND NEUTRO, BLINDADO, AISLADO)
 # ============================================================
@@ -55,18 +78,18 @@ def check_version():
         # Buscar instalador .exe
         # ------------------------------
         download_url = None
+        asset_name = None
         assets = data.get("assets", [])
 
-        if isinstance(assets, list):
-            for a in assets:
-                name = str(a.get("name", "")).lower()
-                if name.endswith(".exe"):
-                    download_url = a.get("browser_download_url")
-                    break
+        installer_asset = _find_installer_asset(assets, latest_version)
+        if installer_asset:
+            asset_name = installer_asset.get("name")
+            download_url = installer_asset.get("browser_download_url")
 
         return {
             "latest_version": latest_version,
             "download_url": download_url,
+            "asset_name": asset_name,
             # 👇 EL BACKEND SIEMPRE OBLIGA UPDATE
             # El frontend decide si aplica o no
             "force_update": False,
