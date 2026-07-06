@@ -33,6 +33,11 @@ def _find_installer_asset(assets, latest_version: str):
         if name.endswith(".exe") and name.startswith("erp-som-setup-") and version.lower() in name:
             return asset
 
+    for asset in assets:
+        name = str(asset.get("name", "")).strip().lower()
+        if name == "erp-som-setup.exe":
+            return asset
+
     return None
 
 # ============================================================
