@@ -1,6 +1,5 @@
 import os
 import sys
-import tempfile
 import subprocess
 import threading
 import time
@@ -34,7 +33,7 @@ class UpdateWindow(tk.Toplevel):
         self.latest_version = latest_version
 
         self.installer_path = os.path.join(
-            tempfile.gettempdir(),
+            self._updates_dir(),
             f"ERP-SOM-Setup-{self.latest_version}.exe"
         )
 
@@ -84,6 +83,45 @@ class UpdateWindow(tk.Toplevel):
             return os.path.join(local_appdata, "Programs", "ERP-SOM", "ERP-SOM.exe")
         return os.path.join(os.path.expanduser("~"), "AppData", "Local", "Programs", "ERP-SOM", "ERP-SOM.exe")
 
+    def _updates_dir(self) -> str:
+        base = os.environ.get("LOCALAPPDATA") or os.path.join(os.path.expanduser("~"), "AppData", "Local")
+        return os.path.join(base, "ERP-SOM", "updates")
+
+    def _prepare_updates_dir(self):
+        os.makedirs(self._updates_dir(), exist_ok=True)
+        for name in os.listdir(self._updates_dir()):
+            if name.lower().startswith("erp-som-setup-") and name.lower().endswith(".exe"):
+                try:
+                    os.remove(os.path.join(self._updates_dir(), name))
+                except OSError:
+                    pass
+
+    def _unblock_downloaded_installer(self, installer_path: str):
+        try:
+            zone_identifier = installer_path + ":Zone.Identifier"
+            if os.path.exists(zone_identifier):
+                os.remove(zone_identifier)
+        except OSError:
+            pass
+
+        try:
+            subprocess.run(
+                [
+                    "powershell.exe",
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-Command",
+                    "Unblock-File -LiteralPath $args[0]",
+                    installer_path,
+                ],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except Exception:
+            pass
+
     def _run_inno_and_wait(self, installer_path: str) -> int:
         """
         Inno Setup flags:
@@ -109,6 +147,8 @@ class UpdateWindow(tk.Toplevel):
             if not self.download_url:
                 raise RuntimeError("URL de descarga no disponible")
 
+            self._prepare_updates_dir()
+
             # -----------------------------
             # Descargar instalador (seguro)
             # -----------------------------
@@ -121,6 +161,8 @@ class UpdateWindow(tk.Toplevel):
 
             if (not os.path.exists(self.installer_path)) or (os.path.getsize(self.installer_path) < 1024 * 200):
                 raise RuntimeError("El instalador descargado es inválido o está corrupto.")
+
+            self._unblock_downloaded_installer(self.installer_path)
 
             # --------------------------------
             # Ejecutar instalador y esperar FIN

@@ -5,7 +5,7 @@
 ; =========================================================
 
 #define MyAppName "ERP-SOM"
-#define MyAppVersion "1.6.2"
+#define MyAppVersion "1.6.7"
 #define MyAppPublisher "InnovaCore SRL"
 #define MyAppExeName "ERP-SOM.exe"
 
@@ -18,7 +18,7 @@ AppVerName={#MyAppName} {#MyAppVersion}
 
 DefaultDirName={localappdata}\Programs\{#MyAppName}
 DefaultGroupName={#MyAppName}
-UsePreviousAppDir=yes
+UsePreviousAppDir=no
 
 ArchitecturesAllowed=x64
 ArchitecturesInstallIn64BitMode=x64
