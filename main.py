@@ -383,7 +383,9 @@ class MainApp(tk.Frame):
         ReportTypeSelector(
             parent=self.content,
             on_container_report=self._open_container_report_form,
-            on_back=lambda: self.cambiar_modulo("Informes")
+            on_back=lambda: self.cambiar_modulo("Informes"),
+            usuario=self.usuario,
+            rol=self.rol
         ).pack(fill="both", expand=True)
 
     def _open_logra_questionnaires(self):

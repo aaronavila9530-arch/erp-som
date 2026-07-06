@@ -173,6 +173,8 @@ class InformesHomeUI(ttk.Frame):
 
         # ================= CONTENT AREA =================
         self.content_frame = ttk.Frame(self)
+        self.content_frame.usuario = self.usuario
+        self.content_frame.rol = self.rol
         self.content_frame.pack(
             fill="both",
             expand=True,
