@@ -5,7 +5,7 @@
 ; =========================================================
 
 #define MyAppName "ERP-SOM"
-#define MyAppVersion "1.6.7"
+#define MyAppVersion "1.6.8"
 #define MyAppPublisher "InnovaCore SRL"
 #define MyAppExeName "ERP-SOM.exe"
 
@@ -92,7 +92,7 @@ var
 begin
   Exec(
     ExpandConstant('{sys}\taskkill.exe'),
-    '/F /T /IM "{#MyAppExeName}"',
+    '/F /IM "{#MyAppExeName}"',
     '',
     SW_HIDE,
     ewWaitUntilTerminated,
