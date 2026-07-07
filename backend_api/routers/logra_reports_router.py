@@ -33,7 +33,7 @@ def _ensure_schema(conn):
                 meeting_end_time TEXT DEFAULT '',
                 meeting_location TEXT DEFAULT '',
                 meeting_person TEXT DEFAULT '',
-                status TEXT DEFAULT 'Draft',
+                status TEXT DEFAULT 'Pending',
                 agenda_items JSONB NOT NULL DEFAULT '[]'::jsonb,
                 agenda_notes TEXT DEFAULT '',
                 created_by TEXT,
@@ -65,7 +65,17 @@ def _ensure_schema(conn):
         """)
         cur.execute("""
             ALTER TABLE logra_reports
-            ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'Draft'
+            ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'Pending'
+        """)
+        cur.execute("""
+            UPDATE logra_reports
+            SET status = 'Pending'
+            WHERE category = 'ONG'
+              AND (status IS NULL OR UPPER(status) = 'DRAFT')
+        """)
+        cur.execute("""
+            ALTER TABLE logra_reports
+            ALTER COLUMN status SET DEFAULT 'Pending'
         """)
         cur.execute("""
             ALTER TABLE logra_reports
@@ -292,7 +302,7 @@ def save_logra_report(payload: dict, conn=Depends(get_db)):
     report_id = payload.get("id")
     title = (payload.get("title") or "ONG Questionnaire").replace("LOGRA", "ONG")
     category = (payload.get("category") or "ONG").replace("LOGRA", "ONG")
-    status = payload.get("status") or "Draft"
+    status = (payload.get("status") or "Pending").replace("Draft", "Pending")
     created_by = payload.get("created_by")
     answers = payload.get("answers") or []
     agenda_items = payload.get("agenda_items") or []

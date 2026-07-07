@@ -4153,7 +4153,7 @@ function LograMobileModal({
       id: targetReportId,
       title: `ONG - ${formTitle || "Cuestionarios"}`,
       category: "ONG",
-      status: "Draft",
+      status: "Pending",
       created_by: session.usuario,
       agenda_items: agendaItems,
       agenda_notes: agendaNotes,
