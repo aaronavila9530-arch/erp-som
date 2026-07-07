@@ -4590,6 +4590,9 @@ function LograMobileModal({
                 <SelectField label="Status" value={String(agendaDraft.status || "Pendiente")} options={["Pendiente", "En proceso", "Completado"]} onChange={(status) => setAgendaDraft((current) => ({ ...current, status }))} />
                 <Text style={styles.label}>Reminder min</Text>
                 <TextInput style={styles.input} keyboardType="number-pad" value={String(agendaDraft.reminder_minutes || 30)} onChangeText={(reminder_minutes) => setAgendaDraft((current) => ({ ...current, reminder_minutes }))} />
+                <Pressable style={styles.actionButton} onPress={() => updateSelectedAgendaLine()}>
+                  <Text style={styles.actionButtonText}>Editar agenda</Text>
+                </Pressable>
               </View>
 
               <View style={styles.lograAgendaToolbar}>
