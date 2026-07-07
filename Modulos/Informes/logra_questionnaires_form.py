@@ -6,7 +6,7 @@ from pathlib import Path
 
 import api_client
 from tkcalendar import DateEntry, Calendar
-from Modulos.Informes.logra_questionnaires_data import LOGRA_QUESTIONNAIRES
+from Modulos.Informes.logra_questionnaires_data import ONG_QUESTIONNAIRES
 from Modulos.Informes.popup.popup_ai_compare import PopupAICompare
 from session_context import get_user
 
@@ -62,7 +62,7 @@ class LograQuestionnairesForm(ttk.Frame):
         self._build_topbar()
         self._build_filters()
         self._build_content()
-        self.form_var.set(LOGRA_QUESTIONNAIRES[0]["title"])
+        self.form_var.set(ONG_QUESTIONNAIRES[0]["title"])
         self._render_current_page()
 
     def _build_topbar(self):
@@ -74,7 +74,7 @@ class LograQuestionnairesForm(ttk.Frame):
         title_box.grid(row=0, column=0, sticky="ew")
         ttk.Label(
             title_box,
-            text="LOGRA - Cuestionarios",
+            text="ONG - Cuestionarios",
             font=("Segoe UI", 14, "bold")
         ).pack(anchor="w")
         ttk.Label(
@@ -91,6 +91,7 @@ class LograQuestionnairesForm(ttk.Frame):
             ttk.Button(actions, text="Guardar", command=self._save_report).pack(side="left", padx=4)
         else:
             ttk.Button(actions, text="Ver agenda", command=self._open_agenda).pack(side="left", padx=4)
+            ttk.Button(actions, text="Actualizar", command=self._save_report).pack(side="left", padx=4)
         ttk.Button(actions, text="Home", command=self._go_home).pack(side="left", padx=4)
 
     def _build_filters(self):
@@ -104,7 +105,7 @@ class LograQuestionnairesForm(ttk.Frame):
             filters,
             textvariable=self.form_var,
             state="readonly",
-            values=[item["title"] for item in LOGRA_QUESTIONNAIRES],
+            values=[item["title"] for item in ONG_QUESTIONNAIRES],
         )
         cb.grid(row=0, column=1, sticky="ew", padx=(0, 12))
         cb.bind("<<ComboboxSelected>>", self._on_context_changed)
@@ -191,7 +192,7 @@ class LograQuestionnairesForm(ttk.Frame):
     # =========================================================
     def _current_form(self):
         title = self.form_var.get()
-        return next((item for item in LOGRA_QUESTIONNAIRES if item["title"] == title), LOGRA_QUESTIONNAIRES[0])
+        return next((item for item in ONG_QUESTIONNAIRES if item["title"] == title), ONG_QUESTIONNAIRES[0])
 
     def _all_questions(self, form=None, section=None):
         form = form or self._current_form()
@@ -334,6 +335,12 @@ class LograQuestionnairesForm(ttk.Frame):
             ttk.Button(actions, text="Adjuntar", command=lambda f=form, s=section, i=item: self._attach_file(f, s, i)).pack(
                 side="left"
             )
+        if self.report_id:
+            ttk.Button(
+                actions,
+                text="Actualizar pregunta",
+                command=lambda f=form, s=section, i=item: self._update_question(f, s, i)
+            ).pack(side="left", padx=(8, 0))
 
         self._build_attachments(card, form, section, item)
 
@@ -382,7 +389,7 @@ class LograQuestionnairesForm(ttk.Frame):
             "status": self.agenda_status.get(),
         }
         if not item["person"] and not item["topic"] and not item["place"]:
-            messagebox.showwarning("Agenda LOGRA", "Agrega al menos persona, tema o lugar.")
+            messagebox.showwarning("Agenda ONG", "Agrega al menos persona, tema o lugar.")
             return
         self.agenda_items.append(item)
         self._render_agenda()
@@ -390,7 +397,7 @@ class LograQuestionnairesForm(ttk.Frame):
     def _remove_agenda_item(self):
         selected = self.agenda_tree.selection()
         if not selected:
-            messagebox.showwarning("Agenda LOGRA", "Selecciona una linea de agenda.")
+            messagebox.showwarning("Agenda ONG", "Selecciona una linea de agenda.")
             return
         indexes = sorted([int(value) for value in selected], reverse=True)
         for index in indexes:
@@ -439,7 +446,7 @@ class LograQuestionnairesForm(ttk.Frame):
         self._collect_visible_text()
         bullets = self._get_bullets(form, section, item)
         if len(bullets) >= self.MAX_BULLETS:
-            messagebox.showwarning("LOGRA", "Cada pregunta permite maximo 20 bullet points.")
+            messagebox.showwarning("ONG", "Cada pregunta permite maximo 20 bullet points.")
             return
         bullets.append("")
         self._render_current_page()
@@ -453,10 +460,30 @@ class LograQuestionnairesForm(ttk.Frame):
             bullets.pop()
         self._render_current_page()
 
+    def _update_question(self, form, section, item):
+        if not self.report_id:
+            messagebox.showwarning("ONG", "Guarda o carga primero el reporte ONG.")
+            return
+        self._collect_visible_text()
+        key = self._answer_key(form, section, item)
+        payload = {
+            "form_slug": form["slug"],
+            "form_title": form["title"],
+            "section": section,
+            "item_key": self._item_key(item),
+            "question_text": item.get("question", ""),
+            "bullets": [value.strip() for value in self.answers.get(key, []) if value.strip()],
+        }
+        resp = api_client.update_logra_answer_api(self.report_id, payload)
+        if not resp.get("success"):
+            messagebox.showerror("ONG", f"No se pudo actualizar la pregunta:\n{resp.get('error') or resp}")
+            return
+        messagebox.showinfo("ONG", "Pregunta actualizada correctamente.")
+
     def _answers_payload(self):
         self._collect_visible_text()
         payload = []
-        for form in LOGRA_QUESTIONNAIRES:
+        for form in ONG_QUESTIONNAIRES:
             for section in self.SECTION_LABELS:
                 for item in form.get(section, []):
                     key = self._answer_key(form, section, item)
@@ -474,7 +501,7 @@ class LograQuestionnairesForm(ttk.Frame):
         return payload
 
     def _save_report(self, silent=False):
-        title = f"LOGRA - {self.form_var.get() or 'Cuestionarios'}"
+        title = f"ONG - {self.form_var.get() or 'Cuestionarios'}"
         payload = {
             "id": self.report_id,
             "title": title,
@@ -486,11 +513,11 @@ class LograQuestionnairesForm(ttk.Frame):
         resp = api_client.save_logra_report_api(payload)
         if not resp.get("success"):
             if not silent:
-                messagebox.showerror("LOGRA", f"No se pudo guardar:\n{resp.get('error') or resp}")
+                messagebox.showerror("ONG", f"No se pudo guardar:\n{resp.get('error') or resp}")
             return False
         self.report_id = (resp.get("report") or {}).get("id") or self.report_id
         if not silent:
-            messagebox.showinfo("LOGRA", "Guardado correctamente.")
+            messagebox.showinfo("ONG", "Guardado correctamente.")
             self._render_current_page()
         return True
 
@@ -498,7 +525,7 @@ class LograQuestionnairesForm(ttk.Frame):
         if not self.report_id:
             if not self._save_report(silent=False):
                 messagebox.showerror(
-                    "LOGRA",
+                    "ONG",
                     "No se pudo guardar el reporte antes de adjuntar. Revisa que el backend este corriendo."
                 )
                 return
@@ -511,7 +538,7 @@ class LograQuestionnairesForm(ttk.Frame):
         ).get("data") or []
         if len(existing) >= self.MAX_ATTACHMENTS_PER_QUESTION:
             messagebox.showwarning(
-                "LOGRA",
+                "ONG",
                 f"Cada pregunta permite maximo {self.MAX_ATTACHMENTS_PER_QUESTION} adjuntos."
             )
             return
@@ -528,26 +555,26 @@ class LograQuestionnairesForm(ttk.Frame):
             path
         )
         if not resp.get("success"):
-            messagebox.showerror("LOGRA", f"No se pudo subir el adjunto:\n{resp.get('error') or resp}")
+            messagebox.showerror("ONG", f"No se pudo subir el adjunto:\n{resp.get('error') or resp}")
             return
 
-        messagebox.showinfo("LOGRA", "Adjunto guardado correctamente.")
+        messagebox.showinfo("ONG", "Adjunto guardado correctamente.")
         self._render_current_page()
 
     def _open_attachment(self, attachment):
         resp = api_client.open_logra_attachment_api(attachment.get("id"))
         if not resp.get("success"):
-            messagebox.showerror("LOGRA", f"No se pudo abrir el adjunto:\n{resp.get('error') or resp}")
+            messagebox.showerror("ONG", f"No se pudo abrir el adjunto:\n{resp.get('error') or resp}")
 
     def _delete_attachment(self, attachment):
         name = attachment.get("original_filename") or f"Adjunto {attachment.get('id')}"
-        if not messagebox.askyesno("LOGRA", f"Eliminar adjunto?\n\n{name}"):
+        if not messagebox.askyesno("ONG", f"Eliminar adjunto?\n\n{name}"):
             return
         resp = api_client.delete_logra_attachment_api(attachment.get("id"))
         if not resp.get("success"):
-            messagebox.showerror("LOGRA", f"No se pudo eliminar el adjunto:\n{resp.get('error') or resp}")
+            messagebox.showerror("ONG", f"No se pudo eliminar el adjunto:\n{resp.get('error') or resp}")
             return
-        messagebox.showinfo("LOGRA", "Adjunto eliminado correctamente.")
+        messagebox.showinfo("ONG", "Adjunto eliminado correctamente.")
         self._render_current_page()
 
     def _open_agenda(self):
@@ -563,7 +590,7 @@ class LograQuestionnairesForm(ttk.Frame):
     def load_report(self, report_id):
         resp = api_client.get_logra_report_api(report_id)
         if resp.get("success") is False:
-            messagebox.showerror("LOGRA", f"No se pudo abrir el reporte:\n{resp.get('error') or resp}")
+            messagebox.showerror("ONG", f"No se pudo abrir el reporte:\n{resp.get('error') or resp}")
             return
 
         self.report_id = (resp.get("report") or {}).get("id")
@@ -576,7 +603,7 @@ class LograQuestionnairesForm(ttk.Frame):
             bullets = item.get("bullets") or []
             self.answers[key] = bullets if bullets else [""]
 
-        messagebox.showinfo("LOGRA", f"Reporte LOGRA #{self.report_id} cargado.")
+        messagebox.showinfo("ONG", f"Reporte ONG #{self.report_id} cargado.")
         self._render_agenda()
         self._render_current_page()
 
@@ -619,24 +646,24 @@ class LograQuestionnairesForm(ttk.Frame):
                 except Exception:
                     reminder = 0
 
-                label = item.get("topic") or item.get("person") or "Reunion LOGRA"
+                label = item.get("topic") or item.get("person") or "Reunion ONG"
                 if reminder > 0 and start - timedelta(minutes=reminder) <= now < start:
                     key = (index, item.get("date_iso") or item.get("date"), item.get("start_time"), "before")
                     if key not in self._agenda_alerted:
                         self._agenda_alerted.add(key)
-                        messagebox.showinfo("Agenda LOGRA", f"La reunion '{label}' inicia en menos de {reminder} minutos.")
+                        messagebox.showinfo("Agenda ONG", f"La reunion '{label}' inicia en menos de {reminder} minutos.")
 
                 if start <= now and (not end or now <= end):
                     key = (index, item.get("date_iso") or item.get("date"), item.get("start_time"), "current")
                     if key not in self._agenda_alerted:
                         self._agenda_alerted.add(key)
-                        messagebox.showinfo("Agenda LOGRA", f"La reunion '{label}' esta en curso.")
+                        messagebox.showinfo("Agenda ONG", f"La reunion '{label}' esta en curso.")
 
                 if end and now > end and status != "Completado":
                     key = (index, item.get("date_iso") or item.get("date"), item.get("end_time"), "late")
                     if key not in self._agenda_alerted:
                         self._agenda_alerted.add(key)
-                        messagebox.showwarning("Agenda LOGRA", f"La reunion '{label}' ya paso y no esta marcada como completada.")
+                        messagebox.showwarning("Agenda ONG", f"La reunion '{label}' ya paso y no esta marcada como completada.")
         finally:
             if self.winfo_exists():
                 self.after(60000, self._check_agenda_alerts)
@@ -646,7 +673,7 @@ class PopupLograOpen(tk.Toplevel):
     def __init__(self, parent, form_instance):
         super().__init__(parent)
         self.form_instance = form_instance
-        self.title("Abrir LOGRA guardado")
+        self.title("Abrir ONG guardado")
         self.geometry("760x420")
         self.transient(parent)
         self.grab_set()
@@ -700,7 +727,7 @@ class PopupLograOpen(tk.Toplevel):
     def _open_selected(self):
         selected = self.tree.selection()
         if not selected:
-            messagebox.showwarning("LOGRA", "Selecciona un reporte.")
+            messagebox.showwarning("ONG", "Selecciona un reporte.")
             return
         self.form_instance.load_report(int(selected[0]))
         self.destroy()
@@ -740,7 +767,7 @@ class PopupLograAgenda(tk.Toplevel):
     def __init__(self, parent, form_instance):
         super().__init__(parent)
         self.form_instance = form_instance
-        self.title("Agenda LOGRA")
+        self.title("Agenda ONG")
         self.geometry("1180x620")
         self.transient(parent)
         self.grab_set()
@@ -830,6 +857,8 @@ class PopupLograAgenda(tk.Toplevel):
         meeting_actions = ttk.LabelFrame(actions, text="Reunion seleccionada", padding=(8, 6))
         meeting_actions.grid(row=0, column=1, sticky="ew", padx=(0, 8))
         ttk.Button(meeting_actions, text="+ Nueva", command=self._add).pack(side="left", padx=(0, 4))
+        ttk.Button(meeting_actions, text="Cargar", command=self._load_selected_into_form).pack(side="left", padx=4)
+        ttk.Button(meeting_actions, text="Actualizar linea", command=self._update_selected).pack(side="left", padx=4)
         ttk.Button(meeting_actions, text="Status", command=self._change_selected_status).pack(side="left", padx=4)
         ttk.Button(meeting_actions, text="Notas", command=self._open_notes).pack(side="left", padx=4)
         ttk.Button(meeting_actions, text="Eliminar", command=self._remove).pack(side="left", padx=(4, 0))
@@ -1097,7 +1126,7 @@ class PopupLograAgenda(tk.Toplevel):
     def _search_backend(self):
         listing = api_client.list_logra_reports_api()
         if listing.get("success") is False:
-            messagebox.showerror("Agenda LOGRA", f"No se pudo buscar la agenda:\n{listing.get('error') or listing}")
+            messagebox.showerror("Agenda ONG", f"No se pudo buscar la agenda:\n{listing.get('error') or listing}")
             return
 
         rows = listing.get("data") or []
@@ -1105,12 +1134,12 @@ class PopupLograAgenda(tk.Toplevel):
             self.items = []
             self.form_instance.agenda_items = []
             self._render()
-            messagebox.showinfo("Agenda LOGRA", "No hay agendas LOGRA guardadas en backend.")
+            messagebox.showinfo("Agenda ONG", "No hay agendas ONG guardadas en backend.")
             return
 
         all_items = []
         for report in rows:
-            report_title = report.get("title") or f"LOGRA #{report.get('id')}"
+            report_title = report.get("title") or f"ONG #{report.get('id')}"
             for agenda_index, item in enumerate(report.get("agenda_items") or []):
                 if not isinstance(item, dict):
                     continue
@@ -1123,25 +1152,25 @@ class PopupLograAgenda(tk.Toplevel):
         self.items = all_items
         self.form_instance.agenda_items = [dict(item) for item in self.items]
         self._render()
-        messagebox.showinfo("Agenda LOGRA", f"Agendas cargadas desde backend. Lineas: {len(self.items)}")
+        messagebox.showinfo("Agenda ONG", f"Agendas cargadas desde backend. Lineas: {len(self.items)}")
 
     def _add(self):
         if len(self.items) >= self.MAX_ITEMS:
-            messagebox.showwarning("Agenda LOGRA", "La agenda permite maximo 150 lineas.")
+            messagebox.showwarning("Agenda ONG", "La agenda permite maximo 150 lineas.")
             return
         self._sync_long_date()
         start = self._compose_time(self.start_hour_var, self.start_minute_var)
         end = self._compose_time(self.end_hour_var, self.end_minute_var)
         if not start or not end:
-            messagebox.showwarning("Agenda LOGRA", "Usa hora 00-23 y minutos 00-59.")
+            messagebox.showwarning("Agenda ONG", "Usa hora 00-23 y minutos 00-59.")
             return
         try:
             reminder = max(0, int(self.reminder_var.get() or 0))
         except Exception:
-            messagebox.showwarning("Agenda LOGRA", "Reminder min debe ser un numero entero.")
+            messagebox.showwarning("Agenda ONG", "Reminder min debe ser un numero entero.")
             return
         item = {
-            "report_title": f"LOGRA - {self.form_instance.form_var.get() or 'Cuestionarios'}",
+            "report_title": f"ONG - {self.form_instance.form_var.get() or 'Cuestionarios'}",
             "date": self.date_long_var.get(),
             "date_iso": self.selected_date.isoformat(),
             "start_time": start,
@@ -1156,25 +1185,128 @@ class PopupLograAgenda(tk.Toplevel):
             "reminder_minutes": reminder,
         }
         if not item["person"] and not item["topic"] and not item["place"]:
-            messagebox.showwarning("Agenda LOGRA", "Agrega al menos persona, tema o lugar.")
+            messagebox.showwarning("Agenda ONG", "Agrega al menos persona, tema o lugar.")
             return
         self.items.append(item)
         self._render()
 
+    def _selected_index(self):
+        selected = self.tree.selection()
+        if not selected:
+            messagebox.showwarning("Agenda ONG", "Selecciona una linea.")
+            return None
+        try:
+            index = int(selected[0])
+        except Exception:
+            messagebox.showwarning("Agenda ONG", "Seleccion invalida.")
+            return None
+        if index < 0 or index >= len(self.items):
+            messagebox.showwarning("Agenda ONG", "Seleccion invalida.")
+            return None
+        return index
+
+    def _load_selected_into_form(self):
+        index = self._selected_index()
+        if index is None:
+            return
+        item = self.items[index]
+        item_date = self._agenda_item_date(item)
+        if item_date:
+            self.selected_date = item_date
+            self._sync_long_date()
+        start = str(item.get("start_time") or "09:00")
+        end = str(item.get("end_time") or "10:00")
+        self.start_hour_var.set(start[:2] if len(start) >= 2 else "09")
+        self.start_minute_var.set(start[3:5] if len(start) >= 5 else "00")
+        self.end_hour_var.set(end[:2] if len(end) >= 2 else "10")
+        self.end_minute_var.set(end[3:5] if len(end) >= 5 else "00")
+        self.place_var.set(item.get("place") or "")
+        self.person_var.set(item.get("person") or "")
+        self.phone_var.set(item.get("phone") or item.get("telefono") or "")
+        self.company_var.set(item.get("company") or item.get("company_role") or "")
+        self.topic_var.set(item.get("topic") or "")
+        self.priority_var.set(item.get("priority") or "Media")
+        self.status_var.set(item.get("status") or "Pendiente")
+        self.reminder_var.set(str(item.get("reminder_minutes") or 30))
+
+    def _agenda_payload_from_fields(self, current_item=None):
+        self._sync_long_date()
+        start = self._compose_time(self.start_hour_var, self.start_minute_var)
+        end = self._compose_time(self.end_hour_var, self.end_minute_var)
+        if not start or not end:
+            messagebox.showwarning("Agenda ONG", "Usa hora 00-23 y minutos 00-59.")
+            return None
+        try:
+            reminder = max(0, int(self.reminder_var.get() or 0))
+        except Exception:
+            messagebox.showwarning("Agenda ONG", "Reminder min debe ser un numero entero.")
+            return None
+        payload = dict(current_item or {})
+        payload.update({
+            "date": self.date_long_var.get(),
+            "date_iso": self.selected_date.isoformat(),
+            "start_time": start,
+            "end_time": end,
+            "place": self.place_var.get().strip(),
+            "person": self.person_var.get().strip(),
+            "phone": self.phone_var.get().strip(),
+            "company": self.company_var.get().strip(),
+            "topic": self.topic_var.get().strip(),
+            "priority": self.priority_var.get(),
+            "status": self.status_var.get(),
+            "reminder_minutes": reminder,
+        })
+        if not payload["person"] and not payload["topic"] and not payload["place"]:
+            messagebox.showwarning("Agenda ONG", "Agrega al menos persona, tema o lugar.")
+            return None
+        return payload
+
+    def _update_selected(self):
+        index = self._selected_index()
+        if index is None:
+            return
+        payload = self._agenda_payload_from_fields(self.items[index])
+        if payload is None:
+            return
+        report_id = payload.get("report_id") or self.form_instance.report_id
+        agenda_index = payload.get("agenda_index", index)
+        if not report_id:
+            self.items[index] = payload
+            self.form_instance.agenda_items = [dict(item) for item in self.items]
+            self._render()
+            messagebox.showinfo("Agenda ONG", "Linea actualizada localmente. Guarda la agenda para persistirla.")
+            return
+        resp = api_client.update_logra_agenda_item_api(report_id, agenda_index, payload)
+        if not resp.get("success"):
+            messagebox.showerror("Agenda ONG", f"No se pudo actualizar la linea:\n{resp.get('error') or resp}")
+            return
+        self.items[index] = payload
+        self.form_instance.agenda_items = [dict(item) for item in self.items]
+        self._render()
+        messagebox.showinfo("Agenda ONG", "Linea actualizada correctamente.")
+
     def _change_selected_status(self):
         selected = self.tree.selection()
         if not selected:
-            messagebox.showwarning("Agenda LOGRA", "Selecciona una linea.")
+            messagebox.showwarning("Agenda ONG", "Selecciona una linea.")
             return
         for iid in selected:
             index = int(iid)
             if 0 <= index < len(self.items):
                 self.items[index]["status"] = self.status_var.get()
+                report_id = self.items[index].get("report_id") or self.form_instance.report_id
+                agenda_index = self.items[index].get("agenda_index", index)
+                if report_id:
+                    resp = api_client.update_logra_agenda_item_api(report_id, agenda_index, self.items[index])
+                    if not resp.get("success"):
+                        messagebox.showerror("Agenda ONG", f"No se pudo actualizar el status:\n{resp.get('error') or resp}")
+                        return
+        self.form_instance.agenda_items = [dict(item) for item in self.items]
         self._render()
 
     def _open_notes(self):
         popup = tk.Toplevel(self)
-        popup.title("Anotaciones generales LOGRA")
+        popup.title("Anotaciones generales ONG")
         popup.geometry("720x420")
         popup.transient(self)
         popup.grab_set()
@@ -1200,9 +1332,9 @@ class PopupLograAgenda(tk.Toplevel):
     def _remove(self):
         selected = self.tree.selection()
         if not selected:
-            messagebox.showwarning("Agenda LOGRA", "Selecciona una linea.")
+            messagebox.showwarning("Agenda ONG", "Selecciona una linea.")
             return
-        if not messagebox.askyesno("Agenda LOGRA", "Deseas eliminar la linea seleccionada de la agenda?"):
+        if not messagebox.askyesno("Agenda ONG", "Deseas eliminar la linea seleccionada de la agenda?"):
             return
 
         for index in sorted((int(i) for i in selected), reverse=True):
@@ -1214,21 +1346,21 @@ class PopupLograAgenda(tk.Toplevel):
                     resp = api_client.delete_logra_agenda_item_api(report_id, agenda_index)
                     if not resp.get("success"):
                         messagebox.showerror(
-                            "Agenda LOGRA",
+                            "Agenda ONG",
                             f"No se pudo eliminar en backend:\n{resp.get('error') or resp}"
                         )
                         continue
                 self.items.pop(index)
         self._render()
-        messagebox.showinfo("Agenda LOGRA", "Linea eliminada correctamente.")
+        messagebox.showinfo("Agenda ONG", "Linea eliminada correctamente.")
 
     def _save(self):
         self.form_instance.agenda_items = [dict(item) for item in self.items]
         if len(self.form_instance.agenda_items) > self.MAX_ITEMS:
-            messagebox.showwarning("Agenda LOGRA", "La agenda permite maximo 150 lineas.")
+            messagebox.showwarning("Agenda ONG", "La agenda permite maximo 150 lineas.")
             return
         if self.form_instance._save_report(silent=False):
-            messagebox.showinfo("Agenda LOGRA", "Agenda guardada correctamente.")
+            messagebox.showinfo("Agenda ONG", "Agenda guardada correctamente.")
 
     def _rows_for_export(self):
         return [[item.get(col, "") for col in self.COLUMNS] for item in self.items]
@@ -1245,7 +1377,7 @@ class PopupLograAgenda(tk.Toplevel):
     def _export_excel(self):
         path = filedialog.asksaveasfilename(
             defaultextension=".xlsx",
-            initialfile="LOGRA_agenda.xlsx",
+            initialfile="ONG_agenda.xlsx",
             filetypes=[("Excel", "*.xlsx")]
         )
         if not path:
@@ -1255,7 +1387,7 @@ class PopupLograAgenda(tk.Toplevel):
 
         wb = Workbook()
         ws = wb.active
-        ws.title = "LOGRA Agenda"
+        ws.title = "ONG Agenda"
         if self.form_instance.agenda_notes:
             ws.append(["General notes", self.form_instance.agenda_notes])
             ws.append([])
@@ -1282,12 +1414,12 @@ class PopupLograAgenda(tk.Toplevel):
         for idx, width in enumerate(widths, start=1):
             ws.column_dimensions[chr(64 + idx)].width = width
         wb.save(path)
-        messagebox.showinfo("Agenda LOGRA", "Excel generado correctamente.")
+        messagebox.showinfo("Agenda ONG", "Excel generado correctamente.")
 
     def _export_word(self):
         path = filedialog.asksaveasfilename(
             defaultextension=".docx",
-            initialfile="LOGRA_agenda.docx",
+            initialfile="ONG_agenda.docx",
             filetypes=[("Word", "*.docx")]
         )
         if not path:
@@ -1303,7 +1435,7 @@ class PopupLograAgenda(tk.Toplevel):
         section.left_margin = Inches(0.55)
         section.right_margin = Inches(0.55)
         title = doc.add_paragraph()
-        run = title.add_run("LOGRA Meeting Agenda")
+        run = title.add_run("ONG Meeting Agenda")
         run.bold = True
         run.font.size = Pt(18)
         run.font.color.rgb = RGBColor(0, 59, 113)
@@ -1322,12 +1454,12 @@ class PopupLograAgenda(tk.Toplevel):
             for idx, col in enumerate(self.COLUMNS):
                 cells[idx].text = str(item.get(col, ""))
         doc.save(path)
-        messagebox.showinfo("Agenda LOGRA", "Word generado correctamente.")
+        messagebox.showinfo("Agenda ONG", "Word generado correctamente.")
 
     def _export_pdf(self):
         path = filedialog.asksaveasfilename(
             defaultextension=".pdf",
-            initialfile="LOGRA_agenda.pdf",
+            initialfile="ONG_agenda.pdf",
             filetypes=[("PDF", "*.pdf")]
         )
         if not path:
@@ -1340,7 +1472,7 @@ class PopupLograAgenda(tk.Toplevel):
         styles = getSampleStyleSheet()
         doc = SimpleDocTemplate(path, pagesize=landscape(letter), leftMargin=28, rightMargin=28, topMargin=28, bottomMargin=28)
         story = [
-            Paragraph("LOGRA Meeting Agenda", styles["Title"]),
+            Paragraph("ONG Meeting Agenda", styles["Title"]),
             Paragraph(datetime.now().strftime("Generated: %B %d, %Y %H:%M").replace(" 0", " "), styles["Normal"]),
             Spacer(1, 10),
         ]
@@ -1365,14 +1497,14 @@ class PopupLograAgenda(tk.Toplevel):
         table.setStyle(style)
         story.append(table)
         doc.build(story)
-        messagebox.showinfo("Agenda LOGRA", "PDF generado correctamente.")
+        messagebox.showinfo("Agenda ONG", "PDF generado correctamente.")
 
 
 class PopupLograAgendaSearch(tk.Toplevel):
     def __init__(self, parent, agenda_popup):
         super().__init__(parent)
         self.agenda_popup = agenda_popup
-        self.title("Buscar agenda LOGRA")
+        self.title("Buscar agenda ONG")
         self.geometry("760x380")
         self.transient(parent)
         self.grab_set()
@@ -1422,12 +1554,12 @@ class PopupLograAgendaSearch(tk.Toplevel):
     def _select(self):
         selected = self.tree.selection()
         if not selected:
-            messagebox.showwarning("Agenda LOGRA", "Selecciona una agenda.")
+            messagebox.showwarning("Agenda ONG", "Selecciona una agenda.")
             return
         report_id = int(selected[0])
         resp = api_client.get_logra_report_api(report_id)
         if resp.get("success") is False:
-            messagebox.showerror("Agenda LOGRA", f"No se pudo cargar:\n{resp.get('error') or resp}")
+            messagebox.showerror("Agenda ONG", f"No se pudo cargar:\n{resp.get('error') or resp}")
             return
         report = resp.get("report") or {}
         self.agenda_popup.form_instance.report_id = report_id
@@ -1442,7 +1574,7 @@ class PopupLograPortia(tk.Toplevel):
     def __init__(self, parent, form_instance):
         super().__init__(parent)
         self.form_instance = form_instance
-        self.title("Mejorar con PORTIA - LOGRA")
+        self.title("Mejorar con PORTIA - ONG")
         self.geometry("720x520")
         self.transient(parent)
         self.grab_set()
@@ -1467,7 +1599,7 @@ class PopupLograPortia(tk.Toplevel):
             root,
             textvariable=self.form_var,
             state="readonly",
-            values=[item["title"] for item in LOGRA_QUESTIONNAIRES],
+            values=[item["title"] for item in ONG_QUESTIONNAIRES],
         )
         form_cb.grid(row=0, column=1, sticky="ew", pady=4)
         form_cb.bind("<<ComboboxSelected>>", lambda e: self._load_questions())
@@ -1505,7 +1637,7 @@ class PopupLograPortia(tk.Toplevel):
         ttk.Button(actions, text="Mejorar con PORTIA", command=self._execute).pack(side="right", padx=6)
 
     def _selected_form(self):
-        return next((item for item in LOGRA_QUESTIONNAIRES if item["title"] == self.form_var.get()), LOGRA_QUESTIONNAIRES[0])
+        return next((item for item in ONG_QUESTIONNAIRES if item["title"] == self.form_var.get()), ONG_QUESTIONNAIRES[0])
 
     def _load_questions(self):
         form = self._selected_form()

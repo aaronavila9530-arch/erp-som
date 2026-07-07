@@ -1442,6 +1442,34 @@ def delete_logra_agenda_item_api(report_id: int, agenda_index: int):
         return {"success": False, "error": str(e)}
 
 
+def update_logra_agenda_item_api(report_id: int, agenda_index: int, payload: dict):
+    try:
+        r = api_request(
+            "PUT",
+            f"{BASE_URL}/logra-reports/{int(report_id)}/agenda-items/{int(agenda_index)}",
+            json=payload,
+            timeout=20
+        )
+        raise_for_status_with_detail(r)
+        return r.json()
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def update_logra_answer_api(report_id: int, payload: dict):
+    try:
+        r = api_request(
+            "PUT",
+            f"{BASE_URL}/logra-reports/{int(report_id)}/answers",
+            json=payload,
+            timeout=20
+        )
+        raise_for_status_with_detail(r)
+        return r.json()
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
 def delete_logra_attachment_api(attachment_id: int):
     try:
         r = api_request(

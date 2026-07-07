@@ -26,7 +26,7 @@ def _ensure_schema(conn):
             CREATE TABLE IF NOT EXISTS logra_reports (
                 id SERIAL PRIMARY KEY,
                 title TEXT,
-                category TEXT DEFAULT 'LOGRA',
+                category TEXT DEFAULT 'ONG',
                 meeting_date DATE DEFAULT CURRENT_DATE,
                 meeting_time TEXT DEFAULT '00:00',
                 meeting_start_time TEXT DEFAULT '',
@@ -47,16 +47,21 @@ def _ensure_schema(conn):
         """)
         cur.execute("""
             ALTER TABLE logra_reports
-            ADD COLUMN IF NOT EXISTS category TEXT DEFAULT 'LOGRA'
+            ADD COLUMN IF NOT EXISTS category TEXT DEFAULT 'ONG'
         """)
         cur.execute("""
             UPDATE logra_reports
-            SET category = 'LOGRA'
-            WHERE category IS NULL
+            SET category = 'ONG'
+            WHERE category IS NULL OR UPPER(category) = 'LOGRA'
+        """)
+        cur.execute("""
+            UPDATE logra_reports
+            SET title = REPLACE(title, 'LOGRA', 'ONG')
+            WHERE title LIKE '%LOGRA%'
         """)
         cur.execute("""
             ALTER TABLE logra_reports
-            ALTER COLUMN category SET DEFAULT 'LOGRA'
+            ALTER COLUMN category SET DEFAULT 'ONG'
         """)
         cur.execute("""
             ALTER TABLE logra_reports
@@ -203,6 +208,11 @@ def _ensure_schema(conn):
             ON logra_answers(report_id)
         """)
         cur.execute("""
+            UPDATE logra_answers
+            SET form_title = REPLACE(form_title, 'LOGRA', 'ONG')
+            WHERE form_title LIKE '%LOGRA%'
+        """)
+        cur.execute("""
             CREATE INDEX IF NOT EXISTS idx_logra_attachments_lookup
             ON logra_attachments(report_id, form_slug, section, item_key)
         """)
@@ -280,8 +290,8 @@ def save_logra_report(payload: dict, conn=Depends(get_db)):
     _ensure_schema(conn)
     payload = payload or {}
     report_id = payload.get("id")
-    title = payload.get("title") or "LOGRA Questionnaire"
-    category = payload.get("category") or "LOGRA"
+    title = (payload.get("title") or "ONG Questionnaire").replace("LOGRA", "ONG")
+    category = (payload.get("category") or "ONG").replace("LOGRA", "ONG")
     status = payload.get("status") or "Draft"
     created_by = payload.get("created_by")
     answers = payload.get("answers") or []
@@ -343,35 +353,36 @@ def save_logra_report(payload: dict, conn=Depends(get_db)):
                 report = cur.fetchone()
                 report_id = report["id"]
 
-            cur.execute("DELETE FROM logra_answers WHERE report_id = %s", (report_id,))
+            if answers:
+                cur.execute("DELETE FROM logra_answers WHERE report_id = %s", (report_id,))
 
-            for item in answers:
-                bullets = item.get("bullets") or []
-                if not isinstance(bullets, list):
-                    bullets = []
-                bullets = [str(value).strip() for value in bullets[:20] if str(value or "").strip()]
-                cur.execute("""
-                    INSERT INTO logra_answers (
-                        report_id, form_slug, form_title, section, item_key,
-                        question_text, bullets, updated_at
-                    )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (report_id, form_slug, section, item_key)
-                    DO UPDATE SET
-                        form_title = EXCLUDED.form_title,
-                        question_text = EXCLUDED.question_text,
-                        bullets = EXCLUDED.bullets,
-                        updated_at = EXCLUDED.updated_at
-                """, (
-                    report_id,
-                    item.get("form_slug"),
-                    item.get("form_title"),
-                    item.get("section"),
-                    item.get("item_key"),
-                    item.get("question_text") or "",
-                    Json(bullets),
-                    datetime.utcnow(),
-                ))
+                for item in answers:
+                    bullets = item.get("bullets") or []
+                    if not isinstance(bullets, list):
+                        bullets = []
+                    bullets = [str(value).strip() for value in bullets[:20] if str(value or "").strip()]
+                    cur.execute("""
+                        INSERT INTO logra_answers (
+                            report_id, form_slug, form_title, section, item_key,
+                            question_text, bullets, updated_at
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (report_id, form_slug, section, item_key)
+                        DO UPDATE SET
+                            form_title = EXCLUDED.form_title,
+                            question_text = EXCLUDED.question_text,
+                            bullets = EXCLUDED.bullets,
+                            updated_at = EXCLUDED.updated_at
+                    """, (
+                        report_id,
+                        item.get("form_slug"),
+                        (item.get("form_title") or "").replace("LOGRA", "ONG"),
+                        item.get("section"),
+                        item.get("item_key"),
+                        item.get("question_text") or "",
+                        Json(bullets),
+                        datetime.utcnow(),
+                    ))
 
         conn.commit()
         return {"success": True, "report": report}
@@ -389,6 +400,118 @@ def update_logra_report(report_id: int, payload: dict, conn=Depends(get_db)):
     payload = dict(payload or {})
     payload["id"] = report_id
     return save_logra_report(payload, conn)
+
+
+@router.put("/{report_id}/answers")
+def update_logra_answer(report_id: int, payload: dict, conn=Depends(get_db)):
+    _ensure_schema(conn)
+    payload = payload or {}
+    form_slug = str(payload.get("form_slug") or "").strip()
+    section = str(payload.get("section") or "").strip()
+    item_key = str(payload.get("item_key") or "").strip()
+    if not form_slug or not section or not item_key:
+        raise HTTPException(status_code=400, detail="form_slug, section and item_key are required")
+
+    bullets = payload.get("bullets") or []
+    if not isinstance(bullets, list):
+        bullets = []
+    bullets = [str(value).strip() for value in bullets[:20] if str(value or "").strip()]
+
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT id FROM logra_reports WHERE id = %s", (report_id,))
+            if not cur.fetchone():
+                raise HTTPException(status_code=404, detail="LOGRA report not found")
+
+            cur.execute("""
+                INSERT INTO logra_answers (
+                    report_id, form_slug, form_title, section, item_key,
+                    question_text, bullets, updated_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (report_id, form_slug, section, item_key)
+                DO UPDATE SET
+                    form_title = EXCLUDED.form_title,
+                    question_text = EXCLUDED.question_text,
+                    bullets = EXCLUDED.bullets,
+                    updated_at = EXCLUDED.updated_at
+                RETURNING form_slug, form_title, section, item_key, question_text, bullets, updated_at
+            """, (
+                report_id,
+                form_slug,
+                payload.get("form_title") or "",
+                section,
+                item_key,
+                payload.get("question_text") or "",
+                Json(bullets),
+                datetime.utcnow(),
+            ))
+            answer = cur.fetchone()
+            cur.execute("UPDATE logra_reports SET updated_at = %s WHERE id = %s", (datetime.utcnow(), report_id))
+        conn.commit()
+        return {"success": True, "answer": answer}
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as exc:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"LOGRA answer update error: {exc}")
+
+
+@router.put("/{report_id}/agenda-items/{agenda_index}")
+def update_logra_agenda_item(report_id: int, agenda_index: int, payload: dict, conn=Depends(get_db)):
+    _ensure_schema(conn)
+    payload = payload or {}
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT agenda_items FROM logra_reports WHERE id = %s", (report_id,))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="LOGRA report not found")
+
+            items = row.get("agenda_items") or []
+            if not isinstance(items, list):
+                items = []
+            if agenda_index < 0 or agenda_index >= len(items):
+                raise HTTPException(status_code=404, detail="Agenda item not found")
+
+            current = items[agenda_index] if isinstance(items[agenda_index], dict) else {}
+            updated_item = {**current, **payload}
+            items[agenda_index] = updated_item
+
+            first_meeting = items[0] if items and isinstance(items[0], dict) else {}
+            cur.execute("""
+                UPDATE logra_reports
+                SET agenda_items = %s,
+                    meeting_date = %s,
+                    meeting_time = %s,
+                    meeting_start_time = %s,
+                    meeting_end_time = %s,
+                    meeting_location = %s,
+                    meeting_person = %s,
+                    updated_at = %s
+                WHERE id = %s
+                RETURNING id, agenda_items, updated_at
+            """, (
+                Json(items),
+                first_meeting.get("date_iso") or datetime.utcnow().date().isoformat(),
+                first_meeting.get("start_time") or "00:00",
+                first_meeting.get("start_time") or "",
+                first_meeting.get("end_time") or "",
+                first_meeting.get("place") or "",
+                first_meeting.get("person") or "",
+                datetime.utcnow(),
+                report_id,
+            ))
+            updated = cur.fetchone()
+        conn.commit()
+        return {"success": True, "report": updated, "item": updated_item}
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as exc:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"LOGRA agenda update error: {exc}")
 
 
 @router.post("/{report_id}/attachments")

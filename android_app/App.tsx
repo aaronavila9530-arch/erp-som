@@ -29,13 +29,13 @@ import {
 import { API_BASE_URL, apiRequest, confirmTotp, login, LoginResponse, Session, verifyTotp } from "./src/api/client";
 import { AuthProvider, useAuth } from "./src/auth/AuthContext";
 import { AppModule, AppSection, TableAction, getAllowedModules } from "./src/config/modules";
-import { LOGRA_QUESTIONNAIRES, LograQuestion, LograQuestionnaire } from "./src/config/lograQuestionnaires";
+import { ONG_QUESTIONNAIRES, LograQuestion, LograQuestionnaire } from "./src/config/lograQuestionnaires";
 
 const BLUE = "#003A75";
 const BORDER = "#D7DEE8";
 const CREDS_KEY = "erp_som_saved_credentials";
 const OFFLINE_QUEUE_KEY = "erp_som_offline_queue";
-const LOGRA_NOTIFICATION_IDS_KEY = "erp_som_logra_notification_ids";
+const ONG_NOTIFICATION_IDS_KEY = "erp_som_logra_notification_ids";
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -1777,7 +1777,7 @@ type InformeCreateField = {
 
 type InformeCreateConfig = {
   key: string;
-  group: "Informe contenedor" | "Informe buque" | "Certificados" | "LOGRA";
+  group: "Informe contenedor" | "Informe buque" | "Certificados" | "ONG";
   title: string;
   endpoint: string;
   dateFormat?: "ymd" | "dmy";
@@ -2025,7 +2025,7 @@ const INFORMES_CONFIG: Record<string, InformeConfig> = {
     ]
   },
   logra: {
-    title: "Informe LOGRA",
+    title: "Informe ONG",
     idField: "id",
     detailEndpoint: "/logra-reports/{id}",
     updateEndpoint: "/logra-reports",
@@ -2097,7 +2097,7 @@ function orderedLograAnswers(payload: Record<string, unknown>) {
     answers.set(key, record);
   });
   const ordered: Array<{ form: LograQuestionnaire; section: "critical_questions" | "detailed_questions"; question: LograQuestion; answer: Record<string, unknown> }> = [];
-  LOGRA_QUESTIONNAIRES.forEach((form) => {
+  ONG_QUESTIONNAIRES.forEach((form) => {
     (["critical_questions", "detailed_questions"] as Array<"critical_questions" | "detailed_questions">).forEach((section) => {
       const questions = Array.isArray(form[section]) ? form[section] as LograQuestion[] : [];
       questions.forEach((question) => {
@@ -2168,7 +2168,7 @@ function buildLograReportHtml(payload: Record<string, unknown>) {
 <html>
 <head>
 <meta charset="utf-8" />
-<title>${escapeHtml(report.title || "LOGRA Report")}</title>
+<title>${escapeHtml(report.title || "ONG Report")}</title>
 <style>
   body { font-family: Arial, sans-serif; color: #172033; margin: 28px; }
   h1 { color: #003A75; text-align: center; margin-bottom: 4px; }
@@ -2185,11 +2185,11 @@ function buildLograReportHtml(payload: Record<string, unknown>) {
 </style>
 </head>
 <body>
-<h1>${escapeHtml(report.title || "LOGRA Report")}</h1>
-<p class="subtitle">Professional LOGRA Questionnaire Report</p>
+<h1>${escapeHtml(report.title || "ONG Report")}</h1>
+<p class="subtitle">Professional ONG Questionnaire Report</p>
 <table>
   <tr><td class="meta-label">ID</td><td>${escapeHtml(report.id)}</td></tr>
-  <tr><td class="meta-label">Categoria</td><td>${escapeHtml(report.category || "LOGRA")}</td></tr>
+  <tr><td class="meta-label">Categoria</td><td>${escapeHtml(report.category || "ONG")}</td></tr>
   <tr><td class="meta-label">Status</td><td>${escapeHtml(report.status)}</td></tr>
   <tr><td class="meta-label">Agenda</td><td>${agenda.length} reuniones</td></tr>
   <tr><td class="meta-label">Actualizado</td><td>${escapeHtml(report.updated_at)}</td></tr>
@@ -2300,7 +2300,7 @@ const INFORME_REVIEW_OPTIONS = [
   { key: "sampling-certificate", label: "Informe Sampling Certificate" },
   { key: "sealing-certificate", label: "Informe Sealing Certificate" },
   { key: "lashing-certificate", label: "Informe Lashing Certificate" },
-  { key: "logra", label: "Informe LOGRA" }
+  { key: "logra", label: "Informe ONG" }
 ];
 
 const COMMON_REPORT_FIELDS: InformeCreateField[] = [
@@ -2523,8 +2523,8 @@ const TRUCK_SUPERVISION_FIELDS: InformeCreateField[] = [
   { key: "conclusion_text", label: "Conclusion", type: "multiline" }
 ];
 
-const LOGRA_FIELDS: InformeCreateField[] = [
-  { key: "section_header", label: "LOGRA", type: "section" },
+const ONG_FIELDS: InformeCreateField[] = [
+  { key: "section_header", label: "ONG", type: "section" },
   { key: "title", label: "Titulo" },
   { key: "category", label: "Categoria" },
   { key: "status", label: "Status" },
@@ -2583,7 +2583,7 @@ const INFORMES_CREATE_CONFIG: InformeCreateConfig[] = [
   { key: "sampling-certificate", group: "Certificados", title: "Sampling Certificate", endpoint: "/sampling-certificates", fields: COMMON_REPORT_FIELDS },
   { key: "sealing-certificate", group: "Certificados", title: "Sealing Certificate", endpoint: "/sealing-certificates", fields: COMMON_REPORT_FIELDS },
   { key: "lashing-certificate", group: "Certificados", title: "Lashing Certificate", endpoint: "/lashing-certificates", fields: COMMON_REPORT_FIELDS },
-  { key: "logra", group: "LOGRA", title: "LOGRA", endpoint: "/logra-reports", fields: LOGRA_FIELDS }
+  { key: "logra", group: "ONG", title: "ONG", endpoint: "/logra-reports", fields: ONG_FIELDS }
 ];
 
 function toDmy(value: string) {
@@ -2856,7 +2856,7 @@ function InformesSectionMobile({
     if (activeKey === "logra") {
       const id = formatValue(selectedRow.id);
       if (id === "-") {
-        setMessage("Seleccione un LOGRA valido.");
+        setMessage("Seleccione un ONG valido.");
         return;
       }
       setLograReviewId(id);
@@ -2885,7 +2885,7 @@ function InformesSectionMobile({
   async function saveDetail() {
     if (!detail) return;
     if (activeKey === "logra") {
-      setMessage("LOGRA se puede revisar desde mobile. Para editar cuestionario, agenda y adjuntos use la pantalla LOGRA completa del ERP.");
+      setMessage("ONG se puede revisar desde mobile. Para editar cuestionario, agenda y adjuntos use la pantalla ONG completa del ERP.");
       return;
     }
     const updateEndpoint = config.updateEndpoint || config.detailEndpoint;
@@ -2954,12 +2954,12 @@ function InformesSectionMobile({
 
   async function exportLograMobile(kind: "word" | "pdf") {
     if (!selectedRow) {
-      setMessage("Seleccione un LOGRA.");
+      setMessage("Seleccione un ONG.");
       return;
     }
     const id = formatValue(selectedRow.id);
     if (id === "-") {
-      setMessage("Seleccione un LOGRA valido.");
+      setMessage("Seleccione un ONG valido.");
       return;
     }
     setBusy(true);
@@ -2968,15 +2968,15 @@ function InformesSectionMobile({
       const payload = await apiRequest<Record<string, unknown>>(`/logra-reports/${encodeURIComponent(id)}`, { session });
       const html = buildLograReportHtml(payload);
       const report = asRecord(payload.report) || selectedRow;
-      const title = cleanFilePart(formatValue(report.title || `LOGRA_${id}`));
+      const title = cleanFilePart(formatValue(report.title || `ONG_${id}`));
       const extension = kind === "word" ? "doc" : "html";
       const filename = `${title}_${kind === "word" ? "WORD" : "PDF"}.${extension}`;
       const uri = `${FileSystem.cacheDirectory || ""}${filename}`;
       await FileSystem.writeAsStringAsync(uri, html);
       await openDownloadedFile(uri, filename, kind === "word" ? "application/msword" : "text/html");
-      setMessage(kind === "word" ? "Word LOGRA generado correctamente." : "Reporte LOGRA abierto. Use imprimir/guardar como PDF desde el telefono.");
+      setMessage(kind === "word" ? "Word ONG generado correctamente." : "Reporte ONG abierto. Use imprimir/guardar como PDF desde el telefono.");
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : "No se pudo exportar LOGRA.");
+      setMessage(err instanceof Error ? err.message : "No se pudo exportar ONG.");
     } finally {
       setBusy(false);
     }
@@ -2996,15 +2996,15 @@ function InformesSectionMobile({
       for (let index = 1; index <= 5; index += 1) initial[`hold${index}_product`] = "MAIZ AMARILLO";
     }
     if (configToCreate.key === "logra") {
-      initial.title = "LOGRA";
-      initial.category = "LOGRA";
+      initial.title = "ONG";
+      initial.category = "ONG";
       initial.status = "Pendiente";
       initial.meeting_date = formatYmd(new Date());
       initial.meeting_start_time = "09:00";
       initial.meeting_end_time = "10:00";
       initial.priority = "Media";
       initial.reminder_minutes = "30";
-      initial.form_title = "LOGRA Mobile";
+      initial.form_title = "ONG Mobile";
     }
     setCreateForm(initial);
     setGenerateOpen(false);
@@ -3020,8 +3020,8 @@ function InformesSectionMobile({
       if (createConfig.key === "logra") {
         const bullets = [createForm.bullet_1, createForm.bullet_2, createForm.bullet_3].map((value) => (value || "").trim()).filter(Boolean);
         const lograPayload = {
-          title: createForm.title || "LOGRA",
-          category: createForm.category || "LOGRA",
+          title: createForm.title || "ONG",
+          category: createForm.category || "ONG",
           status: createForm.status || "Pendiente",
           created_by: session.usuario,
           agenda_notes: createForm.agenda_notes || "",
@@ -3044,7 +3044,7 @@ function InformesSectionMobile({
             ? [
                 {
                   form_slug: "mobile-logra",
-                  form_title: createForm.form_title || "LOGRA Mobile",
+                  form_title: createForm.form_title || "ONG Mobile",
                   section: "Mobile",
                   item_key: "mobile-1",
                   question_text: createForm.question_text,
@@ -3057,11 +3057,11 @@ function InformesSectionMobile({
           method: "POST",
           body: lograPayload,
           session,
-          offlineLabel: "Crear LOGRA"
+          offlineLabel: "Crear ONG"
         });
         setCreateConfig(null);
         setCreateForm({});
-        setMessage(isQueuedOffline(result) ? "Sin internet: LOGRA guardado en cache local para sincronizar." : "LOGRA creado correctamente.");
+        setMessage(isQueuedOffline(result) ? "Sin internet: ONG guardado en cache local para sincronizar." : "ONG creado correctamente.");
         if (activeKey === "logra" && !isQueuedOffline(result)) await load();
         return;
       }
@@ -3337,7 +3337,7 @@ function InformesSectionMobile({
                     setLograOpen(true);
                   }}
                 >
-                  <Text style={styles.secondaryButtonText}>LOGRA</Text>
+                  <Text style={styles.secondaryButtonText}>ONG</Text>
                 </Pressable>
               </>
             ) : (
@@ -3696,6 +3696,9 @@ function InformesSectionMobile({
 }
 
 type LograAgendaItem = {
+  report_id?: number | string;
+  agenda_index?: number | string;
+  report_title?: string;
   date?: string;
   date_iso?: string;
   start_time?: string;
@@ -3724,15 +3727,15 @@ type LograAttachment = {
   created_at?: string;
 };
 
-const LOGRA_SECTION_LABELS: Record<"critical_questions" | "detailed_questions", string> = {
+const ONG_SECTION_LABELS: Record<"critical_questions" | "detailed_questions", string> = {
   critical_questions: "Preguntas de apertura",
   detailed_questions: "Preguntas por tema"
 };
 
-const LOGRA_ITEMS_PER_PAGE = 5;
-const LOGRA_MAX_BULLETS = 20;
+const ONG_ITEMS_PER_PAGE = 5;
+const ONG_MAX_BULLETS = 20;
 
-function lograQuestionKey(form: LograQuestionnaire, section: keyof typeof LOGRA_SECTION_LABELS, item: LograQuestion) {
+function lograQuestionKey(form: LograQuestionnaire, section: keyof typeof ONG_SECTION_LABELS, item: LograQuestion) {
   return `${form.slug}|${section}|${String(item.id || item.number || "").trim()}`;
 }
 
@@ -3804,13 +3807,13 @@ function calendarDaysForMonth(monthDate: Date) {
 
 async function syncLograAgendaNotifications(items: LograAgendaItem[]) {
   try {
-    const previous = await AsyncStorage.getItem(LOGRA_NOTIFICATION_IDS_KEY);
+    const previous = await AsyncStorage.getItem(ONG_NOTIFICATION_IDS_KEY);
     const previousIds = previous ? JSON.parse(previous) as string[] : [];
     await Promise.all(previousIds.map((id) => Notifications.cancelScheduledNotificationAsync(id).catch(() => undefined)));
 
     if (Platform.OS === "android") {
       await Notifications.setNotificationChannelAsync("logra-agenda", {
-        name: "LOGRA Agenda",
+        name: "ONG Agenda",
         importance: Notifications.AndroidImportance.HIGH,
         sound: "default",
         vibrationPattern: [0, 500, 250, 500]
@@ -3819,7 +3822,7 @@ async function syncLograAgendaNotifications(items: LograAgendaItem[]) {
 
     const permission = await Notifications.requestPermissionsAsync();
     if (!permission.granted) {
-      await AsyncStorage.setItem(LOGRA_NOTIFICATION_IDS_KEY, JSON.stringify([]));
+      await AsyncStorage.setItem(ONG_NOTIFICATION_IDS_KEY, JSON.stringify([]));
       return;
     }
 
@@ -3830,7 +3833,7 @@ async function syncLograAgendaNotifications(items: LograAgendaItem[]) {
       const start = lograAgendaStartDate(item);
       if (!start) continue;
       const reminderMinutes = Math.max(0, Number(item.reminder_minutes || 0) || 0);
-      const title = item.topic || item.person || "Reunion LOGRA";
+      const title = item.topic || item.person || "Reunion ONG";
       const detail = [item.person, item.phone || item.telefono, item.place].filter(Boolean).join(" | ");
       const reminderAt = new Date(start.getTime() - reminderMinutes * 60 * 1000);
       const triggers = [
@@ -3841,7 +3844,7 @@ async function syncLograAgendaNotifications(items: LograAgendaItem[]) {
         if (trigger.date.getTime() <= now) continue;
         const id = await Notifications.scheduleNotificationAsync({
           content: {
-            title: `Agenda LOGRA: ${title}`,
+            title: `Agenda ONG: ${title}`,
             body: trigger.body,
             sound: "default",
             data: { type: "logra-agenda" }
@@ -3851,7 +3854,7 @@ async function syncLograAgendaNotifications(items: LograAgendaItem[]) {
         nextIds.push(id);
       }
     }
-    await AsyncStorage.setItem(LOGRA_NOTIFICATION_IDS_KEY, JSON.stringify(nextIds));
+    await AsyncStorage.setItem(ONG_NOTIFICATION_IDS_KEY, JSON.stringify(nextIds));
   } catch {
     // Notifications should never block saving or loading the agenda.
   }
@@ -3871,8 +3874,8 @@ function LograMobileModal({
   onSaved: () => void | Promise<void>;
 }) {
   const [reportId, setReportId] = useState<string | null>(initialReportId);
-  const [formTitle, setFormTitle] = useState(LOGRA_QUESTIONNAIRES[0]?.title || "");
-  const [section, setSection] = useState<keyof typeof LOGRA_SECTION_LABELS>("critical_questions");
+  const [formTitle, setFormTitle] = useState(ONG_QUESTIONNAIRES[0]?.title || "");
+  const [section, setSection] = useState<keyof typeof ONG_SECTION_LABELS>("critical_questions");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(0);
   const [answers, setAnswers] = useState<Record<string, string[]>>({});
@@ -3888,8 +3891,8 @@ function LograMobileModal({
   const [agendaNotesOpen, setAgendaNotesOpen] = useState(false);
   const [agendaLineNote, setAgendaLineNote] = useState("");
   const [portiaOpen, setPortiaOpen] = useState(false);
-  const [portiaForm, setPortiaForm] = useState(LOGRA_QUESTIONNAIRES[0]?.title || "");
-  const [portiaSection, setPortiaSection] = useState<keyof typeof LOGRA_SECTION_LABELS>("critical_questions");
+  const [portiaForm, setPortiaForm] = useState(ONG_QUESTIONNAIRES[0]?.title || "");
+  const [portiaSection, setPortiaSection] = useState<keyof typeof ONG_SECTION_LABELS>("critical_questions");
   const [portiaQuestionKey, setPortiaQuestionKey] = useState("");
   const [portiaBullet, setPortiaBullet] = useState("0");
   const [portiaLanguage, setPortiaLanguage] = useState("ES");
@@ -3897,16 +3900,16 @@ function LograMobileModal({
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
 
-  const selectedForm = LOGRA_QUESTIONNAIRES.find((item) => item.title === formTitle) || LOGRA_QUESTIONNAIRES[0];
+  const selectedForm = ONG_QUESTIONNAIRES.find((item) => item.title === formTitle) || ONG_QUESTIONNAIRES[0];
   const allItems = selectedForm ? selectedForm[section] || [] : [];
   const filteredItems = allItems.filter((item) => {
     const needle = search.trim().toLowerCase();
     if (!needle) return true;
     return [item.id, item.number, item.block, item.question].map((value) => String(value || "").toLowerCase()).some((value) => value.includes(needle));
   });
-  const totalPages = Math.max(1, Math.ceil(filteredItems.length / LOGRA_ITEMS_PER_PAGE));
-  const pageItems = filteredItems.slice(page * LOGRA_ITEMS_PER_PAGE, page * LOGRA_ITEMS_PER_PAGE + LOGRA_ITEMS_PER_PAGE);
-  const portiaSelectedForm = LOGRA_QUESTIONNAIRES.find((item) => item.title === portiaForm) || LOGRA_QUESTIONNAIRES[0];
+  const totalPages = Math.max(1, Math.ceil(filteredItems.length / ONG_ITEMS_PER_PAGE));
+  const pageItems = filteredItems.slice(page * ONG_ITEMS_PER_PAGE, page * ONG_ITEMS_PER_PAGE + ONG_ITEMS_PER_PAGE);
+  const portiaSelectedForm = ONG_QUESTIONNAIRES.find((item) => item.title === portiaForm) || ONG_QUESTIONNAIRES[0];
   const portiaQuestions = portiaSelectedForm ? portiaSelectedForm[portiaSection] || [] : [];
   const portiaSelectedQuestion = portiaQuestions.find((item) => lograItemKey(item) === portiaQuestionKey) || portiaQuestions[0];
   const portiaAnswerKey = portiaSelectedForm && portiaSelectedQuestion ? lograQuestionKey(portiaSelectedForm, portiaSection, portiaSelectedQuestion) : "";
@@ -3923,8 +3926,8 @@ function LograMobileModal({
   useEffect(() => {
     if (!visible) return;
     setReportId(initialReportId);
-    setFormTitle(LOGRA_QUESTIONNAIRES[0]?.title || "");
-    setPortiaForm(LOGRA_QUESTIONNAIRES[0]?.title || "");
+    setFormTitle(ONG_QUESTIONNAIRES[0]?.title || "");
+    setPortiaForm(ONG_QUESTIONNAIRES[0]?.title || "");
     setSection("critical_questions");
     setPortiaSection("critical_questions");
     setSearch("");
@@ -3973,24 +3976,24 @@ function LograMobileModal({
       setAgendaNotes(formatValue(report.agenda_notes) === "-" ? "" : formatValue(report.agenda_notes));
       setAttachments((Array.isArray(payload.attachments) ? payload.attachments : []).filter((item) => asRecord(item)) as LograAttachment[]);
       const title = formatValue(report.title);
-      const matched = LOGRA_QUESTIONNAIRES.find((form) => title.includes(form.title));
+      const matched = ONG_QUESTIONNAIRES.find((form) => title.includes(form.title));
       if (matched) {
         setFormTitle(matched.title);
         setPortiaForm(matched.title);
       }
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : "No se pudo cargar LOGRA.");
+      setMessage(err instanceof Error ? err.message : "No se pudo cargar ONG.");
     } finally {
       setBusy(false);
     }
   }
 
-  function getBullets(form: LograQuestionnaire, selectedSection: keyof typeof LOGRA_SECTION_LABELS, item: LograQuestion) {
+  function getBullets(form: LograQuestionnaire, selectedSection: keyof typeof ONG_SECTION_LABELS, item: LograQuestion) {
     const key = lograQuestionKey(form, selectedSection, item);
     return answers[key] || [""];
   }
 
-  function setBullet(form: LograQuestionnaire, selectedSection: keyof typeof LOGRA_SECTION_LABELS, item: LograQuestion, index: number, value: string) {
+  function setBullet(form: LograQuestionnaire, selectedSection: keyof typeof ONG_SECTION_LABELS, item: LograQuestion, index: number, value: string) {
     const key = lograQuestionKey(form, selectedSection, item);
     setAnswers((current) => {
       const next = [...(current[key] || [""])];
@@ -3999,12 +4002,12 @@ function LograMobileModal({
     });
   }
 
-  function addBullet(form: LograQuestionnaire, selectedSection: keyof typeof LOGRA_SECTION_LABELS, item: LograQuestion) {
+  function addBullet(form: LograQuestionnaire, selectedSection: keyof typeof ONG_SECTION_LABELS, item: LograQuestion) {
     const key = lograQuestionKey(form, selectedSection, item);
     setAnswers((current) => {
       const next = [...(current[key] || [""])];
-      if (next.length >= LOGRA_MAX_BULLETS) {
-        Alert.alert("LOGRA", "Cada pregunta permite maximo 20 bullet points.");
+      if (next.length >= ONG_MAX_BULLETS) {
+        Alert.alert("ONG", "Cada pregunta permite maximo 20 bullet points.");
         return current;
       }
       next.push("");
@@ -4012,7 +4015,7 @@ function LograMobileModal({
     });
   }
 
-  function removeBullet(form: LograQuestionnaire, selectedSection: keyof typeof LOGRA_SECTION_LABELS, item: LograQuestion) {
+  function removeBullet(form: LograQuestionnaire, selectedSection: keyof typeof ONG_SECTION_LABELS, item: LograQuestion) {
     const key = lograQuestionKey(form, selectedSection, item);
     setAnswers((current) => {
       const next = [...(current[key] || [""])];
@@ -4025,11 +4028,11 @@ function LograMobileModal({
   function addAgendaLine() {
     const hasValue = [agendaDraft.place, agendaDraft.person, agendaDraft.topic].some((value) => String(value || "").trim());
     if (!hasValue) {
-      Alert.alert("Agenda LOGRA", "Agrega al menos persona, tema o lugar.");
+      Alert.alert("Agenda ONG", "Agrega al menos persona, tema o lugar.");
       return;
     }
     if (agendaItems.length >= 150) {
-      Alert.alert("Agenda LOGRA", "La agenda soporta hasta 150 lineas.");
+      Alert.alert("Agenda ONG", "La agenda soporta hasta 150 lineas.");
       return;
     }
     const dateIso = agendaDraft.date_iso || formatYmd(new Date());
@@ -4039,10 +4042,10 @@ function LograMobileModal({
 
   function removeAgendaLine() {
     if (selectedAgenda === null || !agendaItems[selectedAgenda]) {
-      Alert.alert("Agenda LOGRA", "Selecciona una linea de agenda.");
+      Alert.alert("Agenda ONG", "Selecciona una linea de agenda.");
       return;
     }
-    Alert.alert("Agenda LOGRA", "Desea eliminar la linea seleccionada?", [
+    Alert.alert("Agenda ONG", "Desea eliminar la linea seleccionada?", [
       { text: "Cancelar", style: "cancel" },
       {
         text: "Eliminar",
@@ -4057,7 +4060,7 @@ function LograMobileModal({
 
   function changeAgendaStatus() {
     if (selectedAgenda === null || !agendaItems[selectedAgenda]) {
-      Alert.alert("Agenda LOGRA", "Selecciona una linea de agenda.");
+      Alert.alert("Agenda ONG", "Selecciona una linea de agenda.");
       return;
     }
     setAgendaStatusOpen(true);
@@ -4065,7 +4068,7 @@ function LograMobileModal({
 
   function openAgendaNotes() {
     if (selectedAgenda === null || !agendaItems[selectedAgenda]) {
-      Alert.alert("Agenda LOGRA", "Selecciona una linea de agenda.");
+      Alert.alert("Agenda ONG", "Selecciona una linea de agenda.");
       return;
     }
     setAgendaLineNote(String(agendaItems[selectedAgenda].notes || ""));
@@ -4074,8 +4077,9 @@ function LograMobileModal({
 
   function saveAgendaLineNote() {
     if (selectedAgenda === null) return;
-    setAgendaItems((current) => current.map((item, index) => index === selectedAgenda ? { ...item, notes: agendaLineNote } : item));
-    setAgendaNotesOpen(false);
+    updateSelectedAgendaLine({ notes: agendaLineNote }, false).then((updated) => {
+      if (updated) setAgendaNotesOpen(false);
+    });
   }
 
   async function searchAgenda() {
@@ -4089,12 +4093,15 @@ function LograMobileModal({
       reports.forEach((report) => {
         const reportTitle = formatValue(report.title);
         const items = Array.isArray(report.agenda_items) ? report.agenda_items : [];
-        items.forEach((item) => {
+        items.forEach((item, agendaIndex) => {
           const record = asRecord(item);
           if (!record || nextItems.length >= 150) return;
           const dateIso = formatValue(record.date_iso || record.date).slice(0, 10);
           const nextItem = {
             ...(record as LograAgendaItem),
+            report_id: formatValue(report.id),
+            agenda_index: agendaIndex,
+            report_title: reportTitle,
             date_iso: dateIso === "-" ? formatYmd(new Date()) : dateIso,
             date: longEnglishDate(dateIso === "-" ? formatYmd(new Date()) : dateIso),
             phone: formatValue(record.phone || record.telefono),
@@ -4110,9 +4117,9 @@ function LograMobileModal({
       setAgendaItems(nextItems);
       setSelectedAgenda(null);
       await syncLograAgendaNotifications(nextItems);
-      setMessage(nextItems.length ? `Agenda cargada: ${nextItems.length} linea(s).` : "No hay agendas LOGRA guardadas en backend.");
+      setMessage(nextItems.length ? `Agenda cargada: ${nextItems.length} linea(s).` : "No hay agendas ONG guardadas en backend.");
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : "No se pudo buscar agenda LOGRA.");
+      setMessage(err instanceof Error ? err.message : "No se pudo buscar agenda ONG.");
     } finally {
       setBusy(false);
     }
@@ -4120,11 +4127,11 @@ function LograMobileModal({
 
   function buildAnswersPayload() {
     const payload: Array<Record<string, unknown>> = [];
-    LOGRA_QUESTIONNAIRES.forEach((form) => {
-      (Object.keys(LOGRA_SECTION_LABELS) as Array<keyof typeof LOGRA_SECTION_LABELS>).forEach((selectedSection) => {
+    ONG_QUESTIONNAIRES.forEach((form) => {
+      (Object.keys(ONG_SECTION_LABELS) as Array<keyof typeof ONG_SECTION_LABELS>).forEach((selectedSection) => {
         form[selectedSection].forEach((item) => {
           const key = lograQuestionKey(form, selectedSection, item);
-          const bullets = (answers[key] || []).map((value) => value.trim()).filter(Boolean).slice(0, LOGRA_MAX_BULLETS);
+          const bullets = (answers[key] || []).map((value) => value.trim()).filter(Boolean).slice(0, ONG_MAX_BULLETS);
           if (!bullets.length) return;
           payload.push({
             form_slug: form.slug,
@@ -4143,8 +4150,8 @@ function LograMobileModal({
   function buildLograPayload(targetReportId: string | null = reportId) {
     return {
       id: targetReportId,
-      title: `LOGRA - ${formTitle || "Cuestionarios"}`,
-      category: "LOGRA",
+      title: `ONG - ${formTitle || "Cuestionarios"}`,
+      category: "ONG",
       status: "Draft",
       created_by: session.usuario,
       agenda_items: agendaItems,
@@ -4157,6 +4164,61 @@ function LograMobileModal({
     await saveLogra(false);
   }
 
+  function loadSelectedAgendaLine() {
+    if (selectedAgenda === null || !agendaItems[selectedAgenda]) {
+      Alert.alert("Agenda ONG", "Selecciona una linea de agenda.");
+      return;
+    }
+    setAgendaDraft({ ...blankAgendaItem(), ...agendaItems[selectedAgenda] });
+  }
+
+  async function updateSelectedAgendaLine(extraValues: Partial<LograAgendaItem> = {}, useDraft = true) {
+    if (selectedAgenda === null || !agendaItems[selectedAgenda]) {
+      Alert.alert("Agenda ONG", "Selecciona una linea de agenda.");
+      return false;
+    }
+    const currentItem = agendaItems[selectedAgenda];
+    const draftValues = useDraft ? agendaDraft : {};
+    const dateIso = String(draftValues.date_iso || currentItem.date_iso || formatYmd(new Date())).slice(0, 10);
+    const nextItem: LograAgendaItem = {
+      ...currentItem,
+      ...draftValues,
+      ...extraValues,
+      date_iso: dateIso,
+      date: longEnglishDate(dateIso),
+      reminder_minutes: Number(draftValues.reminder_minutes || currentItem.reminder_minutes || 30)
+    };
+    const hasValue = [nextItem.place, nextItem.person, nextItem.topic].some((value) => String(value || "").trim());
+    if (!hasValue) {
+      Alert.alert("Agenda ONG", "Agrega al menos persona, tema o lugar.");
+      return false;
+    }
+
+    setBusy(true);
+    setMessage("");
+    try {
+      const itemReportId = formatValue(nextItem.report_id || reportId);
+      const itemAgendaIndex = Number(nextItem.agenda_index ?? selectedAgenda);
+      if (itemReportId !== "-" && Number.isFinite(itemAgendaIndex)) {
+        await apiRequest(`/logra-reports/${encodeURIComponent(itemReportId)}/agenda-items/${itemAgendaIndex}`, {
+          method: "PUT",
+          session,
+          body: nextItem
+        });
+      }
+      const nextItems = agendaItems.map((item, index) => index === selectedAgenda ? nextItem : item);
+      setAgendaItems(nextItems);
+      await syncLograAgendaNotifications(nextItems);
+      setMessage(itemReportId === "-" ? "Linea actualizada localmente. Guarda ONG para persistirla." : "Linea de agenda actualizada.");
+      return true;
+    } catch (err) {
+      Alert.alert("Agenda ONG", err instanceof Error ? err.message : "No se pudo actualizar la linea.");
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function saveLogra(closeAfterSave = true) {
     setBusy(true);
     setMessage("");
@@ -4167,7 +4229,7 @@ function LograMobileModal({
         method: reportId ? "PUT" : "POST",
         body: payload,
         session,
-        offlineLabel: "Guardar LOGRA"
+        offlineLabel: "Guardar ONG"
       });
       if (!isQueuedOffline(result)) {
         const record = asRecord(result);
@@ -4176,16 +4238,16 @@ function LograMobileModal({
         if (nextId !== "-") {
           setReportId(nextId);
           await syncLograAgendaNotifications(agendaItems);
-          setMessage("LOGRA guardado correctamente.");
+          setMessage("ONG guardado correctamente.");
           if (closeAfterSave) await onSaved();
           return nextId;
         }
       }
-      setMessage(isQueuedOffline(result) ? "Sin internet: LOGRA guardado en cache local para sincronizar." : "LOGRA guardado correctamente.");
+      setMessage(isQueuedOffline(result) ? "Sin internet: ONG guardado en cache local para sincronizar." : "ONG guardado correctamente.");
       if (closeAfterSave) await onSaved();
       return reportId;
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : "No se pudo guardar LOGRA.");
+      setMessage(err instanceof Error ? err.message : "No se pudo guardar ONG.");
       return null;
     } finally {
       setBusy(false);
@@ -4209,7 +4271,7 @@ function LograMobileModal({
         body: {
           text: currentText,
           language: portiaLanguage,
-          report_type: LOGRA_SECTION_LABELS[portiaSection],
+          report_type: ONG_SECTION_LABELS[portiaSection],
           form_title: portiaSelectedForm.title,
           question: portiaSelectedQuestion.question
         }
@@ -4222,6 +4284,37 @@ function LograMobileModal({
       setPortiaResult({ original: currentText, improved, answerKey: portiaAnswerKey, bulletIndex });
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "PORTIA no pudo mejorar el texto.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function updateQuestionAnswer(form: LograQuestionnaire, selectedSection: keyof typeof ONG_SECTION_LABELS, item: LograQuestion) {
+    setBusy(true);
+    setMessage("");
+    try {
+      let targetReportId = reportId;
+      if (!targetReportId) {
+        targetReportId = await saveLogra(false);
+      }
+      if (!targetReportId) throw new Error("Primero se debe guardar ONG para actualizar la pregunta.");
+      const key = lograQuestionKey(form, selectedSection, item);
+      const bullets = (answers[key] || []).map((value) => value.trim()).filter(Boolean).slice(0, ONG_MAX_BULLETS);
+      await apiRequest(`/logra-reports/${encodeURIComponent(targetReportId)}/answers`, {
+        method: "PUT",
+        session,
+        body: {
+          form_slug: form.slug,
+          form_title: form.title,
+          section: selectedSection,
+          item_key: lograItemKey(item),
+          question_text: item.question,
+          bullets
+        }
+      });
+      setMessage("Pregunta actualizada correctamente.");
+    } catch (err) {
+      Alert.alert("ONG", err instanceof Error ? err.message : "No se pudo actualizar la pregunta.");
     } finally {
       setBusy(false);
     }
@@ -4252,15 +4345,15 @@ function LograMobileModal({
       }
       await openDownloadedFile(result.uri, filename, attachment.content_type);
     } catch (err) {
-      Alert.alert("LOGRA", err instanceof Error ? err.message : "No se pudo abrir el adjunto.");
+      Alert.alert("ONG", err instanceof Error ? err.message : "No se pudo abrir el adjunto.");
     }
   }
 
-  async function attachLograFile(form: LograQuestionnaire, selectedSection: keyof typeof LOGRA_SECTION_LABELS, item: LograQuestion) {
+  async function attachLograFile(form: LograQuestionnaire, selectedSection: keyof typeof ONG_SECTION_LABELS, item: LograQuestion) {
     const itemKey = lograItemKey(item);
     const existing = attachments.filter((att) => att.form_slug === form.slug && att.section === selectedSection && att.item_key === itemKey);
     if (existing.length >= 10) {
-      Alert.alert("LOGRA", "Cada pregunta permite maximo 10 adjuntos.");
+      Alert.alert("ONG", "Cada pregunta permite maximo 10 adjuntos.");
       return;
     }
 
@@ -4273,7 +4366,7 @@ function LograMobileModal({
 
     const asset = picked.assets?.[0];
     if (!asset?.uri) {
-      Alert.alert("LOGRA", "No se selecciono un archivo valido.");
+      Alert.alert("ONG", "No se selecciono un archivo valido.");
       return;
     }
 
@@ -4281,7 +4374,7 @@ function LograMobileModal({
     setMessage("");
     try {
       const savedId = await saveLogra(false);
-      if (!savedId) throw new Error("Primero se debe guardar LOGRA para adjuntar archivos.");
+      if (!savedId) throw new Error("Primero se debe guardar ONG para adjuntar archivos.");
 
       const formData = new FormData();
       formData.append("form_slug", form.slug);
@@ -4312,14 +4405,14 @@ function LograMobileModal({
       await loadReport(savedId);
       setMessage("Adjunto guardado correctamente.");
     } catch (err) {
-      Alert.alert("LOGRA", err instanceof Error ? err.message : "No se pudo adjuntar el archivo.");
+      Alert.alert("ONG", err instanceof Error ? err.message : "No se pudo adjuntar el archivo.");
     } finally {
       setBusy(false);
     }
   }
 
   function deleteAttachment(attachment: LograAttachment) {
-    Alert.alert("LOGRA", `Eliminar adjunto?\n\n${attachment.original_filename}`, [
+    Alert.alert("ONG", `Eliminar adjunto?\n\n${attachment.original_filename}`, [
       { text: "Cancelar", style: "cancel" },
       {
         text: "Eliminar",
@@ -4329,7 +4422,7 @@ function LograMobileModal({
             await apiRequest(`/logra-reports/attachments/${attachment.id}`, { method: "DELETE", session });
             setAttachments((current) => current.filter((item) => item.id !== attachment.id));
           } catch (err) {
-            Alert.alert("LOGRA", err instanceof Error ? err.message : "No se pudo eliminar el adjunto.");
+            Alert.alert("ONG", err instanceof Error ? err.message : "No se pudo eliminar el adjunto.");
           }
         }
       }
@@ -4340,21 +4433,21 @@ function LograMobileModal({
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
       <SafeAreaView style={styles.modalScreen}>
         <View style={styles.modalHeader}>
-          <Text style={styles.modalTitle}>LOGRA - Cuestionarios</Text>
+          <Text style={styles.modalTitle}>ONG - Cuestionarios</Text>
           <Pressable style={styles.modalClose} onPress={onClose}><Text style={styles.modalCloseText}>Cerrar</Text></Pressable>
         </View>
         <ScrollView contentContainerStyle={styles.modalBody} keyboardShouldPersistTaps="handled">
           <View style={styles.actionBar}>
-            <Pressable style={styles.secondaryButton} onPress={() => setAgendaOpen(true)}><Text style={styles.secondaryButtonText}>Agenda LOGRA</Text></Pressable>
+            <Pressable style={styles.secondaryButton} onPress={() => setAgendaOpen(true)}><Text style={styles.secondaryButtonText}>Agenda ONG</Text></Pressable>
             <Pressable style={styles.secondaryButton} onPress={() => setPortiaOpen(true)}><Text style={styles.secondaryButtonText}>Mejorar con PORTIA</Text></Pressable>
             <Pressable style={styles.actionButton} onPress={() => saveLogra()}><Text style={styles.actionButtonText}>Guardar</Text></Pressable>
           </View>
-          <SelectField label="Formulario" value={formTitle} options={LOGRA_QUESTIONNAIRES.map((item) => item.title)} onChange={setFormTitle} />
-          <SelectField label="Seccion" value={section} options={Object.keys(LOGRA_SECTION_LABELS)} onChange={(value) => setSection(value as keyof typeof LOGRA_SECTION_LABELS)} />
-          <Text style={styles.helperText}>{LOGRA_SECTION_LABELS[section]} | Apertura: {selectedForm?.critical_questions.length || 0} | Por tema: {selectedForm?.detailed_questions.length || 0} | Total: {(selectedForm?.critical_questions.length || 0) + (selectedForm?.detailed_questions.length || 0)}</Text>
+          <SelectField label="Formulario" value={formTitle} options={ONG_QUESTIONNAIRES.map((item) => item.title)} onChange={setFormTitle} />
+          <SelectField label="Seccion" value={section} options={Object.keys(ONG_SECTION_LABELS)} onChange={(value) => setSection(value as keyof typeof ONG_SECTION_LABELS)} />
+          <Text style={styles.helperText}>{ONG_SECTION_LABELS[section]} | Apertura: {selectedForm?.critical_questions.length || 0} | Por tema: {selectedForm?.detailed_questions.length || 0} | Total: {(selectedForm?.critical_questions.length || 0) + (selectedForm?.detailed_questions.length || 0)}</Text>
           <Text style={styles.label}>Buscar</Text>
           <TextInput style={styles.input} value={search} onChangeText={setSearch} placeholder="Palabra clave" />
-          <Text style={styles.helperText}>Agenda LOGRA: {agendaItems.length} linea(s) cargadas.</Text>
+          <Text style={styles.helperText}>Agenda ONG: {agendaItems.length} linea(s) cargadas.</Text>
 
           <View style={styles.actionBar}>
             <Pressable style={styles.modalClose} onPress={() => setPage((current) => Math.max(0, current - 1))}><Text style={styles.modalCloseText}>Anterior</Text></Pressable>
@@ -4386,6 +4479,9 @@ function LograMobileModal({
                   >
                     <Text style={styles.secondaryButtonText}>Adjuntar</Text>
                   </Pressable>
+                  <Pressable style={styles.secondaryButton} onPress={() => updateQuestionAnswer(selectedForm, section, item)}>
+                    <Text style={styles.secondaryButtonText}>Actualizar pregunta</Text>
+                  </Pressable>
                 </View>
                 {questionAttachments.length ? <Text style={styles.label}>Adjuntos</Text> : null}
                 {questionAttachments.map((attachment) => (
@@ -4404,7 +4500,7 @@ function LograMobileModal({
         <Modal visible={agendaOpen} animationType="slide" onRequestClose={() => setAgendaOpen(false)}>
           <SafeAreaView style={styles.modalScreen}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Agenda LOGRA</Text>
+              <Text style={styles.modalTitle}>Agenda ONG</Text>
               <Pressable style={styles.modalClose} onPress={() => setAgendaOpen(false)}><Text style={styles.modalCloseText}>Cerrar</Text></Pressable>
             </View>
             <ScrollView contentContainerStyle={styles.modalBody} keyboardShouldPersistTaps="handled">
@@ -4456,6 +4552,8 @@ function LograMobileModal({
                     <Pressable style={styles.secondaryButtonCompact} onPress={addAgendaLine}><Text style={styles.secondaryButtonText}>+ Nueva</Text></Pressable>
                     {selectedAgenda !== null && agendaItems[selectedAgenda] ? (
                       <>
+                        <Pressable style={styles.secondaryButtonCompact} onPress={loadSelectedAgendaLine}><Text style={styles.secondaryButtonText}>Cargar</Text></Pressable>
+                        <Pressable style={styles.secondaryButtonCompact} onPress={() => updateSelectedAgendaLine()}><Text style={styles.secondaryButtonText}>Actualizar</Text></Pressable>
                         <Pressable style={styles.secondaryButtonCompact} onPress={changeAgendaStatus}><Text style={styles.secondaryButtonText}>Status</Text></Pressable>
                         <Pressable style={styles.secondaryButtonCompact} onPress={openAgendaNotes}><Text style={styles.secondaryButtonText}>Notas</Text></Pressable>
                         <Pressable style={styles.modalCloseCompact} onPress={removeAgendaLine}><Text style={styles.modalCloseText}>Eliminar</Text></Pressable>
@@ -4563,11 +4661,12 @@ function LograMobileModal({
                   style={selectedAgenda !== null && agendaItems[selectedAgenda]?.status === status ? styles.actionButton : styles.secondaryButton}
                   onPress={() => {
                     if (selectedAgenda === null) {
-                      Alert.alert("Agenda LOGRA", "Selecciona una linea de agenda.");
+                      Alert.alert("Agenda ONG", "Selecciona una linea de agenda.");
                       return;
                     }
-                    setAgendaItems((current) => current.map((item, index) => index === selectedAgenda ? { ...item, status } : item));
-                    setAgendaStatusOpen(false);
+                    updateSelectedAgendaLine({ status }, false).then((updated) => {
+                      if (updated) setAgendaStatusOpen(false);
+                    });
                   }}
                 >
                   <Text style={selectedAgenda !== null && agendaItems[selectedAgenda]?.status === status ? styles.actionButtonText : styles.secondaryButtonText}>{status}</Text>
@@ -4586,7 +4685,7 @@ function LograMobileModal({
             <ScrollView contentContainerStyle={styles.modalBody}>
               <Text style={styles.helperText}>
                 {selectedAgenda !== null && agendaItems[selectedAgenda]
-                  ? `${agendaItems[selectedAgenda].topic || "Reunion LOGRA"} - ${agendaItems[selectedAgenda].person || ""}`
+                  ? `${agendaItems[selectedAgenda].topic || "Reunion ONG"} - ${agendaItems[selectedAgenda].person || ""}`
                   : "Selecciona una linea de agenda."}
               </Text>
               <TextInput style={[styles.input, styles.multilineInput]} multiline value={agendaLineNote} onChangeText={setAgendaLineNote} />
@@ -4598,12 +4697,12 @@ function LograMobileModal({
         <Modal visible={portiaOpen} animationType="slide" onRequestClose={() => setPortiaOpen(false)}>
           <SafeAreaView style={styles.modalScreen}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Mejorar con PORTIA - LOGRA</Text>
+              <Text style={styles.modalTitle}>Mejorar con PORTIA - ONG</Text>
               <Pressable style={styles.modalClose} onPress={() => setPortiaOpen(false)}><Text style={styles.modalCloseText}>Cerrar</Text></Pressable>
             </View>
             <ScrollView contentContainerStyle={styles.modalBody}>
-              <SelectField label="Formulario" value={portiaForm} options={LOGRA_QUESTIONNAIRES.map((item) => item.title)} onChange={setPortiaForm} />
-              <SelectField label="Tipo" value={portiaSection} options={Object.keys(LOGRA_SECTION_LABELS)} onChange={(value) => setPortiaSection(value as keyof typeof LOGRA_SECTION_LABELS)} />
+              <SelectField label="Formulario" value={portiaForm} options={ONG_QUESTIONNAIRES.map((item) => item.title)} onChange={setPortiaForm} />
+              <SelectField label="Tipo" value={portiaSection} options={Object.keys(ONG_SECTION_LABELS)} onChange={(value) => setPortiaSection(value as keyof typeof ONG_SECTION_LABELS)} />
               <SelectField label="Pregunta" value={portiaQuestionKey} options={portiaQuestions.map(lograItemKey)} onChange={(value) => { setPortiaQuestionKey(value); setPortiaBullet("0"); }} />
               {portiaSelectedQuestion ? <Text style={styles.fieldValue}>{portiaSelectedQuestion.question}</Text> : null}
               <SelectField label="Bullet" value={portiaBullet} options={portiaBullets.map((_, index) => String(index))} onChange={setPortiaBullet} />
