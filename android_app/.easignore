@@ -3,6 +3,8 @@ node_modules/
 .expo/
 **/.expo/
 .expo-export-test/
+eas-inspect*/
+**/eas-inspect*/
 dist/
 **/dist/
 build/
