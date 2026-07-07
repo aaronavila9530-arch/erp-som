@@ -3887,6 +3887,7 @@ function LograMobileModal({
   const [agendaOpen, setAgendaOpen] = useState(false);
   const [agendaView, setAgendaView] = useState<"list" | "calendar">("list");
   const [calendarMonth, setCalendarMonth] = useState(() => new Date());
+  const [agendaAction, setAgendaAction] = useState("Nueva");
   const [agendaStatusOpen, setAgendaStatusOpen] = useState(false);
   const [agendaNotesOpen, setAgendaNotesOpen] = useState(false);
   const [agendaLineNote, setAgendaLineNote] = useState("");
@@ -4108,7 +4109,7 @@ function LograMobileModal({
             company: formatValue(record.company || record.company_role),
             topic: formatValue(record.topic) === "-" ? reportTitle : formatValue(record.topic)
           };
-          const key = lograAgendaKey(nextItem, reportTitle);
+          const key = lograAgendaKey(nextItem);
           if (seen.has(key)) return;
           seen.add(key);
           nextItems.push(nextItem);
@@ -4170,6 +4171,37 @@ function LograMobileModal({
       return;
     }
     setAgendaDraft({ ...blankAgendaItem(), ...agendaItems[selectedAgenda] });
+  }
+
+  function selectAgendaLine(index: number) {
+    setSelectedAgenda(index);
+    setAgendaDraft({ ...blankAgendaItem(), ...agendaItems[index] });
+  }
+
+  function runAgendaAction() {
+    if (agendaAction === "Nueva") {
+      addAgendaLine();
+      return;
+    }
+    if (agendaAction === "Cargar seleccion") {
+      loadSelectedAgendaLine();
+      return;
+    }
+    if (agendaAction === "Actualizar seleccion") {
+      updateSelectedAgendaLine();
+      return;
+    }
+    if (agendaAction === "Cambiar status") {
+      changeAgendaStatus();
+      return;
+    }
+    if (agendaAction === "Notas") {
+      openAgendaNotes();
+      return;
+    }
+    if (agendaAction === "Eliminar") {
+      removeAgendaLine();
+    }
   }
 
   async function updateSelectedAgendaLine(extraValues: Partial<LograAgendaItem> = {}, useDraft = true) {
@@ -4549,17 +4581,19 @@ function LograMobileModal({
                 <View style={styles.contextActionPanel}>
                   <Text style={styles.contextActionTitle}>Reunion</Text>
                   <View style={styles.contextActionRow}>
-                    <Pressable style={styles.secondaryButtonCompact} onPress={addAgendaLine}><Text style={styles.secondaryButtonText}>+ Nueva</Text></Pressable>
+                    <View style={styles.contextActionSelect}>
+                      <SelectField
+                        label="Accion"
+                        value={agendaAction}
+                        options={["Nueva", "Cargar seleccion", "Actualizar seleccion", "Cambiar status", "Notas", "Eliminar"]}
+                        onChange={setAgendaAction}
+                      />
+                    </View>
+                    <Pressable style={styles.actionButtonCompact} onPress={runAgendaAction}><Text style={styles.actionButtonText}>Ejecutar</Text></Pressable>
                     {selectedAgenda !== null && agendaItems[selectedAgenda] ? (
-                      <>
-                        <Pressable style={styles.secondaryButtonCompact} onPress={loadSelectedAgendaLine}><Text style={styles.secondaryButtonText}>Cargar</Text></Pressable>
-                        <Pressable style={styles.secondaryButtonCompact} onPress={() => updateSelectedAgendaLine()}><Text style={styles.secondaryButtonText}>Actualizar</Text></Pressable>
-                        <Pressable style={styles.secondaryButtonCompact} onPress={changeAgendaStatus}><Text style={styles.secondaryButtonText}>Status</Text></Pressable>
-                        <Pressable style={styles.secondaryButtonCompact} onPress={openAgendaNotes}><Text style={styles.secondaryButtonText}>Notas</Text></Pressable>
-                        <Pressable style={styles.modalCloseCompact} onPress={removeAgendaLine}><Text style={styles.modalCloseText}>Eliminar</Text></Pressable>
-                      </>
+                      <Text style={styles.helperText}>Seleccionada: {agendaItems[selectedAgenda].topic || agendaItems[selectedAgenda].person || "Reunion ONG"}</Text>
                     ) : (
-                      <Text style={styles.helperText}>Selecciona una linea para status, notas o eliminar.</Text>
+                      <Text style={styles.helperText}>Selecciona una linea para editar, status, notas o eliminar.</Text>
                     )}
                   </View>
                 </View>
@@ -4592,7 +4626,7 @@ function LograMobileModal({
                             setAgendaDraft((current) => ({ ...current, date_iso: dayKey, date: longEnglishDate(dayKey) }));
                             if (meetings[0]) {
                               const agendaIndex = agendaItems.findIndex((item) => lograAgendaKey(item) === lograAgendaKey(meetings[0]));
-                              if (agendaIndex >= 0) setSelectedAgenda(agendaIndex);
+                              if (agendaIndex >= 0) selectAgendaLine(agendaIndex);
                             }
                           }}
                         >
@@ -4623,7 +4657,7 @@ function LograMobileModal({
                       <Text style={[styles.lograAgendaCell, styles.lograAgendaHeaderCell]}>Status</Text>
                     </View>
                     {agendaItems.map((item, index) => (
-                      <Pressable key={`${index}-${item.date_iso}-${item.start_time}`} style={[styles.lograAgendaRow, { backgroundColor: lograTint(item.status || item.priority) }, selectedAgenda === index && styles.selectedRow]} onPress={() => setSelectedAgenda(index)}>
+                      <Pressable key={`${index}-${item.date_iso}-${item.start_time}`} style={[styles.lograAgendaRow, { backgroundColor: lograTint(item.status || item.priority) }, selectedAgenda === index && styles.selectedRow]} onPress={() => selectAgendaLine(index)}>
                         <Text style={styles.lograAgendaCell}>{longEnglishDate(String(item.date_iso || item.date || ""))}</Text>
                         <Text style={styles.lograAgendaCell}>{item.start_time} - {item.end_time}</Text>
                         <Text style={styles.lograAgendaCell}>{item.place}</Text>
@@ -13501,6 +13535,7 @@ const styles = StyleSheet.create({
   smallDangerButtonText: { color: "#7A271A", fontSize: 13, fontWeight: "900" },
   actionBar: { gap: 8, paddingVertical: 12 },
   actionButton: { backgroundColor: BLUE, borderRadius: 6, paddingHorizontal: 12, paddingVertical: 10 },
+  actionButtonCompact: { alignItems: "center", backgroundColor: BLUE, borderRadius: 6, paddingHorizontal: 12, paddingVertical: 8 },
   actionButtonText: { color: "white", fontSize: 12, fontWeight: "800" },
   commercialStatusRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 10 },
   statusChip: {
@@ -13516,6 +13551,7 @@ const styles = StyleSheet.create({
   statusChipTextActive: { color: "white" },
   contextActionPanel: { borderColor: BORDER, borderRadius: 8, borderWidth: 1, padding: 10 },
   contextActionRow: { alignItems: "center", flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  contextActionSelect: { minWidth: 220 },
   contextActionTitle: { color: "#344054", fontSize: 12, fontWeight: "900", marginBottom: 8, textTransform: "uppercase" },
   accountingTcBox: {
     backgroundColor: "#F8FAFC",

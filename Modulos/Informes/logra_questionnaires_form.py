@@ -636,7 +636,9 @@ class LograQuestionnairesForm(ttk.Frame):
         try:
             now = datetime.now()
             for index, item in enumerate(self.agenda_items or []):
-                status = item.get("status") or ""
+                status = (item.get("status") or "").strip().lower()
+                if "complet" in status:
+                    continue
                 start = self._parse_agenda_datetime(item, "start_time")
                 end = self._parse_agenda_datetime(item, "end_time")
                 if not start:
@@ -659,7 +661,7 @@ class LograQuestionnairesForm(ttk.Frame):
                         self._agenda_alerted.add(key)
                         messagebox.showinfo("Agenda ONG", f"La reunion '{label}' esta en curso.")
 
-                if end and now > end and status != "Completado":
+                if end and now > end:
                     key = (index, item.get("date_iso") or item.get("date"), item.get("end_time"), "late")
                     if key not in self._agenda_alerted:
                         self._agenda_alerted.add(key)
@@ -787,6 +789,7 @@ class PopupLograAgenda(tk.Toplevel):
         self.priority_var = tk.StringVar(value="Media")
         self.status_var = tk.StringVar(value="Pendiente")
         self.reminder_var = tk.StringVar(value="30")
+        self.agenda_action_var = tk.StringVar(value="Nueva")
         self.export_var = tk.StringVar(value="PDF")
         self.view_mode = tk.StringVar(value="list")
         self.calendar_month = datetime.now().date().replace(day=1)
@@ -856,12 +859,21 @@ class PopupLograAgenda(tk.Toplevel):
 
         meeting_actions = ttk.LabelFrame(actions, text="Reunion seleccionada", padding=(8, 6))
         meeting_actions.grid(row=0, column=1, sticky="ew", padx=(0, 8))
-        ttk.Button(meeting_actions, text="+ Nueva", command=self._add).pack(side="left", padx=(0, 4))
-        ttk.Button(meeting_actions, text="Cargar", command=self._load_selected_into_form).pack(side="left", padx=4)
-        ttk.Button(meeting_actions, text="Actualizar linea", command=self._update_selected).pack(side="left", padx=4)
-        ttk.Button(meeting_actions, text="Status", command=self._change_selected_status).pack(side="left", padx=4)
-        ttk.Button(meeting_actions, text="Notas", command=self._open_notes).pack(side="left", padx=4)
-        ttk.Button(meeting_actions, text="Eliminar", command=self._remove).pack(side="left", padx=(4, 0))
+        ttk.Combobox(
+            meeting_actions,
+            textvariable=self.agenda_action_var,
+            state="readonly",
+            width=22,
+            values=[
+                "Nueva",
+                "Cargar seleccion",
+                "Actualizar seleccion",
+                "Cambiar status",
+                "Notas",
+                "Eliminar",
+            ],
+        ).pack(side="left", padx=(0, 4))
+        ttk.Button(meeting_actions, text="Ejecutar", command=self._run_agenda_action).pack(side="left")
 
         export_actions = ttk.LabelFrame(actions, text="Exportacion", padding=(8, 6))
         export_actions.grid(row=0, column=2, sticky="e")
@@ -898,6 +910,8 @@ class PopupLograAgenda(tk.Toplevel):
         xscroll = ttk.Scrollbar(self.table_box, orient="horizontal", command=self.tree.xview)
         xscroll.grid(row=1, column=0, sticky="ew")
         self.tree.configure(yscrollcommand=yscroll.set, xscrollcommand=xscroll.set)
+        self.tree.bind("<<TreeviewSelect>>", lambda _event: self._load_selected_into_form(silent=True))
+        self.tree.bind("<Double-1>", lambda _event: self._load_selected_into_form(silent=True))
         self.tree.tag_configure("Alta", background="#F8D7DA")
         self.tree.tag_configure("Media", background="#FFF3CD")
         self.tree.tag_configure("Baja", background="#D1E7DD")
@@ -1123,6 +1137,30 @@ class PopupLograAgenda(tk.Toplevel):
         if getattr(self, "view_mode", None) and self.view_mode.get() == "calendar":
             self._render_calendar()
 
+    def _agenda_item_key(self, item):
+        return "|".join([
+            str(item.get("date_iso") or item.get("date") or "").strip().lower(),
+            str(item.get("start_time") or "").strip().lower(),
+            str(item.get("end_time") or "").strip().lower(),
+            str(item.get("place") or "").strip().lower(),
+            str(item.get("person") or "").strip().lower(),
+            str(item.get("phone") or item.get("telefono") or "").strip().lower(),
+            str(item.get("company") or item.get("company_role") or "").strip().lower(),
+            str(item.get("topic") or "").strip().lower(),
+        ])
+
+    def _run_agenda_action(self):
+        action = self.agenda_action_var.get()
+        handlers = {
+            "Nueva": self._add,
+            "Cargar seleccion": self._load_selected_into_form,
+            "Actualizar seleccion": self._update_selected,
+            "Cambiar status": self._change_selected_status,
+            "Notas": self._open_notes,
+            "Eliminar": self._remove,
+        }
+        handlers.get(action, self._add)()
+
     def _search_backend(self):
         listing = api_client.list_logra_reports_api()
         if listing.get("success") is False:
@@ -1138,12 +1176,19 @@ class PopupLograAgenda(tk.Toplevel):
             return
 
         all_items = []
+        seen = set()
+        skipped = 0
         for report in rows:
             report_title = report.get("title") or f"ONG #{report.get('id')}"
             for agenda_index, item in enumerate(report.get("agenda_items") or []):
                 if not isinstance(item, dict):
                     continue
                 row = dict(item)
+                key = self._agenda_item_key(row)
+                if key in seen:
+                    skipped += 1
+                    continue
+                seen.add(key)
                 row["report_id"] = report.get("id")
                 row["agenda_index"] = agenda_index
                 row["report_title"] = report_title
@@ -1152,7 +1197,8 @@ class PopupLograAgenda(tk.Toplevel):
         self.items = all_items
         self.form_instance.agenda_items = [dict(item) for item in self.items]
         self._render()
-        messagebox.showinfo("Agenda ONG", f"Agendas cargadas desde backend. Lineas: {len(self.items)}")
+        extra = f" Duplicadas omitidas: {skipped}." if skipped else ""
+        messagebox.showinfo("Agenda ONG", f"Agendas cargadas desde backend. Lineas: {len(self.items)}.{extra}")
 
     def _add(self):
         if len(self.items) >= self.MAX_ITEMS:
@@ -1190,23 +1236,26 @@ class PopupLograAgenda(tk.Toplevel):
         self.items.append(item)
         self._render()
 
-    def _selected_index(self):
+    def _selected_index(self, silent=False):
         selected = self.tree.selection()
         if not selected:
-            messagebox.showwarning("Agenda ONG", "Selecciona una linea.")
+            if not silent:
+                messagebox.showwarning("Agenda ONG", "Selecciona una linea.")
             return None
         try:
             index = int(selected[0])
         except Exception:
-            messagebox.showwarning("Agenda ONG", "Seleccion invalida.")
+            if not silent:
+                messagebox.showwarning("Agenda ONG", "Seleccion invalida.")
             return None
         if index < 0 or index >= len(self.items):
-            messagebox.showwarning("Agenda ONG", "Seleccion invalida.")
+            if not silent:
+                messagebox.showwarning("Agenda ONG", "Seleccion invalida.")
             return None
         return index
 
-    def _load_selected_into_form(self):
-        index = self._selected_index()
+    def _load_selected_into_form(self, silent=False):
+        index = self._selected_index(silent=silent)
         if index is None:
             return
         item = self.items[index]
