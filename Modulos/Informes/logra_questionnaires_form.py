@@ -90,6 +90,7 @@ class LograQuestionnairesForm(ttk.Frame):
             ttk.Button(actions, text="Mejorar con PORTIA", command=self._open_portia).pack(side="left", padx=4)
             ttk.Button(actions, text="Guardar", command=self._save_report).pack(side="left", padx=4)
         else:
+            ttk.Button(actions, text="Volver", command=self._go_back).pack(side="left", padx=4)
             ttk.Button(actions, text="Ver agenda", command=self._open_agenda).pack(side="left", padx=4)
             ttk.Button(actions, text="Actualizar", command=self._save_report).pack(side="left", padx=4)
         ttk.Button(actions, text="Home", command=self._go_home).pack(side="left", padx=4)
@@ -613,6 +614,12 @@ class LograQuestionnairesForm(ttk.Frame):
         from Modulos.Informes.informes_home_ui import InformesHomeUI
 
         InformesHomeUI(self.parent, usuario=self.usuario, rol=self.rol)
+
+    def _go_back(self):
+        if callable(self.on_back):
+            self.on_back()
+        else:
+            self._go_home()
 
     # =========================================================
     # Agenda alerts
