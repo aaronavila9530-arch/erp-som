@@ -669,12 +669,6 @@ class LograQuestionnairesForm(ttk.Frame):
                     if key not in self._agenda_alerted:
                         self._agenda_alerted.add(key)
                         messagebox.showinfo("Agenda ONG", f"La reunion '{label}' esta en curso.")
-
-                if end and now > end:
-                    key = (index, item.get("date_iso") or item.get("date"), item.get("end_time"), "late")
-                    if key not in self._agenda_alerted:
-                        self._agenda_alerted.add(key)
-                        messagebox.showwarning("Agenda ONG", f"La reunion '{label}' ya paso y no esta marcada como completada.")
         finally:
             if self.winfo_exists():
                 self.after(60000, self._check_agenda_alerts)

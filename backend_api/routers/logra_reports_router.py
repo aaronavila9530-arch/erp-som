@@ -658,6 +658,45 @@ def delete_logra_agenda_item(report_id: int, agenda_index: int, conn=Depends(get
         raise HTTPException(status_code=500, detail=f"LOGRA agenda delete error: {exc}")
 
 
+@router.delete("/{report_id}")
+def delete_logra_report(report_id: int, conn=Depends(get_db)):
+    _ensure_schema(conn)
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT stored_path
+                FROM logra_attachments
+                WHERE report_id = %s
+            """, (report_id,))
+            attachment_paths = [row.get("stored_path") for row in cur.fetchall()]
+            cur.execute("""
+                DELETE FROM logra_reports
+                WHERE id = %s
+                RETURNING id
+            """, (report_id,))
+            deleted = cur.fetchone()
+            if not deleted:
+                raise HTTPException(status_code=404, detail="LOGRA report not found")
+
+        conn.commit()
+
+        for raw_path in attachment_paths:
+            try:
+                path = Path(raw_path or "")
+                if path.exists():
+                    path.unlink()
+            except Exception:
+                pass
+
+        return {"success": True, "id": report_id}
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as exc:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"LOGRA report delete error: {exc}")
+
+
 @router.delete("/attachments/{attachment_id}")
 def delete_logra_attachment(attachment_id: int, conn=Depends(get_db)):
     _ensure_schema(conn)
