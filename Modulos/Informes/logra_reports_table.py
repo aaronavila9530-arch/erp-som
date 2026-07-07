@@ -62,7 +62,10 @@ class LograReportsTable(ttk.Frame):
 
     def _load(self):
         resp = api_client.list_logra_reports_api()
-        self.rows = resp.get("data") or []
+        self.rows = [
+            row for row in (resp.get("data") or [])
+            if (row.get("title") or "").strip().lower() != "ong - agenda"
+        ]
         self.row_map = {str(row.get("id")): row for row in self.rows}
         for item in self.tree.get_children():
             self.tree.delete(item)
