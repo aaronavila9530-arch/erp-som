@@ -83,6 +83,9 @@ class UpdateWindow(tk.Toplevel):
             return os.path.join(local_appdata, "Programs", "ERP-SOM", "ERP-SOM.exe")
         return os.path.join(os.path.expanduser("~"), "AppData", "Local", "Programs", "ERP-SOM", "ERP-SOM.exe")
 
+    def _installed_version_path(self) -> str:
+        return os.path.join(os.path.dirname(self._installed_exe_path()), "_internal", "version.py")
+
     def _updates_dir(self) -> str:
         base = os.environ.get("LOCALAPPDATA") or os.path.join(os.path.expanduser("~"), "AppData", "Local")
         return os.path.join(base, "ERP-SOM", "updates")
@@ -142,6 +145,16 @@ class UpdateWindow(tk.Toplevel):
         completed = subprocess.run(args, check=False)
         return int(completed.returncode)
 
+    def _read_installed_version(self) -> str:
+        try:
+            with open(self._installed_version_path(), "r", encoding="utf-8", errors="ignore") as f:
+                for line in f:
+                    if "APP_VERSION" in line and "=" in line:
+                        return line.split("=", 1)[1].strip().strip("\"'")
+        except Exception:
+            return ""
+        return ""
+
     def _download_install_relaunch(self):
         try:
             if not self.download_url:
@@ -187,6 +200,15 @@ class UpdateWindow(tk.Toplevel):
                     "La instalación terminó, pero no se encontró el ERP instalado en:\n"
                     f"{exe_path}\n\n"
                     "Verifica que el instalador esté usando Program Files."
+                )
+
+            installed_version = self._read_installed_version()
+            if installed_version != self.latest_version:
+                raise RuntimeError(
+                    "El instalador termino, pero la carpeta instalada no quedo actualizada.\n\n"
+                    f"Version esperada: {self.latest_version}\n"
+                    f"Version instalada: {installed_version or 'no detectada'}\n"
+                    f"Ruta revisada: {self._installed_version_path()}"
                 )
 
             subprocess.Popen([exe_path], close_fds=True)
