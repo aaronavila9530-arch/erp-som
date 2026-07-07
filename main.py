@@ -67,7 +67,7 @@ class MainApp(tk.Frame):
         parent.protocol("WM_DELETE_WINDOW", self.on_close)
 
         self.menu_visible = True
-        self._logra_alert_last = {}
+        self._logra_alert_shown = set()
 
         self._build_menu_lateral()
         self._build_content_area()
@@ -286,7 +286,7 @@ class MainApp(tk.Frame):
         self.cambiar_modulo("Dashboard")
 
     # =========================================================
-    # LOGRA global agenda alerts
+    # ONG global agenda alerts
     # =========================================================
     def _start_logra_global_alerts(self):
         self.after(15000, self._check_logra_global_alerts)
@@ -303,12 +303,10 @@ class MainApp(tk.Frame):
                 continue
         return None
 
-    def _should_show_logra_alert(self, key, cooldown_minutes=5):
-        now = datetime.now()
-        last = self._logra_alert_last.get(key)
-        if last and now - last < timedelta(minutes=cooldown_minutes):
+    def _should_show_logra_alert(self, key):
+        if key in self._logra_alert_shown:
             return False
-        self._logra_alert_last[key] = now
+        self._logra_alert_shown.add(key)
         return True
 
     def _check_logra_global_alerts(self):
@@ -317,11 +315,12 @@ class MainApp(tk.Frame):
             rows = resp.get("data") or []
             now = datetime.now()
             for report in rows:
-                report_title = report.get("title") or f"LOGRA #{report.get('id')}"
+                report_title = report.get("title") or f"ONG #{report.get('id')}"
                 for idx, item in enumerate(report.get("agenda_items") or []):
                     if not isinstance(item, dict):
                         continue
-                    if str(item.get("status") or "").strip().lower() == "completado":
+                    status = str(item.get("status") or "").strip().lower()
+                    if "complet" in status:
                         continue
 
                     start = self._parse_logra_agenda_datetime(item, "start_time")
@@ -333,7 +332,7 @@ class MainApp(tk.Frame):
                     except Exception:
                         reminder = 0
 
-                    label = item.get("topic") or item.get("person") or "Reunion LOGRA"
+                    label = item.get("topic") or item.get("person") or "Reunion ONG"
                     base_key = (
                         report.get("id"),
                         idx,
@@ -345,7 +344,7 @@ class MainApp(tk.Frame):
                         key = base_key + ("before",)
                         if self._should_show_logra_alert(key):
                             messagebox.showinfo(
-                                "Agenda LOGRA",
+                                "Agenda ONG",
                                 f"{report_title}\n\n'{label}' inicia en menos de {reminder} minutos.",
                                 parent=self.parent
                             )
@@ -354,17 +353,8 @@ class MainApp(tk.Frame):
                         key = base_key + ("current",)
                         if self._should_show_logra_alert(key):
                             messagebox.showinfo(
-                                "Agenda LOGRA",
+                                "Agenda ONG",
                                 f"{report_title}\n\n'{label}' esta en curso.",
-                                parent=self.parent
-                            )
-
-                    if end and now > end:
-                        key = base_key + ("late",)
-                        if self._should_show_logra_alert(key):
-                            messagebox.showwarning(
-                                "Agenda LOGRA",
-                                f"{report_title}\n\n'{label}' ya paso y no esta marcada como completada.",
                                 parent=self.parent
                             )
         except Exception:
@@ -437,8 +427,8 @@ class MainApp(tk.Frame):
         module_code = (module_code or "").lower()
         action = (action or "").lower()
 
-        # LOGRA queda disponible para todo usuario. Visualmente se expone por
-        # Informes, pero usuarios sin permiso general solo ven LOGRA.
+        # ONG queda disponible para todo usuario. Visualmente se expone por
+        # Informes, pero usuarios sin permiso general solo ven ONG.
         if include_logra_override and module_code == "informes" and action == "view":
             return True
 

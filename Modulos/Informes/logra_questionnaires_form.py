@@ -921,6 +921,8 @@ class PopupLograAgenda(tk.Toplevel):
         self.tree.tag_configure("Pendiente", background="#F8D7DA")
         self.tree.tag_configure("En proceso", background="#FFF3CD")
         self.tree.tag_configure("Completado", background="#D1E7DD")
+        self.tree.tag_configure("Vencido", background="#F4B8B8")
+        self.tree.tag_configure("En curso", background="#FFF3CD")
 
         self.calendar_box = ttk.Frame(root)
         self.calendar_box.grid(row=2, column=0, sticky="nsew")
@@ -1040,15 +1042,41 @@ class PopupLograAgenda(tk.Toplevel):
                 continue
         return None
 
+    def _agenda_item_datetime(self, item, key):
+        item_date = self._agenda_item_date(item)
+        if not item_date:
+            return None
+        try:
+            item_time = datetime.strptime(str(item.get(key) or "").strip(), "%H:%M").time()
+        except Exception:
+            return None
+        return datetime.combine(item_date, item_time)
+
+    def _agenda_row_tag(self, item):
+        status = str(item.get("status") or "").strip()
+        if "complet" in status.lower():
+            return "Completado"
+        now = datetime.now()
+        start = self._agenda_item_datetime(item, "start_time")
+        end = self._agenda_item_datetime(item, "end_time")
+        if end and now > end:
+            return "Vencido"
+        if start and start <= now and (not end or now <= end):
+            return "En curso"
+        return status or item.get("priority") or ""
+
     def _calendar_color(self, item):
+        tag = self._agenda_row_tag(item)
         return {
+            "Vencido": "#F4B8B8",
+            "En curso": "#FFF3CD",
             "Pendiente": "#F8D7DA",
             "En proceso": "#FFF3CD",
             "Completado": "#D1E7DD",
             "Alta": "#F8D7DA",
             "Media": "#FFF3CD",
             "Baja": "#D1E7DD",
-        }.get(item.get("status") or item.get("priority"), "#FFFFFF")
+        }.get(tag, "#FFFFFF")
 
     def _select_calendar_item(self, index):
         if 0 <= index < len(self.items):
@@ -1129,7 +1157,7 @@ class PopupLograAgenda(tk.Toplevel):
         for row in self.tree.get_children():
             self.tree.delete(row)
         for index, item in enumerate(self.items):
-            tag = item.get("status") or item.get("priority") or ""
+            tag = self._agenda_row_tag(item)
             self.tree.insert(
                 "",
                 "end",
@@ -1238,6 +1266,7 @@ class PopupLograAgenda(tk.Toplevel):
             return
         self.items.append(item)
         self._render()
+        self._clear_fields()
 
     def _selected_index(self, silent=False):
         selected = self.tree.selection()
@@ -1280,6 +1309,26 @@ class PopupLograAgenda(tk.Toplevel):
         self.priority_var.set(item.get("priority") or "Media")
         self.status_var.set(item.get("status") or "Pendiente")
         self.reminder_var.set(str(item.get("reminder_minutes") or 30))
+
+    def _clear_fields(self):
+        self.selected_date = datetime.now().date()
+        self._sync_long_date()
+        self.start_hour_var.set("09")
+        self.start_minute_var.set("00")
+        self.end_hour_var.set("10")
+        self.end_minute_var.set("00")
+        self.place_var.set("")
+        self.person_var.set("")
+        self.phone_var.set("")
+        self.company_var.set("")
+        self.topic_var.set("")
+        self.priority_var.set("Media")
+        self.status_var.set("Pendiente")
+        self.reminder_var.set("30")
+        try:
+            self.tree.selection_remove(self.tree.selection())
+        except Exception:
+            pass
 
     def _agenda_payload_from_fields(self, current_item=None):
         self._sync_long_date()
@@ -1327,6 +1376,7 @@ class PopupLograAgenda(tk.Toplevel):
             self.form_instance.agenda_items = [dict(item) for item in self.items]
             self._render()
             messagebox.showinfo("Agenda ONG", "Linea actualizada localmente. Guarda la agenda para persistirla.")
+            self._clear_fields()
             return
         resp = api_client.update_logra_agenda_item_api(report_id, agenda_index, payload)
         if not resp.get("success"):
@@ -1336,25 +1386,52 @@ class PopupLograAgenda(tk.Toplevel):
         self.form_instance.agenda_items = [dict(item) for item in self.items]
         self._render()
         messagebox.showinfo("Agenda ONG", "Linea actualizada correctamente.")
+        self._clear_fields()
 
     def _change_selected_status(self):
-        selected = self.tree.selection()
-        if not selected:
-            messagebox.showwarning("Agenda ONG", "Selecciona una linea.")
+        index = self._selected_index()
+        if index is None:
             return
-        for iid in selected:
-            index = int(iid)
-            if 0 <= index < len(self.items):
-                self.items[index]["status"] = self.status_var.get()
-                report_id = self.items[index].get("report_id") or self.form_instance.report_id
-                agenda_index = self.items[index].get("agenda_index", index)
-                if report_id:
-                    resp = api_client.update_logra_agenda_item_api(report_id, agenda_index, self.items[index])
-                    if not resp.get("success"):
-                        messagebox.showerror("Agenda ONG", f"No se pudo actualizar el status:\n{resp.get('error') or resp}")
-                        return
-        self.form_instance.agenda_items = [dict(item) for item in self.items]
-        self._render()
+
+        popup = tk.Toplevel(self)
+        popup.title("Cambiar status")
+        popup.geometry("330x150")
+        popup.transient(self)
+        popup.grab_set()
+
+        root = ttk.Frame(popup, padding=14)
+        root.pack(fill="both", expand=True)
+        ttk.Label(root, text="Status de la reunion seleccionada").pack(anchor="w")
+        status_value = tk.StringVar(value=self.items[index].get("status") or "Pendiente")
+        combo = ttk.Combobox(
+            root,
+            textvariable=status_value,
+            state="readonly",
+            values=["Pendiente", "En proceso", "Completado"],
+            width=24,
+        )
+        combo.pack(anchor="w", fill="x", pady=(8, 12))
+        combo.focus_set()
+
+        actions = ttk.Frame(root)
+        actions.pack(fill="x")
+
+        def apply_status():
+            self.items[index]["status"] = status_value.get()
+            report_id = self.items[index].get("report_id") or self.form_instance.report_id
+            agenda_index = self.items[index].get("agenda_index", index)
+            if report_id:
+                resp = api_client.update_logra_agenda_item_api(report_id, agenda_index, self.items[index])
+                if not resp.get("success"):
+                    messagebox.showerror("Agenda ONG", f"No se pudo actualizar el status:\n{resp.get('error') or resp}")
+                    return
+            self.form_instance.agenda_items = [dict(item) for item in self.items]
+            self._render()
+            self._clear_fields()
+            popup.destroy()
+
+        ttk.Button(actions, text="Cancelar", command=popup.destroy).pack(side="right")
+        ttk.Button(actions, text="Actualizar status", command=apply_status).pack(side="right", padx=6)
 
     def _open_notes(self):
         popup = tk.Toplevel(self)

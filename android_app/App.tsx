@@ -3789,6 +3789,25 @@ function lograAgendaStartDate(item: LograAgendaItem) {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
+function lograAgendaEndDate(item: LograAgendaItem) {
+  const date = String(item.date_iso || item.date || "").slice(0, 10);
+  const time = String(item.end_time || "").slice(0, 5);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:\d{2}$/.test(time)) return null;
+  const parsed = new Date(`${date}T${time}:00`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function lograAgendaTint(item: LograAgendaItem) {
+  const status = String(item.status || "").toLowerCase();
+  if (status.includes("complet")) return "#D1E7DD";
+  const now = Date.now();
+  const start = lograAgendaStartDate(item);
+  const end = lograAgendaEndDate(item);
+  if (end && end.getTime() < now) return "#F4B8B8";
+  if (start && start.getTime() <= now && (!end || end.getTime() >= now)) return "#FFF3CD";
+  return lograTint(item.status || item.priority);
+}
+
 function monthName(date: Date) {
   return date.toLocaleDateString("en-US", { month: "long", year: "numeric" });
 }
@@ -3889,6 +3908,7 @@ function LograMobileModal({
   const [calendarMonth, setCalendarMonth] = useState(() => new Date());
   const [agendaAction, setAgendaAction] = useState("Nueva");
   const [agendaStatusOpen, setAgendaStatusOpen] = useState(false);
+  const [agendaStatusDraft, setAgendaStatusDraft] = useState("Pendiente");
   const [agendaNotesOpen, setAgendaNotesOpen] = useState(false);
   const [agendaLineNote, setAgendaLineNote] = useState("");
   const [portiaOpen, setPortiaOpen] = useState(false);
@@ -4064,6 +4084,7 @@ function LograMobileModal({
       Alert.alert("Agenda ONG", "Selecciona una linea de agenda.");
       return;
     }
+    setAgendaStatusDraft(String(agendaItems[selectedAgenda].status || "Pendiente"));
     setAgendaStatusOpen(true);
   }
 
@@ -4241,6 +4262,8 @@ function LograMobileModal({
       const nextItems = agendaItems.map((item, index) => index === selectedAgenda ? nextItem : item);
       setAgendaItems(nextItems);
       await syncLograAgendaNotifications(nextItems);
+      setAgendaDraft(blankAgendaItem());
+      setSelectedAgenda(null);
       setMessage(itemReportId === "-" ? "Linea actualizada localmente. Guarda ONG para persistirla." : "Linea de agenda actualizada.");
       return true;
     } catch (err) {
@@ -4632,7 +4655,7 @@ function LograMobileModal({
                         >
                           <Text style={[styles.lograCalendarDayNumber, !inMonth && styles.lograCalendarDayNumberMuted]}>{day.getDate()}</Text>
                           {meetings.slice(0, 3).map((meeting, meetingIndex) => (
-                            <View key={`${dayKey}-${meetingIndex}-${meeting.start_time}`} style={[styles.lograCalendarMeeting, { backgroundColor: lograTint(meeting.status || meeting.priority) }]}>
+                            <View key={`${dayKey}-${meetingIndex}-${meeting.start_time}`} style={[styles.lograCalendarMeeting, { backgroundColor: lograAgendaTint(meeting) }]}>
                               <Text numberOfLines={1} style={styles.lograCalendarMeetingText}>{meeting.start_time || "--:--"} {meeting.topic || meeting.person || "Meeting"}</Text>
                             </View>
                           ))}
@@ -4657,7 +4680,7 @@ function LograMobileModal({
                       <Text style={[styles.lograAgendaCell, styles.lograAgendaHeaderCell]}>Status</Text>
                     </View>
                     {agendaItems.map((item, index) => (
-                      <Pressable key={`${index}-${item.date_iso}-${item.start_time}`} style={[styles.lograAgendaRow, { backgroundColor: lograTint(item.status || item.priority) }, selectedAgenda === index && styles.selectedRow]} onPress={() => selectAgendaLine(index)}>
+                      <Pressable key={`${index}-${item.date_iso}-${item.start_time}`} style={[styles.lograAgendaRow, { backgroundColor: lograAgendaTint(item) }, selectedAgenda === index && styles.selectedRow]} onPress={() => selectAgendaLine(index)}>
                         <Text style={styles.lograAgendaCell}>{longEnglishDate(String(item.date_iso || item.date || ""))}</Text>
                         <Text style={styles.lograAgendaCell}>{item.start_time} - {item.end_time}</Text>
                         <Text style={styles.lograAgendaCell}>{item.place}</Text>
@@ -4689,23 +4712,21 @@ function LograMobileModal({
               <Text style={styles.helperText}>
                 Actual: {selectedAgenda !== null ? String(agendaItems[selectedAgenda]?.status || "Pendiente") : "Selecciona una linea"}
               </Text>
-              {["Pendiente", "En proceso", "Completado"].map((status) => (
-                <Pressable
-                  key={status}
-                  style={selectedAgenda !== null && agendaItems[selectedAgenda]?.status === status ? styles.actionButton : styles.secondaryButton}
-                  onPress={() => {
-                    if (selectedAgenda === null) {
-                      Alert.alert("Agenda ONG", "Selecciona una linea de agenda.");
-                      return;
-                    }
-                    updateSelectedAgendaLine({ status }, false).then((updated) => {
-                      if (updated) setAgendaStatusOpen(false);
-                    });
-                  }}
-                >
-                  <Text style={selectedAgenda !== null && agendaItems[selectedAgenda]?.status === status ? styles.actionButtonText : styles.secondaryButtonText}>{status}</Text>
-                </Pressable>
-              ))}
+              <SelectField label="Nuevo status" value={agendaStatusDraft} options={["Pendiente", "En proceso", "Completado"]} onChange={setAgendaStatusDraft} />
+              <Pressable
+                style={styles.actionButton}
+                onPress={() => {
+                  if (selectedAgenda === null) {
+                    Alert.alert("Agenda ONG", "Selecciona una linea de agenda.");
+                    return;
+                  }
+                  updateSelectedAgendaLine({ status: agendaStatusDraft }, false).then((updated) => {
+                    if (updated) setAgendaStatusOpen(false);
+                  });
+                }}
+              >
+                <Text style={styles.actionButtonText}>Actualizar status</Text>
+              </Pressable>
             </ScrollView>
           </SafeAreaView>
         </Modal>
