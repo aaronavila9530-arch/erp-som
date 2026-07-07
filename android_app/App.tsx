@@ -4208,7 +4208,7 @@ function LograMobileModal({
       loadSelectedAgendaLine();
       return;
     }
-    if (agendaAction === "Actualizar seleccion") {
+    if (agendaAction === "Editar agenda") {
       updateSelectedAgendaLine();
       return;
     }
@@ -4608,7 +4608,7 @@ function LograMobileModal({
                       <SelectField
                         label="Accion"
                         value={agendaAction}
-                        options={["Nueva", "Cargar seleccion", "Actualizar seleccion", "Cambiar status", "Notas", "Eliminar"]}
+                        options={["Nueva", "Cargar seleccion", "Editar agenda", "Cambiar status", "Notas", "Eliminar"]}
                         onChange={setAgendaAction}
                       />
                     </View>
