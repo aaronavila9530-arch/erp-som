@@ -37,6 +37,7 @@ class ReportTypeSelector(ttk.Frame):
     ):
         super().__init__(parent)
 
+        self.parent = parent
         self.on_container_report = on_container_report
         self.on_vessel_report = on_vessel_report
         self.on_back = on_back
@@ -68,23 +69,26 @@ class ReportTypeSelector(ttk.Frame):
         self.grid_columnconfigure(0, weight=1)
 
         # ================= CANVAS + SCROLL =================
-        canvas = tk.Canvas(self, borderwidth=0, highlightthickness=0)
-        canvas.grid(row=0, column=0, sticky="nsew")
+        self.canvas = tk.Canvas(self, borderwidth=0, highlightthickness=0)
+        self.canvas.grid(row=0, column=0, sticky="nsew")
 
-        scrollbar = ttk.Scrollbar(self, orient="vertical", command=canvas.yview)
+        scrollbar = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
         scrollbar.grid(row=0, column=1, sticky="ns")
 
-        canvas.configure(yscrollcommand=scrollbar.set)
+        self.canvas.configure(yscrollcommand=scrollbar.set)
 
-        self.scrollable = ttk.Frame(canvas)
+        self.scrollable = ttk.Frame(self.canvas)
         self.scrollable.columnconfigure(0, weight=1)
 
-        canvas.create_window((0, 0), window=self.scrollable, anchor="nw")
+        self.canvas_window = self.canvas.create_window((0, 0), window=self.scrollable, anchor="nw")
 
         self.scrollable.bind(
             "<Configure>",
-            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+            lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all"))
         )
+        self.canvas.bind("<Configure>", lambda e: self.canvas.itemconfig(self.canvas_window, width=e.width))
+        self.scrollable.bind("<Enter>", self._bind_mousewheel)
+        self.scrollable.bind("<Leave>", self._unbind_mousewheel)
 
         # ================= HEADER =================
         header = ttk.Frame(self.scrollable)
@@ -160,15 +164,16 @@ class ReportTypeSelector(ttk.Frame):
 
         self._build_option_card(
             row=6,
-            title="LOGRA",
+            title="ONG",
             description=(
-                "Cuestionarios de factibilidad nautica y portuaria con preguntas "
-                "criticas, cuestionario detallado, bullets dinamicos, PORTIA y adjuntos."
+                "Cuestionarios de factibilidad nautica y portuaria con agenda, "
+                "preguntas del documento, bullets dinamicos, PORTIA y adjuntos."
             ),
-            button_text="Abrir Cuestionarios LOGRA",
+            button_text="Abrir Cuestionarios ONG",
             command=self._open_logra_questionnaires,
             disabled=False
         )
+        self._bind_mousewheel_to_children(self)
 
     # =========================================================
     # CARDS
@@ -208,6 +213,26 @@ class ReportTypeSelector(ttk.Frame):
 
         if disabled:
             btn.state(["disabled"])
+
+    def _bind_mousewheel(self, event=None):
+        self.canvas.bind_all("<MouseWheel>", self._on_mousewheel)
+        self.canvas.bind_all("<Button-4>", lambda e: self.canvas.yview_scroll(-3, "units"))
+        self.canvas.bind_all("<Button-5>", lambda e: self.canvas.yview_scroll(3, "units"))
+
+    def _unbind_mousewheel(self, event=None):
+        self.canvas.unbind_all("<MouseWheel>")
+        self.canvas.unbind_all("<Button-4>")
+        self.canvas.unbind_all("<Button-5>")
+
+    def _on_mousewheel(self, event):
+        self.canvas.yview_scroll(int(-1 * (event.delta / 120)) * 3, "units")
+
+    def _bind_mousewheel_to_children(self, widget):
+        widget.bind("<MouseWheel>", self._on_mousewheel, add="+")
+        widget.bind("<Button-4>", lambda e: self.canvas.yview_scroll(-3, "units"), add="+")
+        widget.bind("<Button-5>", lambda e: self.canvas.yview_scroll(3, "units"), add="+")
+        for child in widget.winfo_children():
+            self._bind_mousewheel_to_children(child)
 
     # =========================================================
     # ACTIONS

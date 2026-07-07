@@ -86,6 +86,8 @@ class LograQuestionnairesForm(ttk.Frame):
         actions = ttk.Frame(bar)
         actions.grid(row=0, column=1, sticky="e")
         if not self.review_mode:
+            if callable(self.on_back):
+                ttk.Button(actions, text="Volver", command=self._go_back).pack(side="left", padx=4)
             ttk.Button(actions, text="Agenda", command=self._open_agenda).pack(side="left", padx=4)
             ttk.Button(actions, text="Mejorar con PORTIA", command=self._open_portia).pack(side="left", padx=4)
             ttk.Button(actions, text="Guardar", command=self._save_report).pack(side="left", padx=4)
