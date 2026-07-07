@@ -4225,6 +4225,11 @@ function LograMobileModal({
     }
   }
 
+  function resetAgendaDraftForNewLine() {
+    setAgendaDraft(blankAgendaItem());
+    setSelectedAgenda(null);
+  }
+
   async function updateSelectedAgendaLine(extraValues: Partial<LograAgendaItem> = {}, useDraft = true) {
     if (selectedAgenda === null || !agendaItems[selectedAgenda]) {
       Alert.alert("Agenda ONG", "Selecciona una linea de agenda.");
@@ -4590,6 +4595,11 @@ function LograMobileModal({
               <View style={styles.lograAgendaToolbar}>
                 <View style={styles.lograToolbarHeader}>
                   <Pressable style={styles.secondaryButtonCompact} onPress={searchAgenda}><Text style={styles.secondaryButtonText}>Buscar</Text></Pressable>
+                  <Pressable style={styles.secondaryButtonCompact} onPress={resetAgendaDraftForNewLine}><Text style={styles.secondaryButtonText}>Nueva</Text></Pressable>
+                  <Pressable style={styles.actionButtonCompact} onPress={() => updateSelectedAgendaLine()}><Text style={styles.actionButtonText}>Editar agenda</Text></Pressable>
+                  <Pressable style={styles.secondaryButtonCompact} onPress={changeAgendaStatus}><Text style={styles.secondaryButtonText}>Status</Text></Pressable>
+                  <Pressable style={styles.secondaryButtonCompact} onPress={openAgendaNotes}><Text style={styles.secondaryButtonText}>Notas</Text></Pressable>
+                  <Pressable style={styles.secondaryButtonCompact} onPress={removeAgendaLine}><Text style={styles.secondaryButtonText}>Eliminar</Text></Pressable>
                   <View style={styles.segmentedControl}>
                     <Pressable style={[styles.segmentedOption, agendaView === "list" && styles.segmentedOptionActive]} onPress={() => setAgendaView("list")}>
                       <Text style={agendaView === "list" ? styles.segmentedTextActive : styles.segmentedText}>Lista</Text>
