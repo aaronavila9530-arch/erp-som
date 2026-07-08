@@ -509,8 +509,8 @@ class LograQuestionnairesForm(ttk.Frame):
             "id": self.report_id,
             "title": title,
             "created_by": self.usuario or get_user(),
-            "agenda_items": self.agenda_items,
-            "agenda_notes": self.agenda_notes,
+            "agenda_items": [],
+            "agenda_notes": "",
             "answers": self._answers_payload(),
         }
         resp = api_client.save_logra_report_api(payload)
@@ -1206,10 +1206,16 @@ class PopupLograAgenda(tk.Toplevel):
             messagebox.showinfo("Agenda ONG", "No hay agendas ONG guardadas en backend.")
             return
 
+        agenda_rows = [
+            row for row in rows
+            if str(row.get("title") or "").strip().lower() == "ong - agenda"
+        ]
+        source_rows = agenda_rows or rows
+
         all_items = []
         seen = set()
         skipped = 0
-        for report in rows:
+        for report in source_rows:
             report_title = report.get("title") or f"ONG #{report.get('id')}"
             for agenda_index, item in enumerate(report.get("agenda_items") or []):
                 if not isinstance(item, dict):

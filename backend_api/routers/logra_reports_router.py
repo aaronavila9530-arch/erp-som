@@ -410,6 +410,9 @@ def save_logra_report(payload: dict, conn=Depends(get_db)):
     answers = payload.get("answers") or []
     agenda_items = payload.get("agenda_items") or []
     agenda_notes = payload.get("agenda_notes") or ""
+    if title.strip().lower() != "ong - agenda":
+        agenda_items = []
+        agenda_notes = ""
     if not isinstance(agenda_items, list):
         agenda_items = []
     if len(agenda_items) > MAX_AGENDA_ITEMS:

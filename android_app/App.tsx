@@ -4110,9 +4110,11 @@ function LograMobileModal({
     try {
       const payload = await apiRequest<Record<string, unknown>>("/logra-reports", { session });
       const reports = rowsFromAny(payload);
+      const agendaReports = reports.filter((report) => formatValue(report.title).trim().toLowerCase() === "ong - agenda");
+      const sourceReports = agendaReports.length ? agendaReports : reports;
       const nextItems: LograAgendaItem[] = [];
       const seen = new Set<string>();
-      reports.forEach((report) => {
+      sourceReports.forEach((report) => {
         const reportTitle = formatValue(report.title);
         const items = Array.isArray(report.agenda_items) ? report.agenda_items : [];
         items.forEach((item, agendaIndex) => {
@@ -4176,8 +4178,8 @@ function LograMobileModal({
       category: "ONG",
       status: "Pending",
       created_by: session.usuario,
-      agenda_items: agendaItems,
-      agenda_notes: agendaNotes,
+      agenda_items: [],
+      agenda_notes: "",
       answers: buildAnswersPayload()
     };
   }
