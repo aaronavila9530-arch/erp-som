@@ -4182,8 +4182,32 @@ function LograMobileModal({
     };
   }
 
+  function buildAgendaItemFromDraft(currentItem: LograAgendaItem) {
+    const dateIso = String(agendaDraft.date_iso || currentItem.date_iso || formatYmd(new Date())).slice(0, 10);
+    const nextItem: LograAgendaItem = {
+      ...currentItem,
+      ...agendaDraft,
+      date_iso: dateIso,
+      date: longEnglishDate(dateIso),
+      reminder_minutes: Number(agendaDraft.reminder_minutes || currentItem.reminder_minutes || 30)
+    };
+    const hasValue = [nextItem.place, nextItem.person, nextItem.topic].some((value) => String(value || "").trim());
+    if (!hasValue) {
+      Alert.alert("Agenda ONG", "Agrega al menos persona, tema o lugar.");
+      return null;
+    }
+    return nextItem;
+  }
+
   async function saveAgendaOnly() {
-    if (!agendaItems.length) {
+    let itemsToSave = agendaItems;
+    if (selectedAgenda !== null && agendaItems[selectedAgenda]) {
+      const nextItem = buildAgendaItemFromDraft(agendaItems[selectedAgenda]);
+      if (!nextItem) return;
+      itemsToSave = agendaItems.map((item, index) => index === selectedAgenda ? nextItem : item);
+    }
+
+    if (!itemsToSave.length) {
       setMessage("No hay lineas de agenda para guardar.");
       return;
     }
@@ -4194,7 +4218,7 @@ function LograMobileModal({
         method: "POST",
         body: {
           created_by: session.usuario,
-          agenda_items: agendaItems,
+          agenda_items: itemsToSave,
           agenda_notes: agendaNotes
         },
         session,
@@ -4203,7 +4227,7 @@ function LograMobileModal({
       if (!isQueuedOffline(result)) {
         const record = asRecord(result);
         const report = asRecord(record?.report);
-        const savedItems = Array.isArray(report?.agenda_items) ? report.agenda_items : agendaItems;
+        const savedItems = Array.isArray(report?.agenda_items) ? report.agenda_items : itemsToSave;
         const agendaReportId = formatValue(report?.id);
         const normalizedItems = savedItems.map((item, index) => ({
           ...(asRecord(item) as LograAgendaItem),
@@ -4274,21 +4298,10 @@ function LograMobileModal({
       return false;
     }
     const currentItem = agendaItems[selectedAgenda];
-    const draftValues = useDraft ? agendaDraft : {};
-    const dateIso = String(draftValues.date_iso || currentItem.date_iso || formatYmd(new Date())).slice(0, 10);
-    const nextItem: LograAgendaItem = {
-      ...currentItem,
-      ...draftValues,
-      ...extraValues,
-      date_iso: dateIso,
-      date: longEnglishDate(dateIso),
-      reminder_minutes: Number(draftValues.reminder_minutes || currentItem.reminder_minutes || 30)
-    };
-    const hasValue = [nextItem.place, nextItem.person, nextItem.topic].some((value) => String(value || "").trim());
-    if (!hasValue) {
-      Alert.alert("Agenda ONG", "Agrega al menos persona, tema o lugar.");
-      return false;
-    }
+    const nextItem = useDraft
+      ? buildAgendaItemFromDraft({ ...currentItem, ...extraValues })
+      : { ...currentItem, ...extraValues };
+    if (!nextItem) return false;
 
     setBusy(true);
     setMessage("");
