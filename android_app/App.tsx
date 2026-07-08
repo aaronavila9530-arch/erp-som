@@ -6,7 +6,7 @@ import * as Notifications from "expo-notifications";
 import * as Sharing from "expo-sharing";
 import * as SecureStore from "expo-secure-store";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -3944,6 +3944,7 @@ function LograMobileModal({
   const [portiaResult, setPortiaResult] = useState<{ original: string; improved: string; answerKey: string; bulletIndex: number } | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const realtimeDraftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const selectedForm = ONG_QUESTIONNAIRES.find((item) => item.title === formTitle) || ONG_QUESTIONNAIRES[0];
   const allItems = selectedForm ? selectedForm[section] || [] : [];
@@ -4005,6 +4006,17 @@ function LograMobileModal({
       autosaveLogra();
     }, 20000);
     return () => clearInterval(timer);
+  }, [visible, reportId, formTitle, section, answers, agendaItems, agendaNotes]);
+
+  useEffect(() => {
+    if (!visible) return;
+    if (realtimeDraftTimer.current) clearTimeout(realtimeDraftTimer.current);
+    realtimeDraftTimer.current = setTimeout(() => {
+      saveLocalOngDraft();
+    }, 700);
+    return () => {
+      if (realtimeDraftTimer.current) clearTimeout(realtimeDraftTimer.current);
+    };
   }, [visible, reportId, formTitle, section, answers, agendaItems, agendaNotes]);
 
   async function loadReport(id: string) {

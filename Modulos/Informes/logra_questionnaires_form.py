@@ -55,6 +55,7 @@ class LograQuestionnairesForm(ttk.Frame):
         self._agenda_alerted = set()
         self._autosave_after_id = None
         self._sync_after_id = None
+        self._realtime_after_id = None
         self._cache_dir = Path(os.getenv("LOCALAPPDATA") or Path.home()) / "ERP-SOM" / "ong_autosave"
         self._pending_dir = self._cache_dir / "pending"
         self._cache_dir.mkdir(parents=True, exist_ok=True)
@@ -339,6 +340,7 @@ class LograQuestionnairesForm(ttk.Frame):
             text = ScrolledText(bullets_box, height=2, wrap="word", font=("Segoe UI", 9))
             text.insert("1.0", value)
             text.grid(row=idx - 1, column=1, sticky="ew", pady=3)
+            text.bind("<KeyRelease>", self._schedule_realtime_cache)
             self.text_widgets[key].append(text)
 
         actions = ttk.Frame(card)
@@ -559,6 +561,21 @@ class LograQuestionnairesForm(ttk.Frame):
                     self.answers[key] = bullets if bullets else [""]
                 self._render_current_page()
                 return
+        except Exception:
+            pass
+
+    def _schedule_realtime_cache(self, event=None):
+        if self._realtime_after_id:
+            try:
+                self.after_cancel(self._realtime_after_id)
+            except Exception:
+                pass
+        self._realtime_after_id = self.after(700, self._cache_realtime_draft)
+
+    def _cache_realtime_draft(self):
+        self._realtime_after_id = None
+        try:
+            self._cache_payload(self._report_payload(), pending=False)
         except Exception:
             pass
 
