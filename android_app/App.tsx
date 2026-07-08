@@ -255,6 +255,17 @@ function rowsForSection(sectionKey: string | undefined, payload: unknown) {
   return extractRows(payload);
 }
 
+function normalizeOngReviewRows(payload: unknown) {
+  return extractRows(payload)
+    .filter((row) => formatValue(row.title).trim().toLowerCase() !== "ong - agenda")
+    .sort((a, b) => {
+      const aTime = Date.parse(formatValue(a.updated_at));
+      const bTime = Date.parse(formatValue(b.updated_at));
+      if (Number.isFinite(aTime) && Number.isFinite(bTime) && aTime !== bTime) return bTime - aTime;
+      return Number(formatValue(b.id)) - Number(formatValue(a.id));
+    });
+}
+
 function flattenNumbers(value: unknown, prefix = ""): Array<{ label: string; value: number }> {
   if (typeof value === "number" && Number.isFinite(value)) {
     return [{ label: prefix || "Valor", value }];
@@ -2697,7 +2708,7 @@ function InformesSectionMobile({
   }
 
   async function load() {
-    const endpoint = getInformeEndpoint(activeKey, section, activeSection);
+    const endpoint = activeKey === "logra" ? "/logra-reports" : getInformeEndpoint(activeKey, section, activeSection);
     if (!endpoint) return;
     const params = new URLSearchParams();
     if (filters.status && activeKey === "status-informes") params.set("status", filters.status);
@@ -2713,7 +2724,11 @@ function InformesSectionMobile({
     setMessage("");
     try {
       const payload = await apiRequest(`${endpoint}${params.toString() ? `?${params.toString()}` : ""}`, { session });
-      setRows(rowsFromAny(payload));
+      const nextRows = activeKey === "logra" ? normalizeOngReviewRows(payload) : rowsFromAny(payload);
+      setRows(nextRows);
+      if (activeKey === "logra" && !nextRows.length) {
+        setMessage("No hay cuestionarios ONG cargados para revisar.");
+      }
       setSelected(null);
       setDetail(null);
       setDetailForm({});
@@ -2747,6 +2762,12 @@ function InformesSectionMobile({
     if (activeKey === section.key && rows.length) return;
     load();
   }, [activeKey]);
+
+  useEffect(() => {
+    if (reviewOpen && activeKey === "logra") {
+      load();
+    }
+  }, [reviewOpen, activeKey]);
 
   async function openDetail() {
     if (!selectedRow) {
