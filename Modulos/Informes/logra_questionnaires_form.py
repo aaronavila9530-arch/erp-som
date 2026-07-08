@@ -3,6 +3,9 @@ from tkinter import filedialog, messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 from datetime import datetime, timedelta
 from pathlib import Path
+import json
+import os
+import re
 
 import api_client
 from tkcalendar import DateEntry, Calendar
@@ -50,10 +53,19 @@ class LograQuestionnairesForm(ttk.Frame):
         self.text_widgets = {}
         self._search_trace = None
         self._agenda_alerted = set()
+        self._autosave_after_id = None
+        self._sync_after_id = None
+        self._cache_dir = Path(os.getenv("LOCALAPPDATA") or Path.home()) / "ERP-SOM" / "ong_autosave"
+        self._pending_dir = self._cache_dir / "pending"
+        self._cache_dir.mkdir(parents=True, exist_ok=True)
+        self._pending_dir.mkdir(parents=True, exist_ok=True)
 
         self.pack(fill="both", expand=True)
         self._build_ui()
+        self._restore_latest_cache()
         self._start_agenda_alert_monitor()
+        self._schedule_autosave()
+        self._schedule_pending_sync()
 
     # =========================================================
     # UI
@@ -196,6 +208,10 @@ class LograQuestionnairesForm(ttk.Frame):
     def _current_form(self):
         title = self.form_var.get()
         return next((item for item in ONG_QUESTIONNAIRES if item["title"] == title), ONG_QUESTIONNAIRES[0])
+
+    def _safe_cache_name(self, value):
+        text = re.sub(r"[^a-zA-Z0-9._-]+", "_", str(value or "ong")).strip("_")
+        return text or "ong"
 
     def _all_questions(self, form=None, section=None):
         form = form or self._current_form()
@@ -486,26 +502,26 @@ class LograQuestionnairesForm(ttk.Frame):
     def _answers_payload(self):
         self._collect_visible_text()
         payload = []
-        for form in ONG_QUESTIONNAIRES:
-            for section in self.SECTION_LABELS:
-                for item in form.get(section, []):
-                    key = self._answer_key(form, section, item)
-                    bullets = [value.strip() for value in self.answers.get(key, []) if value.strip()]
-                    if not bullets:
-                        continue
-                    payload.append({
-                        "form_slug": form["slug"],
-                        "form_title": form["title"],
-                        "section": section,
-                        "item_key": self._item_key(item),
-                        "question_text": item.get("question", ""),
-                        "bullets": bullets,
-                    })
+        form = self._current_form()
+        for section in self.SECTION_LABELS:
+            for item in form.get(section, []):
+                key = self._answer_key(form, section, item)
+                bullets = [value.strip() for value in self.answers.get(key, []) if value.strip()]
+                if not bullets:
+                    continue
+                payload.append({
+                    "form_slug": form["slug"],
+                    "form_title": form["title"],
+                    "section": section,
+                    "item_key": self._item_key(item),
+                    "question_text": item.get("question", ""),
+                    "bullets": bullets,
+                })
         return payload
 
-    def _save_report(self, silent=False):
+    def _report_payload(self):
         title = f"ONG - {self.form_var.get() or 'Cuestionarios'}"
-        payload = {
+        return {
             "id": self.report_id,
             "title": title,
             "created_by": self.usuario or get_user(),
@@ -513,16 +529,108 @@ class LograQuestionnairesForm(ttk.Frame):
             "agenda_notes": "",
             "answers": self._answers_payload(),
         }
+
+    def _cache_payload(self, payload, pending=False):
+        payload = dict(payload or {})
+        payload["_cached_at"] = datetime.now().isoformat()
+        payload["_usuario"] = self.usuario or get_user()
+        name = self._safe_cache_name(f"{payload.get('id') or 'new'}_{payload.get('title')}")
+        target_dir = self._pending_dir if pending else self._cache_dir
+        path = target_dir / f"{name}.json"
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        return path
+
+    def _restore_latest_cache(self):
+        try:
+            files = sorted(self._cache_dir.glob("*.json"), key=lambda item: item.stat().st_mtime, reverse=True)
+            current_user = (self.usuario or get_user() or "").strip().lower()
+            for path in files:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+                if str(payload.get("_usuario") or "").strip().lower() != current_user:
+                    continue
+                title = str(payload.get("title") or "").replace("ONG - ", "", 1).strip()
+                if title:
+                    self.form_var.set(title)
+                self.report_id = payload.get("id") or self.report_id
+                self.answers.clear()
+                for item in payload.get("answers") or []:
+                    key = f"{item.get('form_slug')}|{item.get('section')}|{item.get('item_key')}"
+                    bullets = item.get("bullets") or []
+                    self.answers[key] = bullets if bullets else [""]
+                self._render_current_page()
+                return
+        except Exception:
+            pass
+
+    def _post_report_payload(self, payload):
         resp = api_client.save_logra_report_api(payload)
         if not resp.get("success"):
-            if not silent:
-                messagebox.showerror("ONG", f"No se pudo guardar:\n{resp.get('error') or resp}")
-            return False
+            self._cache_payload(payload, pending=True)
+            return resp
         self.report_id = (resp.get("report") or {}).get("id") or self.report_id
+        return resp
+
+    def _save_report(self, silent=False):
+        payload = self._report_payload()
+        self._cache_payload(payload, pending=False)
+        resp = self._post_report_payload(payload)
+        if not resp.get("success"):
+            if not silent:
+                messagebox.showwarning(
+                    "ONG",
+                    "No se pudo guardar en backend. Quedo en cache local y se reintentara automaticamente."
+                )
+            return False
         if not silent:
             messagebox.showinfo("ONG", "Guardado correctamente.")
             self._render_current_page()
         return True
+
+    def _autosave_report(self):
+        try:
+            payload = self._report_payload()
+            self._cache_payload(payload, pending=False)
+            if not self.report_id and not payload.get("answers"):
+                return
+            self._post_report_payload(payload)
+        except Exception:
+            try:
+                self._cache_payload(self._report_payload(), pending=True)
+            except Exception:
+                pass
+        finally:
+            self._schedule_autosave()
+
+    def _schedule_autosave(self):
+        if self._autosave_after_id:
+            try:
+                self.after_cancel(self._autosave_after_id)
+            except Exception:
+                pass
+        self._autosave_after_id = self.after(20000, self._autosave_report)
+
+    def _sync_pending_cache(self):
+        try:
+            for path in sorted(self._pending_dir.glob("*.json")):
+                try:
+                    payload = json.loads(path.read_text(encoding="utf-8"))
+                    for key in ("_cached_at", "_usuario"):
+                        payload.pop(key, None)
+                    resp = api_client.save_logra_report_api(payload)
+                    if resp.get("success"):
+                        path.unlink(missing_ok=True)
+                except Exception:
+                    continue
+        finally:
+            self._schedule_pending_sync()
+
+    def _schedule_pending_sync(self):
+        if self._sync_after_id:
+            try:
+                self.after_cancel(self._sync_after_id)
+            except Exception:
+                pass
+        self._sync_after_id = self.after(10000, self._sync_pending_cache)
 
     def _attach_file(self, form, section, item):
         if not self.report_id:

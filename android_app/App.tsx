@@ -36,6 +36,7 @@ const BORDER = "#D7DEE8";
 const CREDS_KEY = "erp_som_saved_credentials";
 const OFFLINE_QUEUE_KEY = "erp_som_offline_queue";
 const ONG_NOTIFICATION_IDS_KEY = "erp_som_logra_notification_ids";
+const ONG_AUTOSAVE_DRAFT_KEY = "erp_som_ong_autosave_draft";
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -99,6 +100,7 @@ async function queueOfflineRequest({
   label: string;
 }) {
   const queue = await readOfflineQueue();
+  const dedupeKey = `${method} ${path} ${label}`;
   const item: OfflineQueueItem = {
     id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
     path,
@@ -108,7 +110,8 @@ async function queueOfflineRequest({
     label,
     createdAt: new Date().toISOString()
   };
-  await writeOfflineQueue([...queue, item]);
+  const nextQueue = queue.filter((queued) => `${queued.method} ${queued.path} ${queued.label}` !== dedupeKey);
+  await writeOfflineQueue([...nextQueue, item]);
   return item;
 }
 
@@ -204,7 +207,7 @@ function useOfflineSync(session: Session | null) {
         setPendingCount(queue.length);
         if (queue.length) syncNow(false);
       });
-    }, 15000);
+    }, 10000);
     return () => clearInterval(timer);
   }, [session?.usuario, syncing]);
 
@@ -3983,6 +3986,7 @@ function LograMobileModal({
     setAttachments([]);
     setMessage("");
     if (initialReportId) loadReport(initialReportId);
+    else restoreLocalOngDraft();
   }, [visible, initialReportId]);
 
   useEffect(() => {
@@ -3994,6 +3998,14 @@ function LograMobileModal({
     setPortiaQuestionKey(first ? lograItemKey(first) : "");
     setPortiaBullet("0");
   }, [portiaForm, portiaSection]);
+
+  useEffect(() => {
+    if (!visible) return;
+    const timer = setInterval(() => {
+      autosaveLogra();
+    }, 20000);
+    return () => clearInterval(timer);
+  }, [visible, reportId, formTitle, section, answers, agendaItems, agendaNotes]);
 
   async function loadReport(id: string) {
     setBusy(true);
@@ -4027,6 +4039,28 @@ function LograMobileModal({
       setMessage(err instanceof Error ? err.message : "No se pudo cargar ONG.");
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function restoreLocalOngDraft() {
+    try {
+      const raw = await AsyncStorage.getItem(ONG_AUTOSAVE_DRAFT_KEY);
+      if (!raw) return;
+      const draft = asRecord(JSON.parse(raw));
+      if (!draft || formatValue(draft.usuario) !== session.usuario) return;
+      if (draft.formTitle && formatValue(draft.formTitle) !== "-") {
+        setFormTitle(formatValue(draft.formTitle));
+        setPortiaForm(formatValue(draft.formTitle));
+      }
+      if (draft.section && Object.keys(ONG_SECTION_LABELS).includes(formatValue(draft.section))) {
+        setSection(formatValue(draft.section) as keyof typeof ONG_SECTION_LABELS);
+      }
+      if (asRecord(draft.answers)) setAnswers(draft.answers as Record<string, string[]>);
+      if (Array.isArray(draft.agendaItems)) setAgendaItems(draft.agendaItems as LograAgendaItem[]);
+      setAgendaNotes(formatValue(draft.agendaNotes) === "-" ? "" : formatValue(draft.agendaNotes));
+      setMessage("Borrador local ONG recuperado.");
+    } catch {
+      // Draft recovery should never block the form.
     }
   }
 
@@ -4172,20 +4206,19 @@ function LograMobileModal({
 
   function buildAnswersPayload() {
     const payload: Array<Record<string, unknown>> = [];
-    ONG_QUESTIONNAIRES.forEach((form) => {
-      (Object.keys(ONG_SECTION_LABELS) as Array<keyof typeof ONG_SECTION_LABELS>).forEach((selectedSection) => {
-        form[selectedSection].forEach((item) => {
-          const key = lograQuestionKey(form, selectedSection, item);
-          const bullets = (answers[key] || []).map((value) => value.trim()).filter(Boolean).slice(0, ONG_MAX_BULLETS);
-          if (!bullets.length) return;
-          payload.push({
-            form_slug: form.slug,
-            form_title: form.title,
-            section: selectedSection,
-            item_key: lograItemKey(item),
-            question_text: item.question,
-            bullets
-          });
+    if (!selectedForm) return payload;
+    (Object.keys(ONG_SECTION_LABELS) as Array<keyof typeof ONG_SECTION_LABELS>).forEach((selectedSection) => {
+      selectedForm[selectedSection].forEach((item) => {
+        const key = lograQuestionKey(selectedForm, selectedSection, item);
+        const bullets = (answers[key] || []).map((value) => value.trim()).filter(Boolean).slice(0, ONG_MAX_BULLETS);
+        if (!bullets.length) return;
+        payload.push({
+          form_slug: selectedForm.slug,
+          form_title: selectedForm.title,
+          section: selectedSection,
+          item_key: lograItemKey(item),
+          question_text: item.question,
+          bullets
         });
       });
     });
@@ -4203,6 +4236,20 @@ function LograMobileModal({
       agenda_notes: "",
       answers: buildAnswersPayload()
     };
+  }
+
+  async function saveLocalOngDraft() {
+    const payload = {
+      reportId,
+      formTitle,
+      section,
+      answers,
+      agendaItems,
+      agendaNotes,
+      savedAt: new Date().toISOString(),
+      usuario: session.usuario
+    };
+    await AsyncStorage.setItem(ONG_AUTOSAVE_DRAFT_KEY, JSON.stringify(payload));
   }
 
   function buildAgendaItemFromDraft(currentItem: LograAgendaItem) {
@@ -4357,6 +4404,7 @@ function LograMobileModal({
     setBusy(true);
     setMessage("");
     try {
+      await saveLocalOngDraft();
       const payload = buildLograPayload();
       const endpoint = reportId ? `/logra-reports/${encodeURIComponent(reportId)}` : "/logra-reports";
       const result = await offlineApiRequest(endpoint, {
@@ -4385,6 +4433,36 @@ function LograMobileModal({
       return null;
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function autosaveLogra() {
+    try {
+      await saveLocalOngDraft();
+      const payload = buildLograPayload();
+      const hasAnswers = Array.isArray(payload.answers) && payload.answers.length > 0;
+      if (!reportId && !hasAnswers) {
+        setMessage("Autosave ONG local.");
+        return;
+      }
+      const endpoint = reportId ? `/logra-reports/${encodeURIComponent(reportId)}` : "/logra-reports";
+      const result = await offlineApiRequest(endpoint, {
+        method: reportId ? "PUT" : "POST",
+        body: payload,
+        session,
+        offlineLabel: `Autosave ONG ${formTitle || "Cuestionarios"}`
+      });
+      if (!isQueuedOffline(result)) {
+        const record = asRecord(result);
+        const report = asRecord(record?.report);
+        const nextId = formatValue(report?.id);
+        if (nextId !== "-") setReportId(nextId);
+        setMessage(`Autosave ONG ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
+      } else {
+        setMessage("Sin internet: autosave ONG guardado en cache local.");
+      }
+    } catch {
+      // Autosave must not interrupt editing.
     }
   }
 
