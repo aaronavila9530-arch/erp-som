@@ -1358,6 +1358,20 @@ def list_logra_reports_api():
         return {"data": [], "error": str(e)}
 
 
+def save_logra_agenda_api(payload: dict):
+    try:
+        r = api_request(
+            "POST",
+            f"{BASE_URL}/logra-reports/agenda-only",
+            json=payload,
+            timeout=30
+        )
+        raise_for_status_with_detail(r)
+        return r.json()
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
 def get_logra_report_api(report_id: int):
     try:
         r = api_request(

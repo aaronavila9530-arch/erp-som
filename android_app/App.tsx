@@ -4183,7 +4183,45 @@ function LograMobileModal({
   }
 
   async function saveAgendaOnly() {
-    await saveLogra(false);
+    if (!agendaItems.length) {
+      setMessage("No hay lineas de agenda para guardar.");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      const result = await offlineApiRequest("/logra-reports/agenda-only", {
+        method: "POST",
+        body: {
+          created_by: session.usuario,
+          agenda_items: agendaItems,
+          agenda_notes: agendaNotes
+        },
+        session,
+        offlineLabel: "Guardar agenda ONG"
+      });
+      if (!isQueuedOffline(result)) {
+        const record = asRecord(result);
+        const report = asRecord(record?.report);
+        const savedItems = Array.isArray(report?.agenda_items) ? report.agenda_items : agendaItems;
+        const agendaReportId = formatValue(report?.id);
+        const normalizedItems = savedItems.map((item, index) => ({
+          ...(asRecord(item) as LograAgendaItem),
+          report_id: agendaReportId,
+          agenda_index: index,
+          report_title: "ONG - Agenda"
+        }));
+        setAgendaItems(normalizedItems);
+        setSelectedAgenda(null);
+        setAgendaDraft(blankAgendaItem());
+        await syncLograAgendaNotifications(normalizedItems);
+      }
+      setMessage(isQueuedOffline(result) ? "Sin internet: agenda ONG guardada en cache local." : "Agenda ONG guardada correctamente.");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo guardar agenda ONG.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   function loadSelectedAgendaLine() {

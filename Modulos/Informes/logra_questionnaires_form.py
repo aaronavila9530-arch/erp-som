@@ -1488,8 +1488,27 @@ class PopupLograAgenda(tk.Toplevel):
         if len(self.form_instance.agenda_items) > self.MAX_ITEMS:
             messagebox.showwarning("Agenda ONG", "La agenda permite maximo 150 lineas.")
             return
-        if self.form_instance._save_report(silent=False):
-            messagebox.showinfo("Agenda ONG", "Agenda guardada correctamente.")
+        resp = api_client.save_logra_agenda_api({
+            "created_by": getattr(self.form_instance, "current_user", "admin"),
+            "agenda_items": self.form_instance.agenda_items,
+            "agenda_notes": self.form_instance.agenda_notes or "",
+        })
+        if not resp.get("success"):
+            messagebox.showerror("Agenda ONG", f"No se pudo guardar la agenda:\n{resp.get('error') or resp}")
+            return
+        report = resp.get("report") or {}
+        report_id = report.get("id")
+        saved_items = report.get("agenda_items") or self.form_instance.agenda_items
+        self.items = [dict(item) for item in saved_items]
+        if report_id:
+            for index, item in enumerate(self.items):
+                item["report_id"] = report_id
+                item["agenda_index"] = index
+                item["report_title"] = "ONG - Agenda"
+        self.form_instance.agenda_items = [dict(item) for item in self.items]
+        self._render()
+        self._clear_fields()
+        messagebox.showinfo("Agenda ONG", "Agenda guardada correctamente.")
 
     def _rows_for_export(self):
         return [[item.get(col, "") for col in self.COLUMNS] for item in self.items]

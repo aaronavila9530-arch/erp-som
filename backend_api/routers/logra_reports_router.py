@@ -263,6 +263,109 @@ def list_logra_reports(conn=Depends(get_db)):
         return {"data": cur.fetchall()}
 
 
+@router.post("/agenda-only")
+def save_logra_agenda_only(payload: dict, conn=Depends(get_db)):
+    _ensure_schema(conn)
+    payload = payload or {}
+    agenda_items = payload.get("agenda_items") or []
+    agenda_notes = payload.get("agenda_notes") or ""
+    created_by = payload.get("created_by")
+    if not isinstance(agenda_items, list):
+        agenda_items = []
+    if len(agenda_items) > MAX_AGENDA_ITEMS:
+        raise HTTPException(status_code=400, detail="LOGRA agenda supports up to 150 items")
+
+    clean_items = []
+    for index, raw_item in enumerate(agenda_items):
+        if not isinstance(raw_item, dict):
+            continue
+        item = dict(raw_item)
+        item["report_title"] = "ONG - Agenda"
+        item["agenda_index"] = index
+        clean_items.append(item)
+
+    first_meeting = clean_items[0] if clean_items else {}
+    meeting_date = first_meeting.get("date_iso") or datetime.utcnow().date().isoformat()
+    meeting_start_time = first_meeting.get("start_time") or ""
+    meeting_end_time = first_meeting.get("end_time") or ""
+    meeting_time = meeting_start_time or "00:00"
+    meeting_location = first_meeting.get("place") or ""
+    meeting_person = first_meeting.get("person") or ""
+
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT id
+                FROM logra_reports
+                WHERE category = 'ONG'
+                  AND title = 'ONG - Agenda'
+                ORDER BY id ASC
+                LIMIT 1
+            """)
+            existing = cur.fetchone()
+
+            if existing:
+                report_id = existing["id"]
+                cur.execute("""
+                    UPDATE logra_reports
+                    SET status = 'Pending',
+                        meeting_date = %s,
+                        meeting_time = %s,
+                        meeting_start_time = %s,
+                        meeting_end_time = %s,
+                        meeting_location = %s,
+                        meeting_person = %s,
+                        agenda_items = %s,
+                        agenda_notes = %s,
+                        updated_at = %s
+                    WHERE id = %s
+                    RETURNING *
+                """, (
+                    meeting_date, meeting_time, meeting_start_time, meeting_end_time,
+                    meeting_location, meeting_person, Json(clean_items), agenda_notes,
+                    datetime.utcnow(), report_id,
+                ))
+                report = cur.fetchone()
+            else:
+                cur.execute("""
+                    INSERT INTO logra_reports (
+                        title, category, status, meeting_date, meeting_time, meeting_start_time,
+                        meeting_end_time, meeting_location, meeting_person, agenda_items,
+                        agenda_notes, created_by, created_at, updated_at
+                    )
+                    VALUES ('ONG - Agenda', 'ONG', 'Pending', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING *
+                """, (
+                    meeting_date, meeting_time, meeting_start_time, meeting_end_time,
+                    meeting_location, meeting_person, Json(clean_items), agenda_notes,
+                    created_by, datetime.utcnow(), datetime.utcnow(),
+                ))
+                report = cur.fetchone()
+                report_id = report["id"]
+
+            for index, item in enumerate(clean_items):
+                item["report_id"] = report_id
+                item["agenda_index"] = index
+
+            cur.execute("""
+                UPDATE logra_reports
+                SET agenda_items = %s,
+                    updated_at = %s
+                WHERE id = %s
+                RETURNING *
+            """, (Json(clean_items), datetime.utcnow(), report_id))
+            report = cur.fetchone()
+
+        conn.commit()
+        return {"success": True, "report": report}
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as exc:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"LOGRA agenda save error: {exc}")
+
+
 
 
 
