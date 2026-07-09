@@ -576,6 +576,13 @@ def editar_servicio(consec: int, data: dict):
 
         sql = """
             UPDATE servicios SET
+                cliente = %(cliente)s,
+                contacto = %(contacto)s,
+                detalle = %(detalle)s,
+                continente = %(continente)s,
+                pais = %(pais)s,
+                puerto = %(puerto)s,
+                operacion = %(operacion)s,
                 surveyor = %(surveyor)s,
                 honorarios = %(honorarios)s,
                 costo_operativo = %(costo_operativo)s,
@@ -587,6 +594,13 @@ def editar_servicio(consec: int, data: dict):
         """
 
         params = {
+            "cliente": data.get("cliente"),
+            "contacto": data.get("contacto"),
+            "detalle": data.get("detalle"),
+            "continente": data.get("continente"),
+            "pais": data.get("pais"),
+            "puerto": data.get("puerto"),
+            "operacion": data.get("operacion"),
             "surveyor": data.get("surveyor"),
             "honorarios": data.get("honorarios"),
             "costo_operativo": data.get("costo_operativo"),
