@@ -68,6 +68,8 @@ def _sync_legacy_fields(data: dict) -> dict:
     data.setdefault("puerto", "")
     data.setdefault("operacion", "")
     data.setdefault("honorario", None)
+    data.setdefault("email", "")
+    data.setdefault("direccion_banco", "")
     if str(data.get("honorario") or "").strip() == "":
         data["honorario"] = None
     data["_tarifas_clean"] = tarifas
@@ -142,6 +144,7 @@ def add_surveyor(data: dict):
             codigo,
             nombre,
             apellidos,
+            email,
             estado_civil,
             genero,
             nacionalidad,
@@ -156,6 +159,7 @@ def add_surveyor(data: dict):
             honorario,
             pago,
             banco,
+            direccion_banco,
             cuenta_iban,
             moneda,
             swift,
@@ -169,6 +173,7 @@ def add_surveyor(data: dict):
             %(codigo)s,
             %(nombre)s,
             %(apellidos)s,
+            %(email)s,
             %(estado_civil)s,
             %(genero)s,
             %(nacionalidad)s,
@@ -183,6 +188,7 @@ def add_surveyor(data: dict):
             %(honorario)s,
             %(pago)s,
             %(banco)s,
+            %(direccion_banco)s,
             %(cuenta_iban)s,
             %(moneda)s,
             %(swift)s,
@@ -229,7 +235,7 @@ def get_surveyores(page: int = 1, page_size: int = 50):
             prefijo,telefono,provincia,canton,distrito,direccion,
             jornada,operacion,honorario,pago,banco,cuenta_iban,
             moneda,swift,uid,enfermedades,contacto_emergencia,
-            telefono_emergencia,puerto
+            telefono_emergencia,puerto,email,direccion_banco
         FROM surveyor
         ORDER BY codigo ASC
         LIMIT {page_size} OFFSET {offset}
@@ -264,6 +270,8 @@ def get_surveyores(page: int = 1, page_size: int = 50):
             "contacto_emergencia": r[22],
             "telefono_emergencia": r[23],
             "puerto": r[24],
+            "email": r[25],
+            "direccion_banco": r[26],
             "tarifas": _get_tarifas(r[0]),
         }
         for r in rows
@@ -283,7 +291,7 @@ def get_surveyor(codigo: str):
             prefijo,telefono,provincia,canton,distrito,direccion,
             jornada,operacion,honorario,pago,banco,cuenta_iban,
             moneda,swift,uid,enfermedades,contacto_emergencia,
-            telefono_emergencia,puerto
+            telefono_emergencia,puerto,email,direccion_banco
         FROM surveyor
         WHERE codigo = %s
     """, (codigo,), fetch=True)
@@ -318,6 +326,8 @@ def get_surveyor(codigo: str):
         "contacto_emergencia": r[22],
         "telefono_emergencia": r[23],
         "puerto": r[24],
+        "email": r[25],
+        "direccion_banco": r[26],
         "tarifas": _get_tarifas(codigo),
     }
 
@@ -343,6 +353,7 @@ def update_surveyor(data: dict):
         UPDATE surveyor SET
             nombre = %(nombre)s,
             apellidos = %(apellidos)s,
+            email = %(email)s,
             estado_civil = %(estado_civil)s,
             genero = %(genero)s,
             nacionalidad = %(nacionalidad)s,
@@ -357,6 +368,7 @@ def update_surveyor(data: dict):
             honorario = %(honorario)s,
             pago = %(pago)s,
             banco = %(banco)s,
+            direccion_banco = %(direccion_banco)s,
             cuenta_iban = %(cuenta_iban)s,
             moneda = %(moneda)s,
             swift = %(swift)s,
