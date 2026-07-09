@@ -561,7 +561,15 @@ def editar_servicio(consec: int, data: dict):
 
         row = database.sql(
             """
-            SELECT num_informe
+            SELECT
+                num_informe,
+                cliente,
+                contacto,
+                detalle,
+                continente,
+                pais,
+                puerto,
+                operacion
             FROM servicios
             WHERE consec = %s
             """,
@@ -573,6 +581,15 @@ def editar_servicio(consec: int, data: dict):
             raise HTTPException(404, "Servicio no encontrado")
 
         num_actualizado = _num_informe_con_fecha(row[0][0], data.get("fecha_inicio"))
+        current = {
+            "cliente": row[0][1],
+            "contacto": row[0][2],
+            "detalle": row[0][3],
+            "continente": row[0][4],
+            "pais": row[0][5],
+            "puerto": row[0][6],
+            "operacion": row[0][7],
+        }
 
         sql = """
             UPDATE servicios SET
@@ -594,13 +611,13 @@ def editar_servicio(consec: int, data: dict):
         """
 
         params = {
-            "cliente": data.get("cliente"),
-            "contacto": data.get("contacto"),
-            "detalle": data.get("detalle"),
-            "continente": data.get("continente"),
-            "pais": data.get("pais"),
-            "puerto": data.get("puerto"),
-            "operacion": data.get("operacion"),
+            "cliente": data["cliente"] if "cliente" in data else current["cliente"],
+            "contacto": data["contacto"] if "contacto" in data else current["contacto"],
+            "detalle": data["detalle"] if "detalle" in data else current["detalle"],
+            "continente": data["continente"] if "continente" in data else current["continente"],
+            "pais": data["pais"] if "pais" in data else current["pais"],
+            "puerto": data["puerto"] if "puerto" in data else current["puerto"],
+            "operacion": data["operacion"] if "operacion" in data else current["operacion"],
             "surveyor": data.get("surveyor"),
             "honorarios": data.get("honorarios"),
             "costo_operativo": data.get("costo_operativo"),
