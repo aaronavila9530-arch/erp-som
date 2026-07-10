@@ -186,6 +186,168 @@ def get_bank_reconciliation(
 
 
 # ============================================================
+# GET /bank-reconciliation/paid-invoices-report
+# REPORTE DE FACTURAS PAGADAS
+# ============================================================
+@router.get("/paid-invoices-report")
+def get_paid_invoices_report(
+    year: Optional[int] = Query(None, ge=2000, le=2100),
+    month: Optional[int] = Query(None, ge=1, le=12),
+    date_from: Optional[str] = Query(None),
+    date_to: Optional[str] = Query(None),
+    cliente: Optional[str] = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(500, ge=1, le=1000),
+    conn=Depends(get_db)
+):
+    """
+    Devuelve pagos aplicados a facturas desde cash_app e incoming_payments.
+    Permite filtrar por mes, anio, rango de fechas y cliente.
+    """
+    offset = (page - 1) * page_size
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+
+    where = []
+    params = {
+        "limit": page_size,
+        "offset": offset,
+    }
+
+    if date_from:
+        where.append("pagos.fecha_pago >= %(date_from)s::date")
+        params["date_from"] = date_from
+
+    if date_to:
+        where.append("pagos.fecha_pago <= %(date_to)s::date")
+        params["date_to"] = date_to
+
+    if year and not date_from and not date_to:
+        where.append("EXTRACT(YEAR FROM pagos.fecha_pago) = %(year)s")
+        params["year"] = year
+
+    if month and not date_from and not date_to:
+        where.append("EXTRACT(MONTH FROM pagos.fecha_pago) = %(month)s")
+        params["month"] = month
+
+    if cliente:
+        where.append("""
+            (
+                pagos.codigo_cliente ILIKE %(cliente_like)s
+                OR pagos.nombre_cliente ILIKE %(cliente_like)s
+            )
+        """)
+        params["cliente_like"] = f"%{cliente}%"
+
+    where_sql = ""
+    if where:
+        where_sql = "WHERE " + " AND ".join(where)
+
+    base_sql = f"""
+        WITH pagos AS (
+            SELECT
+                'cash_app'::text AS source,
+                ca.id::text AS payment_id,
+                ca.numero_documento,
+                ca.codigo_cliente,
+                ca.nombre_cliente,
+                ca.banco,
+                ca.fecha_pago,
+                ca.comision,
+                ca.referencia,
+                ca.monto_pagado,
+                ca.tipo_aplicacion,
+                CASE
+                    WHEN c.estado_factura IS NOT NULL THEN c.estado_factura
+                    WHEN ca.monto_pagado > 0 THEN 'APLICADO'
+                    ELSE 'DESAPLICADO'
+                END AS estado_factura,
+                c.total AS total_factura,
+                c.saldo_pendiente
+            FROM cash_app ca
+            LEFT JOIN collections c
+                ON ltrim(c.numero_documento, '0') = ltrim(ca.numero_documento, '0')
+               AND c.codigo_cliente = ca.codigo_cliente
+               AND c.tipo_documento = 'FACTURA'
+            WHERE ca.monto_pagado > 0
+
+            UNION ALL
+
+            SELECT
+                'incoming_payments'::text AS source,
+                ip.id::text AS payment_id,
+                ip.documento AS numero_documento,
+                ip.codigo_cliente,
+                ip.nombre_cliente,
+                ip.banco,
+                ip.fecha_pago,
+                NULL::numeric AS comision,
+                ip.numero_referencia AS referencia,
+                ip.monto AS monto_pagado,
+                'PAGO'::text AS tipo_aplicacion,
+                COALESCE(c.estado_factura, ip.estado) AS estado_factura,
+                c.total AS total_factura,
+                c.saldo_pendiente
+            FROM incoming_payments ip
+            LEFT JOIN collections c
+                ON ltrim(c.numero_documento, '0') = ltrim(ip.documento, '0')
+               AND c.codigo_cliente = ip.codigo_cliente
+               AND c.tipo_documento = 'FACTURA'
+            WHERE ip.monto > 0
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM cash_app ca2
+                  WHERE ltrim(ca2.numero_documento, '0') = ltrim(ip.documento, '0')
+                    AND ca2.codigo_cliente = ip.codigo_cliente
+                    AND COALESCE(ca2.referencia, '') = COALESCE(ip.numero_referencia, '')
+                    AND ca2.fecha_pago = ip.fecha_pago
+                    AND ca2.monto_pagado = ip.monto
+              )
+        )
+        SELECT *
+        FROM pagos
+        {where_sql}
+    """
+
+    try:
+        cur.execute(
+            f"""
+            SELECT COUNT(*) AS total,
+                   COUNT(DISTINCT numero_documento || '|' || COALESCE(codigo_cliente, '')) AS total_facturas,
+                   COUNT(DISTINCT codigo_cliente) AS total_clientes,
+                   COALESCE(SUM(monto_pagado), 0) AS total_pagado,
+                   COALESCE(SUM(comision), 0) AS total_comision
+            FROM ({base_sql}) q
+            """,
+            params
+        )
+        summary = cur.fetchone() or {}
+
+        cur.execute(
+            base_sql + """
+            ORDER BY fecha_pago DESC, numero_documento ASC, source ASC
+            LIMIT %(limit)s OFFSET %(offset)s
+            """,
+            params
+        )
+        rows = cur.fetchall()
+
+        return {
+            "page": page,
+            "page_size": page_size,
+            "total": summary.get("total", 0),
+            "summary": {
+                "total_facturas": summary.get("total_facturas", 0),
+                "total_clientes": summary.get("total_clientes", 0),
+                "total_pagado": summary.get("total_pagado", 0),
+                "total_comision": summary.get("total_comision", 0),
+            },
+            "data": rows
+        }
+    finally:
+        cur.close()
+
+
+# ============================================================
 # POST /bank-reconciliation/{cash_app_id}/reverse
 # REVERSA TOTAL (DELETE REAL)
 # ============================================================
