@@ -339,11 +339,28 @@ def generate_logra_questionnaire_report(
             f"Respuestas:\n{bullet_text}"
         )
 
-    language_instruction = (
-        "Escribe el informe en espanol profesional, ejecutivo y tecnico."
-        if language == "ES"
-        else "Write the report in professional executive maritime English."
-    )
+    if language == "ES":
+        language_instruction = "Escribe el informe en espanol profesional, ejecutivo y tecnico."
+        headings = (
+            "Resumen Ejecutivo\n"
+            "Hallazgos Operativos\n"
+            "Analisis De Riesgos Y Prioridades\n"
+            "Brechas De Evidencia E Informacion\n"
+            "Seguimiento Recomendado\n"
+            "Analisis Detallado Basado En Cuestionarios\n"
+            "Conclusion"
+        )
+    else:
+        language_instruction = "Write the report in professional executive maritime English."
+        headings = (
+            "Executive Summary\n"
+            "Operational Findings\n"
+            "Risk And Priority Analysis\n"
+            "Evidence And Information Gaps\n"
+            "Recommended Follow Up\n"
+            "Detailed Questionnaire-Based Analysis\n"
+            "Conclusion"
+        )
 
     prompt = f"""
 You are PORTIA, a senior maritime, port operations, and feasibility reporting assistant.
@@ -362,13 +379,7 @@ Rules:
 - {language_instruction}
 
 Return the report with these exact headings:
-Executive Summary
-Operational Findings
-Risk And Priority Analysis
-Evidence And Information Gaps
-Recommended Follow Up
-Detailed Questionnaire-Based Analysis
-Conclusion
+{headings}
 
 Report title:
 {report_title or "ONG Questionnaire Report"}

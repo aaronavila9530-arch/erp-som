@@ -308,6 +308,61 @@ def _get_logra_ai_context(conn, report_id: int):
     return report, valid_answers
 
 
+def _get_logra_ai_context_all(conn):
+    _ensure_schema(conn)
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("""
+            SELECT a.*, r.title AS report_title, r.status AS report_status, r.updated_at AS report_updated_at
+            FROM logra_answers a
+            JOIN logra_reports r ON r.id = a.report_id
+            WHERE COALESCE(r.title, '') <> 'ONG - Agenda'
+              AND COALESCE(r.category, 'ONG') = 'ONG'
+            ORDER BY r.title, a.form_title, a.section, a.item_key
+        """)
+        answers = cur.fetchall()
+
+    valid_answers = []
+    seen = set()
+    for answer in answers:
+        report_title = str(answer.get("report_title") or "")
+        if _looks_like_test_text(report_title.replace("ONG -", "").replace("LOGRA -", "")):
+            continue
+        bullets = _valid_ai_bullets(answer.get("bullets") or [])
+        if not bullets:
+            continue
+        question = str(answer.get("question_text") or "").strip()
+        if not question or _looks_like_test_text(question):
+            continue
+        key = (
+            str(answer.get("form_title") or ""),
+            str(answer.get("section") or ""),
+            str(answer.get("item_key") or ""),
+            question,
+            tuple(bullets),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        valid_answers.append({
+            "report_title": report_title.replace("LOGRA", "ONG"),
+            "form_title": str(answer.get("form_title") or "").replace("LOGRA", "ONG"),
+            "section": answer.get("section") or "",
+            "item_key": answer.get("item_key") or "",
+            "question_text": question,
+            "bullets": bullets,
+        })
+
+    if not valid_answers:
+        raise HTTPException(status_code=400, detail="No hay respuestas reales para generar el informe IA consolidado.")
+
+    report = {
+        "id": "ALL",
+        "title": "ONG Executive Consolidated Questionnaire Report",
+        "status": "Consolidated",
+    }
+    return report, valid_answers
+
+
 @router.get("")
 def list_logra_reports(conn=Depends(get_db)):
     _ensure_schema(conn)
@@ -437,6 +492,146 @@ def save_logra_agenda_only(payload: dict, conn=Depends(get_db)):
     except Exception as exc:
         conn.rollback()
         raise HTTPException(status_code=500, detail=f"LOGRA agenda save error: {exc}")
+
+
+@router.get("/ai-report/all/word")
+def download_logra_ai_report_all_word(
+    language: str = Query("ES"),
+    conn=Depends(get_db)
+):
+    report, answers = _get_logra_ai_context_all(conn)
+    return _build_logra_ai_word_response(report, answers, language)
+
+
+@router.get("/ai-report/all/pdf")
+def download_logra_ai_report_all_pdf(
+    language: str = Query("ES"),
+    conn=Depends(get_db)
+):
+    report, answers = _get_logra_ai_context_all(conn)
+    return _build_logra_ai_pdf_response(report, answers, language)
+
+
+def _build_logra_ai_word_response(report: dict, answers: list[dict], language: str = "ES"):
+    try:
+        from ai.maritime_ai import generate_logra_questionnaire_report
+        from docx import Document
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+        from docx.shared import Inches, Pt, RGBColor
+
+        ai_text = generate_logra_questionnaire_report(report.get("title") or "ONG Report", answers, language=language)
+
+        doc = Document()
+        section = doc.sections[0]
+        section.top_margin = Inches(0.65)
+        section.bottom_margin = Inches(0.65)
+        section.left_margin = Inches(0.75)
+        section.right_margin = Inches(0.75)
+        doc.styles["Normal"].font.name = "Arial"
+        doc.styles["Normal"].font.size = Pt(10)
+
+        title = doc.add_paragraph()
+        title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        run = title.add_run(str(report.get("title") or "ONG AI Report"))
+        run.bold = True
+        run.font.size = Pt(18)
+        run.font.color.rgb = RGBColor(0, 59, 113)
+
+        sub = doc.add_paragraph()
+        sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        sub.add_run("ONG AI Executive Consolidated Report").italic = True
+
+        meta = doc.add_table(rows=0, cols=2)
+        meta.style = "Table Grid"
+        for label, value in (
+            ("Scope", "All valid ONG questionnaires"),
+            ("Language", (language or "ES").upper()),
+            ("Valid answered questions", len(answers)),
+            ("Generated", datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")),
+        ):
+            cells = meta.add_row().cells
+            cells[0].text = str(label)
+            cells[1].text = str(value)
+            cells[0].paragraphs[0].runs[0].bold = True
+
+        doc.add_paragraph()
+        _write_ai_text_to_docx(doc, ai_text)
+
+        doc.add_heading("Questionnaire Evidence Considered", level=1)
+        for item in answers:
+            p = doc.add_paragraph()
+            prefix = f"{item.get('report_title') or item.get('form_title')} - {item.get('item_key')}"
+            p.add_run(f"{prefix}. {item.get('question_text')}").bold = True
+            for bullet in item.get("bullets") or []:
+                doc.add_paragraph(str(bullet), style="List Bullet")
+
+        tmp_dir = tempfile.mkdtemp(prefix="ong_ai_report_all_")
+        filename = _safe_filename("ONG_Executive_Consolidated_AI_Report.docx")
+        path = os.path.join(tmp_dir, filename)
+        doc.save(path)
+        return FileResponse(path, filename=filename, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"ONG AI Word report error: {exc}")
+
+
+def _build_logra_ai_pdf_response(report: dict, answers: list[dict], language: str = "ES"):
+    try:
+        from ai.maritime_ai import generate_logra_questionnaire_report
+        from html import escape
+        from reportlab.lib import colors
+        from reportlab.lib.pagesizes import letter
+        from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+        from reportlab.lib.units import inch
+        from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+        ai_text = generate_logra_questionnaire_report(report.get("title") or "ONG Report", answers, language=language)
+
+        tmp_dir = tempfile.mkdtemp(prefix="ong_ai_report_all_")
+        filename = _safe_filename("ONG_Executive_Consolidated_AI_Report.pdf")
+        path = os.path.join(tmp_dir, filename)
+
+        styles = getSampleStyleSheet()
+        styles.add(ParagraphStyle(name="OngTitle", parent=styles["Title"], fontSize=16, textColor=colors.HexColor("#003B71"), alignment=1))
+        styles.add(ParagraphStyle(name="OngH", parent=styles["Heading1"], fontSize=12, textColor=colors.HexColor("#003B71"), spaceBefore=10, spaceAfter=5))
+        styles.add(ParagraphStyle(name="OngBody", parent=styles["BodyText"], fontSize=9, leading=12, spaceAfter=5))
+
+        story = [
+            Paragraph(escape(str(report.get("title") or "ONG AI Report")), styles["OngTitle"]),
+            Paragraph("ONG AI Executive Consolidated Report", styles["Normal"]),
+            Spacer(1, 8),
+        ]
+        meta = [
+            ["Scope", "All valid ONG questionnaires"],
+            ["Language", (language or "ES").upper()],
+            ["Valid answered questions", str(len(answers))],
+            ["Generated", datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")],
+        ]
+        table = Table(meta, colWidths=[1.9 * inch, 4.8 * inch])
+        table.setStyle(TableStyle([
+            ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#B8C1CA")),
+            ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#E9EEF3")),
+            ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+        ]))
+        story.extend([table, Spacer(1, 10)])
+        _write_ai_text_to_pdf(story, styles, ai_text)
+
+        story.append(Paragraph("Questionnaire Evidence Considered", styles["OngH"]))
+        for item in answers:
+            prefix = f"{item.get('report_title') or item.get('form_title')} - {item.get('item_key')}"
+            story.append(Paragraph(escape(f"{prefix}. {item.get('question_text')}"), styles["OngBody"]))
+            for bullet in item.get("bullets") or []:
+                story.append(Paragraph(f"&#8226; {escape(str(bullet))}", styles["OngBody"]))
+            story.append(Spacer(1, 3))
+
+        doc = SimpleDocTemplate(path, pagesize=letter, rightMargin=0.6 * inch, leftMargin=0.6 * inch, topMargin=0.6 * inch, bottomMargin=0.6 * inch)
+        doc.build(story)
+        return FileResponse(path, filename=filename, media_type="application/pdf")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"ONG AI PDF report error: {exc}")
 
 
 @router.get("/{report_id}/ai-report/word")
@@ -572,6 +767,12 @@ def _write_ai_text_to_docx(doc, text: str):
         "Recommended Follow Up",
         "Detailed Questionnaire-Based Analysis",
         "Conclusion",
+        "Resumen Ejecutivo",
+        "Hallazgos Operativos",
+        "Analisis De Riesgos Y Prioridades",
+        "Brechas De Evidencia E Informacion",
+        "Seguimiento Recomendado",
+        "Analisis Detallado Basado En Cuestionarios",
     }
     for raw_line in str(text or "").splitlines():
         line = raw_line.strip().strip("#").strip()
@@ -597,6 +798,12 @@ def _write_ai_text_to_pdf(story, styles, text: str):
         "Recommended Follow Up",
         "Detailed Questionnaire-Based Analysis",
         "Conclusion",
+        "Resumen Ejecutivo",
+        "Hallazgos Operativos",
+        "Analisis De Riesgos Y Prioridades",
+        "Brechas De Evidencia E Informacion",
+        "Seguimiento Recomendado",
+        "Analisis Detallado Basado En Cuestionarios",
     }
     for raw_line in str(text or "").splitlines():
         line = raw_line.strip().strip("#").strip()
