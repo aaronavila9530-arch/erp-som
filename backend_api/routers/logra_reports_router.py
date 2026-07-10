@@ -557,14 +557,6 @@ def _build_logra_ai_word_response(report: dict, answers: list[dict], language: s
         doc.add_paragraph()
         _write_ai_text_to_docx(doc, ai_text)
 
-        doc.add_heading("Questionnaire Evidence Considered", level=1)
-        for item in answers:
-            p = doc.add_paragraph()
-            prefix = f"{item.get('report_title') or item.get('form_title')} - {item.get('item_key')}"
-            p.add_run(f"{prefix}. {item.get('question_text')}").bold = True
-            for bullet in item.get("bullets") or []:
-                doc.add_paragraph(str(bullet), style="List Bullet")
-
         tmp_dir = tempfile.mkdtemp(prefix="ong_ai_report_all_")
         filename = _safe_filename("ONG_Executive_Consolidated_AI_Report.docx")
         path = os.path.join(tmp_dir, filename)
@@ -616,14 +608,6 @@ def _build_logra_ai_pdf_response(report: dict, answers: list[dict], language: st
         ]))
         story.extend([table, Spacer(1, 10)])
         _write_ai_text_to_pdf(story, styles, ai_text)
-
-        story.append(Paragraph("Questionnaire Evidence Considered", styles["OngH"]))
-        for item in answers:
-            prefix = f"{item.get('report_title') or item.get('form_title')} - {item.get('item_key')}"
-            story.append(Paragraph(escape(f"{prefix}. {item.get('question_text')}"), styles["OngBody"]))
-            for bullet in item.get("bullets") or []:
-                story.append(Paragraph(f"&#8226; {escape(str(bullet))}", styles["OngBody"]))
-            story.append(Spacer(1, 3))
 
         doc = SimpleDocTemplate(path, pagesize=letter, rightMargin=0.6 * inch, leftMargin=0.6 * inch, topMargin=0.6 * inch, bottomMargin=0.6 * inch)
         doc.build(story)
@@ -681,13 +665,6 @@ def download_logra_ai_report_word(report_id: int, conn=Depends(get_db)):
         doc.add_paragraph()
         _write_ai_text_to_docx(doc, ai_text)
 
-        doc.add_heading("Questionnaire Evidence Considered", level=1)
-        for item in answers:
-            p = doc.add_paragraph()
-            p.add_run(f"{item.get('form_title')} - {item.get('item_key')}. {item.get('question_text')}").bold = True
-            for bullet in item.get("bullets") or []:
-                doc.add_paragraph(str(bullet), style="List Bullet")
-
         tmp_dir = tempfile.mkdtemp(prefix="ong_ai_report_")
         filename = _safe_filename(f"{report.get('title') or 'ONG_AI_Report'}_AI.docx")
         path = os.path.join(tmp_dir, filename)
@@ -741,13 +718,6 @@ def download_logra_ai_report_pdf(report_id: int, conn=Depends(get_db)):
         ]))
         story.extend([table, Spacer(1, 10)])
         _write_ai_text_to_pdf(story, styles, ai_text)
-
-        story.append(Paragraph("Questionnaire Evidence Considered", styles["OngH"]))
-        for item in answers:
-            story.append(Paragraph(escape(f"{item.get('form_title')} - {item.get('item_key')}. {item.get('question_text')}"), styles["OngBody"]))
-            for bullet in item.get("bullets") or []:
-                story.append(Paragraph(f"&#8226; {escape(str(bullet))}", styles["OngBody"]))
-            story.append(Spacer(1, 3))
 
         doc = SimpleDocTemplate(path, pagesize=letter, rightMargin=0.6 * inch, leftMargin=0.6 * inch, topMargin=0.6 * inch, bottomMargin=0.6 * inch)
         doc.build(story)
