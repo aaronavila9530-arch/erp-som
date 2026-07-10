@@ -145,6 +145,35 @@ def _report_filename(extension: str, report: str | None, period: str | None, per
     return f"accounting_{safe_report}_{scope}.{extension}"
 
 
+@router.get("/periods")
+def get_accounting_periods(conn=Depends(get_db)):
+    """
+    Devuelve solamente los periodos que realmente tienen movimientos contables.
+    Evita mostrar meses futuros o meses sin data en Accounting.
+    """
+    current_period = date.today().strftime("%Y-%m")
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute("""
+        SELECT period, COUNT(*) AS count
+        FROM accounting_entries
+        WHERE period IS NOT NULL
+          AND period ~ '^[0-9]{4}-[0-9]{2}$'
+          AND period >= '2025-01'
+          AND period <= %s
+        GROUP BY period
+        HAVING COUNT(*) > 0
+        ORDER BY period ASC
+    """, (current_period,))
+    rows = cur.fetchall()
+    return {
+        "data": [row["period"] for row in rows],
+        "period_counts": [
+            {"period": row["period"], "count": int(row["count"] or 0)}
+            for row in rows
+        ]
+    }
+
+
 @router.post("/manual-entry")
 def create_manual_entry(payload: dict, conn=Depends(get_db)):
     """

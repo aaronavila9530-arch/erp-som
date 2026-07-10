@@ -199,6 +199,39 @@ def build_monthly_financial_data(conn, year: int, month: int):
           AND due_date BETWEEN %s AND %s
     """, (next_start, next_end))
 
+    next_receivables = _fetch_one(cur, """
+        SELECT
+            COALESCE(SUM(saldo_pendiente), 0) AS total,
+            COUNT(*) AS count
+        FROM collections
+        WHERE saldo_pendiente > 0
+          AND tipo_documento = 'FACTURA'
+          AND fecha_vencimiento BETWEEN %s AND %s
+    """, (next_start, next_end))
+
+    top_next_receivables = _fetch_all(cur, """
+        SELECT nombre_cliente, COALESCE(SUM(saldo_pendiente), 0) AS total
+        FROM collections
+        WHERE saldo_pendiente > 0
+          AND tipo_documento = 'FACTURA'
+          AND fecha_vencimiento BETWEEN %s AND %s
+        GROUP BY nombre_cliente
+        ORDER BY total DESC
+        LIMIT 5
+    """, (next_start, next_end))
+
+    top_next_payables = _fetch_all(cur, """
+        SELECT payee_name AS nombre_cliente, COALESCE(SUM(
+            CASE WHEN currency = 'CRC' THEN balance / 500.0 ELSE balance END
+        ), 0) AS total
+        FROM payment_obligations
+        WHERE status IN ('PENDING','PARTIAL')
+          AND due_date BETWEEN %s AND %s
+        GROUP BY payee_name
+        ORDER BY total DESC
+        LIMIT 5
+    """, (next_start, next_end))
+
     avg_days = _fetch_one(cur, """
         SELECT ROUND(AVG(ca.fecha_pago::date - i.fecha_emision::date), 1) AS days
         FROM cash_app ca
@@ -229,6 +262,9 @@ def build_monthly_financial_data(conn, year: int, month: int):
     itp_total = _f(itp_paid.get("total"))
     ar_total = _f(ar.get("total"))
     net_cash = collections_total - itp_total
+    next_receivables_total = _f(next_receivables.get("total"))
+    next_payables_total = _f(itp_next.get("total"))
+    next_net_outlook = next_receivables_total - next_payables_total
     month_name = calendar.month_name[month]
     prev_month_name = calendar.month_name[prev_start.month]
     next_month_name = calendar.month_name[next_start.month]
@@ -275,8 +311,11 @@ def build_monthly_financial_data(conn, year: int, month: int):
             "ar_count": int(ar.get("count") or 0),
             "itp_paid": itp_total,
             "itp_paid_count": int(itp_paid.get("count") or 0),
-            "next_payables": _f(itp_next.get("total")),
+            "next_receivables": next_receivables_total,
+            "next_receivables_count": int(next_receivables.get("count") or 0),
+            "next_payables": next_payables_total,
             "next_payables_count": int(itp_next.get("count") or 0),
+            "next_net_outlook": next_net_outlook,
             "net_cash": net_cash,
             "avg_days_to_pay": _f(days) if days is not None else None,
         },
@@ -284,6 +323,8 @@ def build_monthly_financial_data(conn, year: int, month: int):
             "top_ar": [dict(r) for r in top_ar],
             "top_collections": [dict(r) for r in top_collections],
             "top_billing": [dict(r) for r in top_billing],
+            "top_next_receivables": [dict(r) for r in top_next_receivables],
+            "top_next_payables": [dict(r) for r in top_next_payables],
         },
         "narrative": {
             "summary": (
@@ -306,15 +347,23 @@ def build_monthly_financial_data(conn, year: int, month: int):
             ),
             "payables": (
                 f"Invoice-to-pay disbursements recorded during the month totaled {_money(itp_total)}. "
-                f"The next month schedule currently shows {_money(_f(itp_next.get('total')))} pending across "
+                f"The next month schedule currently shows {_money(next_payables_total)} pending across "
                 f"{int(itp_next.get('count') or 0)} obligations."
+            ),
+            "outlook": (
+                f"For {next_month_name} {next_start.year}, the current forward view shows "
+                f"{_money(next_receivables_total)} in receivables expected by due date and "
+                f"{_money(next_payables_total)} in scheduled payables. "
+                f"The projected net position is {_money(next_net_outlook)} before new invoices, additional payments, "
+                f"or operational adjustments posted after this report. "
+                f"{'The outlook is positive if collections are executed on schedule.' if next_net_outlook >= 0 else 'The outlook requires active cash planning because scheduled payables exceed currently visible receivables.'}"
             ),
             "conclusion": (
                 f"The financial position for {month_name} {year} should be read around three controls: "
                 f"cash recovered ({_money(collections_total)}), new billing ({_money(revenue_total)}), "
                 f"and open receivables ({_money(ar_total)}). "
                 f"{'The month supports a positive liquidity stance.' if net_cash >= 0 else 'The month requires tighter cash scheduling.'} "
-                f"Management should continue monitoring collections concentration and the next-month payment calendar."
+                f"Management should continue monitoring collections concentration, the next-month receivables plan, and the payment calendar."
             ),
         },
     }
@@ -345,7 +394,7 @@ def generate_monthly_financial_pdf(conn, year: int, month: int):
         Paragraph("Marine Surveyors & Logistics", styles["CoverTitle"]),
         Paragraph(f"Financial Report - {label}", styles["Title"]),
         Spacer(1, 24),
-        Paragraph("Monthly financial performance, collections recovery, invoicing, payables schedule and management conclusions.", styles["Body"]),
+        Paragraph("Monthly financial performance, collections recovery, invoicing, payables schedule, next-month outlook and management conclusions.", styles["Body"]),
         PageBreak(),
     ]
 
@@ -357,6 +406,9 @@ def generate_monthly_financial_pdf(conn, year: int, month: int):
     _append_pdf_section(story, styles, "Invoice & Billing", data["narrative"]["billing"])
     _append_pdf_table(story, "Top Billing Clients", data["tables"]["top_billing"])
     _append_pdf_section(story, styles, "Invoice To Pay", data["narrative"]["payables"])
+    _append_pdf_section(story, styles, "Next Month Outlook", data["narrative"]["outlook"])
+    _append_pdf_table(story, "Expected Receivables - Next Month", data["tables"]["top_next_receivables"])
+    _append_pdf_table(story, "Scheduled Payables - Next Month", data["tables"]["top_next_payables"])
     _append_pdf_table(story, "Open Accounts Receivable", data["tables"]["top_ar"])
     _append_pdf_section(story, styles, "Financial Report Conclusions", data["narrative"]["conclusion"])
 
@@ -384,6 +436,9 @@ def _append_pdf_kpis(story, data):
         ["Open AR", _money(metrics["ar_open"])],
         ["Payments", _money(metrics["itp_paid"])],
         ["Net cash movement", _money(metrics["net_cash"])],
+        ["Next month receivables", _money(metrics["next_receivables"])],
+        ["Next month payables", _money(metrics["next_payables"])],
+        ["Next month net outlook", _money(metrics["next_net_outlook"])],
     ]
     table = Table(rows, colWidths=[260, 160])
     table.setStyle(TableStyle([
@@ -459,7 +514,7 @@ def generate_monthly_financial_docx(conn, year: int, month: int):
     run.bold = True
     run.font.size = Pt(16)
 
-    doc.add_paragraph("Monthly financial performance, collections recovery, invoicing, payables schedule and management conclusions.")
+    doc.add_paragraph("Monthly financial performance, collections recovery, invoicing, payables schedule, next-month outlook and management conclusions.")
     doc.add_page_break()
 
     _docx_section(doc, "Monthly Summary", data["narrative"]["summary"])
@@ -470,6 +525,9 @@ def generate_monthly_financial_docx(conn, year: int, month: int):
     _docx_section(doc, "Invoice & Billing", data["narrative"]["billing"])
     _docx_table(doc, "Top Billing Clients", data["tables"]["top_billing"])
     _docx_section(doc, "Invoice To Pay", data["narrative"]["payables"])
+    _docx_section(doc, "Next Month Outlook", data["narrative"]["outlook"])
+    _docx_table(doc, "Expected Receivables - Next Month", data["tables"]["top_next_receivables"])
+    _docx_table(doc, "Scheduled Payables - Next Month", data["tables"]["top_next_payables"])
     _docx_table(doc, "Open Accounts Receivable", data["tables"]["top_ar"])
     _docx_section(doc, "Financial Report Conclusions", data["narrative"]["conclusion"])
 
@@ -492,6 +550,9 @@ def _docx_kpis(doc, data):
         ("Open AR", _money(metrics["ar_open"])),
         ("Payments", _money(metrics["itp_paid"])),
         ("Net cash movement", _money(metrics["net_cash"])),
+        ("Next month receivables", _money(metrics["next_receivables"])),
+        ("Next month payables", _money(metrics["next_payables"])),
+        ("Next month net outlook", _money(metrics["next_net_outlook"])),
     ]
     table = doc.add_table(rows=1, cols=2)
     table.style = "Table Grid"
