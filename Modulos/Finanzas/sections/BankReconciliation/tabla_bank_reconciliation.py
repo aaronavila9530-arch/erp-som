@@ -5,6 +5,7 @@ from Modulos.Finanzas.sections.BankReconciliation.popups.popup_view_applied impo
 from Modulos.Finanzas.sections.BankReconciliation.popups.popup_registrar_pago_manual import (
     PopupRegistrarPagoManual
 )
+from Modulos.Finanzas.date_utils import to_long_english_date
 from api_client import (
     get_bank_reconciliation_api,
     get_clientes_finanzas_api
@@ -113,6 +114,12 @@ class BankReconciliationUI(tk.Frame):
 
         ttk.Button(
             frm_actions,
+            text="Paid Invoices Report",
+            command=self._open_paid_invoices_report
+        ).pack(side="left", padx=5)
+
+        ttk.Button(
+            frm_actions,
             text="➕ Registrar Pago Manual",
             command=self._on_registrar_pago_manual
         ).pack(side="left", padx=15)
@@ -200,6 +207,18 @@ class BankReconciliationUI(tk.Frame):
     # =========================================================
     # EVENTOS
     # =========================================================
+    def _open_paid_invoices_report(self):
+        popup = tk.Toplevel(self)
+        popup.title("Paid Invoices Report")
+        popup.geometry("1320x760")
+        popup.minsize(1100, 620)
+        popup.transient(self.winfo_toplevel())
+
+        from Modulos.Finanzas.sections.BankReconciliation.paid_invoices_report_ui import (
+            PaidInvoicesReportUI
+        )
+        PaidInvoicesReportUI(popup).pack(fill="both", expand=True)
+
     def _on_search(self):
 
         codigo_cliente = None
@@ -242,7 +261,7 @@ class BankReconciliationUI(tk.Frame):
                     iid=row["id"],
                     values=(
                         row["banco"],
-                        row["fecha_pago"],
+                        to_long_english_date(row["fecha_pago"]),
                         row["nombre_cliente"],
                         row["numero_documento"],
                         row["referencia"],

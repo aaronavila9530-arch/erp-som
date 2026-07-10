@@ -859,6 +859,118 @@ def get_bank_reconciliation_api(
 # CLIENTES — SOLO CÓDIGOS Y NOMBRES (FINANZAS)
 # (usado por combos en pagos manuales)
 # ============================================================
+def get_paid_invoices_report_api(
+    year=None,
+    month=None,
+    date_from=None,
+    date_to=None,
+    cliente=None,
+    page=1,
+    page_size=500
+):
+    params = {
+        "page": page,
+        "page_size": page_size,
+    }
+
+    if year:
+        params["year"] = year
+    if month:
+        params["month"] = month
+    if date_from:
+        params["date_from"] = date_from
+    if date_to:
+        params["date_to"] = date_to
+    if cliente:
+        params["cliente"] = cliente
+
+    try:
+        r = api_request(
+            "GET",
+            f"{BASE_URL}/bank-reconciliation/paid-invoices-report",
+            params=params,
+            timeout=30
+        )
+        r.raise_for_status()
+        return r.json()
+    except Exception as e:
+        return {
+            "page": page,
+            "page_size": page_size,
+            "total": 0,
+            "summary": {},
+            "data": [],
+            "error": str(e)
+        }
+
+
+def download_monthly_financial_report_api(year: int, month: int, fmt: str, save_path: str):
+    endpoint = "word" if str(fmt).lower() in ("word", "docx") else "pdf"
+    try:
+        r = api_request(
+            "GET",
+            f"{BASE_URL}/monthly-financial-report/{endpoint}",
+            params={"year": int(year), "month": int(month)},
+            timeout=90
+        )
+        r.raise_for_status()
+        final_path = _write_report_file_safely(save_path, r.content)
+        return {"status": "ok", "path": final_path}
+    except PermissionError as e:
+        return {"status": "error", "error": f"No se pudo escribir el archivo porque Windows lo tiene bloqueado: {e}"}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+def _write_report_file_safely(save_path: str, content: bytes) -> str:
+    """
+    Escribe reportes evitando que Windows reviente si el archivo elegido esta abierto
+    o bloqueado. Si no puede sobrescribir, crea una copia con sufijo numerico.
+    Si Windows bloquea toda la carpeta elegida, usa Downloads o AppData local.
+    """
+    candidates = []
+    folders = [os.path.dirname(save_path) or "."]
+    user_home = os.path.expanduser("~")
+    downloads = os.path.join(user_home, "Downloads")
+    local_reports = os.path.join(os.getenv("LOCALAPPDATA") or tempfile.gettempdir(), "ERP-SOM", "reports")
+    for folder in (downloads, local_reports, tempfile.gettempdir()):
+        if folder and folder not in folders:
+            folders.append(folder)
+
+    base, ext = os.path.splitext(os.path.basename(save_path))
+    for folder in folders:
+        candidates.append(os.path.join(folder, f"{base}{ext}"))
+        for idx in range(1, 51):
+            candidates.append(os.path.join(folder, f"{base}_{idx}{ext}"))
+
+    last_error = None
+    for candidate in candidates:
+        try:
+            os.makedirs(os.path.dirname(candidate) or ".", exist_ok=True)
+            with open(candidate, "wb") as f:
+                f.write(content)
+            return candidate
+        except (PermissionError, OSError) as exc:
+            last_error = exc
+            continue
+
+    raise PermissionError(last_error or "No se pudo escribir el reporte en ninguna carpeta disponible")
+
+
+def get_accounting_periods_api():
+    try:
+        r = api_request(
+            "GET",
+            f"{BASE_URL}/accounting/periods",
+            timeout=15
+        )
+        r.raise_for_status()
+        return r.json().get("data", [])
+    except Exception as e:
+        print("Error get_accounting_periods_api:", e)
+        return []
+
+
 def get_clientes_finanzas_api():
     try:
         r = api_request(
@@ -1381,6 +1493,27 @@ def get_logra_report_api(report_id: int):
         )
         raise_for_status_with_detail(r)
         return r.json()
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def download_logra_ai_report_api(report_id, fmt: str, save_path: str, language: str = "ES"):
+    endpoint = "word" if str(fmt).lower() in ("word", "docx") else "pdf"
+    if str(report_id).upper() == "ALL":
+        url = f"{BASE_URL}/logra-reports/ai-report/all/{endpoint}"
+    else:
+        url = f"{BASE_URL}/logra-reports/{int(report_id)}/ai-report/{endpoint}"
+    try:
+        r = api_request(
+            "GET",
+            url,
+            params={"language": (language or "ES").upper()},
+            timeout=120
+        )
+        raise_for_status_with_detail(r)
+        with open(save_path, "wb") as f:
+            f.write(r.content)
+        return {"success": True, "path": save_path}
     except Exception as e:
         return {"success": False, "error": str(e)}
 
