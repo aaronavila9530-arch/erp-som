@@ -1,4 +1,6 @@
 import tkinter as tk
+import threading
+import time
 from tkinter import ttk, messagebox
 from datetime import date
 
@@ -53,6 +55,9 @@ class AccountingUI(tk.Frame):
 
         # Estado inicial: periodo único
         self._toggle_period_mode()
+        self._outlook_last_auto_run = 0
+        self._outlook_job_running = False
+        self.after(60000, self._outlook_auto_tick)
 
 
     # ============================================================
@@ -770,6 +775,28 @@ class AccountingUI(tk.Frame):
             font=("Segoe UI", 12, "bold"),
             bg="white"
         ).pack(padx=15, pady=5)
+
+    def _outlook_auto_tick(self):
+        """Importa silenciosamente el siguiente lote cuando Outlook local está habilitado."""
+        try:
+            from Modulos.Finanzas.sections.Accounting.outlook_fiscal_importer import load_config, scan_and_import
+            config = load_config()
+            elapsed = time.time() - self._outlook_last_auto_run
+            if config.get("enabled") and not self._outlook_job_running and elapsed >= int(config.get("interval_minutes", 15)) * 60:
+                self._outlook_job_running = True
+                self._outlook_last_auto_run = time.time()
+                def worker():
+                    try:
+                        scan_and_import(max_messages=int(config.get("batch_size", 50)))
+                    except Exception as exc:
+                        print(f"Outlook fiscal automático: {exc}")
+                    finally:
+                        self._outlook_job_running = False
+                threading.Thread(target=worker, daemon=True).start()
+        except Exception as exc:
+            print(f"Outlook fiscal configuración: {exc}")
+        finally:
+            self.after(60000, self._outlook_auto_tick)
 
 
 

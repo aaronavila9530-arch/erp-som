@@ -59,6 +59,7 @@ hidden_imports += collect_submodules("tkinter")
 # REQUESTS (API HTTP)
 # --------------------------
 hidden_imports += collect_submodules("requests")
+hidden_imports += ["pythoncom", "pywintypes", "win32com", "win32com.client"]
 
 # ============================================================
 # DATAS

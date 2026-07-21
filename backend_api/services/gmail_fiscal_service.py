@@ -20,7 +20,7 @@ from cryptography.fernet import Fernet, InvalidToken
 from psycopg2.extras import Json, RealDictCursor
 
 from database import get_conn, release_conn
-from routers.accounting_tax import _ensure_schema as ensure_tax_schema, _local, _parse_xml, _save_document
+from routers.accounting_tax import _ensure_purchase_obligation, _ensure_schema as ensure_tax_schema, _local, _parse_xml, _save_document
 
 
 GMAIL_API = "https://gmail.googleapis.com/gmail/v1/users/me"
@@ -268,27 +268,6 @@ def _store_path(kind, digest, filename, content):
     path=folder/f"{digest[:12]}_{safe}"; path.write_bytes(content); return str(path)
 
 
-def _ensure_payment_obligation(cur, data, xml_path):
-    reference=data.get("electronic_key") or data.get("document_number")
-    if not reference:
-        return None
-    cur.execute("SELECT id FROM payment_obligations WHERE reference=%s AND active=TRUE ORDER BY id LIMIT 1",(reference,))
-    existing=cur.fetchone()
-    if existing:
-        return existing["id"]
-    issue=(data.get("issue_datetime") or datetime.now()).date()
-    due=issue+timedelta(days=30)
-    is_credit=data.get("document_type") in {"NC","NCE"}
-    total=-(abs(data.get("total") or 0)) if is_credit else data.get("total") or 0
-    cur.execute("""INSERT INTO payment_obligations(record_type,payee_type,payee_name,obligation_type,reference,
-      issue_date,due_date,country,currency,total,balance,status,origin,file_xml,active,notes,created_at,updated_at)
-      VALUES('OBLIGATION','SUPPLIER',%s,%s,%s,%s,%s,'Costa Rica',%s,%s,%s,'PENDING','GMAIL',%s,TRUE,%s,NOW(),NOW()) RETURNING id""",
-                (data.get("issuer_name") or "PROVEEDOR POR VALIDAR","SUPPLIER_CREDIT_NOTE" if is_credit else "SUPPLIER_INVOICE",
-                 reference,issue,due,data.get("currency_code") or "CRC",total,total,xml_path,
-                 f"Importado automáticamente desde {ACCOUNT}"))
-    return cur.fetchone()["id"]
-
-
 def _process_xml(cur, message_db_id, filename, content, gmail_attachment_id):
     digest=hashlib.sha256(content).hexdigest()
     cur.execute("SELECT id,status,tax_document_id FROM gmail_fiscal_attachments WHERE message_id=%s AND content_hash=%s AND filename=%s",
@@ -314,7 +293,7 @@ def _process_xml(cur, message_db_id, filename, content, gmail_attachment_id):
         else:
             path=_store_path("xml",digest,filename,content)
             tax_id=_save_document(cur,"PURCHASE",data,xml_hash=digest,xml_path=path,xml_content=content,source_table="gmail_attachment",source_id=digest,user="GMAIL_AUTOMATION")
-            _ensure_payment_obligation(cur,data,path)
+            _ensure_purchase_obligation(cur,data,path)
             status="IMPORTED"; error=None
     cur.execute("""INSERT INTO gmail_fiscal_attachments(message_id,gmail_attachment_id,filename,mime_type,content_hash,size_bytes,status,tax_document_id,error_detail,stored_path,content)
       VALUES(%s,%s,%s,'application/xml',%s,%s,%s,%s,%s,%s,%s)""",

@@ -40,3 +40,11 @@ No guardar estos valores en Git, capturas, documentos compartidos ni conversacio
 6. Revisar resultados antes de activar la programación automática.
 
 El backend valida que Google haya autorizado exactamente la cuenta configurada. Una cuenta diferente será rechazada.
+
+## Alternativa local con Outlook
+
+Cuando el buzón ya está configurado en Outlook clásico de Windows, ERP-SOM puede importar sin OAuth adicional desde:
+
+`gastos@mslogisticsgroup.com > xml gastos electrónicos`
+
+Esta modalidad no almacena contraseñas. Outlook debe estar configurado en la misma sesión de Windows y el ERP debe permanecer abierto para ejecutar la revisión programada.

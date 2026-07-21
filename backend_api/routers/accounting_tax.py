@@ -275,6 +275,27 @@ def _save_document(cur, direction, data, *, xml_hash=None, xml_path=None, xml_co
     return document_id
 
 
+def _ensure_purchase_obligation(cur, data, xml_path):
+    reference=data.get("electronic_key") or data.get("document_number")
+    if not reference:
+        return None
+    cur.execute("SELECT id FROM payment_obligations WHERE reference=%s AND active=TRUE ORDER BY id LIMIT 1",(reference,))
+    existing=cur.fetchone()
+    if existing:
+        return existing["id"]
+    issue_value=data.get("issue_datetime") or datetime.now()
+    issue=issue_value.date() if hasattr(issue_value,"date") else issue_value
+    due=issue+timedelta(days=30)
+    is_credit=data.get("document_type") in {"NC","NCE"}
+    total=-(abs(data.get("total") or 0)) if is_credit else data.get("total") or 0
+    cur.execute("""INSERT INTO payment_obligations(record_type,payee_type,payee_name,obligation_type,reference,
+      issue_date,due_date,country,currency,total,balance,status,origin,file_xml,active,notes,created_at,updated_at)
+      VALUES('OBLIGATION','SUPPLIER',%s,%s,%s,%s,%s,'Costa Rica',%s,%s,%s,'PENDING','EMAIL',%s,TRUE,%s,NOW(),NOW()) RETURNING id""",
+                (data.get("issuer_name") or "PROVEEDOR POR VALIDAR","SUPPLIER_CREDIT_NOTE" if is_credit else "SUPPLIER_INVOICE",
+                 reference,issue,due,data.get("currency_code") or "CRC",total,total,xml_path,"Importado automáticamente desde correo fiscal"))
+    return cur.fetchone()["id"]
+
+
 @router.post("/sync")
 def sync_tax_documents(conn=Depends(get_db)):
     _ensure_schema(conn)
@@ -347,6 +368,8 @@ async def upload_tax_xml(direction: str = Form(...), user: str = Form("ERP_USER"
                             (digest,data.get("schema_version"),data.get("issuer_identification"),data.get("issuer_name"),data.get("receiver_identification"),data.get("receiver_name"),data.get("economic_activity"),data.get("discount_amount",0),data.get("exempt_amount",0),doc_id))
             else:
                 doc_id=_save_document(cur,direction,data,xml_hash=digest,xml_path=str(path),xml_content=content,source_table="xml_upload",source_id=digest,user=user)
+            if direction=="PURCHASE":
+                _ensure_purchase_obligation(cur,data,str(path))
         conn.commit()
     except HTTPException:
         conn.rollback(); path.unlink(missing_ok=True); raise
@@ -370,6 +393,27 @@ async def upload_hacienda_response(document_id:int,file:UploadFile=File(...),con
                     (status,detail,str(path),content,status,document_id))
         if not cur.fetchone(): path.unlink(missing_ok=True); raise HTTPException(404,"Documento no encontrado")
     conn.commit(); return {"id":document_id,"hacienda_status":status,"message":detail}
+
+
+@router.post("/documents/import-hacienda-response")
+async def import_hacienda_response(file:UploadFile=File(...),conn=Depends(get_db)):
+    _ensure_schema(conn); content=await file.read()
+    try: root=ET.fromstring(content)
+    except ET.ParseError as exc: raise HTTPException(400,f"Respuesta XML inválida: {exc}")
+    if _local(root.tag) not in {"MensajeHacienda","RespuestaHacienda"}:
+        raise HTTPException(400,"El XML no es una respuesta de Hacienda")
+    key=_child_text(root,"Clave"); message=_child_text(root,"Mensaje") or _child_text(root,"IndEstado") or ""
+    detail=_child_text(root,"DetalleMensaje") or _child_text(root,"RespuestaXml") or ""
+    if not key: raise HTTPException(400,"Respuesta de Hacienda sin clave")
+    status={"1":"ACCEPTED","2":"PARTIAL","3":"REJECTED"}.get(str(message),str(message).upper() or "PENDING")
+    digest=hashlib.sha256(content).hexdigest(); folder=Path("storage/tax/responses")/datetime.now().strftime("%Y/%m"); folder.mkdir(parents=True,exist_ok=True)
+    path=folder/f"{digest[:12]}_hacienda.xml"; path.write_bytes(content)
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("SELECT id FROM tax_electronic_documents WHERE electronic_key=%s ORDER BY id DESC LIMIT 1",(key,)); doc=cur.fetchone()
+        if not doc: path.unlink(missing_ok=True); raise HTTPException(404,"No existe un comprobante fiscal con la clave de esta respuesta")
+        cur.execute("""UPDATE tax_electronic_documents SET hacienda_status=%s,hacienda_message=%s,response_xml_path=%s,
+          response_xml_content=%s,status=%s,updated_at=NOW() WHERE id=%s""",(status,detail,str(path),content,status,doc["id"]))
+    conn.commit(); return {"id":doc["id"],"electronic_key":key,"hacienda_status":status}
 
 
 def _period_bounds(period):

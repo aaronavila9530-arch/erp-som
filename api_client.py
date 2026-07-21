@@ -1977,6 +1977,13 @@ def upload_tax_hacienda_response_api(document_id, path):
     return r.json()
 
 
+def upload_tax_response_auto_api(path):
+    with open(path,"rb") as fh:
+        r=api_request("POST",f"{BASE_URL}/accounting/tax/documents/import-hacienda-response",
+                      files={"file":(path.split("\\")[-1],fh,"application/xml")},timeout=90)
+    raise_for_status_with_detail(r); return r.json()
+
+
 def get_tax_obligations_api(year=None):
     r = api_request("GET", f"{BASE_URL}/accounting/tax/obligations",
                     params={"year": year} if year else None, timeout=30)
