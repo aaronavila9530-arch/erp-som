@@ -3917,6 +3917,8 @@ function LograMobileModal({
   onSaved: () => void | Promise<void>;
 }) {
   const [reportId, setReportId] = useState<string | null>(initialReportId);
+  const [reportIdsByForm, setReportIdsByForm] = useState<Record<string, string>>({});
+  const [reportVersionsByForm, setReportVersionsByForm] = useState<Record<string, number>>({});
   const [formTitle, setFormTitle] = useState(ONG_QUESTIONNAIRES[0]?.title || "");
   const [section, setSection] = useState<keyof typeof ONG_SECTION_LABELS>("critical_questions");
   const [search, setSearch] = useState("");
@@ -3972,6 +3974,8 @@ function LograMobileModal({
   useEffect(() => {
     if (!visible) return;
     setReportId(initialReportId);
+    setReportIdsByForm({});
+    setReportVersionsByForm({});
     setFormTitle(ONG_QUESTIONNAIRES[0]?.title || "");
     setPortiaForm(ONG_QUESTIONNAIRES[0]?.title || "");
     setSection("critical_questions");
@@ -4042,10 +4046,16 @@ function LograMobileModal({
       setAgendaNotes(formatValue(report.agenda_notes) === "-" ? "" : formatValue(report.agenda_notes));
       setAttachments((Array.isArray(payload.attachments) ? payload.attachments : []).filter((item) => asRecord(item)) as LograAttachment[]);
       const title = formatValue(report.title);
-      const matched = ONG_QUESTIONNAIRES.find((form) => title.includes(form.title));
+      const answerSlug = rawAnswers.map((entry) => formatValue(asRecord(entry)?.form_slug)).find((value) => value !== "-");
+      const reportSlug = formatValue(report.form_slug);
+      const matched = ONG_QUESTIONNAIRES.find((form) => form.slug === reportSlug || form.slug === answerSlug)
+        || ONG_QUESTIONNAIRES.find((form) => title.includes(form.title));
       if (matched) {
         setFormTitle(matched.title);
         setPortiaForm(matched.title);
+        setReportIdsByForm((current) => ({ ...current, [matched.slug]: id }));
+        const loadedVersion = Number(report.version || 1);
+        setReportVersionsByForm((current) => ({ ...current, [matched.slug]: loadedVersion }));
       }
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "No se pudo cargar ONG.");
@@ -4068,6 +4078,8 @@ function LograMobileModal({
         setSection(formatValue(draft.section) as keyof typeof ONG_SECTION_LABELS);
       }
       if (asRecord(draft.answers)) setAnswers(draft.answers as Record<string, string[]>);
+      if (asRecord(draft.reportIdsByForm)) setReportIdsByForm(draft.reportIdsByForm as Record<string, string>);
+      if (asRecord(draft.reportVersionsByForm)) setReportVersionsByForm(draft.reportVersionsByForm as Record<string, number>);
       if (Array.isArray(draft.agendaItems)) setAgendaItems(draft.agendaItems as LograAgendaItem[]);
       setAgendaNotes(formatValue(draft.agendaNotes) === "-" ? "" : formatValue(draft.agendaNotes));
       setMessage("Borrador local ONG recuperado.");
@@ -4079,6 +4091,13 @@ function LograMobileModal({
   function getBullets(form: LograQuestionnaire, selectedSection: keyof typeof ONG_SECTION_LABELS, item: LograQuestion) {
     const key = lograQuestionKey(form, selectedSection, item);
     return answers[key] || [""];
+  }
+
+  function changeLograForm(nextTitle: string) {
+    const nextForm = ONG_QUESTIONNAIRES.find((item) => item.title === nextTitle);
+    setFormTitle(nextTitle);
+    setPortiaForm(nextTitle);
+    setReportId(nextForm ? reportIdsByForm[nextForm.slug] || null : null);
   }
 
   function setBullet(form: LograQuestionnaire, selectedSection: keyof typeof ONG_SECTION_LABELS, item: LograQuestion, index: number, value: string) {
@@ -4238,9 +4257,11 @@ function LograMobileModal({
   }
 
   function buildLograPayload(targetReportId: string | null = reportId) {
-    return {
+    const formSlug = selectedForm?.slug || "";
+    const payload: Record<string, unknown> = {
       id: targetReportId,
       title: `ONG - ${formTitle || "Cuestionarios"}`,
+      form_slug: formSlug,
       category: "ONG",
       status: "Pending",
       created_by: session.usuario,
@@ -4248,11 +4269,16 @@ function LograMobileModal({
       agenda_notes: "",
       answers: buildAnswersPayload()
     };
+    const expectedVersion = reportVersionsByForm[formSlug];
+    if (expectedVersion !== undefined) payload.expected_version = expectedVersion;
+    return payload;
   }
 
   async function saveLocalOngDraft() {
     const payload = {
       reportId,
+      reportIdsByForm,
+      reportVersionsByForm,
       formTitle,
       section,
       answers,
@@ -4431,6 +4457,15 @@ function LograMobileModal({
         const nextId = formatValue(report?.id);
         if (nextId !== "-") {
           setReportId(nextId);
+          const formSlug = selectedForm?.slug || formatValue(report?.form_slug);
+          if (formSlug && formSlug !== "-") {
+            setReportIdsByForm((current) => ({ ...current, [formSlug]: nextId }));
+            setReportVersionsByForm((current) => ({ ...current, [formSlug]: Number(report?.version || 1) }));
+          }
+          const expectedAnswerCount = buildAnswersPayload().length;
+          if (Number(record?.saved_answer_count || 0) < expectedAnswerCount) {
+            throw new Error("El backend no confirmo todas las respuestas enviadas.");
+          }
           await syncLograAgendaNotifications(agendaItems);
           setMessage("ONG guardado correctamente.");
           if (closeAfterSave) await onSaved();
@@ -4467,8 +4502,19 @@ function LograMobileModal({
       if (!isQueuedOffline(result)) {
         const record = asRecord(result);
         const report = asRecord(record?.report);
+        const expectedAnswerCount = buildAnswersPayload().length;
+        if (Number(record?.saved_answer_count || 0) < expectedAnswerCount) {
+          throw new Error("El backend no confirmo todas las respuestas del autosave.");
+        }
         const nextId = formatValue(report?.id);
-        if (nextId !== "-") setReportId(nextId);
+        if (nextId !== "-") {
+          setReportId(nextId);
+          const formSlug = selectedForm?.slug || formatValue(report?.form_slug);
+          if (formSlug && formSlug !== "-") {
+            setReportIdsByForm((current) => ({ ...current, [formSlug]: nextId }));
+            setReportVersionsByForm((current) => ({ ...current, [formSlug]: Number(report?.version || 1) }));
+          }
+        }
         setMessage(`Autosave ONG ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
       } else {
         setMessage("Sin internet: autosave ONG guardado en cache local.");
@@ -4666,7 +4712,7 @@ function LograMobileModal({
             <Pressable style={styles.secondaryButton} onPress={() => setPortiaOpen(true)}><Text style={styles.secondaryButtonText}>Mejorar con PORTIA</Text></Pressable>
             <Pressable style={styles.actionButton} onPress={() => saveLogra()}><Text style={styles.actionButtonText}>Guardar</Text></Pressable>
           </View>
-          <SelectField label="Formulario" value={formTitle} options={ONG_QUESTIONNAIRES.map((item) => item.title)} onChange={setFormTitle} />
+          <SelectField label="Formulario" value={formTitle} options={ONG_QUESTIONNAIRES.map((item) => item.title)} onChange={changeLograForm} />
           <SelectField label="Seccion" value={section} options={Object.keys(ONG_SECTION_LABELS)} onChange={(value) => setSection(value as keyof typeof ONG_SECTION_LABELS)} />
           <Text style={styles.helperText}>{ONG_SECTION_LABELS[section]} | Apertura: {selectedForm?.critical_questions.length || 0} | Por tema: {selectedForm?.detailed_questions.length || 0} | Total: {(selectedForm?.critical_questions.length || 0) + (selectedForm?.detailed_questions.length || 0)}</Text>
           <Text style={styles.label}>Buscar</Text>

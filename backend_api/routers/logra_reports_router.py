@@ -1,4 +1,5 @@
 from datetime import datetime
+import json
 import os
 import shutil
 import tempfile
@@ -188,6 +189,14 @@ def _ensure_schema(conn):
             ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW()
         """)
         cur.execute("""
+            ALTER TABLE logra_reports
+            ADD COLUMN IF NOT EXISTS form_slug TEXT
+        """)
+        cur.execute("""
+            ALTER TABLE logra_reports
+            ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 1
+        """)
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS logra_answers (
                 id SERIAL PRIMARY KEY,
                 report_id INTEGER NOT NULL REFERENCES logra_reports(id) ON DELETE CASCADE,
@@ -221,6 +230,18 @@ def _ensure_schema(conn):
             ON logra_answers(report_id)
         """)
         cur.execute("""
+            UPDATE logra_reports r
+            SET form_slug = source.form_slug
+            FROM (
+                SELECT report_id, MIN(form_slug) AS form_slug
+                FROM logra_answers
+                GROUP BY report_id
+                HAVING COUNT(DISTINCT form_slug) = 1
+            ) source
+            WHERE r.id = source.report_id
+              AND (r.form_slug IS NULL OR BTRIM(r.form_slug) = '')
+        """)
+        cur.execute("""
             UPDATE logra_answers
             SET form_title = REPLACE(form_title, 'LOGRA', 'ONG')
             WHERE form_title LIKE '%LOGRA%'
@@ -229,6 +250,21 @@ def _ensure_schema(conn):
             CREATE INDEX IF NOT EXISTS idx_logra_attachments_lookup
             ON logra_attachments(report_id, form_slug, section, item_key)
         """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS logra_report_revisions (
+                id BIGSERIAL PRIMARY KEY,
+                report_id INTEGER NOT NULL REFERENCES logra_reports(id) ON DELETE CASCADE,
+                version INTEGER NOT NULL,
+                form_slug TEXT,
+                snapshot JSONB NOT NULL,
+                saved_by TEXT,
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_logra_revisions_report
+            ON logra_report_revisions(report_id, version DESC)
+        """)
     conn.commit()
 
 
@@ -236,6 +272,73 @@ def _safe_filename(filename: str) -> str:
     base = os.path.basename(filename or "attachment")
     safe = "".join(ch if ch.isalnum() or ch in "._- " else "_" for ch in base).strip()
     return safe or "attachment"
+
+
+def _clean_answers(answers, expected_form_slug=""):
+    if not isinstance(answers, list):
+        raise HTTPException(status_code=400, detail="answers must be a list")
+    cleaned = []
+    seen = set()
+    expected_form_slug = str(expected_form_slug or "").strip()
+    for raw in answers:
+        if not isinstance(raw, dict):
+            continue
+        form_slug = str(raw.get("form_slug") or expected_form_slug).strip()
+        section = str(raw.get("section") or "").strip()
+        item_key = str(raw.get("item_key") or "").strip()
+        if not form_slug or not section or not item_key:
+            raise HTTPException(
+                status_code=400,
+                detail="Each answer requires form_slug, section and item_key",
+            )
+        if expected_form_slug and form_slug != expected_form_slug:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Answer form_slug '{form_slug}' does not match report form_slug '{expected_form_slug}'",
+            )
+        key = (form_slug, section, item_key)
+        if key in seen:
+            raise HTTPException(status_code=400, detail=f"Duplicate answer key in payload: {key}")
+        seen.add(key)
+        bullets = raw.get("bullets") or []
+        if not isinstance(bullets, list):
+            bullets = []
+        bullets = [str(value).strip() for value in bullets[:20] if str(value or "").strip()]
+        if not bullets:
+            continue
+        cleaned.append({
+            "form_slug": form_slug,
+            "form_title": (raw.get("form_title") or "").replace("LOGRA", "ONG"),
+            "section": section,
+            "item_key": item_key,
+            "question_text": raw.get("question_text") or "",
+            "bullets": bullets,
+        })
+    return cleaned
+
+
+def _save_revision(cur, report_id, version, form_slug, saved_by):
+    cur.execute("SELECT * FROM logra_reports WHERE id = %s", (report_id,))
+    report = cur.fetchone()
+    cur.execute("""
+        SELECT form_slug, form_title, section, item_key, question_text, bullets, updated_at
+        FROM logra_answers
+        WHERE report_id = %s
+        ORDER BY form_slug, section, item_key
+    """, (report_id,))
+    answers = cur.fetchall()
+    snapshot = {"report": dict(report or {}), "answers": [dict(item) for item in answers]}
+    cur.execute("""
+        INSERT INTO logra_report_revisions (report_id, version, form_slug, snapshot, saved_by, created_at)
+        VALUES (%s, %s, %s, %s, %s, %s)
+    """, (
+        report_id,
+        version,
+        form_slug,
+        Json(snapshot, dumps=lambda value: json.dumps(value, default=str)),
+        saved_by,
+        datetime.utcnow(),
+    ))
 
 
 def _looks_like_test_text(text: str) -> bool:
@@ -373,6 +476,8 @@ def list_logra_reports(conn=Depends(get_db)):
                 r.title,
                 r.category,
                 r.status,
+                r.form_slug,
+                r.version,
                 r.agenda_items,
                 r.agenda_notes,
                 r.created_by,
@@ -827,7 +932,18 @@ def save_logra_report(payload: dict, conn=Depends(get_db)):
     category = (payload.get("category") or "ONG").replace("LOGRA", "ONG")
     status = (payload.get("status") or "Pending").replace("Draft", "Pending")
     created_by = payload.get("created_by")
-    answers = payload.get("answers") or []
+    raw_answers = payload.get("answers") or []
+    payload_form_slug = str(payload.get("form_slug") or "").strip()
+    if not payload_form_slug and isinstance(raw_answers, list):
+        payload_form_slug = next(
+            (str(item.get("form_slug") or "").strip() for item in raw_answers if isinstance(item, dict) and item.get("form_slug")),
+            "",
+        )
+    answers = _clean_answers(raw_answers, payload_form_slug)
+    expected_version = payload.get("expected_version")
+    deleted_answer_keys = payload.get("deleted_answer_keys") or []
+    if not isinstance(deleted_answer_keys, list):
+        raise HTTPException(status_code=400, detail="deleted_answer_keys must be a list")
     agenda_items = payload.get("agenda_items") or []
     agenda_notes = payload.get("agenda_notes") or ""
     if title.strip().lower() != "ong - agenda":
@@ -848,9 +964,41 @@ def save_logra_report(payload: dict, conn=Depends(get_db)):
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             if report_id:
+                cur.execute("SELECT * FROM logra_reports WHERE id = %s FOR UPDATE", (report_id,))
+                existing = cur.fetchone()
+                if not existing:
+                    raise HTTPException(status_code=404, detail="LOGRA report not found")
+                existing_form_slug = str(existing.get("form_slug") or "").strip()
+                if not existing_form_slug:
+                    cur.execute("SELECT DISTINCT form_slug FROM logra_answers WHERE report_id = %s", (report_id,))
+                    existing_slugs = [str(row["form_slug"] or "").strip() for row in cur.fetchall() if row.get("form_slug")]
+                    if len(existing_slugs) == 1:
+                        existing_form_slug = existing_slugs[0]
+                if existing_form_slug and payload_form_slug and existing_form_slug != payload_form_slug:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=(
+                            f"Report {report_id} belongs to '{existing_form_slug}' and cannot be saved as "
+                            f"'{payload_form_slug}'. Create a new report for the selected questionnaire."
+                        ),
+                    )
+                if existing_form_slug and not payload_form_slug:
+                    # Legacy clients inferred the questionnaire only from populated answers.
+                    # With an empty form, keep the original identity/title instead of allowing
+                    # a form-selector change to relabel an unrelated saved report.
+                    title = existing.get("title") or title
+                report_form_slug = existing_form_slug or payload_form_slug
+                if title.strip().lower() != "ong - agenda" and not report_form_slug:
+                    raise HTTPException(status_code=400, detail="form_slug is required for questionnaire reports")
+                if expected_version is not None and int(expected_version) != int(existing.get("version") or 1):
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"Report {report_id} changed on another device. Reload it before saving.",
+                    )
                 cur.execute("""
                     UPDATE logra_reports
                     SET title = %s,
+                        form_slug = %s,
                         category = %s,
                         status = %s,
                         meeting_date = %s,
@@ -861,43 +1009,38 @@ def save_logra_report(payload: dict, conn=Depends(get_db)):
                         meeting_person = %s,
                         agenda_items = %s,
                         agenda_notes = %s,
-                        updated_at = %s
+                        updated_at = %s,
+                        version = COALESCE(version, 1) + 1
                     WHERE id = %s
                     RETURNING *
                 """, (
-                    title, category, status, meeting_date, meeting_time, meeting_start_time, meeting_end_time,
+                    title, report_form_slug, category, status, meeting_date, meeting_time, meeting_start_time, meeting_end_time,
                     meeting_location, meeting_person, Json(agenda_items), agenda_notes,
                     datetime.utcnow(), report_id
                 ))
                 report = cur.fetchone()
-                if not report:
-                    raise HTTPException(status_code=404, detail="LOGRA report not found")
             else:
+                report_form_slug = payload_form_slug
+                if title.strip().lower() != "ong - agenda" and not report_form_slug:
+                    raise HTTPException(status_code=400, detail="form_slug is required for questionnaire reports")
                 cur.execute("""
                     INSERT INTO logra_reports (
-                        title, category, status, meeting_date, meeting_time, meeting_start_time, meeting_end_time,
+                        title, form_slug, category, status, meeting_date, meeting_time, meeting_start_time, meeting_end_time,
                         meeting_location, meeting_person, agenda_items, agenda_notes,
-                        created_by, created_at, updated_at
+                        created_by, created_at, updated_at, version
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 1)
                     RETURNING *
                 """, (
-                    title, category, status, meeting_date, meeting_time, meeting_start_time, meeting_end_time,
+                    title, report_form_slug, category, status, meeting_date, meeting_time, meeting_start_time, meeting_end_time,
                     meeting_location, meeting_person, Json(agenda_items), agenda_notes,
                     created_by, datetime.utcnow(), datetime.utcnow()
                 ))
                 report = cur.fetchone()
                 report_id = report["id"]
 
-            if answers:
-                cur.execute("DELETE FROM logra_answers WHERE report_id = %s", (report_id,))
-
-                for item in answers:
-                    bullets = item.get("bullets") or []
-                    if not isinstance(bullets, list):
-                        bullets = []
-                    bullets = [str(value).strip() for value in bullets[:20] if str(value or "").strip()]
-                    cur.execute("""
+            for item in answers:
+                cur.execute("""
                         INSERT INTO logra_answers (
                             report_id, form_slug, form_title, section, item_key,
                             question_text, bullets, updated_at
@@ -909,19 +1052,47 @@ def save_logra_report(payload: dict, conn=Depends(get_db)):
                             question_text = EXCLUDED.question_text,
                             bullets = EXCLUDED.bullets,
                             updated_at = EXCLUDED.updated_at
-                    """, (
-                        report_id,
-                        item.get("form_slug"),
-                        (item.get("form_title") or "").replace("LOGRA", "ONG"),
-                        item.get("section"),
-                        item.get("item_key"),
-                        item.get("question_text") or "",
-                        Json(bullets),
-                        datetime.utcnow(),
-                    ))
+                """, (
+                    report_id,
+                    item["form_slug"],
+                    item["form_title"],
+                    item["section"],
+                    item["item_key"],
+                    item["question_text"],
+                    Json(item["bullets"]),
+                    datetime.utcnow(),
+                ))
+
+            for key in deleted_answer_keys:
+                if not isinstance(key, dict):
+                    continue
+                delete_slug = str(key.get("form_slug") or report_form_slug or "").strip()
+                delete_section = str(key.get("section") or "").strip()
+                delete_item_key = str(key.get("item_key") or "").strip()
+                if delete_slug != report_form_slug or not delete_section or not delete_item_key:
+                    raise HTTPException(status_code=400, detail="Invalid deleted_answer_keys entry")
+                cur.execute("""
+                    DELETE FROM logra_answers
+                    WHERE report_id = %s AND form_slug = %s AND section = %s AND item_key = %s
+                """, (report_id, delete_slug, delete_section, delete_item_key))
+
+            cur.execute("SELECT COUNT(*) AS count FROM logra_answers WHERE report_id = %s", (report_id,))
+            total_answer_count = cur.fetchone()["count"]
+            _save_revision(
+                cur,
+                report_id,
+                int(report.get("version") or 1),
+                report_form_slug,
+                created_by,
+            )
 
         conn.commit()
-        return {"success": True, "report": report}
+        return {
+            "success": True,
+            "report": report,
+            "saved_answer_count": len(answers),
+            "total_answer_count": total_answer_count,
+        }
 
     except HTTPException:
         conn.rollback()
@@ -955,9 +1126,16 @@ def update_logra_answer(report_id: int, payload: dict, conn=Depends(get_db)):
 
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT id FROM logra_reports WHERE id = %s", (report_id,))
-            if not cur.fetchone():
+            cur.execute("SELECT id, form_slug, version, created_by FROM logra_reports WHERE id = %s FOR UPDATE", (report_id,))
+            report = cur.fetchone()
+            if not report:
                 raise HTTPException(status_code=404, detail="LOGRA report not found")
+            report_form_slug = str(report.get("form_slug") or "").strip()
+            if report_form_slug and report_form_slug != form_slug:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Report {report_id} belongs to '{report_form_slug}', not '{form_slug}'",
+                )
 
             cur.execute("""
                 INSERT INTO logra_answers (
@@ -983,9 +1161,18 @@ def update_logra_answer(report_id: int, payload: dict, conn=Depends(get_db)):
                 datetime.utcnow(),
             ))
             answer = cur.fetchone()
-            cur.execute("UPDATE logra_reports SET updated_at = %s WHERE id = %s", (datetime.utcnow(), report_id))
+            cur.execute("""
+                UPDATE logra_reports
+                SET form_slug = COALESCE(NULLIF(form_slug, ''), %s),
+                    updated_at = %s,
+                    version = COALESCE(version, 1) + 1
+                WHERE id = %s
+                RETURNING version
+            """, (form_slug, datetime.utcnow(), report_id))
+            version = cur.fetchone()["version"]
+            _save_revision(cur, report_id, version, form_slug, report.get("created_by"))
         conn.commit()
-        return {"success": True, "answer": answer}
+        return {"success": True, "answer": answer, "version": version}
     except HTTPException:
         conn.rollback()
         raise

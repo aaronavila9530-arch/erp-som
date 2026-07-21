@@ -43,6 +43,9 @@ class LograQuestionnairesForm(ttk.Frame):
         self.review_mode = review_mode
 
         self.report_id = None
+        self.report_ids_by_form = {}
+        self.report_versions_by_form = {}
+        self.active_form_slug = None
         self.form_var = tk.StringVar()
         self.search_var = tk.StringVar()
         self.section_var = tk.StringVar(value="critical_questions")
@@ -63,6 +66,7 @@ class LograQuestionnairesForm(ttk.Frame):
 
         self.pack(fill="both", expand=True)
         self._build_ui()
+        self.active_form_slug = self._current_form()["slug"]
         self._restore_latest_cache()
         self._start_agenda_alert_monitor()
         self._schedule_autosave()
@@ -255,6 +259,10 @@ class LograQuestionnairesForm(ttk.Frame):
 
     def _on_context_changed(self, event=None):
         self._collect_visible_text()
+        selected_slug = self._current_form()["slug"]
+        if selected_slug != self.active_form_slug:
+            self.active_form_slug = selected_slug
+            self.report_id = self.report_ids_by_form.get(selected_slug)
         self.page_index = 0
         self._render_current_page()
 
@@ -522,15 +530,24 @@ class LograQuestionnairesForm(ttk.Frame):
         return payload
 
     def _report_payload(self):
+        form = self._current_form()
+        form_slug = form["slug"]
+        report_id = self.report_ids_by_form.get(form_slug)
+        self.report_id = report_id
         title = f"ONG - {self.form_var.get() or 'Cuestionarios'}"
-        return {
-            "id": self.report_id,
+        payload = {
+            "id": report_id,
             "title": title,
+            "form_slug": form_slug,
             "created_by": self.usuario or get_user(),
             "agenda_items": [],
             "agenda_notes": "",
             "answers": self._answers_payload(),
         }
+        version = self.report_versions_by_form.get(form_slug)
+        if version is not None:
+            payload["expected_version"] = version
+        return payload
 
     def _cache_payload(self, payload, pending=False):
         payload = dict(payload or {})
@@ -546,21 +563,38 @@ class LograQuestionnairesForm(ttk.Frame):
         try:
             files = sorted(self._cache_dir.glob("*.json"), key=lambda item: item.stat().st_mtime, reverse=True)
             current_user = (self.usuario or get_user() or "").strip().lower()
+            restored_slugs = set()
+            latest_payload = None
             for path in files:
                 payload = json.loads(path.read_text(encoding="utf-8"))
                 if str(payload.get("_usuario") or "").strip().lower() != current_user:
                     continue
-                title = str(payload.get("title") or "").replace("ONG - ", "", 1).strip()
-                if title:
-                    self.form_var.set(title)
-                self.report_id = payload.get("id") or self.report_id
-                self.answers.clear()
+                form_slug = str(payload.get("form_slug") or "").strip()
+                if not form_slug:
+                    answers = payload.get("answers") or []
+                    form_slug = next((str(item.get("form_slug") or "").strip() for item in answers if item.get("form_slug")), "")
+                if not form_slug or form_slug in restored_slugs:
+                    continue
+                form = next((item for item in ONG_QUESTIONNAIRES if item["slug"] == form_slug), None)
+                if not form:
+                    continue
+                restored_slugs.add(form_slug)
+                if payload.get("id"):
+                    self.report_ids_by_form[form_slug] = payload.get("id")
+                if payload.get("expected_version") is not None:
+                    self.report_versions_by_form[form_slug] = payload.get("expected_version")
                 for item in payload.get("answers") or []:
                     key = f"{item.get('form_slug')}|{item.get('section')}|{item.get('item_key')}"
                     bullets = item.get("bullets") or []
                     self.answers[key] = bullets if bullets else [""]
+                if latest_payload is None:
+                    latest_payload = (payload, form)
+            if latest_payload:
+                payload, form = latest_payload
+                self.form_var.set(form["title"])
+                self.active_form_slug = form["slug"]
+                self.report_id = self.report_ids_by_form.get(form["slug"])
                 self._render_current_page()
-                return
         except Exception:
             pass
 
@@ -584,7 +618,17 @@ class LograQuestionnairesForm(ttk.Frame):
         if not resp.get("success"):
             self._cache_payload(payload, pending=True)
             return resp
-        self.report_id = (resp.get("report") or {}).get("id") or self.report_id
+        report = resp.get("report") or {}
+        form_slug = str(report.get("form_slug") or payload.get("form_slug") or "").strip()
+        self.report_id = report.get("id") or self.report_id
+        if form_slug and self.report_id:
+            self.report_ids_by_form[form_slug] = self.report_id
+            self.report_versions_by_form[form_slug] = report.get("version") or self.report_versions_by_form.get(form_slug)
+        expected_count = len(payload.get("answers") or [])
+        if int(resp.get("saved_answer_count") or 0) < expected_count:
+            failure = {"success": False, "error": "Backend did not confirm every submitted answer."}
+            self._cache_payload(payload, pending=True)
+            return failure
         return resp
 
     def _save_report(self, silent=False):
@@ -635,6 +679,14 @@ class LograQuestionnairesForm(ttk.Frame):
                         payload.pop(key, None)
                     resp = api_client.save_logra_report_api(payload)
                     if resp.get("success"):
+                        report = resp.get("report") or {}
+                        form_slug = str(report.get("form_slug") or payload.get("form_slug") or "").strip()
+                        report_id = report.get("id")
+                        if form_slug and report_id:
+                            self.report_ids_by_form[form_slug] = report_id
+                            self.report_versions_by_form[form_slug] = report.get("version") or 1
+                            if form_slug == self.active_form_slug:
+                                self.report_id = report_id
                         path.unlink(missing_ok=True)
                 except Exception:
                     continue
@@ -721,12 +773,27 @@ class LograQuestionnairesForm(ttk.Frame):
             messagebox.showerror("ONG", f"No se pudo abrir el reporte:\n{resp.get('error') or resp}")
             return
 
-        self.report_id = (resp.get("report") or {}).get("id")
         report = resp.get("report") or {}
+        answers = resp.get("answers") or []
+        form_slug = str(report.get("form_slug") or "").strip()
+        if not form_slug:
+            form_slug = next((str(item.get("form_slug") or "").strip() for item in answers if item.get("form_slug")), "")
+        form = next((item for item in ONG_QUESTIONNAIRES if item["slug"] == form_slug), None)
+        if not form:
+            title = str(report.get("title") or "")
+            form = next((item for item in ONG_QUESTIONNAIRES if item["title"] in title), None)
+            form_slug = form["slug"] if form else ""
+        self.report_id = report.get("id")
+        if form_slug and self.report_id:
+            self.report_ids_by_form[form_slug] = self.report_id
+            self.report_versions_by_form[form_slug] = report.get("version") or 1
+        if form:
+            self.form_var.set(form["title"])
+            self.active_form_slug = form_slug
         self.agenda_items = report.get("agenda_items") or []
         self.agenda_notes = report.get("agenda_notes") or ""
         self.answers.clear()
-        for item in resp.get("answers") or []:
+        for item in answers:
             key = f"{item.get('form_slug')}|{item.get('section')}|{item.get('item_key')}"
             bullets = item.get("bullets") or []
             self.answers[key] = bullets if bullets else [""]
