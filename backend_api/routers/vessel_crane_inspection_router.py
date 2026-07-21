@@ -257,6 +257,11 @@ def create_crane_inspection(payload: dict, conn=Depends(get_db)):
             "id": row["id"]
         }
 
+    except HTTPException:
+
+        conn.rollback()
+        raise
+
     except Exception as e:
 
         conn.rollback()
@@ -318,6 +323,11 @@ def update_crane_inspection(report_id: int, payload: dict, conn=Depends(get_db))
         conn.commit()
 
         return {"success": True}
+
+    except HTTPException:
+
+        conn.rollback()
+        raise
 
     except Exception as e:
 
