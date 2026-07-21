@@ -34,6 +34,7 @@ class PopupTaxCenter(tk.Toplevel):
         ttk.Button(top, text="Sincronizar ERP", command=self._sync).pack(side="left", padx=4)
         ttk.Button(top, text="Cargar XML venta", command=lambda: self._upload_xml("SALE")).pack(side="left", padx=4)
         ttk.Button(top, text="Cargar XML compra", command=lambda: self._upload_xml("PURCHASE")).pack(side="left", padx=4)
+        ttk.Button(top, text="Correo fiscal", command=self._open_gmail_inbox).pack(side="left", padx=4)
 
         self.tabs = ttk.Notebook(self)
         self.tabs.pack(fill="both", expand=True, padx=10, pady=(0, 6))
@@ -182,3 +183,7 @@ class PopupTaxCenter(tk.Toplevel):
         if not path:return
         try: upload_tax_hacienda_response_api(int(selected[0]),path); self.refresh_all()
         except Exception as exc: messagebox.showerror("Respuesta Hacienda",str(exc),parent=self)
+
+    def _open_gmail_inbox(self):
+        from Modulos.Finanzas.sections.Accounting.popups.popup_gmail_fiscal import PopupGmailFiscal
+        PopupGmailFiscal(self)

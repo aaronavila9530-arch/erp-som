@@ -70,6 +70,8 @@ def _ensure_schema(conn):
         cur.execute("DROP INDEX IF EXISTS uq_tax_document_key")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_tax_document_key ON tax_electronic_documents(direction,electronic_key) WHERE electronic_key IS NOT NULL")
         cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_tax_document_hash ON tax_electronic_documents(direction,xml_hash) WHERE xml_hash IS NOT NULL")
+        cur.execute("ALTER TABLE tax_electronic_documents ADD COLUMN IF NOT EXISTS xml_content BYTEA")
+        cur.execute("ALTER TABLE tax_electronic_documents ADD COLUMN IF NOT EXISTS response_xml_content BYTEA")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_tax_documents_period ON tax_electronic_documents(direction,issue_datetime)")
         cur.execute("""
             CREATE TABLE IF NOT EXISTS tax_document_lines (
@@ -237,18 +239,19 @@ def _parse_xml(content: bytes) -> dict:
     }
 
 
-def _save_document(cur, direction, data, *, xml_hash=None, xml_path=None, source_table=None, source_id=None, user=None):
+def _save_document(cur, direction, data, *, xml_hash=None, xml_path=None, xml_content=None, source_table=None, source_id=None, user=None):
     cur.execute("""
         INSERT INTO tax_electronic_documents(
           direction,document_type,document_number,electronic_key,xml_hash,schema_version,
           issuer_identification,issuer_name,receiver_identification,receiver_name,economic_activity,
           issue_datetime,currency_code,exchange_rate,subtotal,discount_amount,exempt_amount,tax_amount,total,
-          status,hacienda_status,xml_path,source_table,source_id,metadata,created_by)
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'PENDING','PENDING',%s,%s,%s,%s,%s)
+          status,hacienda_status,xml_path,xml_content,source_table,source_id,metadata,created_by)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'PENDING','PENDING',%s,%s,%s,%s,%s,%s)
         ON CONFLICT(direction,source_table,source_id) DO UPDATE SET
           document_number=EXCLUDED.document_number,electronic_key=COALESCE(EXCLUDED.electronic_key,tax_electronic_documents.electronic_key),
           issue_datetime=EXCLUDED.issue_datetime,currency_code=EXCLUDED.currency_code,subtotal=EXCLUDED.subtotal,
           tax_amount=EXCLUDED.tax_amount,total=EXCLUDED.total,xml_path=COALESCE(EXCLUDED.xml_path,tax_electronic_documents.xml_path),
+          xml_content=COALESCE(EXCLUDED.xml_content,tax_electronic_documents.xml_content),
           updated_at=NOW()
         RETURNING id
     """, (direction,data["document_type"],data.get("document_number"),data.get("electronic_key"),xml_hash,
@@ -256,7 +259,7 @@ def _save_document(cur, direction, data, *, xml_hash=None, xml_path=None, source
            data.get("receiver_identification"),data.get("receiver_name"),data.get("economic_activity"),
            data.get("issue_datetime"),data.get("currency_code") or "CRC",data.get("exchange_rate") or 1,
            data.get("subtotal") or 0,data.get("discount_amount") or 0,data.get("exempt_amount") or 0,
-           data.get("tax_amount") or 0,data.get("total") or 0,xml_path,source_table,str(source_id) if source_id is not None else None,
+           data.get("tax_amount") or 0,data.get("total") or 0,xml_path,xml_content,source_table,str(source_id) if source_id is not None else None,
            Json({"quality_origin": "XML" if xml_hash else "ERP_SYNC"}),user))
     document_id = cur.fetchone()["id"]
     if data.get("lines"):
@@ -338,12 +341,12 @@ async def upload_tax_xml(direction: str = Form(...), user: str = Form("ERP_USER"
             if duplicate and duplicate.get("xml_hash"):
                 raise HTTPException(409,f"Documento duplicado; registro fiscal {duplicate['id']}")
             if duplicate:
-                doc_id=_save_document(cur,direction,data,xml_hash=digest,xml_path=str(path),
+                doc_id=_save_document(cur,direction,data,xml_hash=digest,xml_path=str(path),xml_content=content,
                                       source_table=duplicate["source_table"],source_id=duplicate["source_id"],user=user)
                 cur.execute("UPDATE tax_electronic_documents SET xml_hash=%s,schema_version=%s,issuer_identification=%s,issuer_name=%s,receiver_identification=%s,receiver_name=%s,economic_activity=%s,discount_amount=%s,exempt_amount=%s,updated_at=NOW() WHERE id=%s",
                             (digest,data.get("schema_version"),data.get("issuer_identification"),data.get("issuer_name"),data.get("receiver_identification"),data.get("receiver_name"),data.get("economic_activity"),data.get("discount_amount",0),data.get("exempt_amount",0),doc_id))
             else:
-                doc_id=_save_document(cur,direction,data,xml_hash=digest,xml_path=str(path),source_table="xml_upload",source_id=digest,user=user)
+                doc_id=_save_document(cur,direction,data,xml_hash=digest,xml_path=str(path),xml_content=content,source_table="xml_upload",source_id=digest,user=user)
         conn.commit()
     except HTTPException:
         conn.rollback(); path.unlink(missing_ok=True); raise
@@ -363,8 +366,8 @@ async def upload_hacienda_response(document_id:int,file:UploadFile=File(...),con
     folder=Path("storage/tax/responses")/datetime.now().strftime("%Y/%m"); folder.mkdir(parents=True,exist_ok=True)
     digest=hashlib.sha256(content).hexdigest(); path=folder/f"{document_id}_{digest[:12]}.xml"; path.write_bytes(content)
     with conn.cursor() as cur:
-        cur.execute("UPDATE tax_electronic_documents SET hacienda_status=%s,hacienda_message=%s,response_xml_path=%s,status=%s,updated_at=NOW() WHERE id=%s RETURNING id",
-                    (status,detail,str(path),status,document_id))
+        cur.execute("UPDATE tax_electronic_documents SET hacienda_status=%s,hacienda_message=%s,response_xml_path=%s,response_xml_content=%s,status=%s,updated_at=NOW() WHERE id=%s RETURNING id",
+                    (status,detail,str(path),content,status,document_id))
         if not cur.fetchone(): path.unlink(missing_ok=True); raise HTTPException(404,"Documento no encontrado")
     conn.commit(); return {"id":document_id,"hacienda_status":status,"message":detail}
 

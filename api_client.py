@@ -1990,6 +1990,34 @@ def search_tax_cabys_api(search=""):
     return r.json().get("data", [])
 
 
+def get_gmail_fiscal_status_api():
+    r=api_request("GET",f"{BASE_URL}/accounting/tax/gmail/status",timeout=30)
+    raise_for_status_with_detail(r); return r.json()
+
+
+def start_gmail_fiscal_oauth_api(user):
+    r=api_request("POST",f"{BASE_URL}/accounting/tax/gmail/oauth/start",json={"user":user},timeout=30)
+    raise_for_status_with_detail(r); return r.json()
+
+
+def update_gmail_fiscal_automation_api(enabled,interval_minutes,user):
+    r=api_request("PUT",f"{BASE_URL}/accounting/tax/gmail/automation",
+                  json={"enabled":enabled,"interval_minutes":interval_minutes,"user":user},timeout=30)
+    raise_for_status_with_detail(r); return r.json()
+
+
+def sync_gmail_fiscal_api(user,max_messages=50):
+    r=api_request("POST",f"{BASE_URL}/accounting/tax/gmail/sync",
+                  params={"user":user,"max_messages":max_messages},timeout=180)
+    raise_for_status_with_detail(r); return r.json()
+
+
+def get_gmail_fiscal_messages_api(status=None):
+    params={"status":status} if status else None
+    r=api_request("GET",f"{BASE_URL}/accounting/tax/gmail/messages",params=params,timeout=45)
+    raise_for_status_with_detail(r); return r.json()
+
+
 # ============================================================
 # ESPACIO DE TRABAJO DEL CONTADOR
 # ============================================================
