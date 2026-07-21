@@ -2166,13 +2166,27 @@ def get_exchange_rate_today_api():
     - Si no existe → BCCR → inserta → retorna
     """
 
-    r = api_request(
-        "GET",
-        f"{BASE_URL}/exchange-rate/today",
-        timeout=20
-    )
-    r.raise_for_status()
-    return r.json()
+    try:
+        r = api_request(
+            "GET",
+            f"{BASE_URL}/exchange-rate/today",
+            timeout=20
+        )
+        r.raise_for_status()
+        return r.json()
+    except Exception as today_error:
+        # Accounting no debe quedar inutilizable por una caída temporal del BCCR
+        # o mientras el backend despliega su mecanismo de respaldo.
+        try:
+            latest = get_exchange_rate_latest_api()
+            latest["source"] = "CACHE_FALLBACK"
+            latest["stale"] = True
+            latest["warning"] = (
+                "BCCR no disponible; se utiliza el último tipo de cambio guardado"
+            )
+            return latest
+        except Exception:
+            raise today_error
 
 
 def get_exchange_rate_latest_api():
