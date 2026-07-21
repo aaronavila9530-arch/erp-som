@@ -162,8 +162,32 @@ def get_today_exchange_rate(conn=Depends(get_db)):
             "source": "CACHE"
         }
 
-    # 2) Consultar BCCR
-    rate, rate_date = _fetch_tc_venta_from_bccr()
+    # 2) Consultar BCCR. Si el servicio externo no está disponible, Accounting
+    # debe seguir operativo con el último valor persistido y su fecha real.
+    try:
+        rate, rate_date = _fetch_tc_venta_from_bccr()
+    except Exception as bccr_error:
+        conn.rollback()
+        cur.execute("""
+            SELECT rate, rate_date, source
+            FROM exchange_rate
+            ORDER BY rate_date DESC
+            LIMIT 1
+        """)
+        fallback = cur.fetchone()
+        if fallback:
+            fallback_date = fallback["rate_date"]
+            return {
+                "rate": float(fallback["rate"]),
+                "date": fallback_date.isoformat(),
+                "source": "CACHE_FALLBACK",
+                "stale": fallback_date != today,
+                "warning": "BCCR no disponible; se utiliza el último tipo de cambio guardado"
+            }
+        raise HTTPException(
+            status_code=503,
+            detail="BCCR no disponible y no existe un tipo de cambio guardado"
+        ) from bccr_error
 
     # 3) Guardar en BD (sin depender de UNIQUE; si existe, mejor)
     try:
@@ -201,7 +225,8 @@ def get_today_exchange_rate(conn=Depends(get_db)):
     return {
         "rate": float(rate),
         "date": rate_date.isoformat(),
-        "source": "BCCR"
+        "source": "BCCR",
+        "stale": rate_date != today
     }
 
 
