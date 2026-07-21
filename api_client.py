@@ -1861,6 +1861,74 @@ def transition_accounting_entry_api(entry_id, action, user, reason=None):
     return r.json()
 
 
+def sync_accounting_auxiliaries_api():
+    r = api_request("POST", f"{BASE_URL}/accounting/auxiliaries/sync", timeout=180)
+    r.raise_for_status()
+    return r.json()
+
+
+def get_accounting_auxiliary_entities_api(entity_type=None, search=None):
+    params = {}
+    if entity_type: params["entity_type"] = entity_type
+    if search: params["search"] = search
+    r = api_request("GET", f"{BASE_URL}/accounting/auxiliaries/entities", params=params, timeout=30)
+    r.raise_for_status()
+    return r.json().get("data", [])
+
+
+def create_accounting_auxiliary_entity_api(payload):
+    r = api_request("POST", f"{BASE_URL}/accounting/auxiliaries/entities", json=payload, timeout=20)
+    r.raise_for_status()
+    return r.json()
+
+
+def get_accounting_auxiliary_documents_api(entity_id):
+    r = api_request("GET", f"{BASE_URL}/accounting/auxiliaries/entities/{entity_id}/documents", timeout=30)
+    r.raise_for_status()
+    return r.json().get("data", [])
+
+
+def create_accounting_auxiliary_document_api(entity_id, payload):
+    r = api_request("POST", f"{BASE_URL}/accounting/auxiliaries/entities/{entity_id}/documents", json=payload, timeout=20)
+    r.raise_for_status()
+    return r.json()
+
+
+def apply_accounting_auxiliary_transaction_api(document_id, payload):
+    r = api_request("POST", f"{BASE_URL}/accounting/auxiliaries/documents/{document_id}/transactions",
+                    json=payload, timeout=20)
+    r.raise_for_status()
+    return r.json()
+
+
+def get_accounting_auxiliary_aging_api(entity_type, as_of=None):
+    params = {"entity_type": entity_type}
+    if as_of: params["as_of"] = as_of
+    r = api_request("GET", f"{BASE_URL}/accounting/auxiliaries/aging", params=params, timeout=30)
+    r.raise_for_status()
+    return r.json().get("data", [])
+
+
+def get_accounting_auxiliary_reconciliation_api(period=None):
+    params = {"period": period} if period else None
+    r = api_request("GET", f"{BASE_URL}/accounting/auxiliaries/reconciliation", params=params, timeout=30)
+    r.raise_for_status()
+    return r.json().get("data", [])
+
+
+def get_accounting_auxiliary_settings_api():
+    r = api_request("GET", f"{BASE_URL}/accounting/auxiliaries/settings", timeout=20)
+    r.raise_for_status()
+    return r.json().get("data", [])
+
+
+def update_accounting_auxiliary_setting_api(entity_type, account_code, user):
+    r = api_request("PUT", f"{BASE_URL}/accounting/auxiliaries/settings/{entity_type}",
+                    json={"control_account_code": account_code, "user": user}, timeout=20)
+    r.raise_for_status()
+    return r.json()
+
+
 # ============================================================
 # ACCOUNTING - GET ENTRY FOR EDIT
 # ============================================================

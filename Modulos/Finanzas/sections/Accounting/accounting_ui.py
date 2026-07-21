@@ -213,6 +213,11 @@ class AccountingUI(tk.Frame):
             command=self._open_chart_of_accounts
         )
 
+        actions_menu.add_command(
+            label="Auxiliares contables",
+            command=self._open_auxiliaries
+        )
+
 
         actions_menu.add_command(
             label="✏️ Ajustar asiento",
@@ -634,6 +639,13 @@ class AccountingUI(tk.Frame):
             PopupChartOfAccounts(self)
         except Exception as exc:
             messagebox.showerror("Catálogo contable", str(exc))
+
+    def _open_auxiliaries(self):
+        try:
+            from Modulos.Finanzas.sections.Accounting.popups.popup_auxiliaries import PopupAccountingAuxiliaries
+            PopupAccountingAuxiliaries(self, period=self.cmb_period.get() or None)
+        except Exception as exc:
+            messagebox.showerror("Auxiliares contables", str(exc))
 
 
     def _adjust_selected_entry(self):
