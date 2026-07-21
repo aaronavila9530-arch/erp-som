@@ -4,8 +4,11 @@ import csv
 
 from api_client import (
     get_accounting_ledger_api,
-    post_accounting_reverse_entry_api
+    post_accounting_reverse_entry_api,
+    transition_accounting_entry_api,
 )
+from session_context import get_user
+from Modulos.Finanzas.date_utils import to_long_english_date
 
 PAGE_SIZE = 150  # líneas por página
 
@@ -36,7 +39,7 @@ class AccountingTable(tk.Frame):
     # ============================================================
     def _build_ui(self):
 
-        columns = ("date", "entry", "account", "detail", "debit", "credit")
+        columns = ("date", "entry", "status", "account", "detail", "debit", "credit")
 
         self.tree = ttk.Treeview(
             self,
@@ -48,6 +51,7 @@ class AccountingTable(tk.Frame):
         headers = {
             "date": "Fecha",
             "entry": "Asiento",
+            "status": "Estado",
             "account": "Cuenta contable",
             "detail": "Detalle",
             "debit": "Debe",
@@ -57,6 +61,7 @@ class AccountingTable(tk.Frame):
         widths = {
             "date": 90,
             "entry": 90,
+            "status": 105,
             "account": 260,
             "detail": 340,
             "debit": 110,
@@ -101,6 +106,9 @@ class AccountingTable(tk.Frame):
         )
         self.menu.add_separator()
         self.menu.add_command(label="✏️ Ajustar asiento", command=self._edit_entry)
+        self.menu.add_command(label="📨 Enviar a revisión", command=lambda: self._transition_entry("submit"))
+        self.menu.add_command(label="✅ Aprobar", command=lambda: self._transition_entry("approve"))
+        self.menu.add_command(label="📘 Contabilizar", command=lambda: self._transition_entry("post"))
         self.menu.add_command(label="🔁 Reversar asiento", command=self._reverse_entry)
         self.menu.add_separator()
         self.menu.add_command(label="📄 Exportar CSV", command=self.export_csv)
@@ -122,7 +130,7 @@ class AccountingTable(tk.Frame):
     # ============================================================
     # DATA LOAD
     # ============================================================
-    def load_from_api(self, period=None, origin=None, account_code=None):
+    def load_from_api(self, period=None, period_from=None, period_to=None, origin=None, account_code=None):
 
         self.all_rows.clear()
         self.current_page = 1
@@ -131,6 +139,8 @@ class AccountingTable(tk.Frame):
 
         entries = get_accounting_ledger_api(
             period=period,
+            period_from=period_from,
+            period_to=period_to,
             origin=origin,
             account_code=account_code
         )
@@ -144,7 +154,8 @@ class AccountingTable(tk.Frame):
 
         for entry in entries:
             entry_id = entry.get("entry_id")
-            entry_date = entry.get("entry_date")
+            entry_date = to_long_english_date(entry.get("entry_date"))
+            workflow_status = entry.get("workflow_status") or "POSTED"
 
             debit_lines = []
             credit_lines = []
@@ -157,6 +168,7 @@ class AccountingTable(tk.Frame):
                     "values": (
                         entry_date,
                         entry_id,
+                        workflow_status,
                         f"{line.get('account_code')} {line.get('account_name')}".strip(),
                         line.get("line_description") or "",
                         f"{debit:,.2f}" if debit else "",
@@ -171,6 +183,8 @@ class AccountingTable(tk.Frame):
                     debit_lines.append(row)
                 elif credit:
                     credit_lines.append(row)
+                self.total_debit += debit
+                self.total_credit += credit
 
             # 1️⃣ DEBE
             self.all_rows.extend(debit_lines)
@@ -180,13 +194,13 @@ class AccountingTable(tk.Frame):
             # Separador visual solo si hubo líneas
             if debit_lines or credit_lines:
                 self.all_rows.append({
-                    "values": ("", "", "────────────", "", "", ""),
+                    "values": ("", "", "", "────────────", "", "", ""),
                     "debit": 0,
                     "credit": 0,
                     "tag": "separator"
                 })
 
-        self.total_pages = max(1, (len(self.all_rows) // PAGE_SIZE) + 1)
+        self.total_pages = max(1, (len(self.all_rows) + PAGE_SIZE - 1) // PAGE_SIZE)
         self._render_page()
 
     # ============================================================
@@ -195,16 +209,11 @@ class AccountingTable(tk.Frame):
     def _render_page(self):
 
         self.tree.delete(*self.tree.get_children())
-        self.total_debit = 0.0
-        self.total_credit = 0.0
-
         start = (self.current_page - 1) * PAGE_SIZE
         end = start + PAGE_SIZE
 
         for row in self.all_rows[start:end]:
             self.tree.insert("", "end", values=row["values"], tags=(row["tag"],))
-            self.total_debit += row["debit"]
-            self.total_credit += row["credit"]
 
         self.lbl_page.config(
             text=f"Página {self.current_page} / {self.total_pages}"
@@ -246,13 +255,40 @@ class AccountingTable(tk.Frame):
     # ============================================================
     # AJUSTES / REVERSOS
     # ============================================================
+    def _selected_entry(self):
+        item = self.tree.focus()
+        if not item:
+            return None, None
+        values = self.tree.item(item, "values")
+        if not values or values[3] == "────────────":
+            return None, None
+        try:
+            return int(values[1]), values[2]
+        except Exception:
+            return None, None
+
+    def _transition_entry(self, action):
+        entry_id, current_status = self._selected_entry()
+        if not entry_id:
+            messagebox.showwarning("Accounting", "Seleccione una línea del asiento.")
+            return
+        labels = {"submit": "enviar a revisión", "approve": "aprobar", "post": "contabilizar"}
+        if not messagebox.askyesno("Flujo contable", f"¿Desea {labels[action]} el asiento {entry_id}?"):
+            return
+        try:
+            transition_accounting_entry_api(entry_id, action, get_user() or "unknown")
+            messagebox.showinfo("Accounting", f"Asiento {entry_id} actualizado correctamente.")
+            self.event_generate("<<ReloadAccounting>>")
+        except Exception as exc:
+            messagebox.showerror("Accounting", str(exc))
+
     def _edit_entry(self):
         item = self.tree.focus()
         if not item:
             return
 
         values = self.tree.item(item, "values")
-        if not values or values[2] == "────────────":
+        if not values or values[3] == "────────────":
             return
 
         try:
@@ -298,9 +334,9 @@ class AccountingTable(tk.Frame):
 
         with open(path, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
-            writer.writerow(["Fecha", "Asiento", "Cuenta", "Detalle", "Debe", "Haber"])
+            writer.writerow(["Fecha", "Asiento", "Estado", "Cuenta", "Detalle", "Debe", "Haber"])
             for row in self.all_rows:
-                if row["values"][2] != "────────────":
+                if row["values"][3] != "────────────":
                     writer.writerow(row["values"])
 
         messagebox.showinfo("Exportar CSV", "Archivo generado.")
@@ -314,10 +350,10 @@ class AccountingTable(tk.Frame):
 
         wb = Workbook()
         ws = wb.active
-        ws.append(["Fecha", "Asiento", "Cuenta", "Detalle", "Debe", "Haber"])
+        ws.append(["Fecha", "Asiento", "Estado", "Cuenta", "Detalle", "Debe", "Haber"])
 
         for row in self.all_rows:
-            if row["values"][2] != "────────────":
+            if row["values"][3] != "────────────":
                 ws.append(row["values"])
 
         wb.save(path)

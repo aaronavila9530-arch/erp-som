@@ -5,8 +5,9 @@ from fastapi import (
     Header
 )
 from fastapi.responses import FileResponse
-from psycopg2.extras import RealDictCursor
-from datetime import date
+from psycopg2.extras import Json, RealDictCursor
+from datetime import date, datetime
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 import os
 import tempfile
 
@@ -25,6 +26,146 @@ router = APIRouter(
     prefix="/accounting",
     tags=["Accounting"]
 )
+
+MONEY_QUANT = Decimal("0.01")
+ENTRY_STATUSES = {"DRAFT", "IN_REVIEW", "APPROVED", "POSTED", "REVERSED"}
+
+
+def _money(value, field="amount"):
+    try:
+        result = Decimal(str(value or 0)).quantize(MONEY_QUANT, rounding=ROUND_HALF_UP)
+    except (InvalidOperation, ValueError, TypeError):
+        raise HTTPException(status_code=400, detail=f"Invalid {field}")
+    if result < 0:
+        raise HTTPException(status_code=400, detail=f"{field} cannot be negative")
+    return result
+
+
+def _ensure_accounting_professional_schema(conn):
+    """Idempotent, additive migration for the professional accounting foundation."""
+    with conn.cursor() as cur:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS accounting_accounts (
+                id BIGSERIAL PRIMARY KEY,
+                account_code VARCHAR(50) NOT NULL UNIQUE,
+                account_name TEXT NOT NULL,
+                account_type VARCHAR(30) NOT NULL,
+                normal_balance VARCHAR(10) NOT NULL DEFAULT 'DEBIT',
+                account_level INTEGER NOT NULL DEFAULT 1,
+                parent_account VARCHAR(50),
+                accepts_posting BOOLEAN NOT NULL DEFAULT TRUE,
+                requires_third_party BOOLEAN NOT NULL DEFAULT FALSE,
+                requires_cost_center BOOLEAN NOT NULL DEFAULT FALSE,
+                currency_code VARCHAR(3),
+                financial_statement_line TEXT,
+                tax_mapping TEXT,
+                active BOOLEAN NOT NULL DEFAULT TRUE,
+                created_by TEXT,
+                created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                updated_by TEXT,
+                updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            INSERT INTO accounting_accounts (
+                account_code, account_name, account_type, account_level,
+                parent_account, normal_balance, active
+            )
+            SELECT DISTINCT ON (account_code)
+                account_code, account_name,
+                COALESCE(NULLIF(account_type, ''), 'UNCLASSIFIED'),
+                COALESCE(account_level, 1), parent_account,
+                CASE WHEN COALESCE(account_type, '') IN ('PASIVO','PATRIMONIO','INGRESO','REVENUE','LIABILITY','EQUITY')
+                     THEN 'CREDIT' ELSE 'DEBIT' END,
+                COALESCE(active, TRUE)
+            FROM accounting_ledger
+            WHERE account_code IS NOT NULL AND BTRIM(account_code) <> ''
+            ON CONFLICT (account_code) DO NOTHING
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS accounting_period_controls (
+                id BIGSERIAL PRIMARY KEY,
+                company_code VARCHAR(30) NOT NULL DEFAULT 'MSL-CR',
+                period VARCHAR(7) NOT NULL,
+                status VARCHAR(20) NOT NULL DEFAULT 'OPEN',
+                closed_by TEXT,
+                closed_at TIMESTAMP,
+                reopened_by TEXT,
+                reopened_at TIMESTAMP,
+                reopen_reason TEXT,
+                updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                UNIQUE(company_code, period),
+                CHECK (status IN ('OPEN','SOFT_CLOSED','CLOSED'))
+            )
+        """)
+        for statement in (
+            "ALTER TABLE accounting_entries ADD COLUMN IF NOT EXISTS workflow_status VARCHAR(20) NOT NULL DEFAULT 'POSTED'",
+            "ALTER TABLE accounting_entries ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 1",
+            "ALTER TABLE accounting_entries ADD COLUMN IF NOT EXISTS company_code VARCHAR(30) NOT NULL DEFAULT 'MSL-CR'",
+            "ALTER TABLE accounting_entries ADD COLUMN IF NOT EXISTS currency_code VARCHAR(3) NOT NULL DEFAULT 'CRC'",
+            "ALTER TABLE accounting_entries ADD COLUMN IF NOT EXISTS exchange_rate NUMERIC(18,6) NOT NULL DEFAULT 1",
+            "ALTER TABLE accounting_entries ADD COLUMN IF NOT EXISTS submitted_by TEXT",
+            "ALTER TABLE accounting_entries ADD COLUMN IF NOT EXISTS submitted_at TIMESTAMP",
+            "ALTER TABLE accounting_entries ADD COLUMN IF NOT EXISTS approved_by TEXT",
+            "ALTER TABLE accounting_entries ADD COLUMN IF NOT EXISTS approved_at TIMESTAMP",
+            "ALTER TABLE accounting_entries ADD COLUMN IF NOT EXISTS posted_by TEXT",
+            "ALTER TABLE accounting_entries ADD COLUMN IF NOT EXISTS posted_at TIMESTAMP",
+            "ALTER TABLE accounting_entries ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP NOT NULL DEFAULT NOW()",
+            "ALTER TABLE accounting_lines ADD COLUMN IF NOT EXISTS third_party_type VARCHAR(30)",
+            "ALTER TABLE accounting_lines ADD COLUMN IF NOT EXISTS third_party_id TEXT",
+            "ALTER TABLE accounting_lines ADD COLUMN IF NOT EXISTS cost_center_code VARCHAR(50)",
+            "ALTER TABLE accounting_lines ADD COLUMN IF NOT EXISTS project_code VARCHAR(50)",
+            "ALTER TABLE accounting_lines ADD COLUMN IF NOT EXISTS vessel_code VARCHAR(100)",
+        ):
+            cur.execute(statement)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS accounting_audit_log (
+                id BIGSERIAL PRIMARY KEY,
+                entry_id INTEGER REFERENCES accounting_entries(id) ON DELETE SET NULL,
+                action VARCHAR(40) NOT NULL,
+                previous_status VARCHAR(20),
+                new_status VARCHAR(20),
+                performed_by TEXT,
+                reason TEXT,
+                snapshot JSONB,
+                created_at TIMESTAMP NOT NULL DEFAULT NOW()
+            )
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_accounting_audit_entry ON accounting_audit_log(entry_id, created_at DESC)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_accounting_entries_workflow ON accounting_entries(period, workflow_status)")
+    conn.commit()
+
+
+def _assert_period_open(cur, period, company_code="MSL-CR"):
+    cur.execute("""
+        SELECT status FROM accounting_period_controls
+        WHERE company_code = %s AND period = %s
+    """, (company_code, period))
+    row = cur.fetchone()
+    if row and row.get("status") == "CLOSED":
+        raise HTTPException(status_code=409, detail=f"Accounting period {period} is closed")
+    fiscal_year, fiscal_month = (int(value) for value in period.split("-"))
+    cur.execute("""
+        SELECT period_closed FROM closing_status
+        WHERE company_code = %s AND fiscal_year = %s AND period = %s
+          AND ledger = '0L'
+    """, (company_code, fiscal_year, fiscal_month))
+    legacy_close = cur.fetchone()
+    if legacy_close and legacy_close.get("period_closed"):
+        raise HTTPException(status_code=409, detail=f"Accounting period {period} is closed")
+
+
+def _audit(cur, entry_id, action, user, previous_status=None, new_status=None, reason=None):
+    cur.execute("SELECT * FROM accounting_entries WHERE id = %s", (entry_id,))
+    entry = cur.fetchone()
+    cur.execute("SELECT * FROM accounting_lines WHERE entry_id = %s ORDER BY id", (entry_id,))
+    lines = cur.fetchall()
+    snapshot = {"entry": dict(entry or {}), "lines": [dict(line) for line in lines]}
+    cur.execute("""
+        INSERT INTO accounting_audit_log
+            (entry_id, action, previous_status, new_status, performed_by, reason, snapshot)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+    """, (entry_id, action, previous_status, new_status, user, reason, Json(snapshot, dumps=lambda v: __import__('json').dumps(v, default=str))))
 
 # ============================================================
 # RBAC GUARD
@@ -91,8 +232,9 @@ def _fetch_accounting_report_lines(
     origin: str | None = None,
     account_code: str | None = None
 ):
+    _ensure_accounting_professional_schema(conn)
     cur = conn.cursor(cursor_factory=RealDictCursor)
-    conditions = []
+    conditions = ["e.workflow_status = 'POSTED'"]
     params = []
 
     if period:
@@ -187,55 +329,81 @@ def create_manual_entry(payload: dict, conn=Depends(get_db)):
     }
     """
 
+    _ensure_accounting_professional_schema(conn)
     lines = payload.get("lines", [])
     if not lines:
         raise HTTPException(400, "No accounting lines provided")
 
-    total_debit = sum(l.get("debit", 0) for l in lines)
-    total_credit = sum(l.get("credit", 0) for l in lines)
+    total_debit = sum((_money(l.get("debit"), "debit") for l in lines), Decimal("0"))
+    total_credit = sum((_money(l.get("credit"), "credit") for l in lines), Decimal("0"))
 
-    if round(total_debit, 2) != round(total_credit, 2):
+    if total_debit != total_credit or total_debit == 0:
         raise HTTPException(400, "Entry does not balance")
 
     entry_date = date.fromisoformat(payload["entry_date"])
     period = entry_date.strftime("%Y-%m")
 
-    cur = conn.cursor(cursor_factory=RealDictCursor)
+    created_by = str(payload.get("created_by") or "unknown").strip()
+    company_code = str(payload.get("company_code") or "MSL-CR").strip()
+    currency_code = str(payload.get("currency_code") or "CRC").strip().upper()
+    exchange_rate = Decimal(str(payload.get("exchange_rate") or 1))
+    if exchange_rate <= 0:
+        raise HTTPException(400, "exchange_rate must be greater than zero")
 
-    cur.execute("""
-        INSERT INTO accounting_entries
-        (entry_date, period, description, origin)
-        VALUES (%s, %s, %s, 'MANUAL')
-        RETURNING id
-    """, (
-        entry_date,
-        period,
-        payload.get("description")
-    ))
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        _assert_period_open(cur, period, company_code)
+        validated = []
+        for line in lines:
+            debit = _money(line.get("debit"), "debit")
+            credit = _money(line.get("credit"), "credit")
+            if (debit > 0) == (credit > 0):
+                raise HTTPException(400, "Each line must contain debit or credit, but not both")
+            cur.execute("""
+                SELECT * FROM accounting_accounts
+                WHERE account_code = %s AND active = TRUE AND accepts_posting = TRUE
+            """, (line.get("account_code"),))
+            account = cur.fetchone()
+            if not account:
+                raise HTTPException(400, f"Invalid or non-postable account: {line.get('account_code')}")
+            if account.get("requires_third_party") and not line.get("third_party_id"):
+                raise HTTPException(400, f"Account {account['account_code']} requires a third party")
+            if account.get("requires_cost_center") and not line.get("cost_center_code"):
+                raise HTTPException(400, f"Account {account['account_code']} requires a cost center")
+            validated.append((line, account, debit, credit))
 
-    entry_id = cur.fetchone()["id"]
-
-    for l in lines:
         cur.execute("""
-            INSERT INTO accounting_lines
-            (entry_id, account_code, account_name, debit, credit, line_description)
-            VALUES (%s, %s, %s, %s, %s, %s)
-        """, (
-            entry_id,
-            l["account_code"],
-            l["account_name"],
-            l.get("debit", 0),
-            l.get("credit", 0),
-            l.get("line_description")
-        ))
-
-    conn.commit()
-    return {"status": "ok", "entry_id": entry_id}
+            INSERT INTO accounting_entries (
+                entry_date, period, description, origin, created_by,
+                workflow_status, company_code, currency_code, exchange_rate
+            ) VALUES (%s, %s, %s, 'MANUAL', %s, 'DRAFT', %s, %s, %s)
+            RETURNING id, workflow_status, version
+        """, (entry_date, period, payload.get("description"), created_by, company_code, currency_code, exchange_rate))
+        entry = cur.fetchone()
+        for line, account, debit, credit in validated:
+            cur.execute("""
+                INSERT INTO accounting_lines (
+                    entry_id, account_code, account_name, debit, credit, line_description,
+                    third_party_type, third_party_id, cost_center_code, project_code, vessel_code
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (entry["id"], account["account_code"], account["account_name"], debit, credit,
+                  line.get("line_description"), line.get("third_party_type"), line.get("third_party_id"),
+                  line.get("cost_center_code"), line.get("project_code"), line.get("vessel_code")))
+        _audit(cur, entry["id"], "CREATE_DRAFT", created_by, None, "DRAFT")
+        conn.commit()
+        return {"status": "ok", "entry_id": entry["id"], "workflow_status": "DRAFT", "version": entry["version"]}
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception:
+        conn.rollback()
+        raise
 
 
 
 @router.post("/reverse/{entry_id}")
 def reverse_entry(entry_id: int, conn=Depends(get_db)):
+    _ensure_accounting_professional_schema(conn)
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     # 1️⃣ Validar asiento original
@@ -244,6 +412,7 @@ def reverse_entry(entry_id: int, conn=Depends(get_db)):
         FROM accounting_entries
         WHERE id = %s
           AND COALESCE(reversed, FALSE) = FALSE
+          AND workflow_status = 'POSTED'
     """, (entry_id,))
     entry = cur.fetchone()
 
@@ -254,6 +423,8 @@ def reverse_entry(entry_id: int, conn=Depends(get_db)):
         )
 
     # 2️⃣ Traer líneas originales
+    _assert_period_open(cur, entry["period"], entry.get("company_code") or "MSL-CR")
+
     cur.execute("""
         SELECT *
         FROM accounting_lines
@@ -296,9 +467,15 @@ def reverse_entry(entry_id: int, conn=Depends(get_db)):
     cur.execute("""
         UPDATE accounting_entries
         SET reversed = TRUE,
-            reversal_entry_id = %s
+            reversal_entry_id = %s,
+            workflow_status = 'REVERSED',
+            version = version + 1,
+            updated_at = NOW()
         WHERE id = %s
     """, (reversal_id, entry_id))
+
+    _audit(cur, entry_id, "REVERSE", entry.get("created_by") or "unknown", "POSTED", "REVERSED")
+    _audit(cur, reversal_id, "CREATE_REVERSAL", entry.get("created_by") or "unknown", None, "POSTED")
 
     conn.commit()
 
@@ -321,17 +498,26 @@ def get_accounting_accounts(conn=Depends(get_db)):
     para uso en combobox (UI / Popup de ajustes)
     """
 
+    _ensure_accounting_professional_schema(conn)
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     query = """
-        SELECT DISTINCT
+        SELECT
             account_code,
             account_name,
             account_type,
             account_level,
-            parent_account
-        FROM accounting_ledger
-        WHERE account_code IS NOT NULL
+            parent_account,
+            normal_balance,
+            accepts_posting,
+            requires_third_party,
+            requires_cost_center,
+            currency_code,
+            financial_statement_line,
+            tax_mapping,
+            active
+        FROM accounting_accounts
+        WHERE active = TRUE
         ORDER BY account_code
     """
 
@@ -341,6 +527,127 @@ def get_accounting_accounts(conn=Depends(get_db)):
     return {
         "data": rows
     }
+
+
+@router.post("/accounts")
+def create_accounting_account(payload: dict, conn=Depends(get_db)):
+    _ensure_accounting_professional_schema(conn)
+    code = str(payload.get("account_code") or "").strip()
+    name = str(payload.get("account_name") or "").strip()
+    account_type = str(payload.get("account_type") or "").strip().upper()
+    if not code or not name or not account_type:
+        raise HTTPException(400, "account_code, account_name and account_type are required")
+    user = str(payload.get("updated_by") or payload.get("created_by") or "unknown")
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                INSERT INTO accounting_accounts (
+                    account_code, account_name, account_type, normal_balance, account_level,
+                    parent_account, accepts_posting, requires_third_party, requires_cost_center,
+                    currency_code, financial_statement_line, tax_mapping, active, created_by, updated_by
+                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                RETURNING *
+            """, (code, name, account_type, str(payload.get("normal_balance") or "DEBIT").upper(),
+                  int(payload.get("account_level") or 1), payload.get("parent_account"),
+                  bool(payload.get("accepts_posting", True)), bool(payload.get("requires_third_party", False)),
+                  bool(payload.get("requires_cost_center", False)), payload.get("currency_code"),
+                  payload.get("financial_statement_line"), payload.get("tax_mapping"),
+                  bool(payload.get("active", True)), user, user))
+            row = cur.fetchone()
+        conn.commit()
+        return {"status": "ok", "account": row}
+    except Exception as exc:
+        conn.rollback()
+        if getattr(exc, "pgcode", None) == "23505":
+            raise HTTPException(409, f"Account {code} already exists")
+        raise
+
+
+@router.put("/accounts/{account_code}")
+def update_accounting_account(account_code: str, payload: dict, conn=Depends(get_db)):
+    _ensure_accounting_professional_schema(conn)
+    user = str(payload.get("updated_by") or "unknown")
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("""
+            UPDATE accounting_accounts SET
+                account_name = COALESCE(%s, account_name),
+                account_type = COALESCE(%s, account_type),
+                normal_balance = COALESCE(%s, normal_balance),
+                account_level = COALESCE(%s, account_level),
+                parent_account = %s,
+                accepts_posting = COALESCE(%s, accepts_posting),
+                requires_third_party = COALESCE(%s, requires_third_party),
+                requires_cost_center = COALESCE(%s, requires_cost_center),
+                currency_code = %s,
+                financial_statement_line = %s,
+                tax_mapping = %s,
+                active = COALESCE(%s, active),
+                updated_by = %s, updated_at = NOW()
+            WHERE account_code = %s RETURNING *
+        """, (payload.get("account_name"), payload.get("account_type"), payload.get("normal_balance"),
+              payload.get("account_level"), payload.get("parent_account"), payload.get("accepts_posting"),
+              payload.get("requires_third_party"), payload.get("requires_cost_center"), payload.get("currency_code"),
+              payload.get("financial_statement_line"), payload.get("tax_mapping"), payload.get("active"),
+              user, account_code))
+        row = cur.fetchone()
+        if not row:
+            conn.rollback()
+            raise HTTPException(404, "Account not found")
+    conn.commit()
+    return {"status": "ok", "account": row}
+
+
+@router.get("/period-controls")
+def list_accounting_period_controls(conn=Depends(get_db)):
+    _ensure_accounting_professional_schema(conn)
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("SELECT * FROM accounting_period_controls ORDER BY period DESC")
+        return {"data": cur.fetchall()}
+
+
+@router.post("/period-controls/{period}/close")
+def close_accounting_period(period: str, payload: dict, conn=Depends(get_db)):
+    _ensure_accounting_professional_schema(conn)
+    company = str(payload.get("company_code") or "MSL-CR")
+    user = str(payload.get("user") or "unknown")
+    if len(period) != 7 or period[4] != "-":
+        raise HTTPException(400, "period must use YYYY-MM")
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("SELECT COUNT(*) AS count FROM accounting_entries WHERE period=%s AND workflow_status <> 'POSTED'", (period,))
+        pending = int(cur.fetchone()["count"])
+        if pending:
+            raise HTTPException(409, f"Period has {pending} entries that are not posted")
+        cur.execute("""
+            INSERT INTO accounting_period_controls(company_code, period, status, closed_by, closed_at)
+            VALUES (%s,%s,'CLOSED',%s,NOW())
+            ON CONFLICT(company_code,period) DO UPDATE SET
+                status='CLOSED', closed_by=EXCLUDED.closed_by, closed_at=NOW(), updated_at=NOW()
+            RETURNING *
+        """, (company, period, user))
+        row = cur.fetchone()
+    conn.commit()
+    return {"status": "ok", "period": row}
+
+
+@router.post("/period-controls/{period}/reopen")
+def reopen_accounting_period(period: str, payload: dict, conn=Depends(get_db)):
+    _ensure_accounting_professional_schema(conn)
+    reason = str(payload.get("reason") or "").strip()
+    if not reason:
+        raise HTTPException(400, "A reopen reason is required")
+    company = str(payload.get("company_code") or "MSL-CR")
+    user = str(payload.get("user") or "unknown")
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("""
+            UPDATE accounting_period_controls SET status='OPEN', reopened_by=%s,
+                reopened_at=NOW(), reopen_reason=%s, updated_at=NOW()
+            WHERE company_code=%s AND period=%s RETURNING *
+        """, (user, reason, company, period))
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "Period control not found")
+    conn.commit()
+    return {"status": "ok", "period": row}
 
 
 # ============================================================
@@ -368,7 +675,16 @@ def get_accounting_entry(
             period,
             description,
             origin,
-            origin_id
+            origin_id,
+            workflow_status,
+            version,
+            company_code,
+            currency_code,
+            exchange_rate,
+            created_by,
+            submitted_by,
+            approved_by,
+            posted_by
         FROM accounting_entries
         WHERE id = %s
     """, (entry_id,))
@@ -406,6 +722,15 @@ def get_accounting_entry(
         "description": entry["description"],
         "origin": entry["origin"],
         "origin_id": entry["origin_id"],
+        "workflow_status": entry["workflow_status"],
+        "version": entry["version"],
+        "company_code": entry["company_code"],
+        "currency_code": entry["currency_code"],
+        "exchange_rate": float(entry["exchange_rate"] or 1),
+        "created_by": entry["created_by"],
+        "submitted_by": entry["submitted_by"],
+        "approved_by": entry["approved_by"],
+        "posted_by": entry["posted_by"],
         "lines": [
             {
                 "line_id": l["line_id"],
@@ -434,6 +759,8 @@ def update_accounting_entry(
     Valida partida doble.
     """
 
+    _ensure_accounting_professional_schema(conn)
+    _ensure_accounting_professional_schema(conn)
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     description = payload.get("description")
@@ -445,12 +772,12 @@ def update_accounting_entry(
     # --------------------------------------------------------
     # 1. VALIDACIONES CONTABLES
     # --------------------------------------------------------
-    total_debit = 0
-    total_credit = 0
+    total_debit = Decimal("0.00")
+    total_credit = Decimal("0.00")
 
     for line in lines:
-        debit = float(line.get("debit") or 0)
-        credit = float(line.get("credit") or 0)
+        debit = _money(line.get("debit"), "debit")
+        credit = _money(line.get("credit"), "credit")
 
         if debit > 0 and credit > 0:
             raise HTTPException(
@@ -458,16 +785,10 @@ def update_accounting_entry(
                 detail="Una línea no puede tener Debe y Haber simultáneamente"
             )
 
-        if debit < 0 or credit < 0:
-            raise HTTPException(
-                status_code=400,
-                detail="Valores negativos no permitidos"
-            )
-
         total_debit += debit
         total_credit += credit
 
-    if round(total_debit, 2) != round(total_credit, 2):
+    if total_debit != total_credit or total_debit == 0:
         raise HTTPException(
             status_code=400,
             detail="La partida no está balanceada (Debe ≠ Haber)"
@@ -477,11 +798,18 @@ def update_accounting_entry(
     # 2. VALIDAR QUE EL ASIENTO EXISTE
     # --------------------------------------------------------
     cur.execute(
-        "SELECT id FROM accounting_entries WHERE id = %s",
+        "SELECT * FROM accounting_entries WHERE id = %s FOR UPDATE",
         (entry_id,)
     )
-    if not cur.fetchone():
+    existing = cur.fetchone()
+    if not existing:
         raise HTTPException(status_code=404, detail="Asiento no encontrado")
+    if existing.get("workflow_status") != "DRAFT":
+        raise HTTPException(status_code=409, detail="Only draft entries can be edited; use an adjustment or reversal")
+    _assert_period_open(cur, existing["period"], existing.get("company_code") or "MSL-CR")
+    expected_version = payload.get("expected_version")
+    if expected_version is not None and int(expected_version) != int(existing.get("version") or 1):
+        raise HTTPException(status_code=409, detail="The entry changed. Reload before saving")
 
     # --------------------------------------------------------
     # 3. ACTUALIZAR CABECERA
@@ -489,7 +817,7 @@ def update_accounting_entry(
     if description is not None:
         cur.execute("""
             UPDATE accounting_entries
-            SET description = %s
+            SET description = %s, version = version + 1, updated_at = NOW()
             WHERE id = %s
         """, (description, entry_id))
 
@@ -508,9 +836,8 @@ def update_accounting_entry(
         # validar cuenta contable
         cur.execute("""
             SELECT account_name
-            FROM accounting_ledger
-            WHERE account_code = %s
-            LIMIT 1
+            FROM accounting_accounts
+            WHERE account_code = %s AND active = TRUE AND accepts_posting = TRUE
         """, (line["account_code"],))
 
         acc = cur.fetchone()
@@ -548,8 +875,75 @@ def update_accounting_entry(
     }
 
 
+def _transition_entry(conn, entry_id, payload, expected_status, new_status, action):
+    _ensure_accounting_professional_schema(conn)
+    user = str((payload or {}).get("user") or "unknown")
+    reason = str((payload or {}).get("reason") or "").strip() or None
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM accounting_entries WHERE id=%s FOR UPDATE", (entry_id,))
+            entry = cur.fetchone()
+            if not entry:
+                raise HTTPException(404, "Accounting entry not found")
+            current = entry.get("workflow_status") or "POSTED"
+            if current != expected_status:
+                raise HTTPException(409, f"Entry is {current}; expected {expected_status}")
+            _assert_period_open(cur, entry["period"], entry.get("company_code") or "MSL-CR")
+            if new_status == "IN_REVIEW":
+                fields = "submitted_by=%s, submitted_at=NOW()"
+            elif new_status == "APPROVED":
+                if entry.get("created_by") and entry.get("created_by") == user:
+                    raise HTTPException(409, "The preparer cannot approve the same entry")
+                fields = "approved_by=%s, approved_at=NOW()"
+            else:
+                fields = "posted_by=%s, posted_at=NOW()"
+            cur.execute(f"""
+                UPDATE accounting_entries SET workflow_status=%s, {fields},
+                    version=version+1, updated_at=NOW()
+                WHERE id=%s RETURNING *
+            """, (new_status, user, entry_id))
+            updated = cur.fetchone()
+            _audit(cur, entry_id, action, user, current, new_status, reason)
+        conn.commit()
+        return {"status": "ok", "entry": updated}
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception:
+        conn.rollback()
+        raise
+
+
+@router.post("/entry/{entry_id}/submit")
+def submit_accounting_entry(entry_id: int, payload: dict, conn=Depends(get_db)):
+    return _transition_entry(conn, entry_id, payload, "DRAFT", "IN_REVIEW", "SUBMIT")
+
+
+@router.post("/entry/{entry_id}/approve")
+def approve_accounting_entry(entry_id: int, payload: dict, conn=Depends(get_db)):
+    return _transition_entry(conn, entry_id, payload, "IN_REVIEW", "APPROVED", "APPROVE")
+
+
+@router.post("/entry/{entry_id}/post")
+def post_accounting_entry(entry_id: int, payload: dict, conn=Depends(get_db)):
+    return _transition_entry(conn, entry_id, payload, "APPROVED", "POSTED", "POST")
+
+
+@router.get("/entry/{entry_id}/audit")
+def get_accounting_entry_audit(entry_id: int, conn=Depends(get_db)):
+    _ensure_accounting_professional_schema(conn)
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("""
+            SELECT id, entry_id, action, previous_status, new_status,
+                   performed_by, reason, created_at
+            FROM accounting_audit_log WHERE entry_id=%s ORDER BY created_at DESC, id DESC
+        """, (entry_id,))
+        return {"data": cur.fetchall()}
+
+
 @router.post("/sync/collections")
 def sync_collections(conn=Depends(get_db)):
+    _ensure_accounting_professional_schema(conn)
     from services.accounting_auto import sync_collections_to_accounting
 
     sync_collections_to_accounting(conn)
@@ -563,6 +957,7 @@ def sync_collections(conn=Depends(get_db)):
 
 @router.post("/sync/cash-app")
 def sync_cash_app(conn=Depends(get_db)):
+    _ensure_accounting_professional_schema(conn)
     try:
         from services.accounting_auto import sync_cash_app_to_accounting
         sync_cash_app_to_accounting(conn)
@@ -581,6 +976,7 @@ def sync_cash_app(conn=Depends(get_db)):
 
 @router.post("/sync/itp")
 def sync_itp(conn=Depends(get_db)):
+    _ensure_accounting_professional_schema(conn)
     try:
         from services.accounting_auto import sync_itp_to_accounting
         sync_itp_to_accounting(conn)
@@ -597,6 +993,7 @@ def sync_itp(conn=Depends(get_db)):
 
 @router.post("/sync/payroll")
 def sync_payroll(conn=Depends(get_db)):
+    _ensure_accounting_professional_schema(conn)
     try:
         from services.accounting_auto import sync_payroll_to_accounting
         sync_payroll_to_accounting(conn)
@@ -613,6 +1010,7 @@ def sync_payroll(conn=Depends(get_db)):
 
 @router.post("/sync/all")
 def sync_all_accounting(conn=Depends(get_db)):
+    _ensure_accounting_professional_schema(conn)
     try:
         from services.accounting_auto import (
             sync_cash_app_to_accounting,
@@ -649,6 +1047,8 @@ def sync_all_accounting(conn=Depends(get_db)):
 @router.get("/ledger")
 def get_accounting_ledger(
     period: str | None = None,
+    period_from: str | None = None,
+    period_to: str | None = None,
     origin: str | None = None,
     account_code: str | None = None,   # ✅ NUEVO FILTRO
     conn=Depends(get_db)
@@ -663,6 +1063,7 @@ def get_accounting_ledger(
     - account_code (1101, 2101, 5101, etc.)
     """
 
+    _ensure_accounting_professional_schema(conn)
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     conditions = []
@@ -683,6 +1084,12 @@ def get_accounting_ledger(
     if period:
         conditions.append("e.period = %s")
         params.append(period)
+    if period_from:
+        conditions.append("e.period >= %s")
+        params.append(period_from)
+    if period_to:
+        conditions.append("e.period <= %s")
+        params.append(period_to)
 
     if origin:
         conditions.append("e.origin = %s")
@@ -707,6 +1114,8 @@ def get_accounting_ledger(
             e.description AS entry_description,
             e.origin,
             e.origin_id,
+            e.workflow_status,
+            e.version,
 
             l.id AS line_id,
             l.account_code,
@@ -743,6 +1152,8 @@ def get_accounting_ledger(
                 "description": row["entry_description"],
                 "origin": row["origin"],
                 "origin_id": row["origin_id"],
+                "workflow_status": row["workflow_status"],
+                "version": row["version"],
                 "lines": []
             }
 

@@ -1802,21 +1802,14 @@ def post_accounting_manual_entry_api(payload: dict):
         ]
     }
     """
-    try:
-        r = api_request(
-            "POST",
-            f"{BASE_URL}/accounting/manual-entry",
-            json=payload,
-            timeout=20
-        )
-        r.raise_for_status()
-        return r.json()
-
-    except Exception as e:
-        return {
-            "status": "error",
-            "error": str(e)
-        }
+    r = api_request(
+        "POST",
+        f"{BASE_URL}/accounting/manual-entry",
+        json=payload,
+        timeout=20
+    )
+    r.raise_for_status()
+    return r.json()
 
 
 # ============================================================
@@ -1834,6 +1827,38 @@ def get_accounting_accounts_api():
     )
     r.raise_for_status()
     return r.json().get("data", [])
+
+
+def create_accounting_account_api(payload):
+    r = api_request("POST", f"{BASE_URL}/accounting/accounts", json=payload, timeout=20)
+    r.raise_for_status()
+    return r.json()
+
+
+def update_accounting_account_api(account_code, payload):
+    r = api_request("PUT", f"{BASE_URL}/accounting/accounts/{account_code}", json=payload, timeout=20)
+    r.raise_for_status()
+    return r.json()
+
+
+def get_accounting_period_controls_api():
+    r = api_request("GET", f"{BASE_URL}/accounting/period-controls", timeout=15)
+    r.raise_for_status()
+    return r.json().get("data", [])
+
+
+def transition_accounting_entry_api(entry_id, action, user, reason=None):
+    payload = {"user": user}
+    if reason:
+        payload["reason"] = reason
+    r = api_request(
+        "POST",
+        f"{BASE_URL}/accounting/entry/{entry_id}/{action}",
+        json=payload,
+        timeout=20,
+    )
+    r.raise_for_status()
+    return r.json()
 
 
 # ============================================================

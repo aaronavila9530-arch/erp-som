@@ -1,5 +1,6 @@
 from psycopg2.extras import RealDictCursor
 from datetime import date
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 def create_accounting_entry(
     conn,
@@ -15,13 +16,36 @@ def create_accounting_entry(
     Crea un asiento contable con validación de partida doble
     """
 
-    total_debit = sum(l["debit"] for l in lines)
-    total_credit = sum(l["credit"] for l in lines)
+    def money(value):
+        try:
+            return Decimal(str(value or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        except (InvalidOperation, ValueError, TypeError):
+            raise ValueError("Monto contable inválido")
 
-    if round(total_debit, 2) != round(total_credit, 2):
+    total_debit = sum((money(l.get("debit")) for l in lines), Decimal("0"))
+    total_credit = sum((money(l.get("credit")) for l in lines), Decimal("0"))
+
+    if total_debit != total_credit or total_debit == 0:
         raise ValueError("Partida no balanceada")
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
+
+    # Las integraciones automáticas tampoco pueden escribir en un período cerrado.
+    cur.execute("""
+        SELECT status FROM accounting_period_controls
+        WHERE company_code = 'MSL-CR' AND period = %s
+    """, (period,))
+    period_control = cur.fetchone()
+    if period_control and period_control.get("status") == "CLOSED":
+        raise ValueError(f"El período contable {period} está cerrado")
+    fiscal_year, fiscal_month = (int(value) for value in period.split("-"))
+    cur.execute("""
+        SELECT period_closed FROM closing_status
+        WHERE company_code='MSL-CR' AND fiscal_year=%s AND period=%s AND ledger='0L'
+    """, (fiscal_year, fiscal_month))
+    legacy_control = cur.fetchone()
+    if legacy_control and legacy_control.get("period_closed"):
+        raise ValueError(f"El período contable {period} está cerrado")
 
     # 1️⃣ Insert entry
     cur.execute("""
@@ -50,8 +74,8 @@ def create_accounting_entry(
             entry_id,
             line["account_code"],
             line["account_name"],
-            line["debit"],
-            line["credit"],
+            money(line.get("debit")),
+            money(line.get("credit")),
             line.get("description")
         ))
 
@@ -1052,4 +1076,3 @@ def sync_payroll_to_accounting(conn):
 
     finally:
         cur.close()
-

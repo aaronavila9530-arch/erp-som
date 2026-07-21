@@ -1,11 +1,15 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 from datetime import date
+from decimal import Decimal, InvalidOperation
 
+from Modulos.Finanzas.date_utils import LONG_DATE_FORMAT, to_db_date, to_long_english_date
+from Modulos.Servicios.widgets.date_picker import DatePicker
 from api_client import (
     get_accounting_accounts_api,
     post_accounting_manual_entry_api
 )
+from session_context import get_user
 
 
 class PopupManualEntry(tk.Toplevel):
@@ -50,6 +54,17 @@ class PopupManualEntry(tk.Toplevel):
         tk.Label(frm_top, text="Detalle del asiento").grid(row=0, column=0, sticky="w")
         self.txt_detail = tk.Entry(frm_top, width=80)
         self.txt_detail.grid(row=1, column=0, columnspan=6, pady=5)
+
+        tk.Label(frm_top, text="Fecha del asiento").grid(row=2, column=0, sticky="w")
+        self.txt_entry_date = tk.Entry(frm_top, width=16)
+        self.txt_entry_date.insert(0, to_long_english_date(date.today()))
+        self.txt_entry_date.grid(row=3, column=0, sticky="w", pady=5)
+        ttk.Button(
+            frm_top,
+            text="📅",
+            width=3,
+            command=lambda: DatePicker(self, self.txt_entry_date, output_format=LONG_DATE_FORMAT)
+        ).grid(row=3, column=1, sticky="w", padx=5)
 
         # -------- Tabla de líneas --------
         self.frm_lines = tk.Frame(self)
@@ -124,8 +139,8 @@ class PopupManualEntry(tk.Toplevel):
             return
 
         lines = []
-        total_debit = 0.0
-        total_credit = 0.0
+        total_debit = Decimal("0.00")
+        total_credit = Decimal("0.00")
 
         for cmb_account, cmb_dc, txt_amount in self.lines_widgets:
 
@@ -133,15 +148,18 @@ class PopupManualEntry(tk.Toplevel):
                 continue
 
             try:
-                amount = float(txt_amount.get().replace(",", ""))
-            except ValueError:
+                amount = Decimal(txt_amount.get().replace(",", "")).quantize(Decimal("0.01"))
+            except (InvalidOperation, ValueError):
                 messagebox.showerror("Error", "Monto inválido.")
+                return
+            if amount <= 0:
+                messagebox.showerror("Error", "El monto debe ser mayor que cero.")
                 return
 
             acc = self.catalog_map[cmb_account.get()]
 
-            debit = amount if cmb_dc.get() == "Debe" else 0
-            credit = amount if cmb_dc.get() == "Haber" else 0
+            debit = amount if cmb_dc.get() == "Debe" else Decimal("0.00")
+            credit = amount if cmb_dc.get() == "Haber" else Decimal("0.00")
 
             total_debit += debit
             total_credit += credit
@@ -149,8 +167,8 @@ class PopupManualEntry(tk.Toplevel):
             lines.append({
                 "account_code": acc["account_code"],
                 "account_name": acc["account_name"],
-                "debit": debit,
-                "credit": credit,
+                "debit": str(debit),
+                "credit": str(credit),
                 "line_description": detail_user
             })
 
@@ -158,7 +176,7 @@ class PopupManualEntry(tk.Toplevel):
             messagebox.showwarning("Validación", "Debe ingresar al menos dos líneas.")
             return
 
-        if round(total_debit, 2) != round(total_credit, 2):
+        if total_debit != total_credit:
             messagebox.showerror(
                 "Asiento descuadrado",
                 f"Debe: {total_debit:,.2f}\nHaber: {total_credit:,.2f}"
@@ -166,14 +184,18 @@ class PopupManualEntry(tk.Toplevel):
             return
 
         payload = {
-            "entry_date": date.today().isoformat(),
+            "entry_date": to_db_date(self.txt_entry_date.get().strip()),
             "description": f"FROM Asiento Manual – {detail_user}",
+            "created_by": get_user() or "unknown",
             "lines": lines
         }
 
         try:
             post_accounting_manual_entry_api(payload)
-            messagebox.showinfo("Éxito", "Asiento manual creado correctamente.")
+            messagebox.showinfo(
+                "Borrador creado",
+                "El asiento quedó como BORRADOR. Debe enviarse a revisión, aprobarse y contabilizarse."
+            )
             if self.on_success:
                 self.on_success()
             self.destroy()

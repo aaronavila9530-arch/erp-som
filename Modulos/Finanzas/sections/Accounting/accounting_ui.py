@@ -5,8 +5,10 @@ from datetime import date
 from api_client import (
     get_exchange_rate_today_api,
     get_accounting_accounts_api,
-    get_accounting_iva_api
+    get_accounting_iva_api,
+    get_accounting_periods_api
 )
+from Modulos.Finanzas.date_utils import to_long_english_date
 from Modulos.Finanzas.sections.Accounting.accounting_table import AccountingTable
 from Modulos.Finanzas.sections.Accounting.popups.popup_report_selector import PopupReportSelector
 
@@ -184,6 +186,12 @@ class AccountingUI(tk.Frame):
         export_btn["menu"] = export_menu
         export_btn.grid(row=1, column=8, padx=5)
 
+        ttk.Button(
+            filter_frame,
+            text="Financial Report mensual",
+            command=self._open_monthly_financial_report
+        ).grid(row=1, column=9, padx=5)
+
         # ================= ACCIONES =================
         actions_btn = ttk.Menubutton(filter_frame, text="Acciones")
         actions_menu = tk.Menu(actions_btn, tearoff=0)
@@ -198,6 +206,11 @@ class AccountingUI(tk.Frame):
         actions_menu.add_command(
             label="Asiento manual",
             command=self._open_manual_entry
+        )
+
+        actions_menu.add_command(
+            label="Catálogo maestro de cuentas",
+            command=self._open_chart_of_accounts
         )
 
 
@@ -269,6 +282,11 @@ class AccountingUI(tk.Frame):
             label="Flujo de Caja",
             command=lambda: self._open_report("Flujo de Caja")
         )
+        reports_menu.add_separator()
+        reports_menu.add_command(
+            label="Financial Report mensual",
+            command=self._open_monthly_financial_report
+        )
 
         actions_menu.add_cascade(
             label="Reportes",
@@ -276,7 +294,7 @@ class AccountingUI(tk.Frame):
         )
 
         actions_btn["menu"] = actions_menu
-        actions_btn.grid(row=1, column=9, padx=5)
+        actions_btn.grid(row=1, column=10, padx=5)
 
 
         # ================= KPI =================
@@ -311,23 +329,35 @@ class AccountingUI(tk.Frame):
         if code:
             popup.report_var.set(code)
 
+    def _open_monthly_financial_report(self):
+        from Modulos.Finanzas.sections.Accounting.popups.popup_monthly_financial_report import (
+            PopupMonthlyFinancialReport
+        )
+        PopupMonthlyFinancialReport(self)
+
     # ============================================================
     # HELPERS (ÚNICA ADICIÓN)
     # ============================================================
     def _build_period_list(self):
         """
-        Construye lista de periodos YYYY-MM
-        Incluye periodo actual y anterior
+        Construye lista de periodos YYYY-MM desde la DB.
+        Solo muestra periodos con movimientos contables reales.
         """
-        today = date.today()
-        current = today.strftime("%Y-%m")
+        today_period = date.today().strftime("%Y-%m")
+        periods = []
+        try:
+            periods = get_accounting_periods_api()
+        except Exception:
+            periods = []
 
-        if today.month == 1:
-            prev = f"{today.year - 1}-12"
-        else:
-            prev = f"{today.year}-{today.month - 1:02d}"
+        clean = []
+        for period in periods or []:
+            value = str(period or "").strip()
+            if len(value) == 7 and value[4] == "-" and value <= today_period:
+                clean.append(value)
 
-        return [prev, current]
+        clean = sorted(set(clean))
+        return clean or [today_period]
 
 
     def _on_fetch_tc(self):
@@ -339,9 +369,7 @@ class AccountingUI(tk.Frame):
             data = get_exchange_rate_today_api()
 
             self.tc_rate_var.set(f"{float(data['rate']):,.2f}")
-            self.tc_date_var.set(
-                date.fromisoformat(data["date"]).strftime("%d/%m/%Y")
-            )
+            self.tc_date_var.set(to_long_english_date(data["date"]))
 
         except Exception as e:
             messagebox.showerror(
@@ -469,6 +497,8 @@ class AccountingUI(tk.Frame):
 
         self.table.load_from_api(
             period=period,
+            period_from=period_from if self.search_mode.get() == "RANGE" else None,
+            period_to=period_to if self.search_mode.get() == "RANGE" else None,
             origin=origin,
             account_code=account_code
         )
@@ -597,6 +627,13 @@ class AccountingUI(tk.Frame):
                 "Asiento manual",
                 f"Error abriendo popup:\n{str(e)}"
             )
+
+    def _open_chart_of_accounts(self):
+        try:
+            from Modulos.Finanzas.sections.Accounting.popups.popup_chart_of_accounts import PopupChartOfAccounts
+            PopupChartOfAccounts(self)
+        except Exception as exc:
+            messagebox.showerror("Catálogo contable", str(exc))
 
 
     def _adjust_selected_entry(self):
