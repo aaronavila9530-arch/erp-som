@@ -34,6 +34,58 @@ CHECKLIST_ITEMS = [
 ]
 
 
+FORM_TEXT_COLUMNS = {
+    "vessel", "intro_text", "intro_inspection_date", "intro_inspection_hour",
+    "intro_inspection_minute", "gear_condition", "gear_wires", "gear_sheaves",
+    "gear_operability", "gear_start_date", "gear_start_hour", "gear_start_minute",
+    "gear_end_date", "gear_end_hour", "gear_end_minute", "link_picture",
+}
+for _item in CHECKLIST_ITEMS:
+    FORM_TEXT_COLUMNS.update({
+        f"{_item}_status", f"{_item}_status1", f"{_item}_status2", f"{_item}_status3"
+    })
+for _crane in range(1, 5):
+    FORM_TEXT_COLUMNS.update({f"crane{_crane}_remark_{i}" for i in range(1, 11)})
+FORM_TEXT_COLUMNS.update({f"grabs_condition_{i}" for i in range(1, 11)})
+
+FORM_BOOLEAN_COLUMNS = {f"{item}_done" for item in CHECKLIST_ITEMS}
+FORM_ALLOWED_COLUMNS = {
+    "report_number", "client", "port", "country", "report_date", "grt", "nrt",
+    "status", *FORM_TEXT_COLUMNS, *FORM_BOOLEAN_COLUMNS,
+    *{f"recommendation_{i}" for i in range(1, 11)},
+    *{f"conclusion_{i}" for i in range(1, 21)},
+}
+
+
+def _ensure_form_schema(conn):
+    """Añade de forma segura las columnas utilizadas por el formulario vigente."""
+    cur = conn.cursor()
+    try:
+        for column in sorted(FORM_TEXT_COLUMNS):
+            cur.execute(
+                f'ALTER TABLE vessel_crane_inspection_reports ADD COLUMN IF NOT EXISTS "{column}" TEXT'
+            )
+        for column in sorted(FORM_BOOLEAN_COLUMNS):
+            cur.execute(
+                f'ALTER TABLE vessel_crane_inspection_reports ADD COLUMN IF NOT EXISTS "{column}" BOOLEAN DEFAULT FALSE'
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+
+
+def _validate_payload_columns(payload):
+    unknown = sorted(set(payload) - FORM_ALLOWED_COLUMNS - {
+        "approve", "recommendations", "grabs_condition", "conclusion",
+        "crane1_remarks", "crane2_remarks", "crane3_remarks", "crane4_remarks",
+    })
+    if unknown:
+        raise HTTPException(status_code=400, detail=f"Campos Crane no soportados: {', '.join(unknown)}")
+
+
 def _clean(value):
     """
     Normaliza valores para evitar problemas JSON.
@@ -51,7 +103,11 @@ def _expand_dynamic_bullets(payload: dict):
 
     for crane in range(1, 5):
 
-        remarks = payload.get(f"crane{crane}_remarks") or []
+        source_key = f"crane{crane}_remarks"
+        if source_key not in payload:
+            continue
+
+        remarks = payload.get(source_key) or []
 
         if not isinstance(remarks, list):
             remarks = []
@@ -67,10 +123,12 @@ def _expand_dynamic_bullets(payload: dict):
 
     recs = payload.get("recommendations") or []
 
-    if not isinstance(recs, list):
+    if "recommendations" not in payload:
+        recs = None
+    elif not isinstance(recs, list):
         recs = []
 
-    for i in range(10):
+    for i in range(10) if recs is not None else ():
 
         value = recs[i] if i < len(recs) else None
         payload[f"recommendation_{i+1}"] = _clean(value)
@@ -81,10 +139,12 @@ def _expand_dynamic_bullets(payload: dict):
 
     grabs = payload.get("grabs_condition") or []
 
-    if not isinstance(grabs, list):
+    if "grabs_condition" not in payload:
+        grabs = None
+    elif not isinstance(grabs, list):
         grabs = []
 
-    for i in range(10):
+    for i in range(10) if grabs is not None else ():
 
         value = grabs[i] if i < len(grabs) else None
         payload[f"grabs_condition_{i+1}"] = _clean(value)
@@ -95,10 +155,12 @@ def _expand_dynamic_bullets(payload: dict):
 
     conclusions = payload.get("conclusion") or []
 
-    if not isinstance(conclusions, list):
+    if "conclusion" not in payload:
+        conclusions = None
+    elif not isinstance(conclusions, list):
         conclusions = []
 
-    for i in range(20):
+    for i in range(20) if conclusions is not None else ():
 
         value = conclusions[i] if i < len(conclusions) else None
         payload[f"conclusion_{i+1}"] = _clean(value)
@@ -115,6 +177,8 @@ def create_crane_inspection(payload: dict, conn=Depends(get_db)):
     try:
 
         payload = payload or {}
+        _validate_payload_columns(payload)
+        _ensure_form_schema(conn)
 
         # ----------------------------------------------------
         # EXPAND BULLETS (recommendation_1, crane1_remark_1...)
@@ -214,6 +278,8 @@ def update_crane_inspection(report_id: int, payload: dict, conn=Depends(get_db))
     try:
 
         payload = payload or {}
+        _validate_payload_columns(payload)
+        _ensure_form_schema(conn)
 
         _expand_dynamic_bullets(payload)
 
