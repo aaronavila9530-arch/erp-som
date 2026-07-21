@@ -192,6 +192,12 @@ class AccountingUI(tk.Frame):
             command=self._open_monthly_financial_report
         ).grid(row=1, column=9, padx=5)
 
+        ttk.Button(
+            filter_frame,
+            text="Mi espacio contable",
+            command=self._open_accountant_workspace
+        ).grid(row=1, column=10, padx=5)
+
         # ================= ACCIONES =================
         actions_btn = ttk.Menubutton(filter_frame, text="Acciones")
         actions_menu = tk.Menu(actions_btn, tearoff=0)
@@ -221,6 +227,11 @@ class AccountingUI(tk.Frame):
         actions_menu.add_command(
             label="Centro fiscal Costa Rica",
             command=self._open_tax_center
+        )
+
+        actions_menu.add_command(
+            label="Mi espacio contable",
+            command=self._open_accountant_workspace
         )
 
 
@@ -714,6 +725,14 @@ class AccountingUI(tk.Frame):
             PopupTaxCenter(self, period=self.cmb_period.get())
         except Exception as e:
             messagebox.showerror("Centro fiscal", f"Error abriendo el centro fiscal:\n{str(e)}")
+
+    def _open_accountant_workspace(self):
+        """Abre la bandeja diaria, búsqueda y cierre guiado."""
+        try:
+            from Modulos.Finanzas.sections.Accounting.popups.popup_accountant_workspace import PopupAccountantWorkspace
+            PopupAccountantWorkspace(self, period=self.cmb_period.get())
+        except Exception as e:
+            messagebox.showerror("Mi espacio contable", f"No se pudo abrir:\n{str(e)}")
 
     # ============================================================
     # HELPERS UI

@@ -1991,6 +1991,46 @@ def search_tax_cabys_api(search=""):
 
 
 # ============================================================
+# ESPACIO DE TRABAJO DEL CONTADOR
+# ============================================================
+def get_accountant_dashboard_api(period):
+    r = api_request("GET", f"{BASE_URL}/accounting/workspace/dashboard", params={"period": period}, timeout=45)
+    raise_for_status_with_detail(r)
+    return r.json()
+
+
+def get_accounting_close_checklist_api(period):
+    r = api_request("GET", f"{BASE_URL}/accounting/workspace/close-checklist", params={"period": period}, timeout=45)
+    raise_for_status_with_detail(r)
+    return r.json()
+
+
+def update_accounting_close_checklist_api(period, item_code, status, user, notes="", evidence=None):
+    r = api_request("PUT", f"{BASE_URL}/accounting/workspace/close-checklist/{period}/{item_code}",
+                    json={"status": status, "user": user, "notes": notes, "evidence": evidence or {}}, timeout=30)
+    raise_for_status_with_detail(r)
+    return r.json()
+
+
+def search_accounting_workspace_api(query, limit=30):
+    r = api_request("GET", f"{BASE_URL}/accounting/workspace/search", params={"q": query, "limit": limit}, timeout=45)
+    raise_for_status_with_detail(r)
+    return r.json()
+
+
+def get_accounting_workspace_preferences_api(user):
+    r = api_request("GET", f"{BASE_URL}/accounting/workspace/preferences/{user}", timeout=20)
+    raise_for_status_with_detail(r)
+    return r.json()
+
+
+def update_accounting_workspace_preferences_api(user, payload):
+    r = api_request("PUT", f"{BASE_URL}/accounting/workspace/preferences/{user}", json=payload, timeout=20)
+    raise_for_status_with_detail(r)
+    return r.json()
+
+
+# ============================================================
 # ACCOUNTING - GET ENTRY FOR EDIT
 # ============================================================
 

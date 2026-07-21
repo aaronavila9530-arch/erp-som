@@ -42,6 +42,7 @@ from routers.closing_status import router as closing_status_router
 from routers.accounting_lines import router as accounting_lines_router
 from routers.accounting_auxiliaries import router as accounting_auxiliaries_router
 from routers.accounting_tax import router as accounting_tax_router
+from routers.accounting_workspace import router as accounting_workspace_router
 from routers.monthly_financial_report import router as monthly_financial_report_router
 
 from routers.exchange_rate import router as exchange_rate_router
@@ -221,6 +222,7 @@ app.include_router(closing_status_router)
 app.include_router(accounting_lines_router)
 app.include_router(accounting_auxiliaries_router)
 app.include_router(accounting_tax_router)
+app.include_router(accounting_workspace_router)
 app.include_router(monthly_financial_report_router)
 
 app.include_router(exchange_rate_router)
