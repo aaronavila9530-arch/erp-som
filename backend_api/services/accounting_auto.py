@@ -103,16 +103,17 @@ def sync_collections_to_accounting(conn):
         today = date.today()
 
         cur.execute("""
-            SELECT rate
+            SELECT rate, rate_date, source
             FROM exchange_rate
-            WHERE rate_date = %s
+            WHERE rate_date <= %s
+            ORDER BY rate_date DESC
             LIMIT 1
         """, (today,))
 
         row_tc = cur.fetchone()
 
         if not row_tc:
-            raise Exception("Tipo de cambio del día no encontrado.")
+            raise Exception("No existe ningún tipo de cambio registrado.")
 
         tc = float(row_tc["rate"])
 
