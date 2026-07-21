@@ -218,6 +218,11 @@ class AccountingUI(tk.Frame):
             command=self._open_auxiliaries
         )
 
+        actions_menu.add_command(
+            label="Centro fiscal Costa Rica",
+            command=self._open_tax_center
+        )
+
 
         actions_menu.add_command(
             label="✏️ Ajustar asiento",
@@ -235,7 +240,7 @@ class AccountingUI(tk.Frame):
         declarations_menu = tk.Menu(actions_menu, tearoff=0)
 
         declarations_menu.add_command(
-            label="D-150 – Impuesto al Valor Agregado",
+            label="Formulario TRIBU-CR 150 - Impuesto al Valor Agregado",
             command=self._open_d150
         )
 
@@ -691,16 +696,24 @@ class AccountingUI(tk.Frame):
     # ============================================================
     def _open_d150(self):
         """
-        Abre el popup de declaración D-150.
+        Abre el formulario TRIBU-CR 150 de IVA.
         """
         try:
             from Modulos.Finanzas.sections.Accounting.popups.popup_d150 import PopupD150
             PopupD150(self, period=self.cmb_period.get())
         except Exception as e:
             messagebox.showerror(
-                "D-150",
-                f"Error abriendo D-150:\n{str(e)}"
+                "Formulario 150",
+                f"Error abriendo el formulario 150:\n{str(e)}"
             )
+
+    def _open_tax_center(self):
+        """Abre libros, XML, IVA, CAByS y obligaciones tributarias."""
+        try:
+            from Modulos.Finanzas.sections.Accounting.popups.popup_tax_center import PopupTaxCenter
+            PopupTaxCenter(self, period=self.cmb_period.get())
+        except Exception as e:
+            messagebox.showerror("Centro fiscal", f"Error abriendo el centro fiscal:\n{str(e)}")
 
     # ============================================================
     # HELPERS UI

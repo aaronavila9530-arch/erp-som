@@ -9,7 +9,7 @@ class PopupD150(tk.Toplevel):
         super().__init__(parent)
 
         self.period = period
-        self.title(f"D-150 – IVA ({period})")
+        self.title(f"Formulario TRIBU-CR 150 - IVA ({period})")
         self.geometry("650x420")
         self.resizable(False, False)
 
@@ -99,7 +99,7 @@ class PopupD150(tk.Toplevel):
             self.labels["Saldo a favor"].set(f"{max(saldo_favor, 0):,.2f}")
 
         except Exception as e:
-            messagebox.showerror("D-150", str(e))
+            messagebox.showerror("Formulario 150", str(e))
             self.destroy()
 
     # -------------------------------------------------
@@ -117,9 +117,9 @@ class PopupD150(tk.Toplevel):
 
         wb = Workbook()
         ws = wb.active
-        ws.title = "D-150"
+        ws.title = "Formulario 150"
 
-        ws.append(["D-150 – Declaración IVA"])
+        ws.append(["Formulario TRIBU-CR 150 - Declaración IVA"])
         ws.append(["Periodo", self.period])
         ws.append([])
 
@@ -147,7 +147,7 @@ class PopupD150(tk.Toplevel):
         y = 800
 
         c.setFont("Helvetica-Bold", 12)
-        c.drawString(50, y, "D-150 – Declaración del Impuesto al Valor Agregado")
+        c.drawString(50, y, "Formulario TRIBU-CR 150 - Impuesto al Valor Agregado")
         y -= 30
 
         c.setFont("Helvetica", 10)

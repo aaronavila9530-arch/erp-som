@@ -1930,6 +1930,67 @@ def update_accounting_auxiliary_setting_api(entity_type, account_code, user):
 
 
 # ============================================================
+# CENTRO FISCAL COSTA RICA
+# ============================================================
+def sync_accounting_tax_api():
+    r = api_request("POST", f"{BASE_URL}/accounting/tax/sync", timeout=180)
+    raise_for_status_with_detail(r)
+    return r.json()
+
+
+def get_tax_documents_api(direction=None, period=None, status=None, quality_only=False):
+    params = {"quality_only": quality_only}
+    if direction: params["direction"] = direction
+    if period: params["period"] = period
+    if status: params["status"] = status
+    r = api_request("GET", f"{BASE_URL}/accounting/tax/documents", params=params, timeout=45)
+    raise_for_status_with_detail(r)
+    return r.json()
+
+
+def get_tax_book_api(direction, period):
+    r = api_request("GET", f"{BASE_URL}/accounting/tax/books/{direction}", params={"period": period}, timeout=45)
+    raise_for_status_with_detail(r)
+    return r.json()
+
+
+def get_tax_iva_api(period):
+    r = api_request("GET", f"{BASE_URL}/accounting/tax/iva", params={"period": period}, timeout=45)
+    raise_for_status_with_detail(r)
+    return r.json()
+
+
+def upload_tax_xml_api(path, direction, user="ERP_USER"):
+    with open(path, "rb") as fh:
+        r = api_request("POST", f"{BASE_URL}/accounting/tax/documents/upload-xml",
+                        data={"direction": direction, "user": user},
+                        files={"file": (path.split("\\")[-1], fh, "application/xml")}, timeout=90)
+    raise_for_status_with_detail(r)
+    return r.json()
+
+
+def upload_tax_hacienda_response_api(document_id, path):
+    with open(path, "rb") as fh:
+        r = api_request("POST", f"{BASE_URL}/accounting/tax/documents/{document_id}/hacienda-response",
+                        files={"file": (path.split("\\")[-1], fh, "application/xml")}, timeout=90)
+    raise_for_status_with_detail(r)
+    return r.json()
+
+
+def get_tax_obligations_api(year=None):
+    r = api_request("GET", f"{BASE_URL}/accounting/tax/obligations",
+                    params={"year": year} if year else None, timeout=30)
+    raise_for_status_with_detail(r)
+    return r.json()
+
+
+def search_tax_cabys_api(search=""):
+    r = api_request("GET", f"{BASE_URL}/accounting/tax/cabys", params={"search": search}, timeout=30)
+    raise_for_status_with_detail(r)
+    return r.json().get("data", [])
+
+
+# ============================================================
 # ACCOUNTING - GET ENTRY FOR EDIT
 # ============================================================
 
