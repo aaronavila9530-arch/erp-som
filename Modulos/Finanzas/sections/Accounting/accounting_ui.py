@@ -320,7 +320,7 @@ class AccountingUI(tk.Frame):
         )
 
         actions_btn["menu"] = actions_menu
-        actions_btn.grid(row=1, column=10, padx=5)
+        actions_btn.grid(row=1, column=11, padx=5)
 
 
         # ================= KPI =================
