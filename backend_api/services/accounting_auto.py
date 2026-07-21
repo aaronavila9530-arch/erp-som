@@ -614,15 +614,16 @@ def sync_itp_to_accounting(conn):
         today = date.today()
 
         cur.execute("""
-            SELECT rate
+            SELECT rate, rate_date, source
             FROM exchange_rate
-            WHERE rate_date = %s
+            WHERE rate_date <= %s
+            ORDER BY rate_date DESC
             LIMIT 1
         """, (today,))
 
         tc_row = cur.fetchone()
         if not tc_row:
-            raise Exception("Tipo de cambio del día no encontrado. No se puede contabilizar ITP.")
+            raise Exception("No existe ningún tipo de cambio registrado. No se puede contabilizar ITP.")
 
         tc = float(tc_row["rate"])
 
