@@ -427,6 +427,12 @@ class MainApp(tk.Frame):
         module_code = (module_code or "").lower()
         action = (action or "").lower()
 
+        # Perfil contable restringido: únicamente Finanzas y Q&A SOM.
+        # Se evalúa antes de las excepciones globales (por ejemplo, ONG en
+        # Informes) para impedir que aparezcan módulos adicionales.
+        if rol == "accounting":
+            return action == "view" and module_code in {"finanzas", "qa_som"}
+
         # ONG queda disponible para todo usuario. Visualmente se expone por
         # Informes, pero usuarios sin permiso general solo ven ONG.
         if include_logra_override and module_code == "informes" and action == "view":

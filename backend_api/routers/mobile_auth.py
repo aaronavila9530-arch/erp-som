@@ -121,6 +121,10 @@ def _has_visual_permission(usuario: str, rol: str, module_code: str, action: str
         return True
 
     role_permissions = {
+        "accounting": {
+            "finanzas": ["view"],
+            "qa_som": ["view"],
+        },
         "user": {
             "dashboard": ["view"],
             "servicios": ["view"],

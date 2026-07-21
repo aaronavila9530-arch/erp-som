@@ -77,6 +77,21 @@ def has_permission(
 
     ROLE_RULES = {
 
+        "accounting": {
+
+            "finanzas": [
+                "view",
+                "create",
+                "edit",
+                "apply",
+                "reverse",
+                "sync",
+                "generate",
+                "reports"
+            ]
+
+        },
+
         "admin": {
 
             "finanzas": [
