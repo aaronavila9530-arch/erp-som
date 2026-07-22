@@ -10,6 +10,11 @@ import tkinter as tk
 from tkinter import messagebox
 from datetime import datetime, timedelta
 
+from window_placement import install_same_monitor_policy
+
+# Every popup and native dialog follows the monitor where ERP-SOM is active.
+install_same_monitor_policy()
+
 from resource_utils import resource_path
 from splash_screen import SplashScreen
 import api_client
