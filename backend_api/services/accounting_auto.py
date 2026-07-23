@@ -570,6 +570,30 @@ def sync_itp_to_accounting(conn):
             """, (code,))
             return cur.fetchone() is not None
 
+        def _ensure_account(code: str, name: str, account_type: str, normal_balance: str, parent_account=None):
+            code = (code or "").strip()
+            if not code:
+                return
+            cur.execute("""
+                UPDATE accounting_ledger
+                SET account_name = %s,
+                    account_type = %s,
+                    account_level = COALESCE(account_level, %s),
+                    parent_account = COALESCE(parent_account, %s),
+                    active = TRUE
+                WHERE account_code = %s
+            """, (name, account_type, 4, parent_account, code))
+            cur.execute("""
+                INSERT INTO accounting_ledger (
+                    account_code, account_name, account_type, account_level,
+                    parent_account, active
+                )
+                SELECT %s, %s, %s, %s, %s, TRUE
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM accounting_ledger WHERE account_code = %s
+                )
+            """, (code, name, account_type, 4, parent_account, code))
+
         def _insert_line(entry_id: int, code: str, name: str, debit: float, credit: float, desc: str):
             cur.execute("""
                 INSERT INTO accounting_lines
@@ -744,6 +768,9 @@ def sync_itp_to_accounting(conn):
             BANK_CODE = "1.1.02"
             BANK_NAME = "Bancos"
 
+            # El IVA de compras debe existir para que el asiento ITP balancee:
+            # Debe gasto + IVA credito fiscal / Haber CxP.
+            _ensure_account(IVA_CF_CODE, IVA_CF_NAME, "ASSET", "DEBIT", "1.1.13")
 
             def _first_existing(candidates):
                 for code, name in candidates:

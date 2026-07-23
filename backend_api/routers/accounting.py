@@ -1337,7 +1337,7 @@ def get_accounting_iva(
                 SELECT
                     SUM(
                         CASE
-                            WHEN account_code = '2108' -- IVA por pagar
+                            WHEN account_code IN ('2108', '2.1.02.03') -- IVA por pagar
                             THEN COALESCE(credit,0) - COALESCE(debit,0)
                             ELSE 0
                         END
@@ -1345,7 +1345,7 @@ def get_accounting_iva(
 
                     SUM(
                         CASE
-                            WHEN account_code = '1131' -- IVA crédito fiscal
+                            WHEN account_code IN ('1131', '1.1.13.99') -- IVA credito fiscal
                             THEN COALESCE(debit,0) - COALESCE(credit,0)
                             ELSE 0
                         END
