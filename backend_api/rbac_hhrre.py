@@ -5,7 +5,7 @@ from psycopg2.extras import execute_batch
 DATABASE_URL = (
     "postgresql://postgres:"
     "LjjyuIUsTSCdiwPVHSSwtIYPOsRQytGX"
-    "@shortline.proxy.rlwy.net:50018/railway"
+    "@tramway.proxy.rlwy.net:15258/railway?sslmode=require"
 )
 
 

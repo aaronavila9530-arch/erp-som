@@ -644,7 +644,8 @@ def sync_itp_to_accounting(conn):
                 p.total,
                 p.balance,
                 p.status,
-                p.active
+                p.active,
+                p.notes
             FROM payment_obligations p
             WHERE p.active = TRUE
             ORDER BY p.id ASC
@@ -706,12 +707,30 @@ def sync_itp_to_accounting(conn):
             # CUENTAS (COA JERÁRQUICO)
             # ============================================================
 
-            # Gastos (ajusta si tu COA real tiene otra ruta)
-            EXP_SERV_CODE = "5.1.01"
-            EXP_SERV_NAME = "Gastos por sueldos y salarios"  # ⚠️ placeholder si no tienes "Gastos de servicios"
+            # Gastos ITP. Salarios queda reservado exclusivamente para PAYROLL.
+            EXP_PROF_CODE = "500-001-001-006"
+            EXP_PROF_NAME = "Servicios Profesionales"
 
-            EXP_SURVEYOR_CODE = "5.1.01"
-            EXP_SURVEYOR_NAME = "Gastos por sueldos y salarios"  # ⚠️ placeholder si no tienes "Honorarios surveyor"
+            EXP_ACCOUNTING_CODE = "500-001-001-007"
+            EXP_ACCOUNTING_NAME = "Servicios Contables"
+
+            EXP_SECURITY_CODE = "500-001-001-008"
+            EXP_SECURITY_NAME = "Servicio de Vigilancia"
+
+            EXP_CLEANING_CODE = "500-001-001-060"
+            EXP_CLEANING_NAME = "Servicios de limpieza"
+
+            EXP_SUPPLIES_CODE = "5.1.04"
+            EXP_SUPPLIES_NAME = "Gastos por suministros de oficina"
+
+            EXP_RENT_CODE = "5.1.05"
+            EXP_RENT_NAME = "Gastos por alquiler"
+
+            EXP_FUEL_CODE = "5.1.08"
+            EXP_FUEL_NAME = "Gastos por combustible"
+
+            EXP_OTHER_CODE = "5.4"
+            EXP_OTHER_NAME = "Otros gastos"
 
             # Cuentas por pagar (tu COA sí trae 2.1.01.01/02/03)
             AP_CODE = "2.1.01.01"
@@ -726,12 +745,49 @@ def sync_itp_to_accounting(conn):
             BANK_NAME = "Bancos"
 
 
-            # Elegir gasto según tipo
-            expense_account = EXP_SERV_CODE
-            expense_name = EXP_SERV_NAME
-            if obligation_type == "SURVEYOR_FEE":
-                expense_account = EXP_SURVEYOR_CODE
-                expense_name = EXP_SURVEYOR_NAME
+            def _first_existing(candidates):
+                for code, name in candidates:
+                    if _account_exists(code):
+                        return code, name
+                return EXP_PROF_CODE, EXP_PROF_NAME
+
+            def _pick_itp_expense_account():
+                text = " ".join([
+                    payee_name,
+                    payee_type,
+                    obligation_type,
+                    str(ob.get("reference") or ""),
+                    str(ob.get("notes") or ""),
+                ]).lower()
+
+                if obligation_type == "SURVEYOR_FEE" or payee_type == "SURVEYOR":
+                    return _first_existing([(EXP_PROF_CODE, EXP_PROF_NAME)])
+
+                if "CARD_PROCESSING" in obligation_type:
+                    return _first_existing([(EXP_OTHER_CODE, EXP_OTHER_NAME), (EXP_PROF_CODE, EXP_PROF_NAME)])
+
+                if any(word in text for word in ("delta", "servicentro", "gasolin", "combustible", "petroleo", "petróleo", "estacion de servicio")):
+                    return _first_existing([(EXP_FUEL_CODE, EXP_FUEL_NAME), (EXP_OTHER_CODE, EXP_OTHER_NAME)])
+
+                if any(word in text for word in ("prime properties", "alquiler", "rent", "arrend")):
+                    return _first_existing([(EXP_RENT_CODE, EXP_RENT_NAME), (EXP_OTHER_CODE, EXP_OTHER_NAME)])
+
+                if any(word in text for word in ("limpieza", "clean")):
+                    return _first_existing([(EXP_CLEANING_CODE, EXP_CLEANING_NAME), (EXP_PROF_CODE, EXP_PROF_NAME)])
+
+                if any(word in text for word in ("vigilancia", "security")):
+                    return _first_existing([(EXP_SECURITY_CODE, EXP_SECURITY_NAME), (EXP_PROF_CODE, EXP_PROF_NAME)])
+
+                if any(word in text for word in ("contador", "contable", "accounting")):
+                    return _first_existing([(EXP_ACCOUNTING_CODE, EXP_ACCOUNTING_NAME), (EXP_PROF_CODE, EXP_PROF_NAME)])
+
+                if any(word in text for word in ("ferreteria", "ferretería", "epa", "office", "suministro", "material")):
+                    return _first_existing([(EXP_SUPPLIES_CODE, EXP_SUPPLIES_NAME), (EXP_OTHER_CODE, EXP_OTHER_NAME)])
+
+                return _first_existing([(EXP_PROF_CODE, EXP_PROF_NAME), (EXP_OTHER_CODE, EXP_OTHER_NAME)])
+
+            # Elegir gasto según tipo/proveedor sin tocar cuentas de salarios.
+            expense_account, expense_name = _pick_itp_expense_account()
 
 
             # Validar cuentas críticas existentes (NO inventar)

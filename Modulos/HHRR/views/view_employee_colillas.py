@@ -1,33 +1,27 @@
-import os
 import tkinter as tk
-from tkinter import ttk, messagebox
-import webbrowser
+from tkinter import ttk, messagebox, filedialog
 
 from Modulos.HHRR.ui_lazy_table import TablaLazy
-from api_client import listar_eventos_hr
+from api_client import listar_eventos_hr, hr_download_payslip_pdf
 
 
 class VistaColillasEmployee(ttk.Frame):
-    """
-    Vista de descarga de colillas de pago para EMPLOYEE.
-    TODO es LAZY.
-    """
 
-    def __init__(self, parent, empleado_id):
+    def __init__(self, parent, empleado_id=None, rol=None):
         super().__init__(parent)
 
-        self.empleado_id = empleado_id
+        self.rol = (rol or "").lower().strip()
+        self.data = []
+
         self._construir_ui()
+        self._cargar_colillas()  # 🔥 IMPORTANTE
 
     # =========================================================
     # UI
     # =========================================================
     def _construir_ui(self):
 
-        columnas = [
-            "periodo",
-            "status"
-        ]
+        columnas = ["periodo", "status"]
 
         self.tabla = TablaLazy(
             self,
@@ -44,71 +38,125 @@ class VistaColillasEmployee(ttk.Frame):
 
         ttk.Button(
             cont_btn,
-            text="Cargar colillas",
+            text="Recargar",
             command=self._cargar_colillas
         ).pack(side="left", padx=5)
 
         ttk.Button(
             cont_btn,
-            text="Descargar colilla",
+            text="Descargar",
             command=self._descargar_colilla
         ).pack(side="right", padx=5)
 
     # =========================================================
-    # LÓGICA
+    # CARGA DATA (SIN get_payslips_api)
     # =========================================================
     def _cargar_colillas(self):
+
         try:
-            datos = listar_eventos_hr(
-                empleado_id=self.empleado_id,
-                event_type="PAYSLIP"
-            )
+            datos = listar_eventos_hr(event_type="PAYSLIP")
         except Exception as e:
-            messagebox.showerror(
-                "Error",
-                f"No se pudieron cargar las colillas:\n{e}"
-            )
+            messagebox.showerror("Error", f"Backend error:\n{e}")
             return
 
-        filas = []
+        if not isinstance(datos, list):
+            datos = []
 
-        for d in datos or []:
+        filas = []
+        self.data = []
+
+        for d in datos:
+
+            if not isinstance(d, dict):
+                continue
+
             payload = d.get("payload") or {}
 
-            filas.append({
-                "periodo": payload.get("periodo", "—"),
-                "status": d.get("status", "—"),
-                "_pdf_path": payload.get("pdf_path")
-            })
+            year = payload.get("year")
+            month = payload.get("month")
+
+            periodo = payload.get("periodo")
+
+            if not periodo:
+                if year and month:
+                    periodo = f"{year}-{str(month).zfill(2)}"
+                else:
+                    periodo = "—"
+
+            fila = {
+                "periodo": periodo,
+                "status": d.get("status") or "—",
+                "_year": year,
+                "_month": month,
+                "_usuario": payload.get("usuario") or d.get("usuario")
+            }
+
+            filas.append(fila)
+            self.data.append(fila)
 
         self.tabla.cargar_datos(filas)
 
+        if not filas:
+            messagebox.showinfo("Info", "No hay colillas disponibles")
+
+    # =========================================================
+    # DESCARGA
+    # =========================================================
     def _descargar_colilla(self):
 
-        seleccionado = self.tabla.obtener_seleccionado()
+        row = self.tabla.obtener_seleccionado()
 
-        if not seleccionado:
-            messagebox.showwarning(
-                "Selección requerida",
-                "Debe seleccionar una colilla."
-            )
+        if not row:
+            messagebox.showwarning("Atención", "Seleccione una colilla")
             return
 
-        path = seleccionado.get("_pdf_path")
+        year = row.get("_year")
+        month = row.get("_month")
+        usuario = row.get("_usuario")
+
+        if not year or not month:
+            messagebox.showerror("Error", "Datos incompletos de la colilla")
+            return
+
+        filename = f"COLILLA_{usuario or 'COLILLA'}_{year}_{month}.pdf"
+
+        path = filedialog.asksaveasfilename(
+            defaultextension=".pdf",
+            initialfile=filename,
+            filetypes=[("PDF", "*.pdf")]
+        )
 
         if not path:
-            messagebox.showerror(
-                "Archivo no disponible",
-                "No se encontró el archivo de la colilla."
-            )
             return
 
         try:
-            webbrowser.open(
-                f"file:///{os.path.abspath(path)}"
+            resp = hr_download_payslip_pdf(
+                year=year,
+                month=month,
+                usuario=usuario
             )
+
+            if resp is None:
+                raise Exception("Respuesta vacía")
+
         except Exception as e:
-            messagebox.showerror(
-                "Error",
-                f"No se pudo abrir la colilla:\n{e}"
-            )
+            messagebox.showerror("Error", f"Fallo al descargar:\n{e}")
+            return
+
+        try:
+            with open(path, "wb") as f:
+
+                if hasattr(resp, "iter_content"):
+                    for chunk in resp.iter_content(8192):
+                        if chunk:
+                            f.write(chunk)
+                elif isinstance(resp, (bytes, bytearray)):
+                    f.write(resp)
+                else:
+                    raise Exception("Formato de respuesta no soportado")
+
+        except Exception as e:
+            messagebox.showerror("Error", f"No se pudo guardar:\n{e}")
+            return
+
+        messagebox.showinfo("OK", "Colilla descargada correctamente")
