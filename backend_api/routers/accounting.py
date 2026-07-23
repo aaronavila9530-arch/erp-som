@@ -1337,21 +1337,22 @@ def get_accounting_iva(
                 SELECT
                     SUM(
                         CASE
-                            WHEN account_code IN ('2108', '2.1.02.03') -- IVA por pagar
-                            THEN COALESCE(credit,0) - COALESCE(debit,0)
+                            WHEN l.account_code IN ('2108', '2.1.02.03') -- IVA por pagar
+                            THEN COALESCE(l.credit,0) - COALESCE(l.debit,0)
                             ELSE 0
                         END
                     ) AS iva_por_pagar,
 
                     SUM(
                         CASE
-                            WHEN account_code IN ('1131', '1.1.13.99') -- IVA credito fiscal
-                            THEN COALESCE(debit,0) - COALESCE(credit,0)
+                            WHEN l.account_code IN ('1131', '1.1.13.99') -- IVA credito fiscal
+                            THEN COALESCE(l.debit,0) - COALESCE(l.credit,0)
                             ELSE 0
                         END
                     ) AS iva_credito
-                FROM accounting_lines
-                WHERE to_char(created_at, 'YYYY-MM') = %s
+                FROM accounting_lines l
+                JOIN accounting_entries e ON e.id = l.entry_id
+                WHERE e.period = %s
             """, (p,))
 
             row = cur.fetchone() or {}
