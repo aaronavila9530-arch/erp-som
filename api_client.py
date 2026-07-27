@@ -2140,7 +2140,7 @@ def get_accounting_legal_library_api(category=None, query=None):
         params["category"] = category
     if query:
         params["q"] = query
-    r = api_request("GET", f"{BASE_URL}/accounting/legal-library", params=params, timeout=30)
+    r = api_request("GET", f"{BASE_URL}/accounting/legal-library/", params=params, timeout=30)
     raise_for_status_with_detail(r)
     return r.json()
 
