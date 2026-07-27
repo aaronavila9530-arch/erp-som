@@ -175,6 +175,51 @@ def _audit(cur, entry_id, action, user, previous_status=None, new_status=None, r
         VALUES (%s, %s, %s, %s, %s, %s, %s)
     """, (entry_id, action, previous_status, new_status, user, reason, Json(snapshot, dumps=lambda v: __import__('json').dumps(v, default=str))))
 
+
+def _entry_validation(cur, entry_id):
+    cur.execute("""
+        SELECT
+            COALESCE(SUM(debit), 0) AS total_debit,
+            COALESCE(SUM(credit), 0) AS total_credit,
+            COUNT(*) AS line_count,
+            COUNT(*) FILTER (
+                WHERE COALESCE(debit, 0) > 0 AND COALESCE(credit, 0) > 0
+            ) AS both_sides_count,
+            COUNT(*) FILTER (
+                WHERE COALESCE(debit, 0) = 0 AND COALESCE(credit, 0) = 0
+            ) AS zero_lines_count
+        FROM accounting_lines
+        WHERE entry_id = %s
+    """, (entry_id,))
+    row = cur.fetchone() or {}
+    debit = Decimal(str(row.get("total_debit") or 0)).quantize(MONEY_QUANT, rounding=ROUND_HALF_UP)
+    credit = Decimal(str(row.get("total_credit") or 0)).quantize(MONEY_QUANT, rounding=ROUND_HALF_UP)
+    return {
+        "total_debit": debit,
+        "total_credit": credit,
+        "difference": (debit - credit).quantize(MONEY_QUANT, rounding=ROUND_HALF_UP),
+        "line_count": int(row.get("line_count") or 0),
+        "both_sides_count": int(row.get("both_sides_count") or 0),
+        "zero_lines_count": int(row.get("zero_lines_count") or 0),
+    }
+
+
+def _assert_entry_can_advance(cur, entry_id):
+    validation = _entry_validation(cur, entry_id)
+    if validation["line_count"] < 2:
+        raise HTTPException(409, "El asiento debe tener al menos dos lineas contables")
+    if validation["both_sides_count"]:
+        raise HTTPException(409, "El asiento tiene lineas con Debe y Haber simultaneamente")
+    if validation["zero_lines_count"]:
+        raise HTTPException(409, "El asiento tiene lineas sin monto")
+    if validation["difference"] != Decimal("0.00"):
+        raise HTTPException(
+            409,
+            f"Asiento descuadrado. Debe={validation['total_debit']}, "
+            f"Haber={validation['total_credit']}, Diferencia={validation['difference']}"
+        )
+    return validation
+
 # ============================================================
 # RBAC GUARD
 # ============================================================
@@ -1037,6 +1082,8 @@ def _transition_entry(conn, entry_id, payload, expected_status, new_status, acti
             if current != expected_status:
                 raise HTTPException(409, f"Entry is {current}; expected {expected_status}")
             _assert_period_open(cur, entry["period"], entry.get("company_code") or "MSL-CR")
+            if new_status in ("APPROVED", "POSTED"):
+                _assert_entry_can_advance(cur, entry_id)
             if new_status == "IN_REVIEW":
                 fields = "submitted_by=%s, submitted_at=NOW()"
             elif new_status == "APPROVED":
@@ -1140,6 +1187,215 @@ def get_finance_audit(
             LIMIT %s
         """, [*params, limit])
         return {"data": cur.fetchall()}
+
+
+@router.get("/validation-alerts")
+def get_accounting_validation_alerts(
+    period: str | None = None,
+    period_from: str | None = None,
+    period_to: str | None = None,
+    origin: str | None = None,
+    limit: int = 200,
+    conn=Depends(get_db),
+):
+    _ensure_accounting_professional_schema(conn)
+    limit = max(1, min(int(limit or 200), 1000))
+    alerts = []
+
+    def add(severity, code, title, message, entity_type=None, entity_id=None, metadata=None):
+        alerts.append({
+            "severity": severity,
+            "code": code,
+            "title": title,
+            "message": message,
+            "entity_type": entity_type,
+            "entity_id": str(entity_id) if entity_id is not None else None,
+            "metadata": metadata or {},
+        })
+
+    conditions = []
+    params = []
+    if period:
+        conditions.append("e.period = %s")
+        params.append(period)
+    if period_from:
+        conditions.append("e.period >= %s")
+        params.append(period_from)
+    if period_to:
+        conditions.append("e.period <= %s")
+        params.append(period_to)
+    if origin and origin != "TODOS":
+        conditions.append("e.origin = %s")
+        params.append(origin)
+    where = "WHERE " + " AND ".join(conditions) if conditions else ""
+
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(f"""
+            SELECT e.id, e.period, e.origin, e.description,
+                   COALESCE(SUM(l.debit),0) AS total_debit,
+                   COALESCE(SUM(l.credit),0) AS total_credit,
+                   ROUND((COALESCE(SUM(l.debit),0) - COALESCE(SUM(l.credit),0))::numeric, 2) AS difference
+            FROM accounting_entries e
+            JOIN accounting_lines l ON l.entry_id = e.id
+            {where}
+            GROUP BY e.id, e.period, e.origin, e.description
+            HAVING ROUND((COALESCE(SUM(l.debit),0) - COALESCE(SUM(l.credit),0))::numeric, 2) <> 0
+            ORDER BY ABS(ROUND((COALESCE(SUM(l.debit),0) - COALESCE(SUM(l.credit),0))::numeric, 2)) DESC
+            LIMIT %s
+        """, [*params, limit])
+        for row in cur.fetchall():
+            add(
+                "critical",
+                "UNBALANCED_ENTRY",
+                "Asiento descuadrado",
+                f"Asiento {row['id']} periodo {row['period']} tiene diferencia {row['difference']}.",
+                "accounting_entry",
+                row["id"],
+                row,
+            )
+
+        cur.execute(f"""
+            SELECT e.id, e.period, e.origin, e.description
+            FROM accounting_entries e
+            LEFT JOIN accounting_lines l ON l.entry_id = e.id
+            {where}
+            GROUP BY e.id, e.period, e.origin, e.description
+            HAVING COUNT(l.id) = 0
+            ORDER BY e.id DESC
+            LIMIT %s
+        """, [*params, limit])
+        for row in cur.fetchall():
+            add(
+                "critical",
+                "ENTRY_WITHOUT_LINES",
+                "Asiento sin lineas",
+                f"Asiento {row['id']} no tiene lineas contables.",
+                "accounting_entry",
+                row["id"],
+                row,
+            )
+
+        cur.execute(f"""
+            SELECT l.id, l.entry_id, e.period, l.account_code, l.account_name, l.debit, l.credit
+            FROM accounting_lines l
+            JOIN accounting_entries e ON e.id = l.entry_id
+            {where}
+              {"AND" if where else "WHERE"} (
+                    (COALESCE(l.debit,0) > 0 AND COALESCE(l.credit,0) > 0)
+                 OR (COALESCE(l.debit,0) = 0 AND COALESCE(l.credit,0) = 0)
+              )
+            ORDER BY l.id DESC
+            LIMIT %s
+        """, [*params, limit])
+        for row in cur.fetchall():
+            add(
+                "critical",
+                "INVALID_LINE_AMOUNT",
+                "Linea con monto invalido",
+                f"Linea {row['id']} del asiento {row['entry_id']} tiene monto invalido.",
+                "accounting_line",
+                row["id"],
+                row,
+            )
+
+        cur.execute(f"""
+            SELECT l.id, l.entry_id, e.period, l.account_code, l.account_name
+            FROM accounting_lines l
+            JOIN accounting_entries e ON e.id = l.entry_id
+            LEFT JOIN accounting_accounts a ON a.account_code = l.account_code
+            {where}
+              {"AND" if where else "WHERE"} (a.account_code IS NULL OR a.active = FALSE)
+            ORDER BY l.id DESC
+            LIMIT %s
+        """, [*params, limit])
+        for row in cur.fetchall():
+            add(
+                "warning",
+                "ACCOUNT_NOT_ACTIVE",
+                "Cuenta no activa o inexistente",
+                f"Linea {row['id']} usa cuenta {row['account_code']} no activa en catalogo contable.",
+                "accounting_line",
+                row["id"],
+                row,
+            )
+
+        if not origin or origin in ("TODOS", "CASH_APP"):
+            cur.execute("""
+                SELECT id, numero_documento, nombre_cliente, banco, bank_account_code, bank_account_name, fecha_pago
+                FROM cash_app
+                WHERE tipo_aplicacion = 'PAGO'
+                  AND (bank_account_code IS NULL OR BTRIM(bank_account_code) = '')
+                ORDER BY id DESC
+                LIMIT %s
+            """, (limit,))
+            for row in cur.fetchall():
+                add(
+                    "warning",
+                    "COLLECTION_PAYMENT_WITHOUT_BANK_ACCOUNT",
+                    "Pago Collections sin banco contable especifico",
+                    f"Pago cash_app {row['id']} no tiene cuenta bancaria contable seleccionada.",
+                    "cash_app",
+                    row["id"],
+                    row,
+                )
+
+        if not origin or origin in ("TODOS", "ITP", "ITP_PAYMENT"):
+            cur.execute("""
+                SELECT id, payee_name, reference, status, payment_bank_account_code, payment_bank_account_name, last_payment_date
+                FROM payment_obligations
+                WHERE active = TRUE
+                  AND status IN ('PAID', 'PARTIAL')
+                  AND last_payment_date IS NOT NULL
+                  AND (payment_bank_account_code IS NULL OR BTRIM(payment_bank_account_code) = '')
+                ORDER BY id DESC
+                LIMIT %s
+            """, (limit,))
+            for row in cur.fetchall():
+                add(
+                    "warning",
+                    "ITP_PAYMENT_WITHOUT_BANK_ACCOUNT",
+                    "Pago ITP sin banco contable especifico",
+                    f"Obligacion ITP {row['id']} tiene pago sin cuenta bancaria contable.",
+                    "payment_obligation",
+                    row["id"],
+                    row,
+                )
+
+        cur.execute(f"""
+            SELECT e.origin, e.origin_id, COUNT(*) AS count
+            FROM accounting_entries e
+            {where}
+              {"AND" if where else "WHERE"} e.origin_id IS NOT NULL
+            GROUP BY e.origin, e.origin_id
+            HAVING COUNT(*) > 1
+            ORDER BY COUNT(*) DESC
+            LIMIT %s
+        """, [*params, limit])
+        for row in cur.fetchall():
+            add(
+                "warning",
+                "DUPLICATE_ORIGIN_ENTRY",
+                "Posible duplicidad de origen",
+                f"Origen {row['origin']} #{row['origin_id']} tiene {row['count']} asientos.",
+                "accounting_entry",
+                row["origin_id"],
+                row,
+            )
+
+    counts = {
+        "critical": sum(1 for item in alerts if item["severity"] == "critical"),
+        "warning": sum(1 for item in alerts if item["severity"] == "warning"),
+        "info": sum(1 for item in alerts if item["severity"] == "info"),
+    }
+    return {
+        "status": "ok",
+        "period": period,
+        "period_from": period_from,
+        "period_to": period_to,
+        "origin": origin,
+        "counts": counts,
+        "alerts": alerts[:limit],
+    }
 
 
 @router.post("/sync/collections")

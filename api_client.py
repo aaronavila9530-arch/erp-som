@@ -1905,6 +1905,32 @@ def get_finance_audit_api(module=None, entity_type=None, entity_id=None, perform
     return r.json().get("data", [])
 
 
+def get_accounting_validation_alerts_api(
+    period=None,
+    period_from=None,
+    period_to=None,
+    origin=None,
+    limit=200,
+):
+    params = {"limit": limit}
+    if period:
+        params["period"] = period
+    if period_from:
+        params["period_from"] = period_from
+    if period_to:
+        params["period_to"] = period_to
+    if origin and origin != "TODOS":
+        params["origin"] = origin
+    r = api_request(
+        "GET",
+        f"{BASE_URL}/accounting/validation-alerts",
+        params=params,
+        timeout=30,
+    )
+    r.raise_for_status()
+    return r.json()
+
+
 def sync_accounting_auxiliaries_api():
     r = api_request("POST", f"{BASE_URL}/accounting/auxiliaries/sync", timeout=180)
     r.raise_for_status()

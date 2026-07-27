@@ -8,7 +8,8 @@ from api_client import (
     get_exchange_rate_today_api,
     get_accounting_accounts_api,
     get_accounting_iva_api,
-    get_accounting_periods_api
+    get_accounting_periods_api,
+    get_accounting_validation_alerts_api
 )
 from Modulos.Finanzas.date_utils import to_long_english_date
 from Modulos.Finanzas.sections.Accounting.accounting_table import AccountingTable
@@ -31,6 +32,7 @@ class AccountingUI(tk.Frame):
         self.kpi_debit_var = tk.StringVar(value="0.00")
         self.kpi_credit_var = tk.StringVar(value="0.00")
         self.kpi_iva_var = tk.StringVar(value="0.00")
+        self.alert_summary_var = tk.StringVar(value="Alertas: sin validar")
 
         self.tc_rate_var = tk.StringVar(value="")
         self.tc_date_var = tk.StringVar(value="")
@@ -244,6 +246,11 @@ class AccountingUI(tk.Frame):
             command=self._open_finance_audit
         )
 
+        actions_menu.add_command(
+            label="Alertas y validaciones",
+            command=self._open_validation_alerts
+        )
+
 
         actions_menu.add_command(
             label="✏️ Ajustar asiento",
@@ -335,6 +342,21 @@ class AccountingUI(tk.Frame):
         self._draw_kpi(kpi_frame, "Total Debe", self.kpi_debit_var, 0)
         self._draw_kpi(kpi_frame, "Total Haber", self.kpi_credit_var, 1)
         self._draw_kpi(kpi_frame, "IVA", self.kpi_iva_var, 2)
+
+        self.alert_bar = tk.Frame(self, bg="#eef4f8")
+        self.alert_bar.pack(fill="x", padx=15, pady=(6, 0))
+        tk.Label(
+            self.alert_bar,
+            textvariable=self.alert_summary_var,
+            bg="#eef4f8",
+            fg="#253746",
+            font=("Segoe UI", 9, "bold")
+        ).pack(side="left", padx=8, pady=5)
+        ttk.Button(
+            self.alert_bar,
+            text="Ver alertas",
+            command=self._open_validation_alerts
+        ).pack(side="right", padx=8, pady=3)
 
         self.lazy_container = tk.Frame(self, bg="white")
 
@@ -563,6 +585,61 @@ class AccountingUI(tk.Frame):
             self.kpi_iva_var.set(f"{iva.get('iva_total', 0):,.2f}")
         except Exception:
             self.kpi_iva_var.set("0.00")
+
+        self._refresh_validation_alerts_summary()
+
+
+    def _current_validation_filters(self):
+        origin = self.cmb_origin.get()
+        if self.search_mode.get() == "SINGLE":
+            return {
+                "period": self.cmb_period.get(),
+                "origin": origin if origin != "TODOS" else None,
+            }
+        return {
+            "period_from": self.period_from.get(),
+            "period_to": self.period_to.get(),
+            "origin": origin if origin != "TODOS" else None,
+        }
+
+    def _refresh_validation_alerts_summary(self):
+        try:
+            data = get_accounting_validation_alerts_api(
+                **self._current_validation_filters(),
+                limit=50,
+            )
+            counts = data.get("counts") or {}
+            critical = int(counts.get("critical") or 0)
+            warning = int(counts.get("warning") or 0)
+            info = int(counts.get("info") or 0)
+            if critical:
+                self.alert_bar.configure(bg="#ffd6d6")
+                fg = "#7a0000"
+                msg = f"Alertas: {critical} criticas, {warning} advertencias. Revise antes de aprobar o postear."
+            elif warning:
+                self.alert_bar.configure(bg="#fff1bf")
+                fg = "#6f4b00"
+                msg = f"Alertas: {warning} advertencias, {info} informativas."
+            else:
+                self.alert_bar.configure(bg="#dff5e1")
+                fg = "#195c2d"
+                msg = "Alertas: cuentas cuadradas y sin riesgos criticos detectados."
+            self.alert_summary_var.set(msg)
+            for child in self.alert_bar.winfo_children():
+                if isinstance(child, tk.Label):
+                    child.configure(bg=self.alert_bar["bg"], fg=fg)
+        except Exception:
+            self.alert_bar.configure(bg="#eef4f8")
+            self.alert_summary_var.set("Alertas: no se pudo validar en este momento.")
+
+    def _open_validation_alerts(self):
+        try:
+            from Modulos.Finanzas.sections.Accounting.popups.popup_validation_alerts import (
+                PopupAccountingValidationAlerts,
+            )
+            PopupAccountingValidationAlerts(self, filters=self._current_validation_filters())
+        except Exception as e:
+            messagebox.showerror("Alertas", f"No se pudo abrir:\n{str(e)}")
 
 
     def _toggle_period_mode(self):
