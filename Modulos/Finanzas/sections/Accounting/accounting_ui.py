@@ -210,7 +210,7 @@ class AccountingUI(tk.Frame):
         actions_menu = tk.Menu(actions_btn, tearoff=0)
 
         actions_menu.add_command(
-            label="📘 Mayorizar / Cierre contable",
+            label="Cierre mensual guiado",
             command=self._open_closing_wizard
         )
 
