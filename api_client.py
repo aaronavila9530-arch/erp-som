@@ -1833,13 +1833,29 @@ def get_accounting_bank_accounts_api():
     """
     Obtiene cuentas bancarias del plan contable para pagos.
     """
-    r = api_request(
-        "GET",
-        f"{BASE_URL}/accounting/bank-accounts",
-        timeout=15
-    )
-    r.raise_for_status()
-    return r.json().get("data", [])
+    try:
+        r = api_request(
+            "GET",
+            f"{BASE_URL}/accounting/bank-accounts",
+            timeout=15
+        )
+        r.raise_for_status()
+        return r.json().get("data", [])
+    except Exception:
+        accounts = get_accounting_accounts_api()
+        banks = []
+        for account in accounts:
+            code = str(account.get("account_code") or "").strip()
+            name = str(account.get("account_name") or "").strip()
+            if code in ("1.1.01", "1.1.02"):
+                continue
+            if (
+                code.startswith("1.1.02.")
+                or code.startswith("1.1.01.")
+                or name.lower().startswith("banco")
+            ):
+                banks.append(account)
+        return banks
 
 
 def create_accounting_account_api(payload):
