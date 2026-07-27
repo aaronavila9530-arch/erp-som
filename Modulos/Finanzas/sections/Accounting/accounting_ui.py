@@ -195,7 +195,7 @@ class AccountingUI(tk.Frame):
 
         ttk.Button(
             filter_frame,
-            text="Financial Report mensual",
+            text="Reporte ejecutivo",
             command=self._open_monthly_financial_report
         ).grid(row=1, column=9, padx=5)
 
@@ -322,7 +322,7 @@ class AccountingUI(tk.Frame):
         )
         reports_menu.add_separator()
         reports_menu.add_command(
-            label="Financial Report mensual",
+            label="Reporte financiero ejecutivo",
             command=self._open_monthly_financial_report
         )
 

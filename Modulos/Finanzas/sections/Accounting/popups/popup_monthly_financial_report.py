@@ -10,8 +10,8 @@ from api_client import download_monthly_financial_report_api, get_accounting_per
 class PopupMonthlyFinancialReport(tk.Toplevel):
     def __init__(self, parent):
         super().__init__(parent)
-        self.title("Monthly Financial Report")
-        self.geometry("430x230")
+        self.title("Reportes financieros ejecutivos")
+        self.geometry("470x250")
         self.resizable(False, False)
         self.configure(bg="white")
         self.transient(parent)
@@ -40,14 +40,14 @@ class PopupMonthlyFinancialReport(tk.Toplevel):
     def _build(self):
         tk.Label(
             self,
-            text="Financial Report mensual",
+            text="Reporte financiero ejecutivo",
             font=("Segoe UI", 14, "bold"),
             bg="white"
         ).pack(anchor="w", padx=18, pady=(14, 4))
 
         tk.Label(
             self,
-            text="Genera PDF o Word con textos variables segun los numeros del mes.",
+            text="Genera PDF o Word con dashboard ejecutivo, graficos, ratios y analisis mensual.",
             bg="white",
             fg="#555"
         ).pack(anchor="w", padx=18, pady=(0, 12))
@@ -86,7 +86,7 @@ class PopupMonthlyFinancialReport(tk.Toplevel):
         extension = ".docx" if fmt == "Word" else ".pdf"
         filename = f"MSL_Financial_Report_{calendar.month_name[month]}_{year}{extension}"
         save_path = filedialog.asksaveasfilename(
-            title="Guardar Financial Report",
+            title="Guardar reporte financiero ejecutivo",
             defaultextension=extension,
             initialfile=filename,
             filetypes=[("Word", "*.docx")] if fmt == "Word" else [("PDF", "*.pdf")]

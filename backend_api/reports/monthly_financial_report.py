@@ -77,6 +77,46 @@ def _fetch_all(cur, sql, params=()):
     return cur.fetchall() or []
 
 
+def _accounting_snapshot(cur, period: str):
+    cur.execute("""
+        SELECT
+            COALESCE(SUM(CASE WHEN l.account_code LIKE '4%%' THEN l.credit - l.debit ELSE 0 END),0) AS accounting_revenue,
+            COALESCE(SUM(CASE WHEN l.account_code LIKE '5%%' OR l.account_code LIKE '6%%' THEN l.debit - l.credit ELSE 0 END),0) AS accounting_expense,
+            COALESCE(SUM(CASE WHEN l.account_code LIKE '1%%' THEN l.debit - l.credit ELSE 0 END),0) AS assets,
+            COALESCE(SUM(CASE WHEN l.account_code LIKE '2%%' THEN l.credit - l.debit ELSE 0 END),0) AS liabilities,
+            COALESCE(SUM(CASE WHEN l.account_code LIKE '3%%' THEN l.credit - l.debit ELSE 0 END),0) AS equity,
+            COALESCE(SUM(CASE WHEN l.account_code LIKE '1.1.02%%' OR LOWER(l.account_name) LIKE '%%banco%%'
+                              THEN l.debit - l.credit ELSE 0 END),0) AS bank_balance,
+            COUNT(DISTINCT e.id) AS posted_entries
+        FROM accounting_entries e
+        JOIN accounting_lines l ON l.entry_id = e.id
+        WHERE e.period = %s
+          AND COALESCE(e.workflow_status, 'POSTED') = 'POSTED'
+    """, (period,))
+    row = cur.fetchone() or {}
+    revenue = _f(row.get("accounting_revenue"))
+    expense = _f(row.get("accounting_expense"))
+    net_income = revenue - expense
+    assets = _f(row.get("assets"))
+    liabilities = _f(row.get("liabilities"))
+    equity = _f(row.get("equity"))
+    working_capital = assets - liabilities
+    return {
+        "accounting_revenue": revenue,
+        "accounting_expense": expense,
+        "net_income": net_income,
+        "assets": assets,
+        "liabilities": liabilities,
+        "equity": equity,
+        "bank_balance": _f(row.get("bank_balance")),
+        "posted_entries": int(row.get("posted_entries") or 0),
+        "working_capital": working_capital,
+        "net_margin_pct": (net_income / revenue * 100.0) if revenue else None,
+        "debt_to_assets_pct": (liabilities / assets * 100.0) if assets else None,
+        "equity_ratio_pct": (equity / assets * 100.0) if assets else None,
+    }
+
+
 def _payments_cte():
     return """
         WITH payments AS (
@@ -337,6 +377,8 @@ def build_monthly_financial_data(conn, year: int, month: int):
         WHERE p.fecha_pago BETWEEN %s AND %s
     """, (start, end))
 
+    accounting = _accounting_snapshot(cur, f"{year}-{month:02d}")
+
     cur.close()
 
     revenue_total = _f(revenue.get("total"))
@@ -387,6 +429,7 @@ def build_monthly_financial_data(conn, year: int, month: int):
             "net_cash": net_cash,
             "avg_days_to_pay": _f(avg_days.get("days")) if avg_days.get("days") is not None else None,
         },
+        "accounting": accounting,
         "tables": {
             "top_collections": [dict(r) for r in top_collections],
             "top_ar": [dict(r) for r in top_ar],
@@ -401,8 +444,49 @@ def build_monthly_financial_data(conn, year: int, month: int):
             "current_year_trend": [dict(r) for r in current_year_trend],
         },
     }
+    data["executive"] = _build_executive_dashboard(data)
     data["narrative"] = _build_financial_narrative(data)
     return data
+
+
+def _ratio_label(value):
+    return "N/A" if value is None else f"{_f(value):.1f}%"
+
+
+def _build_executive_dashboard(data):
+    m = data["metrics"]
+    a = data["accounting"]
+    collection_ratio = (m["collections"] / m["revenue"] * 100.0) if m["revenue"] else None
+    ar_pressure = (m["ar_open"] / m["revenue"] * 100.0) if m["revenue"] else None
+    payable_coverage = (m["collections"] / m["payables_open"] * 100.0) if m["payables_open"] else None
+
+    alerts = []
+    if abs(a["net_income"]) > 0 and a["net_income"] < 0:
+        alerts.append("Resultado contable negativo en el periodo; revisar estructura de gastos y margen operativo.")
+    if ar_pressure is not None and ar_pressure > 100:
+        alerts.append("La cartera abierta supera la facturacion mensual; priorizar cobranza y seguimiento por cliente.")
+    if payable_coverage is not None and payable_coverage < 100:
+        alerts.append("La cobranza del mes no cubre completamente las cuentas por pagar abiertas.")
+    if m["next_net_outlook"] < 0:
+        alerts.append("El outlook del proximo mes muestra presion neta de caja negativa.")
+    if not alerts:
+        alerts.append("No se detectan alertas ejecutivas criticas con los datos disponibles del periodo.")
+
+    return {
+        "collection_ratio_pct": collection_ratio,
+        "ar_pressure_pct": ar_pressure,
+        "payable_coverage_pct": payable_coverage,
+        "net_margin_pct": a["net_margin_pct"],
+        "debt_to_assets_pct": a["debt_to_assets_pct"],
+        "equity_ratio_pct": a["equity_ratio_pct"],
+        "alerts": alerts,
+        "decision_focus": [
+            "Confirmar recuperacion de clientes con mayor cartera abierta.",
+            "Calendarizar pagos de mayor impacto contra caja esperada.",
+            "Validar variaciones entre facturacion operativa y resultado contable.",
+            "Revisar cuentas bancarias y auxiliares antes del cierre mensual.",
+        ],
+    }
 
 
 def _compact_rows(rows, limit=6):
@@ -429,6 +513,8 @@ def _ai_financial_narrative(data):
         payload = {
             "period": period,
             "metrics": metrics,
+            "accounting": data.get("accounting", {}),
+            "executive": data.get("executive", {}),
             "top_collections": _compact_rows(data["tables"]["top_collections"]),
             "top_ar": _compact_rows(data["tables"]["top_ar"]),
             "ar_aging": _compact_rows(data["tables"]["ar_aging"]),
@@ -445,6 +531,8 @@ def _ai_financial_narrative(data):
             "Eres CFO y analista financiero de Marine Surveyors & Logistics. "
             "Genera narrativa ejecutiva en espanol para un reporte financiero mensual, usando SOLO los datos entregados. "
             "No inventes numeros. Si un dato es cero, explicalo con prudencia como falta de registros o sin actividad registrada. "
+            "Incluye lectura CFO de liquidez, rentabilidad, capital de trabajo, margen, cobertura de cuentas por pagar, "
+            "presion de cartera, riesgos y decisiones recomendadas. "
             "Devuelve JSON valido con estas llaves exactas: introduction, collections, receivables, payment_trend, "
             "billing, payables, next_month_outlook, year_comparison, risk, conclusion. "
             "La introduction debe ser amplia: 5 a 7 parrafos ejecutivos, con contexto, alcance del analisis, "
@@ -695,6 +783,8 @@ def generate_monthly_financial_pdf(conn, year: int, month: int):
     story = []
     story.extend(_pdf_cover(data, styles))
     story.append(PageBreak())
+    _pdf_executive_dashboard(story, styles, data)
+    story.append(PageBreak())
     _pdf_section(story, styles, "Introducción ejecutiva", data["narrative"]["introduction"], None, data)
     _pdf_section(story, styles, "Collections Recovery", data["narrative"]["collections"], charts["collections"], data, data["tables"]["top_collections"])
     _pdf_section(story, styles, "Cuentas por cobrar a recuperar", data["narrative"]["receivables"], charts["ar"], data, data["tables"]["top_ar"])
@@ -752,6 +842,51 @@ def _pdf_kpi_table(data):
         ("TOPPADDING", (0, 0), (-1, -1), 8),
     ]))
     return table
+
+
+def _pdf_executive_dashboard(story, styles, data):
+    from reportlab.lib import colors
+    from reportlab.platypus import Paragraph, Spacer, Table, TableStyle
+
+    m = data["metrics"]
+    a = data["accounting"]
+    e = data["executive"]
+    story.append(Paragraph("Executive Financial Dashboard", styles["Section"]))
+    story.append(Paragraph(
+        "Vista ejecutiva de liquidez, rentabilidad, capital de trabajo y riesgos principales del periodo. "
+        "Los indicadores combinan facturacion, cobranza, cuentas por cobrar, cuentas por pagar y movimientos contables POSTED.",
+        styles["Body"],
+    ))
+    rows = [
+        ["Indicador", "Resultado", "Lectura ejecutiva"],
+        ["Facturacion del mes", _money(m["revenue"]), "Capacidad comercial registrada en el periodo"],
+        ["Cobranza del mes", _money(m["collections"]), f"Recuperacion equivalente a {_ratio_label(e['collection_ratio_pct'])} de la facturacion"],
+        ["Resultado contable", _money(a["net_income"]), f"Margen neto contable {_ratio_label(e['net_margin_pct'])}"],
+        ["Capital de trabajo", _money(a["working_capital"]), "Activos menos pasivos segun asientos POSTED"],
+        ["Cartera abierta", _money(m["ar_open"]), f"Presion de cartera {_ratio_label(e['ar_pressure_pct'])} vs facturacion"],
+        ["CxP abiertas", _money(m["payables_open"]), f"Cobertura por cobranza {_ratio_label(e['payable_coverage_pct'])}"],
+        ["Outlook neto proximo mes", _money(m["next_net_outlook"]), "Cobros esperados menos pagos programados"],
+    ]
+    table = Table(rows, colWidths=[150, 120, 260])
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(BLUE)),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#D7DEE8")),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("BACKGROUND", (0, 1), (-1, -1), colors.HexColor("#FBFCFD")),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+        ("TOPPADDING", (0, 0), (-1, -1), 7),
+    ]))
+    story.append(table)
+    story.append(Spacer(1, 14))
+    story.append(Paragraph("Alertas ejecutivas", styles["Section"]))
+    for alert in e["alerts"]:
+        story.append(Paragraph(f"- {escape(alert)}", styles["Body"]))
+    story.append(Spacer(1, 6))
+    story.append(Paragraph("Focos de decision", styles["Section"]))
+    for item in e["decision_focus"]:
+        story.append(Paragraph(f"- {escape(item)}", styles["Body"]))
 
 
 def _pdf_section(story, styles, title, text, chart_path, data, table_rows=None, extra_chart=None):
@@ -847,6 +982,7 @@ def generate_monthly_financial_docx(conn, year: int, month: int):
     doc.add_paragraph("Aarón Ávila Vargas").alignment = WD_ALIGN_PARAGRAPH.CENTER
     doc.add_page_break()
 
+    _docx_executive_dashboard(doc, data)
     _docx_section(doc, "Introducción ejecutiva", data["narrative"]["introduction"])
     _docx_section(doc, "Collections Recovery", data["narrative"]["collections"], charts["collections"], data["tables"]["top_collections"])
     _docx_section(doc, "Cuentas por cobrar a recuperar", data["narrative"]["receivables"], charts["ar"], data["tables"]["top_ar"])
@@ -863,6 +999,43 @@ def generate_monthly_financial_docx(conn, year: int, month: int):
 
     doc.save(path)
     return path, _safe_filename(label, "docx")
+
+
+def _docx_executive_dashboard(doc, data):
+    m = data["metrics"]
+    a = data["accounting"]
+    e = data["executive"]
+    doc.add_heading("Executive Financial Dashboard", level=1)
+    doc.add_paragraph(
+        "Vista ejecutiva de liquidez, rentabilidad, capital de trabajo y riesgos principales del periodo. "
+        "Los indicadores combinan facturacion, cobranza, cuentas por cobrar, cuentas por pagar y movimientos contables POSTED."
+    )
+    table = doc.add_table(rows=1, cols=3)
+    table.style = "Table Grid"
+    table.rows[0].cells[0].text = "Indicador"
+    table.rows[0].cells[1].text = "Resultado"
+    table.rows[0].cells[2].text = "Lectura ejecutiva"
+    rows = [
+        ("Facturacion del mes", _money(m["revenue"]), "Capacidad comercial registrada en el periodo"),
+        ("Cobranza del mes", _money(m["collections"]), f"Recuperacion equivalente a {_ratio_label(e['collection_ratio_pct'])} de la facturacion"),
+        ("Resultado contable", _money(a["net_income"]), f"Margen neto contable {_ratio_label(e['net_margin_pct'])}"),
+        ("Capital de trabajo", _money(a["working_capital"]), "Activos menos pasivos segun asientos POSTED"),
+        ("Cartera abierta", _money(m["ar_open"]), f"Presion de cartera {_ratio_label(e['ar_pressure_pct'])} vs facturacion"),
+        ("CxP abiertas", _money(m["payables_open"]), f"Cobertura por cobranza {_ratio_label(e['payable_coverage_pct'])}"),
+        ("Outlook neto proximo mes", _money(m["next_net_outlook"]), "Cobros esperados menos pagos programados"),
+    ]
+    for indicator, result, reading in rows:
+        cells = table.add_row().cells
+        cells[0].text = indicator
+        cells[1].text = result
+        cells[2].text = reading
+    doc.add_heading("Alertas ejecutivas", level=2)
+    for alert in e["alerts"]:
+        doc.add_paragraph(alert, style="List Bullet")
+    doc.add_heading("Focos de decision", level=2)
+    for item in e["decision_focus"]:
+        doc.add_paragraph(item, style="List Bullet")
+    doc.add_page_break()
 
 
 def _docx_section(doc, title, text, chart_path=None, rows=None):
