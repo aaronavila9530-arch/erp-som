@@ -462,12 +462,48 @@ def apply_payment(
     obligation_id: int,
     amount: float,
     payment_date: date,
+    bank_account_code: Optional[str] = Query(None),
+    bank_account_name: Optional[str] = Query(None),
+    bank_name: Optional[str] = Query(None),
     conn=Depends(get_db)
 ):
     cur = None
 
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
+        bank_account_code = str(bank_account_code or "").strip()
+        bank_account_name = str(bank_account_name or "").strip()
+        bank_name = str(bank_name or bank_account_name or "").strip()
+
+        cur.execute("""
+            ALTER TABLE payment_obligations
+            ADD COLUMN IF NOT EXISTS payment_bank TEXT
+        """)
+        cur.execute("""
+            ALTER TABLE payment_obligations
+            ADD COLUMN IF NOT EXISTS payment_bank_account_code TEXT
+        """)
+        cur.execute("""
+            ALTER TABLE payment_obligations
+            ADD COLUMN IF NOT EXISTS payment_bank_account_name TEXT
+        """)
+
+        if bank_account_code:
+            cur.execute("""
+                SELECT account_code, account_name
+                FROM accounting_ledger
+                WHERE account_code = %s
+                  AND active = TRUE
+                LIMIT 1
+            """, (bank_account_code,))
+            bank_row = cur.fetchone()
+            if not bank_row:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Selected bank account does not exist or is inactive"
+                )
+            bank_account_name = bank_account_name or bank_row["account_name"]
+            bank_name = bank_name or bank_account_name
 
         # =====================================================
         # 1️⃣ BLOQUEAR FILA (ANTI CONCURRENCIA)
@@ -559,16 +595,29 @@ def apply_payment(
                 balance = %s,
                 status = %s,
                 last_payment_date = %s,
+                payment_bank = %s,
+                payment_bank_account_code = %s,
+                payment_bank_account_name = %s,
                 updated_at = NOW()
             WHERE id = %s
         """, (
             new_balance,
             new_status,
             payment_date,
+            bank_name or None,
+            bank_account_code or None,
+            bank_account_name or None,
             obligation_id
         ))
 
         conn.commit()
+
+        accounting_warning = None
+        try:
+            from services.accounting_auto import sync_itp_to_accounting
+            sync_itp_to_accounting(conn)
+        except Exception as sync_error:
+            accounting_warning = str(sync_error)
 
         return {
             "message": "Payment applied successfully",
@@ -576,7 +625,8 @@ def apply_payment(
             "previous_balance": float(balance),
             "applied_amount": float(amount_decimal),
             "new_balance": float(new_balance),
-            "status": new_status
+            "status": new_status,
+            "accounting_warning": accounting_warning
         }
 
     except HTTPException:

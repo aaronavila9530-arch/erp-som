@@ -3,7 +3,9 @@ from tkinter import ttk, messagebox
 from datetime import date
 import requests
 
-from api_client import BASE_URL
+from Modulos.Finanzas.date_utils import LONG_DATE_FORMAT, to_db_date, to_long_english_date
+from Modulos.Servicios.widgets.date_picker import DatePicker
+from api_client import BASE_URL, get_accounting_bank_accounts_api
 
 
 class PopupApplyPayment(tk.Toplevel):
@@ -14,9 +16,11 @@ class PopupApplyPayment(tk.Toplevel):
         self.parent = parent
         self.on_success = on_success
         self.obligation = obligation_data or {}
+        self.bank_accounts = []
+        self.bank_account_by_label = {}
 
         self.title("Apply Payment")
-        self.geometry("420x420")
+        self.geometry("470x475")
         self.resizable(False, False)
         self.transient(parent)
         self.grab_set()
@@ -56,9 +60,22 @@ class PopupApplyPayment(tk.Toplevel):
 
         # ---- Date
         tk.Label(frm, text="Payment Date").grid(row=5, column=0, sticky="w", pady=5)
-        self.ent_date = ttk.Entry(frm)
-        self.ent_date.insert(0, date.today().isoformat())
-        self.ent_date.grid(row=5, column=1, sticky="ew", pady=5)
+        date_frame = ttk.Frame(frm)
+        date_frame.grid(row=5, column=1, sticky="ew", pady=5)
+        self.ent_date = ttk.Entry(date_frame)
+        self.ent_date.insert(0, to_long_english_date(date.today()))
+        self.ent_date.pack(side="left", fill="x", expand=True)
+        ttk.Button(
+            date_frame,
+            text="📅",
+            width=3,
+            command=lambda: DatePicker(self, self.ent_date, output_format=LONG_DATE_FORMAT)
+        ).pack(side="left", padx=(5, 0))
+
+        tk.Label(frm, text="Bank Account").grid(row=6, column=0, sticky="w", pady=5)
+        self.cmb_bank = ttk.Combobox(frm, state="readonly")
+        self.cmb_bank.grid(row=6, column=1, sticky="ew", pady=5)
+        self._load_bank_accounts()
 
         frm.columnconfigure(1, weight=1)
 
@@ -127,9 +144,13 @@ class PopupApplyPayment(tk.Toplevel):
             return
 
         # ---------------- VALIDAR FECHA ----------------
-        payment_date = self.ent_date.get().strip()
+        payment_date = to_db_date(self.ent_date.get().strip())
         if not payment_date:
             messagebox.showerror("Error", "Payment date is required.")
+            return
+
+        if not self._selected_bank():
+            messagebox.showerror("Error", "Select a bank account.")
             return
 
         # ---------------- LLAMAR API ----------------
@@ -139,7 +160,10 @@ class PopupApplyPayment(tk.Toplevel):
                 params={
                     "obligation_id": int(obligation_id),
                     "amount": float(amount),
-                    "payment_date": payment_date
+                    "payment_date": payment_date,
+                    "bank_account_code": self._selected_bank().get("account_code"),
+                    "bank_account_name": self._selected_bank().get("account_name"),
+                    "bank_name": self._selected_bank().get("account_name")
                 },
                 timeout=20
             )
@@ -178,3 +202,27 @@ class PopupApplyPayment(tk.Toplevel):
             self.on_success()
 
         self.destroy()
+
+    def _load_bank_accounts(self):
+        try:
+            self.bank_accounts = get_accounting_bank_accounts_api()
+        except Exception:
+            self.bank_accounts = []
+
+        values = []
+        self.bank_account_by_label = {}
+        for account in self.bank_accounts:
+            code = str(account.get("account_code") or "").strip()
+            name = str(account.get("account_name") or "").strip()
+            if not code or not name:
+                continue
+            label = f"{code} - {name}"
+            values.append(label)
+            self.bank_account_by_label[label] = account
+
+        self.cmb_bank["values"] = values
+        if values:
+            self.cmb_bank.set(values[0])
+
+    def _selected_bank(self):
+        return self.bank_account_by_label.get(self.cmb_bank.get().strip(), {})

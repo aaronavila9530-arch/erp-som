@@ -466,6 +466,8 @@ def aplicar_pago(payload: dict, conn=Depends(get_db)):
         codigo_cliente = str(payload.get("codigo_cliente") or "").strip()
         nombre_cliente = str(payload.get("nombre_cliente") or "").strip()
         banco = str(payload.get("banco") or "").strip()
+        bank_account_code = str(payload.get("bank_account_code") or "").strip()
+        bank_account_name = str(payload.get("bank_account_name") or "").strip()
         referencia = str(payload.get("referencia") or "").strip()
         tipo_aplicacion = str(payload.get("tipo_aplicacion") or "PAGO").strip().upper()
 
@@ -507,6 +509,28 @@ def aplicar_pago(payload: dict, conn=Depends(get_db)):
         if tipo_aplicacion != "PAGO":
             raise HTTPException(400, "tipo_aplicacion debe ser PAGO")
 
+        cur.execute("""
+            ALTER TABLE cash_app
+            ADD COLUMN IF NOT EXISTS bank_account_code TEXT
+        """)
+        cur.execute("""
+            ALTER TABLE cash_app
+            ADD COLUMN IF NOT EXISTS bank_account_name TEXT
+        """)
+
+        if bank_account_code:
+            cur.execute("""
+                SELECT account_code, account_name
+                FROM accounting_ledger
+                WHERE account_code = %s
+                  AND active = TRUE
+                LIMIT 1
+            """, (bank_account_code,))
+            bank_row = cur.fetchone()
+            if not bank_row:
+                raise HTTPException(400, "Cuenta bancaria contable no existe o no esta activa")
+            bank_account_name = bank_account_name or bank_row["account_name"]
+
         # ==============================
         # NORMALIZAR DOCUMENTO
         # ==============================
@@ -526,12 +550,16 @@ def aplicar_pago(payload: dict, conn=Depends(get_db)):
                 referencia,
                 monto_pagado,
                 tipo_aplicacion,
+                bank_account_code,
+                bank_account_name,
                 created_at
             ) VALUES (
                 %s, %s, %s,
                 %s, %s, %s,
                 %s, %s,
-                'PAGO', NOW()
+                'PAGO',
+                %s, %s,
+                NOW()
             )
             RETURNING id
         """, (
@@ -542,7 +570,9 @@ def aplicar_pago(payload: dict, conn=Depends(get_db)):
             fecha_pago,
             comision,
             referencia,
-            monto_pagado
+            monto_pagado,
+            bank_account_code or None,
+            bank_account_name or None
         ))
 
         cash_id = cur.fetchone()["id"]
@@ -610,12 +640,20 @@ def aplicar_pago(payload: dict, conn=Depends(get_db)):
 
         conn.commit()
 
+        accounting_warning = None
+        try:
+            from services.accounting_auto import sync_cash_app_to_accounting
+            sync_cash_app_to_accounting(conn)
+        except Exception as sync_error:
+            accounting_warning = str(sync_error)
+
         return {
             "status": "ok",
             "cash_app_id": cash_id,
             "collections_updated": True,
             "saldo_actual": saldo_actual,
-            "estado_factura": estado_factura
+            "estado_factura": estado_factura,
+            "accounting_warning": accounting_warning
         }
 
     except HTTPException:

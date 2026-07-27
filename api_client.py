@@ -1829,6 +1829,19 @@ def get_accounting_accounts_api():
     return r.json().get("data", [])
 
 
+def get_accounting_bank_accounts_api():
+    """
+    Obtiene cuentas bancarias del plan contable para pagos.
+    """
+    r = api_request(
+        "GET",
+        f"{BASE_URL}/accounting/bank-accounts",
+        timeout=15
+    )
+    r.raise_for_status()
+    return r.json().get("data", [])
+
+
 def create_accounting_account_api(payload):
     r = api_request("POST", f"{BASE_URL}/accounting/accounts", json=payload, timeout=20)
     r.raise_for_status()

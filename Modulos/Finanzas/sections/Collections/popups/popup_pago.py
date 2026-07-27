@@ -2,10 +2,13 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 from datetime import date
 
+from Modulos.Finanzas.date_utils import LONG_DATE_FORMAT, to_db_date, to_long_english_date
+from Modulos.Servicios.widgets.date_picker import DatePicker
 from api_client import (
     aplicar_pago_api,
     aplicar_nota_credito_api,
     api_request,
+    get_accounting_bank_accounts_api,
     BASE_URL
 )
 
@@ -18,6 +21,8 @@ class PopupPago(tk.Toplevel):
         self.row = row_data
         self.on_success = on_success
         self.notas_credito = []
+        self.bank_accounts = []
+        self.bank_account_by_label = {}
 
         # ----------------- SALDOS -----------------
         self.total = self._to_float(self.row[10])
@@ -97,14 +102,23 @@ class PopupPago(tk.Toplevel):
         # ================= FRAME PAGO =================
         self.frm_pago = tk.Frame(form)
 
-        tk.Label(self.frm_pago, text="Banco").pack(anchor="w", padx=8)
-        self.banco = ttk.Entry(self.frm_pago)
+        tk.Label(self.frm_pago, text="Banco / cuenta contable").pack(anchor="w", padx=8)
+        self.banco = ttk.Combobox(self.frm_pago, state="readonly")
         self.banco.pack(fill="x", padx=8, pady=5)
+        self._load_bank_accounts()
 
         tk.Label(self.frm_pago, text="Fecha de pago").pack(anchor="w", padx=8)
-        self.fecha_pago = ttk.Entry(self.frm_pago)
-        self.fecha_pago.insert(0, date.today().isoformat())
-        self.fecha_pago.pack(fill="x", padx=8, pady=5)
+        fecha_row = tk.Frame(self.frm_pago)
+        fecha_row.pack(fill="x", padx=8, pady=5)
+        self.fecha_pago = ttk.Entry(fecha_row)
+        self.fecha_pago.insert(0, to_long_english_date(date.today()))
+        self.fecha_pago.pack(side="left", fill="x", expand=True)
+        ttk.Button(
+            fecha_row,
+            text="📅",
+            width=3,
+            command=lambda: DatePicker(self, self.fecha_pago, output_format=LONG_DATE_FORMAT)
+        ).pack(side="left", padx=(5, 0))
 
         tk.Label(self.frm_pago, text="Comisión").pack(anchor="w", padx=8)
         self.comision = ttk.Entry(self.frm_pago)
@@ -253,12 +267,17 @@ class PopupPago(tk.Toplevel):
                 if monto > self.saldo:
                     raise ValueError("El monto excede el saldo pendiente")
 
+                if not self._selected_bank():
+                    raise ValueError("Seleccione el banco / cuenta contable")
+
                 payload = {
                     "numero_documento": numero_factura,
                     "codigo_cliente": codigo_cliente,
                     "nombre_cliente": nombre_cliente,
                     "banco": self.banco.get().strip(),
-                    "fecha_pago": self.fecha_pago.get().strip(),
+                    "bank_account_code": self._selected_bank().get("account_code"),
+                    "bank_account_name": self._selected_bank().get("account_name"),
+                    "fecha_pago": to_db_date(self.fecha_pago.get().strip()),
                     "comision": comision,
                     "referencia": self.referencia.get().strip(),
                     "monto_pagado": monto,
@@ -303,3 +322,27 @@ class PopupPago(tk.Toplevel):
                 "Error",
                 f"No se pudo aplicar\n\n{e}"
             )
+
+    def _load_bank_accounts(self):
+        try:
+            self.bank_accounts = get_accounting_bank_accounts_api()
+        except Exception:
+            self.bank_accounts = []
+
+        values = []
+        self.bank_account_by_label = {}
+        for account in self.bank_accounts:
+            code = str(account.get("account_code") or "").strip()
+            name = str(account.get("account_name") or "").strip()
+            if not code or not name:
+                continue
+            label = f"{code} - {name}"
+            values.append(label)
+            self.bank_account_by_label[label] = account
+
+        self.banco["values"] = values
+        if values:
+            self.banco.set(values[0])
+
+    def _selected_bank(self):
+        return self.bank_account_by_label.get(self.banco.get().strip(), {})

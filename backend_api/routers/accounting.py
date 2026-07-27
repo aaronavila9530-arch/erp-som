@@ -529,6 +529,35 @@ def get_accounting_accounts(conn=Depends(get_db)):
     }
 
 
+@router.get("/bank-accounts")
+def get_accounting_bank_accounts(conn=Depends(get_db)):
+    """
+    Devuelve cuentas bancarias posteables para pagos de Collections e ITP.
+    Usa el plan contable como fuente unica de verdad.
+    """
+
+    _ensure_accounting_professional_schema(conn)
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute("""
+        SELECT
+            account_code,
+            account_name,
+            account_type,
+            parent_account,
+            active
+        FROM accounting_accounts
+        WHERE active = TRUE
+          AND account_code NOT IN ('1.1.01', '1.1.02')
+          AND (
+                account_code LIKE '1.1.02.%'
+             OR account_code LIKE '1.1.01.%'
+             OR LOWER(account_name) LIKE 'banco%%'
+          )
+        ORDER BY account_code
+    """)
+    return {"data": cur.fetchall() or []}
+
+
 @router.post("/accounts")
 def create_accounting_account(payload: dict, conn=Depends(get_db)):
     _ensure_accounting_professional_schema(conn)

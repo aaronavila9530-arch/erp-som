@@ -96,7 +96,6 @@ def sync_collections_to_accounting(conn):
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     try:
-
         # ============================================================
         # 1️⃣ TC DEL DÍA
         # ============================================================
@@ -318,6 +317,30 @@ def sync_cash_app_to_accounting(conn):
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     try:
+        cur.execute("""
+            ALTER TABLE cash_app
+            ADD COLUMN IF NOT EXISTS bank_account_code TEXT
+        """)
+        cur.execute("""
+            ALTER TABLE cash_app
+            ADD COLUMN IF NOT EXISTS bank_account_name TEXT
+        """)
+
+        def _bank_account(code, name, fallback_code="1.1.01", fallback_name="Bancos"):
+            code = (code or "").strip()
+            name = (name or "").strip()
+            if code:
+                cur.execute("""
+                    SELECT account_code, account_name
+                    FROM accounting_ledger
+                    WHERE account_code = %s
+                      AND active = TRUE
+                    LIMIT 1
+                """, (code,))
+                row = cur.fetchone()
+                if row:
+                    return row["account_code"], row["account_name"]
+            return fallback_code, fallback_name
 
         # ============================================================
         # 0️⃣ TRAER TODOS LOS PAGOS CASH_APP
@@ -329,6 +352,8 @@ def sync_cash_app_to_accounting(conn):
                 c.fecha_pago,
                 c.monto_pagado,
                 c.comision,
+                c.bank_account_code,
+                c.bank_account_name,
                 a.id AS entry_id
             FROM cash_app c
             LEFT JOIN accounting_entries a
@@ -459,6 +484,12 @@ def sync_cash_app_to_accounting(conn):
 
             BANK_ACCOUNT_CODE = "1.1.01"
             BANK_ACCOUNT_NAME = "Bancos"
+            BANK_ACCOUNT_CODE, BANK_ACCOUNT_NAME = _bank_account(
+                p.get("bank_account_code"),
+                p.get("bank_account_name"),
+                BANK_ACCOUNT_CODE,
+                BANK_ACCOUNT_NAME
+            )
 
             BANK_FEE_CODE = "5.2.03"
             BANK_FEE_NAME = "Comisiones bancarias"
@@ -594,6 +625,22 @@ def sync_itp_to_accounting(conn):
                 )
             """, (code, name, account_type, 4, parent_account, code))
 
+        def _bank_account(code, name, fallback_code="1.1.02", fallback_name="Bancos"):
+            code = (code or "").strip()
+            name = (name or "").strip()
+            if code:
+                cur.execute("""
+                    SELECT account_code, account_name
+                    FROM accounting_ledger
+                    WHERE account_code = %s
+                      AND active = TRUE
+                    LIMIT 1
+                """, (code,))
+                row = cur.fetchone()
+                if row:
+                    return row["account_code"], row["account_name"]
+            return fallback_code, fallback_name
+
         def _insert_line(entry_id: int, code: str, name: str, debit: float, credit: float, desc: str):
             cur.execute("""
                 INSERT INTO accounting_lines
@@ -635,6 +682,19 @@ def sync_itp_to_accounting(conn):
         # ============================================================
         # 0️⃣ OBTENER TC DEL DÍA
         # ============================================================
+        cur.execute("""
+            ALTER TABLE payment_obligations
+            ADD COLUMN IF NOT EXISTS payment_bank TEXT
+        """)
+        cur.execute("""
+            ALTER TABLE payment_obligations
+            ADD COLUMN IF NOT EXISTS payment_bank_account_code TEXT
+        """)
+        cur.execute("""
+            ALTER TABLE payment_obligations
+            ADD COLUMN IF NOT EXISTS payment_bank_account_name TEXT
+        """)
+
         today = date.today()
 
         cur.execute("""
@@ -669,7 +729,9 @@ def sync_itp_to_accounting(conn):
                 p.balance,
                 p.status,
                 p.active,
-                p.notes
+                p.notes,
+                p.payment_bank_account_code,
+                p.payment_bank_account_name
             FROM payment_obligations p
             WHERE p.active = TRUE
             ORDER BY p.id ASC
@@ -767,6 +829,12 @@ def sync_itp_to_accounting(conn):
             # Bancos (grupo)
             BANK_CODE = "1.1.02"
             BANK_NAME = "Bancos"
+            BANK_CODE, BANK_NAME = _bank_account(
+                ob.get("payment_bank_account_code"),
+                ob.get("payment_bank_account_name"),
+                BANK_CODE,
+                BANK_NAME
+            )
 
             # El IVA de compras debe existir para que el asiento ITP balancee:
             # Debe gasto + IVA credito fiscal / Haber CxP.
