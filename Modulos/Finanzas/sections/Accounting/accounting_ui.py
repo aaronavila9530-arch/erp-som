@@ -237,6 +237,11 @@ class AccountingUI(tk.Frame):
         )
 
         actions_menu.add_command(
+            label="Biblioteca legal Costa Rica",
+            command=self._open_legal_library
+        )
+
+        actions_menu.add_command(
             label="Mi espacio contable",
             command=self._open_accountant_workspace
         )
@@ -828,6 +833,14 @@ class AccountingUI(tk.Frame):
             PopupTaxCenter(self, period=self.cmb_period.get())
         except Exception as e:
             messagebox.showerror("Centro fiscal", f"Error abriendo el centro fiscal:\n{str(e)}")
+
+    def _open_legal_library(self):
+        try:
+            from Modulos.Finanzas.sections.Accounting.popups.popup_legal_library import PopupLegalLibrary
+
+            PopupLegalLibrary(self)
+        except Exception as e:
+            messagebox.showerror("Biblioteca legal", f"No se pudo abrir:\n{str(e)}")
 
     def _open_accountant_workspace(self):
         """Abre la bandeja diaria, búsqueda y cierre guiado."""

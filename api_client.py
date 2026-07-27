@@ -2134,6 +2134,17 @@ def post_accounting_guided_close_api(period, user, notes=""):
     return r.json()
 
 
+def get_accounting_legal_library_api(category=None, query=None):
+    params = {}
+    if category and category not in ("TODOS", "Todos", "all"):
+        params["category"] = category
+    if query:
+        params["q"] = query
+    r = api_request("GET", f"{BASE_URL}/accounting/legal-library", params=params, timeout=30)
+    raise_for_status_with_detail(r)
+    return r.json()
+
+
 def search_accounting_workspace_api(query, limit=30):
     r = api_request("GET", f"{BASE_URL}/accounting/workspace/search", params={"q": query, "limit": limit}, timeout=45)
     raise_for_status_with_detail(r)
