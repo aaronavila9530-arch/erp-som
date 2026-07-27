@@ -239,6 +239,11 @@ class AccountingUI(tk.Frame):
             command=self._open_accountant_workspace
         )
 
+        actions_menu.add_command(
+            label="Auditoria por usuario",
+            command=self._open_finance_audit
+        )
+
 
         actions_menu.add_command(
             label="✏️ Ajustar asiento",
@@ -360,6 +365,15 @@ class AccountingUI(tk.Frame):
             PopupMonthlyFinancialReport
         )
         PopupMonthlyFinancialReport(self)
+
+    def _open_finance_audit(self):
+        try:
+            from Modulos.Finanzas.sections.Accounting.popups.popup_finance_audit import (
+                PopupFinanceAudit,
+            )
+            PopupFinanceAudit(self)
+        except Exception as e:
+            messagebox.showerror("Auditoria", f"No se pudo abrir:\n{str(e)}")
 
     # ============================================================
     # HELPERS (ÚNICA ADICIÓN)
