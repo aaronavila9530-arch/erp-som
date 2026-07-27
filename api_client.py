@@ -2117,6 +2117,23 @@ def update_accounting_close_checklist_api(period, item_code, status, user, notes
     return r.json()
 
 
+def get_accounting_guided_close_api(period):
+    r = api_request("GET", f"{BASE_URL}/accounting/workspace/guided-close", params={"period": period}, timeout=45)
+    raise_for_status_with_detail(r)
+    return r.json()
+
+
+def post_accounting_guided_close_api(period, user, notes=""):
+    r = api_request(
+        "POST",
+        f"{BASE_URL}/accounting/workspace/guided-close/{period}/close",
+        json={"user": user, "notes": notes or ""},
+        timeout=45,
+    )
+    raise_for_status_with_detail(r)
+    return r.json()
+
+
 def search_accounting_workspace_api(query, limit=30):
     r = api_request("GET", f"{BASE_URL}/accounting/workspace/search", params={"q": query, "limit": limit}, timeout=45)
     raise_for_status_with_detail(r)

@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from database import get_db
 from routers.accounting import _ensure_accounting_professional_schema
 from routers.accounting_tax import _ensure_schema as _ensure_tax_schema
+from services.finance_audit import audit_event, ensure_finance_audit_schema, row_to_dict
 
 
 router = APIRouter(prefix="/accounting/workspace", tags=["Accountant Workspace"])
@@ -72,6 +73,25 @@ def _ensure_schema(conn):
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
         """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS accounting_monthly_close_runs (
+                id BIGSERIAL PRIMARY KEY,
+                company_code VARCHAR(30) NOT NULL DEFAULT 'MSL-CR',
+                period VARCHAR(7) NOT NULL,
+                status VARCHAR(20) NOT NULL DEFAULT 'DRAFT',
+                closed_by TEXT,
+                closed_at TIMESTAMPTZ,
+                notes TEXT,
+                checklist_snapshot JSONB NOT NULL DEFAULT '[]'::jsonb,
+                validation_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
+                summary JSONB NOT NULL DEFAULT '{}'::jsonb,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                UNIQUE(company_code, period),
+                CHECK(status IN ('DRAFT','READY','CLOSED','REOPENED'))
+            )
+        """)
+        ensure_finance_audit_schema(cur)
     conn.commit()
     _SCHEMA_READY = True
 
@@ -196,6 +216,179 @@ def _automatic_checks(cur, period):
             "MANAGEMENT_APPROVAL":{"ready":False,"detail":"Aprobación explícita requerida."}}
 
 
+def _json_default(value):
+    return __import__("json").dumps(value, default=str)
+
+
+def _validation_alert_summary(cur, period):
+    critical = []
+    warnings = []
+
+    cur.execute("""
+        SELECT e.id, e.origin, e.description,
+               ROUND((COALESCE(SUM(l.debit),0)-COALESCE(SUM(l.credit),0))::numeric,2) AS difference
+        FROM accounting_entries e
+        JOIN accounting_lines l ON l.entry_id=e.id
+        WHERE e.period=%s
+        GROUP BY e.id, e.origin, e.description
+        HAVING ROUND((COALESCE(SUM(l.debit),0)-COALESCE(SUM(l.credit),0))::numeric,2) <> 0
+        ORDER BY ABS(ROUND((COALESCE(SUM(l.debit),0)-COALESCE(SUM(l.credit),0))::numeric,2)) DESC
+        LIMIT 50
+    """, (period,))
+    for row in cur.fetchall():
+        critical.append({
+            "code": "UNBALANCED_ENTRY",
+            "title": "Asiento descuadrado",
+            "entity_id": row["id"],
+            "message": f"Asiento {row['id']} tiene diferencia {row['difference']}.",
+            "metadata": row,
+        })
+
+    cur.execute("""
+        SELECT e.id, e.origin, e.description
+        FROM accounting_entries e
+        LEFT JOIN accounting_lines l ON l.entry_id=e.id
+        WHERE e.period=%s
+        GROUP BY e.id, e.origin, e.description
+        HAVING COUNT(l.id)=0
+        ORDER BY e.id DESC
+        LIMIT 50
+    """, (period,))
+    for row in cur.fetchall():
+        critical.append({
+            "code": "ENTRY_WITHOUT_LINES",
+            "title": "Asiento sin lineas",
+            "entity_id": row["id"],
+            "message": f"Asiento {row['id']} no tiene lineas contables.",
+            "metadata": row,
+        })
+
+    cur.execute("""
+        SELECT l.id, l.entry_id, l.account_code, l.account_name, l.debit, l.credit
+        FROM accounting_lines l
+        JOIN accounting_entries e ON e.id=l.entry_id
+        WHERE e.period=%s
+          AND (
+                (COALESCE(l.debit,0)>0 AND COALESCE(l.credit,0)>0)
+             OR (COALESCE(l.debit,0)=0 AND COALESCE(l.credit,0)=0)
+          )
+        ORDER BY l.id DESC
+        LIMIT 50
+    """, (period,))
+    for row in cur.fetchall():
+        critical.append({
+            "code": "INVALID_LINE_AMOUNT",
+            "title": "Linea con monto invalido",
+            "entity_id": row["id"],
+            "message": f"Linea {row['id']} del asiento {row['entry_id']} tiene monto invalido.",
+            "metadata": row,
+        })
+
+    cur.execute("""
+        SELECT COUNT(*) AS count
+        FROM accounting_entries
+        WHERE period=%s AND workflow_status <> 'POSTED'
+    """, (period,))
+    non_posted = int((cur.fetchone() or {}).get("count") or 0)
+    if non_posted:
+        critical.append({
+            "code": "NON_POSTED_ENTRIES",
+            "title": "Asientos sin contabilizar",
+            "entity_id": period,
+            "message": f"{non_posted} asientos del periodo no estan POSTED.",
+            "metadata": {"count": non_posted},
+        })
+
+    cur.execute("""
+        SELECT COUNT(*) AS count
+        FROM cash_app
+        WHERE tipo_aplicacion='PAGO'
+          AND fecha_pago IS NOT NULL
+          AND TO_CHAR(fecha_pago::date,'YYYY-MM')=%s
+          AND (bank_account_code IS NULL OR BTRIM(bank_account_code)='')
+    """, (period,))
+    missing_cash_bank = int((cur.fetchone() or {}).get("count") or 0)
+    if missing_cash_bank:
+        warnings.append({
+            "code": "COLLECTION_PAYMENT_WITHOUT_BANK_ACCOUNT",
+            "title": "Pagos Collections sin banco especifico",
+            "message": f"{missing_cash_bank} pagos de Collections no tienen banco contable especifico.",
+            "metadata": {"count": missing_cash_bank},
+        })
+
+    cur.execute("""
+        SELECT COUNT(*) AS count
+        FROM payment_obligations
+        WHERE active=TRUE
+          AND status IN ('PAID','PARTIAL')
+          AND last_payment_date IS NOT NULL
+          AND TO_CHAR(last_payment_date::date,'YYYY-MM')=%s
+          AND (payment_bank_account_code IS NULL OR BTRIM(payment_bank_account_code)='')
+    """, (period,))
+    missing_itp_bank = int((cur.fetchone() or {}).get("count") or 0)
+    if missing_itp_bank:
+        warnings.append({
+            "code": "ITP_PAYMENT_WITHOUT_BANK_ACCOUNT",
+            "title": "Pagos ITP sin banco especifico",
+            "message": f"{missing_itp_bank} pagos ITP no tienen banco contable especifico.",
+            "metadata": {"count": missing_itp_bank},
+        })
+
+    return {
+        "counts": {
+            "critical": len(critical),
+            "warning": len(warnings),
+            "info": 0,
+        },
+        "critical": critical,
+        "warnings": warnings,
+    }
+
+
+def _close_snapshot(cur, period):
+    _seed_checklist(cur, period)
+    checks = _automatic_checks(cur, period)
+    cur.execute("""
+        SELECT * FROM accounting_close_checklist
+        WHERE company_code='MSL-CR' AND period=%s
+        ORDER BY sequence
+    """, (period,))
+    checklist = []
+    for row in cur.fetchall():
+        checklist.append({
+            **row,
+            "automatic_check": checks.get(row["item_code"], {"ready": False, "detail": "Revision manual"}),
+        })
+
+    blockers = [
+        item for item in checklist
+        if item["mandatory"] and item["status"] not in {"COMPLETE", "NOT_APPLICABLE"}
+    ]
+    validation = _validation_alert_summary(cur, period)
+    cur.execute("""
+        SELECT COALESCE(SUM(l.debit),0) debit, COALESCE(SUM(l.credit),0) credit,
+               COUNT(DISTINCT e.id) entries
+        FROM accounting_entries e
+        LEFT JOIN accounting_lines l ON l.entry_id=e.id
+        WHERE e.period=%s
+    """, (period,))
+    totals = cur.fetchone() or {}
+    debit = float(totals.get("debit") or 0)
+    credit = float(totals.get("credit") or 0)
+    summary = {
+        "entries": int(totals.get("entries") or 0),
+        "debit": debit,
+        "credit": credit,
+        "difference": round(debit - credit, 2),
+        "completed": len(checklist) - len(blockers),
+        "total": len(checklist),
+        "mandatory_blockers": len(blockers),
+        "critical_alerts": validation["counts"]["critical"],
+        "warning_alerts": validation["counts"]["warning"],
+    }
+    return checklist, validation, summary, blockers
+
+
 @router.get("/close-checklist")
 def close_checklist(period: str, conn=Depends(get_db)):
     _valid_period(period); _ensure_schema(conn)
@@ -212,6 +405,138 @@ def close_checklist(period: str, conn=Depends(get_db)):
     blockers=[item for item in data if item["mandatory"] and item["status"] not in {"COMPLETE","NOT_APPLICABLE"}]
     return {"period":period,"period_status":control["status"],"ready_to_close":not blockers,
             "completed":len(data)-len(blockers),"total":len(data),"data":data}
+
+
+@router.get("/guided-close")
+def guided_monthly_close(period: str, conn=Depends(get_db)):
+    _valid_period(period)
+    _ensure_schema(conn)
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        checklist, validation, summary, blockers = _close_snapshot(cur, period)
+        status = "READY" if not blockers and validation["counts"]["critical"] == 0 else "DRAFT"
+        cur.execute("""
+            INSERT INTO accounting_monthly_close_runs(
+                company_code, period, status, checklist_snapshot, validation_snapshot, summary
+            )
+            VALUES('MSL-CR', %s, %s, %s, %s, %s)
+            ON CONFLICT(company_code, period) DO UPDATE SET
+                status=CASE
+                    WHEN accounting_monthly_close_runs.status='CLOSED' THEN 'CLOSED'
+                    ELSE EXCLUDED.status
+                END,
+                checklist_snapshot=EXCLUDED.checklist_snapshot,
+                validation_snapshot=EXCLUDED.validation_snapshot,
+                summary=EXCLUDED.summary,
+                updated_at=NOW()
+            RETURNING *
+        """, (
+            period,
+            status,
+            Json(checklist, dumps=_json_default),
+            Json(validation, dumps=_json_default),
+            Json(summary),
+        ))
+        run = cur.fetchone()
+        cur.execute("""
+            SELECT status, closed_by, closed_at
+            FROM accounting_period_controls
+            WHERE company_code='MSL-CR' AND period=%s
+        """, (period,))
+        control = cur.fetchone() or {"status": "OPEN", "closed_by": None, "closed_at": None}
+    conn.commit()
+    return {
+        "period": period,
+        "ready_to_close": not blockers and validation["counts"]["critical"] == 0,
+        "period_control": control,
+        "run": run,
+        "summary": summary,
+        "checklist": checklist,
+        "validation": validation,
+        "blockers": blockers,
+    }
+
+
+class GuidedClosePayload(BaseModel):
+    user: str
+    notes: str | None = None
+
+
+@router.post("/guided-close/{period}/close")
+def close_guided_month(period: str, payload: GuidedClosePayload, conn=Depends(get_db)):
+    _valid_period(period)
+    _ensure_schema(conn)
+    user = (payload.user or "unknown").strip() or "unknown"
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        checklist, validation, summary, blockers = _close_snapshot(cur, period)
+        if blockers:
+            raise HTTPException(409, f"El checklist obligatorio tiene {len(blockers)} pasos pendientes.")
+        if validation["counts"]["critical"]:
+            raise HTTPException(409, f"Existen {validation['counts']['critical']} alertas criticas antes del cierre.")
+        cur.execute("""
+            SELECT *
+            FROM accounting_period_controls
+            WHERE company_code='MSL-CR' AND period=%s
+            FOR UPDATE
+        """, (period,))
+        before = cur.fetchone()
+        if before and before.get("status") == "CLOSED":
+            raise HTTPException(409, f"El periodo {period} ya esta cerrado.")
+        cur.execute("""
+            INSERT INTO accounting_period_controls(company_code, period, status, closed_by, closed_at)
+            VALUES('MSL-CR', %s, 'CLOSED', %s, NOW())
+            ON CONFLICT(company_code, period) DO UPDATE SET
+                status='CLOSED',
+                closed_by=EXCLUDED.closed_by,
+                closed_at=NOW(),
+                updated_at=NOW()
+            RETURNING *
+        """, (period, user))
+        control = cur.fetchone()
+        cur.execute("""
+            INSERT INTO accounting_monthly_close_runs(
+                company_code, period, status, closed_by, closed_at, notes,
+                checklist_snapshot, validation_snapshot, summary
+            )
+            VALUES('MSL-CR', %s, 'CLOSED', %s, NOW(), %s, %s, %s, %s)
+            ON CONFLICT(company_code, period) DO UPDATE SET
+                status='CLOSED',
+                closed_by=EXCLUDED.closed_by,
+                closed_at=NOW(),
+                notes=EXCLUDED.notes,
+                checklist_snapshot=EXCLUDED.checklist_snapshot,
+                validation_snapshot=EXCLUDED.validation_snapshot,
+                summary=EXCLUDED.summary,
+                updated_at=NOW()
+            RETURNING *
+        """, (
+            period,
+            user,
+            payload.notes,
+            Json(checklist, dumps=_json_default),
+            Json(validation, dumps=_json_default),
+            Json(summary),
+        ))
+        run = cur.fetchone()
+        audit_event(
+            cur,
+            module="accounting",
+            action="MONTHLY_PERIOD_CLOSED",
+            entity_type="accounting_period",
+            entity_id=period,
+            performed_by=user,
+            performed_role="",
+            before=row_to_dict(before),
+            after={"period_control": row_to_dict(control), "close_run": row_to_dict(run)},
+            metadata={"summary": summary, "notes": payload.notes or ""},
+        )
+    conn.commit()
+    return {
+        "status": "ok",
+        "period": period,
+        "period_control": control,
+        "run": run,
+        "summary": summary,
+    }
 
 
 class ChecklistUpdate(BaseModel):

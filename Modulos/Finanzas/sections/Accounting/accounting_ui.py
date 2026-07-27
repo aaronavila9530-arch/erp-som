@@ -698,23 +698,30 @@ class AccountingUI(tk.Frame):
 
     def _open_closing_wizard(self):
         """
-        Abre el wizard de cierre contable.
+        Abre el cierre mensual guiado.
         """
         try:
-            from Modulos.Finanzas.sections.Accounting.popups.popup_closing_wizard import (
-                PopupClosingWizard
+            from Modulos.Finanzas.sections.Accounting.popups.popup_guided_monthly_close import (
+                PopupGuidedMonthlyClose
             )
 
-            PopupClosingWizard(
-                self,
-                company_code="MSL-CR",
-                ledger="0L"
-            )
+            PopupGuidedMonthlyClose(self, period=self.cmb_period.get() or self.current_period)
 
         except Exception as e:
             messagebox.showerror(
-                "Cierre contable",
-                f"Error abriendo cierre contable:\n{str(e)}"
+                "Cierre mensual guiado",
+                f"Error abriendo cierre mensual:\n{str(e)}"
+            )
+
+    def _open_technical_closing_wizard(self):
+        try:
+            from Modulos.Finanzas.sections.Accounting.popups.popup_closing_wizard import PopupClosingWizard
+
+            PopupClosingWizard(self, company_code="MSL-CR", ledger="0L")
+        except Exception as e:
+            messagebox.showerror(
+                "Mayorizacion tecnica",
+                f"Error abriendo mayorizacion tecnica:\n{str(e)}"
             )
 
     # ============================================================
