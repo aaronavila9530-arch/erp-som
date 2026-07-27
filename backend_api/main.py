@@ -44,6 +44,7 @@ from routers.accounting_auxiliaries import router as accounting_auxiliaries_rout
 from routers.accounting_tax import router as accounting_tax_router
 from routers.accounting_workspace import router as accounting_workspace_router
 from routers.accounting_legal_library import router as accounting_legal_library_router
+from routers.accounting_ai import router as accounting_ai_router
 from routers.gmail_fiscal import router as gmail_fiscal_router, start_gmail_fiscal_scheduler
 from routers.monthly_financial_report import router as monthly_financial_report_router
 
@@ -227,6 +228,7 @@ app.include_router(accounting_auxiliaries_router)
 app.include_router(accounting_tax_router)
 app.include_router(accounting_workspace_router)
 app.include_router(accounting_legal_library_router)
+app.include_router(accounting_ai_router)
 app.include_router(gmail_fiscal_router)
 app.include_router(monthly_financial_report_router)
 

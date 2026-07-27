@@ -1931,6 +1931,17 @@ def get_accounting_validation_alerts_api(
     return r.json()
 
 
+def post_accounting_ai_analysis_api(payload: dict):
+    r = api_request(
+        "POST",
+        f"{BASE_URL}/accounting/ai/analyze",
+        json=payload,
+        timeout=90,
+    )
+    raise_for_status_with_detail(r)
+    return r.json()
+
+
 def sync_accounting_auxiliaries_api():
     r = api_request("POST", f"{BASE_URL}/accounting/auxiliaries/sync", timeout=180)
     r.raise_for_status()

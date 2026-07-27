@@ -256,6 +256,11 @@ class AccountingUI(tk.Frame):
             command=self._open_validation_alerts
         )
 
+        actions_menu.add_command(
+            label="IA contable",
+            command=self._open_accounting_ai
+        )
+
 
         actions_menu.add_command(
             label="✏️ Ajustar asiento",
@@ -595,7 +600,7 @@ class AccountingUI(tk.Frame):
 
 
     def _current_validation_filters(self):
-        origin = self.cmb_origin.get()
+        origin = self.cmb_source.get()
         if self.search_mode.get() == "SINGLE":
             return {
                 "period": self.cmb_period.get(),
@@ -645,6 +650,15 @@ class AccountingUI(tk.Frame):
             PopupAccountingValidationAlerts(self, filters=self._current_validation_filters())
         except Exception as e:
             messagebox.showerror("Alertas", f"No se pudo abrir:\n{str(e)}")
+
+    def _open_accounting_ai(self):
+        try:
+            from Modulos.Finanzas.sections.Accounting.popups.popup_accounting_ai import (
+                PopupAccountingAI,
+            )
+            PopupAccountingAI(self, filters=self._current_validation_filters())
+        except Exception as e:
+            messagebox.showerror("IA contable", f"No se pudo abrir:\n{str(e)}")
 
 
     def _toggle_period_mode(self):
