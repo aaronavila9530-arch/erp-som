@@ -11,6 +11,7 @@ from datetime import date, datetime, timedelta
 
 from database import get_db
 from rbac_service import has_permission
+from services.finance_audit import actor_from_headers, audit_event, row_to_dict
 
 
 router = APIRouter(
@@ -452,12 +453,19 @@ def search_collections(
 # ============================================================
 @router.post("/pago")
 @router.post("/pago/")
-def aplicar_pago(payload: dict, conn=Depends(get_db)):
+def aplicar_pago(
+    payload: dict,
+    conn=Depends(get_db),
+    x_user: str | None = Header(None, alias="X-User"),
+    x_role: str | None = Header(None, alias="X-Role"),
+    x_user_role: str | None = Header(None, alias="X-User-Role"),
+):
 
     cur = None
 
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
+        performed_by, performed_role = actor_from_headers(x_user, x_role, x_user_role)
 
         # ==============================
         # 1) Leer payload (del popup)
@@ -581,7 +589,7 @@ def aplicar_pago(payload: dict, conn=Depends(get_db)):
         # 4) Recalcular saldo SOLO FACTURA
         # ==============================
         cur.execute("""
-            SELECT total
+            SELECT *
             FROM collections
             WHERE ltrim(numero_documento, '0') = %s
               AND codigo_cliente = %s
@@ -597,6 +605,7 @@ def aplicar_pago(payload: dict, conn=Depends(get_db)):
                 "Factura no encontrada o el documento no es una FACTURA"
             )
 
+        before_collection = row_to_dict(factura)
         total_factura = float(factura["total"] or 0)
 
         # Calcular total pagado SOLO sobre pagos
@@ -637,6 +646,39 @@ def aplicar_pago(payload: dict, conn=Depends(get_db)):
             numero_norm,
             codigo_cliente
         ))
+
+        cur.execute("""
+            SELECT *
+            FROM collections
+            WHERE ltrim(numero_documento, '0') = %s
+              AND codigo_cliente = %s
+              AND tipo_documento = 'FACTURA'
+            LIMIT 1
+        """, (numero_norm, codigo_cliente))
+        after_collection = row_to_dict(cur.fetchone())
+
+        cur.execute("SELECT * FROM cash_app WHERE id = %s", (cash_id,))
+        cash_after = row_to_dict(cur.fetchone())
+
+        audit_event(
+            cur,
+            module="collections",
+            action="PAYMENT_APPLIED",
+            entity_type="cash_app",
+            entity_id=cash_id,
+            performed_by=performed_by,
+            performed_role=performed_role,
+            before={"collection": before_collection},
+            after={"collection": after_collection, "cash_app": cash_after},
+            metadata={
+                "numero_documento": numero_documento,
+                "codigo_cliente": codigo_cliente,
+                "monto_pagado": monto_pagado,
+                "comision": comision,
+                "bank_account_code": bank_account_code or None,
+                "bank_account_name": bank_account_name or None,
+            },
+        )
 
         conn.commit()
 

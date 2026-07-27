@@ -3,6 +3,8 @@ from tkinter import ttk, messagebox
 import requests
 
 from api_client import BASE_URL
+from session_context import get_rol, get_user
+from Modulos.Finanzas.date_utils import to_long_english_date
 
 
 class PopupViewApplied(tk.Toplevel):
@@ -63,9 +65,13 @@ class PopupViewApplied(tk.Toplevel):
                 padx=5,
                 pady=4
             )
+            value = self.payment_data.get(key, "")
+            if key in ("fecha_pago", "created_at"):
+                value = to_long_english_date(value)
+
             ttk.Label(
                 frm_info,
-                text=str(self.payment_data.get(key, ""))
+                text=str(value)
             ).grid(
                 row=i // 2,
                 column=(i % 2) * 2 + 1,
@@ -133,6 +139,11 @@ class PopupViewApplied(tk.Toplevel):
                 json={
                     "reason": reason,
                     "comment": comment
+                },
+                headers={
+                    "X-User": get_user() or "unknown",
+                    "X-Role": get_rol() or "",
+                    "X-User-Role": get_rol() or "",
                 },
                 timeout=20
             )

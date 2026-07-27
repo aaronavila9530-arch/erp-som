@@ -1877,7 +1877,7 @@ def get_accounting_period_controls_api():
 
 
 def transition_accounting_entry_api(entry_id, action, user, reason=None):
-    payload = {"user": user}
+    payload = {"user": user, "role": get_rol() or ""}
     if reason:
         payload["reason"] = reason
     r = api_request(
@@ -1888,6 +1888,21 @@ def transition_accounting_entry_api(entry_id, action, user, reason=None):
     )
     r.raise_for_status()
     return r.json()
+
+
+def get_finance_audit_api(module=None, entity_type=None, entity_id=None, performed_by=None, limit=200):
+    params = {"limit": limit}
+    if module:
+        params["module"] = module
+    if entity_type:
+        params["entity_type"] = entity_type
+    if entity_id is not None:
+        params["entity_id"] = str(entity_id)
+    if performed_by:
+        params["performed_by"] = performed_by
+    r = api_request("GET", f"{BASE_URL}/accounting/audit", params=params, timeout=20)
+    r.raise_for_status()
+    return r.json().get("data", [])
 
 
 def sync_accounting_auxiliaries_api():

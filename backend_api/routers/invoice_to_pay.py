@@ -16,6 +16,7 @@ import shutil
 
 from database import get_db
 from rbac_service import has_permission
+from services.finance_audit import actor_from_headers, audit_event, row_to_dict
 
 
 router = APIRouter(
@@ -465,7 +466,10 @@ def apply_payment(
     bank_account_code: Optional[str] = Query(None),
     bank_account_name: Optional[str] = Query(None),
     bank_name: Optional[str] = Query(None),
-    conn=Depends(get_db)
+    conn=Depends(get_db),
+    x_user: str | None = Header(None, alias="X-User"),
+    x_role: str | None = Header(None, alias="X-Role"),
+    x_user_role: str | None = Header(None, alias="X-User-Role"),
 ):
     cur = None
 
@@ -474,6 +478,7 @@ def apply_payment(
         bank_account_code = str(bank_account_code or "").strip()
         bank_account_name = str(bank_account_name or "").strip()
         bank_name = str(bank_name or bank_account_name or "").strip()
+        performed_by, performed_role = actor_from_headers(x_user, x_role, x_user_role)
 
         cur.execute("""
             ALTER TABLE payment_obligations
@@ -509,7 +514,7 @@ def apply_payment(
         # 1️⃣ BLOQUEAR FILA (ANTI CONCURRENCIA)
         # =====================================================
         cur.execute("""
-            SELECT id, balance, status
+            SELECT *
             FROM payment_obligations
             WHERE id = %s
               AND record_type = 'OBLIGATION'
@@ -523,6 +528,8 @@ def apply_payment(
                 status_code=404,
                 detail="Obligation not found"
             )
+
+        before_obligation = row_to_dict(obligation)
 
         # =====================================================
         # 2️⃣ CONVERTIR A DECIMAL (FINANCIERO CORRECTO)
@@ -609,6 +616,28 @@ def apply_payment(
             bank_account_name or None,
             obligation_id
         ))
+
+        cur.execute("SELECT * FROM payment_obligations WHERE id = %s", (obligation_id,))
+        after_obligation = row_to_dict(cur.fetchone())
+
+        audit_event(
+            cur,
+            module="itp",
+            action="PAYMENT_APPLIED",
+            entity_type="payment_obligation",
+            entity_id=obligation_id,
+            performed_by=performed_by,
+            performed_role=performed_role,
+            before=before_obligation,
+            after=after_obligation,
+            metadata={
+                "applied_amount": str(amount_decimal),
+                "payment_date": payment_date,
+                "bank_account_code": bank_account_code or None,
+                "bank_account_name": bank_account_name or None,
+                "new_balance": str(new_balance),
+            },
+        )
 
         conn.commit()
 

@@ -4,6 +4,7 @@ from typing import Optional
 
 from database import get_db
 from rbac_service import has_permission
+from services.finance_audit import actor_from_headers, audit_event, row_to_dict
 
 
 router = APIRouter(
@@ -355,7 +356,10 @@ def get_paid_invoices_report(
 def reverse_cash_app(
     cash_app_id: int,
     payload: dict,
-    conn=Depends(get_db)
+    conn=Depends(get_db),
+    x_user: str | None = Header(None, alias="X-User"),
+    x_role: str | None = Header(None, alias="X-Role"),
+    x_user_role: str | None = Header(None, alias="X-User-Role"),
 ):
     """
     payload esperado:
@@ -367,6 +371,7 @@ def reverse_cash_app(
 
     reason = payload.get("reason")
     comment = payload.get("comment")
+    performed_by, performed_role = actor_from_headers(x_user, x_role, x_user_role)
 
     if not reason or not comment:
         raise HTTPException(
@@ -380,7 +385,7 @@ def reverse_cash_app(
     # 1️⃣ INTENTAR CASH_APP (NO TOCADO)
     # =====================================================
     cur.execute("""
-        SELECT id
+        SELECT *
         FROM cash_app
         WHERE id = %(id)s
     """, {"id": cash_app_id})
@@ -388,6 +393,7 @@ def reverse_cash_app(
     row = cur.fetchone()
 
     if row:
+        before = row_to_dict(row)
         # -----------------------------
         # REVERSA REAL cash_app
         # -----------------------------
@@ -395,6 +401,19 @@ def reverse_cash_app(
             DELETE FROM cash_app
             WHERE id = %(id)s
         """, {"id": cash_app_id})
+
+        audit_event(
+            cur,
+            module="bank_reconciliation",
+            action="PAYMENT_REVERSED",
+            entity_type="cash_app",
+            entity_id=cash_app_id,
+            performed_by=performed_by,
+            performed_role=performed_role,
+            reason=reason,
+            before=before,
+            metadata={"comment": comment},
+        )
 
         conn.commit()
         cur.close()
@@ -410,7 +429,7 @@ def reverse_cash_app(
     # 2️⃣ SI NO EXISTE EN cash_app → incoming_payments
     # =====================================================
     cur.execute("""
-        SELECT id
+        SELECT *
         FROM incoming_payments
         WHERE id = %(id)s
     """, {"id": cash_app_id})
@@ -418,6 +437,7 @@ def reverse_cash_app(
     row = cur.fetchone()
 
     if row:
+        before = row_to_dict(row)
         # -----------------------------
         # REVERSA REAL incoming_payments
         # -----------------------------
@@ -425,6 +445,19 @@ def reverse_cash_app(
             DELETE FROM incoming_payments
             WHERE id = %(id)s
         """, {"id": cash_app_id})
+
+        audit_event(
+            cur,
+            module="bank_reconciliation",
+            action="PAYMENT_REVERSED",
+            entity_type="incoming_payments",
+            entity_id=cash_app_id,
+            performed_by=performed_by,
+            performed_role=performed_role,
+            reason=reason,
+            before=before,
+            metadata={"comment": comment},
+        )
 
         conn.commit()
         cur.close()

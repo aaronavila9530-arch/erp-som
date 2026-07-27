@@ -6,6 +6,7 @@ import requests
 from Modulos.Finanzas.date_utils import LONG_DATE_FORMAT, to_db_date, to_long_english_date
 from Modulos.Servicios.widgets.date_picker import DatePicker
 from api_client import BASE_URL, get_accounting_bank_accounts_api
+from session_context import get_rol, get_user
 
 
 class PopupApplyPayment(tk.Toplevel):
@@ -164,6 +165,11 @@ class PopupApplyPayment(tk.Toplevel):
                     "bank_account_code": self._selected_bank().get("account_code"),
                     "bank_account_name": self._selected_bank().get("account_name"),
                     "bank_name": self._selected_bank().get("account_name")
+                },
+                headers={
+                    "X-User": get_user() or "unknown",
+                    "X-Role": get_rol() or "",
+                    "X-User-Role": get_rol() or "",
                 },
                 timeout=20
             )

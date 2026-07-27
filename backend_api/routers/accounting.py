@@ -20,6 +20,13 @@ from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, Tabl
 
 from database import get_db
 from rbac_service import has_permission
+from services.finance_audit import (
+    actor_from_headers,
+    audit_event,
+    ensure_finance_audit_schema,
+    row_to_dict,
+    rows_to_dicts,
+)
 
 
 router = APIRouter(
@@ -133,6 +140,7 @@ def _ensure_accounting_professional_schema(conn):
         """)
         cur.execute("CREATE INDEX IF NOT EXISTS idx_accounting_audit_entry ON accounting_audit_log(entry_id, created_at DESC)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_accounting_entries_workflow ON accounting_entries(period, workflow_status)")
+        ensure_finance_audit_schema(cur)
     conn.commit()
 
 
@@ -317,7 +325,13 @@ def get_accounting_periods(conn=Depends(get_db)):
 
 
 @router.post("/manual-entry")
-def create_manual_entry(payload: dict, conn=Depends(get_db)):
+def create_manual_entry(
+    payload: dict,
+    conn=Depends(get_db),
+    x_user: str | None = Header(None, alias="X-User"),
+    x_role: str | None = Header(None, alias="X-Role"),
+    x_user_role: str | None = Header(None, alias="X-User-Role"),
+):
     """
     payload:
     {
@@ -343,7 +357,8 @@ def create_manual_entry(payload: dict, conn=Depends(get_db)):
     entry_date = date.fromisoformat(payload["entry_date"])
     period = entry_date.strftime("%Y-%m")
 
-    created_by = str(payload.get("created_by") or "unknown").strip()
+    header_user, header_role = actor_from_headers(x_user, x_role, x_user_role)
+    created_by = str(payload.get("created_by") or header_user or "unknown").strip()
     company_code = str(payload.get("company_code") or "MSL-CR").strip()
     currency_code = str(payload.get("currency_code") or "CRC").strip().upper()
     exchange_rate = Decimal(str(payload.get("exchange_rate") or 1))
@@ -390,6 +405,21 @@ def create_manual_entry(payload: dict, conn=Depends(get_db)):
                   line.get("line_description"), line.get("third_party_type"), line.get("third_party_id"),
                   line.get("cost_center_code"), line.get("project_code"), line.get("vessel_code")))
         _audit(cur, entry["id"], "CREATE_DRAFT", created_by, None, "DRAFT")
+        cur.execute("SELECT * FROM accounting_entries WHERE id = %s", (entry["id"],))
+        after_entry = row_to_dict(cur.fetchone())
+        cur.execute("SELECT * FROM accounting_lines WHERE entry_id = %s ORDER BY id", (entry["id"],))
+        after_lines = rows_to_dicts(cur.fetchall())
+        audit_event(
+            cur,
+            module="accounting",
+            action="MANUAL_ENTRY_CREATED",
+            entity_type="accounting_entry",
+            entity_id=entry["id"],
+            performed_by=created_by,
+            performed_role=header_role,
+            after={"entry": after_entry, "lines": after_lines},
+            metadata={"period": period, "total_debit": str(total_debit), "total_credit": str(total_credit)},
+        )
         conn.commit()
         return {"status": "ok", "entry_id": entry["id"], "workflow_status": "DRAFT", "version": entry["version"]}
     except HTTPException:
@@ -402,9 +432,16 @@ def create_manual_entry(payload: dict, conn=Depends(get_db)):
 
 
 @router.post("/reverse/{entry_id}")
-def reverse_entry(entry_id: int, conn=Depends(get_db)):
+def reverse_entry(
+    entry_id: int,
+    conn=Depends(get_db),
+    x_user: str | None = Header(None, alias="X-User"),
+    x_role: str | None = Header(None, alias="X-Role"),
+    x_user_role: str | None = Header(None, alias="X-User-Role"),
+):
     _ensure_accounting_professional_schema(conn)
     cur = conn.cursor(cursor_factory=RealDictCursor)
+    performed_by, performed_role = actor_from_headers(x_user, x_role, x_user_role)
 
     # 1️⃣ Validar asiento original
     cur.execute("""
@@ -436,6 +473,8 @@ def reverse_entry(entry_id: int, conn=Depends(get_db)):
         raise HTTPException(400, "El asiento no tiene líneas")
 
     # 3️⃣ Crear asiento de reverso (NO marcado como reversed)
+    before_snapshot = {"entry": row_to_dict(entry), "lines": rows_to_dicts(lines)}
+
     cur.execute("""
         INSERT INTO accounting_entries
         (entry_date, period, description, origin, origin_id, reversed)
@@ -474,8 +513,24 @@ def reverse_entry(entry_id: int, conn=Depends(get_db)):
         WHERE id = %s
     """, (reversal_id, entry_id))
 
-    _audit(cur, entry_id, "REVERSE", entry.get("created_by") or "unknown", "POSTED", "REVERSED")
-    _audit(cur, reversal_id, "CREATE_REVERSAL", entry.get("created_by") or "unknown", None, "POSTED")
+    _audit(cur, entry_id, "REVERSE", performed_by, "POSTED", "REVERSED")
+    _audit(cur, reversal_id, "CREATE_REVERSAL", performed_by, None, "POSTED")
+    cur.execute("SELECT * FROM accounting_entries WHERE id IN (%s, %s) ORDER BY id", (entry_id, reversal_id))
+    after_entries = rows_to_dicts(cur.fetchall())
+    cur.execute("SELECT * FROM accounting_lines WHERE entry_id IN (%s, %s) ORDER BY entry_id, id", (entry_id, reversal_id))
+    after_lines = rows_to_dicts(cur.fetchall())
+    audit_event(
+        cur,
+        module="accounting",
+        action="ENTRY_REVERSED",
+        entity_type="accounting_entry",
+        entity_id=entry_id,
+        performed_by=performed_by,
+        performed_role=performed_role,
+        before=before_snapshot,
+        after={"entries": after_entries, "lines": after_lines},
+        metadata={"reversal_entry_id": reversal_id},
+    )
 
     conn.commit()
 
@@ -559,14 +614,21 @@ def get_accounting_bank_accounts(conn=Depends(get_db)):
 
 
 @router.post("/accounts")
-def create_accounting_account(payload: dict, conn=Depends(get_db)):
+def create_accounting_account(
+    payload: dict,
+    conn=Depends(get_db),
+    x_user: str | None = Header(None, alias="X-User"),
+    x_role: str | None = Header(None, alias="X-Role"),
+    x_user_role: str | None = Header(None, alias="X-User-Role"),
+):
     _ensure_accounting_professional_schema(conn)
     code = str(payload.get("account_code") or "").strip()
     name = str(payload.get("account_name") or "").strip()
     account_type = str(payload.get("account_type") or "").strip().upper()
     if not code or not name or not account_type:
         raise HTTPException(400, "account_code, account_name and account_type are required")
-    user = str(payload.get("updated_by") or payload.get("created_by") or "unknown")
+    header_user, header_role = actor_from_headers(x_user, x_role, x_user_role)
+    user = str(payload.get("updated_by") or payload.get("created_by") or header_user or "unknown")
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("""
@@ -583,6 +645,16 @@ def create_accounting_account(payload: dict, conn=Depends(get_db)):
                   payload.get("financial_statement_line"), payload.get("tax_mapping"),
                   bool(payload.get("active", True)), user, user))
             row = cur.fetchone()
+            audit_event(
+                cur,
+                module="accounting",
+                action="ACCOUNT_CREATED",
+                entity_type="accounting_account",
+                entity_id=code,
+                performed_by=user,
+                performed_role=header_role,
+                after=row_to_dict(row),
+            )
         conn.commit()
         return {"status": "ok", "account": row}
     except Exception as exc:
@@ -593,10 +665,20 @@ def create_accounting_account(payload: dict, conn=Depends(get_db)):
 
 
 @router.put("/accounts/{account_code}")
-def update_accounting_account(account_code: str, payload: dict, conn=Depends(get_db)):
+def update_accounting_account(
+    account_code: str,
+    payload: dict,
+    conn=Depends(get_db),
+    x_user: str | None = Header(None, alias="X-User"),
+    x_role: str | None = Header(None, alias="X-Role"),
+    x_user_role: str | None = Header(None, alias="X-User-Role"),
+):
     _ensure_accounting_professional_schema(conn)
-    user = str(payload.get("updated_by") or "unknown")
+    header_user, header_role = actor_from_headers(x_user, x_role, x_user_role)
+    user = str(payload.get("updated_by") or header_user or "unknown")
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("SELECT * FROM accounting_accounts WHERE account_code = %s", (account_code,))
+        before = row_to_dict(cur.fetchone())
         cur.execute("""
             UPDATE accounting_accounts SET
                 account_name = COALESCE(%s, account_name),
@@ -622,6 +704,18 @@ def update_accounting_account(account_code: str, payload: dict, conn=Depends(get
         if not row:
             conn.rollback()
             raise HTTPException(404, "Account not found")
+        audit_event(
+            cur,
+            module="accounting",
+            action="ACCOUNT_UPDATED",
+            entity_type="accounting_account",
+            entity_id=account_code,
+            performed_by=user,
+            performed_role=header_role,
+            before=before,
+            after=row_to_dict(row),
+            metadata={"changed_fields": sorted(payload.keys())},
+        )
     conn.commit()
     return {"status": "ok", "account": row}
 
@@ -781,7 +875,10 @@ def get_accounting_entry(
 def update_accounting_entry(
     entry_id: int,
     payload: dict,
-    conn=Depends(get_db)
+    conn=Depends(get_db),
+    x_user: str | None = Header(None, alias="X-User"),
+    x_role: str | None = Header(None, alias="X-Role"),
+    x_user_role: str | None = Header(None, alias="X-User-Role"),
 ):
     """
     Actualiza descripción del asiento y líneas contables.
@@ -791,6 +888,7 @@ def update_accounting_entry(
     _ensure_accounting_professional_schema(conn)
     _ensure_accounting_professional_schema(conn)
     cur = conn.cursor(cursor_factory=RealDictCursor)
+    performed_by, performed_role = actor_from_headers(x_user, x_role, x_user_role)
 
     description = payload.get("description")
     lines = payload.get("lines", [])
@@ -839,6 +937,9 @@ def update_accounting_entry(
     expected_version = payload.get("expected_version")
     if expected_version is not None and int(expected_version) != int(existing.get("version") or 1):
         raise HTTPException(status_code=409, detail="The entry changed. Reload before saving")
+
+    cur.execute("SELECT * FROM accounting_lines WHERE entry_id = %s ORDER BY id", (entry_id,))
+    before_snapshot = {"entry": row_to_dict(existing), "lines": rows_to_dicts(cur.fetchall())}
 
     # --------------------------------------------------------
     # 3. ACTUALIZAR CABECERA
@@ -896,6 +997,23 @@ def update_accounting_entry(
             entry_id
         ))
 
+    cur.execute("SELECT * FROM accounting_entries WHERE id = %s", (entry_id,))
+    after_entry = row_to_dict(cur.fetchone())
+    cur.execute("SELECT * FROM accounting_lines WHERE entry_id = %s ORDER BY id", (entry_id,))
+    after_lines = rows_to_dicts(cur.fetchall())
+    audit_event(
+        cur,
+        module="accounting",
+        action="ENTRY_UPDATED",
+        entity_type="accounting_entry",
+        entity_id=entry_id,
+        performed_by=performed_by,
+        performed_role=performed_role,
+        before=before_snapshot,
+        after={"entry": after_entry, "lines": after_lines},
+        metadata={"total_debit": str(total_debit), "total_credit": str(total_credit)},
+    )
+
     conn.commit()
 
     return {
@@ -907,6 +1025,7 @@ def update_accounting_entry(
 def _transition_entry(conn, entry_id, payload, expected_status, new_status, action):
     _ensure_accounting_professional_schema(conn)
     user = str((payload or {}).get("user") or "unknown")
+    role = str((payload or {}).get("role") or "").strip().lower() or None
     reason = str((payload or {}).get("reason") or "").strip() or None
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -933,6 +1052,19 @@ def _transition_entry(conn, entry_id, payload, expected_status, new_status, acti
             """, (new_status, user, entry_id))
             updated = cur.fetchone()
             _audit(cur, entry_id, action, user, current, new_status, reason)
+            audit_event(
+                cur,
+                module="accounting",
+                action=f"ENTRY_{action}",
+                entity_type="accounting_entry",
+                entity_id=entry_id,
+                performed_by=user,
+                performed_role=role,
+                reason=reason,
+                before=row_to_dict(entry),
+                after=row_to_dict(updated),
+                metadata={"previous_status": current, "new_status": new_status},
+            )
         conn.commit()
         return {"status": "ok", "entry": updated}
     except HTTPException:
@@ -967,6 +1099,46 @@ def get_accounting_entry_audit(entry_id: int, conn=Depends(get_db)):
                    performed_by, reason, created_at
             FROM accounting_audit_log WHERE entry_id=%s ORDER BY created_at DESC, id DESC
         """, (entry_id,))
+        return {"data": cur.fetchall()}
+
+
+@router.get("/audit")
+def get_finance_audit(
+    module: str | None = None,
+    entity_type: str | None = None,
+    entity_id: str | None = None,
+    performed_by: str | None = None,
+    limit: int = 200,
+    conn=Depends(get_db),
+):
+    _ensure_accounting_professional_schema(conn)
+    limit = max(1, min(int(limit or 200), 1000))
+    conditions = []
+    params = []
+    if module:
+        conditions.append("module = %s")
+        params.append(module)
+    if entity_type:
+        conditions.append("entity_type = %s")
+        params.append(entity_type)
+    if entity_id:
+        conditions.append("entity_id = %s")
+        params.append(str(entity_id))
+    if performed_by:
+        conditions.append("LOWER(performed_by) = LOWER(%s)")
+        params.append(performed_by)
+    where = "WHERE " + " AND ".join(conditions) if conditions else ""
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        ensure_finance_audit_schema(cur)
+        cur.execute(f"""
+            SELECT id, module, action, entity_type, entity_id, performed_by,
+                   performed_role, reason, before_snapshot, after_snapshot,
+                   metadata, created_at
+            FROM finance_audit_log
+            {where}
+            ORDER BY created_at DESC, id DESC
+            LIMIT %s
+        """, [*params, limit])
         return {"data": cur.fetchall()}
 
 
