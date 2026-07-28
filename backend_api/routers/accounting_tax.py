@@ -540,16 +540,20 @@ def upsert_cabys(code:str,payload:CabysItem,conn=Depends(get_db)):
 
 
 @router.get("/obligations")
-def obligations(year:int|None=None,conn=Depends(get_db)):
+def obligations(year:int|None=None,period:str|None=None,pending_only:bool=False,conn=Depends(get_db)):
     _ensure_schema(conn); year=year or date.today().year; results=[]
+    min_period = period if pending_only and period else date.today().strftime("%Y-%m") if pending_only else None
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute("SELECT * FROM tax_obligations WHERE active=TRUE ORDER BY tax_code")
         for item in cur.fetchall():
             due_dates=[]
             if item["periodicity"]=="MONTHLY" and item.get("due_day"):
                 for month in range(1,13):
+                    item_period = f"{year}-{month:02d}"
+                    if min_period and item_period < min_period:
+                        continue
                     nxt=date(year+(month==12),(month%12)+1,1)
-                    due_dates.append({"period":f"{year}-{month:02d}","estimated_due_date":min(nxt-timedelta(days=1),date(nxt.year,nxt.month,min(item["due_day"],28))).isoformat()})
+                    due_dates.append({"period":item_period,"estimated_due_date":min(nxt-timedelta(days=1),date(nxt.year,nxt.month,min(item["due_day"],28))).isoformat()})
             results.append({**item,"calendar":due_dates})
     return {"year":year,"data":results,"warning":"Fechas estimadas; valide feriados y prórrogas en el calendario oficial de Hacienda."}
 

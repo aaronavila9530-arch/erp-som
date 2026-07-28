@@ -41,7 +41,8 @@ class AccountingUI(tk.Frame):
         self.accounts_loaded = False
 
         self.periods = self._build_period_list()
-        self.current_period = self.periods[-1]
+        today_period = date.today().strftime("%Y-%m")
+        self.current_period = today_period if today_period in self.periods else self.periods[0]
 
 
         # ================= FILTRO AVANZADO =================

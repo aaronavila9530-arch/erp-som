@@ -1,7 +1,7 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-from api_client import get_finance_audit_api
+from api_client import get_finance_audit_api, get_finance_audit_users_api
 
 
 class PopupFinanceAudit(tk.Toplevel):
@@ -11,7 +11,9 @@ class PopupFinanceAudit(tk.Toplevel):
         self.geometry("1150x620")
         self.transient(parent)
         self.grab_set()
+        self.user_map = {}
         self._build_ui()
+        self._load_users()
         self._load()
 
     def _build_ui(self):
@@ -28,7 +30,7 @@ class PopupFinanceAudit(tk.Toplevel):
         self.module.grid(row=0, column=1, padx=5, pady=6, sticky="w")
 
         ttk.Label(filters, text="Usuario").grid(row=0, column=2, padx=5, pady=6, sticky="w")
-        self.user = ttk.Entry(filters, width=24)
+        self.user = ttk.Combobox(filters, values=[""], width=24)
         self.user.grid(row=0, column=3, padx=5, pady=6, sticky="w")
 
         ttk.Label(filters, text="Entidad").grid(row=0, column=4, padx=5, pady=6, sticky="w")
@@ -71,10 +73,32 @@ class PopupFinanceAudit(tk.Toplevel):
 
     def _clear(self):
         self.module.set("")
-        self.user.delete(0, "end")
+        self.user.set("")
         self.entity_type.delete(0, "end")
         self.entity_id.delete(0, "end")
         self._load()
+
+    def _load_users(self):
+        try:
+            rows = get_finance_audit_users_api()
+        except Exception:
+            rows = []
+        values = [""]
+        self.user_map = {}
+        for row in rows:
+            usuario = str(row.get("usuario") or "").strip()
+            nombre = str(row.get("nombre") or "").strip()
+            rol = str(row.get("rol") or "").strip()
+            if not usuario:
+                continue
+            label = usuario
+            if nombre:
+                label += f" - {nombre}"
+            if rol:
+                label += f" ({rol})"
+            values.append(label)
+            self.user_map[label] = usuario
+        self.user.configure(values=values)
 
     def _load(self):
         try:
@@ -82,7 +106,7 @@ class PopupFinanceAudit(tk.Toplevel):
                 module=self.module.get().strip() or None,
                 entity_type=self.entity_type.get().strip() or None,
                 entity_id=self.entity_id.get().strip() or None,
-                performed_by=self.user.get().strip() or None,
+                performed_by=self.user_map.get(self.user.get().strip(), self.user.get().strip()) or None,
                 limit=500,
             )
         except Exception as exc:

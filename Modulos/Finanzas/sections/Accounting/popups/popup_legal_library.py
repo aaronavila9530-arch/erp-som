@@ -139,6 +139,7 @@ class PopupLegalLibrary(tk.Toplevel):
             f"Numero: {row.get('number')}\n"
             f"Emisor: {row.get('issuer')}\n"
             f"Fecha: {row.get('date') or '-'}\n\n"
+            f"Vigencia:\n{row.get('current_status') or 'Vigente segun fuente oficial indicada.'}\n\n"
             f"Resumen operativo:\n{row.get('summary')}\n\n"
             f"Relevancia para ERP-SOM:\n{row.get('erp_relevance')}\n\n"
             f"{extra_text}\n\n"

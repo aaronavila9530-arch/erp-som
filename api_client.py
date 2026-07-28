@@ -1905,6 +1905,12 @@ def get_finance_audit_api(module=None, entity_type=None, entity_id=None, perform
     return r.json().get("data", [])
 
 
+def get_finance_audit_users_api():
+    r = api_request("GET", f"{BASE_URL}/accounting/audit/users", timeout=20)
+    r.raise_for_status()
+    return r.json().get("data", [])
+
+
 def get_accounting_validation_alerts_api(
     period=None,
     period_from=None,
@@ -2065,9 +2071,16 @@ def upload_tax_response_auto_api(path):
     raise_for_status_with_detail(r); return r.json()
 
 
-def get_tax_obligations_api(year=None):
+def get_tax_obligations_api(year=None, period=None, pending_only=False):
+    params = {}
+    if year:
+        params["year"] = year
+    if period:
+        params["period"] = period
+    if pending_only:
+        params["pending_only"] = True
     r = api_request("GET", f"{BASE_URL}/accounting/tax/obligations",
-                    params={"year": year} if year else None, timeout=30)
+                    params=params or None, timeout=30)
     raise_for_status_with_detail(r)
     return r.json()
 

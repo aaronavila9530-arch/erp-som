@@ -1220,6 +1220,47 @@ def get_finance_audit(
         return {"data": cur.fetchall()}
 
 
+@router.get("/audit/users")
+def get_finance_audit_users(conn=Depends(get_db)):
+    _ensure_accounting_professional_schema(conn)
+    finance_roles = {"admin", "master", "accounting", "finance", "finanzas", "gerencia"}
+    finance_users = {"admin", "aaron01", "gerencia1", "accountant"}
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("""
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = 'usuarios'
+        """)
+        columns = {row["column_name"] for row in cur.fetchall()}
+        user_col = next((c for c in ("usuario", "username", "user_name") if c in columns), None)
+        name_col = next((c for c in ("nombre", "name", "full_name") if c in columns), None)
+        role_col = next((c for c in ("rol", "role", "role_code") if c in columns), None)
+        active_col = next((c for c in ("activo", "active", "is_active") if c in columns), None)
+        if not user_col:
+            return {"data": []}
+        select_cols = [f"{user_col} AS usuario"]
+        select_cols.append(f"{name_col} AS nombre" if name_col else "NULL::text AS nombre")
+        select_cols.append(f"{role_col} AS rol" if role_col else "NULL::text AS rol")
+        where = ""
+        if active_col:
+            where = f"WHERE COALESCE({active_col}, TRUE) = TRUE"
+        cur.execute(f"""
+            SELECT {', '.join(select_cols)}
+            FROM usuarios
+            {where}
+            ORDER BY {user_col}
+        """)
+        rows = []
+        for row in cur.fetchall():
+            usuario = str(row.get("usuario") or "").strip()
+            rol = str(row.get("rol") or "").strip().lower()
+            if not usuario:
+                continue
+            if usuario.lower() in finance_users or rol in finance_roles:
+                rows.append(row)
+        return {"data": rows}
+
+
 @router.get("/validation-alerts")
 def get_accounting_validation_alerts(
     period: str | None = None,

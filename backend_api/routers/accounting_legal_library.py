@@ -258,8 +258,51 @@ LEGAL_ITEMS = [
         "erp_relevance": "Acceso rapido a normativa operativa actualizada y avisos oficiales de implementacion.",
         "keywords": ["hacienda", "normativa", "resoluciones", "avisos", "tributacion", "portal"],
         "official_url": "https://www.hacienda.go.cr/",
+        "is_current": False,
     },
 ]
+
+
+def _enrich_item(item):
+    enriched = dict(item)
+    enriched.setdefault("is_current", True)
+    enriched.setdefault("current_status", "Vigente segun fuente oficial indicada; validar reformas en SCIJ/PGR antes de uso legal final.")
+    if not enriched.get("key_points"):
+        if enriched.get("category") == "Hacienda":
+            enriched["key_points"] = [
+                "Mantener XML, PDF, clave electronica y respuesta de Hacienda como evidencia documental.",
+                "Conciliar IVA documental contra cuentas contables antes de declarar.",
+                "Conservar trazabilidad de cambios, ajustes y reclasificaciones tributarias.",
+            ]
+            enriched["erp_controls"] = [
+                "Centro fiscal: XML faltante, CAByS faltante, clave repetida y estado Hacienda.",
+                "Alertas contables: IVA, descuadres y cuentas no activas.",
+                "Auditoria por usuario para cambios de cuentas, pagos y documentos fiscales.",
+            ]
+        elif enriched.get("category") == "Comercial":
+            enriched["key_points"] = [
+                "Respaldar facturas, contratos, cotizaciones y comunicaciones comerciales.",
+                "Mantener datos de cliente, contacto, moneda, pais, puerto y detalle operativo completos.",
+                "Conservar evidencia de obligaciones y documentos mercantiles.",
+            ]
+            enriched["erp_controls"] = [
+                "Master Data y Servicios como fuente de datos comerciales.",
+                "Documentos adjuntos y trazabilidad de ediciones.",
+                "Reportes y facturacion vinculados al cliente correcto.",
+            ]
+        else:
+            enriched["key_points"] = [
+                "Separar preparacion, revision y aprobacion de cambios sensibles.",
+                "Registrar usuario, fecha, motivo y antes/despues de cada cambio contable.",
+                "Conservar evidencia suficiente para auditoria, cierre y reportes financieros.",
+            ]
+            enriched["erp_controls"] = [
+                "Auditoria por usuario.",
+                "Cierre mensual guiado.",
+                "PORTIA contable como asistente de explicacion, no como aprobador automatico.",
+            ]
+        enriched.setdefault("practical_use", "Use esta norma como referencia operativa para revisar datos, soportes, aprobaciones y cumplimiento dentro de ERP-SOM.")
+    return enriched
 
 
 @router.get("")
@@ -271,6 +314,9 @@ def list_legal_library(
     selected_category = (category or "").strip().lower()
     rows = []
     for item in LEGAL_ITEMS:
+        item = _enrich_item(item)
+        if not item.get("is_current", True):
+            continue
         if selected_category and selected_category not in {"todos", "all"}:
             if item["category"].lower() != selected_category:
                 continue
@@ -291,5 +337,5 @@ def list_legal_library(
             continue
         rows.append(item)
     rows.sort(key=lambda item: item.get("date") or "0000-00-00", reverse=True)
-    categories = sorted({item["category"] for item in LEGAL_ITEMS})
+    categories = sorted({item["category"] for item in map(_enrich_item, LEGAL_ITEMS) if item.get("is_current", True)})
     return {"status": "ok", "categories": categories, "count": len(rows), "data": rows}

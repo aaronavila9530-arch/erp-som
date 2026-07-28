@@ -61,28 +61,13 @@ class PopupAccountingAI(tk.Toplevel):
         self.status_var = tk.StringVar(value="Listo para analizar.")
         ttk.Label(self, textvariable=self.status_var).pack(anchor="w", padx=12)
 
-        body = ttk.PanedWindow(self, orient="horizontal")
-        body.pack(fill="both", expand=True, padx=10, pady=10)
-
-        result_frame = ttk.LabelFrame(body, text="Analisis")
-        body.add(result_frame, weight=3)
+        result_frame = ttk.LabelFrame(self, text="Analisis")
+        result_frame.pack(fill="both", expand=True, padx=10, pady=10)
         self.output = tk.Text(result_frame, wrap="word")
         out_scroll = ttk.Scrollbar(result_frame, orient="vertical", command=self.output.yview)
         self.output.configure(yscrollcommand=out_scroll.set)
         self.output.pack(side="left", fill="both", expand=True)
         out_scroll.pack(side="right", fill="y")
-
-        context_frame = ttk.LabelFrame(body, text="Datos usados por PORTIA")
-        body.add(context_frame, weight=2)
-        self.context_text = tk.Text(context_frame, wrap="none")
-        ctx_y = ttk.Scrollbar(context_frame, orient="vertical", command=self.context_text.yview)
-        ctx_x = ttk.Scrollbar(context_frame, orient="horizontal", command=self.context_text.xview)
-        self.context_text.configure(yscrollcommand=ctx_y.set, xscrollcommand=ctx_x.set)
-        self.context_text.grid(row=0, column=0, sticky="nsew")
-        ctx_y.grid(row=0, column=1, sticky="ns")
-        ctx_x.grid(row=1, column=0, sticky="ew")
-        context_frame.rowconfigure(0, weight=1)
-        context_frame.columnconfigure(0, weight=1)
 
     def _scope_text(self):
         if self.filters.get("period"):
@@ -96,7 +81,6 @@ class PopupAccountingAI(tk.Toplevel):
     def _run(self):
         self.status_var.set("Analizando datos contables...")
         self.output.delete("1.0", "end")
-        self.context_text.delete("1.0", "end")
         payload = dict(self.filters)
         payload["language"] = self.language_var.get()
         payload["question"] = self.question.get("1.0", "end").strip()
@@ -115,54 +99,6 @@ class PopupAccountingAI(tk.Toplevel):
         self.status_var.set(f"Analisis completado. Modo: {mode}.")
         self.output.delete("1.0", "end")
         self.output.insert("1.0", data.get("analysis") or "Sin analisis disponible.")
-        self.context_text.delete("1.0", "end")
-        self.context_text.insert("1.0", self._format_context_summary(data.get("context") or {}))
-
-    def _format_money(self, value):
-        try:
-            return f"{float(value or 0):,.2f}"
-        except Exception:
-            return "0.00"
-
-    def _format_context_summary(self, context):
-        filters = context.get("filters") or {}
-        totals = context.get("totals") or {}
-        exceptions = context.get("exceptions") or {}
-        lines = [
-            "Alcance",
-            f"- Periodo: {filters.get('period') or '-'}",
-            f"- Desde: {filters.get('period_from') or '-'}",
-            f"- Hasta: {filters.get('period_to') or '-'}",
-            f"- Origen: {filters.get('origin') or 'TODOS'}",
-            "",
-            "Resumen contable",
-            f"- Asientos: {int(totals.get('entry_count') or 0)}",
-            f"- Lineas: {int(totals.get('line_count') or 0)}",
-            f"- Debe: {self._format_money(totals.get('total_debit'))}",
-            f"- Haber: {self._format_money(totals.get('total_credit'))}",
-            f"- Diferencia: {self._format_money(totals.get('difference'))}",
-            f"- Fechas: {totals.get('first_date') or '-'} a {totals.get('last_date') or '-'}",
-            "",
-            "Cuentas con mayor impacto",
-        ]
-        for row in (context.get("top_accounts") or [])[:10]:
-            lines.append(
-                f"- {row.get('account_code')} {row.get('account_name')}: "
-                f"Debe {self._format_money(row.get('debit'))}, "
-                f"Haber {self._format_money(row.get('credit'))}, "
-                f"Saldo {self._format_money(row.get('balance'))}"
-            )
-        lines.extend(["", "Origenes"])
-        for row in (context.get("by_origin") or [])[:10]:
-            lines.append(
-                f"- {row.get('origin')}: {int(row.get('entry_count') or 0)} asientos, "
-                f"diferencia {self._format_money(row.get('difference'))}"
-            )
-        lines.extend(["", "Excepciones detectadas"])
-        lines.append(f"- Asientos descuadrados: {len(exceptions.get('unbalanced_entries') or [])}")
-        lines.append(f"- Lineas invalidas: {len(exceptions.get('invalid_lines') or [])}")
-        lines.append(f"- Origenes duplicados: {len(exceptions.get('duplicate_origin_entries') or [])}")
-        return "\n".join(lines)
 
     def _show_error(self, exc):
         self.status_var.set("No se pudo completar el analisis.")

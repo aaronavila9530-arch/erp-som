@@ -86,6 +86,11 @@ class PopupTaxCenter(tk.Toplevel):
 
     @staticmethod
     def _quality_tree(parent):
+        ttk.Label(
+            parent,
+            text="Control documental muestra documentos fiscales incompletos: XML faltante, clave electronica faltante, lineas sin detalle/CAByS, duplicados o respuesta de Hacienda pendiente.",
+            wraplength=1120,
+        ).pack(anchor="w", pady=(0, 6))
         cols=("id","direction","date","number","xml","key","lines","cabys","duplicates","hacienda")
         tree=ttk.Treeview(parent,columns=cols,show="headings")
         for col,label in zip(cols,("ID","Tipo","Fecha","Documento","XML","Clave","Líneas","CAByS faltante","Clave repetida","Hacienda")):
@@ -138,9 +143,14 @@ class PopupTaxCenter(tk.Toplevel):
         tree.delete(*tree.get_children())
         for row in data["data"]:
             party=row.get("receiver_name") if direction=="SALE" else row.get("issuer_name")
+            total = float(row.get("total") or 0)
+            missing_detail = not row.get("xml_path") or total == 0
+            hacienda = row.get("hacienda_status") or ""
+            if missing_detail:
+                hacienda = f"{hacienda} / INCOMPLETO".strip(" /")
             tree.insert("","end",values=(str(row.get("issue_datetime") or "")[:10],row.get("document_number") or "",party or "",
               row.get("currency_code"),f"{float(row.get('subtotal') or 0):,.2f}",f"{float(row.get('tax_amount') or 0):,.2f}",
-              f"{float(row.get('total') or 0):,.2f}",row.get("hacienda_status")))
+              f"{total:,.2f}",hacienda))
 
     def _load_quality(self):
         rows=get_tax_documents_api(period=self.period.get(),quality_only=True)["data"]
@@ -151,7 +161,7 @@ class PopupTaxCenter(tk.Toplevel):
               row.get("line_count"),row.get("missing_cabys_lines"),row.get("duplicate_key_count"),row.get("hacienda_status")))
 
     def _load_obligations(self):
-        data=get_tax_obligations_api(int(self.period.get()[:4])); self.obligations_tree.delete(*self.obligations_tree.get_children())
+        data=get_tax_obligations_api(int(self.period.get()[:4]), period=self.period.get(), pending_only=True); self.obligations_tree.delete(*self.obligations_tree.get_children())
         for item in data["data"]:
             calendar=item.get("calendar") or [{}]
             for due in calendar:
