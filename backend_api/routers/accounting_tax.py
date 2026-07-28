@@ -356,6 +356,53 @@ def sync_tax_documents(conn=Depends(get_db)):
                                     (doc_id,index,line.get("descripcion"),line.get("cantidad") or 0,line.get("precio_unitario") or 0,line_total-line_tax,line_tax,line_total))
                 counts["sales"] += 1
             cur.execute("""
+                SELECT
+                    id,
+                    tipo_factura,
+                    tipo_documento,
+                    numero_documento,
+                    codigo_cliente,
+                    nombre_cliente,
+                    fecha_emision,
+                    moneda,
+                    total,
+                    estado,
+                    pdf_path,
+                    descripcion_servicio
+                FROM invoicing
+                WHERE UPPER(COALESCE(tipo_documento, '')) = 'FACTURA'
+                  AND COALESCE(total, 0) > 0
+            """)
+            for row in cur.fetchall():
+                total = _money(row.get("total") or 0)
+                data = {
+                    "document_type": "FE" if str(row.get("tipo_factura") or "").upper() == "ELECTRONICA" else "FE",
+                    "document_number": row.get("numero_documento"),
+                    "electronic_key": row.get("numero_documento") if len(str(row.get("numero_documento") or "")) == 50 else None,
+                    "receiver_identification": row.get("codigo_cliente"),
+                    "receiver_name": row.get("nombre_cliente"),
+                    "issue_datetime": row.get("fecha_emision"),
+                    "currency_code": row.get("moneda") or "CRC",
+                    "subtotal": total,
+                    "tax_amount": Decimal("0.00"),
+                    "total": total,
+                    "lines": [{
+                        "line_number": 1,
+                        "description": row.get("descripcion_servicio") or "Venta ERP-SOM",
+                        "quantity": Decimal("1.00"),
+                        "unit_price": total,
+                        "subtotal": total,
+                        "tax_amount": Decimal("0.00"),
+                        "total": total,
+                    }],
+                }
+                doc_id = _save_document(cur, "SALE", data, source_table="invoicing", source_id=row["id"], user="SYSTEM_SYNC")
+                cur.execute(
+                    "UPDATE tax_electronic_documents SET pdf_path=%s,status=%s WHERE id=%s",
+                    (row.get("pdf_path"), "ACCEPTED" if str(row.get("estado","")).upper() in {"PAGADA","EMITIDA","ACEPTADA"} else "PENDING", doc_id)
+                )
+                counts["sales"] += 1
+            cur.execute("""
                 INSERT INTO tax_electronic_documents(
                   direction,document_type,document_number,electronic_key,issuer_name,issue_datetime,
                   currency_code,total,status,hacienda_status,xml_path,pdf_path,source_table,source_id,metadata,created_by)
