@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, Query, HTTPException, Header
 from psycopg2.extras import RealDictCursor
 from typing import Optional
+from decimal import Decimal, InvalidOperation
 
 from database import get_db
 from rbac_service import has_permission
@@ -11,6 +12,85 @@ router = APIRouter(
     prefix="/bank-reconciliation",
     tags=["Bank Reconciliation"]
 )
+
+
+def _money(value):
+    try:
+        return Decimal(str(value or 0)).quantize(Decimal("0.01"))
+    except (InvalidOperation, TypeError, ValueError):
+        raise HTTPException(400, "Invalid amount")
+
+
+def _ensure_professional_schema(conn):
+    with conn.cursor() as cur:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS bank_reconciliation_statements (
+                id BIGSERIAL PRIMARY KEY,
+                bank_name TEXT NOT NULL,
+                bank_account_code TEXT,
+                bank_account_name TEXT,
+                currency_code VARCHAR(3) NOT NULL DEFAULT 'CRC',
+                statement_period VARCHAR(7),
+                statement_date DATE,
+                source_filename TEXT,
+                status VARCHAR(20) NOT NULL DEFAULT 'OPEN',
+                imported_by TEXT,
+                closed_by TEXT,
+                closed_at TIMESTAMP,
+                close_note TEXT,
+                created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                CHECK (status IN ('OPEN','MATCHED','CLOSED','REOPENED'))
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS bank_reconciliation_statement_lines (
+                id BIGSERIAL PRIMARY KEY,
+                statement_id BIGINT NOT NULL REFERENCES bank_reconciliation_statements(id) ON DELETE CASCADE,
+                line_date DATE NOT NULL,
+                description TEXT,
+                reference TEXT,
+                debit NUMERIC(18,2) NOT NULL DEFAULT 0,
+                credit NUMERIC(18,2) NOT NULL DEFAULT 0,
+                amount NUMERIC(18,2) NOT NULL DEFAULT 0,
+                currency_code VARCHAR(3) NOT NULL DEFAULT 'CRC',
+                matched_source TEXT,
+                matched_id TEXT,
+                matched_entry_id INTEGER,
+                match_confidence NUMERIC(5,2),
+                match_status VARCHAR(20) NOT NULL DEFAULT 'OPEN',
+                difference NUMERIC(18,2) NOT NULL DEFAULT 0,
+                bank_fee_entry_id INTEGER,
+                created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                UNIQUE(statement_id, line_date, reference, amount),
+                CHECK (match_status IN ('OPEN','AUTO_MATCHED','MANUAL_MATCHED','DIFFERENCE','BANK_FEE','REVERSED'))
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS bank_reconciliation_closures (
+                id BIGSERIAL PRIMARY KEY,
+                bank_name TEXT NOT NULL,
+                bank_account_code TEXT,
+                currency_code VARCHAR(3) NOT NULL DEFAULT 'CRC',
+                statement_period VARCHAR(7) NOT NULL,
+                total_statement NUMERIC(18,2) NOT NULL DEFAULT 0,
+                total_matched NUMERIC(18,2) NOT NULL DEFAULT 0,
+                total_open NUMERIC(18,2) NOT NULL DEFAULT 0,
+                open_items INTEGER NOT NULL DEFAULT 0,
+                closed_by TEXT,
+                closed_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                status VARCHAR(20) NOT NULL DEFAULT 'CLOSED',
+                note TEXT
+            )
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_bank_recon_lines_status ON bank_reconciliation_statement_lines(match_status,line_date)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_bank_recon_statement_filter ON bank_reconciliation_statements(bank_account_code,currency_code,statement_period,status)")
+        cur.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_bank_recon_closure_scope
+            ON bank_reconciliation_closures(bank_name, COALESCE(bank_account_code,''), currency_code, statement_period)
+        """)
+    conn.commit()
 
 # ============================================================
 # RBAC GUARD
@@ -25,6 +105,301 @@ def require_permission(module: str, action: str):
                 detail="No autorizado"
             )
     return checker
+
+
+@router.post("/statements/import")
+def import_bank_statement(payload: dict, conn=Depends(get_db), x_user: str | None = Header(None, alias="X-User")):
+    _ensure_professional_schema(conn)
+    bank_name = str(payload.get("bank_name") or "").strip()
+    currency = str(payload.get("currency_code") or "CRC").strip().upper()
+    rows = payload.get("rows") or []
+    if not bank_name or not rows:
+        raise HTTPException(400, "bank_name and rows are required")
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("""
+            INSERT INTO bank_reconciliation_statements (
+                bank_name,bank_account_code,bank_account_name,currency_code,statement_period,
+                statement_date,source_filename,imported_by
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+            RETURNING *
+        """, (
+            bank_name,
+            payload.get("bank_account_code"),
+            payload.get("bank_account_name"),
+            currency,
+            payload.get("statement_period"),
+            payload.get("statement_date"),
+            payload.get("source_filename"),
+            x_user or payload.get("user") or "unknown",
+        ))
+        statement = cur.fetchone()
+        inserted = 0
+        skipped = 0
+        for row in rows:
+            debit = _money(row.get("debit"))
+            credit = _money(row.get("credit"))
+            amount = _money(row.get("amount"))
+            if amount == 0:
+                amount = credit - debit if credit else debit * Decimal("-1")
+            try:
+                cur.execute("""
+                    INSERT INTO bank_reconciliation_statement_lines (
+                        statement_id,line_date,description,reference,debit,credit,amount,currency_code
+                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+                    ON CONFLICT(statement_id, line_date, reference, amount) DO NOTHING
+                """, (
+                    statement["id"],
+                    row.get("line_date") or row.get("date"),
+                    row.get("description"),
+                    row.get("reference"),
+                    debit,
+                    credit,
+                    amount,
+                    str(row.get("currency_code") or currency).upper(),
+                ))
+                if cur.rowcount:
+                    inserted += 1
+                else:
+                    skipped += 1
+            except Exception:
+                raise
+        audit_event(
+            cur,
+            module="bank_reconciliation",
+            action="STATEMENT_IMPORTED",
+            entity_type="bank_statement",
+            entity_id=statement["id"],
+            performed_by=x_user or payload.get("user") or "unknown",
+            after={"statement": row_to_dict(statement)},
+            metadata={"inserted": inserted, "skipped": skipped},
+        )
+    conn.commit()
+    return {"status": "ok", "statement_id": statement["id"], "inserted": inserted, "skipped": skipped}
+
+
+@router.get("/statements")
+def list_bank_statements(
+    bank_account_code: Optional[str] = Query(None),
+    currency_code: Optional[str] = Query(None),
+    period: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    conn=Depends(get_db),
+):
+    _ensure_professional_schema(conn)
+    bank_account_code = bank_account_code if isinstance(bank_account_code, str) and bank_account_code else None
+    currency_code = currency_code if isinstance(currency_code, str) and currency_code else None
+    period = period if isinstance(period, str) and period else None
+    status = status if isinstance(status, str) and status else None
+    where, params = [], []
+    if bank_account_code:
+        where.append("s.bank_account_code=%s"); params.append(bank_account_code)
+    if currency_code:
+        where.append("s.currency_code=%s"); params.append(currency_code.upper())
+    if period:
+        where.append("s.statement_period=%s"); params.append(period)
+    if status:
+        where.append("s.status=%s"); params.append(status.upper())
+    where_sql = "WHERE " + " AND ".join(where) if where else ""
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(f"""
+            SELECT s.*,
+                   COUNT(l.id) AS line_count,
+                   COUNT(l.id) FILTER (WHERE l.match_status='OPEN') AS open_count,
+                   COALESCE(SUM(l.amount),0) AS statement_total,
+                   COALESCE(SUM(l.amount) FILTER (WHERE l.match_status<>'OPEN'),0) AS matched_total,
+                   COALESCE(SUM(l.amount) FILTER (WHERE l.match_status='OPEN'),0) AS open_total
+            FROM bank_reconciliation_statements s
+            LEFT JOIN bank_reconciliation_statement_lines l ON l.statement_id=s.id
+            {where_sql}
+            GROUP BY s.id
+            ORDER BY s.created_at DESC
+        """, params)
+        return {"data": cur.fetchall()}
+
+
+@router.get("/statements/{statement_id}/lines")
+def list_bank_statement_lines(statement_id: int, status: Optional[str] = Query(None), conn=Depends(get_db)):
+    _ensure_professional_schema(conn)
+    status = status if isinstance(status, str) and status else None
+    params = [statement_id]
+    where = "WHERE statement_id=%s"
+    if status:
+        where += " AND match_status=%s"
+        params.append(status.upper())
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(f"""
+            SELECT *
+            FROM bank_reconciliation_statement_lines
+            {where}
+            ORDER BY line_date DESC,id DESC
+        """, params)
+        return {"data": cur.fetchall()}
+
+
+@router.post("/statements/{statement_id}/auto-match")
+def auto_match_bank_statement(statement_id: int, payload: dict | None = None, conn=Depends(get_db)):
+    _ensure_professional_schema(conn)
+    payload = payload or {}
+    tolerance = _money(payload.get("tolerance", "1.00"))
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("SELECT * FROM bank_reconciliation_statements WHERE id=%s FOR UPDATE", (statement_id,))
+        statement = cur.fetchone()
+        if not statement:
+            raise HTTPException(404, "Statement not found")
+        cur.execute("""
+            SELECT * FROM bank_reconciliation_statement_lines
+            WHERE statement_id=%s AND match_status='OPEN'
+            ORDER BY line_date,id
+        """, (statement_id,))
+        matched = 0
+        differences = 0
+        for line in cur.fetchall():
+            amount_abs = abs(Decimal(line["amount"] or 0))
+            ref = str(line.get("reference") or "").strip()
+            cur.execute("""
+                SELECT 'cash_app' AS source, ca.id::text AS source_id, ca.monto_pagado AS amount,
+                       ca.fecha_pago AS payment_date, ae.id AS entry_id
+                FROM cash_app ca
+                LEFT JOIN accounting_entries ae ON ae.origin='CASH_APP' AND ae.origin_id=ca.id
+                WHERE ca.fecha_pago BETWEEN %s::date - INTERVAL '3 days' AND %s::date + INTERVAL '3 days'
+                  AND ABS(COALESCE(ca.monto_pagado,0)-%s) <= %s
+                  AND (%s='' OR COALESCE(ca.referencia,'') ILIKE %s)
+                ORDER BY ABS(COALESCE(ca.monto_pagado,0)-%s), ca.fecha_pago DESC
+                LIMIT 1
+            """, (line["line_date"], line["line_date"], amount_abs, tolerance, ref, f"%{ref}%", amount_abs))
+            candidate = cur.fetchone()
+            if not candidate:
+                cur.execute("""
+                    SELECT 'accounting_line' AS source, l.id::text AS source_id,
+                           ABS(COALESCE(l.debit,0)-COALESCE(l.credit,0)) AS amount,
+                           e.entry_date AS payment_date, e.id AS entry_id
+                    FROM accounting_lines l
+                    JOIN accounting_entries e ON e.id=l.entry_id AND e.workflow_status='POSTED'
+                    WHERE l.account_code=%s
+                      AND e.entry_date BETWEEN %s::date - INTERVAL '3 days' AND %s::date + INTERVAL '3 days'
+                      AND ABS(ABS(COALESCE(l.debit,0)-COALESCE(l.credit,0))-%s) <= %s
+                    ORDER BY ABS(ABS(COALESCE(l.debit,0)-COALESCE(l.credit,0))-%s), e.entry_date DESC
+                    LIMIT 1
+                """, (statement.get("bank_account_code"), line["line_date"], line["line_date"], amount_abs, tolerance, amount_abs))
+                candidate = cur.fetchone()
+            if candidate:
+                difference = Decimal(candidate["amount"] or 0) - amount_abs
+                status = "AUTO_MATCHED" if abs(difference) <= tolerance else "DIFFERENCE"
+                cur.execute("""
+                    UPDATE bank_reconciliation_statement_lines
+                    SET matched_source=%s,matched_id=%s,matched_entry_id=%s,
+                        match_confidence=%s,match_status=%s,difference=%s,updated_at=NOW()
+                    WHERE id=%s
+                """, (candidate["source"], candidate["source_id"], candidate["entry_id"],
+                      Decimal("100.00") if status == "AUTO_MATCHED" else Decimal("75.00"),
+                      status, difference, line["id"]))
+                matched += 1
+                if status == "DIFFERENCE":
+                    differences += 1
+        cur.execute("""
+            UPDATE bank_reconciliation_statements
+            SET status=CASE WHEN NOT EXISTS (
+                    SELECT 1 FROM bank_reconciliation_statement_lines
+                    WHERE statement_id=%s AND match_status='OPEN'
+                ) THEN 'MATCHED' ELSE status END,
+                updated_at=NOW()
+            WHERE id=%s
+        """, (statement_id, statement_id))
+    conn.commit()
+    return {"status": "ok", "matched": matched, "differences": differences}
+
+
+@router.post("/lines/{line_id}/bank-fee")
+def mark_bank_fee(line_id: int, payload: dict | None = None, conn=Depends(get_db), x_user: str | None = Header(None, alias="X-User")):
+    _ensure_professional_schema(conn)
+    payload = payload or {}
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("SELECT * FROM bank_reconciliation_statement_lines WHERE id=%s FOR UPDATE", (line_id,))
+        line = cur.fetchone()
+        if not line:
+            raise HTTPException(404, "Statement line not found")
+        cur.execute("""
+            UPDATE bank_reconciliation_statement_lines
+            SET match_status='BANK_FEE', matched_source='bank_fee', difference=0, updated_at=NOW()
+            WHERE id=%s RETURNING *
+        """, (line_id,))
+        updated = cur.fetchone()
+        audit_event(
+            cur,
+            module="bank_reconciliation",
+            action="BANK_FEE_MARKED",
+            entity_type="bank_statement_line",
+            entity_id=line_id,
+            performed_by=x_user or payload.get("user") or "unknown",
+            before=row_to_dict(line),
+            after=row_to_dict(updated),
+            metadata={"note": payload.get("note")},
+        )
+    conn.commit()
+    return {"status": "ok", "line": updated}
+
+
+@router.post("/statements/{statement_id}/close")
+def close_bank_reconciliation(statement_id: int, payload: dict | None = None, conn=Depends(get_db), x_user: str | None = Header(None, alias="X-User")):
+    _ensure_professional_schema(conn)
+    payload = payload or {}
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("SELECT * FROM bank_reconciliation_statements WHERE id=%s FOR UPDATE", (statement_id,))
+        statement = cur.fetchone()
+        if not statement:
+            raise HTTPException(404, "Statement not found")
+        cur.execute("""
+            SELECT COUNT(*) FILTER (WHERE match_status='OPEN') AS open_items,
+                   COALESCE(SUM(amount),0) AS total_statement,
+                   COALESCE(SUM(amount) FILTER (WHERE match_status<>'OPEN'),0) AS total_matched,
+                   COALESCE(SUM(amount) FILTER (WHERE match_status='OPEN'),0) AS total_open
+            FROM bank_reconciliation_statement_lines
+            WHERE statement_id=%s
+        """, (statement_id,))
+        totals = cur.fetchone()
+        if int(totals["open_items"] or 0) > 0 and not payload.get("force_close"):
+            raise HTTPException(409, "Open bank items remain. Use force_close only with documented reason.")
+        user = x_user or payload.get("user") or "unknown"
+        cur.execute("""
+            UPDATE bank_reconciliation_statements
+            SET status='CLOSED', closed_by=%s, closed_at=NOW(), close_note=%s, updated_at=NOW()
+            WHERE id=%s RETURNING *
+        """, (user, payload.get("note"), statement_id))
+        closed = cur.fetchone()
+        cur.execute("""
+            DELETE FROM bank_reconciliation_closures
+            WHERE bank_name=%s
+              AND COALESCE(bank_account_code,'')=COALESCE(%s,'')
+              AND currency_code=%s
+              AND statement_period=%s
+        """, (
+            statement["bank_name"], statement.get("bank_account_code"), statement["currency_code"],
+            statement.get("statement_period") or str(statement.get("statement_date") or "")[:7],
+        ))
+        cur.execute("""
+            INSERT INTO bank_reconciliation_closures (
+                bank_name,bank_account_code,currency_code,statement_period,
+                total_statement,total_matched,total_open,open_items,closed_by,note
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+        """, (
+            statement["bank_name"], statement.get("bank_account_code"), statement["currency_code"],
+            statement.get("statement_period") or str(statement.get("statement_date") or "")[:7],
+            totals["total_statement"], totals["total_matched"], totals["total_open"], totals["open_items"],
+            user, payload.get("note"),
+        ))
+        audit_event(
+            cur,
+            module="bank_reconciliation",
+            action="RECONCILIATION_CLOSED",
+            entity_type="bank_statement",
+            entity_id=statement_id,
+            performed_by=user,
+            before=row_to_dict(statement),
+            after=row_to_dict(closed),
+            metadata=row_to_dict(totals),
+        )
+    conn.commit()
+    return {"status": "ok", "statement": closed, "totals": totals}
 
 # ============================================================
 # GET /bank-reconciliation

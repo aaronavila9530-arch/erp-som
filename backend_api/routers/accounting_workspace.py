@@ -44,6 +44,11 @@ def _ensure_schema(conn):
         return
     _ensure_accounting_professional_schema(conn)
     _ensure_tax_schema(conn)
+    try:
+        from routers.bank_reconciliation import _ensure_professional_schema as _ensure_bank_reconciliation_schema
+        _ensure_bank_reconciliation_schema(conn)
+    except Exception:
+        pass
     with conn.cursor() as cur:
         cur.execute("""
             CREATE TABLE IF NOT EXISTS accounting_close_checklist (
@@ -123,6 +128,31 @@ def _period_bounds(period: str):
     return start, end
 
 
+def _latest_fx_rate(cur):
+    cur.execute("""
+        SELECT rate, rate_date
+        FROM exchange_rate
+        WHERE rate_date <= CURRENT_DATE
+        ORDER BY rate_date DESC
+        LIMIT 1
+    """)
+    row = cur.fetchone() or {}
+    rate = Decimal(str(row.get("rate") or 1))
+    if rate <= 0:
+        rate = Decimal("1")
+    return rate, row.get("rate_date")
+
+
+def _crc_amount_sql(amount_field: str, currency_field: str):
+    return f"""
+        CASE
+            WHEN UPPER(COALESCE({currency_field}, 'CRC')) IN ('USD', 'US$', 'DOLLAR', 'DOLARES', 'DOLARES US')
+            THEN COALESCE({amount_field}, 0) * %s
+            ELSE COALESCE({amount_field}, 0)
+        END
+    """
+
+
 def _work_items(cur, period, period_start=None, period_end=None):
     backfill_missing_bank_accounts(cur)
     items = []
@@ -143,9 +173,6 @@ def _work_items(cur, period, period_start=None, period_end=None):
     overdue_ar_sql = """SELECT COUNT(*) count FROM collections
         WHERE COALESCE(saldo_pendiente,0)>0 AND fecha_vencimiento<CURRENT_DATE"""
     overdue_ar_params = []
-    if period_start and period_end:
-        overdue_ar_sql += " AND COALESCE(fecha_emision, fecha_vencimiento) >= %s AND COALESCE(fecha_emision, fecha_vencimiento) < %s"
-        overdue_ar_params.extend([period_start, period_end])
     overdue_ar = int(_scalar(cur, overdue_ar_sql, tuple(overdue_ar_params)))
     if overdue_ar:
         items.append({"code":"OVERDUE_AR","area":"COLLECTIONS","priority":"HIGH","title":"Facturas de clientes vencidas",
@@ -157,9 +184,6 @@ def _work_items(cur, period, period_start=None, period_end=None):
     overdue_ap_sql = """SELECT COUNT(*) count FROM payment_obligations
         WHERE active=TRUE AND record_type='OBLIGATION' AND COALESCE(balance,0)>0 AND due_date<CURRENT_DATE"""
     overdue_ap_params = []
-    if period_start and period_end:
-        overdue_ap_sql += " AND COALESCE(issue_date, due_date) >= %s AND COALESCE(issue_date, due_date) < %s"
-        overdue_ap_params.extend([period_start, period_end])
     overdue_ap = int(_scalar(cur, overdue_ap_sql, tuple(overdue_ap_params)))
     if overdue_ap:
         items.append({"code":"OVERDUE_AP","area":"PAYABLES","priority":"HIGH","title":"Obligaciones de pago vencidas",
@@ -190,30 +214,29 @@ def accountant_dashboard(period: str, conn=Depends(get_db)):
     period_start, period_end = _period_bounds(period)
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         work_items = _work_items(cur, period, period_start, period_end)
+        fx_rate, fx_date = _latest_fx_rate(cur)
         cur.execute("""SELECT COALESCE(SUM(l.debit),0) debit,COALESCE(SUM(l.credit),0) credit,
           COUNT(DISTINCT e.id) entries FROM accounting_entries e
           LEFT JOIN accounting_lines l ON l.entry_id=e.id
           WHERE e.period=%s AND e.workflow_status='POSTED'""", (period,))
         ledger = cur.fetchone()
-        cur.execute("""SELECT COALESCE(SUM(saldo_pendiente),0) open_ar,
-          COALESCE(SUM(saldo_pendiente) FILTER(WHERE fecha_vencimiento<CURRENT_DATE),0) overdue_ar,
+        ar_amount = _crc_amount_sql("saldo_pendiente", "moneda")
+        cur.execute(f"""SELECT COALESCE(SUM({ar_amount}),0) open_ar,
+          COALESCE(SUM({ar_amount}) FILTER(WHERE fecha_vencimiento<CURRENT_DATE),0) overdue_ar,
           COUNT(*) open_ar_count,
           COUNT(*) FILTER(WHERE fecha_vencimiento<CURRENT_DATE) overdue_ar_count
           FROM collections
-          WHERE COALESCE(saldo_pendiente,0)>0
-            AND COALESCE(fecha_emision, fecha_vencimiento) >= %s
-            AND COALESCE(fecha_emision, fecha_vencimiento) < %s""", (period_start, period_end))
+          WHERE COALESCE(saldo_pendiente,0)>0""", (fx_rate, fx_rate))
         ar = cur.fetchone()
-        cur.execute("""SELECT COALESCE(SUM(balance),0) open_ap,
-          COALESCE(SUM(balance) FILTER(WHERE due_date<CURRENT_DATE),0) overdue_ap,
+        ap_amount = _crc_amount_sql("balance", "currency")
+        cur.execute(f"""SELECT COALESCE(SUM({ap_amount}),0) open_ap,
+          COALESCE(SUM({ap_amount}) FILTER(WHERE due_date<CURRENT_DATE),0) overdue_ap,
           COUNT(*) open_ap_count,
           COUNT(*) FILTER(WHERE due_date<CURRENT_DATE) overdue_ap_count
           FROM payment_obligations
           WHERE active=TRUE
             AND record_type='OBLIGATION'
-            AND COALESCE(balance,0)>0
-            AND COALESCE(issue_date, due_date) >= %s
-            AND COALESCE(issue_date, due_date) < %s""", (period_start, period_end))
+            AND COALESCE(balance,0)>0""", (fx_rate, fx_rate))
         ap = cur.fetchone()
         cur.execute("""SELECT status,closed_by,closed_at,reopened_by,reopened_at FROM accounting_period_controls
           WHERE company_code='MSL-CR' AND period=%s""", (period,))
@@ -225,7 +248,13 @@ def accountant_dashboard(period: str, conn=Depends(get_db)):
     deductions = sum(min(item["count"], 10) * ({"CRITICAL":5,"HIGH":2,"MEDIUM":1,"LOW":0.5}[item["priority"]]) for item in work_items)
     health = max(0, round(100 - deductions))
     return {"period":period,"health_score":health,"period_control":period_control,"work_items":work_items,
-            "kpi_scope": {"from": period_start.isoformat(), "to": (period_end - timedelta(days=1)).isoformat()},
+            "kpi_scope": {
+                "as_of": date.today().isoformat(),
+                "currency": "CRC",
+                "fx_rate": float(fx_rate),
+                "fx_date": fx_date.isoformat() if fx_date else None,
+                "note": "Saldos abiertos actuales convertidos a CRC.",
+            },
             "kpis":{"posted_entries":int(ledger["entries"] or 0),"debit":float(ledger["debit"] or 0),
                     "credit":float(ledger["credit"] or 0),"open_ar":float(ar["open_ar"] or 0),
                     "open_ar_count":int(ar["open_ar_count"] or 0),
@@ -236,26 +265,99 @@ def accountant_dashboard(period: str, conn=Depends(get_db)):
                     "overdue_ap":float(ap["overdue_ap"] or 0)},"recent_entries":recent}
 
 
-def _automatic_checks(cur, period):
-    nonposted = int(_scalar(cur, "SELECT COUNT(*) count FROM accounting_entries WHERE period=%s AND workflow_status<>'POSTED'", (period,)))
-    tax_issues = int(_scalar(cur, """SELECT COUNT(*) count FROM tax_electronic_documents d WHERE TO_CHAR(issue_datetime,'YYYY-MM')=%s AND
+def _robust_close_controls(cur, period):
+    controls = {
+        "unbalanced_entries": 0,
+        "entries_without_lines": 0,
+        "invalid_lines": 0,
+        "non_posted_entries": 0,
+        "tax_quality_issues": 0,
+        "iva_difference_count": 0,
+        "bank_open_items": 0,
+        "bank_unclosed_statements": 0,
+        "auxiliary_differences": 0,
+        "auxiliary_unmapped": 0,
+    }
+    cur.execute("""SELECT COUNT(*) count FROM (SELECT e.id FROM accounting_entries e JOIN accounting_lines l ON l.entry_id=e.id
+      WHERE e.period=%s GROUP BY e.id HAVING ABS(SUM(l.debit)-SUM(l.credit))>0.01) q""", (period,))
+    controls["unbalanced_entries"] = int((cur.fetchone() or {}).get("count") or 0)
+    cur.execute("""SELECT e.id FROM accounting_entries e LEFT JOIN accounting_lines l ON l.entry_id=e.id
+      WHERE e.period=%s GROUP BY e.id HAVING COUNT(l.id)=0""", (period,))
+    controls["entries_without_lines"] = len(cur.fetchall())
+    cur.execute("""SELECT COUNT(*) count FROM accounting_lines l JOIN accounting_entries e ON e.id=l.entry_id
+      WHERE e.period=%s AND ((COALESCE(l.debit,0)>0 AND COALESCE(l.credit,0)>0)
+      OR (COALESCE(l.debit,0)=0 AND COALESCE(l.credit,0)=0))""", (period,))
+    controls["invalid_lines"] = int((cur.fetchone() or {}).get("count") or 0)
+    cur.execute("SELECT COUNT(*) count FROM accounting_entries WHERE period=%s AND workflow_status <> 'POSTED'", (period,))
+    controls["non_posted_entries"] = int((cur.fetchone() or {}).get("count") or 0)
+    cur.execute("""SELECT COUNT(*) count FROM tax_electronic_documents d WHERE TO_CHAR(issue_datetime,'YYYY-MM')=%s AND
       (xml_path IS NULL OR hacienda_status='PENDING' OR NOT EXISTS(SELECT 1 FROM tax_document_lines l WHERE l.document_id=d.id)
-       OR EXISTS(SELECT 1 FROM tax_document_lines l WHERE l.document_id=d.id AND COALESCE(l.cabys_code,'')=''))""", (period,)))
-    unbalanced = int(_scalar(cur, """SELECT COUNT(*) count FROM (SELECT e.id FROM accounting_entries e JOIN accounting_lines l ON l.entry_id=e.id
-      WHERE e.period=%s GROUP BY e.id HAVING ABS(SUM(l.debit)-SUM(l.credit))>0.01) q""", (period,)))
+       OR EXISTS(SELECT 1 FROM tax_document_lines l WHERE l.document_id=d.id AND COALESCE(l.cabys_code,'')=''))""", (period,))
+    controls["tax_quality_issues"] = int((cur.fetchone() or {}).get("count") or 0)
+    start_date, end_date = _period_bounds(period)
+    cur.execute("SELECT setting_key,setting_value FROM tax_settings WHERE setting_key IN ('IVA_DEBIT_ACCOUNT','IVA_CREDIT_ACCOUNT')")
+    settings = {r["setting_key"]: r["setting_value"] for r in cur.fetchall()}
+    iva_debit = settings.get("IVA_DEBIT_ACCOUNT", "2108")
+    iva_credit = settings.get("IVA_CREDIT_ACCOUNT", "1131")
+    cur.execute("""SELECT direction,COALESCE(SUM(tax_amount),0) tax
+      FROM tax_electronic_documents WHERE issue_datetime >= %s AND issue_datetime < %s GROUP BY direction""", (start_date, end_date))
+    tax = {r["direction"]: Decimal(str(r["tax"] or 0)) for r in cur.fetchall()}
+    cur.execute("""SELECT account_code,COALESCE(SUM(debit),0) debit,COALESCE(SUM(credit),0) credit
+      FROM accounting_lines l JOIN accounting_entries e ON e.id=l.entry_id
+      WHERE e.entry_date >= %s AND e.entry_date < %s AND e.workflow_status='POSTED'
+      AND account_code IN (%s,%s) GROUP BY account_code""", (start_date, end_date, iva_debit, iva_credit))
+    gl = {r["account_code"]: r for r in cur.fetchall()}
+    fiscal_debit = tax.get("SALE", Decimal("0"))
+    fiscal_credit = tax.get("PURCHASE", Decimal("0"))
+    gl_debit = Decimal(str((gl.get(iva_debit) or {}).get("credit") or 0)) - Decimal(str((gl.get(iva_debit) or {}).get("debit") or 0))
+    gl_credit = Decimal(str((gl.get(iva_credit) or {}).get("debit") or 0)) - Decimal(str((gl.get(iva_credit) or {}).get("credit") or 0))
+    controls["iva_difference_count"] = sum(
+        1 for diff in (
+            fiscal_debit - gl_debit,
+            fiscal_credit - gl_credit,
+            (fiscal_debit - fiscal_credit) - (gl_debit - gl_credit),
+        ) if abs(diff) > Decimal("0.01")
+    )
+    cur.execute("""SELECT COUNT(*) count FROM bank_reconciliation_statement_lines l
+      JOIN bank_reconciliation_statements s ON s.id=l.statement_id
+      WHERE s.statement_period=%s AND l.match_status='OPEN'""", (period,))
+    controls["bank_open_items"] = int((cur.fetchone() or {}).get("count") or 0)
+    cur.execute("""SELECT COUNT(*) count FROM bank_reconciliation_statements
+      WHERE statement_period=%s AND status <> 'CLOSED'""", (period,))
+    controls["bank_unclosed_statements"] = int((cur.fetchone() or {}).get("count") or 0)
+    try:
+        from routers.accounting_auxiliaries import reconcile_auxiliaries
+        data = reconcile_auxiliaries(period=period, conn=cur.connection).get("data", [])
+        controls["auxiliary_differences"] = sum(1 for row in data if row.get("status") in {"DIFFERENCE", "FX_REQUIRED"})
+        controls["auxiliary_unmapped"] = sum(
+            1 for row in data
+            if row.get("status") == "UNMAPPED" and Decimal(str(row.get("auxiliary_balance") or 0)) != 0
+        )
+    except Exception:
+        controls["auxiliary_differences"] = 1
+    return controls
+
+
+def _automatic_checks(cur, period):
+    controls = _robust_close_controls(cur, period)
+    bank_blockers = controls["bank_open_items"] + controls["bank_unclosed_statements"]
+    aux_blockers = controls["auxiliary_differences"] + controls["auxiliary_unmapped"]
+    tax_blockers = controls["tax_quality_issues"] + controls["iva_difference_count"]
+    entry_blockers = controls["non_posted_entries"] + controls["unbalanced_entries"] + controls["entries_without_lines"] + controls["invalid_lines"]
     fx_open = int(_scalar(cur, """SELECT COUNT(*) count FROM accounting_auxiliary_documents
       WHERE status='OPEN' AND currency_code<>'CRC'"""))
-    return {"SOURCE_SYNC":{"ready":True,"detail":"Use Sincronizar ERP antes de completar."},
-            "ENTRY_WORKFLOW":{"ready":nonposted==0,"detail":f"{nonposted} asientos sin contabilizar"},
-            "BANK_RECONCILIATION":{"ready":False,"detail":"Confirmación manual requerida; no hay movimientos bancarios normalizados."},
-            "AR_REVIEW":{"ready":True,"detail":"Confirme disputas, vencimientos y deterioro."},
-            "AP_REVIEW":{"ready":True,"detail":"Confirme vencimientos, soportes y pagos."},
-            "AUX_RECONCILIATION":{"ready":unbalanced==0,"detail":f"{unbalanced} asientos descuadrados"},
-            "TAX_REVIEW":{"ready":tax_issues==0,"detail":f"{tax_issues} documentos fiscales con incidencias"},
-            "FX_REVALUATION":{"ready":fx_open==0,"detail":f"{fx_open} documentos abiertos en moneda extranjera"},
-            "FINANCIAL_STATEMENTS":{"ready":True,"detail":"Revisión profesional y analítica requerida."},
-            "MANAGEMENT_APPROVAL":{"ready":False,"detail":"Aprobación explícita requerida."}}
-
+    return {
+        "SOURCE_SYNC": {"ready": True, "detail": "Use Sincronizar ERP antes de completar."},
+        "ENTRY_WORKFLOW": {"ready": entry_blockers == 0, "detail": f"{entry_blockers} incidencias de asientos antes del cierre"},
+        "BANK_RECONCILIATION": {"ready": bank_blockers == 0, "detail": f"{controls['bank_open_items']} partidas abiertas y {controls['bank_unclosed_statements']} extractos sin cierre"},
+        "AR_REVIEW": {"ready": True, "detail": "Confirme disputas, vencimientos y deterioro."},
+        "AP_REVIEW": {"ready": True, "detail": "Confirme vencimientos, soportes y pagos."},
+        "AUX_RECONCILIATION": {"ready": aux_blockers == 0, "detail": f"{aux_blockers} auxiliares con diferencias o sin mapeo"},
+        "TAX_REVIEW": {"ready": tax_blockers == 0, "detail": f"{controls['tax_quality_issues']} incidencias XML/fiscales; {controls['iva_difference_count']} diferencias IVA"},
+        "FX_REVALUATION": {"ready": fx_open == 0, "detail": f"{fx_open} documentos abiertos en moneda extranjera"},
+        "FINANCIAL_STATEMENTS": {"ready": True, "detail": "Revision profesional y analitica requerida."},
+        "MANAGEMENT_APPROVAL": {"ready": False, "detail": "Aprobacion explicita requerida."},
+    }
 
 def _json_default(value):
     return __import__("json").dumps(value, default=str)
@@ -265,6 +367,7 @@ def _validation_alert_summary(cur, period):
     backfill_missing_bank_accounts(cur)
     critical = []
     warnings = []
+    robust = _robust_close_controls(cur, period)
 
     cur.execute("""
         SELECT e.id, e.origin, e.description,
@@ -376,6 +479,25 @@ def _validation_alert_summary(cur, period):
             "metadata": {"count": missing_itp_bank},
         })
 
+    robust_messages = (
+        ("TAX_XML_PENDING", "XML/calidad fiscal pendiente", "tax_quality_issues", "documentos fiscales con XML, Hacienda, lineas o CAByS pendiente"),
+        ("IVA_NOT_REVIEWED", "IVA sin revisar o descuadrado", "iva_difference_count", "diferencias entre IVA documental y contable"),
+        ("BANK_RECON_OPEN_ITEMS", "Bancos sin conciliar", "bank_open_items", "partidas abiertas en extractos bancarios"),
+        ("BANK_RECON_NOT_CLOSED", "Conciliacion bancaria sin cierre", "bank_unclosed_statements", "extractos bancarios sin cierre"),
+        ("AUXILIARY_DIFFERENCE", "Auxiliares descuadrados", "auxiliary_differences", "auxiliares no conciliados contra mayor"),
+        ("AUXILIARY_UNMAPPED", "Auxiliares sin mapeo", "auxiliary_unmapped", "auxiliares con saldo sin cuenta de control"),
+    )
+    for code, title, key, detail in robust_messages:
+        count = int(robust.get(key) or 0)
+        if count:
+            critical.append({
+                "code": code,
+                "title": title,
+                "entity_id": period,
+                "message": f"{count} {detail}.",
+                "metadata": {"count": count, "period": period},
+            })
+
     return {
         "counts": {
             "critical": len(critical),
@@ -404,7 +526,11 @@ def _close_snapshot(cur, period):
 
     blockers = [
         item for item in checklist
-        if item["mandatory"] and item["status"] not in {"COMPLETE", "NOT_APPLICABLE"}
+        if item["mandatory"]
+        and (
+            item["status"] not in {"COMPLETE", "NOT_APPLICABLE"}
+            or not item["automatic_check"].get("ready")
+        )
     ]
     validation = _validation_alert_summary(cur, period)
     cur.execute("""

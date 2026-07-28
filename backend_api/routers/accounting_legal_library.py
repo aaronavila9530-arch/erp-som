@@ -218,7 +218,7 @@ LEGAL_ITEMS = [
         "summary": "Regula el IVA aplicable a venta de bienes y prestacion de servicios en Costa Rica, creditos fiscales, tarifas y obligaciones.",
         "erp_relevance": "Base legal para IVA, D-104/D-150, libro de ventas/compras, credito fiscal y conciliacion tributaria.",
         "keywords": ["iva", "valor agregado", "credito fiscal", "ventas", "servicios", "d104", "d150"],
-        "official_url": "https://pgrweb.go.cr/SCIJ/Busqueda/Normativa/Normas/nrm_norma.aspx?nValor1=1&nValor2=32526&nValor3=34312&param1=NRM&strTipM=VA",
+        "official_url": "https://pgrweb.go.cr/scij/Busqueda/Normativa/normas/nrm_articulo.aspx?nValor1=1&nValor2=32526&nValor3=119207&nValor5=147797&param1=NRA&strTipM=FA",
     },
     {
         "code": "CR-EINV-44739-H",
@@ -327,10 +327,163 @@ LEGAL_EXTRACTS = {
 }
 
 
+LEGAL_ARTICLES = {
+    "CR-TAX-9635": [
+        {
+            "article": "Articulo 1",
+            "title": "Reforma integral de la Ley 6826",
+            "source": "SCIJ/PGR - Ley 9635, texto completo vigente",
+            "text": (
+                "Se reforma, de forma integral, la Ley N. 6826, Ley de Impuesto General "
+                "sobre las Ventas, de 8 de noviembre de 1982. El texto es el siguiente: "
+                "Ley del Impuesto sobre el Valor Agregado."
+            ),
+        },
+        {
+            "article": "Articulo 1 - Ley del IVA",
+            "title": "Objeto del impuesto",
+            "source": "SCIJ/PGR - Ley 9635, titulo I, articulo 1 reproducido",
+            "text": (
+                "Se establece un impuesto sobre el valor agregado en la venta de bienes "
+                "y en la prestacion de servicios, independientemente del medio por el que "
+                "sean prestados, realizados en el territorio de la Republica."
+            ),
+        },
+    ],
+    "CR-TAX-10386": [
+        {
+            "article": "Articulo 1",
+            "title": "Modificacion del titulo IV de la Ley 9635",
+            "source": "SCIJ/PGR - Ley 10386, articulo 1",
+            "text": (
+                "Se adicionan los incisos l), m), n), n), o), p), q), r), s), t), u), v), w) "
+                "al articulo 6 del titulo IV, Responsabilidad Fiscal de la Republica, "
+                "capitulo 1 Disposiciones Generales, de la Ley 9635."
+            ),
+        },
+        {
+            "article": "Articulo 2",
+            "title": "Promedio de crecimiento del PIB",
+            "source": "SCIJ/PGR - Ley 10386, articulo 2",
+            "text": (
+                "Se reforma el inciso e) del articulo 8 del titulo IV de la Ley 9635. "
+                "Promedio de crecimiento del PIB se refiere al promedio de la tasa de "
+                "crecimiento interanual del PIB nominal de los cuatro anos previos al ano "
+                "en que se formula el presupuesto."
+            ),
+        },
+    ],
+    "CR-VAT-6826": [
+        {
+            "article": "Articulo 1",
+            "title": "Objeto del impuesto",
+            "source": "SCIJ/PGR - Ley 6826, articulo 1, version vigente",
+            "text": (
+                "1. Se establece un impuesto sobre el valor agregado en la venta de bienes y en la "
+                "prestacion de servicios, independientemente del medio por el que sean prestados, "
+                "realizados en el territorio de la Republica."
+            ),
+        },
+    ],
+    "CR-TAX-7092": [
+        {
+            "article": "Articulo 1",
+            "title": "Impuesto que comprende la ley, hecho generador y materia imponible",
+            "source": "SCIJ/PGR - Ley 7092, articulo 1, version vigente",
+            "text": (
+                "Se establece un impuesto sobre las utilidades de las personas fisicas, juridicas "
+                "y entes colectivos sin personalidad juridica, domiciliados en el pais, que "
+                "desarrollen actividades lucrativas de fuente costarricense."
+            ),
+        },
+        {
+            "article": "Articulo 1",
+            "title": "Hecho generador",
+            "source": "SCIJ/PGR - Ley 7092, articulo 1, version vigente",
+            "text": (
+                "El hecho generador del impuesto sobre las utilidades es la percepcion o devengo "
+                "de rentas en dinero o en especie, continuas u ocasionales, procedentes de "
+                "actividades lucrativas de fuente costarricense."
+            ),
+        },
+    ],
+    "CR-COM-3284": [
+        {
+            "article": "Articulo 234",
+            "title": "Obligaciones comunes a los que ejercen el comercio",
+            "source": "SCIJ/PGR - Codigo de Comercio, articulo 234",
+            "text": (
+                "Los que ejercen el comercio contraen las siguientes obligaciones: a) Inscribir "
+                "en el Registro Mercantil los documentos que se indican en el capitulo siguiente; "
+                "b) Distinguir su establecimiento con su nombre; c) Llevar la contabilidad del "
+                "negocio en orden y de conformidad con las disposiciones de este Codigo."
+            ),
+        },
+        {
+            "article": "Articulo 234",
+            "title": "Conservacion documental",
+            "source": "SCIJ/PGR - Codigo de Comercio, articulo 234",
+            "text": (
+                "Conservar los libros de contabilidad desde que se inician hasta cuatro anos "
+                "despues del cierre del negocio, y conservar igualmente la correspondencia, las "
+                "facturas y los demas comprobantes, por un periodo no menor de cuatro anos."
+            ),
+        },
+    ],
+    "CR-COM-3284-234": [
+        {
+            "article": "Articulo 234",
+            "title": "Contabilidad y comprobantes del comerciante",
+            "source": "SCIJ/PGR - Codigo de Comercio, articulo 234",
+            "text": (
+                "Llevar la contabilidad del negocio en orden y de conformidad con las disposiciones "
+                "de este Codigo; y conservar los libros de contabilidad, la correspondencia, las "
+                "facturas y los demas comprobantes."
+            ),
+        },
+    ],
+    "CR-TAX-4755": [
+        {
+            "article": "Articulo 128",
+            "title": "Obligaciones de los particulares",
+            "source": "SCIJ/PGR - Codigo de Normas y Procedimientos Tributarios, articulo 128",
+            "text": (
+                "Los contribuyentes y responsables estan obligados a facilitar las tareas de "
+                "determinacion, fiscalizacion e investigacion que realice la Administracion Tributaria."
+            ),
+        },
+        {
+            "article": "Articulo 128",
+            "title": "Libros, declaraciones y conservacion",
+            "source": "SCIJ/PGR - Codigo de Normas y Procedimientos Tributarios, articulo 128",
+            "text": (
+                "Cuando lo requieran las leyes o los reglamentos o lo exija dicha Administracion, "
+                "deben llevar los libros y registros especiales, inscribirse en los registros "
+                "pertinentes, presentar las declaraciones que correspondan y conservar en forma "
+                "ordenada los documentos y antecedentes de las operaciones."
+            ),
+        },
+    ],
+    "CR-VAT-41779-H": [
+        {
+            "article": "Articulo 1",
+            "title": "Definiciones",
+            "source": "SCIJ/PGR - Decreto Ejecutivo 41779-H, articulo 1",
+            "text": (
+                "Para los efectos del Reglamento de la Ley del Impuesto sobre el Valor Agregado, "
+                "se establecen definiciones aplicables a la Administracion Tributaria y a la "
+                "gestion y fiscalizacion de los tributos."
+            ),
+        },
+    ],
+}
+
+
 def _enrich_item(item):
     enriched = dict(item)
     enriched.setdefault("is_current", True)
     enriched.setdefault("current_status", "Vigente segun fuente oficial indicada; validar reformas en SCIJ/PGR antes de uso legal final.")
+    enriched.setdefault("legal_articles", LEGAL_ARTICLES.get(enriched.get("code"), []))
     enriched.setdefault("legal_extracts", LEGAL_EXTRACTS.get(enriched.get("code"), [
         "Referencia normativa vigente para consulta operativa; revisar el texto oficial antes de emitir criterio legal o tributario final.",
         "Mantener evidencia, controles, trazabilidad y conciliaciones en ERP-SOM segun la naturaleza de la obligacion.",
@@ -399,6 +552,7 @@ def list_legal_library(
                 item["summary"],
                 item["erp_relevance"],
                 " ".join(item["keywords"]),
+                " ".join(article.get("text", "") for article in item.get("legal_articles") or []),
                 " ".join(item.get("legal_extracts") or []),
                 " ".join(item.get("key_points") or []),
             ]

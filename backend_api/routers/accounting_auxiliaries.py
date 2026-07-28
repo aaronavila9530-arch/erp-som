@@ -9,7 +9,7 @@ from database import get_db
 
 router = APIRouter(prefix="/accounting/auxiliaries", tags=["Accounting Auxiliaries"])
 
-ENTITY_TYPES = {"CUSTOMER", "SUPPLIER", "BANK", "EMPLOYEE", "TAX", "ASSET", "ADVANCE", "LOAN"}
+ENTITY_TYPES = {"CUSTOMER", "SUPPLIER", "BANK", "EMPLOYEE", "TAX", "ASSET", "ADVANCE", "RETENTION", "LOAN"}
 
 
 def _decimal(value, field="amount"):
@@ -22,12 +22,30 @@ def _decimal(value, field="amount"):
 def _ensure_schema(conn):
     with conn.cursor() as cur:
         cur.execute("""
+            DO $$
+            DECLARE item RECORD;
+            BEGIN
+                FOR item IN
+                    SELECT conrelid::regclass AS table_name, conname
+                    FROM pg_constraint
+                    WHERE contype = 'c'
+                      AND conrelid IN (
+                          to_regclass('accounting_auxiliary_settings'),
+                          to_regclass('accounting_auxiliary_entities')
+                      )
+                      AND pg_get_constraintdef(oid) ILIKE '%entity_type%'
+                LOOP
+                    EXECUTE format('ALTER TABLE %s DROP CONSTRAINT IF EXISTS %I', item.table_name, item.conname);
+                END LOOP;
+            END $$;
+        """)
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS accounting_auxiliary_settings (
                 entity_type VARCHAR(20) PRIMARY KEY,
                 control_account_code VARCHAR(50),
                 updated_by TEXT,
                 updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
-                CHECK (entity_type IN ('CUSTOMER','SUPPLIER','BANK','EMPLOYEE','TAX','ASSET','ADVANCE','LOAN'))
+                CHECK (entity_type IN ('CUSTOMER','SUPPLIER','BANK','EMPLOYEE','TAX','ASSET','ADVANCE','RETENTION','LOAN'))
             )
         """)
         cur.execute("""
@@ -47,7 +65,7 @@ def _ensure_schema(conn):
                 created_at TIMESTAMP NOT NULL DEFAULT NOW(),
                 updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
                 UNIQUE(entity_type, entity_code),
-                CHECK (entity_type IN ('CUSTOMER','SUPPLIER','BANK','EMPLOYEE','TAX','ASSET','ADVANCE','LOAN'))
+                CHECK (entity_type IN ('CUSTOMER','SUPPLIER','BANK','EMPLOYEE','TAX','ASSET','ADVANCE','RETENTION','LOAN'))
             )
         """)
         cur.execute("""
@@ -90,13 +108,26 @@ def _ensure_schema(conn):
                 CHECK (amount > 0)
             )
         """)
+        cur.execute("""
+            ALTER TABLE accounting_auxiliary_transactions
+            ADD COLUMN IF NOT EXISTS source_table VARCHAR(80)
+        """)
+        cur.execute("""
+            ALTER TABLE accounting_auxiliary_transactions
+            ADD COLUMN IF NOT EXISTS source_id TEXT
+        """)
         cur.execute("CREATE INDEX IF NOT EXISTS idx_aux_transactions_document ON accounting_auxiliary_transactions(document_id,transaction_date)")
+        cur.execute("DROP INDEX IF EXISTS ux_aux_transactions_source")
+        cur.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_aux_transactions_source
+            ON accounting_auxiliary_transactions(source_table, source_id, transaction_type)
+        """)
         cur.execute("""
             INSERT INTO accounting_auxiliary_settings(entity_type,control_account_code,updated_by)
             SELECT defaults.entity_type,defaults.account_code,'SYSTEM_DEFAULT'
             FROM (VALUES
                 ('CUSTOMER','1.1.04.01'),('SUPPLIER','2.1.01.01'),('BANK','1.1.02'),
-                ('EMPLOYEE','2.1.01.02'),('TAX','2.1.02.03'),('LOAN','2.2.04')
+                ('EMPLOYEE','2105'),('TAX','2.1.02.03'),('RETENTION','2.1.03.01'),('LOAN','2.2.04')
             ) AS defaults(entity_type,account_code)
             JOIN accounting_accounts a ON a.account_code=defaults.account_code AND a.active=TRUE
             ON CONFLICT(entity_type) DO NOTHING
@@ -175,9 +206,12 @@ def sync_auxiliaries(conn=Depends(get_db)):
                 INSERT INTO accounting_auxiliary_entities (
                     entity_type,entity_code,entity_name,currency_code,source_table,created_by
                 )
-                SELECT DISTINCT 'CUSTOMER',codigo_cliente,COALESCE(nombre_cliente,codigo_cliente),
-                       COALESCE(moneda,'CRC'),'cliente','SYSTEM_SYNC'
-                FROM collections WHERE codigo_cliente IS NOT NULL
+                SELECT 'CUSTOMER', codigo_cliente,
+                       MAX(COALESCE(nombre_cliente,codigo_cliente)),
+                       MAX(COALESCE(moneda,'CRC')), 'cliente', 'SYSTEM_SYNC'
+                FROM collections
+                WHERE codigo_cliente IS NOT NULL
+                GROUP BY codigo_cliente
                 ON CONFLICT(entity_type,entity_code) DO UPDATE SET
                     entity_name=EXCLUDED.entity_name,updated_at=NOW()
             """)
@@ -203,12 +237,18 @@ def sync_auxiliaries(conn=Depends(get_db)):
                 INSERT INTO accounting_auxiliary_entities (
                     entity_type,entity_code,entity_name,currency_code,source_table,created_by
                 )
-                SELECT DISTINCT
-                    CASE WHEN UPPER(COALESCE(payee_type,'')) IN ('EMPLOYEE','EMPLEADO') THEN 'EMPLOYEE' ELSE 'SUPPLIER' END,
-                    COALESCE(payee_id::text,payee_name,'PAYEE-'||id::text),
-                    COALESCE(payee_name,payee_id::text,'PAYEE-'||id::text),COALESCE(currency,'CRC'),
-                    COALESCE(origin,'payment_obligations'),'SYSTEM_SYNC'
-                FROM payment_obligations
+                SELECT entity_type, entity_code, MAX(entity_name), MAX(currency_code),
+                       MAX(source_table), 'SYSTEM_SYNC'
+                FROM (
+                    SELECT
+                        CASE WHEN UPPER(COALESCE(payee_type,'')) IN ('EMPLOYEE','EMPLEADO') THEN 'EMPLOYEE' ELSE 'SUPPLIER' END AS entity_type,
+                        COALESCE(payee_id::text,payee_name,'PAYEE-'||id::text) AS entity_code,
+                        COALESCE(payee_name,payee_id::text,'PAYEE-'||id::text) AS entity_name,
+                        COALESCE(currency,'CRC') AS currency_code,
+                        COALESCE(origin,'payment_obligations') AS source_table
+                    FROM payment_obligations
+                ) src
+                GROUP BY entity_type, entity_code
                 ON CONFLICT(entity_type,entity_code) DO UPDATE SET
                     entity_name=EXCLUDED.entity_name,updated_at=NOW()
             """)
@@ -233,6 +273,30 @@ def sync_auxiliaries(conn=Depends(get_db)):
             """)
 
             cur.execute("""
+                INSERT INTO accounting_auxiliary_transactions (
+                    document_id,transaction_date,transaction_type,effect,amount,reference,
+                    accounting_entry_id,created_by,source_table,source_id
+                )
+                SELECT d.id, ca.fecha_pago, 'PAYMENT', 'REDUCE', ABS(COALESCE(ca.monto_pagado,0)),
+                       ca.referencia, e.id, 'SYSTEM_SYNC', 'cash_app', ca.id::text
+                FROM cash_app ca
+                JOIN accounting_auxiliary_documents d
+                  ON d.source_table='collections'
+                 AND d.document_number=ca.numero_documento
+                 AND d.document_type='RECEIVABLE'
+                LEFT JOIN accounting_entries e
+                  ON e.origin='CASH_APP'
+                 AND e.origin_id=ca.id
+                WHERE COALESCE(ca.monto_pagado,0) > 0
+                ON CONFLICT(source_table,source_id,transaction_type) DO UPDATE SET
+                    document_id=EXCLUDED.document_id,
+                    transaction_date=EXCLUDED.transaction_date,
+                    amount=EXCLUDED.amount,
+                    reference=EXCLUDED.reference,
+                    accounting_entry_id=EXCLUDED.accounting_entry_id
+            """)
+
+            cur.execute("""
                 SELECT DISTINCT banco FROM (
                     SELECT banco FROM cash_app WHERE banco IS NOT NULL AND BTRIM(banco)<>''
                     UNION SELECT banco FROM proveedor WHERE banco IS NOT NULL AND BTRIM(banco)<>''
@@ -242,6 +306,181 @@ def sync_auxiliaries(conn=Depends(get_db)):
             for row in cur.fetchall():
                 _upsert_entity(cur, "BANK", row["banco"], row["banco"], source_table="derived_banks")
                 counts["BANK"] += 1
+
+            cur.execute("""
+                INSERT INTO accounting_auxiliary_entities (
+                    entity_type,entity_code,entity_name,currency_code,control_account_code,
+                    source_table,created_by
+                )
+                SELECT 'BANK', account_code, account_name, COALESCE(currency_code,'CRC'), account_code,
+                       'accounting_accounts','SYSTEM_SYNC'
+                FROM accounting_accounts
+                WHERE active=TRUE
+                  AND account_code NOT IN ('1.1.02','1.1.02.01','110-002-002-001')
+                  AND LOWER(account_name) NOT LIKE '%banco nacional%'
+                  AND (account_code LIKE '1.1.02.%' OR LOWER(account_name) LIKE 'banco%')
+                ON CONFLICT(entity_type,entity_code) DO UPDATE SET
+                    entity_name=EXCLUDED.entity_name,
+                    control_account_code=EXCLUDED.control_account_code,
+                    updated_at=NOW()
+            """)
+            cur.execute("""
+                INSERT INTO accounting_auxiliary_documents (
+                    entity_id,document_type,document_number,issue_date,due_date,currency_code,
+                    original_amount,open_amount,status,reference,source_table,source_id,metadata,created_by
+                )
+                SELECT ent.id,'BANK_MOVEMENT','GL-'||l.id::text,e.entry_date,e.entry_date,
+                       COALESCE(e.currency_code,'CRC'),
+                       COALESCE(l.debit,0)-COALESCE(l.credit,0),
+                       COALESCE(l.debit,0)-COALESCE(l.credit,0),
+                       'POSTED',COALESCE(e.description,l.line_description),
+                       'accounting_lines',l.id::text,
+                       jsonb_build_object('entry_id',e.id,'account',l.account_code),'SYSTEM_SYNC'
+                FROM accounting_lines l
+                JOIN accounting_entries e ON e.id=l.entry_id AND e.workflow_status='POSTED'
+                JOIN accounting_auxiliary_entities ent
+                  ON ent.entity_type='BANK' AND ent.entity_code=l.account_code
+                WHERE COALESCE(l.debit,0) <> COALESCE(l.credit,0)
+                ON CONFLICT(source_table,source_id,document_type) DO UPDATE SET
+                    entity_id=EXCLUDED.entity_id,
+                    issue_date=EXCLUDED.issue_date,
+                    original_amount=EXCLUDED.original_amount,
+                    open_amount=EXCLUDED.open_amount,
+                    reference=EXCLUDED.reference,
+                    metadata=EXCLUDED.metadata,
+                    updated_at=NOW()
+            """)
+            counts["BANK"] += cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
+
+            cur.execute("""
+                INSERT INTO accounting_auxiliary_entities (
+                    entity_type,entity_code,entity_name,currency_code,control_account_code,
+                    source_table,created_by
+                )
+                SELECT DISTINCT
+                    CASE WHEN LOWER(a.account_name) LIKE '%retenc%' OR a.account_code LIKE '2.1.03.%'
+                         THEN 'RETENTION' ELSE 'TAX' END,
+                    a.account_code, a.account_name, COALESCE(a.currency_code,'CRC'), a.account_code,
+                    'accounting_accounts','SYSTEM_SYNC'
+                FROM accounting_accounts a
+                WHERE a.active=TRUE
+                  AND (
+                        LOWER(a.account_name) LIKE '%iva%'
+                     OR LOWER(a.account_name) LIKE '%impuesto%'
+                     OR LOWER(a.account_name) LIKE '%retenc%'
+                     OR a.account_code LIKE '2.1.02.%'
+                     OR a.account_code LIKE '2.1.03.%'
+                     OR a.account_code = '1.1.13.99'
+                  )
+                ON CONFLICT(entity_type,entity_code) DO UPDATE SET
+                    entity_name=EXCLUDED.entity_name,
+                    control_account_code=EXCLUDED.control_account_code,
+                    updated_at=NOW()
+            """)
+            cur.execute("""
+                INSERT INTO accounting_auxiliary_documents (
+                    entity_id,document_type,document_number,issue_date,due_date,currency_code,
+                    original_amount,open_amount,status,reference,source_table,source_id,metadata,created_by
+                )
+                SELECT ent.id,
+                       CASE WHEN ent.entity_type='RETENTION' THEN 'RETENTION_MOVEMENT' ELSE 'TAX_MOVEMENT' END,
+                       'GL-'||l.id::text,e.entry_date,e.entry_date,COALESCE(e.currency_code,'CRC'),
+                       CASE WHEN a.normal_balance='CREDIT'
+                            THEN COALESCE(l.credit,0)-COALESCE(l.debit,0)
+                            ELSE COALESCE(l.debit,0)-COALESCE(l.credit,0) END,
+                       CASE WHEN a.normal_balance='CREDIT'
+                            THEN COALESCE(l.credit,0)-COALESCE(l.debit,0)
+                            ELSE COALESCE(l.debit,0)-COALESCE(l.credit,0) END,
+                       'POSTED',COALESCE(e.description,l.line_description),
+                       'accounting_lines_tax',l.id::text,
+                       jsonb_build_object('entry_id',e.id,'account',l.account_code),'SYSTEM_SYNC'
+                FROM accounting_lines l
+                JOIN accounting_entries e ON e.id=l.entry_id AND e.workflow_status='POSTED'
+                JOIN accounting_accounts a ON a.account_code=l.account_code
+                JOIN accounting_auxiliary_entities ent
+                  ON ent.entity_code=l.account_code
+                 AND ent.entity_type IN ('TAX','RETENTION')
+                WHERE COALESCE(l.debit,0) <> COALESCE(l.credit,0)
+                ON CONFLICT(source_table,source_id,document_type) DO UPDATE SET
+                    entity_id=EXCLUDED.entity_id,
+                    issue_date=EXCLUDED.issue_date,
+                    original_amount=EXCLUDED.original_amount,
+                    open_amount=EXCLUDED.open_amount,
+                    reference=EXCLUDED.reference,
+                    metadata=EXCLUDED.metadata,
+                    updated_at=NOW()
+            """)
+
+            cur.execute("""
+                INSERT INTO accounting_auxiliary_entities (
+                    entity_type,entity_code,entity_name,currency_code,control_account_code,
+                    source_table,created_by
+                )
+                SELECT DISTINCT 'ADVANCE', a.account_code, a.account_name, COALESCE(a.currency_code,'CRC'),
+                       a.account_code, 'accounting_accounts','SYSTEM_SYNC'
+                FROM accounting_accounts a
+                WHERE a.active=TRUE
+                  AND (LOWER(a.account_name) LIKE '%anticipo%' OR LOWER(a.account_name) LIKE '%advance%')
+                ON CONFLICT(entity_type,entity_code) DO UPDATE SET
+                    entity_name=EXCLUDED.entity_name,
+                    control_account_code=EXCLUDED.control_account_code,
+                    updated_at=NOW()
+            """)
+            cur.execute("""
+                INSERT INTO accounting_auxiliary_documents (
+                    entity_id,document_type,document_number,issue_date,due_date,currency_code,
+                    original_amount,open_amount,status,reference,source_table,source_id,metadata,created_by
+                )
+                SELECT ent.id,'ADVANCE_MOVEMENT','GL-'||l.id::text,e.entry_date,e.entry_date,
+                       COALESCE(e.currency_code,'CRC'),
+                       CASE WHEN a.normal_balance='CREDIT'
+                            THEN COALESCE(l.credit,0)-COALESCE(l.debit,0)
+                            ELSE COALESCE(l.debit,0)-COALESCE(l.credit,0) END,
+                       CASE WHEN a.normal_balance='CREDIT'
+                            THEN COALESCE(l.credit,0)-COALESCE(l.debit,0)
+                            ELSE COALESCE(l.debit,0)-COALESCE(l.credit,0) END,
+                       'POSTED',COALESCE(e.description,l.line_description),
+                       'accounting_lines_advance',l.id::text,
+                       jsonb_build_object('entry_id',e.id,'account',l.account_code),'SYSTEM_SYNC'
+                FROM accounting_lines l
+                JOIN accounting_entries e ON e.id=l.entry_id AND e.workflow_status='POSTED'
+                JOIN accounting_accounts a ON a.account_code=l.account_code
+                JOIN accounting_auxiliary_entities ent
+                  ON ent.entity_type='ADVANCE' AND ent.entity_code=l.account_code
+                WHERE COALESCE(l.debit,0) <> COALESCE(l.credit,0)
+                ON CONFLICT(source_table,source_id,document_type) DO UPDATE SET
+                    entity_id=EXCLUDED.entity_id,
+                    issue_date=EXCLUDED.issue_date,
+                    original_amount=EXCLUDED.original_amount,
+                    open_amount=EXCLUDED.open_amount,
+                    reference=EXCLUDED.reference,
+                    metadata=EXCLUDED.metadata,
+                    updated_at=NOW()
+            """)
+
+            cur.execute("""
+                INSERT INTO accounting_auxiliary_documents (
+                    entity_id,document_type,document_number,issue_date,due_date,currency_code,
+                    original_amount,open_amount,status,reference,source_table,source_id,metadata,created_by
+                )
+                SELECT ent.id,'PAYROLL',pr.usuario||'-'||pr.year||'-'||LPAD(pr.month::text,2,'0'),
+                       make_date(pr.year,pr.month,1),make_date(pr.year,pr.month,1),
+                       'CRC',COALESCE(pr.salario_neto,0),0,'CLOSED',
+                       'Payroll '||pr.usuario||' '||pr.year||'-'||LPAD(pr.month::text,2,'0'),
+                       'payroll_runs',pr.id::text,
+                       jsonb_build_object('gross',pr.salario_bruto,'extra',pr.monto_horas_extra),'SYSTEM_SYNC'
+                FROM payroll_runs pr
+                JOIN accounting_auxiliary_entities ent
+                  ON ent.entity_type='EMPLOYEE'
+                 AND ent.entity_code=pr.usuario
+                ON CONFLICT(source_table,source_id,document_type) DO UPDATE SET
+                    entity_id=EXCLUDED.entity_id,
+                    original_amount=EXCLUDED.original_amount,
+                    open_amount=EXCLUDED.open_amount,
+                    status=EXCLUDED.status,
+                    metadata=EXCLUDED.metadata,
+                    updated_at=NOW()
+            """)
         conn.commit()
         return {"status": "ok", "synced": counts}
     except Exception:
@@ -444,12 +683,44 @@ def reconcile_auxiliaries(period: str | None = Query(None), conn=Depends(get_db)
                        STRING_AGG(DISTINCT d.currency_code, ', ' ORDER BY d.currency_code) currencies
                 FROM accounting_auxiliary_documents d
                 JOIN accounting_auxiliary_entities e ON e.id=d.entity_id
-                WHERE e.entity_type=%s AND e.active=TRUE AND d.status='OPEN'
+                WHERE e.entity_type=%s
+                  AND e.active=TRUE
+                  AND (
+                        d.status='OPEN'
+                     OR d.document_type IN ('BANK_MOVEMENT','TAX_MOVEMENT','RETENTION_MOVEMENT','ADVANCE_MOVEMENT')
+                  )
             """, (entity_type,))
             auxiliary_row = cur.fetchone()
             auxiliary = auxiliary_row["balance"]
             ledger = Decimal("0")
-            if account:
+            if entity_type in {"BANK", "TAX", "RETENTION", "ADVANCE"}:
+                cur.execute("""
+                    SELECT COALESCE(SUM(x.balance),0) AS balance,
+                           COUNT(*) AS account_count
+                    FROM (
+                        SELECT e.control_account_code,
+                               COALESCE(SUM(
+                                   CASE WHEN COALESCE(a.normal_balance,'DEBIT')='CREDIT'
+                                        THEN COALESCE(l.credit,0)-COALESCE(l.debit,0)
+                                        ELSE COALESCE(l.debit,0)-COALESCE(l.credit,0) END
+                               ),0) AS balance
+                        FROM accounting_auxiliary_entities e
+                        JOIN accounting_accounts a ON a.account_code=e.control_account_code
+                        LEFT JOIN accounting_lines l ON l.account_code=e.control_account_code
+                        LEFT JOIN accounting_entries en ON en.id=l.entry_id
+                            AND en.workflow_status='POSTED'
+                            AND (%s IS NULL OR en.period<=%s)
+                        WHERE e.entity_type=%s
+                          AND e.active=TRUE
+                          AND e.control_account_code IS NOT NULL
+                        GROUP BY e.control_account_code
+                    ) x
+                """, (period, period, entity_type))
+                ledger_row = cur.fetchone()
+                ledger = ledger_row["balance"]
+                if int(ledger_row["account_count"] or 0) > 0:
+                    account = "CUENTAS ESPECIFICAS"
+            elif account:
                 params = [account]; period_clause = ""
                 if period: period_clause="AND en.period<=%s"; params.append(period)
                 cur.execute(f"""
@@ -470,4 +741,132 @@ def reconcile_auxiliaries(period: str | None = Query(None), conn=Depends(get_db)
                             "auxiliary_balance": auxiliary, "ledger_balance": ledger,
                             "difference": difference, "currencies": auxiliary_row["currencies"],
                             "status": status})
+    return {"data": results, "period": period}
+
+
+@router.get("/reconciliation/details")
+def reconcile_auxiliary_details(
+    entity_type: str | None = Query(None),
+    period: str | None = Query(None),
+    conn=Depends(get_db),
+):
+    _ensure_schema(conn)
+    conditions = ["e.active=TRUE"]
+    params = []
+    if entity_type:
+        conditions.append("e.entity_type=%s")
+        params.append(entity_type.upper())
+    results = []
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(f"""
+            SELECT d.*, e.entity_type, e.entity_code, e.entity_name,
+                   COALESCE(e.control_account_code,s.control_account_code) AS control_account_code,
+                   a.normal_balance
+            FROM accounting_auxiliary_documents d
+            JOIN accounting_auxiliary_entities e ON e.id=d.entity_id
+            LEFT JOIN accounting_auxiliary_settings s ON s.entity_type=e.entity_type
+            LEFT JOIN accounting_accounts a ON a.account_code=COALESCE(e.control_account_code,s.control_account_code)
+            WHERE {' AND '.join(conditions)}
+            ORDER BY e.entity_type,e.entity_name,d.document_type,d.issue_date DESC,d.id DESC
+            LIMIT 1500
+        """, params)
+        documents = cur.fetchall()
+
+        for doc in documents:
+            account = doc.get("control_account_code")
+            ledger_balance = None
+            ledger_scope = "NO_ACCOUNT"
+            if account:
+                source_table = doc.get("source_table")
+                source_id = str(doc.get("source_id") or "")
+                if source_table == "collections":
+                    cur.execute("""
+                        SELECT COALESCE(SUM(
+                            CASE WHEN l.account_code=%s THEN COALESCE(l.debit,0)-COALESCE(l.credit,0) ELSE 0 END
+                        ),0) AS balance
+                        FROM accounting_lines l
+                        JOIN accounting_entries en ON en.id=l.entry_id AND en.workflow_status='POSTED'
+                        LEFT JOIN cash_app ca ON en.origin='CASH_APP' AND ca.id=en.origin_id
+                        WHERE l.account_code=%s
+                          AND (%s IS NULL OR en.period<=%s)
+                          AND (
+                                (en.origin='COLLECTIONS' AND en.origin_id::text=%s)
+                             OR (en.origin='CASH_APP' AND ca.numero_documento=%s)
+                          )
+                    """, (account, account, period, period, source_id, doc.get("document_number")))
+                    ledger_balance = cur.fetchone()["balance"]
+                    ledger_scope = "DOCUMENT_SOURCE"
+                elif source_table == "payment_obligations":
+                    cur.execute("""
+                        SELECT COALESCE(SUM(
+                            CASE WHEN COALESCE(a.normal_balance,'DEBIT')='CREDIT'
+                                 THEN COALESCE(l.credit,0)-COALESCE(l.debit,0)
+                                 ELSE COALESCE(l.debit,0)-COALESCE(l.credit,0) END
+                        ),0) AS balance
+                        FROM accounting_lines l
+                        JOIN accounting_entries en ON en.id=l.entry_id AND en.workflow_status='POSTED'
+                        JOIN accounting_accounts a ON a.account_code=l.account_code
+                        WHERE l.account_code=%s
+                          AND (%s IS NULL OR en.period<=%s)
+                          AND en.origin IN ('ITP','ITP_PAYMENT')
+                          AND en.origin_id::text=%s
+                    """, (account, period, period, source_id))
+                    ledger_balance = cur.fetchone()["balance"]
+                    ledger_scope = "DOCUMENT_SOURCE"
+                elif source_table in ("accounting_lines", "accounting_lines_tax", "accounting_lines_advance"):
+                    ledger_balance = doc.get("open_amount") or Decimal("0")
+                    ledger_scope = "ACCOUNTING_LINE"
+                elif source_table == "payroll_runs":
+                    cur.execute("""
+                        SELECT COALESCE(SUM(
+                            CASE WHEN COALESCE(a.normal_balance,'DEBIT')='CREDIT'
+                                 THEN COALESCE(l.credit,0)-COALESCE(l.debit,0)
+                                 ELSE COALESCE(l.debit,0)-COALESCE(l.credit,0) END
+                        ),0) AS balance
+                        FROM accounting_lines l
+                        JOIN accounting_entries en ON en.id=l.entry_id AND en.workflow_status='POSTED'
+                        JOIN accounting_accounts a ON a.account_code=l.account_code
+                        WHERE l.account_code=%s
+                          AND (%s IS NULL OR en.period<=%s)
+                          AND en.origin IN ('PAYROLL','PAYROLL_PAYMENT')
+                          AND en.origin_id::text=%s
+                    """, (account, period, period, source_id))
+                    ledger_balance = cur.fetchone()["balance"]
+                    ledger_scope = "DOCUMENT_SOURCE"
+                else:
+                    cur.execute("""
+                        SELECT COALESCE(SUM(
+                            CASE WHEN COALESCE(a.normal_balance,'DEBIT')='CREDIT'
+                                 THEN COALESCE(l.credit,0)-COALESCE(l.debit,0)
+                                 ELSE COALESCE(l.debit,0)-COALESCE(l.credit,0) END
+                        ),0) AS balance
+                        FROM accounting_lines l
+                        JOIN accounting_entries en ON en.id=l.entry_id AND en.workflow_status='POSTED'
+                        JOIN accounting_accounts a ON a.account_code=l.account_code
+                        WHERE l.account_code=%s
+                          AND (%s IS NULL OR en.period<=%s)
+                    """, (account, period, period))
+                    ledger_balance = cur.fetchone()["balance"]
+                    ledger_scope = "CONTROL_ACCOUNT"
+
+            aux_balance = Decimal(doc.get("open_amount") or 0)
+            difference = None if ledger_balance is None else aux_balance - Decimal(ledger_balance or 0)
+            status = "UNMAPPED" if ledger_balance is None else ("OK" if difference == 0 else "DIFFERENCE")
+            results.append({
+                "entity_type": doc.get("entity_type"),
+                "entity_code": doc.get("entity_code"),
+                "entity_name": doc.get("entity_name"),
+                "document_id": doc.get("id"),
+                "document_type": doc.get("document_type"),
+                "document_number": doc.get("document_number"),
+                "currency_code": doc.get("currency_code"),
+                "control_account_code": account,
+                "auxiliary_balance": aux_balance,
+                "ledger_balance": ledger_balance,
+                "difference": difference,
+                "ledger_scope": ledger_scope,
+                "status": status,
+                "source_table": doc.get("source_table"),
+                "source_id": doc.get("source_id"),
+            })
     return {"data": results, "period": period}

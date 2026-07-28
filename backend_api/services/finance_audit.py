@@ -20,9 +20,13 @@ def ensure_finance_audit_schema(cur):
             before_snapshot JSONB,
             after_snapshot JSONB,
             metadata JSONB,
+            ip_address TEXT,
+            workstation TEXT,
             created_at TIMESTAMP NOT NULL DEFAULT NOW()
         )
     """)
+    cur.execute("ALTER TABLE finance_audit_log ADD COLUMN IF NOT EXISTS ip_address TEXT")
+    cur.execute("ALTER TABLE finance_audit_log ADD COLUMN IF NOT EXISTS workstation TEXT")
     cur.execute("""
         CREATE INDEX IF NOT EXISTS idx_finance_audit_module_entity
         ON finance_audit_log(module, entity_type, entity_id, created_at DESC)
@@ -57,14 +61,22 @@ def audit_event(
     before=None,
     after=None,
     metadata=None,
+    ip_address=None,
+    workstation=None,
 ):
     ensure_finance_audit_schema(cur)
+    if not workstation:
+        try:
+            import socket
+            workstation = socket.gethostname()
+        except Exception:
+            workstation = None
     cur.execute("""
         INSERT INTO finance_audit_log (
             module, action, entity_type, entity_id, performed_by, performed_role,
-            reason, before_snapshot, after_snapshot, metadata
+            reason, before_snapshot, after_snapshot, metadata, ip_address, workstation
         )
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
     """, (
         str(module or "").strip() or "finance",
         str(action or "").strip() or "UNKNOWN",
@@ -76,6 +88,8 @@ def audit_event(
         Json(before, dumps=_json_dumps) if before is not None else None,
         Json(after, dumps=_json_dumps) if after is not None else None,
         Json(metadata, dumps=_json_dumps) if metadata is not None else None,
+        ip_address,
+        workstation,
     ))
 
 

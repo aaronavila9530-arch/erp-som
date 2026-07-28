@@ -2,7 +2,7 @@ from fastapi import (
     APIRouter,
     Depends,
     HTTPException,
-    Header
+    Header,
 )
 from fastapi.responses import FileResponse
 from psycopg2.extras import Json, RealDictCursor
@@ -31,6 +31,11 @@ from services.accounting_bank_rules import (
     backfill_missing_bank_accounts,
     canonical_bac_account,
     canonical_bcr_account,
+)
+from services.accounting_rule_engine import (
+    ensure_posting_rule_schema,
+    list_posting_rules,
+    seed_default_posting_rules,
 )
 
 
@@ -72,6 +77,9 @@ def _ensure_accounting_professional_schema(conn):
                 financial_statement_line TEXT,
                 tax_mapping TEXT,
                 active BOOLEAN NOT NULL DEFAULT TRUE,
+                locked BOOLEAN NOT NULL DEFAULT FALSE,
+                locked_by TEXT,
+                locked_at TIMESTAMP,
                 created_by TEXT,
                 created_at TIMESTAMP NOT NULL DEFAULT NOW(),
                 updated_by TEXT,
@@ -92,6 +100,8 @@ def _ensure_accounting_professional_schema(conn):
                 COALESCE(active, TRUE)
             FROM accounting_ledger
             WHERE account_code IS NOT NULL AND BTRIM(account_code) <> ''
+              AND account_code <> '1.1.02.01'
+              AND LOWER(COALESCE(account_name, '')) NOT LIKE '%banco nacional%'
             ON CONFLICT (account_code) DO NOTHING
         """)
         cur.execute("""
@@ -123,11 +133,17 @@ def _ensure_accounting_professional_schema(conn):
             "ALTER TABLE accounting_entries ADD COLUMN IF NOT EXISTS posted_by TEXT",
             "ALTER TABLE accounting_entries ADD COLUMN IF NOT EXISTS posted_at TIMESTAMP",
             "ALTER TABLE accounting_entries ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP NOT NULL DEFAULT NOW()",
+            "ALTER TABLE accounting_entries ADD COLUMN IF NOT EXISTS posting_rule_code VARCHAR(100)",
+            "ALTER TABLE accounting_entries ADD COLUMN IF NOT EXISTS posting_metadata JSONB NOT NULL DEFAULT '{}'::jsonb",
+            "ALTER TABLE accounting_accounts ADD COLUMN IF NOT EXISTS locked BOOLEAN NOT NULL DEFAULT FALSE",
+            "ALTER TABLE accounting_accounts ADD COLUMN IF NOT EXISTS locked_by TEXT",
+            "ALTER TABLE accounting_accounts ADD COLUMN IF NOT EXISTS locked_at TIMESTAMP",
             "ALTER TABLE accounting_lines ADD COLUMN IF NOT EXISTS third_party_type VARCHAR(30)",
             "ALTER TABLE accounting_lines ADD COLUMN IF NOT EXISTS third_party_id TEXT",
             "ALTER TABLE accounting_lines ADD COLUMN IF NOT EXISTS cost_center_code VARCHAR(50)",
             "ALTER TABLE accounting_lines ADD COLUMN IF NOT EXISTS project_code VARCHAR(50)",
             "ALTER TABLE accounting_lines ADD COLUMN IF NOT EXISTS vessel_code VARCHAR(100)",
+            "ALTER TABLE accounting_lines ADD COLUMN IF NOT EXISTS tax_role VARCHAR(40)",
         ):
             cur.execute(statement)
         cur.execute("""
@@ -146,6 +162,7 @@ def _ensure_accounting_professional_schema(conn):
         cur.execute("CREATE INDEX IF NOT EXISTS idx_accounting_audit_entry ON accounting_audit_log(entry_id, created_at DESC)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_accounting_entries_workflow ON accounting_entries(period, workflow_status)")
         ensure_finance_audit_schema(cur)
+        ensure_posting_rule_schema(cur)
     conn.commit()
 
 
@@ -467,10 +484,25 @@ def create_manual_entry(
         cur.execute("""
             INSERT INTO accounting_entries (
                 entry_date, period, description, origin, created_by,
-                workflow_status, company_code, currency_code, exchange_rate
-            ) VALUES (%s, %s, %s, 'MANUAL', %s, 'DRAFT', %s, %s, %s)
+                workflow_status, company_code, currency_code, exchange_rate,
+                posting_rule_code, posting_metadata
+            ) VALUES (%s, %s, %s, 'MANUAL', %s, 'DRAFT', %s, %s, %s, %s, %s)
             RETURNING id, workflow_status, version
-        """, (entry_date, period, payload.get("description"), created_by, company_code, currency_code, exchange_rate))
+        """, (
+            entry_date,
+            period,
+            payload.get("description"),
+            created_by,
+            company_code,
+            currency_code,
+            exchange_rate,
+            payload.get("posting_rule_code") or "MANUAL_ADJUSTMENT",
+            Json({
+                "origin": "Manual",
+                "event_type": "Manual adjustment",
+                "source": "desktop_manual_entry",
+            }),
+        ))
         entry = cur.fetchone()
         for line, account, debit, credit in validated:
             cur.execute("""
@@ -624,7 +656,7 @@ def reverse_entry(
 # CHART OF ACCOUNTS (Catalogo Contable)
 # ============================================================
 @router.get("/accounts")
-def get_accounting_accounts(conn=Depends(get_db)):
+def get_accounting_accounts(include_inactive: bool = False, conn=Depends(get_db)):
     """
     Devuelve el catálogo contable desde accounting_ledger
     para uso en combobox (UI / Popup de ajustes)
@@ -647,13 +679,16 @@ def get_accounting_accounts(conn=Depends(get_db)):
             currency_code,
             financial_statement_line,
             tax_mapping,
-            active
+            active,
+            locked,
+            locked_by,
+            locked_at
         FROM accounting_accounts
-        WHERE active = TRUE
+        WHERE (%s = TRUE OR active = TRUE)
         ORDER BY account_code
     """
 
-    cur.execute(query)
+    cur.execute(query, (include_inactive,))
     rows = cur.fetchall()
 
     return {
@@ -692,7 +727,8 @@ def get_accounting_bank_accounts(conn=Depends(get_db)):
             active
         FROM accounting_accounts
         WHERE active = TRUE
-          AND account_code NOT IN ('1.1.01', '1.1.02', '110-002-002-001')
+          AND account_code NOT IN ('1.1.01', '1.1.02', '1.1.02.01', '110-002-002-001')
+          AND LOWER(account_name) NOT LIKE '%banco nacional%'
           AND (
                 account_code LIKE '1.1.02.%'
              OR account_code LIKE '1.1.01.%'
@@ -737,15 +773,15 @@ def create_accounting_account(
                 INSERT INTO accounting_accounts (
                     account_code, account_name, account_type, normal_balance, account_level,
                     parent_account, accepts_posting, requires_third_party, requires_cost_center,
-                    currency_code, financial_statement_line, tax_mapping, active, created_by, updated_by
-                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    currency_code, financial_statement_line, tax_mapping, active, locked, created_by, updated_by
+                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 RETURNING *
             """, (code, name, account_type, str(payload.get("normal_balance") or "DEBIT").upper(),
                   int(payload.get("account_level") or 1), payload.get("parent_account"),
                   bool(payload.get("accepts_posting", True)), bool(payload.get("requires_third_party", False)),
                   bool(payload.get("requires_cost_center", False)), payload.get("currency_code"),
                   payload.get("financial_statement_line"), payload.get("tax_mapping"),
-                  bool(payload.get("active", True)), user, user))
+                  bool(payload.get("active", True)), bool(payload.get("locked", False)), user, user))
             row = cur.fetchone()
             audit_event(
                 cur,
@@ -781,6 +817,31 @@ def update_accounting_account(
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute("SELECT * FROM accounting_accounts WHERE account_code = %s", (account_code,))
         before = row_to_dict(cur.fetchone())
+        if not before:
+            conn.rollback()
+            raise HTTPException(404, "Account not found")
+        protected_fields = {
+            "account_name",
+            "account_type",
+            "normal_balance",
+            "account_level",
+            "parent_account",
+            "accepts_posting",
+            "requires_third_party",
+            "requires_cost_center",
+            "currency_code",
+            "financial_statement_line",
+            "tax_mapping",
+        }
+        changed_locked_fields = [
+            field for field in protected_fields
+            if field in payload and payload.get(field) != before.get(field)
+        ]
+        if before.get("locked") and changed_locked_fields and not payload.get("allow_locked_update"):
+            raise HTTPException(
+                409,
+                "Account is locked. Only active/inactive can be changed without controlled override.",
+            )
         cur.execute("""
             UPDATE accounting_accounts SET
                 account_name = COALESCE(%s, account_name),
@@ -795,17 +856,17 @@ def update_accounting_account(
                 financial_statement_line = %s,
                 tax_mapping = %s,
                 active = COALESCE(%s, active),
+                locked = COALESCE(%s, locked),
+                locked_by = CASE WHEN %s = TRUE AND locked = FALSE THEN %s ELSE locked_by END,
+                locked_at = CASE WHEN %s = TRUE AND locked = FALSE THEN NOW() ELSE locked_at END,
                 updated_by = %s, updated_at = NOW()
             WHERE account_code = %s RETURNING *
         """, (payload.get("account_name"), payload.get("account_type"), payload.get("normal_balance"),
               payload.get("account_level"), payload.get("parent_account"), payload.get("accepts_posting"),
               payload.get("requires_third_party"), payload.get("requires_cost_center"), payload.get("currency_code"),
               payload.get("financial_statement_line"), payload.get("tax_mapping"), payload.get("active"),
-              user, account_code))
+              payload.get("locked"), payload.get("locked"), user, payload.get("locked"), user, account_code))
         row = cur.fetchone()
-        if not row:
-            conn.rollback()
-            raise HTTPException(404, "Account not found")
         audit_event(
             cur,
             module="accounting",
@@ -820,6 +881,164 @@ def update_accounting_account(
         )
     conn.commit()
     return {"status": "ok", "account": row}
+
+
+@router.post("/accounts/harden")
+def harden_accounting_chart(
+    payload: dict | None = None,
+    conn=Depends(get_db),
+    x_user: str | None = Header(None, alias="X-User"),
+    x_role: str | None = Header(None, alias="X-Role"),
+    x_user_role: str | None = Header(None, alias="X-User-Role"),
+):
+    _ensure_accounting_professional_schema(conn)
+    payload = payload or {}
+    header_user, header_role = actor_from_headers(x_user, x_role, x_user_role)
+    user = str(payload.get("user") or header_user or "system")
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("SELECT * FROM accounting_accounts ORDER BY account_code")
+        before_accounts = rows_to_dicts(cur.fetchall())
+
+        cur.execute("""
+            SELECT a.account_code, COUNT(l.id) AS lines,
+                   COUNT(c.id) AS collection_refs,
+                   COUNT(p.id) AS itp_refs
+            FROM accounting_accounts a
+            LEFT JOIN accounting_lines l ON l.account_code = a.account_code
+            LEFT JOIN cash_app c ON c.bank_account_code = a.account_code
+            LEFT JOIN payment_obligations p ON p.payment_bank_account_code = a.account_code
+            WHERE LOWER(a.account_name) LIKE '%banco nacional%'
+               OR a.account_code = '1.1.02.01'
+            GROUP BY a.account_code
+        """)
+        banco_nacional = cur.fetchall() or []
+        deleted_bn = []
+        inactive_bn = []
+        for row in banco_nacional:
+            if int(row.get("lines") or 0) == 0 and int(row.get("collection_refs") or 0) == 0 and int(row.get("itp_refs") or 0) == 0:
+                cur.execute("DELETE FROM accounting_accounts WHERE account_code = %s RETURNING *", (row["account_code"],))
+                deleted_bn.extend(rows_to_dicts(cur.fetchall()))
+            else:
+                cur.execute("""
+                    UPDATE accounting_accounts
+                    SET active = FALSE,
+                        accepts_posting = FALSE,
+                        locked = TRUE,
+                        locked_by = %s,
+                        locked_at = COALESCE(locked_at, NOW()),
+                        updated_by = %s,
+                        updated_at = NOW()
+                    WHERE account_code = %s
+                    RETURNING *
+                """, (user, user, row["account_code"]))
+                inactive_bn.extend(rows_to_dicts(cur.fetchall()))
+        cur.execute("""
+            DELETE FROM accounting_ledger
+            WHERE account_code = '1.1.02.01'
+               OR LOWER(COALESCE(account_name, '')) LIKE '%banco nacional%'
+        """)
+
+        cur.execute("""
+            WITH used_accounts AS (
+                SELECT DISTINCT account_code
+                FROM accounting_lines
+                WHERE account_code IS NOT NULL AND BTRIM(account_code) <> ''
+            )
+            UPDATE accounting_accounts a
+            SET active = FALSE,
+                accepts_posting = FALSE,
+                locked = TRUE,
+                locked_by = %s,
+                locked_at = COALESCE(locked_at, NOW()),
+                updated_by = %s,
+                updated_at = NOW()
+            WHERE a.active = TRUE
+              AND NOT EXISTS (
+                  SELECT 1 FROM used_accounts u WHERE u.account_code = a.account_code
+              )
+            RETURNING *
+        """, (user, user))
+        inactivated_unused = rows_to_dicts(cur.fetchall())
+
+        cur.execute("""
+            UPDATE accounting_accounts
+            SET locked = TRUE,
+                locked_by = COALESCE(locked_by, %s),
+                locked_at = COALESCE(locked_at, NOW()),
+                updated_by = %s,
+                updated_at = NOW()
+            WHERE active = TRUE
+            RETURNING *
+        """, (user, user))
+        locked_active = rows_to_dicts(cur.fetchall())
+
+        audit_event(
+            cur,
+            module="accounting",
+            action="CHART_OF_ACCOUNTS_HARDENED",
+            entity_type="accounting_chart",
+            entity_id="MSL-CR",
+            performed_by=user,
+            performed_role=header_role,
+            before={"accounts": before_accounts},
+            after={
+                "deleted_banco_nacional": deleted_bn,
+                "inactive_banco_nacional": inactive_bn,
+                "inactivated_unused": inactivated_unused,
+                "locked_active_count": len(locked_active),
+            },
+            metadata={"reason": payload.get("reason") or "Definitive chart cleanup"},
+        )
+    conn.commit()
+    return {
+        "status": "ok",
+        "deleted_banco_nacional": len(deleted_bn),
+        "inactive_banco_nacional": len(inactive_bn),
+        "inactivated_unused": len(inactivated_unused),
+        "locked_active": len(locked_active),
+    }
+
+
+@router.get("/posting-rules")
+def get_accounting_posting_rules(
+    origin: str | None = None,
+    include_inactive: bool = False,
+    conn=Depends(get_db),
+):
+    _ensure_accounting_professional_schema(conn)
+    return {"data": list_posting_rules(conn, origin=origin, include_inactive=include_inactive)}
+
+
+@router.post("/posting-rules/seed")
+def seed_accounting_posting_rules(
+    payload: dict | None = None,
+    conn=Depends(get_db),
+    x_user: str | None = Header(None, alias="X-User"),
+    x_role: str | None = Header(None, alias="X-Role"),
+    x_user_role: str | None = Header(None, alias="X-User-Role"),
+):
+    _ensure_accounting_professional_schema(conn)
+    payload = payload or {}
+    header_user, header_role = actor_from_headers(x_user, x_role, x_user_role)
+    user = str(payload.get("user") or header_user or "system")
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        before = rows_to_dicts(list_posting_rules(conn, include_inactive=True))
+        result = seed_default_posting_rules(cur, user=user)
+        after = rows_to_dicts(list_posting_rules(conn, include_inactive=True))
+        audit_event(
+            cur,
+            module="accounting",
+            action="POSTING_RULES_SEEDED",
+            entity_type="accounting_posting_rules",
+            entity_id="FORMAL_ENGINE",
+            performed_by=user,
+            performed_role=header_role,
+            before={"rules": before},
+            after={"rules": after},
+            metadata={"reason": payload.get("reason") or "Seed formal accounting engine"},
+        )
+    conn.commit()
+    return {"status": "ok", **result}
 
 
 @router.get("/period-controls")
@@ -837,7 +1056,17 @@ def close_accounting_period(period: str, payload: dict, conn=Depends(get_db)):
     user = str(payload.get("user") or "unknown")
     if len(period) != 7 or period[4] != "-":
         raise HTTPException(400, "period must use YYYY-MM")
+    try:
+        from routers.accounting_workspace import _close_snapshot, _ensure_schema as _ensure_workspace_schema
+        _ensure_workspace_schema(conn)
+    except HTTPException:
+        raise
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        checklist, validation, summary, blockers = _close_snapshot(cur, period)
+        if blockers:
+            raise HTTPException(409, f"Robust close blocked: {len(blockers)} mandatory controls are pending or failing.")
+        if validation["counts"]["critical"]:
+            raise HTTPException(409, f"Robust close blocked: {validation['counts']['critical']} critical validations remain.")
         cur.execute("SELECT COUNT(*) AS count FROM accounting_entries WHERE period=%s AND workflow_status <> 'POSTED'", (period,))
         pending = int(cur.fetchone()["count"])
         if pending:
