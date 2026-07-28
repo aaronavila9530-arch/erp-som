@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import calendar
 import re
 import xml.etree.ElementTree as ET
 from datetime import date, datetime, timedelta
@@ -553,7 +554,8 @@ def obligations(year:int|None=None,period:str|None=None,pending_only:bool=False,
                     if min_period and item_period < min_period:
                         continue
                     nxt=date(year+(month==12),(month%12)+1,1)
-                    due_dates.append({"period":item_period,"estimated_due_date":min(nxt-timedelta(days=1),date(nxt.year,nxt.month,min(item["due_day"],28))).isoformat()})
+                    last_due_day = calendar.monthrange(nxt.year, nxt.month)[1]
+                    due_dates.append({"period":item_period,"estimated_due_date":date(nxt.year,nxt.month,min(int(item["due_day"]),last_due_day)).isoformat()})
             results.append({**item,"calendar":due_dates})
     return {"year":year,"data":results,"warning":"Fechas estimadas; valide feriados y prórrogas en el calendario oficial de Hacienda."}
 
