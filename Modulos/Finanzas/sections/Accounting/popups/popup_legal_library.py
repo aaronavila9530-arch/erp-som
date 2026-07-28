@@ -18,6 +18,8 @@ class PopupLegalLibrary(tk.Toplevel):
         self.category_var = tk.StringVar(value="TODOS")
         self.search_var = tk.StringVar()
         self.status_var = tk.StringVar(value="Cargando biblioteca legal...")
+        self._normal_geometry = None
+        self._is_zoomed = False
         self._build()
         self.after(120, self._load)
 
@@ -35,6 +37,8 @@ class PopupLegalLibrary(tk.Toplevel):
         ttk.Button(header, text="Buscar", command=self._load).pack(side="left", padx=4)
         ttk.Button(header, text="Limpiar", command=self._clear).pack(side="left", padx=4)
         ttk.Button(header, text="Abrir fuente oficial", command=self._open_source).pack(side="right")
+        self.max_button = ttk.Button(header, text="Maximizar", command=self._toggle_maximize)
+        self.max_button.pack(side="right", padx=(0, 6))
 
         note = ttk.Label(
             self,
@@ -123,6 +127,8 @@ class PopupLegalLibrary(tk.Toplevel):
         row = self.rows[int(selected[0])]
         self.selected_url = row.get("official_url") or ""
         extra = []
+        if row.get("legal_extracts"):
+            extra.append("Que exige / que dice la norma:\n" + "\n".join(f"- {item}" for item in row.get("legal_extracts") or []))
         if row.get("key_points"):
             extra.append("Puntos clave:\n" + "\n".join(f"- {item}" for item in row.get("key_points") or []))
         if row.get("erp_controls"):
@@ -159,3 +165,16 @@ class PopupLegalLibrary(tk.Toplevel):
             messagebox.showwarning("Biblioteca legal", "Seleccione una norma con fuente oficial.", parent=self)
             return
         webbrowser.open(self.selected_url)
+
+    def _toggle_maximize(self):
+        if not self._is_zoomed:
+            self._normal_geometry = self.geometry()
+            self.state("zoomed")
+            self._is_zoomed = True
+            self.max_button.configure(text="Restaurar")
+        else:
+            self.state("normal")
+            if self._normal_geometry:
+                self.geometry(self._normal_geometry)
+            self._is_zoomed = False
+            self.max_button.configure(text="Maximizar")

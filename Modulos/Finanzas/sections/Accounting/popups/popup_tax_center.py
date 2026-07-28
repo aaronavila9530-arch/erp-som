@@ -22,6 +22,7 @@ class PopupTaxCenter(tk.Toplevel):
         self.minsize(980, 620)
         self.period = tk.StringVar(value=period or date.today().strftime("%Y-%m"))
         self.status = tk.StringVar(value="Listo")
+        self._shown_obligation_alerts = set()
         self._build()
         self.after(100, self.refresh_all)
 
@@ -101,7 +102,13 @@ class PopupTaxCenter(tk.Toplevel):
         return tree
 
     def _build_obligations(self):
-        self.obligations_tree=ttk.Treeview(self.tab_obligations,columns=("code","name","periodicity","period","due"),show="headings")
+        self.obligations_tree=ttk.Treeview(self.tab_obligations,columns=("code","name","periodicity","period","due","alert"),show="headings")
+        self.obligations_tree.heading("alert", text="Alerta")
+        self.obligations_tree.column("alert", width=230)
+        self.obligations_tree.tag_configure("DUE_TODAY", background="#FEE2E2", foreground="#991B1B")
+        self.obligations_tree.tag_configure("DUE_TOMORROW", background="#FEF3C7", foreground="#92400E")
+        self.obligations_tree.tag_configure("DUE_SOON", background="#FEF3C7", foreground="#92400E")
+        self.obligations_tree.tag_configure("PENDING", foreground="#1F2937")
         for col,label,width in (("code","Código",150),("name","Obligación",300),("periodicity","Periodicidad",110),("period","Periodo",90),("due","Vencimiento estimado",160)):
             self.obligations_tree.heading(col,text=label); self.obligations_tree.column(col,width=width)
         self.obligations_tree.pack(fill="both",expand=True)
@@ -162,10 +169,19 @@ class PopupTaxCenter(tk.Toplevel):
 
     def _load_obligations(self):
         data=get_tax_obligations_api(int(self.period.get()[:4]), period=self.period.get(), pending_only=True); self.obligations_tree.delete(*self.obligations_tree.get_children())
+        alerts = []
         for item in data["data"]:
             calendar=item.get("calendar") or [{}]
             for due in calendar:
-                self.obligations_tree.insert("","end",values=(item["tax_code"],item["name"],item["periodicity"],due.get("period",""),due.get("estimated_due_date","Configurar")))
+                status = due.get("alert_status") or "PENDING"
+                message = due.get("alert_message") or ""
+                key = f"{item['tax_code']}:{due.get('period','')}:{status}"
+                self.obligations_tree.insert("","end",values=(item["tax_code"],item["name"],item["periodicity"],due.get("period",""),due.get("estimated_due_date","Configurar"),message),tags=(status,))
+                if status in {"DUE_TODAY", "DUE_TOMORROW"} and key not in self._shown_obligation_alerts:
+                    alerts.append(f"{item['name']} ({due.get('period','')}): {message}")
+                    self._shown_obligation_alerts.add(key)
+        if alerts:
+            messagebox.showwarning("Obligaciones fiscales", "Vencimientos fiscales proximos:\n\n" + "\n".join(alerts[:8]), parent=self)
 
     def _load_cabys(self):
         rows=search_tax_cabys_api(self.cabys_search.get()); self.cabys_tree.delete(*self.cabys_tree.get_children())

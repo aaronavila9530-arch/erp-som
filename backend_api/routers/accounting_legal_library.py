@@ -263,10 +263,78 @@ LEGAL_ITEMS = [
 ]
 
 
+LEGAL_EXTRACTS = {
+    "CR-TAX-9635": [
+        "Transforma el impuesto general sobre las ventas en un esquema de IVA con debito y credito fiscal, por lo que ERP-SOM debe separar IVA cobrado, IVA acreditable y diferencias antes de declarar.",
+        "Reforma reglas del impuesto sobre la renta y disciplina fiscal; los cierres deben distinguir ingresos gravables, gastos deducibles, soportes y ajustes.",
+        "Exige trazabilidad de base imponible, tarifa, exenciones y documentacion de soporte para justificar declaraciones y reportes.",
+    ],
+    "CR-VAT-6826": [
+        "Regula el IVA aplicable a ventas de bienes y prestacion de servicios; cada factura debe conservar base, tarifa, impuesto, total y contraparte.",
+        "El credito fiscal solo debe reconocerse si el documento de compra es valido, esta vinculado a la actividad y cuenta con soporte fiscal suficiente.",
+        "La declaracion periodica debe conciliar ventas, compras, notas, exenciones y saldos de IVA antes de presentar.",
+    ],
+    "CR-VAT-41779-H": [
+        "Aterriza reglas operativas del IVA: determinacion de la base, tarifas, exenciones, credito fiscal, documentacion y requisitos de control.",
+        "El Centro fiscal debe marcar XML faltante, CAByS faltante, claves repetidas, respuesta de Hacienda pendiente y diferencias contra contabilidad.",
+        "La conciliacion debe separar debito fiscal por ventas, credito fiscal por compras y neto documental contra cuentas contables de IVA.",
+    ],
+    "CR-TAX-7092": [
+        "Define el impuesto sobre utilidades y rentas de fuente costarricense; los ingresos, costos y gastos deben quedar clasificados para cierre fiscal.",
+        "Los gastos deben tener soporte, razonabilidad, vinculacion con la actividad y tratamiento correcto para deducibilidad.",
+        "ERP-SOM debe conservar evidencia de pagos, proveedores, facturas, retenciones y reclasificaciones que impacten renta.",
+    ],
+    "CR-TAX-4755": [
+        "Establece deberes formales, facultades de fiscalizacion, infracciones, sanciones y procedimientos tributarios.",
+        "Justifica alertas por declaraciones pendientes, documentos incompletos, respuestas de Hacienda no adjuntas y cambios sin auditoria.",
+        "Todo ajuste sensible debe conservar usuario, fecha, motivo, antes/despues y soporte documental.",
+    ],
+    "CR-EINV-44739-H": [
+        "Regula comprobantes electronicos como soporte tributario: factura, nota de credito, nota de debito, tiquete y documentos autorizados.",
+        "Cada comprobante debe conservar clave electronica, XML, PDF cuando exista, emisor, receptor, lineas, impuestos y estado ante Hacienda.",
+        "ERP-SOM no debe considerar listo el libro fiscal si faltan XML, respuesta de Hacienda, clave o detalle de lineas.",
+    ],
+    "CR-EINV-DGT-0027-2024": [
+        "Actualiza disposiciones tecnicas de comprobantes electronicos y version operativa para validacion de documentos.",
+        "El sistema debe validar estructura, clave, receptor/emisor, moneda, impuesto, CAByS y estado documental.",
+        "Los cambios de version deben quedar parametrizados para evitar mezclar documentos antiguos con reglas nuevas.",
+    ],
+    "CR-COM-3284": [
+        "El Codigo de Comercio exige orden documental y respaldo de actos mercantiles; clientes, proveedores, servicios, facturas y pagos deben ser trazables.",
+        "Los registros comerciales deben permitir reconstruir operaciones, obligaciones, cobros y pagos por contraparte.",
+        "La evidencia comercial alimenta contabilidad, facturacion, auxiliares y reportes ejecutivos.",
+    ],
+    "CR-COM-3284-234": [
+        "Refuerza obligaciones contables del comerciante: llevar registros, conservar libros/documentos y permitir verificacion de operaciones.",
+        "ERP-SOM debe mantener asientos, auxiliares, documentos fuente, auditoria de cambios y cierres mensuales reproducibles.",
+        "La edicion de cuenta contable, banco, cliente o proveedor debe dejar rastro auditable.",
+    ],
+    "CR-CPA-45505-A": [
+        "Ordena responsabilidad profesional, diligencia, documentacion y trazabilidad en trabajos contables.",
+        "Soporta controles de preparacion, revision, aprobacion, evidencia y motivo obligatorio en ajustes sensibles.",
+        "PORTIA puede asistir con explicaciones, pero no sustituye el juicio ni la aprobacion profesional.",
+    ],
+    "CR-CPA-ETHICS-22": [
+        "Exige integridad, objetividad, competencia profesional, confidencialidad y comportamiento profesional.",
+        "La informacion financiera debe ser verificable, completa y no inducir a error.",
+        "Los cambios deben documentarse para proteger independencia, revision y evidencia.",
+    ],
+    "CR-CPA-1038": [
+        "Da marco legal a la profesion contable y al rol de certificacion/revision profesional.",
+        "Respalda segregacion de funciones, bitacora por usuario y control de modificaciones contables.",
+        "Los reportes financieros deben poder sustentarse con registros y evidencia suficiente.",
+    ],
+}
+
+
 def _enrich_item(item):
     enriched = dict(item)
     enriched.setdefault("is_current", True)
     enriched.setdefault("current_status", "Vigente segun fuente oficial indicada; validar reformas en SCIJ/PGR antes de uso legal final.")
+    enriched.setdefault("legal_extracts", LEGAL_EXTRACTS.get(enriched.get("code"), [
+        "Referencia normativa vigente para consulta operativa; revisar el texto oficial antes de emitir criterio legal o tributario final.",
+        "Mantener evidencia, controles, trazabilidad y conciliaciones en ERP-SOM segun la naturaleza de la obligacion.",
+    ]))
     if not enriched.get("key_points"):
         if enriched.get("category") == "Hacienda":
             enriched["key_points"] = [
@@ -331,6 +399,8 @@ def list_legal_library(
                 item["summary"],
                 item["erp_relevance"],
                 " ".join(item["keywords"]),
+                " ".join(item.get("legal_extracts") or []),
+                " ".join(item.get("key_points") or []),
             ]
         ).lower()
         if query and query not in haystack:

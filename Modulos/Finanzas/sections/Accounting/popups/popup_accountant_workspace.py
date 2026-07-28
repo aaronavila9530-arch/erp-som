@@ -22,6 +22,7 @@ class PopupAccountantWorkspace(tk.Toplevel):
         self.status = tk.StringVar(value="Cargando…")
         self.health = tk.StringVar(value="—")
         self.period_status = tk.StringVar(value="—")
+        self.kpi_scope = tk.StringVar(value="")
         self._loading = False
         self.title("Mi espacio contable")
         self.geometry("1240x760")
@@ -56,6 +57,7 @@ class PopupAccountantWorkspace(tk.Toplevel):
         for col,(key,label,money) in enumerate(specs):
             box=ttk.LabelFrame(cards,text=label,padding=10); box.grid(row=0,column=col,sticky="nsew",padx=3); cards.columnconfigure(col,weight=1)
             var=tk.StringVar(value="—"); ttk.Label(box,textvariable=var,font=("Segoe UI",12,"bold")).pack(); self.kpi_vars[key]=(var,money)
+        ttk.Label(self.today_tab,textvariable=self.kpi_scope,foreground="#555").pack(anchor="w",pady=(0,8))
         pane=ttk.Panedwindow(self.today_tab,orient="horizontal"); pane.pack(fill="both",expand=True)
         queue=ttk.LabelFrame(pane,text="Bandeja priorizada",padding=6); recent=ttk.LabelFrame(pane,text="Actividad reciente",padding=6)
         pane.add(queue,weight=3); pane.add(recent,weight=2)
@@ -114,6 +116,11 @@ class PopupAccountantWorkspace(tk.Toplevel):
 
     def _apply_refresh(self,data,checklist):
         self.health.set(f"{data['health_score']} / 100"); self.period_status.set(f"Periodo: {data['period_control'].get('status','OPEN')}")
+        scope=data.get("kpi_scope") or {}
+        if scope.get("from") and scope.get("to"):
+            self.kpi_scope.set(f"KPIs calculados para el periodo seleccionado: {scope.get('from')} a {scope.get('to')}.")
+        else:
+            self.kpi_scope.set("")
         for key,(var,money) in self.kpi_vars.items():
             value=data["kpis"].get(key,0); var.set(f"₡{value:,.2f}" if money else f"{int(value):,}")
         self.queue.delete(*self.queue.get_children()); self._queue_actions={}

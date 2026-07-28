@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -113,6 +113,16 @@ def _scalar(cur, sql, params=()):
     return next(iter(row.values())) or 0
 
 
+def _period_bounds(period: str):
+    year, month = (int(value) for value in period.split("-"))
+    start = date(year, month, 1)
+    if month == 12:
+        end = date(year + 1, 1, 1)
+    else:
+        end = date(year, month + 1, 1)
+    return start, end
+
+
 def _work_items(cur, period):
     backfill_missing_bank_accounts(cur)
     items = []
@@ -167,6 +177,7 @@ def _work_items(cur, period):
 def accountant_dashboard(period: str, conn=Depends(get_db)):
     _valid_period(period)
     _ensure_schema(conn)
+    period_start, period_end = _period_bounds(period)
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         work_items = _work_items(cur, period)
         cur.execute("""SELECT COALESCE(SUM(l.debit),0) debit,COALESCE(SUM(l.credit),0) credit,
@@ -175,11 +186,20 @@ def accountant_dashboard(period: str, conn=Depends(get_db)):
           WHERE e.period=%s AND e.workflow_status='POSTED'""", (period,))
         ledger = cur.fetchone()
         cur.execute("""SELECT COALESCE(SUM(saldo_pendiente),0) open_ar,
-          COALESCE(SUM(saldo_pendiente) FILTER(WHERE fecha_vencimiento<CURRENT_DATE),0) overdue_ar FROM collections""")
+          COALESCE(SUM(saldo_pendiente) FILTER(WHERE fecha_vencimiento<CURRENT_DATE),0) overdue_ar
+          FROM collections
+          WHERE COALESCE(saldo_pendiente,0)>0
+            AND COALESCE(fecha_emision, fecha_vencimiento) >= %s
+            AND COALESCE(fecha_emision, fecha_vencimiento) < %s""", (period_start, period_end))
         ar = cur.fetchone()
         cur.execute("""SELECT COALESCE(SUM(balance),0) open_ap,
           COALESCE(SUM(balance) FILTER(WHERE due_date<CURRENT_DATE),0) overdue_ap
-          FROM payment_obligations WHERE active=TRUE AND record_type='OBLIGATION' AND COALESCE(balance,0)>0""")
+          FROM payment_obligations
+          WHERE active=TRUE
+            AND record_type='OBLIGATION'
+            AND COALESCE(balance,0)>0
+            AND COALESCE(issue_date, due_date) >= %s
+            AND COALESCE(issue_date, due_date) < %s""", (period_start, period_end))
         ap = cur.fetchone()
         cur.execute("""SELECT status,closed_by,closed_at,reopened_by,reopened_at FROM accounting_period_controls
           WHERE company_code='MSL-CR' AND period=%s""", (period,))
@@ -191,6 +211,7 @@ def accountant_dashboard(period: str, conn=Depends(get_db)):
     deductions = sum(min(item["count"], 10) * ({"CRITICAL":5,"HIGH":2,"MEDIUM":1,"LOW":0.5}[item["priority"]]) for item in work_items)
     health = max(0, round(100 - deductions))
     return {"period":period,"health_score":health,"period_control":period_control,"work_items":work_items,
+            "kpi_scope": {"from": period_start.isoformat(), "to": (period_end - timedelta(days=1)).isoformat()},
             "kpis":{"posted_entries":int(ledger["entries"] or 0),"debit":float(ledger["debit"] or 0),
                     "credit":float(ledger["credit"] or 0),"open_ar":float(ar["open_ar"] or 0),
                     "overdue_ar":float(ar["overdue_ar"] or 0),"open_ap":float(ap["open_ap"] or 0),

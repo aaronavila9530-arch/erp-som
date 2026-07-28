@@ -111,6 +111,10 @@ def _ensure_schema(conn):
                 name TEXT NOT NULL,
                 periodicity VARCHAR(20) NOT NULL DEFAULT 'MONTHLY',
                 due_day INTEGER,
+                due_month INTEGER,
+                alert_days_before INTEGER NOT NULL DEFAULT 1,
+                applicability TEXT NOT NULL DEFAULT 'GENERAL',
+                source_url TEXT,
                 active BOOLEAN NOT NULL DEFAULT TRUE,
                 last_period_filed VARCHAR(10),
                 last_filed_at TIMESTAMPTZ,
@@ -118,6 +122,14 @@ def _ensure_schema(conn):
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
         """)
+        for ddl in (
+            "ALTER TABLE tax_obligations ALTER COLUMN tax_code TYPE VARCHAR(80)",
+            "ALTER TABLE tax_obligations ADD COLUMN IF NOT EXISTS due_month INTEGER",
+            "ALTER TABLE tax_obligations ADD COLUMN IF NOT EXISTS alert_days_before INTEGER NOT NULL DEFAULT 1",
+            "ALTER TABLE tax_obligations ADD COLUMN IF NOT EXISTS applicability TEXT NOT NULL DEFAULT 'GENERAL'",
+            "ALTER TABLE tax_obligations ADD COLUMN IF NOT EXISTS source_url TEXT",
+        ):
+            cur.execute(ddl)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS tax_settings (
                 setting_key VARCHAR(40) PRIMARY KEY,
@@ -132,6 +144,44 @@ def _ensure_schema(conn):
               ('TRIBU-RENTA-101','Impuesto sobre las utilidades','ANNUAL',NULL,'Configurar fecha conforme al periodo fiscal del contribuyente.'),
               ('TRIBU-RETENCIONES','Retenciones en la fuente','MONTHLY',15,'Aplica cuando existan retenciones sujetas a declaración.')
             ON CONFLICT(tax_code) DO NOTHING
+        """)
+        cur.execute("""
+            INSERT INTO tax_obligations(tax_code,name,periodicity,due_day,due_month,alert_days_before,applicability,source_url,notes) VALUES
+              ('TRIBU-IVA-150','IVA - Formulario TRIBU-CR 150','MONTHLY',15,NULL,1,'GENERAL',
+               'https://www.hacienda.go.cr/CalendarioPagos.html',
+               'Declaracion mensual del IVA en TRIBU-CR. Validar feriados, prorrogas y calendario oficial de Hacienda.'),
+              ('TRIBU-RETENCIONES','Retenciones en la fuente','MONTHLY',15,NULL,1,'WHEN_APPLICABLE',
+               'https://www.hacienda.go.cr/CalendarioPagos.html',
+               'Aplica cuando existan retenciones sujetas a declaracion mensual.'),
+              ('TRIBU-RENTA-101','Impuesto sobre las utilidades / ISR','ANNUAL',15,3,1,'GENERAL',
+               'https://www.hacienda.go.cr/CalendarioPagos.html',
+               'Declaracion anual de impuesto sobre utilidades. La fecha exacta depende del periodo fiscal autorizado.'),
+              ('TRIBU-PERSONAS-JURIDICAS','Impuesto a las personas juridicas','ANNUAL',31,1,1,'LEGAL_ENTITY',
+               'https://www.hacienda.go.cr/CalendarioPagos.html',
+               'Obligacion anual para sociedades inscritas; validar tarifa aplicable y vencimiento oficial.'),
+              ('TRIBU-PAGOS-PARCIALES-RENTA','Pagos parciales del impuesto sobre la renta','INSTALLMENTS',NULL,NULL,1,'WHEN_APPLICABLE',
+               'https://www.hacienda.go.cr/CalendarioPagos.html',
+               'Anticipos de renta cuando correspondan segun base historica o notificacion tributaria.'),
+              ('TRIBU-INFORMATIVA-CLIENTES-PROVEEDORES','Declaracion informativa de clientes, proveedores y gastos especificos','ANNUAL',28,2,1,'WHEN_APPLICABLE',
+               'https://www.hacienda.go.cr/CalendarioPagos.html',
+               'Obligacion informativa anual cuando aplique por operaciones reportables.'),
+              ('CCSS-PLANILLA','Planilla CCSS','MONTHLY',15,NULL,1,'PAYROLL',
+               'https://www.ccss.sa.cr/',
+               'Obligacion laboral/previsional mensual asociada a planilla; validar fechas oficiales de la CCSS.'),
+              ('INS-RT','Poliza de riesgos del trabajo INS','ANNUAL',31,1,1,'PAYROLL',
+               'https://www.grupoins.com/',
+               'Obligacion de seguro de riesgos del trabajo; validar renovacion y pagos segun poliza.')
+            ON CONFLICT(tax_code) DO UPDATE SET
+              name=EXCLUDED.name,
+              periodicity=EXCLUDED.periodicity,
+              due_day=EXCLUDED.due_day,
+              due_month=EXCLUDED.due_month,
+              alert_days_before=EXCLUDED.alert_days_before,
+              applicability=EXCLUDED.applicability,
+              source_url=EXCLUDED.source_url,
+              notes=EXCLUDED.notes,
+              active=TRUE,
+              updated_at=NOW()
         """)
         cur.execute("""
             INSERT INTO tax_settings(setting_key,setting_value,updated_by) VALUES
@@ -625,6 +675,43 @@ def upsert_cabys(code:str,payload:CabysItem,conn=Depends(get_db)):
     conn.commit(); return {"message":"CAByS guardado","code":code}
 
 
+def _next_business_day(value: date) -> date:
+    while value.weekday() >= 5:
+        value += timedelta(days=1)
+    return value
+
+
+def _tax_alert(due_date: date, days_before: int) -> dict:
+    today = date.today()
+    alert_date = due_date - timedelta(days=max(days_before, 0))
+    if due_date < today:
+        status = "OVERDUE"
+        message = f"Vencida desde {due_date.isoformat()}."
+    elif due_date == today:
+        status = "DUE_TODAY"
+        message = "Vence hoy."
+    elif today == alert_date:
+        status = "DUE_TOMORROW" if days_before == 1 else "DUE_SOON"
+        message = f"Vence el {due_date.isoformat()}."
+    elif alert_date < today < due_date:
+        status = "DUE_SOON"
+        message = f"Vence el {due_date.isoformat()}."
+    else:
+        status = "PENDING"
+        message = f"Pendiente; alerta desde {alert_date.isoformat()}."
+    return {"alert_date": alert_date.isoformat(), "alert_status": status, "alert_message": message}
+
+
+def _calendar_entry(item, item_period: str, due_date: date) -> dict:
+    due_date = _next_business_day(due_date)
+    alert_days = int(item.get("alert_days_before") or 1)
+    return {
+        "period": item_period,
+        "estimated_due_date": due_date.isoformat(),
+        **_tax_alert(due_date, alert_days),
+    }
+
+
 @router.get("/obligations")
 def obligations(year:int|None=None,period:str|None=None,pending_only:bool=False,conn=Depends(get_db)):
     _ensure_schema(conn); year=year or date.today().year; results=[]
@@ -640,7 +727,16 @@ def obligations(year:int|None=None,period:str|None=None,pending_only:bool=False,
                         continue
                     nxt=date(year+(month==12),(month%12)+1,1)
                     last_due_day = calendar.monthrange(nxt.year, nxt.month)[1]
-                    due_dates.append({"period":item_period,"estimated_due_date":date(nxt.year,nxt.month,min(int(item["due_day"]),last_due_day)).isoformat()})
+                    due_dates.append(_calendar_entry(item, item_period, date(nxt.year,nxt.month,min(int(item["due_day"]),last_due_day))))
+            elif item["periodicity"]=="ANNUAL" and item.get("due_day") and item.get("due_month"):
+                item_period = f"{year}"
+                due_dates.append(_calendar_entry(item, item_period, date(year, int(item["due_month"]), int(item["due_day"]))))
+            elif item["periodicity"]=="INSTALLMENTS":
+                for index, due_date in enumerate((date(year, 3, 31), date(year, 6, 30), date(year, 9, 30)), start=1):
+                    due_dates.append(_calendar_entry(item, f"{year}-P{index}", due_date))
+            if pending_only:
+                today = date.today()
+                due_dates = [due for due in due_dates if datetime.fromisoformat(due["estimated_due_date"]).date() >= today]
             results.append({**item,"calendar":due_dates})
     return {"year":year,"data":results,"warning":"Fechas estimadas; valide feriados y prórrogas en el calendario oficial de Hacienda."}
 
