@@ -122,7 +122,25 @@ class PopupAccountantWorkspace(tk.Toplevel):
         else:
             self.kpi_scope.set("")
         for key,(var,money) in self.kpi_vars.items():
-            value=data["kpis"].get(key,0); var.set(f"₡{value:,.2f}" if money else f"{int(value):,}")
+            value=data["kpis"].get(key,0)
+            if key == "overdue_ar":
+                count = int(data["kpis"].get("overdue_ar_count") or 0)
+                label = "factura" if count == 1 else "facturas"
+                var.set(f"₡{value:,.2f}\n{count:,} {label}")
+            elif key == "open_ar":
+                count = int(data["kpis"].get("open_ar_count") or 0)
+                label = "factura" if count == 1 else "facturas"
+                var.set(f"₡{value:,.2f}\n{count:,} {label}")
+            elif key == "overdue_ap":
+                count = int(data["kpis"].get("overdue_ap_count") or 0)
+                label = "obligación" if count == 1 else "obligaciones"
+                var.set(f"₡{value:,.2f}\n{count:,} {label}")
+            elif key == "open_ap":
+                count = int(data["kpis"].get("open_ap_count") or 0)
+                label = "obligación" if count == 1 else "obligaciones"
+                var.set(f"₡{value:,.2f}\n{count:,} {label}")
+            else:
+                var.set(f"₡{value:,.2f}" if money else f"{int(value):,}")
         self.queue.delete(*self.queue.get_children()); self._queue_actions={}
         for i,item in enumerate(data["work_items"]):
             iid=f"q{i}"; self.queue.insert("","end",iid=iid,values=(item["priority"],item["area"],item["title"],item["count"]),tags=(item["priority"],)); self._queue_actions[iid]=item["action"]

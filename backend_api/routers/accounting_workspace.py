@@ -123,7 +123,7 @@ def _period_bounds(period: str):
     return start, end
 
 
-def _work_items(cur, period):
+def _work_items(cur, period, period_start=None, period_end=None):
     backfill_missing_bank_accounts(cur)
     items = []
 
@@ -140,8 +140,13 @@ def _work_items(cur, period):
             items.append({"code": f"ENTRIES_{status}", "area": "ACCOUNTING", "priority": priority,
                           "title": label, "count": count, "action": "LEDGER"})
 
-    overdue_ar = int(_scalar(cur, """SELECT COUNT(*) count FROM collections
-        WHERE COALESCE(saldo_pendiente,0)>0 AND fecha_vencimiento<CURRENT_DATE"""))
+    overdue_ar_sql = """SELECT COUNT(*) count FROM collections
+        WHERE COALESCE(saldo_pendiente,0)>0 AND fecha_vencimiento<CURRENT_DATE"""
+    overdue_ar_params = []
+    if period_start and period_end:
+        overdue_ar_sql += " AND COALESCE(fecha_emision, fecha_vencimiento) >= %s AND COALESCE(fecha_emision, fecha_vencimiento) < %s"
+        overdue_ar_params.extend([period_start, period_end])
+    overdue_ar = int(_scalar(cur, overdue_ar_sql, tuple(overdue_ar_params)))
     if overdue_ar:
         items.append({"code":"OVERDUE_AR","area":"COLLECTIONS","priority":"HIGH","title":"Facturas de clientes vencidas",
                       "count":overdue_ar,"action":"AUXILIARIES_CUSTOMER"})
@@ -149,8 +154,13 @@ def _work_items(cur, period):
     if disputes:
         items.append({"code":"DISPUTED_AR","area":"COLLECTIONS","priority":"HIGH","title":"Cuentas por cobrar en disputa",
                       "count":disputes,"action":"AUXILIARIES_CUSTOMER"})
-    overdue_ap = int(_scalar(cur, """SELECT COUNT(*) count FROM payment_obligations
-        WHERE active=TRUE AND record_type='OBLIGATION' AND COALESCE(balance,0)>0 AND due_date<CURRENT_DATE"""))
+    overdue_ap_sql = """SELECT COUNT(*) count FROM payment_obligations
+        WHERE active=TRUE AND record_type='OBLIGATION' AND COALESCE(balance,0)>0 AND due_date<CURRENT_DATE"""
+    overdue_ap_params = []
+    if period_start and period_end:
+        overdue_ap_sql += " AND COALESCE(issue_date, due_date) >= %s AND COALESCE(issue_date, due_date) < %s"
+        overdue_ap_params.extend([period_start, period_end])
+    overdue_ap = int(_scalar(cur, overdue_ap_sql, tuple(overdue_ap_params)))
     if overdue_ap:
         items.append({"code":"OVERDUE_AP","area":"PAYABLES","priority":"HIGH","title":"Obligaciones de pago vencidas",
                       "count":overdue_ap,"action":"AUXILIARIES_SUPPLIER"})
@@ -179,21 +189,25 @@ def accountant_dashboard(period: str, conn=Depends(get_db)):
     _ensure_schema(conn)
     period_start, period_end = _period_bounds(period)
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        work_items = _work_items(cur, period)
+        work_items = _work_items(cur, period, period_start, period_end)
         cur.execute("""SELECT COALESCE(SUM(l.debit),0) debit,COALESCE(SUM(l.credit),0) credit,
           COUNT(DISTINCT e.id) entries FROM accounting_entries e
           LEFT JOIN accounting_lines l ON l.entry_id=e.id
           WHERE e.period=%s AND e.workflow_status='POSTED'""", (period,))
         ledger = cur.fetchone()
         cur.execute("""SELECT COALESCE(SUM(saldo_pendiente),0) open_ar,
-          COALESCE(SUM(saldo_pendiente) FILTER(WHERE fecha_vencimiento<CURRENT_DATE),0) overdue_ar
+          COALESCE(SUM(saldo_pendiente) FILTER(WHERE fecha_vencimiento<CURRENT_DATE),0) overdue_ar,
+          COUNT(*) open_ar_count,
+          COUNT(*) FILTER(WHERE fecha_vencimiento<CURRENT_DATE) overdue_ar_count
           FROM collections
           WHERE COALESCE(saldo_pendiente,0)>0
             AND COALESCE(fecha_emision, fecha_vencimiento) >= %s
             AND COALESCE(fecha_emision, fecha_vencimiento) < %s""", (period_start, period_end))
         ar = cur.fetchone()
         cur.execute("""SELECT COALESCE(SUM(balance),0) open_ap,
-          COALESCE(SUM(balance) FILTER(WHERE due_date<CURRENT_DATE),0) overdue_ap
+          COALESCE(SUM(balance) FILTER(WHERE due_date<CURRENT_DATE),0) overdue_ap,
+          COUNT(*) open_ap_count,
+          COUNT(*) FILTER(WHERE due_date<CURRENT_DATE) overdue_ap_count
           FROM payment_obligations
           WHERE active=TRUE
             AND record_type='OBLIGATION'
@@ -214,7 +228,11 @@ def accountant_dashboard(period: str, conn=Depends(get_db)):
             "kpi_scope": {"from": period_start.isoformat(), "to": (period_end - timedelta(days=1)).isoformat()},
             "kpis":{"posted_entries":int(ledger["entries"] or 0),"debit":float(ledger["debit"] or 0),
                     "credit":float(ledger["credit"] or 0),"open_ar":float(ar["open_ar"] or 0),
+                    "open_ar_count":int(ar["open_ar_count"] or 0),
+                    "overdue_ar_count":int(ar["overdue_ar_count"] or 0),
                     "overdue_ar":float(ar["overdue_ar"] or 0),"open_ap":float(ap["open_ap"] or 0),
+                    "open_ap_count":int(ap["open_ap_count"] or 0),
+                    "overdue_ap_count":int(ap["overdue_ap_count"] or 0),
                     "overdue_ap":float(ap["overdue_ap"] or 0)},"recent_entries":recent}
 
 
