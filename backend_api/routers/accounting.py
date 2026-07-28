@@ -282,6 +282,30 @@ def _report_title(report: str | None):
     return titles.get(key, key)
 
 
+def _append_account_filter(conditions, params, account_code: str | None):
+    if not account_code or account_code == "TODOS":
+        return
+    code = str(account_code).strip()
+    if not code:
+        return
+    clauses = ["l.account_code = %s", "l.account_code LIKE %s"]
+    values = [code, f"{code}.%"]
+    if code == "1.1.02.02":
+        clauses.extend([
+            "LOWER(l.account_name) LIKE %s",
+            "l.account_code = %s",
+        ])
+        values.extend(["%bac%", "110-002-002-001"])
+    elif code == "1.1.02.04":
+        clauses.append("LOWER(l.account_name) LIKE %s")
+        values.append("%banco de costa rica%")
+    elif code == "1.1.02":
+        clauses.append("LOWER(l.account_name) LIKE %s")
+        values.append("%banco%")
+    conditions.append("(" + " OR ".join(clauses) + ")")
+    params.extend(values)
+
+
 def _fetch_accounting_report_lines(
     conn,
     period: str | None = None,
@@ -292,7 +316,7 @@ def _fetch_accounting_report_lines(
 ):
     _ensure_accounting_professional_schema(conn)
     cur = conn.cursor(cursor_factory=RealDictCursor)
-    conditions = ["e.workflow_status = 'POSTED'"]
+    conditions = ["e.workflow_status = 'POSTED'", "e.entry_date <= CURRENT_DATE"]
     params = []
 
     if period:
@@ -311,10 +335,7 @@ def _fetch_accounting_report_lines(
         conditions.append("e.origin = %s")
         params.append(origin)
 
-    if account_code and account_code != "TODOS":
-        code = str(account_code).strip()
-        conditions.append("(l.account_code = %s OR l.account_code LIKE %s)")
-        params.extend([code, f"{code}.%"])
+    _append_account_filter(conditions, params, account_code)
 
     where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
@@ -361,6 +382,7 @@ def get_accounting_periods(conn=Depends(get_db)):
           AND period ~ '^[0-9]{4}-[0-9]{2}$'
           AND period >= '2025-01'
           AND period <= %s
+          AND entry_date <= CURRENT_DATE
         GROUP BY period
         HAVING COUNT(*) > 0
         ORDER BY period ASC
@@ -1597,7 +1619,7 @@ def get_accounting_ledger(
     _ensure_accounting_professional_schema(conn)
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
-    conditions = []
+    conditions = ["e.entry_date <= CURRENT_DATE"]
     params = []
 
     # -----------------------------
@@ -1626,10 +1648,7 @@ def get_accounting_ledger(
         conditions.append("e.origin = %s")
         params.append(origin)
 
-    if account_code:
-        code = str(account_code).strip()
-        conditions.append("(l.account_code = %s OR l.account_code LIKE %s)")
-        params.extend([code, f"{code}.%"])
+    _append_account_filter(conditions, params, account_code)
 
     where_clause = ""
     if conditions:

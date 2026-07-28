@@ -305,17 +305,34 @@ def sync_tax_documents(conn=Depends(get_db)):
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("SELECT id,numero_factura,clave_electronica,fecha_emision,moneda,total,estado,xml_path,pdf_path FROM factura")
             for row in cur.fetchall():
-                data = {"document_type":"FE","document_number":row["numero_factura"],"electronic_key":row.get("clave_electronica"),
-                        "issue_datetime":row.get("fecha_emision"),"currency_code":row.get("moneda") or "CRC","total":row.get("total") or 0}
-                doc_id = _save_document(cur,"SALE",data,source_table="factura",source_id=row["id"],xml_path=row.get("xml_path"),user="SYSTEM_SYNC")
-                cur.execute("UPDATE tax_electronic_documents SET pdf_path=%s,status=%s WHERE id=%s",(row.get("pdf_path"),"ACCEPTED" if str(row.get("estado","")).upper() in {"PAGADA","EMITIDA","ACEPTADA"} else "PENDING",doc_id))
                 cur.execute("SELECT * FROM factura_detalle WHERE factura_id=%s ORDER BY id",(row["id"],))
                 details=cur.fetchall()
+                detail_subtotal = Decimal("0.00")
+                detail_tax = Decimal("0.00")
+                detail_total = Decimal("0.00")
+                for line in details:
+                    line_total = _money(line.get("total_linea") or line.get("total") or 0)
+                    line_tax = _money(line.get("impuesto") or line.get("tax_amount") or 0)
+                    detail_total += line_total
+                    detail_tax += line_tax
+                    detail_subtotal += line_total - line_tax
+                total = _money(row.get("total") or 0)
+                if total == 0 and detail_total:
+                    total = detail_total
+                subtotal = detail_subtotal if detail_total else total
+                tax_amount = detail_tax if detail_total else Decimal("0.00")
+                data = {"document_type":"FE","document_number":row["numero_factura"],"electronic_key":row.get("clave_electronica"),
+                        "issue_datetime":row.get("fecha_emision"),"currency_code":row.get("moneda") or "CRC",
+                        "subtotal":subtotal,"tax_amount":tax_amount,"total":total}
+                doc_id = _save_document(cur,"SALE",data,source_table="factura",source_id=row["id"],xml_path=row.get("xml_path"),user="SYSTEM_SYNC")
+                cur.execute("UPDATE tax_electronic_documents SET pdf_path=%s,status=%s WHERE id=%s",(row.get("pdf_path"),"ACCEPTED" if str(row.get("estado","")).upper() in {"PAGADA","EMITIDA","ACEPTADA"} else "PENDING",doc_id))
                 if details:
                     cur.execute("DELETE FROM tax_document_lines WHERE document_id=%s",(doc_id,))
                     for index,line in enumerate(details,1):
-                        cur.execute("INSERT INTO tax_document_lines(document_id,line_number,description,quantity,unit_price,tax_amount,total) VALUES(%s,%s,%s,%s,%s,%s,%s)",
-                                    (doc_id,index,line.get("descripcion"),line.get("cantidad") or 0,line.get("precio_unitario") or 0,line.get("impuesto") or 0,line.get("total_linea") or 0))
+                        line_total = _money(line.get("total_linea") or line.get("total") or 0)
+                        line_tax = _money(line.get("impuesto") or line.get("tax_amount") or 0)
+                        cur.execute("INSERT INTO tax_document_lines(document_id,line_number,description,quantity,unit_price,subtotal,tax_amount,total) VALUES(%s,%s,%s,%s,%s,%s,%s,%s)",
+                                    (doc_id,index,line.get("descripcion"),line.get("cantidad") or 0,line.get("precio_unitario") or 0,line_total-line_tax,line_tax,line_total))
                 counts["sales"] += 1
             cur.execute("""
                 INSERT INTO tax_electronic_documents(

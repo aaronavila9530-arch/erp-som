@@ -678,6 +678,28 @@ def sync_itp_to_accounting(conn):
 
             return cur.fetchone()["id"]
 
+        def _delete_future_system_entries(origin_id=None, origin=None):
+            clauses = [
+                "origin IN ('ITP', 'ITP_PAYMENT')",
+                "entry_date > CURRENT_DATE",
+                "COALESCE(created_by, 'SYSTEM') = 'SYSTEM'",
+            ]
+            params = []
+            if origin_id is not None:
+                clauses.append("origin_id = %s")
+                params.append(origin_id)
+            if origin:
+                clauses.append("origin = %s")
+                params.append(origin)
+            where_clause = " AND ".join(clauses)
+            cur.execute(f"""
+                DELETE FROM accounting_lines
+                WHERE entry_id IN (
+                    SELECT id FROM accounting_entries WHERE {where_clause}
+                )
+            """, params)
+            cur.execute(f"DELETE FROM accounting_entries WHERE {where_clause}", params)
+
 
         # ============================================================
         # 0️⃣ OBTENER TC DEL DÍA
@@ -697,6 +719,7 @@ def sync_itp_to_accounting(conn):
         backfill_missing_bank_accounts(cur)
 
         today = date.today()
+        _delete_future_system_entries()
 
         cur.execute("""
             SELECT rate, rate_date, source
@@ -769,6 +792,9 @@ def sync_itp_to_accounting(conn):
             # Fechas + período
             # ------------------------------------------------------------
             issue_date = _to_date(ob.get("issue_date")) or today
+            if issue_date > today:
+                _delete_future_system_entries(obligation_id)
+                continue
             period = issue_date.strftime("%Y-%m")
 
             status = (ob.get("status") or "").upper()
@@ -976,6 +1002,9 @@ def sync_itp_to_accounting(conn):
             if status == "PAID" and balance_crc == 0 and not is_credit_note:
 
                 payment_date = _to_date(ob.get("last_payment_date")) or issue_date
+                if payment_date > today:
+                    _delete_future_system_entries(obligation_id, "ITP_PAYMENT")
+                    continue
                 payment_period = payment_date.strftime("%Y-%m")
                 payment_detail = f"From ITP Payment done to {payee_name}"
 

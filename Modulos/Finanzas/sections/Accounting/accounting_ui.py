@@ -443,6 +443,15 @@ class AccountingUI(tk.Frame):
 
             self.tc_rate_var.set(f"{float(data['rate']):,.2f}")
             self.tc_date_var.set(to_long_english_date(data["date"]))
+            warning = data.get("warning")
+            if warning or data.get("stale"):
+                messagebox.showwarning(
+                    "Tipo de Cambio BCCR",
+                    warning or (
+                        "BCCR no publico un valor para hoy; "
+                        f"se usa el tipo de cambio disponible de {data.get('date')}."
+                    )
+                )
 
         except Exception as e:
             messagebox.showerror(
