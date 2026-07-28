@@ -167,7 +167,20 @@ class PopupAccountantWorkspace(tk.Toplevel):
         else: self.status.set("Use la referencia mostrada en los filtros del libro contable.")
 
     def _manual_entry(self): self.accounting._open_manual_entry()
-    def _auxiliaries(self): self.accounting._open_auxiliaries()
-    def _tax_center(self): self.accounting._open_tax_center()
+    def _auxiliaries(self):
+        try:
+            from Modulos.Finanzas.sections.Accounting.popups.popup_auxiliaries import PopupAccountingAuxiliaries
+            popup = PopupAccountingAuxiliaries(self, period=self.period.get())
+            popup.transient(self)
+        except Exception as exc:
+            messagebox.showerror("Auxiliares contables", str(exc), parent=self)
+
+    def _tax_center(self):
+        try:
+            from Modulos.Finanzas.sections.Accounting.popups.popup_tax_center import PopupTaxCenter
+            popup = PopupTaxCenter(self, period=self.period.get())
+            popup.transient(self)
+        except Exception as exc:
+            messagebox.showerror("Centro fiscal", str(exc), parent=self)
     def _monthly_report(self): self.accounting._open_monthly_financial_report()
     def _closing(self): self.accounting._open_closing_wizard()

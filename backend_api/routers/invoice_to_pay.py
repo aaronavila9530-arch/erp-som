@@ -17,6 +17,7 @@ import shutil
 from database import get_db
 from rbac_service import has_permission
 from services.finance_audit import actor_from_headers, audit_event, row_to_dict
+from services.accounting_bank_rules import resolve_itp_bank
 
 
 router = APIRouter(
@@ -493,23 +494,6 @@ def apply_payment(
             ADD COLUMN IF NOT EXISTS payment_bank_account_name TEXT
         """)
 
-        if bank_account_code:
-            cur.execute("""
-                SELECT account_code, account_name
-                FROM accounting_ledger
-                WHERE account_code = %s
-                  AND active = TRUE
-                LIMIT 1
-            """, (bank_account_code,))
-            bank_row = cur.fetchone()
-            if not bank_row:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Selected bank account does not exist or is inactive"
-                )
-            bank_account_name = bank_account_name or bank_row["account_name"]
-            bank_name = bank_name or bank_account_name
-
         # =====================================================
         # 1️⃣ BLOQUEAR FILA (ANTI CONCURRENCIA)
         # =====================================================
@@ -528,6 +512,25 @@ def apply_payment(
                 status_code=404,
                 detail="Obligation not found"
             )
+
+        bank_row = resolve_itp_bank(
+            cur,
+            bank_account_code,
+            bank_account_name,
+            payee_name=obligation.get("payee_name"),
+            country=obligation.get("country"),
+            reference=obligation.get("reference"),
+            notes=obligation.get("notes"),
+        )
+        if bank_account_code and not bank_row:
+            raise HTTPException(
+                status_code=400,
+                detail="Selected bank account does not exist or is inactive"
+            )
+        if bank_row:
+            bank_account_code = bank_row["account_code"]
+            bank_account_name = bank_row["account_name"]
+            bank_name = bank_account_name
 
         before_obligation = row_to_dict(obligation)
 

@@ -11,7 +11,7 @@ class PopupAccountingAI(tk.Toplevel):
         super().__init__(parent)
         self.filters = filters or {}
         self.result = None
-        self.title("IA contable")
+        self.title("PORTIA contable")
         self.geometry("1120x720")
         self.transient(parent)
         self.grab_set()
@@ -23,7 +23,7 @@ class PopupAccountingAI(tk.Toplevel):
 
         ttk.Label(
             header,
-            text="IA contable para sugerencias y explicacion de diferencias",
+            text="PORTIA contable para sugerencias y explicacion de diferencias",
             font=("Segoe UI", 12, "bold"),
         ).pack(side="left")
 
@@ -48,7 +48,7 @@ class PopupAccountingAI(tk.Toplevel):
             width=8,
         ).pack(side="left", padx=(6, 18))
 
-        ttk.Button(options, text="Analizar con IA", command=self._run).pack(side="left")
+        ttk.Button(options, text="Analizar con PORTIA", command=self._run).pack(side="left")
 
         question_frame = ttk.LabelFrame(self, text="Pregunta o enfoque", padding=10)
         question_frame.pack(fill="x", padx=10, pady=(0, 8))
@@ -124,12 +124,12 @@ class PopupAccountingAI(tk.Toplevel):
 
     def _show_error(self, exc):
         self.status_var.set("No se pudo completar el analisis.")
-        messagebox.showerror("IA contable", f"No se pudo analizar:\n{exc}", parent=self)
+        messagebox.showerror("PORTIA contable", f"No se pudo analizar:\n{exc}", parent=self)
 
     def _copy_result(self):
         text = self.output.get("1.0", "end").strip()
         if not text:
-            messagebox.showwarning("IA contable", "No hay resultado para copiar.", parent=self)
+            messagebox.showwarning("PORTIA contable", "No hay resultado para copiar.", parent=self)
             return
         self.clipboard_clear()
         self.clipboard_append(text)

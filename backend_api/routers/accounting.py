@@ -27,6 +27,11 @@ from services.finance_audit import (
     row_to_dict,
     rows_to_dicts,
 )
+from services.accounting_bank_rules import (
+    backfill_missing_bank_accounts,
+    canonical_bac_account,
+    canonical_bcr_account,
+)
 
 
 router = APIRouter(
@@ -638,6 +643,19 @@ def get_accounting_bank_accounts(conn=Depends(get_db)):
 
     _ensure_accounting_professional_schema(conn)
     cur = conn.cursor(cursor_factory=RealDictCursor)
+    canonical_codes = set()
+    canonical_rows = []
+    for row in (canonical_bac_account(cur), canonical_bcr_account(cur)):
+        if row and row["account_code"] not in canonical_codes:
+            canonical_codes.add(row["account_code"])
+            canonical_rows.append({
+                "account_code": row["account_code"],
+                "account_name": row["account_name"],
+                "account_type": "ASSET",
+                "parent_account": "1.1.02",
+                "active": True,
+            })
+
     cur.execute("""
         SELECT
             account_code,
@@ -647,7 +665,7 @@ def get_accounting_bank_accounts(conn=Depends(get_db)):
             active
         FROM accounting_accounts
         WHERE active = TRUE
-          AND account_code NOT IN ('1.1.01', '1.1.02')
+          AND account_code NOT IN ('1.1.01', '1.1.02', '110-002-002-001')
           AND (
                 account_code LIKE '1.1.02.%'
              OR account_code LIKE '1.1.01.%'
@@ -655,7 +673,19 @@ def get_accounting_bank_accounts(conn=Depends(get_db)):
           )
         ORDER BY account_code
     """)
-    return {"data": cur.fetchall() or []}
+    rows = []
+    seen = set(canonical_codes)
+    for row in cur.fetchall() or []:
+        name = (row.get("account_name") or "").lower()
+        if "banco de costa rica" in name and row.get("account_code") != "1.1.02.04":
+            continue
+        if "bac" in name and row.get("account_code") != "1.1.02.02":
+            continue
+        if row["account_code"] in seen:
+            continue
+        seen.add(row["account_code"])
+        rows.append(row)
+    return {"data": sorted(canonical_rows + rows, key=lambda item: item["account_code"])}
 
 
 @router.post("/accounts")
@@ -1230,6 +1260,8 @@ def get_accounting_validation_alerts(
     where = "WHERE " + " AND ".join(conditions) if conditions else ""
 
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        backfill_missing_bank_accounts(cur)
+        conn.commit()
         cur.execute(f"""
             SELECT e.id, e.period, e.origin, e.description,
                    COALESCE(SUM(l.debit),0) AS total_debit,

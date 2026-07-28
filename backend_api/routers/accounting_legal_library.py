@@ -8,6 +8,45 @@ router = APIRouter(prefix="/accounting/legal-library", tags=["Accounting Legal L
 
 LEGAL_ITEMS = [
     {
+        "code": "CR-TAX-9635",
+        "category": "Hacienda",
+        "title": "Ley de Fortalecimiento de las Finanzas Publicas",
+        "norm_type": "Ley vigente consolidada",
+        "number": "9635",
+        "issuer": "Asamblea Legislativa",
+        "date": "2018-12-03",
+        "summary": "Ley marco moderna que introdujo el IVA y reformas fiscales relevantes para renta, reglas fiscales y cumplimiento tributario.",
+        "erp_relevance": "Referencia prioritaria para IVA, cierre fiscal, conciliacion tributaria, reportes ejecutivos y controles de cumplimiento.",
+        "keywords": ["iva", "renta", "finanzas publicas", "hacienda", "cumplimiento", "ley 9635", "vigente"],
+        "official_url": "https://pgrweb.go.cr/scij/Busqueda/Normativa/Normas/nrm_texto_completo.aspx?nValor1=1&nValor2=87720&nValor3=143345&param1=NRTC&strTipM=TC",
+    },
+    {
+        "code": "CR-VAT-41779-H",
+        "category": "Hacienda",
+        "title": "Reglamento de la Ley del Impuesto sobre el Valor Agregado",
+        "norm_type": "Decreto Ejecutivo vigente consolidado",
+        "number": "41779-H",
+        "issuer": "Poder Ejecutivo / Ministerio de Hacienda",
+        "date": "2019-06-07",
+        "summary": "Reglamento operativo del IVA: hecho generador, tarifas, exenciones, creditos fiscales, documentacion y reglas de aplicacion.",
+        "erp_relevance": "Base de trabajo para Centro fiscal, libros de compras/ventas, credito fiscal, D-150 y revision documental.",
+        "keywords": ["iva", "reglamento iva", "credito fiscal", "exenciones", "d150", "hacienda", "vigente"],
+        "official_url": "https://pgrweb.go.cr/scij/Busqueda/Normativa/Normas/nrm_texto_completo.aspx?nValor1=1&nValor2=88953&nValor3=138939&param1=NRTC&strTipM=TC",
+    },
+    {
+        "code": "CR-TAX-10386",
+        "category": "Hacienda",
+        "title": "Reforma a Ley de Fortalecimiento de las Finanzas Publicas",
+        "norm_type": "Ley",
+        "number": "10386",
+        "issuer": "Asamblea Legislativa",
+        "date": "2023-09-26",
+        "summary": "Reforma reciente vinculada con la Ley 9635 y su marco de responsabilidad fiscal.",
+        "erp_relevance": "Referencia para mantener actualizada la biblioteca legal y separar normativa historica de reformas recientes.",
+        "keywords": ["reforma", "ley 9635", "finanzas publicas", "responsabilidad fiscal", "vigente"],
+        "official_url": "https://pgrweb.go.cr/scij/Busqueda/Normativa/Normas/nrm_texto_completo.aspx?nValor1=1&nValor2=100319&nValor3=137721&param1=NRTC",
+    },
+    {
         "code": "CR-COM-3284",
         "category": "Comercial",
         "title": "Codigo de Comercio",
@@ -155,5 +194,6 @@ def list_legal_library(
         if query and query not in haystack:
             continue
         rows.append(item)
+    rows.sort(key=lambda item: item.get("date") or "0000-00-00", reverse=True)
     categories = sorted({item["category"] for item in LEGAL_ITEMS})
     return {"status": "ok", "categories": categories, "count": len(rows), "data": rows}

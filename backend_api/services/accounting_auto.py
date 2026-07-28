@@ -1,6 +1,11 @@
 from psycopg2.extras import RealDictCursor
 from datetime import date
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from services.accounting_bank_rules import (
+    backfill_missing_bank_accounts,
+    resolve_collections_bank,
+    resolve_itp_bank,
+)
 
 def create_accounting_entry(
     conn,
@@ -325,21 +330,12 @@ def sync_cash_app_to_accounting(conn):
             ALTER TABLE cash_app
             ADD COLUMN IF NOT EXISTS bank_account_name TEXT
         """)
+        backfill_missing_bank_accounts(cur)
 
         def _bank_account(code, name, fallback_code="1.1.01", fallback_name="Bancos"):
-            code = (code or "").strip()
-            name = (name or "").strip()
-            if code:
-                cur.execute("""
-                    SELECT account_code, account_name
-                    FROM accounting_ledger
-                    WHERE account_code = %s
-                      AND active = TRUE
-                    LIMIT 1
-                """, (code,))
-                row = cur.fetchone()
-                if row:
-                    return row["account_code"], row["account_name"]
+            account = resolve_collections_bank(cur, code, name, current_client_name)
+            if account:
+                return account["account_code"], account["account_name"]
             return fallback_code, fallback_name
 
         # ============================================================
@@ -350,6 +346,7 @@ def sync_cash_app_to_accounting(conn):
                 c.id,
                 c.numero_documento,
                 c.fecha_pago,
+                c.nombre_cliente,
                 c.monto_pagado,
                 c.comision,
                 c.bank_account_code,
@@ -368,6 +365,7 @@ def sync_cash_app_to_accounting(conn):
 
             cash_id = p.get("id")
             numero = (p.get("numero_documento") or "").strip()
+            current_client_name = (p.get("nombre_cliente") or "").strip()
             fecha_pago = p.get("fecha_pago")
 
             if not fecha_pago:
@@ -626,19 +624,17 @@ def sync_itp_to_accounting(conn):
             """, (code, name, account_type, 4, parent_account, code))
 
         def _bank_account(code, name, fallback_code="1.1.02", fallback_name="Bancos"):
-            code = (code or "").strip()
-            name = (name or "").strip()
-            if code:
-                cur.execute("""
-                    SELECT account_code, account_name
-                    FROM accounting_ledger
-                    WHERE account_code = %s
-                      AND active = TRUE
-                    LIMIT 1
-                """, (code,))
-                row = cur.fetchone()
-                if row:
-                    return row["account_code"], row["account_name"]
+            account = resolve_itp_bank(
+                cur,
+                code,
+                name,
+                payee_name=current_payee_name,
+                country=current_country,
+                reference=current_reference,
+                notes=current_notes,
+            )
+            if account:
+                return account["account_code"], account["account_name"]
             return fallback_code, fallback_name
 
         def _insert_line(entry_id: int, code: str, name: str, debit: float, credit: float, desc: str):
@@ -694,6 +690,7 @@ def sync_itp_to_accounting(conn):
             ALTER TABLE payment_obligations
             ADD COLUMN IF NOT EXISTS payment_bank_account_name TEXT
         """)
+        backfill_missing_bank_accounts(cur)
 
         today = date.today()
 
@@ -722,6 +719,7 @@ def sync_itp_to_accounting(conn):
                 p.payee_type,
                 p.obligation_type,
                 p.reference,
+                p.country,
                 p.issue_date,
                 p.last_payment_date,
                 p.currency,
@@ -747,6 +745,10 @@ def sync_itp_to_accounting(conn):
 
             obligation_id = ob.get("id")
             payee_name = (ob.get("payee_name") or "").strip() or "N/A"
+            current_payee_name = payee_name
+            current_country = (ob.get("country") or "").strip()
+            current_reference = (ob.get("reference") or "").strip()
+            current_notes = (ob.get("notes") or "").strip()
             payee_type = (ob.get("payee_type") or "").upper()
             obligation_type = (ob.get("obligation_type") or "").upper()
             currency = (ob.get("currency") or "").upper()

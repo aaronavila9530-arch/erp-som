@@ -435,7 +435,12 @@ def list_documents(direction:str|None=None,period:str|None=None,status:str|None=
        (d.electronic_key IS NOT NULL AND EXISTS(SELECT 1 FROM tax_electronic_documents x WHERE x.direction=d.direction AND x.electronic_key=d.electronic_key AND x.id<>d.id)))"""
     if quality_only: where.append(quality)
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        cur.execute(f"""SELECT d.*,
+        cur.execute(f"""SELECT
+          d.id,d.direction,d.document_type,d.document_number,d.electronic_key,d.xml_hash,d.schema_version,
+          d.issuer_identification,d.issuer_name,d.receiver_identification,d.receiver_name,d.economic_activity,
+          d.issue_datetime,d.currency_code,d.exchange_rate,d.subtotal,d.discount_amount,d.exempt_amount,
+          d.tax_amount,d.total,d.status,d.hacienda_status,d.hacienda_message,d.xml_path,d.response_xml_path,
+          d.pdf_path,d.source_table,d.source_id,d.metadata,d.created_by,d.created_at,d.updated_at,
           (SELECT COUNT(*) FROM tax_document_lines l WHERE l.document_id=d.id) line_count,
           (SELECT COUNT(*) FROM tax_document_lines l WHERE l.document_id=d.id AND COALESCE(l.cabys_code,'')='') missing_cabys_lines,
           (SELECT COUNT(*) FROM tax_electronic_documents x WHERE x.direction=d.direction AND x.electronic_key=d.electronic_key AND x.id<>d.id) duplicate_key_count

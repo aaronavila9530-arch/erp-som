@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from database import get_db
 from routers.accounting import _ensure_accounting_professional_schema
 from routers.accounting_tax import _ensure_schema as _ensure_tax_schema
+from services.accounting_bank_rules import backfill_missing_bank_accounts
 from services.finance_audit import audit_event, ensure_finance_audit_schema, row_to_dict
 
 
@@ -113,6 +114,7 @@ def _scalar(cur, sql, params=()):
 
 
 def _work_items(cur, period):
+    backfill_missing_bank_accounts(cur)
     items = []
 
     workflow = {}
@@ -221,6 +223,7 @@ def _json_default(value):
 
 
 def _validation_alert_summary(cur, period):
+    backfill_missing_bank_accounts(cur)
     critical = []
     warnings = []
 

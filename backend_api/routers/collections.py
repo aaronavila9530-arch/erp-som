@@ -12,6 +12,7 @@ from datetime import date, datetime, timedelta
 from database import get_db
 from rbac_service import has_permission
 from services.finance_audit import actor_from_headers, audit_event, row_to_dict
+from services.accounting_bank_rules import resolve_collections_bank
 
 
 router = APIRouter(
@@ -526,18 +527,17 @@ def aplicar_pago(
             ADD COLUMN IF NOT EXISTS bank_account_name TEXT
         """)
 
-        if bank_account_code:
-            cur.execute("""
-                SELECT account_code, account_name
-                FROM accounting_ledger
-                WHERE account_code = %s
-                  AND active = TRUE
-                LIMIT 1
-            """, (bank_account_code,))
-            bank_row = cur.fetchone()
-            if not bank_row:
-                raise HTTPException(400, "Cuenta bancaria contable no existe o no esta activa")
-            bank_account_name = bank_account_name or bank_row["account_name"]
+        bank_row = resolve_collections_bank(
+            cur,
+            bank_account_code,
+            bank_account_name,
+            nombre_cliente,
+        )
+        if bank_account_code and not bank_row:
+            raise HTTPException(400, "Cuenta bancaria contable no existe o no esta activa")
+        if bank_row:
+            bank_account_code = bank_row["account_code"]
+            bank_account_name = bank_row["account_name"]
 
         # ==============================
         # NORMALIZAR DOCUMENTO

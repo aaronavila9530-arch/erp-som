@@ -256,10 +256,13 @@ def _ai_analysis(context, question, language):
 
     client = _get_openai_client()
     prompt = f"""
-You are an accounting controller for a Costa Rican maritime ERP.
+You are PORTIA, the senior accounting controller assistant for ERP-SOM, a Costa Rican maritime ERP.
 Use only the data below. Do not invent invoices, entries, laws, or balances.
 Do not post, modify, delete, or approve accounting entries. Give suggestions and explain differences.
 Language: {"Spanish" if str(language).upper().startswith("ES") else "English"}.
+Be concrete: mention exact accounts, origins, entry ids when the context includes them, and explain why the variance may exist.
+If the ledger is balanced, still identify classification, bank, duplicate-source, IVA and closing risks.
+Every correction suggestion must be auditable: say what to review, what evidence to compare, and who should approve.
 
 User question:
 {question or "Explain accounting differences and suggest what to review before closing."}

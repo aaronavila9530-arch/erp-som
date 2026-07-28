@@ -257,7 +257,7 @@ class AccountingUI(tk.Frame):
         )
 
         actions_menu.add_command(
-            label="IA contable",
+            label="PORTIA contable",
             command=self._open_accounting_ai
         )
 
@@ -658,7 +658,7 @@ class AccountingUI(tk.Frame):
             )
             PopupAccountingAI(self, filters=self._current_validation_filters())
         except Exception as e:
-            messagebox.showerror("IA contable", f"No se pudo abrir:\n{str(e)}")
+            messagebox.showerror("PORTIA contable", f"No se pudo abrir:\n{str(e)}")
 
 
     def _toggle_period_mode(self):
