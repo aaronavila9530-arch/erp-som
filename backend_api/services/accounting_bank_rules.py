@@ -90,7 +90,12 @@ def canonicalize_bank_account(cur, code=None, name=None):
     return _account_by_code(cur, code)
 
 
-def infer_collections_bank(cur, client_name):
+def infer_collections_bank(cur, client_name, raw_bank=None):
+    bank_text = normalize_text(raw_bank).upper()
+    if "BCR" in bank_text or "BANCO DE COSTA RICA" in bank_text:
+        return canonical_bcr_account(cur)
+    if "BAC" in bank_text:
+        return canonical_bac_account(cur)
     text = normalize_text(client_name).upper()
     if any(token in text for token in COLLECTIONS_BCR_CLIENTS):
         return canonical_bcr_account(cur)
@@ -107,8 +112,8 @@ def infer_itp_bank(cur, payee_name=None, country=None, reference=None, notes=Non
     return None
 
 
-def resolve_collections_bank(cur, code=None, name=None, client_name=None):
-    return canonicalize_bank_account(cur, code, name) or infer_collections_bank(cur, client_name)
+def resolve_collections_bank(cur, code=None, name=None, client_name=None, raw_bank=None):
+    return canonicalize_bank_account(cur, code, name) or infer_collections_bank(cur, client_name, raw_bank)
 
 
 def resolve_itp_bank(cur, code=None, name=None, payee_name=None, country=None, reference=None, notes=None):
@@ -138,7 +143,7 @@ def backfill_missing_bank_accounts(cur):
 
     changed = {"collections": 0, "itp": 0}
     cur.execute("""
-        SELECT id, nombre_cliente, bank_account_code, bank_account_name
+        SELECT id, nombre_cliente, banco, bank_account_code, bank_account_name
         FROM cash_app
         WHERE tipo_aplicacion = 'PAGO'
           AND (
@@ -153,6 +158,7 @@ def backfill_missing_bank_accounts(cur):
             row.get("bank_account_code"),
             row.get("bank_account_name"),
             row.get("nombre_cliente"),
+            row.get("banco"),
         )
         if not account:
             continue

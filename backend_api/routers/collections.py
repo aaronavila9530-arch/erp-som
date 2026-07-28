@@ -532,6 +532,7 @@ def aplicar_pago(
             bank_account_code,
             bank_account_name,
             nombre_cliente,
+            banco,
         )
         if bank_account_code and not bank_row:
             raise HTTPException(400, "Cuenta bancaria contable no existe o no esta activa")

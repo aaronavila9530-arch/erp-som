@@ -333,7 +333,7 @@ def sync_cash_app_to_accounting(conn):
         backfill_missing_bank_accounts(cur)
 
         def _bank_account(code, name, fallback_code="1.1.01", fallback_name="Bancos"):
-            account = resolve_collections_bank(cur, code, name, current_client_name)
+            account = resolve_collections_bank(cur, code, name, current_client_name, current_raw_bank)
             if account:
                 return account["account_code"], account["account_name"]
             return fallback_code, fallback_name
@@ -347,6 +347,7 @@ def sync_cash_app_to_accounting(conn):
                 c.numero_documento,
                 c.fecha_pago,
                 c.nombre_cliente,
+                c.banco,
                 c.monto_pagado,
                 c.comision,
                 c.bank_account_code,
@@ -366,6 +367,7 @@ def sync_cash_app_to_accounting(conn):
             cash_id = p.get("id")
             numero = (p.get("numero_documento") or "").strip()
             current_client_name = (p.get("nombre_cliente") or "").strip()
+            current_raw_bank = (p.get("banco") or "").strip()
             fecha_pago = p.get("fecha_pago")
 
             if not fecha_pago:
