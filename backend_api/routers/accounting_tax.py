@@ -303,7 +303,28 @@ def sync_tax_documents(conn=Depends(get_db)):
     counts = {"sales": 0, "purchases": 0}
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT id,numero_factura,clave_electronica,fecha_emision,moneda,total,estado,xml_path,pdf_path FROM factura")
+            cur.execute("""
+                SELECT
+                    f.id,
+                    f.numero_factura,
+                    f.clave_electronica,
+                    f.fecha_emision,
+                    COALESCE(NULLIF(f.moneda, ''), inv.moneda) AS moneda,
+                    COALESCE(NULLIF(f.total, 0), inv.total, 0) AS total,
+                    f.estado,
+                    f.xml_path AS xml_path,
+                    COALESCE(f.pdf_path, inv.pdf_path) AS pdf_path,
+                    inv.nombre_cliente
+                FROM factura f
+                LEFT JOIN LATERAL (
+                    SELECT moneda, total, pdf_path, nombre_cliente
+                    FROM invoicing i
+                    WHERE i.factura_id = f.id
+                       OR i.numero_documento = f.numero_factura::text
+                    ORDER BY i.id DESC
+                    LIMIT 1
+                ) inv ON TRUE
+            """)
             for row in cur.fetchall():
                 cur.execute("SELECT * FROM factura_detalle WHERE factura_id=%s ORDER BY id",(row["id"],))
                 details=cur.fetchall()
