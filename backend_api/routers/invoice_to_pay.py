@@ -518,6 +518,8 @@ def apply_payment(
             bank_account_code,
             bank_account_name,
             payee_name=obligation.get("payee_name"),
+            payee_type=obligation.get("payee_type"),
+            obligation_type=obligation.get("obligation_type"),
             country=obligation.get("country"),
             reference=obligation.get("reference"),
             notes=obligation.get("notes"),

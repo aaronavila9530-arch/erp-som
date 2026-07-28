@@ -631,6 +631,8 @@ def sync_itp_to_accounting(conn):
                 code,
                 name,
                 payee_name=current_payee_name,
+                payee_type=current_payee_type,
+                obligation_type=current_obligation_type,
                 country=current_country,
                 reference=current_reference,
                 notes=current_notes,
@@ -753,6 +755,8 @@ def sync_itp_to_accounting(conn):
             current_notes = (ob.get("notes") or "").strip()
             payee_type = (ob.get("payee_type") or "").upper()
             obligation_type = (ob.get("obligation_type") or "").upper()
+            current_payee_type = payee_type
+            current_obligation_type = obligation_type
             currency = (ob.get("currency") or "").upper()
 
             total_raw = float(ob.get("total") or 0)

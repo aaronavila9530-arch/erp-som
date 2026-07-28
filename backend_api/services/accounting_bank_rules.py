@@ -104,10 +104,17 @@ def infer_collections_bank(cur, client_name, raw_bank=None):
     return None
 
 
-def infer_itp_bank(cur, payee_name=None, country=None, reference=None, notes=None):
+def infer_itp_bank(cur, payee_name=None, country=None, reference=None, notes=None, payee_type=None, obligation_type=None):
     text = normalize_text(" ".join(str(x or "") for x in (payee_name, reference, notes))).upper()
     country_text = normalize_text(country)
-    if country_text == "costa rica" or any(token in text for token in ITP_BAC_PAYEES):
+    payee_kind = normalize_text(payee_type).upper()
+    obligation_kind = normalize_text(obligation_type).upper()
+    if (
+        country_text == "costa rica"
+        or payee_kind == "SURVEYOR"
+        or obligation_kind == "SURVEYOR_FEE"
+        or any(token in text for token in ITP_BAC_PAYEES)
+    ):
         return canonical_bac_account(cur)
     return None
 
@@ -116,10 +123,18 @@ def resolve_collections_bank(cur, code=None, name=None, client_name=None, raw_ba
     return canonicalize_bank_account(cur, code, name) or infer_collections_bank(cur, client_name, raw_bank)
 
 
-def resolve_itp_bank(cur, code=None, name=None, payee_name=None, country=None, reference=None, notes=None):
+def resolve_itp_bank(cur, code=None, name=None, payee_name=None, country=None, reference=None, notes=None, payee_type=None, obligation_type=None):
     return (
         canonicalize_bank_account(cur, code, name)
-        or infer_itp_bank(cur, payee_name=payee_name, country=country, reference=reference, notes=notes)
+        or infer_itp_bank(
+            cur,
+            payee_name=payee_name,
+            country=country,
+            reference=reference,
+            notes=notes,
+            payee_type=payee_type,
+            obligation_type=obligation_type,
+        )
     )
 
 
@@ -181,7 +196,7 @@ def backfill_missing_bank_accounts(cur):
         changed["collections"] += cur.rowcount
 
     cur.execute("""
-        SELECT id, payee_name, country, reference, notes, payment_bank_account_code, payment_bank_account_name
+        SELECT id, payee_name, payee_type, obligation_type, country, reference, notes, payment_bank_account_code, payment_bank_account_name
         FROM payment_obligations
         WHERE active = TRUE
           AND status IN ('PAID', 'PARTIAL')
@@ -198,6 +213,8 @@ def backfill_missing_bank_accounts(cur):
             row.get("payment_bank_account_code"),
             row.get("payment_bank_account_name"),
             payee_name=row.get("payee_name"),
+            payee_type=row.get("payee_type"),
+            obligation_type=row.get("obligation_type"),
             country=row.get("country"),
             reference=row.get("reference"),
             notes=row.get("notes"),
