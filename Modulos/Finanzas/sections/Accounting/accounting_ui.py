@@ -194,18 +194,6 @@ class AccountingUI(tk.Frame):
         export_btn["menu"] = export_menu
         export_btn.grid(row=1, column=8, padx=5)
 
-        ttk.Button(
-            filter_frame,
-            text="Reporte ejecutivo",
-            command=self._open_monthly_financial_report
-        ).grid(row=1, column=9, padx=5)
-
-        ttk.Button(
-            filter_frame,
-            text="Mi espacio contable",
-            command=self._open_accountant_workspace
-        ).grid(row=1, column=10, padx=5)
-
         # ================= ACCIONES =================
         actions_btn = ttk.Menubutton(filter_frame, text="Acciones")
         actions_menu = tk.Menu(actions_btn, tearoff=0)
@@ -342,8 +330,30 @@ class AccountingUI(tk.Frame):
             menu=reports_menu
         )
 
+        final_actions_menu = tk.Menu(actions_btn, tearoff=0)
+        final_actions_menu.add_command(label="Mi espacio contable", command=self._open_accountant_workspace)
+        final_actions_menu.add_command(label="Asiento manual", command=self._open_manual_entry)
+        final_actions_menu.add_command(label="Sincronizar asientos ERP", command=self._sync_accounting_entries)
+        final_actions_menu.add_separator()
+        final_actions_menu.add_command(label="Auxiliares contables", command=self._open_auxiliaries)
+        final_actions_menu.add_command(label="Centro fiscal Costa Rica", command=self._open_tax_center)
+        final_actions_menu.add_command(label="Biblioteca legal Costa Rica", command=self._open_legal_library)
+        final_actions_menu.add_command(label="Catalogo maestro de cuentas", command=self._open_chart_of_accounts)
+        final_actions_menu.add_separator()
+        final_actions_menu.add_command(label="Alertas y validaciones", command=self._open_validation_alerts)
+        final_actions_menu.add_command(label="Auditoria por usuario", command=self._open_finance_audit)
+        final_actions_menu.add_command(label="Cierre mensual guiado", command=self._open_closing_wizard)
+        final_actions_menu.add_command(label="PORTIA contable", command=self._open_accounting_ai)
+        final_actions_menu.add_separator()
+        final_actions_menu.add_command(label="Ajustar asiento", command=self._adjust_selected_entry)
+        final_actions_menu.add_command(label="Reversar asiento", command=self._reverse_selected_entry)
+        final_actions_menu.add_separator()
+        final_actions_menu.add_cascade(label="Declaraciones", menu=declarations_menu)
+        final_actions_menu.add_cascade(label="Reportes", menu=reports_menu)
+        actions_menu = final_actions_menu
+
         actions_btn["menu"] = actions_menu
-        actions_btn.grid(row=1, column=11, padx=5)
+        actions_btn.grid(row=1, column=9, padx=5)
 
 
         # ================= KPI =================
@@ -488,41 +498,37 @@ class AccountingUI(tk.Frame):
             )
 
 
-    def _on_search(self):
+    def _sync_accounting_entries(self):
         """
-        Ejecuta la búsqueda contable según filtros seleccionados
-        y carga la tabla de asientos / mayor.
+        Genera o actualiza asientos desde los modulos fuente.
+        Buscar queda separado para no bloquear consultas historicas.
         """
-
-        if not self.tc_rate_var.get():
-            messagebox.showwarning(
-                "Tipo de cambio requerido",
-                "Debe obtener el Tipo de Cambio antes de continuar."
-            )
-            return
-
-        # ============================================================
-        # 🔥 SINCRONIZAR ASIENTOS ANTES DE CONSULTAR LEDGER
-        # ============================================================
         try:
             from api_client import (
                 post_accounting_sync_collections_api,
                 post_accounting_sync_cash_app_api,
                 post_accounting_sync_itp_api,
-                post_accounting_sync_payroll_api 
+                post_accounting_sync_payroll_api,
             )
 
             post_accounting_sync_collections_api()
             post_accounting_sync_cash_app_api()
             post_accounting_sync_itp_api()
-            post_accounting_sync_payroll_api() 
-
+            post_accounting_sync_payroll_api()
+            messagebox.showinfo("Sincronizacion contable", "Asientos sincronizados correctamente.")
+            self._on_search()
         except Exception as e:
             messagebox.showerror(
-                "Sincronización contable",
+                "Sincronizacion contable",
                 f"Error sincronizando asientos:\n{str(e)}"
             )
-            return
+
+
+    def _on_search(self):
+        """
+        Ejecuta la búsqueda contable según filtros seleccionados
+        y carga la tabla de asientos / mayor.
+        """
 
         # ============================================================
         # FILTROS COMUNES
