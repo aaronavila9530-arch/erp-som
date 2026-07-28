@@ -294,11 +294,15 @@ def _append_account_filter(conditions, params, account_code: str | None):
         clauses.extend([
             "LOWER(l.account_name) LIKE %s",
             "l.account_code = %s",
+            "l.account_code = %s",
         ])
-        values.extend(["%bac%", "110-002-002-001"])
+        values.extend(["%bac%", "110-002-002-001", "1.1.02"])
     elif code == "1.1.02.04":
-        clauses.append("LOWER(l.account_name) LIKE %s")
-        values.append("%banco de costa rica%")
+        clauses.extend([
+            "LOWER(l.account_name) LIKE %s",
+            "l.account_code = %s",
+        ])
+        values.extend(["%banco de costa rica%", "1.1.02"])
     elif code == "1.1.02":
         clauses.append("LOWER(l.account_name) LIKE %s")
         values.append("%banco%")

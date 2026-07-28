@@ -30,7 +30,12 @@ BCCR_API_BASE = os.getenv(
     "https://apim.bccr.fi.cr/SDDE/api/Bccr.Ge.SDDE.Publico.Indicadores.API",
 ).rstrip("/")
 BCCR_EMAIL = os.getenv("BCCR_EMAIL", "aaron.avila@hotmail.es")
-BCCR_TOKEN = os.getenv("BCCR_API_TOKEN") or os.getenv("BCCR_TOKEN", "S8L8LAT0VI")
+BCCR_TOKEN = os.getenv("BCCR_API_TOKEN") or os.getenv(
+    "BCCR_TOKEN",
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
+    "eyJpc3MiOiJCQ0NSLVNEREUiLCJzdWIiOiJhYXJvbi5hdmlsYUBob3RtYWlsLmVzIiwiYXVkIjoiU0RERS1TaXRpb0V4dGVybm8iLCJleHAiOjI1MzQwMjMwMDgwMCwibmJmIjoxNzg1MjYxNDY5LCJpYXQiOjE3ODUyNjE0NjksImp0aSI6IjI4MjlmYjgzLWIzNGQtNGQxOC1hNTg1LWNmNGE1YjY1NGU3MiIsImVtYWlsIjoiYWFyb24uYXZpbGFAaG90bWFpbC5lcyJ9."
+    "KV0awZgT8tGlW0zlTj2cvznxanEOcAxCloRZb7APwRg"
+)
 BCCR_NOMBRE = os.getenv("BCCR_APP_NAME", "MSL")
 
 INDICADOR_COMPRA = "317"
