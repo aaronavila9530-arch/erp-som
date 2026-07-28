@@ -88,6 +88,14 @@ class MainApp(tk.Frame):
 
         self.cambiar_modulo("Dashboard")
         self._start_logra_global_alerts()
+        self._start_outlook_fiscal_background_sync()
+
+    def _start_outlook_fiscal_background_sync(self):
+        try:
+            from Modulos.Finanzas.sections.Accounting.outlook_fiscal_importer import start_background_sync
+            start_background_sync()
+        except Exception as exc:
+            print(f"Outlook fiscal automatico no iniciado: {exc}")
 
     # --------------------------------------------------------
     # Menú lateral (RBAC)

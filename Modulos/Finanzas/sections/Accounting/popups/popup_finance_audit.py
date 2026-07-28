@@ -90,6 +90,21 @@ class PopupFinanceAudit(tk.Toplevel):
             self.rows = []
 
         self.tree.delete(*self.tree.get_children())
+        if not self.rows:
+            self.tree.insert(
+                "",
+                "end",
+                values=(
+                    "",
+                    "Sin auditoria",
+                    "NO_RECORDS",
+                    "",
+                    "",
+                    "",
+                    "No hay eventos para los filtros seleccionados.",
+                ),
+            )
+            return
         for idx, row in enumerate(self.rows):
             entity = " ".join(
                 part for part in (
@@ -116,6 +131,8 @@ class PopupFinanceAudit(tk.Toplevel):
     def _show_detail(self, _event=None):
         selected = self.tree.selection()
         if not selected:
+            return
+        if not self.rows:
             return
         row = self.rows[int(selected[0])]
         detail = tk.Toplevel(self)

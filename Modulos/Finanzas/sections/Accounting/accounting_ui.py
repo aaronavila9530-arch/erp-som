@@ -428,7 +428,7 @@ class AccountingUI(tk.Frame):
             if len(value) == 7 and value[4] == "-" and value <= today_period:
                 clean.append(value)
 
-        clean = sorted(set(clean))
+        clean = sorted(set(clean), reverse=True)
         return clean or [today_period]
 
 

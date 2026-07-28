@@ -65,6 +65,21 @@ class PopupAccountingValidationAlerts(tk.Toplevel):
             f"Info: {counts.get('info', 0)}"
         )
         self.tree.delete(*self.tree.get_children())
+        if not self.rows:
+            self.tree.insert(
+                "",
+                "end",
+                iid="ok_no_alerts",
+                tags=("info",),
+                values=(
+                    "VERDE",
+                    "OK_NO_ALERTS",
+                    "Sin alertas",
+                    "No se encontraron descuadres, cuentas invalidas, pagos sin banco o duplicidades para los filtros seleccionados.",
+                    "",
+                ),
+            )
+            return
         for idx, row in enumerate(self.rows):
             severity = row.get("severity") or "info"
             entity = " ".join(
@@ -98,6 +113,8 @@ class PopupAccountingValidationAlerts(tk.Toplevel):
     def _show_detail(self, _event=None):
         selected = self.tree.selection()
         if not selected:
+            return
+        if not self.rows:
             return
         row = self.rows[int(selected[0])]
         detail = tk.Toplevel(self)

@@ -122,6 +122,14 @@ class PopupLegalLibrary(tk.Toplevel):
             return
         row = self.rows[int(selected[0])]
         self.selected_url = row.get("official_url") or ""
+        extra = []
+        if row.get("key_points"):
+            extra.append("Puntos clave:\n" + "\n".join(f"- {item}" for item in row.get("key_points") or []))
+        if row.get("erp_controls"):
+            extra.append("Controles sugeridos en ERP-SOM:\n" + "\n".join(f"- {item}" for item in row.get("erp_controls") or []))
+        if row.get("practical_use"):
+            extra.append(f"Uso practico:\n{row.get('practical_use')}")
+        extra_text = "\n\n".join(extra)
         text = (
             f"{row.get('title')}\n"
             f"{'-' * 80}\n"
@@ -133,6 +141,7 @@ class PopupLegalLibrary(tk.Toplevel):
             f"Fecha: {row.get('date') or '-'}\n\n"
             f"Resumen operativo:\n{row.get('summary')}\n\n"
             f"Relevancia para ERP-SOM:\n{row.get('erp_relevance')}\n\n"
+            f"{extra_text}\n\n"
             f"Palabras clave:\n{', '.join(row.get('keywords') or [])}\n\n"
             f"Fuente oficial:\n{self.selected_url}"
         )

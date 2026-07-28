@@ -1,4 +1,3 @@
-import json
 import threading
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -73,7 +72,7 @@ class PopupAccountingAI(tk.Toplevel):
         self.output.pack(side="left", fill="both", expand=True)
         out_scroll.pack(side="right", fill="y")
 
-        context_frame = ttk.LabelFrame(body, text="Contexto usado")
+        context_frame = ttk.LabelFrame(body, text="Datos usados por PORTIA")
         body.add(context_frame, weight=2)
         self.context_text = tk.Text(context_frame, wrap="none")
         ctx_y = ttk.Scrollbar(context_frame, orient="vertical", command=self.context_text.yview)
@@ -117,10 +116,53 @@ class PopupAccountingAI(tk.Toplevel):
         self.output.delete("1.0", "end")
         self.output.insert("1.0", data.get("analysis") or "Sin analisis disponible.")
         self.context_text.delete("1.0", "end")
-        self.context_text.insert(
-            "1.0",
-            json.dumps(data.get("context") or {}, indent=2, ensure_ascii=False, default=str),
-        )
+        self.context_text.insert("1.0", self._format_context_summary(data.get("context") or {}))
+
+    def _format_money(self, value):
+        try:
+            return f"{float(value or 0):,.2f}"
+        except Exception:
+            return "0.00"
+
+    def _format_context_summary(self, context):
+        filters = context.get("filters") or {}
+        totals = context.get("totals") or {}
+        exceptions = context.get("exceptions") or {}
+        lines = [
+            "Alcance",
+            f"- Periodo: {filters.get('period') or '-'}",
+            f"- Desde: {filters.get('period_from') or '-'}",
+            f"- Hasta: {filters.get('period_to') or '-'}",
+            f"- Origen: {filters.get('origin') or 'TODOS'}",
+            "",
+            "Resumen contable",
+            f"- Asientos: {int(totals.get('entry_count') or 0)}",
+            f"- Lineas: {int(totals.get('line_count') or 0)}",
+            f"- Debe: {self._format_money(totals.get('total_debit'))}",
+            f"- Haber: {self._format_money(totals.get('total_credit'))}",
+            f"- Diferencia: {self._format_money(totals.get('difference'))}",
+            f"- Fechas: {totals.get('first_date') or '-'} a {totals.get('last_date') or '-'}",
+            "",
+            "Cuentas con mayor impacto",
+        ]
+        for row in (context.get("top_accounts") or [])[:10]:
+            lines.append(
+                f"- {row.get('account_code')} {row.get('account_name')}: "
+                f"Debe {self._format_money(row.get('debit'))}, "
+                f"Haber {self._format_money(row.get('credit'))}, "
+                f"Saldo {self._format_money(row.get('balance'))}"
+            )
+        lines.extend(["", "Origenes"])
+        for row in (context.get("by_origin") or [])[:10]:
+            lines.append(
+                f"- {row.get('origin')}: {int(row.get('entry_count') or 0)} asientos, "
+                f"diferencia {self._format_money(row.get('difference'))}"
+            )
+        lines.extend(["", "Excepciones detectadas"])
+        lines.append(f"- Asientos descuadrados: {len(exceptions.get('unbalanced_entries') or [])}")
+        lines.append(f"- Lineas invalidas: {len(exceptions.get('invalid_lines') or [])}")
+        lines.append(f"- Origenes duplicados: {len(exceptions.get('duplicate_origin_entries') or [])}")
+        return "\n".join(lines)
 
     def _show_error(self, exc):
         self.status_var.set("No se pudo completar el analisis.")

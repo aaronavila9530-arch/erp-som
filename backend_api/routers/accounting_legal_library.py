@@ -21,6 +21,102 @@ LEGAL_ITEMS = [
         "official_url": "https://pgrweb.go.cr/scij/Busqueda/Normativa/Normas/nrm_texto_completo.aspx?nValor1=1&nValor2=87720&nValor3=143345&param1=NRTC&strTipM=TC",
     },
     {
+        "code": "CR-CPA-45505-A",
+        "category": "Contable",
+        "title": "Reglamento de la Ley N. 1038 de la Profesion de Contador Publico",
+        "norm_type": "Decreto Ejecutivo vigente",
+        "number": "45505-A",
+        "issuer": "Poder Ejecutivo",
+        "date": "2025-11-20",
+        "summary": "Reglamento moderno de la profesion de Contador Publico en Costa Rica, vigente desde 2026, con reglas profesionales, responsabilidades y marco de actuacion.",
+        "erp_relevance": "Soporta controles de auditoria, responsabilidades de preparacion/revision, evidencia de cambios y segregacion de funciones en Accounting.",
+        "key_points": [
+            "Usar auditoria por usuario para conservar evidencia de quien preparo, reviso, aprobo o modifico.",
+            "Separar preparacion y aprobacion cuando haya asientos sensibles o cierres mensuales.",
+            "Mantener soportes y razon de cambio para ajustes contables."
+        ],
+        "erp_controls": [
+            "Auditoria obligatoria para cambios de cuenta contable, bancos, ITP, Collections y cierre.",
+            "Bloqueo de periodo cerrado salvo reapertura controlada.",
+            "Trazabilidad de before/after en modificaciones contables."
+        ],
+        "practical_use": "Uselo como referencia de gobierno profesional contable: quien hizo que, con que evidencia, y por que razon.",
+        "keywords": ["contador publico", "cpa", "auditoria", "responsabilidad", "contable", "vigente"],
+        "official_url": "https://pgrweb.go.cr/scij/Busqueda/Normativa/Normas/nrm_norma.aspx?nValor1=1&nValor2=106528&nValor3=150022&param1=NRM&strTipM=FN",
+    },
+    {
+        "code": "CR-CPA-1038",
+        "category": "Contable",
+        "title": "Ley de Creacion del Colegio de Contadores Publicos",
+        "norm_type": "Ley vigente consolidada",
+        "number": "1038",
+        "issuer": "Asamblea Legislativa",
+        "date": "1947-08-19",
+        "summary": "Marco legal de la profesion de Contador Publico y del Colegio de Contadores Publicos de Costa Rica.",
+        "erp_relevance": "Base de independencia, responsabilidad profesional, certificacion, auditoria y soporte de estados financieros.",
+        "key_points": [
+            "Define el ejercicio profesional de la contaduria publica.",
+            "Relaciona preparacion, certificacion y revision de informacion contable o financiera.",
+            "Sirve como soporte de criterios de independencia y responsabilidad."
+        ],
+        "erp_controls": [
+            "Bitacora de cambios por usuario y rol.",
+            "Evidencia documental para reportes, cierres y ajustes.",
+            "Aprobacion separada de ajustes y asientos manuales."
+        ],
+        "practical_use": "Sirve para respaldar por que el ERP exige trazabilidad, evidencia y controles de aprobacion.",
+        "keywords": ["contador publico", "colegio", "auditoria", "certificacion", "contabilidad"],
+        "official_url": "https://pgrweb.go.cr/scij/Busqueda/Normativa/Normas/nrm_texto_completo.aspx?nValor1=1&nValor2=37400",
+    },
+    {
+        "code": "CR-CPA-ETHICS-22",
+        "category": "Contable",
+        "title": "Codigo de etica profesional del Colegio de Contadores Publicos",
+        "norm_type": "Reglamento profesional",
+        "number": "Reglamento 22",
+        "issuer": "Colegio de Contadores Publicos",
+        "date": "2022-11-08",
+        "summary": "Codigo de etica profesional aplicable a personas contadoras publicas autorizadas.",
+        "erp_relevance": "Apoya controles de integridad, objetividad, diligencia, evidencia y revision independiente dentro del modulo contable.",
+        "key_points": [
+            "La informacion financiera debe ser preparada con integridad y diligencia.",
+            "Los cambios relevantes deben quedar explicados y respaldados.",
+            "Las revisiones y aprobaciones deben ser rastreables."
+        ],
+        "erp_controls": [
+            "Motivo obligatorio en ajustes sensibles.",
+            "PORTIA contable como apoyo explicativo, no como aprobador automatico.",
+            "Registro de usuario, rol, before/after y fecha de cada cambio."
+        ],
+        "practical_use": "Use esta referencia cuando Accounting pida razon de cambio, evidencia o aprobacion de un tercero.",
+        "keywords": ["etica", "contador publico", "integridad", "diligencia", "auditoria"],
+        "official_url": "https://pgrweb.go.cr/scij/Busqueda/Normativa/Normas/nrm_articulo.aspx?nValor1=1&nValor2=98494&nValor3=134016&nValor4=-1&nValor5=2&nValor6=08%2F11%2F2022&param1=NRA&strTipM=FA",
+    },
+    {
+        "code": "CR-FIN-8131",
+        "category": "Contable",
+        "title": "Ley de la Administracion Financiera de la Republica y Presupuestos Publicos",
+        "norm_type": "Ley vigente consolidada",
+        "number": "8131",
+        "issuer": "Asamblea Legislativa",
+        "date": "2001-09-18",
+        "summary": "Marco de administracion financiera publica. Aunque su enfoque es sector publico, aporta principios de control, presupuesto, registro y rendicion de cuentas.",
+        "erp_relevance": "Referencia de buenas practicas de control financiero, cierre, evidencia, rendicion y trazabilidad.",
+        "key_points": [
+            "Refuerza la disciplina de control financiero y rendicion de cuentas.",
+            "Ayuda a estructurar cierres y reportes con evidencia verificable.",
+            "Es util como referencia de gobierno financiero, aunque MSL opere como privado."
+        ],
+        "erp_controls": [
+            "Cierre mensual guiado con checklist.",
+            "Alertas de descuadre antes del cierre.",
+            "Reportes ejecutivos con datos de cierre."
+        ],
+        "practical_use": "Sirve como guia de control para disenar cierres y reportes financieros mas disciplinados.",
+        "keywords": ["administracion financiera", "control", "cierre", "presupuesto", "rendicion"],
+        "official_url": "https://pgrweb.go.cr/scij/Busqueda/Normativa/Normas/nrm_texto_completo.aspx?nValor1=1&nValor2=47258&nValor3=141198&param1=NRTC&strTipM=TC",
+    },
+    {
         "code": "CR-VAT-41779-H",
         "category": "Hacienda",
         "title": "Reglamento de la Ley del Impuesto sobre el Valor Agregado",

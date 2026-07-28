@@ -5,6 +5,7 @@ import json
 import os
 import tempfile
 import threading
+import time
 import unicodedata
 import zipfile
 import xml.etree.ElementTree as ET
@@ -18,6 +19,8 @@ DEFAULT_FOLDER="xml gastos electrónicos"
 MAX_ATTACHMENT_BYTES=20*1024*1024
 MAX_ZIP_MEMBERS=50
 _scan_lock=threading.Lock()
+_background_lock=threading.Lock()
+_background_started=False
 
 
 def _data_dir():
@@ -30,7 +33,7 @@ def _state_path(): return _data_dir()/"outlook_fiscal_state.json"
 
 
 def load_config():
-    default={"enabled":False,"interval_minutes":15,"account":ACCOUNT,"folder":DEFAULT_FOLDER,"batch_size":50}
+    default={"enabled":True,"interval_minutes":15,"account":ACCOUNT,"folder":DEFAULT_FOLDER,"batch_size":50}
     try:
         saved=json.loads(_config_path().read_text(encoding="utf-8")); default.update(saved if isinstance(saved,dict) else {})
     except Exception: pass
@@ -41,6 +44,34 @@ def save_config(config):
     current=load_config(); current.update(config)
     tmp=_config_path().with_suffix(".tmp"); tmp.write_text(json.dumps(current,ensure_ascii=False,indent=2),encoding="utf-8"); os.replace(tmp,_config_path())
     return current
+
+
+def start_background_sync():
+    """Arranca el importador fiscal local al login y lo repite segun configuracion."""
+    global _background_started
+    with _background_lock:
+        if _background_started:
+            return False
+        _background_started=True
+
+    def worker():
+        last_run=0
+        while True:
+            try:
+                config=load_config()
+                interval=max(1,int(config.get("interval_minutes") or 15))*60
+                if config.get("enabled") and time.time()-last_run>=interval:
+                    last_run=time.time()
+                    try:
+                        scan_and_import(max_messages=int(config.get("batch_size") or 50))
+                    except Exception as exc:
+                        print(f"Outlook fiscal automatico: {exc}")
+            except Exception as exc:
+                print(f"Outlook fiscal scheduler: {exc}")
+            time.sleep(60)
+
+    threading.Thread(target=worker,daemon=True).start()
+    return True
 
 
 def _load_state():

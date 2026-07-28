@@ -36,6 +36,19 @@ class PopupGuidedMonthlyClose(tk.Toplevel):
         ttk.Button(header, text="Ver alertas", command=self._open_alerts).pack(side="left", padx=4)
         ttk.Label(header, textvariable=self.ready_var, font=("Segoe UI", 11, "bold")).pack(side="right")
 
+        guide = ttk.LabelFrame(self, text="Como funciona", padding=8)
+        guide.pack(fill="x", padx=10, pady=(0, 8))
+        ttk.Label(
+            guide,
+            text=(
+                "Este cierre es una lista de control auditable: valida que el periodo cuadre, "
+                "que no existan alertas criticas y que cada paso tenga responsable/evidencia. "
+                "Cerrar periodo bloquea nuevos asientos y cambios contables en ese mes."
+            ),
+            wraplength=1160,
+            foreground="#444",
+        ).pack(anchor="w")
+
         cards = ttk.Frame(self, padding=(10, 0, 10, 8))
         cards.pack(fill="x")
         for idx, (key, label) in enumerate((

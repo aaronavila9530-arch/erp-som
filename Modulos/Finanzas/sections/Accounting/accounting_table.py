@@ -149,8 +149,16 @@ class AccountingTable(tk.Frame):
             self._render_page()
             return
 
-        # Orden natural por asiento
-        entries = sorted(entries, key=lambda x: x.get("entry_id", 0))
+        # El backend ya entrega el ledger por fecha/asiento descendente.
+        # Mantener ese orden evita que la UI vuelva a poner primero asientos antiguos.
+        entries = sorted(
+            entries,
+            key=lambda x: (
+                str(x.get("entry_date") or ""),
+                int(x.get("entry_id") or 0),
+            ),
+            reverse=True,
+        )
 
         for entry in entries:
             entry_id = entry.get("entry_id")

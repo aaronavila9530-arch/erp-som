@@ -312,8 +312,9 @@ def _fetch_accounting_report_lines(
         params.append(origin)
 
     if account_code and account_code != "TODOS":
-        conditions.append("l.account_code = %s")
-        params.append(account_code)
+        code = str(account_code).strip()
+        conditions.append("(l.account_code = %s OR l.account_code LIKE %s)")
+        params.extend([code, f"{code}.%"])
 
     where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
@@ -1202,8 +1203,8 @@ def get_finance_audit(
         conditions.append("entity_id = %s")
         params.append(str(entity_id))
     if performed_by:
-        conditions.append("LOWER(performed_by) = LOWER(%s)")
-        params.append(performed_by)
+        conditions.append("LOWER(COALESCE(performed_by,'')) LIKE LOWER(%s)")
+        params.append(f"%{performed_by}%")
     where = "WHERE " + " AND ".join(conditions) if conditions else ""
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         ensure_finance_audit_schema(cur)
@@ -1585,8 +1586,9 @@ def get_accounting_ledger(
         params.append(origin)
 
     if account_code:
-        conditions.append("l.account_code = %s")
-        params.append(account_code)
+        code = str(account_code).strip()
+        conditions.append("(l.account_code = %s OR l.account_code LIKE %s)")
+        params.extend([code, f"{code}.%"])
 
     where_clause = ""
     if conditions:
