@@ -501,7 +501,48 @@ def update_ballast(draft_survey_id: str, payload: dict, conn=Depends(get_db)):
         existing = cur.fetchone()
 
         if not existing:
-            raise HTTPException(404, "No existe registro ballast para actualizar")
+            flat_payload = _build_ballast_flat_payload(payload, cols)
+            flat_payload[fk_col] = real_id
+
+            if "draft_report_number" in cols and draft_report_number:
+                flat_payload["draft_report_number"] = draft_report_number
+
+            ballast_meta = _get_table_column_types(cur, "draft_survey_ballast")
+            flat_payload = _normalize_payload_by_db_types(flat_payload, ballast_meta)
+
+            if "status" in cols:
+                flat_payload["status"] = "Pending for review"
+
+            insert_fields = {
+                k: v
+                for k, v in flat_payload.items()
+                if k in cols and k not in ("id", "created_at", "updated_at")
+            }
+
+            if not insert_fields:
+                raise HTTPException(400, "No hay campos válidos para crear ballast")
+
+            fields = list(insert_fields.keys())
+            placeholders = ", ".join(["%s"] * len(fields))
+            columns_sql = ", ".join(fields)
+            values = [insert_fields[f] for f in fields]
+
+            cur.execute(f"""
+                INSERT INTO draft_survey_ballast ({columns_sql})
+                VALUES ({placeholders})
+                RETURNING id
+            """, values)
+
+            ballast_id = cur.fetchone()[0]
+            conn.commit()
+
+            return {
+                "success": True,
+                "action": "created_by_put",
+                "ballast_id": ballast_id,
+                "draft_survey_id": real_id,
+                "saved_fields": len(insert_fields)
+            }
 
         ballast_id = existing[0]
 
