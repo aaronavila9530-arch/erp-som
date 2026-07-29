@@ -194,6 +194,47 @@ def _ensure_schema(conn):
     conn.commit()
 
 
+def _sale_amounts_from_accounting(cur, document_number):
+    if not document_number:
+        return None
+    cur.execute("""
+        SELECT
+          COALESCE(SUM(CASE
+            WHEN (l.account_code LIKE '4%%' OR l.account_code = '4101') AND COALESCE(l.credit,0) > 0
+            THEN l.credit - COALESCE(l.debit,0)
+            ELSE 0
+          END),0) AS subtotal,
+          COALESCE(SUM(CASE
+            WHEN l.account_code IN ('2.1.02.03','2108') AND COALESCE(l.credit,0) > 0
+            THEN l.credit - COALESCE(l.debit,0)
+            ELSE 0
+          END),0) AS tax_amount,
+          COALESCE(SUM(CASE
+            WHEN l.account_code IN ('1.1.04.01','1101') AND COALESCE(l.debit,0) > 0
+            THEN l.debit - COALESCE(l.credit,0)
+            ELSE 0
+          END),0) AS total
+        FROM collections c
+        JOIN accounting_entries e
+          ON e.origin='COLLECTIONS'
+         AND e.origin_id=c.id
+         AND e.workflow_status='POSTED'
+        JOIN accounting_lines l ON l.entry_id=e.id
+        WHERE c.numero_documento=%s
+    """, (str(document_number),))
+    row = cur.fetchone() or {}
+    subtotal = _money(row.get("subtotal"))
+    tax_amount = _money(row.get("tax_amount"))
+    total = _money(row.get("total"))
+    if total <= 0 and subtotal <= 0 and tax_amount <= 0:
+        return None
+    return {
+        "subtotal": subtotal if subtotal > 0 else max(total - tax_amount, Decimal("0.00")),
+        "tax_amount": tax_amount,
+        "total": total if total > 0 else subtotal + tax_amount,
+    }
+
+
 def _local(tag: str) -> str:
     return tag.rsplit("}", 1)[-1]
 
@@ -425,6 +466,17 @@ def sync_tax_documents(conn=Depends(get_db)):
             """)
             for row in cur.fetchall():
                 total = _money(row.get("total") or 0)
+                accounted = _sale_amounts_from_accounting(cur, row.get("numero_documento"))
+                invoice_type = str(row.get("tipo_factura") or "").upper()
+                is_export = "EXPORT" in invoice_type or "EXPORTACION" in invoice_type or "EXPORTACIÓN" in invoice_type
+                if is_export:
+                    subtotal = accounted["total"] if accounted else total
+                    tax_amount = Decimal("0.00")
+                    fiscal_total = accounted["total"] if accounted else total
+                else:
+                    subtotal = accounted["subtotal"] if accounted else total
+                    tax_amount = accounted["tax_amount"] if accounted else Decimal("0.00")
+                    fiscal_total = accounted["total"] if accounted else total
                 data = {
                     "document_type": "FE" if str(row.get("tipo_factura") or "").upper() == "ELECTRONICA" else "FE",
                     "document_number": row.get("numero_documento"),
@@ -432,21 +484,37 @@ def sync_tax_documents(conn=Depends(get_db)):
                     "receiver_identification": row.get("codigo_cliente"),
                     "receiver_name": row.get("nombre_cliente"),
                     "issue_datetime": row.get("fecha_emision"),
-                    "currency_code": row.get("moneda") or "CRC",
-                    "subtotal": total,
-                    "tax_amount": Decimal("0.00"),
-                    "total": total,
+                    "currency_code": "CRC" if accounted else (row.get("moneda") or "CRC"),
+                    "exchange_rate": Decimal("1.00") if accounted else Decimal("1.00"),
+                    "subtotal": subtotal,
+                    "tax_amount": tax_amount,
+                    "total": fiscal_total,
                     "lines": [{
                         "line_number": 1,
                         "description": row.get("descripcion_servicio") or "Venta ERP-SOM",
                         "quantity": Decimal("1.00"),
-                        "unit_price": total,
-                        "subtotal": total,
-                        "tax_amount": Decimal("0.00"),
-                        "total": total,
+                        "unit_price": subtotal,
+                        "subtotal": subtotal,
+                        "tax_amount": tax_amount,
+                        "total": fiscal_total,
                     }],
                 }
                 doc_id = _save_document(cur, "SALE", data, source_table="invoicing", source_id=row["id"], user="SYSTEM_SYNC")
+                cur.execute("DELETE FROM tax_document_lines WHERE document_id=%s", (doc_id,))
+                for line in data["lines"]:
+                    cur.execute(
+                        "INSERT INTO tax_document_lines(document_id,line_number,description,quantity,unit_price,subtotal,tax_amount,total) VALUES(%s,%s,%s,%s,%s,%s,%s,%s)",
+                        (
+                            doc_id,
+                            line["line_number"],
+                            line["description"],
+                            line["quantity"],
+                            line["unit_price"],
+                            line["subtotal"],
+                            line["tax_amount"],
+                            line["total"],
+                        ),
+                    )
                 cur.execute(
                     "UPDATE tax_electronic_documents SET pdf_path=%s,status=%s WHERE id=%s",
                     (row.get("pdf_path"), "ACCEPTED" if str(row.get("estado","")).upper() in {"PAGADA","EMITIDA","ACEPTADA"} else "PENDING", doc_id)
@@ -617,8 +685,19 @@ def tax_book(direction:str,period:str,conn=Depends(get_db)):
 def tax_iva(period:str,conn=Depends(get_db)):
     _ensure_schema(conn); start,end=_period_bounds(period)
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        cur.execute("""SELECT direction,COALESCE(SUM(subtotal),0) subtotal,COALESCE(SUM(exempt_amount),0) exempt,
-          COALESCE(SUM(tax_amount),0) tax,COALESCE(SUM(total),0) total,COUNT(*) documents,
+        amount_crc = """
+            CASE
+              WHEN UPPER(COALESCE(currency_code,'CRC')) IN ('CRC','COLON','COLONES')
+              THEN %s
+              ELSE %s * COALESCE(NULLIF(exchange_rate,0),1)
+            END
+        """
+        cur.execute(f"""SELECT direction,
+          COALESCE(SUM({amount_crc % ('subtotal', 'subtotal')}),0) subtotal,
+          COALESCE(SUM({amount_crc % ('exempt_amount', 'exempt_amount')}),0) exempt,
+          COALESCE(SUM({amount_crc % ('tax_amount', 'tax_amount')}),0) tax,
+          COALESCE(SUM({amount_crc % ('total', 'total')}),0) total,
+          COUNT(*) documents,
           COUNT(*) FILTER(WHERE xml_path IS NULL) missing_xml,COUNT(*) FILTER(WHERE hacienda_status='PENDING') pending_hacienda
           FROM tax_electronic_documents
           WHERE issue_datetime >= %s
@@ -628,10 +707,33 @@ def tax_iva(period:str,conn=Depends(get_db)):
         by_direction={r["direction"]:r for r in cur.fetchall()}
         cur.execute("SELECT setting_key,setting_value FROM tax_settings WHERE setting_key IN ('IVA_DEBIT_ACCOUNT','IVA_CREDIT_ACCOUNT')")
         settings={r["setting_key"]:r["setting_value"] for r in cur.fetchall()}
+        debit_codes = list(dict.fromkeys([settings.get("IVA_DEBIT_ACCOUNT","2108"), "2.1.02.03", "2108"]))
+        credit_codes = list(dict.fromkeys([settings.get("IVA_CREDIT_ACCOUNT","1131"), "1.1.13.99", "1131"]))
         cur.execute("""SELECT account_code,COALESCE(SUM(debit),0) debit,COALESCE(SUM(credit),0) credit
           FROM accounting_lines l JOIN accounting_entries e ON e.id=l.entry_id
-          WHERE e.entry_date >= %s AND e.entry_date < %s AND e.workflow_status='POSTED' AND account_code IN (%s,%s) GROUP BY account_code""",
-                    (start,end,settings.get("IVA_DEBIT_ACCOUNT","2108"),settings.get("IVA_CREDIT_ACCOUNT","1131")))
+          WHERE e.entry_date >= %s
+            AND e.entry_date < %s
+            AND e.workflow_status='POSTED'
+            AND (account_code = ANY(%s) OR account_code = ANY(%s))
+            AND (
+              (e.origin='COLLECTIONS' AND EXISTS (
+                SELECT 1 FROM collections c
+                WHERE c.id=e.origin_id
+                  AND c.fecha_emision >= %s
+                  AND c.fecha_emision < %s
+              ))
+              OR
+              (e.origin='ITP' AND EXISTS (
+                SELECT 1 FROM payment_obligations p
+                WHERE p.id=e.origin_id
+                  AND p.issue_date >= %s
+                  AND p.issue_date < %s
+              ))
+              OR
+              (COALESCE(e.origin,'') NOT IN ('COLLECTIONS','ITP'))
+            )
+          GROUP BY account_code""",
+                    (start,end,debit_codes,credit_codes,start,end,start,end))
         gl={r["account_code"]:r for r in cur.fetchall()}
         cur.execute("""SELECT
           COUNT(*) FILTER(WHERE NOT EXISTS(SELECT 1 FROM tax_document_lines x WHERE x.document_id=d.id)) documents_without_lines,
@@ -643,8 +745,8 @@ def tax_iva(period:str,conn=Depends(get_db)):
         quality=cur.fetchone()
     sales=by_direction.get("SALE",{}); purchases=by_direction.get("PURCHASE",{})
     debit=_money(sales.get("tax")); credit=_money(purchases.get("tax")); net=debit-credit
-    debit_gl=_money(gl.get(settings.get("IVA_DEBIT_ACCOUNT","2108"),{}).get("credit"))-_money(gl.get(settings.get("IVA_DEBIT_ACCOUNT","2108"),{}).get("debit"))
-    credit_gl=_money(gl.get(settings.get("IVA_CREDIT_ACCOUNT","1131"),{}).get("debit"))-_money(gl.get(settings.get("IVA_CREDIT_ACCOUNT","1131"),{}).get("credit"))
+    debit_gl=sum((_money(gl.get(code,{}).get("credit"))-_money(gl.get(code,{}).get("debit")) for code in debit_codes), Decimal("0"))
+    credit_gl=sum((_money(gl.get(code,{}).get("debit"))-_money(gl.get(code,{}).get("credit")) for code in credit_codes), Decimal("0"))
     return {"period":period,"fiscal":{"sales_tax":float(debit),"purchase_tax_credit":float(credit),"net_tax":float(net),
       "sales_total":float(_money(sales.get('total'))),"purchase_total":float(_money(purchases.get('total')))},
       "accounting":{"debit_tax":float(debit_gl),"credit_tax":float(credit_gl),"net_tax":float(debit_gl-credit_gl)},

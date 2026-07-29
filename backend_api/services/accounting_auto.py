@@ -812,12 +812,38 @@ def sync_itp_to_accounting(conn):
             is_credit_note = (obligation_type == "SUPPLIER_CREDIT_NOTE")
             calc_total = abs(total_crc)
 
+            def _purchase_xml_tax_crc(reference):
+                if not reference:
+                    return None
+                cur.execute("""
+                    SELECT currency_code, exchange_rate, tax_amount
+                    FROM tax_electronic_documents
+                    WHERE direction='PURCHASE'
+                      AND (electronic_key=%s OR document_number=%s)
+                      AND COALESCE(tax_amount,0) >= 0
+                    ORDER BY
+                      CASE WHEN COALESCE(tax_amount,0) > 0 THEN 0 ELSE 1 END,
+                      updated_at DESC NULLS LAST,
+                      id DESC
+                    LIMIT 1
+                """, (str(reference), str(reference)))
+                row = cur.fetchone()
+                if not row:
+                    return None
+                tax_raw = float(row.get("tax_amount") or 0)
+                doc_currency = (row.get("currency_code") or "CRC").upper()
+                rate = float(row.get("exchange_rate") or 1)
+                if doc_currency == "USD":
+                    return round(tax_raw * rate, 2)
+                return round(tax_raw, 2)
+
             # ------------------------------------------------------------
             # IVA SOLO PARA SUPPLIER
             # ------------------------------------------------------------
             if payee_type == "SUPPLIER":
-                subtotal = round(calc_total / 1.13, 2)
-                iva = round(calc_total - subtotal, 2)
+                xml_iva = _purchase_xml_tax_crc(ob.get("reference"))
+                iva = min(round(abs(xml_iva or 0), 2), calc_total)
+                subtotal = round(calc_total - iva, 2)
             else:
                 subtotal = calc_total
                 iva = 0.0
