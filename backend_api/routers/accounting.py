@@ -305,8 +305,22 @@ def _append_account_filter(conditions, params, account_code: str | None):
     code = str(account_code).strip()
     if not code:
         return
-    clauses = ["l.account_code = %s", "l.account_code LIKE %s"]
-    values = [code, f"{code}.%"]
+    equivalent_accounts = {
+        "1.1.04.01": ["1101"],
+        "1101": ["1.1.04.01"],
+        "4.1.01": ["4101"],
+        "4101": ["4.1.01"],
+        "2.1.02.03": ["2108"],
+        "2108": ["2.1.02.03"],
+        "2105": ["2.1.05"],
+        "2.1.05": ["2105"],
+    }
+    codes = [code, *equivalent_accounts.get(code, [])]
+    clauses = []
+    values = []
+    for item in codes:
+        clauses.extend(["l.account_code = %s", "l.account_code LIKE %s"])
+        values.extend([item, f"{item}.%"])
     if code == "1.1.02.02":
         clauses.extend([
             "LOWER(l.account_name) LIKE %s",
@@ -1668,6 +1682,57 @@ def get_accounting_validation_alerts(
                     row,
                 )
 
+        if not origin or origin in ("TODOS", "COLLECTIONS"):
+            cur.execute("""
+                SELECT c.id, c.numero_documento, c.nombre_cliente, c.total, c.moneda, c.fecha_emision
+                FROM collections c
+                LEFT JOIN accounting_entries e
+                  ON e.origin='COLLECTIONS'
+                 AND e.origin_id=c.id
+                 AND e.workflow_status='POSTED'
+                WHERE COALESCE(c.total,0)>0
+                  AND COALESCE(c.fecha_emision::date, CURRENT_DATE) <= CURRENT_DATE
+                  AND e.id IS NULL
+                ORDER BY c.id DESC
+                LIMIT %s
+            """, (limit,))
+            for row in cur.fetchall():
+                add(
+                    "critical",
+                    "COLLECTION_INVOICE_WITHOUT_POSTED_ENTRY",
+                    "Factura de venta sin asiento contabilizado",
+                    f"Factura {row['numero_documento']} de {row['nombre_cliente']} no tiene asiento POSTED.",
+                    "collections",
+                    row["id"],
+                    row,
+                )
+
+            cur.execute("""
+                SELECT e.id entry_id, c.id collection_id, c.numero_documento, c.nombre_cliente,
+                       COUNT(*) FILTER(WHERE l.account_code IN ('1.1.04.01','1101') AND COALESCE(l.debit,0)>0) ar_lines,
+                       COUNT(*) FILTER(WHERE (l.account_code LIKE '4%%' OR l.account_code='4101') AND COALESCE(l.credit,0)>0) revenue_lines
+                FROM collections c
+                JOIN accounting_entries e ON e.origin='COLLECTIONS' AND e.origin_id=c.id AND e.workflow_status='POSTED'
+                LEFT JOIN accounting_lines l ON l.entry_id=e.id
+                WHERE COALESCE(c.total,0)>0
+                  AND COALESCE(c.fecha_emision::date, CURRENT_DATE) <= CURRENT_DATE
+                GROUP BY e.id,c.id,c.numero_documento,c.nombre_cliente
+                HAVING COUNT(*) FILTER(WHERE l.account_code IN ('1.1.04.01','1101') AND COALESCE(l.debit,0)>0)=0
+                    OR COUNT(*) FILTER(WHERE (l.account_code LIKE '4%%' OR l.account_code='4101') AND COALESCE(l.credit,0)>0)=0
+                ORDER BY e.id DESC
+                LIMIT %s
+            """, (limit,))
+            for row in cur.fetchall():
+                add(
+                    "critical",
+                    "COLLECTION_INVOICE_BAD_CLASSIFICATION",
+                    "Factura de venta con clasificacion incompleta",
+                    f"Factura {row['numero_documento']} debe tener debito a CxC y credito a ingresos.",
+                    "accounting_entry",
+                    row["entry_id"],
+                    row,
+                )
+
         if not origin or origin in ("TODOS", "ITP", "ITP_PAYMENT"):
             cur.execute("""
                 SELECT id, payee_name, reference, status, payment_bank_account_code, payment_bank_account_name, last_payment_date
@@ -1687,6 +1752,60 @@ def get_accounting_validation_alerts(
                     f"Obligacion ITP {row['id']} tiene pago sin cuenta bancaria contable.",
                     "payment_obligation",
                     row["id"],
+                    row,
+                )
+
+            cur.execute("""
+                SELECT p.id, p.payee_name, p.reference, p.total, p.currency, p.issue_date
+                FROM payment_obligations p
+                LEFT JOIN accounting_entries e
+                  ON e.origin='ITP'
+                 AND e.origin_id=p.id
+                 AND e.workflow_status='POSTED'
+                WHERE p.active=TRUE
+                  AND p.record_type='OBLIGATION'
+                  AND COALESCE(p.total,0)>0
+                  AND COALESCE(p.issue_date, CURRENT_DATE) <= CURRENT_DATE
+                  AND e.id IS NULL
+                ORDER BY p.id DESC
+                LIMIT %s
+            """, (limit,))
+            for row in cur.fetchall():
+                add(
+                    "critical",
+                    "ITP_OBLIGATION_WITHOUT_POSTED_ENTRY",
+                    "Factura/obligacion de compra sin asiento contabilizado",
+                    f"ITP {row['id']} {row['payee_name']} no tiene asiento POSTED.",
+                    "payment_obligation",
+                    row["id"],
+                    row,
+                )
+
+            cur.execute("""
+                SELECT e.id entry_id, p.id obligation_id, p.payee_name, p.reference,
+                       COUNT(*) FILTER(WHERE l.account_code='2.1.01.01' AND COALESCE(l.credit,0)>0) payable_lines,
+                       COUNT(*) FILTER(WHERE (l.account_code LIKE '5%%' OR l.account_code LIKE '1%%') AND COALESCE(l.debit,0)>0) debit_lines
+                FROM payment_obligations p
+                JOIN accounting_entries e ON e.origin='ITP' AND e.origin_id=p.id AND e.workflow_status='POSTED'
+                LEFT JOIN accounting_lines l ON l.entry_id=e.id
+                WHERE p.active=TRUE
+                  AND p.record_type='OBLIGATION'
+                  AND COALESCE(p.total,0)>0
+                  AND COALESCE(p.issue_date, CURRENT_DATE) <= CURRENT_DATE
+                GROUP BY e.id,p.id,p.payee_name,p.reference
+                HAVING COUNT(*) FILTER(WHERE l.account_code='2.1.01.01' AND COALESCE(l.credit,0)>0)=0
+                    OR COUNT(*) FILTER(WHERE (l.account_code LIKE '5%%' OR l.account_code LIKE '1%%') AND COALESCE(l.debit,0)>0)=0
+                ORDER BY e.id DESC
+                LIMIT %s
+            """, (limit,))
+            for row in cur.fetchall():
+                add(
+                    "critical",
+                    "ITP_OBLIGATION_BAD_CLASSIFICATION",
+                    "Factura/obligacion de compra con clasificacion incompleta",
+                    f"ITP {row['obligation_id']} debe tener debito a gasto/activo y credito a CxP.",
+                    "accounting_entry",
+                    row["entry_id"],
                     row,
                 )
 

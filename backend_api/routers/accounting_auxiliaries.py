@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -17,6 +17,37 @@ def _decimal(value, field="amount"):
         return Decimal(str(value or 0)).quantize(Decimal("0.01"))
     except (InvalidOperation, TypeError, ValueError):
         raise HTTPException(400, f"Invalid {field}")
+
+
+def _period_as_of(period: str | None):
+    if not period:
+        return date.today()
+    try:
+        year, month = (int(part) for part in period.split("-"))
+        if month == 12:
+            return date(year + 1, 1, 1) - timedelta(days=1)
+        return date(year, month + 1, 1) - timedelta(days=1)
+    except Exception:
+        return date.today()
+
+
+def _fx_rate(cur, currency_code, as_of):
+    currency = str(currency_code or "CRC").upper().strip()
+    if currency in {"CRC", "COLON", "COLONES"}:
+        return Decimal("1.00")
+    cur.execute("""
+        SELECT rate
+        FROM exchange_rate
+        WHERE rate_date <= %s
+        ORDER BY rate_date DESC
+        LIMIT 1
+    """, (as_of,))
+    row = cur.fetchone() or {}
+    try:
+        rate = Decimal(str(row.get("rate") or 1))
+    except Exception:
+        rate = Decimal("1.00")
+    return rate if rate > 0 else Decimal("1.00")
 
 
 def _ensure_schema(conn):
@@ -758,6 +789,7 @@ def reconcile_auxiliary_details(
         params.append(entity_type.upper())
     results = []
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        as_of = _period_as_of(period)
         cur.execute(f"""
             SELECT d.*, e.entity_type, e.entity_code, e.entity_name,
                    COALESCE(e.control_account_code,s.control_account_code) AS control_account_code,
@@ -849,7 +881,9 @@ def reconcile_auxiliary_details(
                     ledger_balance = cur.fetchone()["balance"]
                     ledger_scope = "CONTROL_ACCOUNT"
 
-            aux_balance = Decimal(doc.get("open_amount") or 0)
+            aux_original = Decimal(doc.get("open_amount") or 0)
+            fx_rate = _fx_rate(cur, doc.get("currency_code"), as_of)
+            aux_balance = (aux_original * fx_rate).quantize(Decimal("0.01"))
             difference = None if ledger_balance is None else aux_balance - Decimal(ledger_balance or 0)
             status = "UNMAPPED" if ledger_balance is None else ("OK" if difference == 0 else "DIFFERENCE")
             results.append({
@@ -861,6 +895,10 @@ def reconcile_auxiliary_details(
                 "document_number": doc.get("document_number"),
                 "currency_code": doc.get("currency_code"),
                 "control_account_code": account,
+                "auxiliary_original_balance": aux_original,
+                "auxiliary_original_currency": doc.get("currency_code"),
+                "fx_rate": fx_rate,
+                "fx_as_of": as_of,
                 "auxiliary_balance": aux_balance,
                 "ledger_balance": ledger_balance,
                 "difference": difference,

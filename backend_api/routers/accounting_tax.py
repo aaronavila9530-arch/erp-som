@@ -165,9 +165,9 @@ def _ensure_schema(conn):
               ('TRIBU-INFORMATIVA-CLIENTES-PROVEEDORES','Declaracion informativa de clientes, proveedores y gastos especificos','ANNUAL',28,2,1,'WHEN_APPLICABLE',
                'https://www.hacienda.go.cr/CalendarioPagos.html',
                'Obligacion informativa anual cuando aplique por operaciones reportables.'),
-              ('CCSS-PLANILLA','Planilla CCSS','MONTHLY',15,NULL,1,'PAYROLL',
-               'https://www.ccss.sa.cr/',
-               'Obligacion laboral/previsional mensual asociada a planilla; validar fechas oficiales de la CCSS.'),
+              ('CCSS-PLANILLA','Planilla CCSS','MONTHLY',NULL,NULL,1,'PAYROLL',
+               'https://aissfa.ccss.sa.cr/patronos',
+               'Regla CCSS patronos: presentacion desde el 26 del mes hasta el cuarto dia habil del mes siguiente; validar pago en Oficina Virtual CCSS.'),
               ('INS-RT','Poliza de riesgos del trabajo INS','ANNUAL',31,1,1,'PAYROLL',
                'https://www.grupoins.com/',
                'Obligacion de seguro de riesgos del trabajo; validar renovacion y pagos segun poliza.')
@@ -589,12 +589,25 @@ def list_documents(direction:str|None=None,period:str|None=None,status:str|None=
 def tax_book(direction:str,period:str,conn=Depends(get_db)):
     _ensure_schema(conn); direction=direction.upper()
     if direction not in {"SALE","PURCHASE"}: raise HTTPException(400,"Libro debe ser SALE o PURCHASE")
-    start,end=_period_bounds(period)
+    all_periods = str(period or "").upper() in {"", "ALL", "TODOS"}
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        cur.execute("""SELECT id,document_type,document_number,electronic_key,issue_datetime,currency_code,exchange_rate,
+        if all_periods:
+            cur.execute("""SELECT id,document_type,document_number,electronic_key,issue_datetime,currency_code,exchange_rate,
+              issuer_identification,issuer_name,receiver_identification,receiver_name,subtotal,exempt_amount,tax_amount,total,
+              hacienda_status,xml_path FROM tax_electronic_documents
+              WHERE direction=%s
+                AND COALESCE(issue_datetime::date, CURRENT_DATE) <= CURRENT_DATE
+              ORDER BY issue_datetime DESC NULLS LAST,document_number""",(direction,))
+        else:
+            start,end=_period_bounds(period)
+            cur.execute("""SELECT id,document_type,document_number,electronic_key,issue_datetime,currency_code,exchange_rate,
           issuer_identification,issuer_name,receiver_identification,receiver_name,subtotal,exempt_amount,tax_amount,total,
           hacienda_status,xml_path FROM tax_electronic_documents
-          WHERE direction=%s AND issue_datetime >= %s AND issue_datetime < %s ORDER BY issue_datetime,document_number""",(direction,start,end))
+          WHERE direction=%s
+            AND issue_datetime >= %s
+            AND issue_datetime < %s
+            AND COALESCE(issue_datetime::date, CURRENT_DATE) <= CURRENT_DATE
+          ORDER BY issue_datetime,document_number""",(direction,start,end))
         rows=cur.fetchall()
     totals={k:float(sum((_money(r[k]) for r in rows),Decimal("0"))) for k in ("subtotal","exempt_amount","tax_amount","total")}
     return {"period":period,"direction":direction,"data":rows,"totals":totals}
@@ -607,7 +620,11 @@ def tax_iva(period:str,conn=Depends(get_db)):
         cur.execute("""SELECT direction,COALESCE(SUM(subtotal),0) subtotal,COALESCE(SUM(exempt_amount),0) exempt,
           COALESCE(SUM(tax_amount),0) tax,COALESCE(SUM(total),0) total,COUNT(*) documents,
           COUNT(*) FILTER(WHERE xml_path IS NULL) missing_xml,COUNT(*) FILTER(WHERE hacienda_status='PENDING') pending_hacienda
-          FROM tax_electronic_documents WHERE issue_datetime >= %s AND issue_datetime < %s GROUP BY direction""",(start,end))
+          FROM tax_electronic_documents
+          WHERE issue_datetime >= %s
+            AND issue_datetime < %s
+            AND COALESCE(issue_datetime::date, CURRENT_DATE) <= CURRENT_DATE
+          GROUP BY direction""",(start,end))
         by_direction={r["direction"]:r for r in cur.fetchall()}
         cur.execute("SELECT setting_key,setting_value FROM tax_settings WHERE setting_key IN ('IVA_DEBIT_ACCOUNT','IVA_CREDIT_ACCOUNT')")
         settings={r["setting_key"]:r["setting_value"] for r in cur.fetchall()}
@@ -619,7 +636,10 @@ def tax_iva(period:str,conn=Depends(get_db)):
         cur.execute("""SELECT
           COUNT(*) FILTER(WHERE NOT EXISTS(SELECT 1 FROM tax_document_lines x WHERE x.document_id=d.id)) documents_without_lines,
           COALESCE(SUM((SELECT COUNT(*) FROM tax_document_lines l WHERE l.document_id=d.id AND COALESCE(l.cabys_code,'')='')),0) missing_cabys
-          FROM tax_electronic_documents d WHERE d.issue_datetime >= %s AND d.issue_datetime < %s""",(start,end))
+          FROM tax_electronic_documents d
+          WHERE d.issue_datetime >= %s
+            AND d.issue_datetime < %s
+            AND COALESCE(d.issue_datetime::date, CURRENT_DATE) <= CURRENT_DATE""",(start,end))
         quality=cur.fetchone()
     sales=by_direction.get("SALE",{}); purchases=by_direction.get("PURCHASE",{})
     debit=_money(sales.get("tax")); credit=_money(purchases.get("tax")); net=debit-credit
@@ -681,6 +701,17 @@ def _next_business_day(value: date) -> date:
     return value
 
 
+def _nth_business_day(year: int, month: int, n: int) -> date:
+    current = date(year, month, 1)
+    count = 0
+    while True:
+        if current.weekday() < 5:
+            count += 1
+            if count == n:
+                return current
+        current += timedelta(days=1)
+
+
 def _tax_alert(due_date: date, days_before: int) -> dict:
     today = date.today()
     alert_date = due_date - timedelta(days=max(days_before, 0))
@@ -708,6 +739,7 @@ def _calendar_entry(item, item_period: str, due_date: date) -> dict:
     return {
         "period": item_period,
         "estimated_due_date": due_date.isoformat(),
+        "source_rule": item.get("notes") or "Regla configurada en ERP-SOM.",
         **_tax_alert(due_date, alert_days),
     }
 
@@ -720,7 +752,14 @@ def obligations(year:int|None=None,period:str|None=None,pending_only:bool=False,
         cur.execute("SELECT * FROM tax_obligations WHERE active=TRUE ORDER BY tax_code")
         for item in cur.fetchall():
             due_dates=[]
-            if item["periodicity"]=="MONTHLY" and item.get("due_day"):
+            if item["tax_code"] == "CCSS-PLANILLA":
+                for month in range(1,13):
+                    item_period = f"{year}-{month:02d}"
+                    if min_period and item_period < min_period:
+                        continue
+                    nxt=date(year+(month==12),(month%12)+1,1)
+                    due_dates.append(_calendar_entry(item, item_period, _nth_business_day(nxt.year, nxt.month, 4)))
+            elif item["periodicity"]=="MONTHLY" and item.get("due_day"):
                 for month in range(1,13):
                     item_period = f"{year}-{month:02d}"
                     if min_period and item_period < min_period:
