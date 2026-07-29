@@ -146,7 +146,7 @@ def _latest_fx_rate(cur):
 def _crc_amount_sql(amount_field: str, currency_field: str):
     return f"""
         CASE
-            WHEN UPPER(COALESCE({currency_field}, 'CRC')) IN ('USD', 'US$', 'DOLLAR', 'DOLARES', 'DOLARES US')
+            WHEN UPPER(TRIM(COALESCE({currency_field}, 'CRC'))) IN ('USD', 'US$', '$', 'DOLLAR', 'DOLAR', 'DOLARES', 'DOLARES US')
             THEN COALESCE({amount_field}, 0) * %s
             ELSE COALESCE({amount_field}, 0)
         END
@@ -347,16 +347,16 @@ def _automatic_checks(cur, period):
     fx_open = int(_scalar(cur, """SELECT COUNT(*) count FROM accounting_auxiliary_documents
       WHERE status='OPEN' AND currency_code<>'CRC'"""))
     return {
-        "SOURCE_SYNC": {"ready": True, "detail": "Use Sincronizar ERP antes de completar."},
-        "ENTRY_WORKFLOW": {"ready": entry_blockers == 0, "detail": f"{entry_blockers} incidencias de asientos antes del cierre"},
-        "BANK_RECONCILIATION": {"ready": bank_blockers == 0, "detail": f"{controls['bank_open_items']} partidas abiertas y {controls['bank_unclosed_statements']} extractos sin cierre"},
-        "AR_REVIEW": {"ready": True, "detail": "Confirme disputas, vencimientos y deterioro."},
-        "AP_REVIEW": {"ready": True, "detail": "Confirme vencimientos, soportes y pagos."},
-        "AUX_RECONCILIATION": {"ready": aux_blockers == 0, "detail": f"{aux_blockers} auxiliares con diferencias o sin mapeo"},
-        "TAX_REVIEW": {"ready": tax_blockers == 0, "detail": f"{controls['tax_quality_issues']} incidencias XML/fiscales; {controls['iva_difference_count']} diferencias IVA"},
-        "FX_REVALUATION": {"ready": fx_open == 0, "detail": f"{fx_open} documentos abiertos en moneda extranjera"},
-        "FINANCIAL_STATEMENTS": {"ready": True, "detail": "Revision profesional y analitica requerida."},
-        "MANAGEMENT_APPROVAL": {"ready": False, "detail": "Aprobacion explicita requerida."},
+        "SOURCE_SYNC": {"ready": True, "detail": "Primero pulse Sincronizar ERP; valida que facturas, bancos, pagos, XML y planillas esten actualizados."},
+        "ENTRY_WORKFLOW": {"ready": entry_blockers == 0, "detail": "Listo" if entry_blockers == 0 else f"Resolver {entry_blockers} asientos borrador, descuadrados, sin lineas o invalidos."},
+        "BANK_RECONCILIATION": {"ready": bank_blockers == 0, "detail": "Listo" if bank_blockers == 0 else f"Cerrar bancos: {controls['bank_open_items']} partidas abiertas y {controls['bank_unclosed_statements']} extractos sin cierre."},
+        "AR_REVIEW": {"ready": True, "detail": "Revise clientes vencidos, disputas y posibilidad real de cobro."},
+        "AP_REVIEW": {"ready": True, "detail": "Revise proveedores vencidos, soportes y pagos pendientes."},
+        "AUX_RECONCILIATION": {"ready": aux_blockers == 0, "detail": "Listo" if aux_blockers == 0 else f"Cuadrar {aux_blockers} diferencias/sin mapeo entre auxiliares y mayor."},
+        "TAX_REVIEW": {"ready": tax_blockers == 0, "detail": "Listo" if tax_blockers == 0 else f"Revisar {controls['tax_quality_issues']} documentos fiscales y {controls['iva_difference_count']} diferencias de IVA."},
+        "FX_REVALUATION": {"ready": fx_open == 0, "detail": "Listo" if fx_open == 0 else f"Revaluar {fx_open} documentos abiertos en USD."},
+        "FINANCIAL_STATEMENTS": {"ready": True, "detail": "Genere y revise balance, resultados, flujo y variaciones antes de aprobar."},
+        "MANAGEMENT_APPROVAL": {"ready": False, "detail": "Debe aprobar Gerencia/Finance para bloquear el periodo."},
     }
 
 def _json_default(value):
@@ -736,9 +736,16 @@ def update_checklist(period: str, item_code: str, payload: ChecklistUpdate, conn
 
 
 @router.get("/search")
-def global_search(q: str = Query(..., min_length=2), limit: int = Query(30, ge=5, le=100), conn=Depends(get_db)):
-    _ensure_schema(conn); pattern=f"%{q.strip()}%"; results=[]
+def global_search(q: str = Query("", min_length=0), limit: int = Query(30, ge=5, le=100), conn=Depends(get_db)):
+    _ensure_schema(conn); term=(q or "").strip(); pattern=f"%{term}%"; results=[]
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        if len(term) < 2:
+            cur.execute("""SELECT id::text reference,'ENTRY' result_type,description title,
+              CONCAT(period,' · ',origin,' · ',workflow_status) subtitle,updated_at sort_date
+              FROM accounting_entries
+              ORDER BY updated_at DESC NULLS LAST, id DESC LIMIT %s""", (limit,))
+            rows = cur.fetchall()
+            return {"query": q, "data": rows, "count": len(rows)}
         cur.execute("""SELECT id::text reference,'ENTRY' result_type,description title,
           CONCAT(period,' · ',origin,' · ',workflow_status) subtitle,updated_at sort_date
           FROM accounting_entries WHERE id::text ILIKE %s OR description ILIKE %s OR COALESCE(origin,'') ILIKE %s

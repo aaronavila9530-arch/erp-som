@@ -582,15 +582,23 @@ def smart_alerts(period: str, conn=Depends(get_db)):
 def executive_dashboard(period: str, conn=Depends(get_db)):
     _ensure_schema(conn)
     start, end = _period_bounds(period)
+    as_of = min(end - timedelta(days=1), date.today())
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute("""
-            SELECT COALESCE(SUM(CASE WHEN l.account_code LIKE '1.1.02%%' OR LOWER(l.account_name) LIKE '%%banco%%' THEN l.debit-l.credit ELSE 0 END),0) banks,
-                   COALESCE(SUM(CASE WHEN l.account_code LIKE '4%%' THEN l.credit-l.debit ELSE 0 END),0) revenue,
+            SELECT COALESCE(SUM(CASE WHEN l.account_code LIKE '4%%' THEN l.credit-l.debit ELSE 0 END),0) revenue,
                    COALESCE(SUM(CASE WHEN l.account_code LIKE '5%%' THEN l.debit-l.credit ELSE 0 END),0) expenses
             FROM accounting_entries e JOIN accounting_lines l ON l.entry_id=e.id
             WHERE e.workflow_status='POSTED' AND e.entry_date >= %s AND e.entry_date < %s AND e.entry_date <= CURRENT_DATE
         """, (start, end))
         ledger = cur.fetchone()
+        cur.execute("""
+            SELECT COALESCE(SUM(l.debit-l.credit),0) banks
+            FROM accounting_entries e JOIN accounting_lines l ON l.entry_id=e.id
+            WHERE e.workflow_status='POSTED'
+              AND e.entry_date <= %s
+              AND (l.account_code LIKE '1.1.02%%' OR LOWER(l.account_name) LIKE '%%banco%%')
+        """, (as_of,))
+        bank_row = cur.fetchone() or {"banks": 0}
         cur.execute("SELECT COALESCE(SUM(saldo_pendiente),0) total, COUNT(*) count FROM collections WHERE COALESCE(saldo_pendiente,0)>0 AND fecha_vencimiento<CURRENT_DATE")
         overdue_ar = cur.fetchone()
         cur.execute("SELECT COALESCE(SUM(balance),0) total, COUNT(*) count FROM payment_obligations WHERE active=TRUE AND record_type='OBLIGATION' AND COALESCE(balance,0)>0 AND due_date BETWEEN CURRENT_DATE AND CURRENT_DATE+INTERVAL '15 days'")
@@ -615,12 +623,12 @@ def executive_dashboard(period: str, conn=Depends(get_db)):
     expenses = _money(ledger["expenses"])
     return {
         "period": period,
-        "liquidity": {"banks": _to_float(ledger["banks"])},
+        "liquidity": {"banks": _to_float(bank_row["banks"]), "as_of": as_of.isoformat()},
         "margin": {"revenue": _to_float(revenue), "expenses": _to_float(expenses), "profit": _to_float(revenue - expenses), "margin_pct": float(((revenue - expenses) / revenue * 100).quantize(MONEY)) if revenue else 0.0},
         "overdue_ar": _serialize(overdue_ar),
         "upcoming_payments": _serialize(upcoming_ap),
         "iva_estimated": iva.get("fiscal", {}),
-        "cash_flow_projected": {"next_15_days_payments": _to_float(upcoming_ap.get("total")), "current_banks_less_upcoming": _to_float(_money(ledger["banks"]) - _money(upcoming_ap.get("total")))},
+        "cash_flow_projected": {"next_15_days_payments": _to_float(upcoming_ap.get("total")), "current_banks_less_upcoming": _to_float(_money(bank_row["banks"]) - _money(upcoming_ap.get("total")))},
         "top_clients": [_serialize(row) for row in top_clients],
         "top_expenses": [_serialize(row) for row in top_expenses],
         "alerts": {"critical": sum(1 for a in alerts if a["severity"] == "critical"), "warning": sum(1 for a in alerts if a["severity"] == "warning"), "info": sum(1 for a in alerts if a["severity"] == "info")},
