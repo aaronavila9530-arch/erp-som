@@ -563,6 +563,7 @@ def editar_servicio(consec: int, data: dict):
             """
             SELECT
                 num_informe,
+                buque_contenedor,
                 cliente,
                 contacto,
                 detalle,
@@ -582,17 +583,19 @@ def editar_servicio(consec: int, data: dict):
 
         num_actualizado = _num_informe_con_fecha(row[0][0], data.get("fecha_inicio"))
         current = {
-            "cliente": row[0][1],
-            "contacto": row[0][2],
-            "detalle": row[0][3],
-            "continente": row[0][4],
-            "pais": row[0][5],
-            "puerto": row[0][6],
-            "operacion": row[0][7],
+            "buque_contenedor": row[0][1],
+            "cliente": row[0][2],
+            "contacto": row[0][3],
+            "detalle": row[0][4],
+            "continente": row[0][5],
+            "pais": row[0][6],
+            "puerto": row[0][7],
+            "operacion": row[0][8],
         }
 
         sql = """
             UPDATE servicios SET
+                buque_contenedor = %(buque_contenedor)s,
                 cliente = %(cliente)s,
                 contacto = %(contacto)s,
                 detalle = %(detalle)s,
@@ -611,6 +614,7 @@ def editar_servicio(consec: int, data: dict):
         """
 
         params = {
+            "buque_contenedor": data["buque_contenedor"] if "buque_contenedor" in data else current["buque_contenedor"],
             "cliente": data["cliente"] if "cliente" in data else current["cliente"],
             "contacto": data["contacto"] if "contacto" in data else current["contacto"],
             "detalle": data["detalle"] if "detalle" in data else current["detalle"],
