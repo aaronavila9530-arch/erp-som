@@ -260,6 +260,14 @@ def get_draft_survey_unified(draft_report_number: str, conn=Depends(get_db)):
         ballast_row = cur.fetchone()
         ballast = _row_to_dict(cur, ballast_row)
 
+        if not ballast and draft and draft.get("id") is not None:
+            cur.execute(
+                "SELECT * FROM draft_survey_ballast WHERE draft_survey_id = %s LIMIT 1",
+                (draft.get("id"),)
+            )
+            ballast_row = cur.fetchone()
+            ballast = _row_to_dict(cur, ballast_row)
+
         # 3) word
         cur.execute(
             "SELECT * FROM draft_survey_word_report WHERE draft_report_number = %s LIMIT 1",
@@ -267,6 +275,14 @@ def get_draft_survey_unified(draft_report_number: str, conn=Depends(get_db)):
         )
         word_row = cur.fetchone()
         word = _row_to_dict(cur, word_row)
+
+        if not word and draft and draft.get("id") is not None:
+            cur.execute(
+                "SELECT * FROM draft_survey_word_report WHERE draft_survey_id = %s LIMIT 1",
+                (draft.get("id"),)
+            )
+            word_row = cur.fetchone()
+            word = _row_to_dict(cur, word_row)
 
         # 4) general
         cur.execute(

@@ -141,6 +141,24 @@ def _resolve_draft_survey_real_id(cur, draft_survey_id: str):
     return real_id
 
 
+def _get_draft_survey_report_number(cur, real_id):
+    if not real_id:
+        return None
+
+    cur.execute("""
+        SELECT draft_report_number
+        FROM draft_survey
+        WHERE id = %s
+        LIMIT 1
+    """, (real_id,))
+    row = cur.fetchone()
+
+    if not row:
+        return None
+
+    return row[0]
+
+
 def _get_ballast_columns(cur):
     cur.execute("""
         SELECT column_name
@@ -338,6 +356,8 @@ def create_ballast(draft_survey_id: str, payload: dict, conn=Depends(get_db)):
         if not real_id:
             raise HTTPException(404, f"No existe draft_survey {draft_survey_id}")
 
+        draft_report_number = _get_draft_survey_report_number(cur, real_id)
+
         cols = _get_ballast_columns(cur)
 
         if not cols:
@@ -369,6 +389,9 @@ def create_ballast(draft_survey_id: str, payload: dict, conn=Depends(get_db)):
 
         # FK obligatoria
         flat_payload[fk_col] = real_id
+
+        if "draft_report_number" in cols and draft_report_number:
+            flat_payload["draft_report_number"] = draft_report_number
 
         # -----------------------------------------------------
         # NORMALIZAR SEGÚN TIPOS REALES DE DB
@@ -447,6 +470,8 @@ def update_ballast(draft_survey_id: str, payload: dict, conn=Depends(get_db)):
         if not real_id:
             raise HTTPException(404, f"No existe draft_survey {draft_survey_id}")
 
+        draft_report_number = _get_draft_survey_report_number(cur, real_id)
+
         cols = _get_ballast_columns(cur)
 
         if not cols:
@@ -477,6 +502,9 @@ def update_ballast(draft_survey_id: str, payload: dict, conn=Depends(get_db)):
         ballast_id = existing[0]
 
         flat_payload = _build_ballast_flat_payload(payload, cols)
+
+        if "draft_report_number" in cols and draft_report_number:
+            flat_payload["draft_report_number"] = draft_report_number
 
         # -----------------------------------------------------
         # NORMALIZAR SEGÚN TIPOS REALES DE DB
