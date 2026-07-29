@@ -38,6 +38,53 @@ def parse_date(value):
         return None
 
 
+def _ensure_current_draft_form_columns(cur):
+    """
+    The desktop Draft Survey form has grown over time. Production databases may
+    not have every technical field yet, so create missing text columns before
+    dynamic insert/update logic discovers the schema.
+    """
+    prefixes = ("init", "final")
+    draft_fields = [
+        "time_from", "time_to",
+        "draft_fwd_port", "draft_fwd_stb", "draft_fwd_marks",
+        "draft_mid_port", "draft_mid_stb", "draft_mid_marks",
+        "draft_aft_port", "draft_aft_stb", "draft_aft_marks",
+        "sg", "lpp", "tpc_p", "tpc_s",
+        "ballast", "fresh_water", "fuel_oil", "diesel_oil", "lub_oil",
+        "slop", "swimming_pool", "others", "bl_figure",
+    ]
+    hydro_fields = []
+
+    for table_no in (1, 2, 3):
+        hydro_fields.extend([
+            f"hydro{table_no}_draft_1",
+            f"hydro{table_no}_disp_1",
+            f"hydro{table_no}_tpc_1",
+            f"hydro{table_no}_lcf_1",
+            f"hydro{table_no}_draft_2",
+            f"hydro{table_no}_disp_2",
+            f"hydro{table_no}_tpc_2",
+            f"hydro{table_no}_lcf_2",
+            f"hydro{table_no}_draft_mtc",
+            f"hydro{table_no}_mtc_p50_1",
+            f"hydro{table_no}_mtc_m50_1",
+            f"hydro{table_no}_mtc_p50_2",
+            f"hydro{table_no}_mtc_m50_2",
+        ])
+
+    columns = []
+    for prefix in prefixes:
+        columns.extend(f"{prefix}_{field}" for field in draft_fields)
+
+    columns.extend(f"init_{field}" for field in hydro_fields)
+
+    for column in columns:
+        cur.execute(
+            f'ALTER TABLE draft_survey ADD COLUMN IF NOT EXISTS "{column}" TEXT'
+        )
+
+
 # =========================================================
 # FILTER SERVICIOS (DYNAMIC CASCADE FILTER)
 # =========================================================
@@ -261,6 +308,8 @@ def create_draft_survey(payload: dict, conn=Depends(get_db)):
         if payload.get("trim_tables_available") is None:
             if payload.get("trim_tables_yes") is not None:
                 payload["trim_tables_available"] = parse_bool(payload.get("trim_tables_yes"))
+
+        _ensure_current_draft_form_columns(cur)
 
         # =====================================================
         # 🔥 DETECTAR TIPOS REALES DE DB
@@ -887,6 +936,8 @@ def update_draft_survey(identifier: str, payload: dict, conn=Depends(get_db)):
 
         if "final_date" in payload:
             payload["final_date"] = parse_date_flexible(payload.get("final_date"))
+
+        _ensure_current_draft_form_columns(cur)
 
         # =====================================================
         # 6) DESCUBRIR COLUMNAS REALES + TIPOS

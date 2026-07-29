@@ -160,6 +160,10 @@ def _get_draft_survey_report_number(cur, real_id):
 
 
 def _get_ballast_columns(cur):
+    cur.execute(
+        "ALTER TABLE draft_survey_ballast ADD COLUMN IF NOT EXISTS draft_report_number TEXT"
+    )
+
     cur.execute("""
         SELECT column_name
         FROM information_schema.columns
