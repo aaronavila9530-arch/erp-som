@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
-from psycopg2.extras import RealDictCursor
+from psycopg2.extras import Json, RealDictCursor
 from database import get_db
 
 
@@ -72,6 +72,9 @@ def _normalize_value_by_db_type(value, data_type: str):
 
     if value is None:
         return None
+
+    if dtype in ("json", "jsonb"):
+        return Json(value)
 
     if dtype in (
         "integer",
@@ -162,6 +165,9 @@ def _get_draft_survey_report_number(cur, real_id):
 def _get_ballast_columns(cur):
     cur.execute(
         "ALTER TABLE draft_survey_ballast ADD COLUMN IF NOT EXISTS draft_report_number TEXT"
+    )
+    cur.execute(
+        "ALTER TABLE draft_survey_ballast ADD COLUMN IF NOT EXISTS ballast_json JSONB"
     )
 
     cur.execute("""
@@ -778,6 +784,107 @@ def update_ballast(draft_survey_id: str, payload: dict, conn=Depends(get_db)):
         finally:
             cur.close()
 
+
+@router.put("/word/{draft_survey_id}")
+def update_word_report(draft_survey_id: str, payload: dict, conn=Depends(get_db)):
+    cur = conn.cursor()
+
+    try:
+        payload = payload or {}
+        real_id = _resolve_draft_survey_real_id(cur, str(draft_survey_id))
+
+        if not real_id:
+            raise HTTPException(404, f"No existe draft_survey {draft_survey_id}")
+
+        word_meta = _get_table_column_types(cur, "draft_survey_word_report")
+        cols = {
+            col
+            for col in word_meta
+            if col not in ("id", "created_at", "draft_survey_id")
+        }
+
+        if not cols:
+            raise HTTPException(500, "No se pudieron leer columnas de draft_survey_word_report")
+
+        cur.execute(
+            """
+            SELECT id, status
+            FROM draft_survey_word_report
+            WHERE draft_survey_id = %s
+            LIMIT 1
+            """,
+            (real_id,)
+        )
+        existing = cur.fetchone()
+
+        if not existing:
+            raise HTTPException(404, "No existe registro word para actualizar")
+
+        if len(existing) > 1 and existing[1] == "Approved":
+            raise HTTPException(403, "Already approved")
+
+        clean_payload = {}
+        for key, value in payload.items():
+            if key in cols:
+                clean_payload[key] = value
+
+        if "status" in cols and "status" not in clean_payload:
+            clean_payload["status"] = payload.get("status") or "Pending for review"
+
+        if "raw_payload" in cols:
+            clean_payload["raw_payload"] = payload
+
+        if "word_json" in cols:
+            clean_payload["word_json"] = payload
+
+        clean_payload = _normalize_payload_by_db_types(clean_payload, word_meta)
+
+        if not clean_payload:
+            return {
+                "success": True,
+                "action": "no_changes",
+                "draft_survey_id": real_id
+            }
+
+        set_clause = ", ".join([f"{field} = %s" for field in clean_payload.keys()])
+        values = list(clean_payload.values())
+
+        if "updated_at" in word_meta:
+            set_clause += ", updated_at = NOW()"
+
+        values.append(real_id)
+
+        cur.execute(
+            f"""
+            UPDATE draft_survey_word_report
+            SET {set_clause}
+            WHERE draft_survey_id = %s
+            RETURNING id
+            """,
+            values
+        )
+        updated = cur.fetchone()
+
+        if not updated:
+            raise HTTPException(500, "Fallo el UPDATE de Word Report")
+
+        conn.commit()
+        return {
+            "success": True,
+            "action": "updated",
+            "draft_survey_id": real_id,
+            "saved_fields": len(clean_payload)
+        }
+
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, f"Error actualizando word report: {str(e)}")
+    finally:
+        cur.close()
+
     # ---------------------------------------------------------
     # PUT BALLAST — ULTRA BLINDADO (ACEPTA ID O REPORT NUMBER)
     # ---------------------------------------------------------
@@ -1214,7 +1321,7 @@ def create_word(draft_survey_id: str, payload: dict, conn=Depends(get_db)):
     # ULTRA BLINDADO — ENTERPRISE FIXED
     # =========================================================
     @router.put("/word/{draft_survey_id}")
-    def update_word(draft_survey_id: int, payload: dict, conn=Depends(get_db)):
+    def update_word(draft_survey_id: str, payload: dict, conn=Depends(get_db)):
 
         cur = conn.cursor()
 
@@ -1224,21 +1331,10 @@ def create_word(draft_survey_id: str, payload: dict, conn=Depends(get_db)):
             # =====================================================
             # 1) RESOLVER ID REAL
             # =====================================================
-            cur.execute("""
-                SELECT id FROM draft_survey WHERE general_id = %s
-            """, (draft_survey_id,))
-            row = cur.fetchone()
+            real_id = _resolve_draft_survey_real_id(cur, str(draft_survey_id))
 
-            if not row:
-                cur.execute("""
-                    SELECT id FROM draft_survey WHERE id = %s
-                """, (draft_survey_id,))
-                row = cur.fetchone()
-
-            if not row:
+            if not real_id:
                 raise HTTPException(404, f"No existe draft_survey {draft_survey_id}")
-
-            real_id = row[0]
 
             # =====================================================
             # 2) COLUMNAS REALES (EXCLUYENDO SISTEMA)
