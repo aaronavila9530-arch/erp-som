@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from typing import Any, Dict, Optional
 from database import get_db
 
+import json
 import psycopg2
 from psycopg2 import sql
 
@@ -17,6 +18,26 @@ def _row_to_dict(cur, row) -> Dict[str, Any]:
         return {}
     cols = [d[0] for d in cur.description]
     return {cols[i]: row[i] for i in range(len(cols))}
+
+
+def _normalize_ballast_json(payload: Dict[str, Any]) -> None:
+    ballast_json = payload.get("ballast_json")
+    if not ballast_json:
+        return
+
+    if isinstance(ballast_json, str):
+        try:
+            ballast_json = json.loads(ballast_json)
+        except Exception:
+            return
+
+    if not isinstance(ballast_json, dict):
+        return
+
+    if isinstance(ballast_json.get("ballast"), dict):
+        payload["ballast"] = ballast_json.get("ballast") or {}
+    if isinstance(ballast_json.get("fresh_water"), dict):
+        payload["fresh_water"] = ballast_json.get("fresh_water") or {}
 
 
 def _get_table_columns(conn, table_name: str) -> set:
@@ -309,6 +330,7 @@ def get_draft_survey_unified(draft_report_number: str, conn=Depends(get_db)):
 
         if ballast:
             unified.update(ballast)
+            _normalize_ballast_json(unified)
 
         if word:
             unified.update(word)
