@@ -5,10 +5,6 @@ from datetime import datetime, date
 from pathlib import Path
 
 from openpyxl import load_workbook
-try:
-    from services.template_autofit import apply_workbook_autofit
-except ModuleNotFoundError:
-    from backend_api.services.template_autofit import apply_workbook_autofit
 from openpyxl.worksheet.worksheet import Worksheet
 from psycopg2.extras import RealDictCursor
 
@@ -362,7 +358,6 @@ class DraftSurveyExcelPdfService:
         tmp_dir = tempfile.mkdtemp(prefix="draft_excel_")
         out_xlsx = os.path.join(tmp_dir, f"draft_survey_{draft_report_number}.xlsx")
 
-        apply_workbook_autofit(wb)
         wb.save(out_xlsx)
 
         if not os.path.exists(out_xlsx) or os.path.getsize(out_xlsx) == 0:

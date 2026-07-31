@@ -2,10 +2,6 @@ import os
 import tempfile
 from datetime import datetime, date
 from openpyxl import load_workbook
-try:
-    from services.template_autofit import apply_workbook_autofit
-except ModuleNotFoundError:
-    from backend_api.services.template_autofit import apply_workbook_autofit
 from openpyxl.worksheet.worksheet import Worksheet
 
 
@@ -546,7 +542,6 @@ class DraftSurveyExcelGenerator:
         tmp_dir = tempfile.mkdtemp(prefix="draft_excel_")
         tmp_path = os.path.join(tmp_dir, "draft_survey.xlsx")
 
-        apply_workbook_autofit(wb)
         wb.save(tmp_path)
 
         return tmp_path
