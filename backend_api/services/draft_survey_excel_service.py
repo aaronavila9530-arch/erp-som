@@ -241,25 +241,12 @@ class DraftSurveyExcelGenerator:
                 # =====================================================
 
                 # Fila 1
-                "final_hydro1_draft_1": "BG27",
-                "final_hydro1_disp_1":  "BH27",
-                "final_hydro1_tpc_1":   "BI27",
-                "final_hydro1_lcf_1":   "BJ27",
 
                 # Fila 2
-                "final_hydro1_draft_2": "BG29",
-                "final_hydro1_disp_2":  "BH29",
-                "final_hydro1_tpc_2":   "BI29",
-                "final_hydro1_lcf_2":   "BJ29",
 
                 # Fila 3
-                "final_hydro1_draft_mtc": "BG31",
-                "final_hydro1_mtc_p50_1": "BH31",
-                "final_hydro1_mtc_m50_1": "BJ31",
 
                 # Fila 4
-                "final_hydro1_mtc_p50_2": "BH33",
-                "final_hydro1_mtc_m50_2": "BJ33",
 
 
                 # =====================================================
@@ -267,25 +254,12 @@ class DraftSurveyExcelGenerator:
                 # =====================================================
 
                 # Fila 1
-                "final_hydro2_draft_1": "BG36",
-                "final_hydro2_disp_1":  "BH36",
-                "final_hydro2_tpc_1":   "BI36",
-                "final_hydro2_lcf_1":   "BJ36",
 
                 # Fila 2
-                "final_hydro2_draft_2": "BG38",
-                "final_hydro2_disp_2":  "BH38",
-                "final_hydro2_tpc_2":   "BI38",
-                "final_hydro2_lcf_2":   "BJ38",
 
                 # Fila 3
-                "final_hydro2_draft_mtc": "BG40",
-                "final_hydro2_mtc_p50_1": "BH40",
-                "final_hydro2_mtc_m50_1": "BJ40",
 
                 # Fila 4
-                "final_hydro2_mtc_p50_2": "BH42",
-                "final_hydro2_mtc_m50_2": "BJ42",
 
                 # =====================================================
                 # SIGNATURES
