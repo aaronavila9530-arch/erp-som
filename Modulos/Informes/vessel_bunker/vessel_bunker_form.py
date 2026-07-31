@@ -82,25 +82,42 @@ class VesselBunkerReportForm(ttk.Frame):
         btn_frame = ttk.Frame(topbar)
         btn_frame.pack(side="right")
 
-        ttk.Button(
+        self.btn_select_report = ttk.Button(
             btn_frame,
             text="Seleccionar Reporte",
             command=self._select_draft_service
-        ).pack(side="left", padx=4)
+        )
+        self.btn_select_report.pack(side="left", padx=4)
 
-        # ❌ ELIMINADO: botón Guardar
-
-        ttk.Button(
+        self.btn_send_review = ttk.Button(
             btn_frame,
             text="Enviar a Revisión",
             command=self._send_to_review
-        ).pack(side="left", padx=4)
+        )
+        self.btn_send_review.pack(side="left", padx=4)
 
-        ttk.Button(
+        self.btn_edit = ttk.Button(
+            btn_frame,
+            text="Editar",
+            command=self._enable_edit_mode
+        )
+        self.btn_edit.pack(side="left", padx=4)
+        self.btn_edit.pack_forget()
+
+        self.btn_save_changes = ttk.Button(
+            btn_frame,
+            text="Guardar Cambios",
+            command=self._save_changes
+        )
+        self.btn_save_changes.pack(side="left", padx=4)
+        self.btn_save_changes.pack_forget()
+
+        self.btn_visualizar = ttk.Button(
             btn_frame,
             text="Visualizar",
             command=self._visualizar_excel
-        ).pack(side="left", padx=4)
+        )
+        self.btn_visualizar.pack(side="left", padx=4)
 
         ttk.Button(
             btn_frame,
@@ -883,22 +900,28 @@ class VesselBunkerReportForm(ttk.Frame):
     # PAYLOAD (DB ALIGNED STRICT 1:1 WITH DATABASE)
     # =========================================================
     def get_payload(self) -> dict:
-        """
-        Payload estrictamente alineado con la tabla vessel_bunker_reports.
 
-        - Solo columnas que existen en DB
-        - Normaliza HH/MM
-        - Normaliza fechas ISO
-        - Genera 20 tanques por tipo
-        - Genera 10 bunker figures
-        """
+        try:
+            self.update_idletasks()
+        except Exception:
+            pass
+
+        # -------------------------------
+        # Sync remarks (Text → var)
+        # -------------------------------
+        try:
+            if hasattr(self, "remarks_box"):
+                remarks_value = self.remarks_box.get("1.0", "end-1c")
+                self._v("remarks").set((remarks_value or "").strip())
+        except Exception:
+            pass
 
         payload = {}
 
         # =====================================================
-        # COLUMNAS REALES EN DB (NO FANTASMAS)
+        # 1) CAMPOS DIRECTOS (DB)
         # =====================================================
-        db_columns = [
+        static_columns = [
 
             # HEADER
             "bunker_cert_no",
@@ -912,7 +935,7 @@ class VesselBunkerReportForm(ttk.Frame):
             "port",
             "country",
 
-            # DATES DB
+            # FECHAS
             "berthing_date",
             "commenced_date",
             "dslop_date",
@@ -921,7 +944,7 @@ class VesselBunkerReportForm(ttk.Frame):
             "dslop_port",
             "dslop_country",
 
-            # DELIVERY CALC FIELDS (exist in DB)
+            # CALCULOS
             "bunker_delivery_declared",
             "rob_diff",
             "plus_consumption",
@@ -929,7 +952,7 @@ class VesselBunkerReportForm(ttk.Frame):
             "cons_dept",
             "me_to_sea_buoy",
 
-            # REMARKS
+            # TEXTO
             "remarks",
 
             # DRAFT
@@ -939,29 +962,52 @@ class VesselBunkerReportForm(ttk.Frame):
             "trim",
             "list",
 
-            # LOG BOOK VALUES ONLY (NO date/hour duplicates here)
-            "log_eosp_vlsfo", "log_eosp_hfso", "log_eosp_mdo", "log_eosp_lsmgo",
-            "log_pob_vlsfo", "log_pob_hfso", "log_pob_mdo", "log_pob_lsmgo",
-            "log_fwe_vlsfo", "log_fwe_hfso", "log_fwe_mdo", "log_fwe_lsmgo",
-            "log_at_survey_vlsfo", "log_at_survey_hfso",
-            "log_at_survey_mdo", "log_at_survey_lsmgo",
+            # ENGINE LOG
+            "log_eosp_vlsfo",
+            "log_eosp_hfso",
+            "log_eosp_mdo",
+            "log_eosp_lsmgo",
+
+            "log_pob_vlsfo",
+            "log_pob_hfso",
+            "log_pob_mdo",
+            "log_pob_lsmgo",
+
+            "log_fwe_vlsfo",
+            "log_fwe_hfso",
+            "log_fwe_mdo",
+            "log_fwe_lsmgo",
+
+            "log_bunker_vlsfo",
+            "log_bunker_hfso",
+            "log_bunker_mdo",
+            "log_bunker_lsmgo",
+
+            "log_at_survey_vlsfo",
+            "log_at_survey_hfso",
+            "log_at_survey_mdo",
+            "log_at_survey_lsmgo",
 
             # CONSUMPTION
-            "cons_sea_loaded_vlsfo", "cons_sea_loaded_hfso",
-            "cons_sea_loaded_mdo", "cons_sea_loaded_lsmgo",
+            "cons_sea_loaded_vlsfo",
+            "cons_sea_loaded_hfso",
+            "cons_sea_loaded_mdo",
+            "cons_sea_loaded_lsmgo",
 
-            "cons_sea_ballast_vlsfo", "cons_sea_ballast_hfso",
-            "cons_sea_ballast_mdo", "cons_sea_ballast_lsmgo",
+            "cons_sea_ballast_vlsfo",
+            "cons_sea_ballast_hfso",
+            "cons_sea_ballast_mdo",
+            "cons_sea_ballast_lsmgo",
 
-            "cons_port_ship_gear_vlsfo", "cons_port_ship_gear_hfso",
-            "cons_port_ship_gear_mdo", "cons_port_ship_gear_lsmgo",
+            "cons_port_ship_gear_vlsfo",
+            "cons_port_ship_gear_hfso",
+            "cons_port_ship_gear_mdo",
+            "cons_port_ship_gear_lsmgo",
 
-            "cons_port_shore_gear_vlsfo", "cons_port_shore_gear_hfso",
-            "cons_port_shore_gear_mdo", "cons_port_shore_gear_lsmgo",
-
-            # SIGNATURES
-            "surveyor_name",
-            "master_name",
+            "cons_port_shore_gear_vlsfo",
+            "cons_port_shore_gear_hfso",
+            "cons_port_shore_gear_mdo",
+            "cons_port_shore_gear_lsmgo",
 
             # WORKFLOW
             "workflow_status",
@@ -974,65 +1020,53 @@ class VesselBunkerReportForm(ttk.Frame):
             "antecedent_survey_date_to",
             "inspection_with",
 
-            # TIME FIELDS (exist at end of DB)
+            # SIGNATURES
+            "surveyor_name",
+            "master_name",
+            "chief_engineer_name",
+            "owner_name",
+            "charterers_name",
+
+            # LOG DATES
+            "log_eosp_date",
+            "log_pob_date",
+            "log_fwe_date",
+            "log_bunker_date",
+            "log_at_survey_date",
+
+            # HORAS
             "antecedent_survey_hour_from",
-            "antecedent_survey_minute_from",
             "antecedent_survey_hour_to",
+            "antecedent_survey_minute_from",
             "antecedent_survey_minute_to",
+
             "dslop_hour",
             "dslop_minute",
-            "log_eosp_date",
-            "log_eosp_hour",
-            "log_eosp_minute",
-            "log_pob_date",
-            "log_pob_hour",
-            "log_pob_minute",
-            "log_fwe_date",
-            "log_fwe_hour",
-            "log_fwe_minute",
-            "log_bunker_date",
-            "log_bunker_hour",
-            "log_bunker_minute",
-            "log_at_survey_date",
+
             "log_at_survey_hour",
             "log_at_survey_minute",
+
+            "log_bunker_hour",
+            "log_bunker_minute",
+
+            "log_eosp_hour",
+            "log_eosp_minute",
+
+            "log_fwe_hour",
+            "log_fwe_minute",
+
+            "log_pob_hour",
+            "log_pob_minute",
+
+            "berthing_hour",
+            "berthing_minute",
         ]
 
-        for col in db_columns:
+        for col in static_columns:
             payload[col] = self._get_var_value(col)
 
         # =====================================================
-        # NORMALIZAR HH / MM
-        # =====================================================
-        for key in payload.keys():
-            if key.endswith("_hour"):
-                payload[key] = self._normalize_hhmm(payload.get(key), 23)
-            elif key.endswith("_minute"):
-                payload[key] = self._normalize_hhmm(payload.get(key), 59)
-
-        # =====================================================
-        # NORMALIZAR FECHAS
-        # =====================================================
-        date_fields = [
-            "report_date",
-            "berthing_date",
-            "commenced_date",
-            "dslop_date",
-            "antecedent_arrived_dt",
-            "antecedent_survey_date_from",
-            "antecedent_survey_date_to",
-            "log_eosp_date",
-            "log_pob_date",
-            "log_fwe_date",
-            "log_bunker_date",
-            "log_at_survey_date",
-        ]
-
-        for df in date_fields:
-            payload[df] = self._normalize_date_for_db(payload.get(df))
-
-        # =====================================================
-        # TANKS (20 VLSFO + 20 MGO)
+        # 2) TANQUES DINÁMICOS
         # =====================================================
         for i in range(1, self.MAX_TANKS + 1):
             for prefix in ("vlsfo", "mgo"):
@@ -1050,71 +1084,193 @@ class VesselBunkerReportForm(ttk.Frame):
                     payload[key] = self._get_var_value(key)
 
         # =====================================================
-        # BUNKER FIGURES (10)
+        # 3) BUNKER FIGURES
         # =====================================================
-        for idx in range(1, 11):
-            payload[f"bunker_figure_{idx}_name"] = self._get_var_value(f"bunker_figure_{idx}_name")
-            payload[f"bunker_figure_{idx}_ifo"] = self._get_var_value(f"bunker_figure_{idx}_ifo")
-            payload[f"bunker_figure_{idx}_vlsfo"] = self._get_var_value(f"bunker_figure_{idx}_vlsfo")
-            payload[f"bunker_figure_{idx}_lsmgo"] = self._get_var_value(f"bunker_figure_{idx}_lsmgo")
+        for i in range(1, 11):
+            payload[f"bunker_figure_{i}_name"] = self._get_var_value(f"bunker_figure_{i}_name")
+            payload[f"bunker_figure_{i}_ifo"] = self._get_var_value(f"bunker_figure_{i}_ifo")
+            payload[f"bunker_figure_{i}_vlsfo"] = self._get_var_value(f"bunker_figure_{i}_vlsfo")
+            payload[f"bunker_figure_{i}_lsmgo"] = self._get_var_value(f"bunker_figure_{i}_lsmgo")
+
+        # =====================================================
+        # 4) NORMALIZAR HH/MM
+        # =====================================================
+        for k in payload:
+            if "hour" in k:
+                payload[k] = self._normalize_hhmm(payload[k], 23)
+            if "minute" in k:
+                payload[k] = self._normalize_hhmm(payload[k], 59)
+
+        # =====================================================
+        # 5) NORMALIZAR FECHAS
+        # =====================================================
+        for k in payload:
+            if "date" in k:
+                payload[k] = self._normalize_date_for_db(payload[k])
+
+        # =====================================================
+        # 6) NORMALIZAR NUMÉRICOS
+        # =====================================================
+        numeric_fields = {
+            "gross_tonnage",
+            "bunker_delivery_declared",
+            "rob_diff",
+            "plus_consumption",
+            "generator_until_aps",
+            "cons_dept",
+            "me_to_sea_buoy",
+            "draft",
+            "draft_fwd",
+            "draft_aft",
+            "trim",
+            "list",
+
+            "log_eosp_vlsfo", "log_eosp_hfso", "log_eosp_mdo", "log_eosp_lsmgo",
+            "log_pob_vlsfo", "log_pob_hfso", "log_pob_mdo", "log_pob_lsmgo",
+            "log_fwe_vlsfo", "log_fwe_hfso", "log_fwe_mdo", "log_fwe_lsmgo",
+            "log_bunker_vlsfo", "log_bunker_hfso", "log_bunker_mdo", "log_bunker_lsmgo",
+            "log_at_survey_vlsfo", "log_at_survey_hfso", "log_at_survey_mdo", "log_at_survey_lsmgo",
+
+            "cons_sea_loaded_vlsfo", "cons_sea_loaded_hfso", "cons_sea_loaded_mdo", "cons_sea_loaded_lsmgo",
+            "cons_sea_ballast_vlsfo", "cons_sea_ballast_hfso", "cons_sea_ballast_mdo", "cons_sea_ballast_lsmgo",
+            "cons_port_ship_gear_vlsfo", "cons_port_ship_gear_hfso", "cons_port_ship_gear_mdo", "cons_port_ship_gear_lsmgo",
+            "cons_port_shore_gear_vlsfo", "cons_port_shore_gear_hfso", "cons_port_shore_gear_mdo", "cons_port_shore_gear_lsmgo",
+        }
+
+        for key in list(payload.keys()):
+            if key in numeric_fields:
+                payload[key] = self._normalize_numeric_for_db(payload[key])
+                continue
+
+            if key.startswith("vlsfo_tank_") or key.startswith("mgo_tank_"):
+                if key.endswith((
+                    "_volume_m3",
+                    "_temp_c",
+                    "_temp_f",
+                    "_density_15c",
+                    "_weight_mt",
+                )):
+                    payload[key] = self._normalize_numeric_for_db(payload[key])
+                continue
+
+            if key.startswith("bunker_figure_") and key.endswith(("_ifo", "_vlsfo", "_lsmgo")):
+                payload[key] = self._normalize_numeric_for_db(payload[key])
+
+        # =====================================================
+        # 7) LIMPIEZA FINAL
+        # =====================================================
+        for k, v in payload.items():
+            if isinstance(v, str):
+                v = v.strip()
+                payload[k] = v if v else None
 
         return payload
-
 
 
     # =========================================================
     # SAFE VAR GETTER
     # =========================================================
     def _get_var_value(self, key: str):
-        if key not in self.vars:
+        try:
+            if key not in self.vars:
+                return None
+            val = self.vars[key].get()
+            if val is None:
+                return None
+            val = str(val).strip()
+            return val if val else None
+        except Exception:
             return None
-        value = (self.vars[key].get() or "").strip()
-        return value if value != "" else None
-
 
 
     # =========================================================
-    # DATE NORMALIZER (UI -> DB ISO FORMAT)
+    # NORMALIZE HH/MM
     # =========================================================
-    def _normalize_date_for_db(self, value: str):
+    def _normalize_hhmm(self, value, max_value):
+        if value is None:
+            return None
+        s = str(value).strip()
+        if not s.isdigit():
+            return None
+        n = int(s)
+        if n < 0 or n > max_value:
+            return None
+        return f"{n:02d}"
 
+
+    # =========================================================
+    # NORMALIZE DATE
+    # =========================================================
+    def _normalize_date_for_db(self, value):
         if not value:
             return None
 
-        value = value.strip()
+        value = str(value).strip()
 
-        # 1️⃣ Si ya está en formato ISO correcto
         try:
-            dt = datetime.strptime(value, "%Y-%m-%d")
-            return dt.strftime("%Y-%m-%d")
-        except Exception:
+            return datetime.strptime(value, "%Y-%m-%d").strftime("%Y-%m-%d")
+        except:
             pass
 
-        # 2️⃣ Si viene en formato visual (MMMM dd, yyyy)
         try:
-            dt = datetime.strptime(value, "%B %d, %Y")
-            return dt.strftime("%Y-%m-%d")
-        except Exception:
+            return datetime.strptime(value, "%B %d, %Y").strftime("%Y-%m-%d")
+        except:
             pass
 
-        # 3️⃣ Si nada funcionó → no romper sistema
         return value
 
+    # =========================================================
+    # NORMALIZE NUMERIC FOR DB
+    # =========================================================
+    def _normalize_numeric_for_db(self, value):
+        """
+        Normaliza numéricos para PostgreSQL:
+        - "" -> None
+        - "4,65" -> "4.65"
+        - "1.234,56" -> "1234.56"
+        - "1,234.56" -> "1234.56"
+        - limpia espacios
+        - si no es numérico válido, devuelve el valor original
+        """
+        if value is None:
+            return None
+
+        s = str(value).strip()
+        if not s:
+            return None
+
+        s = s.replace(" ", "")
+
+        # Si trae coma y punto, decidir cuál es decimal
+        if "," in s and "." in s:
+            if s.rfind(",") > s.rfind("."):
+                # Formato europeo: 1.234,56
+                s = s.replace(".", "")
+                s = s.replace(",", ".")
+            else:
+                # Formato US: 1,234.56
+                s = s.replace(",", "")
+        elif "," in s:
+            # Caso simple: 4,65 -> 4.65
+            s = s.replace(",", ".")
+
+        try:
+            float(s)
+            return s
+        except Exception:
+            return None
 
 
     # =========================================================
     # SET PAYLOAD (BLINDADO + DINÁMICOS)
     # =========================================================
-    def set_payload(self, data: dict):
-        """
-        Carga data al form (FULL):
-        - setea vars simples (crea vars si no existen)
-        - reconstruye tanques dinámicos (VLSFO + MGO)
-        - reconstruye bunker figures dinámicos
-        """
+    # =========================================================
+    # SET PAYLOAD / LOAD RECORD
+    # =========================================================
+    def set_payload(self, data: dict, from_review: bool = False):
+
         data = data or {}
 
-        # ✅ set report_id si viene del backend
         try:
             rid = data.get("id")
             if rid is not None:
@@ -1122,37 +1278,146 @@ class VesselBunkerReportForm(ttk.Frame):
         except Exception:
             pass
 
-        # -------------------------------------------------
-        # 1) SETEAR TODAS LAS KEYS QUE VENGAN EN DATA
-        #    (esto crea vars aunque no existan aún)
-        # -------------------------------------------------
-        for k, v in (data or {}).items():
+        for k, v in data.items():
             try:
                 self._v(str(k)).set("" if v is None else str(v))
             except Exception:
                 pass
 
-        # -------------------------------------------------
-        # 1.1) SINCRONIZAR TEXT WIDGET (REMARKS)
-        # -------------------------------------------------
         try:
             if hasattr(self, "remarks_box"):
                 self.remarks_box.delete("1.0", "end")
-                remarks_value = self._v("remarks").get() or ""
-                self.remarks_box.insert("1.0", remarks_value)
+                self.remarks_box.insert("1.0", self._v("remarks").get() or "")
         except Exception:
             pass
 
-        # -------------------------------------------------
-        # 2) REBUILD TANQUES (usa self._v para estar ligado a UI)
-        # -------------------------------------------------
-        self._rebuild_dynamic_tanks_from_data(prefix="vlsfo", data=data)
-        self._rebuild_dynamic_tanks_from_data(prefix="mgo", data=data)
+        self._rebuild_dynamic_tanks_from_data("vlsfo", data)
+        self._rebuild_dynamic_tanks_from_data("mgo", data)
+        self._rebuild_bunker_figures_from_data(data)
 
-        # -------------------------------------------------
-        # 3) REBUILD BUNKER FIGURES
-        # -------------------------------------------------
-        self._rebuild_bunker_figures_from_data(data=data)
+        if from_review:
+            self._enter_review_mode()
+        else:
+            self._enable_edit_mode()
+
+
+    # =========================================================
+    # REVIEW / EDIT MODE
+    # =========================================================
+    def _enter_review_mode(self):
+
+        try:
+            self.btn_send_review.pack_forget()
+        except Exception:
+            pass
+
+        try:
+            self.btn_save_changes.pack_forget()
+        except Exception:
+            pass
+
+        try:
+            self.btn_edit.pack(side="left", padx=4)
+        except Exception:
+            pass
+
+        self._set_form_locked_state(True)
+
+
+    def _enable_edit_mode(self):
+
+        try:
+            self.btn_edit.pack_forget()
+        except Exception:
+            pass
+
+        try:
+            self.btn_send_review.pack_forget()
+        except Exception:
+            pass
+
+        try:
+            self.btn_save_changes.pack(side="left", padx=4)
+        except Exception:
+            pass
+
+        self._set_form_locked_state(False)
+
+
+    def _iter_form_widgets(self, parent):
+
+        for child in parent.winfo_children():
+            yield child
+            yield from self._iter_form_widgets(child)
+
+
+    def _set_form_locked_state(self, locked: bool):
+
+        root = getattr(self, "scroll_frame", self)
+
+        for widget in self._iter_form_widgets(root):
+
+            if isinstance(widget, tk.Text):
+                try:
+                    widget.configure(state="disabled" if locked else "normal")
+                except Exception:
+                    pass
+                continue
+
+            try:
+                widget_class = widget.winfo_class()
+            except Exception:
+                widget_class = ""
+
+            if widget_class in ("TEntry", "TCombobox", "DateEntry"):
+                try:
+                    widget.configure(state="disabled" if locked else "normal")
+                except Exception:
+                    pass
+
+        for btn_name in ("btn_select_report", "btn_visualizar", "btn_send_review"):
+            try:
+                getattr(self, btn_name).config(state="disabled" if locked else "normal")
+            except Exception:
+                pass
+
+
+    # =========================================================
+    # SAVE CHANGES
+    # =========================================================
+    def _save_changes(self):
+
+        try:
+            if not self.report_id:
+                messagebox.showwarning(
+                    "Guardar Cambios",
+                    "No se encontró el ID del reporte."
+                )
+                return
+
+            payload = self.get_payload()
+
+            resp = update_vessel_bunker_report_api(
+                self.report_id,
+                payload
+            )
+
+            if not resp or not resp.get("success"):
+                raise Exception(
+                    resp.get("detail") or resp.get("error") or "No se pudo actualizar el reporte."
+                )
+
+            messagebox.showinfo(
+                "Guardar Cambios",
+                "Reporte actualizado correctamente."
+            )
+
+        except Exception as e:
+            messagebox.showerror(
+                "Guardar Cambios",
+                str(e)
+            )
+
 
     # =========================================================
     # REBUILD BUNKER FIGURES FROM DATA (NUEVO)
@@ -1436,7 +1701,7 @@ class VesselBunkerReportForm(ttk.Frame):
             payload.setdefault("status", "Pending")
 
             # ✅ si ya existe report_id -> PUT, si no -> POST
-            if self.report_id is None:
+            if True:
                 resp = create_vessel_bunker_report_api(payload)
                 if not resp or not resp.get("success"):
                     raise Exception(resp.get("detail") or resp.get("error") or "Error creating report")
@@ -1444,7 +1709,7 @@ class VesselBunkerReportForm(ttk.Frame):
                 data = resp.get("data") or {}
                 self.report_id = data.get("id")
 
-            else:
+            elif False:
                 resp = update_vessel_bunker_report_api(self.report_id, payload)
                 if not resp or not resp.get("success"):
                     raise Exception(resp.get("detail") or resp.get("error") or "Error updating report")

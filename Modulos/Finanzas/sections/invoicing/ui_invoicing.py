@@ -3,6 +3,7 @@ from tkinter import ttk, messagebox
 import requests
 
 from api_client import BASE_URL
+from Modulos.Finanzas.date_utils import to_long_english_date
 
 
 class InvoicingUI(tk.Frame):
@@ -283,6 +284,8 @@ class InvoicingUI(tk.Frame):
 
                 if col in ("duracion", "demoras"):
                     value = self._format_duracion(value)
+                elif col in ("fecha_inicio", "fecha_fin"):
+                    value = to_long_english_date(value)
 
                 row.append(value)
 

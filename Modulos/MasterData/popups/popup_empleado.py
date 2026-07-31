@@ -1,5 +1,6 @@
 import tkinter as tk
 from tkinter import ttk
+from Modulos.MasterData.prefijos_telefonicos import PREFIJOS_TELEFONICOS
 
 class PopupEmpleado(tk.Toplevel):
 
@@ -105,8 +106,7 @@ class PopupEmpleado(tk.Toplevel):
         # TAB 2: Contacto
         # ===================================================
         tk.Label(tab2, text="Prefijo:", bg="white").grid(row=0, column=0, padx=10, pady=5, sticky="w")
-        prefijos_america = ["+506", "+57", "+1"]
-        self.combo_prefijo = ttk.Combobox(tab2, textvariable=self.prefijo, values=prefijos_america, state="readonly")
+        self.combo_prefijo = ttk.Combobox(tab2, textvariable=self.prefijo, values=PREFIJOS_TELEFONICOS, state="readonly")
         self.combo_prefijo.grid(row=0, column=1, padx=10, pady=5)
 
         tk.Label(tab2, text="Teléfono:", bg="white").grid(row=1, column=0, padx=10, pady=5, sticky="w")

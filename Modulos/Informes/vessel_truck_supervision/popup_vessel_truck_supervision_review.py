@@ -6,6 +6,7 @@ from api_client import (
     get_vessel_truck_supervision_by_id_api,
     update_vessel_truck_supervision_api
 )
+from Modulos.Informes.date_utils import to_db_date, to_long_english_date
 
 
 class PopupVesselTruckSupervisionReview(tk.Toplevel):
@@ -26,6 +27,19 @@ class PopupVesselTruckSupervisionReview(tk.Toplevel):
 
         self._build_ui()
         self._load_data()
+
+    def _safe_text(self, value):
+        if value is None:
+            return ""
+        return str(value)
+
+    def _set_entry_value(self, entry, value):
+        entry.delete(0, "end")
+        entry.insert(0, self._safe_text(value))
+
+    def _set_text_value(self, text_widget, value):
+        text_widget.delete("1.0", "end")
+        text_widget.insert("1.0", self._safe_text(value))
 
     # =========================================================
     # UI
@@ -66,8 +80,12 @@ class PopupVesselTruckSupervisionReview(tk.Toplevel):
 
         # Row 2
         ttk.Label(form, text="Report Date").grid(row=2, column=0, sticky="w")
-        self.report_date = DateEntry(form, width=15, date_pattern="dd-mm-yyyy")
+        self.report_date = DateEntry(form, width=15, date_pattern="yyyy-mm-dd")
         self.report_date.grid(row=2, column=1, padx=5)
+        self.report_date.bind(
+            "<<DateEntrySelected>>",
+            lambda event: self._format_date_entry_long(self.report_date)
+        )
 
         # ---------------- VESSEL ----------------
         vessel_frame = ttk.LabelFrame(container, text="Vessel")
@@ -110,16 +128,28 @@ class PopupVesselTruckSupervisionReview(tk.Toplevel):
         times_frame.pack(fill="x", pady=10)
 
         ttk.Label(times_frame, text="Arrival Date").grid(row=0, column=0, sticky="w")
-        self.arrival_date = DateEntry(times_frame, width=15, date_pattern="dd-mm-yyyy")
+        self.arrival_date = DateEntry(times_frame, width=15, date_pattern="yyyy-mm-dd")
         self.arrival_date.grid(row=0, column=1, padx=5, pady=2)
+        self.arrival_date.bind(
+            "<<DateEntrySelected>>",
+            lambda event: self._format_date_entry_long(self.arrival_date)
+        )
 
         ttk.Label(times_frame, text="Inspection Date").grid(row=1, column=0, sticky="w")
-        self.inspection_date = DateEntry(times_frame, width=15, date_pattern="dd-mm-yyyy")
+        self.inspection_date = DateEntry(times_frame, width=15, date_pattern="yyyy-mm-dd")
         self.inspection_date.grid(row=1, column=1, padx=5, pady=2)
+        self.inspection_date.bind(
+            "<<DateEntrySelected>>",
+            lambda event: self._format_date_entry_long(self.inspection_date)
+        )
 
         ttk.Label(times_frame, text="Supervision Completed").grid(row=2, column=0, sticky="w")
-        self.supervision_completed_date = DateEntry(times_frame, width=15, date_pattern="dd-mm-yyyy")
+        self.supervision_completed_date = DateEntry(times_frame, width=15, date_pattern="yyyy-mm-dd")
         self.supervision_completed_date.grid(row=2, column=1, padx=5, pady=2)
+        self.supervision_completed_date.bind(
+            "<<DateEntrySelected>>",
+            lambda event: self._format_date_entry_long(self.supervision_completed_date)
+        )
 
 
         # ---------------- TEXT SECTIONS ----------------
@@ -144,6 +174,14 @@ class PopupVesselTruckSupervisionReview(tk.Toplevel):
             text="Close",
             command=self.destroy
         ).pack(side="right", padx=10)
+
+    def _format_date_entry_long(self, entry):
+        try:
+            value = to_long_english_date(entry.get_date())
+        except Exception:
+            value = to_long_english_date(entry.get())
+        entry.delete(0, "end")
+        entry.insert(0, value)
 
     # =========================================================
     # TEXT SECTION BUILDER
@@ -174,17 +212,10 @@ class PopupVesselTruckSupervisionReview(tk.Toplevel):
             data = resp.get("data", {})
             self.report_data = data
 
-            self.cert_no.delete(0, "end")
-            self.cert_no.insert(0, str(data.get("cert_no") or ""))
-
-            self.customer.delete(0, "end")
-            self.customer.insert(0, str(data.get("customer") or ""))
-
-            self.port.delete(0, "end")
-            self.port.insert(0, str(data.get("port") or ""))
-
-            self.country.delete(0, "end")
-            self.country.insert(0, str(data.get("country") or ""))
+            self._set_entry_value(self.cert_no, data.get("cert_no"))
+            self._set_entry_value(self.customer, data.get("customer"))
+            self._set_entry_value(self.port, data.get("port"))
+            self._set_entry_value(self.country, data.get("country"))
 
             if data.get("report_date"):
                 try:
@@ -198,11 +229,8 @@ class PopupVesselTruckSupervisionReview(tk.Toplevel):
                     pass
 
             # ---------------- REPRESENTATIVES ----------------
-            self.captain.delete(0, "end")
-            self.captain.insert(0, str(data.get("captain") or ""))
-
-            self.chief_officer.delete(0, "end")
-            self.chief_officer.insert(0, str(data.get("chief_officer") or ""))
+            self._set_entry_value(self.captain, data.get("captain"))
+            self._set_entry_value(self.chief_officer, data.get("chief_officer"))
 
             # ---------------- TIMES ----------------
             from datetime import datetime
@@ -237,18 +265,27 @@ class PopupVesselTruckSupervisionReview(tk.Toplevel):
                 except:
                     pass
 
-            self.vessel_name.insert(0, data.get("vessel_name", ""))
-            self.flag_port_registry.insert(0, data.get("flag_port_registry", ""))
-            self.grt.insert(0, data.get("grt", ""))
-            self.nrt.insert(0, data.get("nrt", ""))
-            self.imo_no.insert(0, data.get("imo_no", ""))
-            self.build_year.insert(0, data.get("build_year", ""))
+            self._set_entry_value(self.vessel_name, data.get("vessel_name"))
+            self._set_entry_value(
+                self.flag_port_registry,
+                data.get("flag_port_registry")
+            )
+            self._set_entry_value(self.grt, data.get("grt"))
+            self._set_entry_value(self.nrt, data.get("nrt"))
+            self._set_entry_value(self.imo_no, data.get("imo_no"))
+            self._set_entry_value(self.build_year, data.get("build_year"))
 
-            self.process_text.insert("1.0", data.get("process_text", ""))
-            self.findings_doc.insert("1.0", data.get("findings_documental_text", ""))
-            self.findings_oper.insert("1.0", data.get("findings_operational_text", ""))
-            self.incidents_text.insert("1.0", data.get("incidents_text", ""))
-            self.conclusion_text.insert("1.0", data.get("conclusion_text", ""))
+            self._set_text_value(self.process_text, data.get("process_text"))
+            self._set_text_value(
+                self.findings_doc,
+                data.get("findings_documental_text")
+            )
+            self._set_text_value(
+                self.findings_oper,
+                data.get("findings_operational_text")
+            )
+            self._set_text_value(self.incidents_text, data.get("incidents_text"))
+            self._set_text_value(self.conclusion_text, data.get("conclusion_text"))
 
         except Exception as e:
             messagebox.showerror("Error", str(e))
@@ -264,7 +301,7 @@ class PopupVesselTruckSupervisionReview(tk.Toplevel):
             "customer": self.customer.get(),
             "port": self.port.get(),
             "country": self.country.get(),
-            "report_date": self.report_date.get(),
+            "report_date": to_db_date(self.report_date.get()),
 
             "vessel_name": self.vessel_name.get(),
             "flag_port_registry": self.flag_port_registry.get(),
@@ -276,9 +313,9 @@ class PopupVesselTruckSupervisionReview(tk.Toplevel):
             "captain": self.captain.get(),
             "chief_officer": self.chief_officer.get(),
 
-            "arrival_date": self.arrival_date.get(),
-            "inspection_date": self.inspection_date.get(),
-            "supervision_completed_date": self.supervision_completed_date.get(),
+            "arrival_date": to_db_date(self.arrival_date.get()),
+            "inspection_date": to_db_date(self.inspection_date.get()),
+            "supervision_completed_date": to_db_date(self.supervision_completed_date.get()),
 
             "process_text": self.process_text.get("1.0", "end").strip(),
             "findings_documental_text": self.findings_doc.get("1.0", "end").strip(),

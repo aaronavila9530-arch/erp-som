@@ -15,6 +15,7 @@ from Modulos.Informes.vessel_truck_supervision.popup_servicio_selector import (
 
 from api_client import improve_truck_supervision_api
 from Modulos.Informes.popup.popup_ai_compare import PopupAICompare
+from Modulos.Informes.date_utils import to_db_date, to_long_english_date
 
 
 class VesselTruckSupervisionForm(ttk.Frame):
@@ -205,8 +206,12 @@ class VesselTruckSupervisionForm(ttk.Frame):
 
         # ---------------- FECHA ----------------
         ttk.Label(frm, text="Fecha").grid(row=3, column=0, sticky="w", padx=5)
-        self.report_date = DateEntry(frm, width=15, date_pattern="dd-mm-yyyy")
+        self.report_date = DateEntry(frm, width=15, date_pattern="yyyy-mm-dd")
         self.report_date.grid(row=3, column=1, padx=5)
+        self.report_date.bind(
+            "<<DateEntrySelected>>",
+            lambda event: self._format_date_entry_long(self.report_date)
+        )
 
     # =========================================================
     # BUQUE
@@ -267,9 +272,21 @@ class VesselTruckSupervisionForm(ttk.Frame):
 
         for i, label in enumerate(fields):
             ttk.Label(frm, text=label).grid(row=i, column=0, padx=5)
-            entry = DateEntry(frm, width=15, date_pattern="dd-mm-yyyy")
+            entry = DateEntry(frm, width=15, date_pattern="yyyy-mm-dd")
             entry.grid(row=i, column=1, padx=5)
+            entry.bind(
+                "<<DateEntrySelected>>",
+                lambda event, widget=entry: self._format_date_entry_long(widget)
+            )
             self.time_fields[label] = entry
+
+    def _format_date_entry_long(self, entry):
+        try:
+            value = to_long_english_date(entry.get_date())
+        except Exception:
+            value = to_long_english_date(entry.get())
+        entry.delete(0, "end")
+        entry.insert(0, value)
 
     # =========================================================
     # PROCESO
@@ -372,7 +389,7 @@ class VesselTruckSupervisionForm(ttk.Frame):
             "customer": self.customer.get(),
             "port": self.port.get(),
             "country": self.country.get(),
-            "report_date": self.report_date.get(),
+            "report_date": to_db_date(self.report_date.get()),
 
             "vessel_name": self.ship_fields["Nombre"].get(),
             "flag_port_registry": self.ship_fields["Bandera / Puerto Registro"].get(),
@@ -384,9 +401,9 @@ class VesselTruckSupervisionForm(ttk.Frame):
             "captain": self.captain.get(),
             "chief_officer": self.chief_officer.get(),
 
-            "arrival_date": self.time_fields["Fecha Arribo"].get(),
-            "inspection_date": self.time_fields["Fecha Inspección"].get(),
-            "supervision_completed_date": self.time_fields["Supervisión Completada"].get(),
+            "arrival_date": to_db_date(self.time_fields["Fecha Arribo"].get()),
+            "inspection_date": to_db_date(self.time_fields["Fecha Inspección"].get()),
+            "supervision_completed_date": to_db_date(self.time_fields["Supervisión Completada"].get()),
 
             "process_text": self.process_text.get("1.0", "end").strip(),
 
@@ -626,7 +643,7 @@ class VesselTruckSupervisionForm(ttk.Frame):
             "customer": self.customer.get(),
             "port": self.port.get(),
             "country": self.country.get(),
-            "report_date": self.report_date.get(),
+            "report_date": to_db_date(self.report_date.get()),
 
             "vessel_name": self.ship_fields["Nombre"].get(),
             "flag_port_registry": self.ship_fields["Bandera / Puerto Registro"].get(),
@@ -638,9 +655,9 @@ class VesselTruckSupervisionForm(ttk.Frame):
             "captain": self.captain.get(),
             "chief_officer": self.chief_officer.get(),
 
-            "arrival_date": self.time_fields["Fecha Arribo"].get(),
-            "inspection_date": self.time_fields["Fecha Inspección"].get(),
-            "supervision_completed_date": self.time_fields["Supervisión Completada"].get(),
+            "arrival_date": to_db_date(self.time_fields["Fecha Arribo"].get()),
+            "inspection_date": to_db_date(self.time_fields["Fecha Inspección"].get()),
+            "supervision_completed_date": to_db_date(self.time_fields["Supervisión Completada"].get()),
 
             "process_text": self.process_text.get("1.0", "end").strip(),
 

@@ -7,6 +7,7 @@ from api_client import (
     update_vessel_bunker_report_api,
     generate_vessel_bunker_excel_api
 )
+from Modulos.Informes.date_utils import to_db_date
 
 class VesselBunkerTable(ttk.Frame):
 
@@ -17,6 +18,9 @@ class VesselBunkerTable(ttk.Frame):
     # =========================================================
     def __init__(self, parent):
         super().__init__(parent)
+
+        # 🔒 Usuario heredado (estándar ERP)
+        self.usuario = getattr(parent, "usuario", None)
 
         self._data_all = []
         self._page = 1
@@ -233,7 +237,7 @@ class VesselBunkerTable(ttk.Frame):
 
             if report_date:
                 try:
-                    date_str = str(report_date)
+                    date_str = to_db_date(report_date)
                     # Expecting YYYY-MM-DD
                     if len(date_str) >= 7:
                         year = date_str[0:4]
@@ -280,9 +284,68 @@ class VesselBunkerTable(ttk.Frame):
             messagebox.showwarning("Acciones", "Selecciona un reporte.")
             return
 
-        x = self.btn_actions.winfo_rootx()
-        y = self.btn_actions.winfo_rooty() + self.btn_actions.winfo_height()
-        self.actions_menu.tk_popup(x, y)
+        try:
+            # ==================================================
+            # 🔒 CONTROL DE USUARIOS RESTRINGIDOS
+            # ==================================================
+            restricted_users = {"surveyor01", "surveyor02"}
+            is_restricted = str(self.usuario or "").strip().lower() in restricted_users
+
+            # ==================================================
+            # 🔁 RECONSTRUIR MENU DINÁMICAMENTE
+            # ==================================================
+            self.actions_menu.delete(0, "end")
+
+            # --- Review ---
+            self.actions_menu.add_command(
+                label="🔍 Review",
+                command=self._review_selected
+            )
+
+            # --- Reject / Approve ---
+            if is_restricted:
+                self.actions_menu.add_command(
+                    label="❌ Reject",
+                    state="disabled"
+                )
+                self.actions_menu.add_command(
+                    label="✅ Approve",
+                    state="disabled"
+                )
+            else:
+                self.actions_menu.add_command(
+                    label="❌ Reject",
+                    command=lambda: self._change_status("Rejected")
+                )
+                self.actions_menu.add_command(
+                    label="✅ Approve",
+                    command=lambda: self._change_status("Approved")
+                )
+
+            self.actions_menu.add_separator()
+
+            # --- Excel ---
+            self.actions_menu.add_command(
+                label="📊 Generate Excel",
+                command=self._generate_excel_selected
+            )
+
+            # --- Final Report ---
+            self.actions_menu.add_command(
+                label="📄 Crear Informe Final",
+                command=self._create_final_report_selected
+            )
+
+            # ==================================================
+            # 📍 MOSTRAR MENU
+            # ==================================================
+            x = self.btn_actions.winfo_rootx()
+            y = self.btn_actions.winfo_rooty() + self.btn_actions.winfo_height()
+
+            self.actions_menu.tk_popup(x, y)
+
+        finally:
+            self.actions_menu.grab_release()
 
     # =========================================================
     # REVIEW (OPEN FORM + GET BY ID)
@@ -317,7 +380,7 @@ class VesselBunkerTable(ttk.Frame):
             form.report_id = int(payload.get("id") or report_id)
 
             # 🔥 Cargar payload
-            form.set_payload(payload)
+            form.set_payload(payload, from_review=True)
 
             form.pack(fill="both", expand=True)
 

@@ -1,6 +1,7 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 from api_client import get_servicio_api, confirmar_informe_api
+from Modulos.Servicios.date_utils import to_long_english_date
 
 
 class PopupVistaInforme(tk.Toplevel):
@@ -66,12 +67,16 @@ class PopupVistaInforme(tk.Toplevel):
         ]
 
         for c in campos_mostrar:
+            value = self.data.get(c, "")
+            if c in ("fecha_inicio", "fecha_fin", "fecha_factura", "fecha_vencimiento"):
+                value = to_long_english_date(value)
+
             tree.insert(
                 "",
                 "end",
                 values=(
                     c.replace("_", " ").title(),
-                    self.data.get(c, "")
+                    value
                 )
             )
 

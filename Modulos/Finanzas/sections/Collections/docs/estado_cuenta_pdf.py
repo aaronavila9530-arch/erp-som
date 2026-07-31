@@ -9,6 +9,7 @@ from tkinter import filedialog, messagebox
 import tempfile
 import shutil
 import os
+from Modulos.Finanzas.date_utils import to_long_english_date
 
 HEADER_PATH = r"C:\Users\Aaron Avila\Documents\ERP-SOM\assets\header.png"
 WATERMARK_PATH = r"C:\Users\Aaron Avila\Documents\ERP-SOM\assets\watermark.png"
@@ -63,7 +64,7 @@ def generar_estado_cuenta_pdf(
     datos_bancarios
 ):
 
-    hoy = date.today().strftime("%Y-%m-%d")
+    hoy = to_long_english_date(date.today())
 
     filename = f"Estado_Cuenta_{cliente}_{hoy}.pdf"
     path = filedialog.asksaveasfilename(
@@ -91,6 +92,7 @@ def generar_estado_cuenta_pdf(
 
         styles = getSampleStyleSheet()
         styles.add(ParagraphStyle(name="Body", fontSize=10, leading=14))
+        styles.add(ParagraphStyle(name="InvoiceNumber", fontSize=7, leading=8))
 
         elements = []
 
@@ -150,9 +152,9 @@ def generar_estado_cuenta_pdf(
 
         for f in facturas:
             table_data.append([
-                f.get("numero_documento", ""),
-                f.get("fecha_emision", ""),
-                f.get("fecha_vencimiento", ""),
+                Paragraph(str(f.get("numero_documento") or ""), styles["InvoiceNumber"]),
+                to_long_english_date(f.get("fecha_emision", "")),
+                to_long_english_date(f.get("fecha_vencimiento", "")),
                 f.get("aging_dias", ""),
                 f"{float(f.get('total') or 0):,.2f}",
                 f.get("buque_contenedor", ""),
@@ -163,13 +165,13 @@ def generar_estado_cuenta_pdf(
         available_width = doc.width
 
         col_widths = [
-            available_width * 0.18,
+            available_width * 0.23,
             available_width * 0.12,
             available_width * 0.12,
             available_width * 0.06,
             available_width * 0.10,
-            available_width * 0.14,
-            available_width * 0.14,
+            available_width * 0.12,
+            available_width * 0.12,
             available_width * 0.14,
         ]
 

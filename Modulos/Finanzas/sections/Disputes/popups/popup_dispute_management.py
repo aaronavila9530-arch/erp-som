@@ -3,6 +3,7 @@ from tkinter import ttk, messagebox
 import requests
 
 from api_client import BASE_URL
+from Modulos.Finanzas.date_utils import to_long_english_date
 
 
 STATUSES = [
@@ -139,7 +140,7 @@ class PopupDisputeManagement(tk.Toplevel):
         for row in data:
             self.history.insert(
                 "end",
-                f"[{row['created_at']}] {row.get('created_by', '')}:\n"
+                f"[{to_long_english_date(row['created_at'])}] {row.get('created_by', '')}:\n"
                 f"{row['comentario']}\n\n"
             )
 

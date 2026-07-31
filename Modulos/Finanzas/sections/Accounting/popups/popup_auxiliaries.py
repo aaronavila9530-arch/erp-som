@@ -11,6 +11,7 @@ from api_client import (
     get_accounting_auxiliary_documents_api,
     get_accounting_auxiliary_entities_api,
     get_accounting_auxiliary_reconciliation_api,
+    get_accounting_auxiliary_reconciliation_details_api,
     get_accounting_auxiliary_settings_api,
     sync_accounting_auxiliaries_api,
     update_accounting_auxiliary_setting_api,
@@ -18,7 +19,7 @@ from api_client import (
 from session_context import get_user
 
 
-TYPES = ("CUSTOMER", "SUPPLIER", "BANK", "EMPLOYEE", "TAX", "ASSET", "ADVANCE", "LOAN")
+TYPES = ("CUSTOMER", "SUPPLIER", "BANK", "EMPLOYEE", "TAX", "RETENTION", "ASSET", "ADVANCE", "LOAN")
 
 
 class PopupAccountingAuxiliaries(tk.Toplevel):
@@ -65,12 +66,15 @@ class PopupAccountingAuxiliaries(tk.Toplevel):
         notebook.pack(fill="both", expand=True, padx=10, pady=(0, 10))
         self.entities_tab = ttk.Frame(notebook)
         self.recon_tab = ttk.Frame(notebook)
+        self.detail_recon_tab = ttk.Frame(notebook)
         self.aging_tab = ttk.Frame(notebook)
         notebook.add(self.entities_tab, text="Auxiliares y documentos")
+        notebook.add(self.detail_recon_tab, text="Detalle real vs mayor")
         notebook.add(self.recon_tab, text="Conciliación con mayor")
         notebook.add(self.aging_tab, text="Antigüedad de saldos")
         self._build_entities_tab()
         self._build_recon_tab()
+        self._build_detail_recon_tab()
         self._build_aging_tab()
 
     def _tree(self, parent, columns, headers, widths=None):
@@ -116,6 +120,25 @@ class PopupAccountingAuxiliaries(tk.Toplevel):
         self.recon_tree.tag_configure("UNMAPPED", foreground="#946200")
         self.recon_tree.tag_configure("FX_REQUIRED", foreground="#6b4eff")
 
+    def _build_detail_recon_tab(self):
+        frame = ttk.Frame(self.detail_recon_tab, padding=5)
+        frame.pack(fill="both", expand=True)
+        ttk.Label(
+            frame,
+            text="Esta vista compara cada documento abierto contra su asiento o cuenta de control. Si dice diferencia, revise moneda, pago aplicado, cuenta contable o documento fuente.",
+            wraplength=1200,
+        ).pack(anchor="w", pady=(0, 6))
+        cols = ("type", "entity", "document", "doc_type", "currency", "account",
+                "aux", "ledger", "difference", "scope", "status")
+        self.detail_recon_tree = self._tree(frame, cols,
+            ("Tipo", "Auxiliar", "Documento", "Clase", "Moneda", "Cuenta",
+             "Saldo auxiliar", "Saldo mayor", "Diferencia", "Alcance", "Estado"),
+            {"type": 95, "entity": 240, "document": 170, "doc_type": 130, "currency": 75,
+             "account": 125, "aux": 130, "ledger": 130, "difference": 130, "scope": 145, "status": 110})
+        self.detail_recon_tree.tag_configure("OK", foreground="#167c3a")
+        self.detail_recon_tree.tag_configure("DIFFERENCE", foreground="#b42318")
+        self.detail_recon_tree.tag_configure("UNMAPPED", foreground="#946200")
+
     def _build_aging_tab(self):
         frame = ttk.Frame(self.aging_tab, padding=5)
         frame.pack(fill="both", expand=True)
@@ -144,6 +167,7 @@ class PopupAccountingAuxiliaries(tk.Toplevel):
             self.mapping.set(label)
             self._load_entities()
             self._load_reconciliation()
+            self._load_detail_reconciliation()
             self._load_aging()
         except Exception as exc:
             messagebox.showerror("Auxiliares", str(exc))
@@ -173,6 +197,43 @@ class PopupAccountingAuxiliaries(tk.Toplevel):
             self.recon_tree.insert("", "end", values=(row["entity_type"], row.get("control_account_code") or "SIN MAPEO",
                 self._amount(row["auxiliary_balance"]), self._amount(row["ledger_balance"]),
                 self._amount(row["difference"]), row["status"]), tags=(row["status"],))
+
+    def _load_detail_reconciliation(self):
+        self.detail_recon_tree.delete(*self.detail_recon_tree.get_children())
+        rows = get_accounting_auxiliary_reconciliation_details_api(self.entity_type.get(), self.period)
+        for row in rows:
+            entity = f"{row.get('entity_code') or ''} - {row.get('entity_name') or ''}".strip(" -")
+            self.detail_recon_tree.insert("", "end", values=(
+                row.get("entity_type") or "",
+                entity,
+                row.get("document_number") or "",
+                row.get("document_type") or "",
+                row.get("currency_code") or "",
+                row.get("control_account_code") or "SIN MAPEO",
+                self._amount(row.get("auxiliary_balance")),
+                self._amount(row.get("ledger_balance")),
+                self._amount(row.get("difference")),
+                self._scope_label(row.get("ledger_scope")),
+                self._status_label(row.get("status")),
+            ), tags=(row.get("status") or "",))
+
+    @staticmethod
+    def _scope_label(scope):
+        return {
+            "DOCUMENT_SOURCE": "Documento fuente",
+            "ACCOUNTING_LINE": "Linea contable",
+            "CONTROL_ACCOUNT": "Cuenta control",
+            "NO_ACCOUNT": "Sin cuenta mapeada",
+        }.get(scope or "", scope or "")
+
+    @staticmethod
+    def _status_label(status):
+        return {
+            "OK": "OK",
+            "DIFFERENCE": "Diferencia: revisar",
+            "UNMAPPED": "Sin mapeo contable",
+            "FX_REQUIRED": "Requiere TC/revaluacion",
+        }.get(status or "", status or "")
 
     def _load_aging(self):
         self.aging_tree.delete(*self.aging_tree.get_children())
@@ -219,7 +280,7 @@ class PopupAccountingAuxiliaries(tk.Toplevel):
             create_accounting_auxiliary_document_api(entity_id, {"document_type": "OTHER", "document_number": number,
                 "issue_date": date.today().isoformat(), "due_date": due or None, "original_amount": str(amount),
                 "open_amount": str(amount), "currency_code": "CRC"})
-            self._load_documents(); self._load_entities(); self._load_reconciliation(); self._load_aging()
+            self._load_documents(); self._load_entities(); self._load_reconciliation(); self._load_detail_reconciliation(); self._load_aging()
         except Exception as exc: messagebox.showerror("Documento", str(exc))
 
     def _apply_transaction(self):
@@ -234,5 +295,5 @@ class PopupAccountingAuxiliaries(tk.Toplevel):
         try:
             apply_accounting_auxiliary_transaction_api(document_id, {"transaction_type": "PAYMENT", "effect": "REDUCE",
                 "amount": str(amount), "reference": reference, "user": get_user() or "unknown"})
-            self._load_documents(); self._load_entities(); self._load_reconciliation(); self._load_aging()
+            self._load_documents(); self._load_entities(); self._load_reconciliation(); self._load_detail_reconciliation(); self._load_aging()
         except Exception as exc: messagebox.showerror("Movimiento", str(exc))

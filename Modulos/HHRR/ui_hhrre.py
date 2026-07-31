@@ -25,14 +25,6 @@ from Modulos.HHRR.views.vista_empleados import VistaEmpleadosHHRR
 
 
 class HHRRUI(ttk.Frame):
-    """
-    Router visual del módulo HHRR.
-
-    ✔ HOME sin botón volver
-    ✔ Vistas internas con botón volver
-    ✔ Routing estricto por rol
-    ✔ NO lógica operativa aquí
-    """
 
     def __init__(self, parent, usuario, rol, empleado_id=None, on_back=None):
         super().__init__(parent)
@@ -40,7 +32,7 @@ class HHRRUI(ttk.Frame):
         self.parent = parent
         self.usuario = usuario
         self.rol = (rol or "").lower()
-        self.empleado_id = empleado_id
+        self.empleado_id = empleado_id  # ⚠️ ya NO es crítico
         self.on_back = on_back
 
         self._build_base_ui()
@@ -97,7 +89,7 @@ class HHRRUI(ttk.Frame):
             "paylips": self._abrir_paylips,
             "solicitudes": self._abrir_solicitudes,
             "horas": self._abrir_horas,
-            "empleados": self._abrir_empleados,  # ➕ BOTÓN EMPLEADOS
+            "empleados": self._abrir_empleados,
             "politicas": self._abrir_politicas,
         }
 
@@ -130,7 +122,7 @@ class HHRRUI(ttk.Frame):
         ).pack(fill="both", expand=True)
 
     # =========================================================
-    # SOLICITUDES (USER / ADMIN / MASTER)
+    # SOLICITUDES
     # =========================================================
     def _abrir_solicitudes(self):
 
@@ -138,9 +130,10 @@ class HHRRUI(ttk.Frame):
         self._mostrar_boton_volver()
 
         VistaSolicitudesHHRR(
-            parent=self.contenedor,
+            parent=self.contenedor,      # 🔥 FIX (no self)
+            usuario=self.usuario,        # 🔥 FIX CLAVE
             rol_usuario=self.rol,
-            on_back=self._mostrar_home
+            on_back=self._mostrar_home   # 🔥 FIX (tu método correcto)
         ).pack(fill="both", expand=True)
 
     # =========================================================
@@ -187,35 +180,28 @@ class HHRRUI(ttk.Frame):
             ).pack(fill="both", expand=True)
 
     # =========================================================
-    # PAYSLIPS (EMPLOYEE / ADMIN / MASTER)
+    # PAYSLIPS (FIX REAL)
     # =========================================================
     def _abrir_paylips(self):
 
         if self.rol not in ("user", "admin", "master"):
             messagebox.showwarning(
                 "Acceso denegado",
-                "No tienes permisos para acceder a Colillas de Pago."
+                "No tienes permisos para acceder a Colillas."
             )
             return
 
-        if self.rol == "user" and not self.empleado_id:
-            messagebox.showerror(
-                "Error",
-                "Empleado no asociado."
-            )
-            return
-
+        # 🔥 FIX CRÍTICO: eliminar dependencia de empleado_id
         self._limpiar_contenedor()
         self._mostrar_boton_volver()
 
         VistaColillasEmployee(
             parent=self.contenedor,
-            empleado_id=self.empleado_id
+            empleado_id=self.usuario   # 👉 usamos usuario directamente
         ).pack(fill="both", expand=True)
 
-
     # =========================================================
-    # POLÍTICAS (USER / ADMIN / MASTER)
+    # POLÍTICAS
     # =========================================================
     def _abrir_politicas(self):
 

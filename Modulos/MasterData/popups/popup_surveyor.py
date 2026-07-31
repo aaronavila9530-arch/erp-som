@@ -2,6 +2,7 @@ import tkinter as tk
 from tkinter import ttk
 import requests
 from api_client import BASE_URL
+from Modulos.MasterData.prefijos_telefonicos import PREFIJOS_TELEFONICOS
 
 
 class PopupSurveyor(tk.Toplevel):
@@ -19,10 +20,12 @@ class PopupSurveyor(tk.Toplevel):
         # Si no vienen datos aún, usamos listas vacías
         self.lista_operaciones = lista_operaciones or []
         self.lista_puertos = lista_puertos or []
+        self._ensure_catalogs()
 
         # Variables
         self.nombre = tk.StringVar()
         self.apellidos = tk.StringVar()
+        self.email = tk.StringVar()
         self.nacionalidad = tk.StringVar()
         self.estado_civil = tk.StringVar()
         self.genero = tk.StringVar()
@@ -37,6 +40,7 @@ class PopupSurveyor(tk.Toplevel):
         self.honorario = tk.StringVar()
         self.frecuencia_pago = tk.StringVar()
         self.banco = tk.StringVar()
+        self.direccion_banco = tk.StringVar()
         self.cuenta_iban = tk.StringVar()
         self.moneda = tk.StringVar()
         self.swift = tk.StringVar()
@@ -45,8 +49,31 @@ class PopupSurveyor(tk.Toplevel):
         self.contacto_emergencia = tk.StringVar()
         self.telefono_emergencia = tk.StringVar()
         self.puerto = tk.StringVar()
+        self.tarifa_rows = []
 
         self._build()
+
+    def _ensure_catalogs(self):
+        if not self.lista_operaciones:
+            try:
+                url = f"{BASE_URL}/servicios_md?page=1&page_size=500"
+                response = requests.get(url, timeout=10)
+                response.raise_for_status()
+                payload = response.json()
+                self.lista_operaciones = [
+                    item.get("nombre", "")
+                    for item in payload.get("data", [])
+                    if item.get("nombre")
+                ]
+            except Exception as e:
+                print("Error cargando operaciones iniciales:", e)
+
+        if not self.lista_puertos:
+            try:
+                from api_client import get_puertos_all_api
+                self.lista_puertos = get_puertos_all_api() or []
+            except Exception as e:
+                print("Error cargando puertos iniciales:", e)
 
     def _build(self):
 
@@ -131,12 +158,10 @@ class PopupSurveyor(tk.Toplevel):
         ttk.Label(tab2, text="Prefijo:", background="white") \
             .grid(row=0, column=0, padx=10, pady=5, sticky="w")
 
-        prefijos_america = ["+506", "+57", "+1"]
-
         self.combo_prefijo = ttk.Combobox(
             tab2,
             textvariable=self.prefijo,
-            values=prefijos_america,
+            values=PREFIJOS_TELEFONICOS,
             state="readonly"
         )
         self.combo_prefijo.grid(row=0, column=1, padx=10, pady=5, sticky="ew")
@@ -147,29 +172,35 @@ class PopupSurveyor(tk.Toplevel):
         self.entry_telefono = ttk.Entry(tab2, textvariable=self.telefono)
         self.entry_telefono.grid(row=1, column=1, padx=10, pady=5, sticky="ew")
 
-        ttk.Label(tab2, text="Provincia:", background="white") \
+        ttk.Label(tab2, text="Email:", background="white") \
             .grid(row=2, column=0, padx=10, pady=5, sticky="w")
 
-        self.entry_provincia = ttk.Entry(tab2, textvariable=self.provincia)
-        self.entry_provincia.grid(row=2, column=1, padx=10, pady=5, sticky="ew")
+        self.entry_email = ttk.Entry(tab2, textvariable=self.email)
+        self.entry_email.grid(row=2, column=1, padx=10, pady=5, sticky="ew")
 
-        ttk.Label(tab2, text="Cantón:", background="white") \
+        ttk.Label(tab2, text="Provincia:", background="white") \
             .grid(row=3, column=0, padx=10, pady=5, sticky="w")
 
-        self.entry_canton = ttk.Entry(tab2, textvariable=self.canton)
-        self.entry_canton.grid(row=3, column=1, padx=10, pady=5, sticky="ew")
+        self.entry_provincia = ttk.Entry(tab2, textvariable=self.provincia)
+        self.entry_provincia.grid(row=3, column=1, padx=10, pady=5, sticky="ew")
 
-        ttk.Label(tab2, text="Distrito:", background="white") \
+        ttk.Label(tab2, text="Cantón:", background="white") \
             .grid(row=4, column=0, padx=10, pady=5, sticky="w")
 
-        self.entry_distrito = ttk.Entry(tab2, textvariable=self.distrito)
-        self.entry_distrito.grid(row=4, column=1, padx=10, pady=5, sticky="ew")
+        self.entry_canton = ttk.Entry(tab2, textvariable=self.canton)
+        self.entry_canton.grid(row=4, column=1, padx=10, pady=5, sticky="ew")
 
-        ttk.Label(tab2, text="Dirección exacta:", background="white") \
+        ttk.Label(tab2, text="Distrito:", background="white") \
             .grid(row=5, column=0, padx=10, pady=5, sticky="w")
 
+        self.entry_distrito = ttk.Entry(tab2, textvariable=self.distrito)
+        self.entry_distrito.grid(row=5, column=1, padx=10, pady=5, sticky="ew")
+
+        ttk.Label(tab2, text="Dirección exacta:", background="white") \
+            .grid(row=6, column=0, padx=10, pady=5, sticky="w")
+
         self.entry_direccion = ttk.Entry(tab2, textvariable=self.direccion)
-        self.entry_direccion.grid(row=5, column=1, padx=10, pady=5, sticky="ew")
+        self.entry_direccion.grid(row=6, column=1, padx=10, pady=5, sticky="ew")
 
         # ==========================
         # TAB 3 — Laboral
@@ -207,26 +238,32 @@ class PopupSurveyor(tk.Toplevel):
         self.entry_banco = ttk.Entry(tab3, textvariable=self.banco)
         self.entry_banco.grid(row=2, column=1, padx=10, pady=5, sticky="ew")
 
-        ttk.Label(tab3, text="Cuenta IBAN:", background="white") \
+        ttk.Label(tab3, text="Dirección banco:", background="white") \
             .grid(row=3, column=0, padx=10, pady=5, sticky="w")
 
-        self.entry_cuenta_iban = ttk.Entry(tab3, textvariable=self.cuenta_iban)
-        self.entry_cuenta_iban.grid(row=3, column=1, padx=10, pady=5, sticky="ew")
+        self.entry_direccion_banco = ttk.Entry(tab3, textvariable=self.direccion_banco)
+        self.entry_direccion_banco.grid(row=3, column=1, padx=10, pady=5, sticky="ew")
 
-        ttk.Label(tab3, text="Swift Code:", background="white") \
+        ttk.Label(tab3, text="Cuenta IBAN:", background="white") \
             .grid(row=4, column=0, padx=10, pady=5, sticky="w")
 
-        self.entry_swift = ttk.Entry(tab3, textvariable=self.swift)
-        self.entry_swift.grid(row=4, column=1, padx=10, pady=5, sticky="ew")
+        self.entry_cuenta_iban = ttk.Entry(tab3, textvariable=self.cuenta_iban)
+        self.entry_cuenta_iban.grid(row=4, column=1, padx=10, pady=5, sticky="ew")
 
-        ttk.Label(tab3, text="UID:", background="white") \
+        ttk.Label(tab3, text="Swift Code:", background="white") \
             .grid(row=5, column=0, padx=10, pady=5, sticky="w")
 
+        self.entry_swift = ttk.Entry(tab3, textvariable=self.swift)
+        self.entry_swift.grid(row=5, column=1, padx=10, pady=5, sticky="ew")
+
+        ttk.Label(tab3, text="UID:", background="white") \
+            .grid(row=6, column=0, padx=10, pady=5, sticky="w")
+
         self.entry_uid = ttk.Entry(tab3, textvariable=self.uid)
-        self.entry_uid.grid(row=5, column=1, padx=10, pady=5, sticky="ew")
+        self.entry_uid.grid(row=6, column=1, padx=10, pady=5, sticky="ew")
 
         ttk.Label(tab3, text="Moneda:", background="white") \
-            .grid(row=6, column=0, padx=10, pady=5, sticky="w")
+            .grid(row=7, column=0, padx=10, pady=5, sticky="w")
 
         monedas = ["CRC", "USD", "EUR"]
 
@@ -236,7 +273,7 @@ class PopupSurveyor(tk.Toplevel):
             values=monedas,
             state="readonly"
         )
-        self.combo_moneda.grid(row=6, column=1, padx=10, pady=5, sticky="ew")
+        self.combo_moneda.grid(row=7, column=1, padx=10, pady=5, sticky="ew")
 
         # ==========================
         # TAB 4 — Salud
@@ -295,6 +332,87 @@ class PopupSurveyor(tk.Toplevel):
         # Cargar operaciones dinámicamente
         self.combo_operacion.configure(postcommand=self._cargar_operaciones)
 
+        ttk.Separator(tab5, orient="horizontal").grid(
+            row=3, column=0, columnspan=2, padx=10, pady=12, sticky="ew"
+        )
+
+        ttk.Label(
+            tab5,
+            text="Cobertura adicional por puerto / servicio",
+            background="white",
+            font=("Arial", 10, "bold")
+        ).grid(row=4, column=0, columnspan=2, padx=10, pady=(0, 5), sticky="w")
+
+        header = tk.Frame(tab5, bg="white")
+        header.grid(row=5, column=0, columnspan=2, padx=10, pady=(0, 2), sticky="ew")
+        for idx, text in enumerate(("Puerto", "Servicio", "Honorario", "Accion")):
+            ttk.Label(header, text=text, background="white", font=("Arial", 9, "bold")).grid(
+                row=0, column=idx, padx=4, sticky="w"
+            )
+
+        self.tarifas_frame = tk.Frame(tab5, bg="white")
+        self.tarifas_frame.grid(row=6, column=0, columnspan=2, padx=10, pady=2, sticky="ew")
+
+        frame_tarifa_btns = tk.Frame(tab5, bg="white")
+        frame_tarifa_btns.grid(row=7, column=0, columnspan=2, padx=10, pady=8, sticky="w")
+        tk.Button(frame_tarifa_btns, text="+ Agregar puerto / servicio", command=self._add_tarifa_row) \
+            .pack(side="left", padx=(0, 6))
+        tk.Button(frame_tarifa_btns, text="- Quitar ultimo", command=self._remove_last_tarifa_row) \
+            .pack(side="left")
+
+        for child in tab5.grid_slaves():
+            child.destroy()
+
+        ttk.Label(
+            tab5,
+            text="Cobertura por puerto / servicio",
+            background="white",
+            font=("Arial", 10, "bold")
+        ).grid(row=0, column=0, columnspan=2, padx=10, pady=(10, 5), sticky="w")
+
+        header = tk.Frame(tab5, bg="white")
+        header.grid(row=1, column=0, columnspan=2, padx=10, pady=(0, 2), sticky="ew")
+        for idx, text in enumerate(("Puerto", "Servicio", "Honorario", "Accion")):
+            ttk.Label(header, text=text, background="white", font=("Arial", 9, "bold")).grid(
+                row=0, column=idx, padx=4, sticky="w"
+            )
+
+        base_frame = tk.Frame(tab5, bg="white")
+        base_frame.grid(row=2, column=0, columnspan=2, padx=10, pady=2, sticky="ew")
+
+        self.combo_puerto = ttk.Combobox(
+            base_frame,
+            textvariable=self.puerto,
+            values=self.lista_puertos,
+            state="readonly",
+            width=24
+        )
+        self.combo_puerto.grid(row=0, column=0, padx=4, sticky="ew")
+
+        self.combo_operacion = ttk.Combobox(
+            base_frame,
+            textvariable=self.operacion,
+            values=self.lista_operaciones,
+            state="readonly",
+            width=24
+        )
+        self.combo_operacion.configure(postcommand=self._cargar_operaciones)
+        self.combo_operacion.grid(row=0, column=1, padx=4, sticky="ew")
+
+        self.entry_honorario = ttk.Entry(base_frame, textvariable=self.honorario, width=14)
+        self.entry_honorario.grid(row=0, column=2, padx=4, sticky="ew")
+        ttk.Label(base_frame, text="Base", background="white").grid(row=0, column=3, padx=4, sticky="w")
+
+        self.tarifas_frame = tk.Frame(tab5, bg="white")
+        self.tarifas_frame.grid(row=3, column=0, columnspan=2, padx=10, pady=2, sticky="ew")
+
+        frame_tarifa_btns = tk.Frame(tab5, bg="white")
+        frame_tarifa_btns.grid(row=4, column=0, columnspan=2, padx=10, pady=8, sticky="w")
+        tk.Button(frame_tarifa_btns, text="+ Agregar puerto / servicio", command=self._add_tarifa_row) \
+            .pack(side="left", padx=(0, 6))
+        tk.Button(frame_tarifa_btns, text="- Quitar ultimo", command=self._remove_last_tarifa_row) \
+            .pack(side="left")
+
         # ==========================
         # BOTÓN GUARDAR
         # ==========================
@@ -308,11 +426,102 @@ class PopupSurveyor(tk.Toplevel):
             command=self._guardar
         ).pack(pady=10)
 
+    def _add_tarifa_row(self, item=None):
+        item = item or {}
+        row_frame = tk.Frame(self.tarifas_frame, bg="white")
+        row_frame.pack(fill="x", pady=2)
+
+        puerto_var = tk.StringVar(value=item.get("puerto", ""))
+        servicio_var = tk.StringVar(value=item.get("servicio") or item.get("operacion", ""))
+        honorario_var = tk.StringVar(value="" if item.get("honorario") is None else str(item.get("honorario", "")))
+
+        combo_puerto = ttk.Combobox(
+            row_frame,
+            textvariable=puerto_var,
+            values=self.lista_puertos,
+            state="readonly",
+            width=24
+        )
+        combo_puerto.grid(row=0, column=0, padx=4, sticky="ew")
+
+        combo_servicio = ttk.Combobox(
+            row_frame,
+            textvariable=servicio_var,
+            values=self.lista_operaciones,
+            state="readonly",
+            width=24
+        )
+        combo_servicio.configure(postcommand=self._cargar_operaciones)
+        combo_servicio.grid(row=0, column=1, padx=4, sticky="ew")
+
+        entry_honorario = ttk.Entry(row_frame, textvariable=honorario_var, width=14)
+        entry_honorario.grid(row=0, column=2, padx=4, sticky="ew")
+
+        row = {
+            "frame": row_frame,
+            "puerto": puerto_var,
+            "servicio": servicio_var,
+            "honorario": honorario_var,
+            "servicio_combo": combo_servicio,
+        }
+        tk.Button(row_frame, text="Quitar", command=lambda r=row: self._remove_tarifa_row(r)) \
+            .grid(row=0, column=3, padx=4)
+
+        self.tarifa_rows.append(row)
+
+    def _remove_tarifa_row(self, row):
+        if row in self.tarifa_rows:
+            self.tarifa_rows.remove(row)
+        row["frame"].destroy()
+
+    def _remove_last_tarifa_row(self):
+        if self.tarifa_rows:
+            self._remove_tarifa_row(self.tarifa_rows[-1])
+
+    def _collect_tarifas(self):
+        tarifas = []
+        base = {
+            "puerto": self.combo_puerto.get().strip(),
+            "servicio": self.combo_operacion.get().strip(),
+            "honorario": self.entry_honorario.get().strip(),
+            "moneda": self.combo_moneda.get().strip() or "USD",
+        }
+        if any(base.values()):
+            tarifas.append(base)
+
+        for row in self.tarifa_rows:
+            item = {
+                "puerto": row["puerto"].get().strip(),
+                "servicio": row["servicio"].get().strip(),
+                "honorario": row["honorario"].get().strip(),
+                "moneda": self.combo_moneda.get().strip() or "USD",
+            }
+            if any(item.values()):
+                tarifas.append(item)
+        return tarifas
+
+    def set_tarifas(self, tarifas):
+        for row in list(self.tarifa_rows):
+            self._remove_tarifa_row(row)
+
+        tarifas = tarifas or []
+        if not tarifas:
+            return
+
+        first = tarifas[0]
+        self.puerto.set(first.get("puerto", ""))
+        self.operacion.set(first.get("servicio") or first.get("operacion", ""))
+        self.honorario.set("" if first.get("honorario") is None else str(first.get("honorario", "")))
+        for item in tarifas[1:]:
+            self._add_tarifa_row(item)
+
     def _guardar(self):
+        tarifas = self._collect_tarifas()
         data = {
             "codigo": self.codigo_generado,
             "nombre": self.entry_nombre.get().strip(),
             "apellidos": self.entry_apellidos.get().strip(),
+            "email": self.entry_email.get().strip(),
             "estado_civil": self.combo_estado_civil.get().strip(),
             "genero": self.combo_genero.get().strip(),
             "nacionalidad": self.entry_nacionalidad.get().strip(),
@@ -327,6 +536,7 @@ class PopupSurveyor(tk.Toplevel):
             "honorario": self.entry_honorario.get().strip(),
             "pago": self.combo_pago.get().strip(),
             "banco": self.entry_banco.get().strip(),
+            "direccion_banco": self.entry_direccion_banco.get().strip(),
             "cuenta_iban": self.entry_cuenta_iban.get().strip(),
             "moneda": self.combo_moneda.get().strip(),
             "swift": self.entry_swift.get().strip(),
@@ -335,6 +545,7 @@ class PopupSurveyor(tk.Toplevel):
             "contacto_emergencia": self.entry_contacto_emergencia.get().strip(),
             "telefono_emergencia": self.entry_telefono_emergencia.get().strip(),
             "puerto": self.combo_puerto.get().strip(),
+            "tarifas": tarifas,
         }
 
         print("💾 Guardar Surveyor →", data)
@@ -354,9 +565,12 @@ class PopupSurveyor(tk.Toplevel):
             payload = response.json()
             data = payload.get("data", [])
 
-            operaciones = [item["nombre"] for item in data]
+            operaciones = [item["nombre"] for item in data if item.get("nombre")]
+            self.lista_operaciones = operaciones
 
             self.combo_operacion["values"] = operaciones
+            for row in self.tarifa_rows:
+                row["servicio_combo"]["values"] = operaciones
 
         except Exception as e:
             print("Error cargando operaciones:", e)

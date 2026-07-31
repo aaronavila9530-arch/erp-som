@@ -17,6 +17,9 @@ class DraftSurveyTable(ttk.Frame):
     def __init__(self, parent):
         super().__init__(parent)
 
+        # 🔒 Usuario heredado (estándar ERP)
+        self.usuario = getattr(parent, "usuario", None)
+
         self._data_all = []
         self._data_map = {}
         self._page = 1
@@ -395,14 +398,85 @@ class DraftSurveyTable(ttk.Frame):
     def _open_actions_menu(self):
 
         rid = self._get_selected_id()
+
         if not rid:
             messagebox.showwarning("Acciones", "Selecciona un reporte.")
             return
 
         try:
+            # ==================================================
+            # 🔒 CONTROL DE USUARIOS RESTRINGIDOS
+            # ==================================================
+            restricted_users = {"surveyor01", "surveyor02"}
+            is_restricted = str(self.usuario or "").strip().lower() in restricted_users
+
+            # ==================================================
+            # 🔁 RECONSTRUIR MENU DINÁMICAMENTE
+            # ==================================================
+            self.actions_menu.delete(0, "end")
+
+            # --- Review ---
+            self.actions_menu.add_command(
+                label="🔍 Review",
+                command=self._review_selected
+            )
+
+            self.actions_menu.add_separator()
+
+            # --- Approve / Word (mismo flujo) ---
+            if is_restricted:
+                self.actions_menu.add_command(
+                    label="✅ Approve",
+                    state="disabled"
+                )
+                self.actions_menu.add_command(
+                    label="📄 Generar Word (Aprueba)",
+                    state="disabled"
+                )
+            else:
+                self.actions_menu.add_command(
+                    label="✅ Approve",
+                    command=self._approve_selected
+                )
+                self.actions_menu.add_command(
+                    label="📄 Generar Word (Aprueba)",
+                    command=self._approve_selected
+                )
+
+            # --- Excel (SIEMPRE permitido) ---
+            self.actions_menu.add_command(
+                label="📊 Generar Excel (PDF)",
+                command=self._generate_excel_selected
+            )
+
+            # --- Reject ---
+            if is_restricted:
+                self.actions_menu.add_command(
+                    label="❌ Reject",
+                    state="disabled"
+                )
+            else:
+                self.actions_menu.add_command(
+                    label="❌ Reject",
+                    command=lambda: self._change_status("Rejected")
+                )
+
+            self.actions_menu.add_separator()
+
+            # --- Final Report Popup ---
+            self.actions_menu.add_command(
+                label="🧾 Generar Informe Final",
+                command=self._open_final_popup
+            )
+
+            # ==================================================
+            # 📍 MOSTRAR MENU
+            # ==================================================
             x = self.btn_actions.winfo_rootx()
             y = self.btn_actions.winfo_rooty() + self.btn_actions.winfo_height()
+
             self.actions_menu.tk_popup(x, y)
+
         finally:
             self.actions_menu.grab_release()
 

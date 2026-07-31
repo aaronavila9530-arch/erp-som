@@ -5,6 +5,8 @@ import csv
 from openpyxl import Workbook
 
 from api_client import BASE_URL
+from Modulos.Finanzas.date_utils import to_long_english_date
+from Modulos.Finanzas.export_formatting import normalize_invoice_text_columns
 from Modulos.Finanzas.sections.Collections.popups.popup_disputa import PopupDisputa
 from Modulos.Finanzas.sections.Collections.popups.popup_pago import PopupPago
 from Modulos.Finanzas.sections.Collections.docs.estado_cuenta_word import generar_estado_cuenta_word
@@ -186,9 +188,9 @@ class TablaCollections(tk.Frame):
                     row.get("tipo_factura"),
                     row.get("tipo_documento"),
                     row.get("numero_documento"),
-                    row.get("fecha_emision"),
+                    to_long_english_date(row.get("fecha_emision")),
                     row.get("dias_credito"),
-                    row.get("fecha_vencimiento"),
+                    to_long_english_date(row.get("fecha_vencimiento")),
                     row.get("aging_dias"),
                     row.get("moneda"),
                     row.get("total"),
@@ -518,6 +520,8 @@ class TablaCollections(tk.Frame):
 
         for item in self.tree.get_children():
             ws.append(self.tree.item(item)["values"])
+
+        normalize_invoice_text_columns(ws, headers)
 
         try:
             wb.save(path)

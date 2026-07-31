@@ -5,9 +5,11 @@ from datetime import datetime
 
 
 class DatePicker(tk.Toplevel):
-    def __init__(self, parent, entry_widget):
+    def __init__(self, parent, entry_widget, output_format="%Y-%m-%d", on_select=None):
         super().__init__(parent)
         self.entry_widget = entry_widget
+        self.output_format = output_format
+        self.on_select = on_select
         self.title("Seleccionar fecha")
         self.geometry("300x260")
         self.resizable(False, False)
@@ -69,7 +71,10 @@ class DatePicker(tk.Toplevel):
         self.draw_calendar()
 
     def select_date(self, day):
-        selected = f"{self.year}-{self.month:02d}-{day:02d}"
+        selected_dt = datetime(self.year, self.month, day)
+        selected = selected_dt.strftime(self.output_format)
         self.entry_widget.delete(0, tk.END)
         self.entry_widget.insert(0, selected)
+        if self.on_select:
+            self.on_select(selected_dt)
         self.destroy()

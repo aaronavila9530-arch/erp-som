@@ -27,12 +27,33 @@ def parse_date(value):
     if not value:
         return None
     try:
-        raw = str(value).split(" ")[0]
+        if isinstance(value, datetime):
+            return value.date()
+        if isinstance(value, date):
+            return value
 
-        if "-" in raw and len(raw.split("-")[0]) == 4:
-            return datetime.strptime(raw, "%Y-%m-%d").date()
+        text = str(value).strip()
+        normalized = " ".join(text.replace(",", " ").split())
 
-        return datetime.strptime(raw, "%d-%m-%Y").date()
+        for fmt in (
+            "%Y-%m-%d",
+            "%Y/%m/%d",
+            "%d-%m-%Y",
+            "%d/%m/%Y",
+            "%m-%d-%Y",
+            "%m/%d/%Y",
+            "%b %d %Y",
+            "%B %d %Y",
+            "%Y-%m-%d %H:%M",
+            "%Y-%m-%d %H:%M:%S",
+            "%Y-%m-%dT%H:%M:%S",
+        ):
+            try:
+                return datetime.strptime(normalized, fmt).date()
+            except Exception:
+                pass
+
+        return datetime.fromisoformat(text[:19].replace(" ", "T")).date()
 
     except:
         return None
@@ -77,7 +98,8 @@ def _ensure_current_draft_form_columns(cur):
     for prefix in prefixes:
         columns.extend(f"{prefix}_{field}" for field in draft_fields)
 
-    columns.extend(f"init_{field}" for field in hydro_fields)
+    for prefix in prefixes:
+        columns.extend(f"{prefix}_{field}" for field in hydro_fields)
 
     for column in columns:
         cur.execute(
@@ -742,23 +764,35 @@ def update_draft_survey(identifier: str, payload: dict, conn=Depends(get_db)):
         def parse_date_flexible(v):
             if v in (None, ""):
                 return None
-
+            if isinstance(v, datetime):
+                return v.date()
             if isinstance(v, date):
                 return v
 
-            if isinstance(v, datetime):
-                return v.date()
+            text = str(v).strip()
+            normalized = " ".join(text.replace(",", " ").split())
+            for fmt in (
+                "%Y-%m-%d",
+                "%Y/%m/%d",
+                "%d-%m-%Y",
+                "%d/%m/%Y",
+                "%m-%d-%Y",
+                "%m/%d/%Y",
+                "%b %d %Y",
+                "%B %d %Y",
+                "%Y-%m-%d %H:%M",
+                "%Y-%m-%d %H:%M:%S",
+                "%Y-%m-%dT%H:%M:%S",
+            ):
+                try:
+                    return datetime.strptime(normalized, fmt).date()
+                except Exception:
+                    pass
 
-            if isinstance(v, str):
-                raw = v.strip().split(" ")[0]
-
-                for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%m-%d-%Y"):
-                    try:
-                        return datetime.strptime(raw, fmt).date()
-                    except Exception:
-                        pass
-
-            return None
+            try:
+                return datetime.fromisoformat(text[:19].replace(" ", "T")).date()
+            except Exception:
+                return None
 
         def normalize_decimal_string(v):
             """

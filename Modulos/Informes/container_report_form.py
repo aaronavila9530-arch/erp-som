@@ -11,6 +11,7 @@ from api_client import create_container_report_api
 from Modulos.Informes.popup.popup_container_report_selector import (
     PopupContainerReportSelector
 )
+from Modulos.Informes.date_utils import to_db_datetime, to_long_english_date
 
 
 class ContainerReportForm(ttk.Frame):
@@ -818,10 +819,14 @@ class ContainerReportForm(ttk.Frame):
         date_entry = DateEntry(
             frame,
             textvariable=date_var,
-            date_pattern="dd-mm-yyyy",
+            date_pattern="yyyy-mm-dd",
             width=12
         )
         date_entry.pack(side="left")
+        date_entry.bind(
+            "<<DateEntrySelected>>",
+            lambda event: date_var.set(to_long_english_date(date_var.get()))
+        )
 
         # ----------------------------
         # TIME (24H)
@@ -860,18 +865,14 @@ class ContainerReportForm(ttk.Frame):
             if not date_var.get():
                 return None
 
-            try:
-                dt = datetime.strptime(
-                    f"{date_var.get()} {hour_var.get()}:{minute_var.get()}",
-                    "%d-%m-%Y %H:%M"
-                )
-                return dt.strftime("%Y-%m-%d %H:%M")
-            except ValueError:
+            value = to_db_datetime(date_var.get(), hour_var.get(), minute_var.get())
+            if not value:
                 messagebox.showerror(
                     "Invalid Date / Time",
                     "Please select a valid date and time (24h format)."
                 )
                 return None
+            return value
 
         return {
             "date": date_var,

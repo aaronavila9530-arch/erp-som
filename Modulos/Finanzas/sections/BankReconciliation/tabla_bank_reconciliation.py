@@ -120,6 +120,12 @@ class BankReconciliationUI(tk.Frame):
 
         ttk.Button(
             frm_actions,
+            text="Conciliacion profesional",
+            command=self._open_professional_reconciliation
+        ).pack(side="left", padx=5)
+
+        ttk.Button(
+            frm_actions,
             text="➕ Registrar Pago Manual",
             command=self._on_registrar_pago_manual
         ).pack(side="left", padx=15)
@@ -218,6 +224,12 @@ class BankReconciliationUI(tk.Frame):
             PaidInvoicesReportUI
         )
         PaidInvoicesReportUI(popup).pack(fill="both", expand=True)
+
+    def _open_professional_reconciliation(self):
+        from Modulos.Finanzas.sections.BankReconciliation.popup_professional_reconciliation import (
+            PopupProfessionalBankReconciliation,
+        )
+        PopupProfessionalBankReconciliation(self)
 
     def _on_search(self):
 

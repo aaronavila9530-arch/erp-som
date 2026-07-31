@@ -3,6 +3,7 @@ from tkinter import ttk, messagebox
 
 from Modulos.Servicios.widgets.date_picker import DatePicker
 from Modulos.Servicios.widgets.time_picker import TimePicker
+from Modulos.Servicios.date_utils import LONG_DATE_FORMAT, to_db_date, to_long_english_date
 
 from api_client import confirmar_servicio_api, get_servicio_api
 
@@ -57,7 +58,7 @@ class PopupGenerarConsecutivo(tk.Toplevel):
 
         fecha_actual = self._get_valor_columna("fecha_inicio")
         if fecha_actual:
-            self.fecha_entry.insert(0, fecha_actual)
+            self.fecha_entry.insert(0, to_long_english_date(fecha_actual))
 
         ttk.Button(
             self,
@@ -110,7 +111,7 @@ class PopupGenerarConsecutivo(tk.Toplevel):
     # HELPERS
     # ==========================================================
     def _abrir_datepicker(self):
-        DatePicker(self, self.fecha_entry)
+        DatePicker(self, self.fecha_entry, output_format=LONG_DATE_FORMAT)
 
     def _abrir_timepicker(self):
         TimePicker(self, self.hora_entry)
@@ -137,7 +138,7 @@ class PopupGenerarConsecutivo(tk.Toplevel):
     # ==========================================================
     def _confirmar(self):
 
-        fecha = self.fecha_entry.get().strip()
+        fecha = to_db_date(self.fecha_entry.get().strip())
         hora = self.hora_entry.get().strip()
 
         if not fecha or not hora:

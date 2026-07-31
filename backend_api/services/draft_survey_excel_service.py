@@ -191,6 +191,20 @@ class DraftSurveyExcelGenerator:
                 "init_hydro2_mtc_p50_2":  "BH42",
                 "init_hydro2_mtc_m50_2":  "BJ42",
 
+                "final_hydro1_draft_1": "BG36",
+                "final_hydro1_disp_1":  "BH36",
+                "final_hydro1_tpc_1":   "BI36",
+                "final_hydro1_lcf_1":   "BJ36",
+                "final_hydro1_draft_2": "BG38",
+                "final_hydro1_disp_2":  "BH38",
+                "final_hydro1_tpc_2":   "BI38",
+                "final_hydro1_lcf_2":   "BJ38",
+                "final_hydro1_draft_mtc":  "BG40",
+                "final_hydro1_mtc_p50_1":  "BH40",
+                "final_hydro1_mtc_m50_1":  "BJ40",
+                "final_hydro1_mtc_p50_2":  "BH42",
+                "final_hydro1_mtc_m50_2":  "BJ42",
+
                 # =====================================================
                 # FINAL â€” TOP
                 # =====================================================
@@ -204,10 +218,10 @@ class DraftSurveyExcelGenerator:
                 # =====================================================
 
                 "final_draft_fwd_port": "Z8",
-                "final_draft_fwd_stb": "Z9",
-                "final_draft_mid_port": "Z10",
-                "final_draft_mid_stb": "AD8",
-                "final_draft_aft_port": "AD9",
+                "final_draft_fwd_stb": "AD8",
+                "final_draft_mid_port": "Z9",
+                "final_draft_mid_stb": "AD9",
+                "final_draft_aft_port": "Z10",
                 "final_draft_aft_stb": "AD10",
 
                 "final_draft_fwd_marks": "AU8",
@@ -283,32 +297,66 @@ class DraftSurveyExcelGenerator:
     # =========================================================
     # SAFE SETTERS (MERGE SAFE + NUMERIC SAFE + BOOL SAFE)
     # =========================================================
+    def _coerce_excel_value(self, value):
+        if value in [None, ""]:
+            return value
+
+        if isinstance(value, bool):
+            return "YES" if value else "NO"
+
+        if isinstance(value, (int, float)):
+            return value
+
+        if not isinstance(value, str):
+            return value
+
+        text = value.strip()
+        if not text:
+            return value
+        if text.startswith("="):
+            return text
+
+        number_text = text.replace("\u00a0", "").replace(" ", "")
+        allowed = set("0123456789+-.,")
+        if any(ch not in allowed for ch in number_text):
+            return value
+        if any(sign in number_text[1:] for sign in "+-"):
+            return value
+
+        if "," in number_text and "." in number_text:
+            if number_text.rfind(",") > number_text.rfind("."):
+                number_text = number_text.replace(".", "").replace(",", ".")
+            else:
+                number_text = number_text.replace(",", "")
+        elif "," in number_text:
+            parts = number_text.split(",")
+            if len(parts) == 2:
+                number_text = f"{parts[0]}.{parts[1]}"
+            else:
+                number_text = number_text.replace(",", "")
+
+        try:
+            number = float(number_text)
+        except Exception:
+            return value
+
+        if number.is_integer() and "." not in number_text:
+            return int(number)
+        return number
+
     def _safe_set(self, ws: Worksheet, cell: str, value):
 
         if value in [None, ""]:
             return
 
-        # Normalizar booleanos a YES/NO si aplica
-        if isinstance(value, bool):
-            value = "YES" if value else "NO"
+        value = self._coerce_excel_value(value)
 
-        # Intentar convertir a nÃºmero si es numÃ©rico
-        try:
-            if isinstance(value, str):
-                v = value.replace(",", ".")
-                if v.replace(".", "", 1).isdigit():
-                    value = float(v)
-        except Exception:
-            pass
-
-        # Manejo de merged cells
         for merged in ws.merged_cells.ranges:
             if cell in merged:
                 ws.cell(row=merged.min_row, column=merged.min_col).value = value
                 return
 
         ws[cell].value = value
-
 
     def _safe_set_date(self, ws: Worksheet, cell: str, value):
 
@@ -329,7 +377,7 @@ class DraftSurveyExcelGenerator:
             # -------------------------------------------------
             elif isinstance(value, str):
 
-                v = value.strip().split(" ")[0]
+                v = " ".join(value.strip().replace(",", " ").split())
 
                 # Intentar formatos comunes usados en el ERP
                 date_formats = [
@@ -339,6 +387,12 @@ class DraftSurveyExcelGenerator:
                     "%m/%d/%Y",
                     "%d/%m/%Y",
                     "%Y/%m/%d",
+                    "%B %d %Y",
+                    "%b %d %Y",
+                    "%Y-%m-%d %H:%M",
+                    "%Y-%m-%d %H:%M:%S",
+                    "%Y-%m-%dT%H:%M",
+                    "%Y-%m-%dT%H:%M:%S",
                 ]
 
                 for fmt in date_formats:

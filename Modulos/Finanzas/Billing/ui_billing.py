@@ -1,10 +1,11 @@
 import tkinter as tk
 from tkinter import ttk
-from datetime import datetime
 import requests
 
 from api_client import BASE_URL
+from Modulos.Finanzas.date_utils import LONG_DATE_FORMAT, to_db_date
 from Modulos.Finanzas.Billing.tabla_billing import TablaBilling
+from Modulos.Servicios.widgets.date_picker import DatePicker
 
 
 class BillingUI(tk.Frame):
@@ -43,11 +44,23 @@ class BillingUI(tk.Frame):
 
         tk.Label(filtros, text="Desde").grid(row=0, column=2, padx=5, sticky="w")
         ttk.Entry(filtros, textvariable=self.fecha_desde, width=12)\
-            .grid(row=0, column=3, padx=5, sticky="w")
+            .grid(row=0, column=3, padx=(5, 0), sticky="w")
+        ttk.Button(
+            filtros,
+            text="📅",
+            width=3,
+            command=lambda: DatePicker(self, self._date_var_entry(self.fecha_desde), output_format=LONG_DATE_FORMAT)
+        ).grid(row=0, column=3, padx=(92, 5), sticky="w")
 
         tk.Label(filtros, text="Hasta").grid(row=0, column=4, padx=5, sticky="w")
         ttk.Entry(filtros, textvariable=self.fecha_hasta, width=12)\
-            .grid(row=0, column=5, padx=5, sticky="w")
+            .grid(row=0, column=5, padx=(5, 0), sticky="w")
+        ttk.Button(
+            filtros,
+            text="📅",
+            width=3,
+            command=lambda: DatePicker(self, self._date_var_entry(self.fecha_hasta), output_format=LONG_DATE_FORMAT)
+        ).grid(row=0, column=5, padx=(92, 5), sticky="w")
 
         # ===================== ROW 1 =====================
         tk.Label(filtros, text="Tipo Factura").grid(row=1, column=0, padx=5, sticky="w")
@@ -111,15 +124,8 @@ class BillingUI(tk.Frame):
     def _buscar(self):
 
         def to_iso(fecha_str):
-            if not fecha_str:
-                return None
-            try:
-                return datetime.strptime(
-                    fecha_str.strip(),
-                    "%d/%m/%Y"
-                ).date().isoformat()
-            except ValueError:
-                return None
+            parsed = to_db_date(fecha_str)
+            return parsed or None
 
         filtros_raw = {
             "cliente": self.cliente.get(),  # ALL o nombre
@@ -144,3 +150,13 @@ class BillingUI(tk.Frame):
 
         self.tabla = TablaBilling(self, filtros)
         self.tabla.pack(fill="both", expand=True)
+
+    def _date_var_entry(self, var):
+        class _EntryAdapter:
+            def delete(self, *_):
+                var.set("")
+
+            def insert(self, _, value):
+                var.set(value)
+
+        return _EntryAdapter()

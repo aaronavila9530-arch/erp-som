@@ -7,6 +7,7 @@ import os
 import sys
 import tempfile
 import shutil
+from Modulos.Finanzas.date_utils import to_long_english_date
 
 
 # ============================================================
@@ -100,7 +101,7 @@ def generar_estado_cuenta_word(
         wm_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
         wm_p.add_run().add_picture(WATERMARK_PATH, width=Inches(4.5))
 
-        hoy = date.today().strftime("%Y-%m-%d")
+        hoy = to_long_english_date(date.today())
 
         # ====================================================
         # RECÁLCULO DE BUCKETS
@@ -188,6 +189,7 @@ def generar_estado_cuenta_word(
         # ====================================================
         table = doc.add_table(rows=1, cols=8)
         table.style = "Table Grid"
+        table.autofit = False
 
         headers = [
             "Número Documento", "Fecha Emisión", "Fecha Vencimiento",
@@ -197,16 +199,26 @@ def generar_estado_cuenta_word(
         for i, h in enumerate(headers):
             table.rows[0].cells[i].text = h
 
+        column_widths = [
+            Inches(1.65), Inches(0.9), Inches(0.9), Inches(0.55),
+            Inches(0.85), Inches(1.0), Inches(1.0), Inches(0.9)
+        ]
+        for row in table.rows:
+            for idx, width in enumerate(column_widths):
+                row.cells[idx].width = width
+
         for f in facturas:
             r = table.add_row().cells
             r[0].text = str(f.get("numero_documento", ""))
-            r[1].text = str(f.get("fecha_emision", ""))
-            r[2].text = str(f.get("fecha_vencimiento", ""))
+            r[1].text = to_long_english_date(f.get("fecha_emision", ""))
+            r[2].text = to_long_english_date(f.get("fecha_vencimiento", ""))
             r[3].text = str(f.get("aging_dias", ""))
             r[4].text = f"{float(f.get('total') or 0):,.2f}"
             r[5].text = str(f.get("buque_contenedor", ""))
             r[6].text = str(f.get("operacion", ""))
             r[7].text = str(f.get("num_informe", ""))
+            for idx, width in enumerate(column_widths):
+                r[idx].width = width
 
         # ====================================================
         # FOOTER

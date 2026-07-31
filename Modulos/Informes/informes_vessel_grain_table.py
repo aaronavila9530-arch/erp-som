@@ -12,6 +12,7 @@ from Modulos.Informes.popup.popup_vessel_grain_sampling_preview import (
 )
 
 from desktop_services.word_pdf_service import convert_word_to_pdf
+from Modulos.Informes.date_utils import to_long_english_date
 
 class VesselGrainSamplingTable(ttk.Frame):
 
@@ -22,6 +23,8 @@ class VesselGrainSamplingTable(ttk.Frame):
     # =========================================================
     def __init__(self, parent):
         super().__init__(parent)
+
+        self.usuario = parent.usuario if hasattr(parent, "usuario") else None
 
         self._data_all = []
         self._data_map = {}
@@ -220,7 +223,7 @@ class VesselGrainSamplingTable(ttk.Frame):
                         "cert_no": r.get("cert_no"),
                         "client": r.get("requested_by"),
                         "vessel": r.get("vessel_name"),
-                        "date": r.get("place_date"),
+                        "date": to_long_english_date(r.get("place_date")),
                         "total": r.get("products_total")
                     }
 
@@ -271,7 +274,7 @@ class VesselGrainSamplingTable(ttk.Frame):
                     r.get("cert_no"),
                     r.get("client"),
                     r.get("vessel"),
-                    r.get("date"),
+                    to_long_english_date(r.get("date")),
                     r.get("total")
                 )
             )
@@ -306,9 +309,69 @@ class VesselGrainSamplingTable(ttk.Frame):
             return
 
         try:
+            # ==================================================
+            # 🔒 CONTROL DE USUARIOS RESTRINGIDOS
+            # ==================================================
+            restricted_users = {"surveyor01", "surveyor02"}
+            is_restricted = str(self.usuario or "").strip().lower() in restricted_users
+
+            # ==================================================
+            # 🔁 RECONSTRUIR MENU DINÁMICAMENTE
+            # ==================================================
+            self.actions_menu.delete(0, "end")
+
+            # --- Review ---
+            self.actions_menu.add_command(
+                label="🔍 Review",
+                command=self._review_selected
+            )
+
+            self.actions_menu.add_separator()
+
+            # --- Export Word ---
+            self.actions_menu.add_command(
+                label="📄 Export Word",
+                command=self._export_word_selected
+            )
+
+            self.actions_menu.add_separator()
+
+            # --- Approve / Reject ---
+            if is_restricted:
+                self.actions_menu.add_command(
+                    label="✅ Approve",
+                    state="disabled"
+                )
+                self.actions_menu.add_command(
+                    label="❌ Reject",
+                    state="disabled"
+                )
+            else:
+                self.actions_menu.add_command(
+                    label="✅ Approve",
+                    command=self._approve_report
+                )
+                self.actions_menu.add_command(
+                    label="❌ Reject",
+                    command=lambda: self._change_status("Rejected")
+                )
+
+            self.actions_menu.add_separator()
+
+            # --- Final Report ---
+            self.actions_menu.add_command(
+                label="📝 Crear Informe Final",
+                command=self._create_final_report
+            )
+
+            # ==================================================
+            # 📍 MOSTRAR MENU
+            # ==================================================
             x = self.btn_actions.winfo_rootx()
             y = self.btn_actions.winfo_rooty() + self.btn_actions.winfo_height()
+
             self.actions_menu.tk_popup(x, y)
+
         finally:
             self.actions_menu.grab_release()
 

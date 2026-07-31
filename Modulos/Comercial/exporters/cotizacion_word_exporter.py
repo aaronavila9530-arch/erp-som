@@ -5,6 +5,7 @@ from datetime import date
 import os
 
 from resource_utils import resource_path
+from Modulos.Comercial.date_utils import to_long_english_date
 
 
 # ============================================================
@@ -84,7 +85,7 @@ def export_cotizacion_word(data: dict, output_path: str):
     # FECHA / CIUDAD
     # --------------------------------------------------
     body.add_run(
-        f"Alajuela, Costa Rica\n{date.today()}\n\n"
+        f"Alajuela, Costa Rica\n{to_long_english_date(date.today())}\n\n"
     )
 
     # --------------------------------------------------

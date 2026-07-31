@@ -3,6 +3,7 @@ from tkinter import ttk, messagebox
 import requests
 
 from api_client import BASE_URL, get_clientes_finanzas_api
+from Modulos.Finanzas.date_utils import to_long_english_date
 from Modulos.Finanzas.sections.Disputes.kpi_disputes import DisputesKPIs
 
 
@@ -183,8 +184,8 @@ class DisputeManagementUI(tk.Frame):
                     row["numero_documento"],
                     row["codigo_cliente"],
                     row["nombre_cliente"],
-                    row["fecha_factura"],
-                    row["fecha_vencimiento"],
+                    to_long_english_date(row["fecha_factura"]),
+                    to_long_english_date(row["fecha_vencimiento"]),
                     f"{row['monto']:,.2f}",
                     row["status"],                         # ✅ status REAL
                     row.get("motivo", ""),                 # ✅ MOTIVO
@@ -193,7 +194,7 @@ class DisputeManagementUI(tk.Frame):
                     row.get("operacion", ""),              # ✅ OPERACIÓN
                     row.get("periodo_operacion", ""),      # ✅ PERIODO
                     row.get("descripcion_servicio", ""),   # ✅ DESCRIPCIÓN
-                    row["created_at"]
+                    to_long_english_date(row["created_at"])
                 )
             )
 

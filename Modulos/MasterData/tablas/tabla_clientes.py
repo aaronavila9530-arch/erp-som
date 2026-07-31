@@ -4,6 +4,7 @@ import requests
 
 from Modulos.MasterData.tablas.base_table import BasePaginatedTable
 from Modulos.MasterData.popups.popup_cliente import PopupCliente
+from Modulos.MasterData.date_utils import to_long_english_date
 
 BASE_URL = "https://api-som-fastapi-production-e66d.up.railway.app"
 
@@ -72,7 +73,10 @@ class TablaClientesUI(BasePaginatedTable):
                 self.table.delete(item)
 
             for row in filas:
-                vals = [row.get(col, "") for col, _ in self.columns]
+                vals = [
+                    to_long_english_date(row.get(col, "")) if col == "fecha_pago" else row.get(col, "")
+                    for col, _ in self.columns
+                ]
                 self.table.insert("", "end", values=vals)
 
         except Exception as e:
@@ -118,7 +122,8 @@ class TablaClientesUI(BasePaginatedTable):
 
             entry = tk.Entry(popup, width=35, relief="flat", bg="#F2F2F2")
             entry.grid(row=i, column=1, padx=10, pady=6, sticky="w")
-            entry.insert(0, data.get(key, ""))
+            value = to_long_english_date(data.get(key, "")) if key == "fecha_pago" else data.get(key, "")
+            entry.insert(0, value)
             entry.config(state="readonly",
                         readonlybackground="#F2F2F2",
                         foreground="black")
@@ -150,7 +155,7 @@ class TablaClientesUI(BasePaginatedTable):
         popup.Canton.set(data.get("canton", ""))
         popup.Distrito.set(data.get("distrito", ""))
         popup.DireccionExacta.set(data.get("direccionexacta", ""))
-        popup.FechaDePago.set(data.get("fecha_pago", ""))
+        popup.FechaDePago.set(to_long_english_date(data.get("fecha_pago", "")))
         popup.Correo.set(data.get("correo", ""))
         popup.Prefijo.set(data.get("prefijo", ""))
         popup.Telefono.set(data.get("telefono", ""))

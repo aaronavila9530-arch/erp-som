@@ -1,6 +1,8 @@
 import tkinter as tk
 from tkinter import ttk
 
+from Modulos.HHRR.date_utils import is_date_column, to_long_english_date
+
 
 class TablaLazy(ttk.Frame):
     """
@@ -72,7 +74,12 @@ class TablaLazy(ttk.Frame):
         self._datos_actuales = filas or []
 
         for fila in self._datos_actuales:
-            valores = [fila.get(col, "") for col in self.columnas]
+            valores = []
+            for col in self.columnas:
+                value = fila.get(col, "")
+                if is_date_column(col):
+                    value = to_long_english_date(value)
+                valores.append(value)
             self.tree.insert("", "end", values=valores)
 
     def limpiar(self):

@@ -9,6 +9,7 @@ from api_client import (
     get_container_report_excel_api,
     get_container_report_statuses_api
 )
+from Modulos.Informes.date_utils import to_db_date
 
 from Modulos.Informes.popup.popup_generate_container_presentation import (
     PopupGenerateContainerPresentation
@@ -40,6 +41,9 @@ class InformesTable(ttk.Frame):
     # =========================================================
     def __init__(self, parent):
         super().__init__(parent)
+
+        self.usuario = parent.usuario if hasattr(parent, "usuario") else None
+
 
         self._data_all = []
         self._data_map = {}
@@ -302,7 +306,7 @@ class InformesTable(ttk.Frame):
                             "status": "Vessel",
                             "vessel": r.get("vessel_name"),
                             "customer": r.get("requested_by"),
-                            "year": str(r.get("place_date"))[:4] if r.get("place_date") else "",
+                            "year": to_db_date(r.get("place_date"))[:4] if r.get("place_date") else "",
                             "month": ""
                         }
 
@@ -619,11 +623,73 @@ class InformesTable(ttk.Frame):
             return
 
         try:
+            # ==================================================
+            # 🔒 CONTROL DE USUARIOS RESTRINGIDOS
+            # ==================================================
+            restricted_users = {"surveyor01", "surveyor02"}
+
+            is_restricted = str(self.usuario or "").strip().lower() in restricted_users
+
+            # ==================================================
+            # 🔁 RECONSTRUIR MENU DINÁMICAMENTE
+            # ==================================================
+            self.actions_menu.delete(0, "end")
+
+            # --- Review ---
+            self.actions_menu.add_command(
+                label="🔍 Review",
+                command=self._review_selected
+            )
+
+            self.actions_menu.add_separator()
+
+            # --- Export ---
+            self.actions_menu.add_command(
+                label="📊 Export Excel",
+                command=self._export_excel_selected
+            )
+
+            self.actions_menu.add_separator()
+
+            # --- Approve / Reject (CONDICIONAL) ---
+            if is_restricted:
+                self.actions_menu.add_command(
+                    label="✅ Approve",
+                    state="disabled"
+                )
+                self.actions_menu.add_command(
+                    label="❌ Reject",
+                    state="disabled"
+                )
+            else:
+                self.actions_menu.add_command(
+                    label="✅ Approve",
+                    command=lambda: self._change_status_selected("Approved")
+                )
+                self.actions_menu.add_command(
+                    label="❌ Reject",
+                    command=lambda: self._change_status_selected("Rejected")
+                )
+
+            self.actions_menu.add_separator()
+
+            # --- Final Report ---
+            self.actions_menu.add_command(
+                label="📄 Crear Informe Final",
+                command=self._create_final_report_selected
+            )
+
+            # ==================================================
+            # 📍 MOSTRAR MENU
+            # ==================================================
             x = self.btn_actions.winfo_rootx()
             y = self.btn_actions.winfo_rooty() + self.btn_actions.winfo_height()
+
             self.actions_menu.tk_popup(x, y)
+
         finally:
             self.actions_menu.grab_release()
+
 
 
     def _create_final_report_selected(self):

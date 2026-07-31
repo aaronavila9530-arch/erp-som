@@ -2,7 +2,7 @@ export type LograQuestion = { number?: string; id?: string; priority?: string; b
 
 export type LograQuestionnaire = { title: string; source_file: string; slug: string; critical_questions: LograQuestion[]; detailed_questions: LograQuestion[]; evidence_requests?: Array<{ id: string; document: string; source?: string }> };
 
-export const LOGRA_QUESTIONNAIRES: LograQuestionnaire[] = [
+export const ONG_QUESTIONNAIRES: LograQuestionnaire[] = [
   {
     "title": "Agencias Navieras Y Agentes",
     "source_file": "Agencias_navieras_y_agentes modificado.docx",

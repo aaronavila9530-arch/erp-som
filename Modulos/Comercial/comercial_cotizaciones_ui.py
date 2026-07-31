@@ -11,6 +11,7 @@ from Modulos.Servicios.popup_servicio import PopupServicio
 
 
 from Modulos.Comercial.popup.popup_nueva_cotizacion import PopupNuevaCotizacion
+from Modulos.Comercial.date_utils import to_long_english_date
 from api_client import (
     get_comercial_cotizaciones_api,
     delete_comercial_cotizacion_api,
@@ -436,6 +437,14 @@ class ComercialCotizacionesUI(ttk.Frame):
         start = (self.page - 1) * self.PAGE_SIZE
         end = start + self.PAGE_SIZE
 
+        def fmt_precio(value):
+            if value in (None, ""):
+                return ""
+            try:
+                return f"{float(value):,.2f}"
+            except (TypeError, ValueError):
+                return ""
+
         for r in filtered[start:end]:
             status = r.get("status")
 
@@ -450,11 +459,11 @@ class ComercialCotizacionesUI(ttk.Frame):
                     r.get("continente"),
                     r.get("pais"),
                     r.get("puerto"),
-                    f"{float(r.get('precio', 0)):,.2f}",
+                    fmt_precio(r.get("precio")),
                     r.get("idioma"),
                     r.get("validez"),
                     status,
-                    r.get("created_at")
+                    to_long_english_date(r.get("created_at"))
                 )
             )
 
@@ -590,7 +599,13 @@ class ComercialCotizacionesUI(ttk.Frame):
         if not path:
             return
 
-        df = pd.DataFrame(self.data_all)
+        export_rows = []
+        for row in self.data_all:
+            item = dict(row or {})
+            item["created_at"] = to_long_english_date(item.get("created_at"))
+            export_rows.append(item)
+
+        df = pd.DataFrame(export_rows)
         if path.endswith(".csv"):
             df.to_csv(path, index=False)
         else:

@@ -4,6 +4,7 @@ import math
 import pandas as pd
 
 from api_client import get_comercial_client_view_api
+from Modulos.Comercial.date_utils import format_comercial_row_dates
 from Modulos.Comercial.popup.popup_cliente_detalle import PopupClienteDetalle
 
 
@@ -333,6 +334,7 @@ class ComercialClientAnalyticsUI(ttk.Frame):
         end = start + self.PAGE_SIZE
 
         for r in self._data_all[start:end]:
+            r = format_comercial_row_dates(r, self.columnas)
             self.tabla.insert("", "end", values=[r.get(c, "") for c in self.columnas])
 
         self.lbl_page.config(text=f"Página {self._page} de {total_pages}")
@@ -343,7 +345,8 @@ class ComercialClientAnalyticsUI(ttk.Frame):
         path = filedialog.asksaveasfilename(defaultextension=".xlsx")
         if not path:
             return
-        pd.DataFrame(self._data_all).to_excel(path, index=False)
+        export_rows = [format_comercial_row_dates(r, self.columnas) for r in self._data_all]
+        pd.DataFrame(export_rows).to_excel(path, index=False)
         messagebox.showinfo("Export", "Excel generado correctamente")
 
     def _export_pdf(self):

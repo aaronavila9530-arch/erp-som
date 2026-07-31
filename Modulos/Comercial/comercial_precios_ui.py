@@ -143,6 +143,9 @@ class ComercialPreciosUI(ttk.Frame):
         self.cb_pais = _combo("País", self.pais_var)
         self.cb_puerto = _combo("Puerto", self.puerto_var)
 
+        self.cb_continente.bind("<<ComboboxSelected>>", self._on_continente_selected)
+        self.cb_pais.bind("<<ComboboxSelected>>", self._on_pais_selected)
+
         ttk.Button(
             filter_bar,
             text="Buscar",
@@ -225,9 +228,11 @@ class ComercialPreciosUI(ttk.Frame):
                 [f"{c['nombrejuridico']} ({c['codigo']})" for c in meta.get("clientes", [])]
             )
 
-            continentes = sorted({u["continente"] for u in meta.get("ubicaciones", [])})
-            paises = sorted({u["pais"] for u in meta.get("ubicaciones", [])})
-            puertos = sorted({u["puerto"] for u in meta.get("ubicaciones", [])})
+            self.ubicaciones = meta.get("ubicaciones", []) or []
+
+            continentes = self._unique_ubicaciones("continente")
+            paises = self._unique_ubicaciones("pais")
+            puertos = self._unique_ubicaciones("puerto")
 
             self.cb_servicio["values"] = self.servicios
             self.cb_cliente["values"] = self.clientes
@@ -235,7 +240,6 @@ class ComercialPreciosUI(ttk.Frame):
             self.cb_pais["values"] = paises
             self.cb_puerto["values"] = puertos
 
-            # 🔹 Forzar ancho REAL del dropdown
             def _attach_dropdown_resize(combo):
                 combo.configure(
                     postcommand=lambda: self._force_dropdown_width(combo)
@@ -250,24 +254,89 @@ class ComercialPreciosUI(ttk.Frame):
             ):
                 _attach_dropdown_resize(cb)
 
-
-            # 🔹 Auto resize dinámico
             self._auto_resize_combo(self.cb_servicio, self.servicios)
             self._auto_resize_combo(self.cb_cliente, self.clientes)
             self._auto_resize_combo(self.cb_continente, continentes)
             self._auto_resize_combo(self.cb_pais, paises)
             self._auto_resize_combo(self.cb_puerto, puertos)
 
-
         except Exception as e:
             messagebox.showerror("Error", f"No se pudo cargar meta:\n{e}")
+
+    def _unique_ubicaciones(self, field, continente=None, pais=None):
+        values = []
+        for ubicacion in self.ubicaciones:
+            if continente and ubicacion.get("continente") != continente:
+                continue
+            if pais and ubicacion.get("pais") != pais:
+                continue
+
+            value = ubicacion.get(field)
+            if value:
+                values.append(value)
+
+        return sorted(set(values))
+
+    def _set_combo_values(self, combo, values):
+        combo["values"] = values
+        self._auto_resize_combo(combo, values)
+
+    def _refresh_location_filters(self, reset_pais=False, reset_puerto=True):
+        continente = (self.continente_var.get() or "").strip()
+        pais = (self.pais_var.get() or "").strip()
+
+        if reset_pais:
+            self.pais_var.set("")
+            pais = ""
+
+        if reset_puerto:
+            self.puerto_var.set("")
+
+        paises = self._unique_ubicaciones("pais", continente=continente or None)
+        puertos = self._unique_ubicaciones(
+            "puerto",
+            continente=continente or None,
+            pais=pais or None
+        )
+
+        self._set_combo_values(self.cb_pais, paises)
+        self._set_combo_values(self.cb_puerto, puertos)
+
+    def _on_continente_selected(self, event=None):
+        self._refresh_location_filters(reset_pais=True, reset_puerto=True)
+
+    def _on_pais_selected(self, event=None):
+        self._refresh_location_filters(reset_pais=False, reset_puerto=True)
+
 
     def _buscar(self):
         try:
             resp = get_comercial_precios_api()
-            self.data_all = resp.get("data", [])
+            rows = resp.get("data", [])
+
+            servicio_f = self._extract_display_value(self.servicio_var.get())
+            cliente_f = self._extract_display_value(self.cliente_var.get())
+            continente_f = (self.continente_var.get() or "").strip()
+            pais_f = (self.pais_var.get() or "").strip()
+            puerto_f = (self.puerto_var.get() or "").strip()
+
+            def _clean(v):
+                if v is None:
+                    return ""
+                return str(v).strip()
+
+            self.data_all = [
+                r for r in rows
+                if (not servicio_f or _clean(r.get("servicio")) == servicio_f)
+                and (not cliente_f or _clean(r.get("cliente")) == cliente_f)
+                and (not continente_f or _clean(r.get("continente")) == continente_f)
+                and (not pais_f or _clean(r.get("pais")) == pais_f)
+                and (not puerto_f or _clean(r.get("puerto")) == puerto_f)
+            ]
+
             self.page = 1
             self._render_page()
+
         except Exception as e:
             messagebox.showerror("Error", str(e))
 
@@ -410,7 +479,9 @@ class ComercialPreciosUI(ttk.Frame):
             v.set("")
 
         self.data_all = []
+        self.page = 1
         self.tree.delete(*self.tree.get_children())
+        self._refresh_location_filters(reset_pais=True, reset_puerto=True)
         self.pagination_lbl.config(text="0 resultados")
 
     def _on_precio_guardado(self):
@@ -419,6 +490,24 @@ class ComercialPreciosUI(ttk.Frame):
         Refresca el listado SIN recrear la UI.
         """
         self._buscar()
+
+    def _extract_display_value(self, value: str) -> str:
+        """
+        Convierte:
+        'Servicio XYZ (123)' -> 'Servicio XYZ'
+        'Cliente ABC (45)'   -> 'Cliente ABC'
+        """
+        if value is None:
+            return ""
+
+        s = str(value).strip()
+        if not s:
+            return ""
+
+        if s.endswith(")") and " (" in s:
+            return s.rsplit(" (", 1)[0].strip()
+
+        return s
 
 
     def _go_back(self):

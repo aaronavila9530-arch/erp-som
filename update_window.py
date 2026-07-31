@@ -2,7 +2,6 @@ import os
 import sys
 import subprocess
 import threading
-import time
 import requests
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -145,6 +144,54 @@ class UpdateWindow(tk.Toplevel):
         completed = subprocess.run(args, check=False)
         return int(completed.returncode)
 
+    def _write_update_helper(self, installer_path: str, exe_path: str) -> str:
+        helper_path = os.path.join(self._updates_dir(), "erp_som_apply_update.cmd")
+        log_path = os.path.join(self._updates_dir(), "erp_som_update.log")
+        inno_args = (
+            "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART "
+            "/CLOSEAPPLICATIONS /RESTARTAPPLICATIONS /FORCECLOSEAPPLICATIONS"
+        )
+        script = f"""@echo off
+setlocal
+set "INSTALLER={installer_path}"
+set "EXE={exe_path}"
+set "LOG={log_path}"
+echo [%date% %time%] Starting ERP-SOM update > "%LOG%"
+"%INSTALLER%" {inno_args} >> "%LOG%" 2>&1
+set "RC=%ERRORLEVEL%"
+echo [%date% %time%] Installer exit code %RC% >> "%LOG%"
+if not "%RC%"=="0" exit /b %RC%
+for /l %%I in (1,1,40) do (
+    if exist "%EXE%" (
+        start "" "%EXE%"
+        echo [%date% %time%] ERP-SOM relaunched: %EXE% >> "%LOG%"
+        exit /b 0
+    )
+    ping -n 2 127.0.0.1 >nul
+)
+echo [%date% %time%] ERP-SOM exe not found: %EXE% >> "%LOG%"
+exit /b 1
+"""
+        with open(helper_path, "w", encoding="ascii", errors="ignore") as f:
+            f.write(script)
+        return helper_path
+
+    def _launch_update_helper(self, helper_path: str):
+        creationflags = 0
+        if os.name == "nt":
+            creationflags = (
+                getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                | getattr(subprocess, "DETACHED_PROCESS", 0)
+                | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            )
+        subprocess.Popen(
+            ["cmd.exe", "/c", helper_path],
+            close_fds=True,
+            creationflags=creationflags,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
     def _read_installed_version(self) -> str:
         try:
             with open(self._installed_version_path(), "r", encoding="utf-8", errors="ignore") as f:
@@ -177,41 +224,13 @@ class UpdateWindow(tk.Toplevel):
 
             self._unblock_downloaded_installer(self.installer_path)
 
-            # --------------------------------
-            # Ejecutar instalador y esperar FIN
-            # --------------------------------
-            code = self._run_inno_and_wait(self.installer_path)
-            if code != 0:
-                raise RuntimeError(f"El instalador finalizó con código {code}.")
-
             # -----------------------------
-            # Relanzar EXE instalado
+            # Aplicar update desde un helper externo.
+            # Inno puede cerrar este ERP antes de que Python relance.
             # -----------------------------
             exe_path = self._installed_exe_path()
-
-            # espera corta por si Windows tarda en liberar archivo
-            for _ in range(20):
-                if os.path.exists(exe_path):
-                    break
-                time.sleep(0.25)
-
-            if not os.path.exists(exe_path):
-                raise RuntimeError(
-                    "La instalación terminó, pero no se encontró el ERP instalado en:\n"
-                    f"{exe_path}\n\n"
-                    "Verifica que el instalador esté usando Program Files."
-                )
-
-            installed_version = self._read_installed_version()
-            if installed_version != self.latest_version:
-                raise RuntimeError(
-                    "El instalador termino, pero la carpeta instalada no quedo actualizada.\n\n"
-                    f"Version esperada: {self.latest_version}\n"
-                    f"Version instalada: {installed_version or 'no detectada'}\n"
-                    f"Ruta revisada: {self._installed_version_path()}"
-                )
-
-            subprocess.Popen([exe_path], close_fds=True)
+            helper_path = self._write_update_helper(self.installer_path, exe_path)
+            self._launch_update_helper(helper_path)
 
             # cerrar el ERP viejo
             os._exit(0)

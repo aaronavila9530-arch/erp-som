@@ -5,6 +5,8 @@ import shutil
 import subprocess
 import sys
 
+from Modulos.Finanzas.date_utils import to_long_english_date
+
 
 class PopupVerFactura(tk.Toplevel):
 
@@ -48,7 +50,7 @@ class PopupVerFactura(tk.Toplevel):
         info = [
             ("Tipo:", self.factura.get("tipo_factura", "")),
             ("Cliente:", self.factura.get("codigo_cliente", "")),
-            ("Fecha:", self.factura.get("fecha_emision", "")),
+            ("Fecha:", to_long_english_date(self.factura.get("fecha_emision", ""))),
             ("Total:", self.factura.get("total", "")),
         ]
 

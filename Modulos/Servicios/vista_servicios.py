@@ -6,7 +6,10 @@ import xml.etree.ElementTree as ET
 from reportlab.pdfgen import canvas  # para exportar PDF
 import io
 from datetime import datetime, date, timedelta
+from Modulos.Servicios.date_utils import to_long_english_date
 from openpyxl import Workbook
+from Modulos.Core.report_router import ReportRouter
+from Modulos.Finanzas.export_formatting import normalize_invoice_text_columns
 
 BASE_URL = "https://api-som-fastapi-production-e66d.up.railway.app"
 
@@ -234,6 +237,7 @@ class VistaServicios(tk.Frame):
 
         # Click derecho
         self.table.bind("<Button-3>", self._menu_contextual)
+        self.table.bind("<Double-1>", self._on_double_click)
 
     # =====================================================================
     # PAGINACIÓN
@@ -256,7 +260,7 @@ class VistaServicios(tk.Frame):
     def _calc_factura_ui(self, row: dict):
         """
         UI ONLY:
-        - fecha_factura -> MM/DD/YYYY
+        - fecha_factura -> Jan 15 2026
         - fecha_vencimiento = fecha_factura + terminos_pago
         - dias_vencido = hoy - fecha_vencimiento (nunca negativo)
         """
@@ -279,8 +283,8 @@ class VistaServicios(tk.Frame):
 
                 fecha_venc_dt = fecha_factura_dt + timedelta(days=terminos_pago_int)
 
-                fecha_factura_ui = fecha_factura_dt.strftime("%m/%d/%Y")
-                fecha_vencimiento_ui = fecha_venc_dt.strftime("%m/%d/%Y")
+                fecha_factura_ui = to_long_english_date(fecha_factura_dt)
+                fecha_vencimiento_ui = to_long_english_date(fecha_venc_dt)
 
                 dias_calc = (date.today() - fecha_venc_dt).days
                 dias_vencido_ui = dias_calc if dias_calc > 0 else 0
@@ -367,6 +371,9 @@ class VistaServicios(tk.Frame):
 
                 elif col == "fecha_vencimiento":
                     val = fecha_vencimiento_ui
+
+                elif col in ("fecha_inicio", "fecha_fin"):
+                    val = to_long_english_date(row.get(col, ""))
 
                 elif col == "dias_vencido":
                     val = dias_vencido_ui
@@ -527,6 +534,8 @@ class VistaServicios(tk.Frame):
         for row_id in self.table.get_children():
             ws.append(self.table.item(row_id)["values"])
 
+        normalize_invoice_text_columns(ws, columns)
+
         # Ajuste automático de ancho
         for col in ws.columns:
             max_len = 0
@@ -534,7 +543,10 @@ class VistaServicios(tk.Frame):
             for cell in col:
                 if cell.value:
                     max_len = max(max_len, len(str(cell.value)))
-            ws.column_dimensions[col_letter].width = max_len + 2
+            ws.column_dimensions[col_letter].width = max(
+                ws.column_dimensions[col_letter].width or 0,
+                max_len + 2
+            )
 
         wb.save(file)
         messagebox.showinfo("Excel", "Exportación a Excel exitosa.")
@@ -786,21 +798,28 @@ class VistaServicios(tk.Frame):
 
 
     # ============================================================
-    # REFRESCAR TABLA DESPUÉS DE UNA ACCIÓN
+    # REFRESCAR TABLA DESPUÉS DE UNA ACCIÓN (MEJORADO + CONSISTENTE)
     # ============================================================
     def refresh(self):
         """Vuelve a cargar los datos en la tabla usando los filtros actuales."""
 
-        # 1. Limpiar tabla
-        self.table.delete(*self.table.get_children())
+        # ============================================================
+        # 1. LIMPIAR TABLA
+        # ============================================================
+        try:
+            self.table.delete(*self.table.get_children())
+        except Exception:
+            pass
 
-        # 2. Llamar API
+        # ============================================================
+        # 2. LLAMAR API (BLINDADO)
+        # ============================================================
         import requests
         from api_client import BASE_URL
 
         params = self.filtros.copy()
         params["page"] = self.page
-        params["page_size"] = 50
+        params["page_size"] = self.page_size
 
         try:
             r = requests.get(
@@ -808,7 +827,15 @@ class VistaServicios(tk.Frame):
                 params=params,
                 timeout=15
             )
-            data = r.json().get("data", [])
+
+            if r.status_code != 200:
+                raise Exception(r.text)
+
+            resp_json = r.json()
+
+            self.total_items = resp_json.get("total", 0)
+            data = resp_json.get("data", []) or []
+
         except Exception as e:
             messagebox.showerror(
                 "Error",
@@ -816,36 +843,75 @@ class VistaServicios(tk.Frame):
             )
             return
 
-        # 3. Insertar filas (incluye _consec_real correctamente)
+        # ============================================================
+        # 3. INSERTAR FILAS (CONSISTENTE CON load_data)
+        # ============================================================
         columnas_totales = self.columnas + self.columnas_ocultas
 
-        for item in data:
+        for idx, item in enumerate(data, start=1):
+
+            # ============================================================
+            # CALCULAR CAMPOS UI (FACTURA)
+            # ============================================================
+            (
+                fecha_factura_ui,
+                fecha_vencimiento_ui,
+                dias_vencido_ui
+            ) = self._calc_factura_ui(item)
+
             valores = []
 
             for col in columnas_totales:
 
-                if col == "_consec_real":
-                    valores.append(item.get("consec"))
+                if col == "consec":
+                    val = idx
+
+                elif col == "_consec_real":
+                    val = item.get("consec")
+
+                elif col == "fecha_factura":
+                    val = fecha_factura_ui
+
+                elif col == "fecha_vencimiento":
+                    val = fecha_vencimiento_ui
+
+                elif col in ("fecha_inicio", "fecha_fin"):
+                    val = to_long_english_date(item.get(col, ""))
+
+                elif col == "dias_vencido":
+                    val = dias_vencido_ui
 
                 elif col == "demoras":
-                    valores.append(self.format_demoras(item.get("demoras")))
+                    val = self.format_demoras(item.get("demoras"))
 
                 elif col == "duracion":
-                    valores.append(self.calcular_duracion(item))
+                    val = self.calcular_duracion(item)
 
                 else:
-                    valores.append(item.get(col, ""))
+                    val = item.get(col, "")
+
+                valores.append(val)
 
             # ============================================================
             # DETECTAR COSTOS FALTANTES (MISMA LÓGICA QUE load_data)
             # ============================================================
             estado = str(item.get("estado") or "").strip()
 
-            honorarios = float(item.get("honorarios") or 0)
-            costo_operativo = float(item.get("costo_operativo") or 0)
-            costo_tarjetas = float(item.get("costo_tarjetas") or 0)
+            try:
+                honorarios = float(item.get("honorarios") or 0)
+                costo_operativo = float(item.get("costo_operativo") or 0)
+                costo_tarjetas = float(item.get("costo_tarjetas") or 0)
+            except Exception:
+                honorarios = 0
+                costo_operativo = 0
+                costo_tarjetas = 0
 
-            if estado == "En Operación" and honorarios == 0 and costo_operativo == 0 and costo_tarjetas == 0:
+            if (
+                estado == "En Operación"
+                and honorarios == 0
+                and costo_operativo == 0
+                and costo_tarjetas == 0
+            ):
                 self.table.insert(
                     "",
                     "end",
@@ -859,51 +925,56 @@ class VistaServicios(tk.Frame):
                     values=valores
                 )
 
-        # 4. Página
-        if hasattr(self, "label_pagina"):
-            self.label_pagina.config(text=f"Página {self.page}")
-
+        # ============================================================
+        # 4. PAGINACIÓN (CORREGIDO)
+        # ============================================================
+        try:
+            if hasattr(self, "lbl_page"):
+                self.lbl_page.config(text=f"Página {self.page}")
+            elif hasattr(self, "label_pagina"):
+                self.label_pagina.config(text=f"Página {self.page}")
+        except Exception:
+            pass
 
         # ============================================================
-        # 5. REFRESCAR KPIs (NUEVO — AQUÍ ESTABA FALTANDO)
+        # 5. KPIs (CONSISTENTE CON load_data)
         # ============================================================
 
-        # Operaciones = total líneas
         total_operaciones = len(data)
 
-        # Confirmados
         total_confirmados = len([
             r for r in data if r.get("estado") == "Confirmado"
         ])
 
-        # Cancelados
         total_cancelados = len([
             r for r in data if r.get("estado") == "Cancelado"
         ])
 
-        # Servicios = Confirmados + Finalizados
         total_servicios = len([
             r for r in data
             if r.get("estado") in ("Confirmado", "Finalizado")
         ])
 
-        # Países únicos
         paises_unicos = {
             r.get("pais") for r in data if r.get("pais")
         }
 
-        # Facturado
         total_facturado = sum(
             float(r.get("valor_factura") or 0) for r in data
         )
 
-        # Actualizar KPIs
-        self.kpi_operaciones.config(text=str(total_operaciones))
-        self.kpi_confirmados.config(text=str(total_confirmados))
-        self.kpi_cancelados.config(text=str(total_cancelados))
-        self.kpi_servicios.config(text=str(total_servicios))
-        self.kpi_paises.config(text=str(len(paises_unicos)))
-        self.kpi_facturado.config(text=f"${total_facturado:,.2f}")
+        # ============================================================
+        # ACTUALIZAR KPIs (BLINDADO)
+        # ============================================================
+        try:
+            self.kpi_operaciones.config(text=str(total_operaciones))
+            self.kpi_confirmados.config(text=str(total_confirmados))
+            self.kpi_cancelados.config(text=str(total_cancelados))
+            self.kpi_servicios.config(text=str(total_servicios))
+            self.kpi_paises.config(text=str(len(paises_unicos)))
+            self.kpi_facturado.config(text=f"${total_facturado:,.2f}")
+        except Exception:
+            pass
 
     # ============================================================
     # FORMATO / PARSE DE DEMORAS Y DURACION
@@ -1000,3 +1071,84 @@ class VistaServicios(tk.Frame):
             duracion_min = 0
 
         return self.format_demoras(duracion_min)
+
+
+
+    # ============================================================
+    # DOBLE CLICK → ABRIR INFORME
+    # ============================================================
+    def _on_double_click(self, event):
+
+        item = self.table.focus()
+
+        if not item:
+            return
+
+        valores = self.table.item(item, "values")
+
+        if not valores:
+            return
+
+        try:
+
+            idx_num_informe = self.table["columns"].index("num_informe")
+            idx_operacion = self.table["columns"].index("operacion")
+            idx_estado = self.table["columns"].index("estado")
+
+            num_informe = str(valores[idx_num_informe]).strip()
+            operacion = str(valores[idx_operacion]).strip()
+            estado = str(valores[idx_estado]).strip()
+
+        except Exception:
+
+            messagebox.showerror(
+                "Error",
+                "No se pudo leer la fila seleccionada."
+            )
+            return
+
+        # --------------------------------------------------------
+        # VALIDAR ESTADO
+        # --------------------------------------------------------
+        if estado.lower() != "finalizado":
+
+            messagebox.showwarning(
+                "Informe",
+                "El informe no está finalizado."
+            )
+            return
+
+        # --------------------------------------------------------
+        # VALIDAR NUM INFORME
+        # --------------------------------------------------------
+        if not num_informe:
+
+            messagebox.showwarning(
+                "Informe",
+                "El registro no tiene número de informe."
+            )
+            return
+
+        # --------------------------------------------------------
+        # CONTENEDOR CORRECTO (ServiciosUI.content)
+        # --------------------------------------------------------
+        container = self.master
+
+        # --------------------------------------------------------
+        # ABRIR REPORTE
+        # --------------------------------------------------------
+        try:
+
+            ReportRouter.open_report(
+                container,
+                num_informe,
+                operacion,
+                estado
+            )
+
+        except Exception as e:
+
+            messagebox.showerror(
+                "Error al abrir informe",
+                str(e)
+            )

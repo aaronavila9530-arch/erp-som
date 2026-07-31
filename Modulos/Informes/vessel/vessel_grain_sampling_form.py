@@ -7,6 +7,7 @@ from api_client import (
     improve_grain_sampling_api,
     create_vessel_grain_sampling_api,
 )
+from Modulos.Informes.date_utils import to_db_date, to_db_datetime, to_long_english_date
 
 from Modulos.Informes.popup.popup_ai_compare import PopupAICompare
 from Modulos.Informes.popup.popup_grain_service_selector import PopupGrainServiceSelector
@@ -84,7 +85,7 @@ class GrainSamplingVesselForm(ttk.Frame):
 
         ttk.Button(
             header,
-            text="← Back",
+            text="Back",
             command=_go_home  # 🔥 SIEMPRE usa este (no on_back)
         ).pack(side="right")
 
@@ -155,13 +156,19 @@ class GrainSamplingVesselForm(ttk.Frame):
         self.inspection_date = DateEntry(
             frm,
             width=12,
-            date_pattern="dd-mm-yyyy"
+            date_pattern="yyyy-mm-dd"
         )
         self.inspection_date.grid(row=1, column=4, padx=5)
+        self.inspection_date.bind("<<DateEntrySelected>>", self._format_inspection_date_long)
 
     # =========================================================
     # MAIN DATA (AUTO FROM POPUP - READONLY)
     # =========================================================
+    def _format_inspection_date_long(self, event=None):
+        self.inspection_date.delete(0, "end")
+        self.inspection_date.insert(0, to_long_english_date(self.inspection_date.get_date()))
+
+
     def _section_main_data(self):
 
         frm = ttk.LabelFrame(self.form, text="Main Information")
@@ -177,7 +184,7 @@ class GrainSamplingVesselForm(ttk.Frame):
         self.client_entry = ttk.Entry(frm, width=35, state="readonly")
         self.client_entry.grid(row=1, column=1, padx=5)
 
-        # CAPITÁN (MANUAL)
+        # CAPITAN (MANUAL)
         ttk.Label(frm, text="Capitán").grid(row=2, column=0, sticky="w", padx=5)
         self.captain = ttk.Entry(frm, width=30)
         self.captain.grid(row=2, column=1, padx=5)
@@ -293,7 +300,7 @@ class GrainSamplingVesselForm(ttk.Frame):
         self.hold_rows = []
 
         for r in range(5):
-            product_lbl = ttk.Label(table, text="MAÍZ AMARILLO")
+            product_lbl = ttk.Label(table, text="MAIZ AMARILLO")
             product_lbl.grid(row=r + 1, column=0, padx=5)
 
             hold_entry = ttk.Entry(table, width=10)
@@ -397,13 +404,13 @@ class GrainSamplingVesselForm(ttk.Frame):
 
         ttk.Button(
             frm,
-            text="✨ Mejorar conclusi�n con PORTIA",
+            text="Mejorar conclusion con PORTIA",
             command=self._improve_conclusion
         ).pack(side="left", padx=5)
 
         ttk.Button(
             frm,
-            text="📝 Crear Informe",
+            text="Crear Informe",
             command=self._create_report
         ).pack(side="right", padx=5)
 
@@ -451,7 +458,7 @@ class GrainSamplingVesselForm(ttk.Frame):
 
         for row in self.hold_rows:
             hold_values.append({
-                "product": "MAÍZ AMARILLO",
+                "product": "MAIZ AMARILLO",
                 "tonnage": row["tonnage"].get()
             })
 
@@ -483,7 +490,7 @@ class GrainSamplingVesselForm(ttk.Frame):
         payload = {
 
             "cert_no": self.cert_no.get(),
-            "place_date": self.inspection_date.get(),
+            "place_date": to_db_date(self.inspection_date.get()),
 
             "vessel_name": self.vessel_entry.get(),
             "requested_by": self.client_entry.get(),
@@ -568,8 +575,12 @@ class GrainSamplingVesselForm(ttk.Frame):
         frame.grid(row=row, column=1, sticky="w")
 
         date_var = tk.StringVar()
-        date_entry = DateEntry(frame, textvariable=date_var, date_pattern="dd-mm-yyyy")
+        date_entry = DateEntry(frame, textvariable=date_var, date_pattern="yyyy-mm-dd")
         date_entry.pack(side="left")
+        date_entry.bind(
+            "<<DateEntrySelected>>",
+            lambda event: date_var.set(to_long_english_date(date_var.get()))
+        )
 
         hour_var = tk.StringVar(value="00")
         minute_var = tk.StringVar(value="00")
@@ -579,14 +590,7 @@ class GrainSamplingVesselForm(ttk.Frame):
         ttk.Spinbox(frame, from_=0, to=59, width=3, textvariable=minute_var, format="%02.0f").pack(side="left")
 
         def get_value():
-            try:
-                dt = datetime.strptime(
-                    f"{date_var.get()} {hour_var.get()}:{minute_var.get()}",
-                    "%d-%m-%Y %H:%M"
-                )
-                return dt.strftime("%Y-%m-%d %H:%M")
-            except:
-                return None
+            return to_db_datetime(date_var.get(), hour_var.get(), minute_var.get()) or None
 
         return {"get": get_value}
 

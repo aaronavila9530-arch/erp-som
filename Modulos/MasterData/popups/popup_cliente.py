@@ -1,5 +1,8 @@
 import tkinter as tk
 from tkinter import ttk
+from Modulos.Servicios.widgets.date_picker import DatePicker
+from Modulos.MasterData.date_utils import LONG_DATE_FORMAT, to_db_date
+from Modulos.MasterData.prefijos_telefonicos import PREFIJOS_TELEFONICOS
 
 class PopupCliente(tk.Toplevel):
 
@@ -100,8 +103,16 @@ class PopupCliente(tk.Toplevel):
 
         ttk.Label(tab2, text="Fecha de pago:", background="white")\
             .grid(row=4, column=0, padx=10, pady=5, sticky="w")
-        self.entry_fechapago = ttk.Entry(tab2, textvariable=self.FechaDePago)
-        self.entry_fechapago.grid(row=4, column=1, padx=10, pady=5)
+        fecha_frame = tk.Frame(tab2, bg="white")
+        fecha_frame.grid(row=4, column=1, padx=10, pady=5, sticky="w")
+        self.entry_fechapago = ttk.Entry(fecha_frame, textvariable=self.FechaDePago, width=22)
+        self.entry_fechapago.pack(side="left")
+        ttk.Button(
+            fecha_frame,
+            text="📅",
+            width=3,
+            command=lambda: DatePicker(self, self.entry_fechapago, output_format=LONG_DATE_FORMAT)
+        ).pack(side="left", padx=(5, 0))
 
         ttk.Label(tab2, text="Correo:", background="white")\
             .grid(row=5, column=0, padx=10, pady=5, sticky="w")
@@ -111,7 +122,14 @@ class PopupCliente(tk.Toplevel):
         # ============ TAB 3 ============
         ttk.Label(tab3, text="Prefijo:", background="white")\
             .grid(row=0, column=0, padx=10, pady=5, sticky="w")
-        self.combo_prefijo = ttk.Combobox(tab3, textvariable=self.Prefijo, values=["+506", "+57", "+1"], state="readonly")
+
+        self.combo_prefijo = ttk.Combobox(
+            tab3,
+            textvariable=self.Prefijo,
+            values=PREFIJOS_TELEFONICOS,
+            state="readonly"
+        )
+
         self.combo_prefijo.grid(row=0, column=1, padx=10, pady=5)
 
         ttk.Label(tab3, text="Teléfono:", background="white")\
@@ -152,7 +170,7 @@ class PopupCliente(tk.Toplevel):
             "Canton": self.entry_canton.get().strip(),
             "Distrito": self.entry_distrito.get().strip(),
             "DireccionExacta": self.entry_direccion.get().strip(),
-            "FechaDePago": self.entry_fechapago.get().strip(),
+            "FechaDePago": to_db_date(self.entry_fechapago.get().strip()),
             "Correo": self.entry_correo.get().strip(),
             "Prefijo": self.combo_prefijo.get().strip(),
             "Telefono": self.entry_telefono.get().strip(),

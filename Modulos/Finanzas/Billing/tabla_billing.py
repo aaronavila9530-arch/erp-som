@@ -1,12 +1,13 @@
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
-from datetime import datetime
 import requests
 import shutil
 import csv
 import os
 
 from api_client import BASE_URL
+from Modulos.Finanzas.date_utils import to_long_english_date
+from Modulos.Finanzas.export_formatting import normalize_invoice_text_columns
 from Modulos.Finanzas.popups.popup_preview_factura import PopupPreviewFactura
 
 
@@ -373,7 +374,7 @@ class TablaBilling(tk.Frame):
                         row.get("tipo_documento"),
                         row.get("numero_documento"),
                         row.get("nombre_cliente"),
-                        row.get("fecha_emision"),
+                        self._fmt_fecha(row.get("fecha_emision")),
                         row.get("moneda"),
                         row.get("total"),
                         row.get("estado")
@@ -428,6 +429,11 @@ class TablaBilling(tk.Frame):
                 "Cliente", "Fecha", "Moneda", "Total", "Estado"
             ])
 
+            headers = list(ws[1])
+            export_headers = [cell.value for cell in headers]
+            if len(export_headers) >= 4:
+                export_headers[3] = "numero_documento"
+
             for row in data:
                 ws.append([
                     row.get("id"),
@@ -435,11 +441,13 @@ class TablaBilling(tk.Frame):
                     row.get("tipo_documento"),
                     row.get("numero_documento"),
                     row.get("nombre_cliente"),
-                    row.get("fecha_emision"),
+                        self._fmt_fecha(row.get("fecha_emision")),
                     row.get("moneda"),
                     row.get("total"),
                     row.get("estado")
                 ])
+
+            normalize_invoice_text_columns(ws, export_headers)
 
             wb.save(destino)
 
@@ -458,14 +466,7 @@ class TablaBilling(tk.Frame):
     # HELPERS
     # ======================================================
     def _fmt_fecha(self, fecha):
-        if not fecha:
-            return ""
-        try:
-            return datetime.strptime(
-                str(fecha), "%Y-%m-%d"
-            ).strftime("%d/%m/%Y")
-        except Exception:
-            return fecha
+        return to_long_english_date(fecha)
 
     def _get_selected(self):
         item = self.tree.focus()

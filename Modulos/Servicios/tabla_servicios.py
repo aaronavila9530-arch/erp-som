@@ -1,6 +1,7 @@
 from Modulos.MasterData.tablas.base_table import BasePaginatedTable
 import requests
 from datetime import datetime, date, timedelta
+from Modulos.Servicios.date_utils import to_long_english_date
 
 BASE_URL = "https://api-som-fastapi-production-e66d.up.railway.app"
 
@@ -98,9 +99,8 @@ class TablaServiciosUI(BasePaginatedTable):
 
                     fecha_venc_dt = fecha_factura_dt + timedelta(days=terminos_pago_int)
 
-                    # Mostrar en UI: MM/DD/YYYY
-                    fecha_factura_ui = fecha_factura_dt.strftime("%m/%d/%Y")
-                    fecha_vencimiento_ui = fecha_venc_dt.strftime("%m/%d/%Y")
+                    fecha_factura_ui = to_long_english_date(fecha_factura_dt)
+                    fecha_vencimiento_ui = to_long_english_date(fecha_venc_dt)
 
                     dias_calc = (date.today() - fecha_venc_dt).days
                     dias_vencido_ui = dias_calc if dias_calc > 0 else 0
@@ -121,6 +121,8 @@ class TablaServiciosUI(BasePaginatedTable):
                     vals.append(fecha_factura_ui)
                 elif c == "fecha_vencimiento":
                     vals.append(fecha_vencimiento_ui)
+                elif c in ("fecha_inicio", "fecha_fin"):
+                    vals.append(to_long_english_date(row.get(c, "")))
                 elif c == "dias_vencido":
                     vals.append(dias_vencido_ui)
                 else:

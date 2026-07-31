@@ -1,6 +1,6 @@
-# Generated from the LOGRA questionnaire DOCX files. Do not edit questions by hand.
+# Generated from the ONG questionnaire DOCX files. Do not edit questions by hand.
 
-LOGRA_QUESTIONNAIRES = [{'title': 'Agencias Navieras Y Agentes',
+ONG_QUESTIONNAIRES = [{'title': 'Agencias Navieras Y Agentes',
   'source_file': 'Agencias_navieras_y_agentes modificado.docx',
   'slug': 'agencias_navieras_y_agentes',
   'critical_questions': [{'number': '1',

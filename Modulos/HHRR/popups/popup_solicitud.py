@@ -3,22 +3,25 @@ from tkinter import ttk, messagebox
 from datetime import datetime
 
 from api_client import crear_evento_hr, obtener_vacaciones_disponibles
+from Modulos.HHRR.date_utils import LONG_DATE_FORMAT, parse_hhrr_date, to_db_date
 from Modulos.Servicios.widgets.date_picker import DatePicker
 
 
 class PopupSolicitud(tk.Toplevel):
-    """
-    Popup para crear solicitudes HHRR
-    Compatible 100% con router backend existente
-    """
 
-    def __init__(self, parent, on_success):
+    def __init__(self, parent, usuario, rol, on_success):
         super().__init__(parent)
 
+        self.usuario = (usuario or "").strip().lower()   # 🔥 FIX
+        self.rol = (rol or "").strip().lower()           # 🔥 FIX
         self.on_success = on_success
+
         self.title("Nueva Solicitud HHRR")
         self.geometry("480x520")
         self.resizable(False, False)
+
+        self.transient(parent)
+        self.grab_set()
 
         self._build_ui()
 
@@ -26,6 +29,7 @@ class PopupSolicitud(tk.Toplevel):
     # UI
     # =========================================================
     def _build_ui(self):
+
         pad = 8
 
         ttk.Label(self, text="Tipo de solicitud").grid(
@@ -66,8 +70,10 @@ class PopupSolicitud(tk.Toplevel):
             w.destroy()
 
     def _render_dynamic_fields(self, *_):
+
         self._clear_dynamic()
-        tipo = self.cmb_tipo.get()
+
+        tipo = (self.cmb_tipo.get() or "").strip().upper()
         pad = 6
         row = 0
 
@@ -78,12 +84,14 @@ class PopupSolicitud(tk.Toplevel):
             )
             entry = ttk.Entry(self.frm_dynamic, width=15)
             entry.grid(row=row, column=1)
+
             ttk.Button(
                 self.frm_dynamic,
                 text="📅",
                 width=3,
                 command=lambda e=entry: self._pick_date(e)
             ).grid(row=row, column=2)
+
             setattr(self, attr, entry)
             row += 1
 
@@ -150,13 +158,19 @@ class PopupSolicitud(tk.Toplevel):
     # UTILIDADES
     # =========================================================
     def _pick_date(self, entry):
-        DatePicker(self, entry)
+        DatePicker(self, entry, output_format=LONG_DATE_FORMAT)
         self.after(200, self._calcular_dias)
 
     def _calcular_dias(self):
+
+        if not hasattr(self, "fecha_inicio") or not hasattr(self, "fecha_fin"):
+            return
+
         try:
-            fi = datetime.strptime(self.fecha_inicio.get(), "%Y-%m-%d").date()
-            ff = datetime.strptime(self.fecha_fin.get(), "%Y-%m-%d").date()
+            fi = parse_hhrr_date(self.fecha_inicio.get().strip())
+            ff = parse_hhrr_date(self.fecha_fin.get().strip())
+            if not fi or not ff:
+                raise ValueError("Fechas invalidas")
             dias = (ff - fi).days + 1
             if dias < 0:
                 dias = 0
@@ -174,15 +188,27 @@ class PopupSolicitud(tk.Toplevel):
     # SUBMIT
     # =========================================================
     def _submit(self):
-        tipo = self.cmb_tipo.get()
+
+        tipo = (self.cmb_tipo.get() or "").strip().upper()
+
         if not tipo:
-            messagebox.showerror("Error", "Seleccione un tipo de solicitud")
+            messagebox.showerror("Error", "Seleccione un tipo")
             return
 
         try:
             payload = {}
 
             if tipo in ("VACACIONES", "INCAPACIDAD", "LICENCIA"):
+
+                if not hasattr(self, "fecha_inicio") or not hasattr(self, "fecha_fin"):
+                    raise ValueError("Debe ingresar fechas")
+
+                fi = to_db_date(self.fecha_inicio.get().strip())
+                ff = to_db_date(self.fecha_fin.get().strip())
+
+                if not fi or not ff:
+                    raise ValueError("Debe completar fechas")
+
                 self._calcular_dias()
                 dias = int(self.lbl_dias.cget("text"))
 
@@ -190,8 +216,8 @@ class PopupSolicitud(tk.Toplevel):
                     raise ValueError("Fechas inválidas")
 
                 payload = {
-                    "fecha_inicio": self.fecha_inicio.get(),
-                    "fecha_fin": self.fecha_fin.get(),
+                    "fecha_inicio": fi,
+                    "fecha_fin": ff,
                     "dias_solicitados": dias
                 }
 
@@ -201,23 +227,25 @@ class PopupSolicitud(tk.Toplevel):
                     payload["tipo_licencia"] = self.tipo_licencia.get()
 
             elif tipo in ("CONSTANCIA_SALARIAL", "CONSTANCIA_LABORAL"):
-                if not self.motivo.get().strip():
-                    raise ValueError("Debe indicar un motivo")
+
+                if not hasattr(self, "motivo") or not self.motivo.get().strip():
+                    raise ValueError("Debe indicar motivo")
+
                 payload = {"motivo": self.motivo.get().strip()}
 
             crear_evento_hr(
                 event_type=tipo,
                 payload=payload,
-                event_date=datetime.today().strftime("%Y-%m-%d")
+                event_date=to_db_date(datetime.today()),
+                usuario=self.usuario,   # 🔥 CRÍTICO
+                rol=self.rol            # 🔥 CRÍTICO
             )
 
             messagebox.showinfo("Éxito", "Solicitud enviada correctamente")
 
-            # 🔁 AUTO REFRESH TABLA
             if callable(self.on_success):
                 self.on_success()
 
-            # ❌ AUTO CLOSE
             self.destroy()
 
         except Exception as e:

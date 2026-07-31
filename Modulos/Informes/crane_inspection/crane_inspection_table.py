@@ -7,6 +7,7 @@ from api_client import (
     update_crane_inspection_api,
     approve_crane_inspection_api
 )
+from Modulos.Informes.date_utils import to_long_english_date
 
 
 class CraneInspectionTable(ttk.Frame):
@@ -22,7 +23,7 @@ class CraneInspectionTable(ttk.Frame):
         super().__init__(parent)
 
         self.parent = parent
-        self.usuario = usuario
+        self.usuario = usuario or (parent.usuario if hasattr(parent, "usuario") else None)
         self.rol = rol
 
         self._data_all = []
@@ -253,9 +254,9 @@ class CraneInspectionTable(ttk.Frame):
                     r.get("vessel") or "",
                     r.get("port") or "",
                     r.get("country") or "",
-                    r.get("report_date") or "",
+                    to_long_english_date(r.get("report_date")) or "",
                     r.get("status") or "",
-                    r.get("created_at") or ""
+                    to_long_english_date(r.get("created_at")) or ""
                 )
             )
 
@@ -280,10 +281,69 @@ class CraneInspectionTable(ttk.Frame):
             messagebox.showwarning("Acciones", "Selecciona un reporte.")
             return
 
-        x = self.btn_actions.winfo_rootx()
-        y = self.btn_actions.winfo_rooty() + self.btn_actions.winfo_height()
+        try:
+            # ==================================================
+            # 🔒 CONTROL DE USUARIOS RESTRINGIDOS
+            # ==================================================
+            restricted_users = {"surveyor01", "surveyor02"}
+            is_restricted = str(self.usuario or "").strip().lower() in restricted_users
 
-        self.actions_menu.tk_popup(x, y)
+            # ==================================================
+            # 🔁 RECONSTRUIR MENU DINÁMICAMENTE
+            # ==================================================
+            self.actions_menu.delete(0, "end")
+
+            # --- Review ---
+            self.actions_menu.add_command(
+                label="✏ Review",
+                command=self._open_review
+            )
+
+            # --- Word ---
+            self.actions_menu.add_command(
+                label="📄 Generate Word",
+                command=self._generate_word
+            )
+
+            # --- Final Report ---
+            self.actions_menu.add_command(
+                label="📑 Crear Informe Final",
+                command=self._open_final_report_popup
+            )
+
+            self.actions_menu.add_separator()
+
+            # --- Reject / Approve ---
+            if is_restricted:
+                self.actions_menu.add_command(
+                    label="❌ Reject",
+                    state="disabled"
+                )
+                self.actions_menu.add_command(
+                    label="✅ Approve",
+                    state="disabled"
+                )
+            else:
+                self.actions_menu.add_command(
+                    label="❌ Reject",
+                    command=lambda: self._change_status("Rejected")
+                )
+                self.actions_menu.add_command(
+                    label="✅ Approve",
+                    command=self._approve_selected
+                )
+
+            # ==================================================
+            # 📍 MOSTRAR MENU
+            # ==================================================
+            x = self.btn_actions.winfo_rootx()
+            y = self.btn_actions.winfo_rooty() + self.btn_actions.winfo_height()
+
+            self.actions_menu.tk_popup(x, y)
+
+        finally:
+            self.actions_menu.grab_release()
+
 
     # =========================================================
     # REVIEW

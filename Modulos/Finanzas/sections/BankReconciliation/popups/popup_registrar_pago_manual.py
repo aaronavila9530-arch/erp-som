@@ -3,6 +3,8 @@ from tkinter import ttk, messagebox
 from datetime import datetime
 import requests
 
+from Modulos.Finanzas.date_utils import LONG_DATE_FORMAT, to_db_date, to_long_english_date
+from Modulos.Servicios.widgets.date_picker import DatePicker
 from api_client import (
     BASE_URL,
     get_clientes_finanzas_api
@@ -65,10 +67,18 @@ class PopupRegistrarPagoManual(tk.Toplevel):
         # -------------------------
         # Fecha de pago
         # -------------------------
-        ttk.Label(frm, text="Fecha de Pago (YYYY-MM-DD)").grid(row=row, column=0, sticky="w", pady=5)
-        self.txt_fecha = ttk.Entry(frm)
-        self.txt_fecha.insert(0, datetime.today().strftime("%Y-%m-%d"))
-        self.txt_fecha.grid(row=row, column=1, sticky="ew", pady=5)
+        ttk.Label(frm, text="Fecha de Pago").grid(row=row, column=0, sticky="w", pady=5)
+        fecha_frame = ttk.Frame(frm)
+        fecha_frame.grid(row=row, column=1, sticky="ew", pady=5)
+        self.txt_fecha = ttk.Entry(fecha_frame)
+        self.txt_fecha.insert(0, to_long_english_date(datetime.today()))
+        self.txt_fecha.pack(side="left", fill="x", expand=True)
+        ttk.Button(
+            fecha_frame,
+            text="📅",
+            width=3,
+            command=lambda: DatePicker(self, self.txt_fecha, output_format=LONG_DATE_FORMAT)
+        ).pack(side="left", padx=(5, 0))
         row += 1
 
         # -------------------------
@@ -167,7 +177,7 @@ class PopupRegistrarPagoManual(tk.Toplevel):
             "nombre_cliente": nombre_cliente,
             "banco": self.txt_banco.get().strip(),
             "numero_referencia": self.txt_referencia.get().strip(),
-            "fecha_pago": self.txt_fecha.get().strip(),
+            "fecha_pago": to_db_date(self.txt_fecha.get().strip()),
             "documento": self.txt_documento.get().strip() or None,
             "monto": monto
         }

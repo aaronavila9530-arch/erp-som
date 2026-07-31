@@ -3,6 +3,8 @@ from tkinter import messagebox, filedialog
 from tkinter import ttk
 from datetime import date
 
+from Modulos.Finanzas.date_utils import LONG_DATE_FORMAT, to_long_english_date
+from Modulos.Servicios.widgets.date_picker import DatePicker
 from api_client import (
     get_clientes_finanzas_api,
     post_invoicing_anticipada_manual_api,
@@ -33,7 +35,7 @@ class PopupFacturacionAnticipada(tk.Toplevel):
         self._clientes_map = {}  # nombre -> codigo
 
         # Manual
-        self.fecha = tk.StringVar(value=date.today().isoformat())
+        self.fecha = tk.StringVar(value=to_long_english_date(date.today()))
         self.moneda = tk.StringVar(value="USD")
         self.termino_pago = tk.StringVar()
         self.total = tk.StringVar()
@@ -189,6 +191,20 @@ class PopupFacturacionAnticipada(tk.Toplevel):
         )
         ent.grid(row=row, column=1, pady=5, sticky="w")
         widgets.append(ent)
+
+        if "Fecha" in label:
+            btn = tk.Button(
+                parent,
+                text="📅",
+                width=3,
+                command=lambda: DatePicker(self, ent, output_format=LONG_DATE_FORMAT),
+                bg="white",
+                fg="black",
+                relief="solid",
+                bd=1
+            )
+            btn.grid(row=row, column=2, padx=5, sticky="w")
+            widgets.append(btn)
 
         return widgets
 

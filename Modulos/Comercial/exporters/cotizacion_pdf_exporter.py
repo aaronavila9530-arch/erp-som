@@ -5,6 +5,7 @@ from datetime import date
 import os
 
 from resource_utils import resource_path
+from Modulos.Comercial.date_utils import to_long_english_date
 
 
 # ============================================================
@@ -104,7 +105,7 @@ def export_cotizacion_pdf(data: dict, output_path: str):
     c.setFont("Helvetica-Bold", 10)
     c.drawString(LEFT_MARGIN, y, "Alajuela, Costa Rica")
     y -= 14
-    c.drawString(LEFT_MARGIN, y, str(date.today()))
+    c.drawString(LEFT_MARGIN, y, to_long_english_date(date.today()))
     y -= 26
 
     # =========================================================

@@ -2,6 +2,8 @@ import tkinter as tk
 from tkinter import messagebox, filedialog
 from datetime import date
 
+from Modulos.Finanzas.date_utils import LONG_DATE_FORMAT, to_long_english_date
+from Modulos.Servicios.widgets.date_picker import DatePicker
 from api_client import (
     post_factura_manual_api,
     get_termino_pago_cliente_api   # ✅ FUNCIÓN REAL
@@ -22,7 +24,7 @@ class PopupFacturaManual(tk.Toplevel):
         self.grab_set()
 
         # ================= VARIABLES =================
-        self.fecha = tk.StringVar(value=date.today().isoformat())
+        self.fecha = tk.StringVar(value=to_long_english_date(date.today()))
         self.moneda = tk.StringVar(value="USD")
         self.termino_pago = tk.StringVar()
         self.total = tk.StringVar()
@@ -31,7 +33,7 @@ class PopupFacturaManual(tk.Toplevel):
         self.servicio_op = tk.StringVar(value=servicio.get("operacion", ""))
         self.num_informe = tk.StringVar(value=servicio.get("num_informe", ""))
         self.periodo = tk.StringVar(
-            value=f"De {servicio.get('fecha_inicio')} a {servicio.get('fecha_fin')}"
+            value=f"De {to_long_english_date(servicio.get('fecha_inicio'))} a {to_long_english_date(servicio.get('fecha_fin'))}"
         )
 
         self.descripcion_default = (
@@ -110,6 +112,14 @@ class PopupFacturaManual(tk.Toplevel):
 
         if readonly:
             entry.config(state="readonly")
+
+        if "Fecha" in label:
+            tk.Button(
+                parent,
+                text="📅",
+                width=3,
+                command=lambda: DatePicker(self, entry, output_format=LONG_DATE_FORMAT)
+            ).grid(row=row, column=2, padx=5, sticky="w")
 
     # ============================================================
     # TÉRMINOS DE PAGO (cliente → cliente_credito) ✅
@@ -201,7 +211,7 @@ class PopupFacturaManual(tk.Toplevel):
 
         data = {
             "cliente": self.servicio["cliente"],
-            "fecha_factura": self.fecha.get(),
+            "fecha_factura": self.fecha.get().strip(),
             "buque": self.buque.get(),
             "operacion": self.servicio_op.get(),
             "num_informe": self.num_informe.get(),

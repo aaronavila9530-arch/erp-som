@@ -46,14 +46,32 @@ class HHRRHomeUI(ttk.Frame):
         top_bar = ttk.Frame(self)
         top_bar.grid(row=0, column=0, sticky="w", padx=10, pady=(10, 12))
 
-        acciones = [
-            ("Payroll", "payroll"),
-            ("Colillas", "paylips"),
-            ("Solicitudes", "solicitudes"),
-            ("Horas", "horas"),
-            ("Empleados", "empleados"),
-            ("Políticas", "politicas"),
-        ]
+        # ---------------------------------------------------------
+        # RBAC LOCAL PARA BOTONES HHRR
+        # ---------------------------------------------------------
+
+        usuario = (self.usuario or "").lower()
+
+        # Surveyors → acceso limitado
+        if usuario in ("surveyor01", "surveyor02"):
+
+            acciones = [
+                ("Colillas", "paylips"),
+                ("Solicitudes", "solicitudes"),
+                ("Horas", "horas"),
+                ("Políticas", "politicas"),
+            ]
+
+        else:
+
+            acciones = [
+                ("Payroll", "payroll"),
+                ("Colillas", "paylips"),
+                ("Solicitudes", "solicitudes"),
+                ("Horas", "horas"),
+                ("Empleados", "empleados"),
+                ("Políticas", "politicas"),
+            ]
 
         for texto, key in acciones:
             ttk.Button(
@@ -119,7 +137,12 @@ class HHRRHomeUI(ttk.Frame):
         self.lst_noticias.grid(row=1, column=0, sticky="nsew")
         scrollbar.grid(row=1, column=1, sticky="ns")
 
-        if self.rol in ("admin", "master"):
+        # ---------------------------------------------------------
+        # 🔒 PUBLICAR NOTICIA (OCULTO PARA SURVEYORS)
+        # ---------------------------------------------------------
+        usuario = (self.usuario or "").lower()
+
+        if self.rol in ("admin", "master") and usuario not in ("surveyor01", "surveyor02"):
             ttk.Button(
                 cont_news,
                 text="Publicar noticia",

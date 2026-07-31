@@ -1,5 +1,6 @@
 import tkinter as tk
 from tkinter import ttk
+from Modulos.Servicios.date_utils import to_long_english_date
 
 class PopupVerServicio(tk.Toplevel):
 
@@ -46,6 +47,9 @@ class PopupVerServicio(tk.Toplevel):
         # MOSTRAR CAMPOS (MODO SOLO LECTURA)
         # ========================================
         for i, (campo, valor) in enumerate(zip(self.cols, self.data)):
+            if campo in ("fecha_inicio", "fecha_fin", "fecha_factura", "fecha_vencimiento"):
+                valor = to_long_english_date(valor)
+
             ttk.Label(
                 scroll_frame,
                 text=f"{campo.replace('_',' ').title()}:",

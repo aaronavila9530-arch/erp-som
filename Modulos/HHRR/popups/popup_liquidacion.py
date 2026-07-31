@@ -2,6 +2,9 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 from datetime import date
 
+from Modulos.HHRR.date_utils import LONG_DATE_FORMAT, parse_hhrr_date, to_db_date
+from Modulos.Servicios.widgets.date_picker import DatePicker
+
 # =========================================================
 # SERVICIO REAL (NO API)
 # =========================================================
@@ -63,9 +66,18 @@ class PopupLiquidacion(tk.Toplevel):
         # -------------------------------
         # Fecha salida
         # -------------------------------
-        ttk.Label(cont, text="Fecha de salida (YYYY-MM-DD)").pack(anchor="w")
+        ttk.Label(cont, text="Fecha de salida").pack(anchor="w")
         self.var_fecha_salida = tk.StringVar()
-        ttk.Entry(cont, textvariable=self.var_fecha_salida).pack(fill="x")
+        fecha_frame = ttk.Frame(cont)
+        fecha_frame.pack(fill="x")
+        self.ent_fecha_salida = ttk.Entry(fecha_frame, textvariable=self.var_fecha_salida)
+        self.ent_fecha_salida.pack(side="left", fill="x", expand=True)
+        ttk.Button(
+            fecha_frame,
+            text="📅",
+            width=3,
+            command=lambda: DatePicker(self, self.ent_fecha_salida, output_format=LONG_DATE_FORMAT)
+        ).pack(side="left", padx=(5, 0))
 
         # -------------------------------
         # Salario mensual
@@ -103,7 +115,9 @@ class PopupLiquidacion(tk.Toplevel):
     def _calcular(self):
 
         try:
-            fecha_salida = date.fromisoformat(self.var_fecha_salida.get())
+            fecha_salida = parse_hhrr_date(self.var_fecha_salida.get())
+            if not fecha_salida:
+                raise ValueError("Fecha de salida invalida")
             salario = float(self.var_salario.get())
             vacaciones = float(self.var_vacaciones.get())
         except Exception as e:
@@ -151,7 +165,7 @@ class PopupLiquidacion(tk.Toplevel):
             crear_evento_hr({
                 "empleado_id": self.empleado_id,
                 "event_type": "LIQUIDATION",
-                "event_date": date.today().isoformat(),
+                "event_date": to_db_date(date.today()),
                 "status": "CLOSED",
                 "payload": self.calculo
             })

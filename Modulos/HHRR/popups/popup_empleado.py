@@ -1,7 +1,9 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
-from tkcalendar import DateEntry
 from datetime import date, datetime
+
+from Modulos.HHRR.date_utils import LONG_DATE_FORMAT, parse_hhrr_date, to_db_date, to_long_english_date
+from Modulos.Servicios.widgets.date_picker import DatePicker
 
 
 class PopupEmpleado(tk.Toplevel):
@@ -64,7 +66,7 @@ class PopupEmpleado(tk.Toplevel):
         self.var_estado_civil = tk.StringVar(value=str(self.empleado.get("estado_civil") or ""))
         self.var_genero = tk.StringVar(value=str(self.empleado.get("genero") or ""))
         self.var_nacionalidad = tk.StringVar(value=str(self.empleado.get("nacionalidad") or ""))
-        self.var_fecha_nacimiento = tk.StringVar(value=str(self.empleado.get("fecha_nacimiento") or ""))
+        self.var_fecha_nacimiento = tk.StringVar(value=to_long_english_date(self.empleado.get("fecha_nacimiento") or ""))
         self.var_edad = tk.StringVar(value=str(self.empleado.get("edad") or ""))
 
         # Contacto y dirección
@@ -82,7 +84,7 @@ class PopupEmpleado(tk.Toplevel):
         self.var_banco = tk.StringVar(value=str(self.empleado.get("banco") or ""))
         self.var_cuenta_iban = tk.StringVar(value=str(self.empleado.get("cuenta_iban") or ""))
         self.var_moneda = tk.StringVar(value=str(self.empleado.get("moneda") or ""))
-        self.var_fecha_ingreso = tk.StringVar(value=str(self.empleado.get("fecha_ingreso") or ""))
+        self.var_fecha_ingreso = tk.StringVar(value=to_long_english_date(self.empleado.get("fecha_ingreso") or ""))
         self.var_horas_contratadas = tk.StringVar(value=str(self.empleado.get("horas_contratadas") or ""))
         self.var_vacaciones = tk.StringVar(value=str(self.empleado.get("vacaciones") or ""))
         self.var_estado = tk.StringVar(value=str(self.empleado.get("estado") or ""))
@@ -183,16 +185,8 @@ class PopupEmpleado(tk.Toplevel):
         self.ent_usuario.grid(row=row, column=3, padx=10, pady=6, sticky="w")
 
         row += 1
-        ttk.Label(tab1, text="Fecha nacimiento (YYYY-MM-DD)").grid(row=row, column=0, padx=10, pady=6, sticky="w")
-        self.ent_fecha_nac = DateEntry(
-            tab1,
-            textvariable=self.var_fecha_nacimiento,
-            date_pattern="yyyy-mm-dd",
-            width=32,
-            state="readonly",
-            background="white",
-            foreground="black"
-        )
+        ttk.Label(tab1, text="Fecha nacimiento").grid(row=row, column=0, padx=10, pady=6, sticky="w")
+        self.ent_fecha_nac = ttk.Entry(tab1, textvariable=self.var_fecha_nacimiento, width=35)
         self.ent_fecha_nac.grid(
             row=row,
             column=1,
@@ -200,10 +194,13 @@ class PopupEmpleado(tk.Toplevel):
             pady=6,
             sticky="w"
         )
-        self.ent_fecha_nac.bind(
-            "<<DateEntrySelected>>",
-            self._on_fecha_nacimiento_change
-        )
+        ttk.Button(
+            tab1,
+            text="📅",
+            width=3,
+            command=lambda: DatePicker(self, self.ent_fecha_nac, output_format=LONG_DATE_FORMAT, on_select=lambda *_: self._on_fecha_nacimiento_change())
+        ).grid(row=row, column=1, padx=(305, 10), pady=6, sticky="w")
+        self.ent_fecha_nac.bind("<FocusOut>", self._on_fecha_nacimiento_change)
 
 
 
@@ -287,16 +284,8 @@ class PopupEmpleado(tk.Toplevel):
         self.cbo_moneda = ttk.Combobox(tab3, textvariable=self.var_moneda, values=monedas, state="readonly", width=32)
         self.cbo_moneda.grid(row=row, column=1, padx=10, pady=6, sticky="w")
 
-        ttk.Label(tab3, text="Fecha ingreso (YYYY-MM-DD)").grid(row=row, column=2, padx=10, pady=6, sticky="w")
-        self.ent_fecha_ingreso = DateEntry(
-            tab3,
-            textvariable=self.var_fecha_ingreso,
-            date_pattern="yyyy-mm-dd",
-            width=32,
-            state="readonly",
-            background="white",
-            foreground="black"
-        )
+        ttk.Label(tab3, text="Fecha ingreso").grid(row=row, column=2, padx=10, pady=6, sticky="w")
+        self.ent_fecha_ingreso = ttk.Entry(tab3, textvariable=self.var_fecha_ingreso, width=35)
         self.ent_fecha_ingreso.grid(
             row=row,
             column=3,
@@ -304,6 +293,12 @@ class PopupEmpleado(tk.Toplevel):
             pady=6,
             sticky="w"
         )
+        ttk.Button(
+            tab3,
+            text="📅",
+            width=3,
+            command=lambda: DatePicker(self, self.ent_fecha_ingreso, output_format=LONG_DATE_FORMAT)
+        ).grid(row=row, column=3, padx=(305, 10), pady=6, sticky="w")
 
         row += 1
         ttk.Label(tab3, text="Horas contratadas").grid(row=row, column=0, padx=10, pady=6, sticky="w")
@@ -444,7 +439,7 @@ class PopupEmpleado(tk.Toplevel):
             "estado_civil": self.var_estado_civil.get().strip() or None,
             "genero": self.var_genero.get().strip() or None,
             "nacionalidad": self.var_nacionalidad.get().strip() or None,
-            "fecha_nacimiento": self.var_fecha_nacimiento.get().strip() or None,
+            "fecha_nacimiento": to_db_date(self.var_fecha_nacimiento.get().strip()) or None,
             "edad": self.var_edad.get().strip() or None,
 
             "prefijo": self.var_prefijo.get().strip() or None,
@@ -460,7 +455,7 @@ class PopupEmpleado(tk.Toplevel):
             "banco": self.var_banco.get().strip() or None,
             "cuenta_iban": self.var_cuenta_iban.get().strip() or None,
             "moneda": self.var_moneda.get().strip() or None,
-            "fecha_ingreso": self.var_fecha_ingreso.get().strip() or None,
+            "fecha_ingreso": to_db_date(self.var_fecha_ingreso.get().strip()) or None,
             "horas_contratadas": self.var_horas_contratadas.get().strip() or None,
             "vacaciones": self.var_vacaciones.get().strip() or None,
             "estado": self.var_estado.get().strip() or None,
@@ -542,7 +537,9 @@ class PopupEmpleado(tk.Toplevel):
                 self.var_edad.set("")
                 return
 
-            fecha_nac = datetime.strptime(fecha_str, "%Y-%m-%d").date()
+            fecha_nac = parse_hhrr_date(fecha_str)
+            if not fecha_nac:
+                raise ValueError("Fecha invalida")
             hoy = date.today()
 
             edad = hoy.year - fecha_nac.year - (

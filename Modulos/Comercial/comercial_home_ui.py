@@ -1,7 +1,6 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 import math
-from datetime import datetime
 
 from api_client import get_comercial_board_api
 from Modulos.Comercial.comercial_client_analytics_ui import ComercialClientAnalyticsUI
@@ -9,6 +8,7 @@ from Modulos.Comercial.comercial_ports_analytics_ui import ComercialPortsAnalyti
 from Modulos.Comercial.comercial_servicios_analytics_ui import ComercialServiciosAnalyticsUI
 from Modulos.Comercial.comercial_precios_ui import ComercialPreciosUI
 from Modulos.Comercial.comercial_cotizaciones_ui import ComercialCotizacionesUI
+from Modulos.Comercial.date_utils import format_comercial_row_dates, parse_comercial_date
 
 
 class ComercialHomeUI(ttk.Frame):
@@ -59,15 +59,47 @@ class ComercialHomeUI(ttk.Frame):
             font=("Segoe UI", 15, "bold")
         ).pack(side="left")
 
-        if self.rol in ("admin", "master"):
+        # ---------------------------------------------------------
+        # RBAC LOCAL — NAV COMERCIAL
+        # Surveyors SOLO pueden ver el Home y usar filtros/búsqueda
+        # ---------------------------------------------------------
+
+        usuario = (self.usuario or "").lower()
+
+        if usuario not in ("surveyor01", "surveyor02"):
+
             nav = ttk.Frame(header)
             nav.pack(side="right")
 
-            ttk.Button(nav, text="Clientes", command=self._open("open_clients")).pack(side="left", padx=4)
-            ttk.Button(nav, text="Puertos", command=self._open("open_ports")).pack(side="left", padx=4)
-            ttk.Button(nav, text="Servicios", command=self._open("open_services")).pack(side="left", padx=4)
-            ttk.Button(nav, text="Cotizaciones", command=self._open("open_quotations")).pack(side="left", padx=4)
-            ttk.Button(nav, text="Precios", command=self._open("open_pricing")).pack(side="left", padx=4)
+            ttk.Button(
+                nav,
+                text="Clientes",
+                command=self._open("open_clients")
+            ).pack(side="left", padx=4)
+
+            ttk.Button(
+                nav,
+                text="Puertos",
+                command=self._open("open_ports")
+            ).pack(side="left", padx=4)
+
+            ttk.Button(
+                nav,
+                text="Servicios",
+                command=self._open("open_services")
+            ).pack(side="left", padx=4)
+
+            ttk.Button(
+                nav,
+                text="Cotizaciones",
+                command=self._open("open_quotations")
+            ).pack(side="left", padx=4)
+
+            ttk.Button(
+                nav,
+                text="Precios",
+                command=self._open("open_pricing")
+            ).pack(side="left", padx=4)
 
         filtros = ttk.LabelFrame(self, text="Filtros")
         filtros.pack(fill="x", padx=20, pady=(0, 10))
@@ -205,11 +237,9 @@ class ComercialHomeUI(ttk.Frame):
                 if not fecha:
                     continue
 
-                try:
-                    year = datetime.fromisoformat(str(fecha)).year
-                    years.add(year)
-                except Exception:
-                    continue
+                parsed = parse_comercial_date(fecha)
+                if parsed:
+                    years.add(parsed.year)
 
             # ---------------------------------------------
             # ORDENAR DESCENDENTE (AÑO MÁS RECIENTE PRIMERO)
@@ -299,7 +329,7 @@ class ComercialHomeUI(ttk.Frame):
         end = start + self.PAGE_SIZE
 
         for r in self._data_all[start:end]:
-            r = dict(r)
+            r = format_comercial_row_dates(r, self.columnas)
             r["duracion"] = self._format_duration(r.get("duracion"))
             self.tabla.insert("", "end", values=[r.get(c, "") for c in self.columnas])
 

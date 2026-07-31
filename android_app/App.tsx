@@ -10,6 +10,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  AppState,
   Image,
   Linking,
   Modal,
@@ -36,6 +37,7 @@ const BORDER = "#D7DEE8";
 const CREDS_KEY = "erp_som_saved_credentials";
 const OFFLINE_QUEUE_KEY = "erp_som_offline_queue";
 const ONG_NOTIFICATION_IDS_KEY = "erp_som_logra_notification_ids";
+const ERP_NOTIFICATION_IDS_KEY = "erp_som_business_notification_ids";
 const ONG_AUTOSAVE_DRAFT_KEY = "erp_som_ong_autosave_draft";
 
 Notifications.setNotificationHandler({
@@ -479,6 +481,19 @@ function Shell() {
   useEffect(() => {
     if (!activeModule && modules.length > 0) setActiveModule(modules[0]);
   }, [activeModule, modules]);
+
+  useEffect(() => {
+    if (!session) return;
+    syncBusinessNotifications(session);
+    const timer = setInterval(() => syncBusinessNotifications(session), 15 * 60 * 1000);
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") syncBusinessNotifications(session);
+    });
+    return () => {
+      clearInterval(timer);
+      subscription.remove();
+    };
+  }, [session]);
 
   useEffect(() => {
     if (activeModule?.code !== "informes" || activeSection || !session) return;
@@ -3900,6 +3915,140 @@ async function syncLograAgendaNotifications(items: LograAgendaItem[]) {
     await AsyncStorage.setItem(ONG_NOTIFICATION_IDS_KEY, JSON.stringify(nextIds));
   } catch {
     // Notifications should never block saving or loading the agenda.
+  }
+}
+
+function parseDateValue(value: unknown) {
+  const text = String(value ?? "").trim();
+  if (!text) return null;
+  const normalized = /^\d{4}-\d{2}-\d{2}/.test(text) ? text.slice(0, 10) : text;
+  const parsed = new Date(`${normalized}T09:00:00`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function nextBirthdayDate(value: unknown) {
+  const birth = parseDateValue(value);
+  if (!birth) return null;
+  const today = new Date();
+  const next = new Date(today.getFullYear(), birth.getMonth(), birth.getDate(), 9, 0, 0);
+  const todayDateOnly = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+  const nextDateOnly = new Date(next.getFullYear(), next.getMonth(), next.getDate()).getTime();
+  if (nextDateOnly < todayDateOnly) next.setFullYear(today.getFullYear() + 1);
+  return next;
+}
+
+function calendarDaysBetween(from: Date, to: Date) {
+  const start = new Date(from.getFullYear(), from.getMonth(), from.getDate()).getTime();
+  const end = new Date(to.getFullYear(), to.getMonth(), to.getDate()).getTime();
+  return Math.round((end - start) / (24 * 60 * 60 * 1000));
+}
+
+async function syncBusinessNotifications(session: Session) {
+  try {
+    const previous = await AsyncStorage.getItem(ERP_NOTIFICATION_IDS_KEY);
+    const previousIds = previous ? JSON.parse(previous) as string[] : [];
+    await Promise.all(previousIds.map((id) => Notifications.cancelScheduledNotificationAsync(id).catch(() => undefined)));
+
+    if (Platform.OS === "android") {
+      await Notifications.setNotificationChannelAsync("erp-alerts", {
+        name: "ERP SOM Alertas",
+        importance: Notifications.AndroidImportance.HIGH,
+        sound: "default",
+        vibrationPattern: [0, 500, 250, 500]
+      });
+    }
+
+    const permission = await Notifications.requestPermissionsAsync();
+    if (!permission.granted) {
+      await AsyncStorage.setItem(ERP_NOTIFICATION_IDS_KEY, JSON.stringify([]));
+      return;
+    }
+
+    const now = new Date();
+    const period = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+    const ids: string[] = [];
+
+    const tax = await apiRequest<Record<string, unknown>>(`/accounting/tax/obligations?year=${now.getFullYear()}&period=${period}&pending_only=true`, { session }).catch(() => null);
+    for (const item of (Array.isArray(tax?.data) ? tax?.data : []).slice(0, 10) as Record<string, unknown>[]) {
+      const calendar = Array.isArray(item.calendar) ? item.calendar as Record<string, unknown>[] : [];
+      for (const due of calendar.slice(0, 3)) {
+        const dueDate = parseDateValue(due.estimated_due_date);
+        const status = String(due.alert_status || "").toUpperCase();
+        const name = String(item.name || item.tax_code || "Declaracion pendiente");
+        const dueText = String(due.estimated_due_date || "sin fecha");
+        const alertDate = dueDate ? new Date(dueDate.getTime() - 24 * 60 * 60 * 1000) : null;
+        const triggerDate = status === "DUE_TODAY" || status === "DUE_TOMORROW"
+          ? new Date(Date.now() + 3000)
+          : alertDate && alertDate.getTime() > Date.now()
+            ? alertDate
+            : null;
+        if (!triggerDate) continue;
+        const id = await Notifications.scheduleNotificationAsync({
+          content: {
+            title: "Declaracion pendiente",
+            body: `${name} vence ${dueText}.`,
+            sound: "default",
+            data: { type: "tax-obligation" }
+          },
+          trigger: { type: "date", date: triggerDate, channelId: "erp-alerts" } as Notifications.NotificationTriggerInput
+        });
+        ids.push(id);
+      }
+    }
+
+    const role = String(session.rol || "").trim().toLowerCase();
+    if (role === "master" || role === "admin") {
+      const employees = await apiRequest<Record<string, unknown>>("/hr/employees?page=1&page_size=500&estado=ACTIVO", { session }).catch(() => null);
+      for (const emp of (Array.isArray(employees?.data) ? employees?.data : []) as Record<string, unknown>[]) {
+        const date = nextBirthdayDate(emp.fecha_nacimiento);
+        if (!date) continue;
+        const days = calendarDaysBetween(new Date(), date);
+        if (days !== 0 && days !== 3) continue;
+        const name = String(emp.nombre_completo || emp.nombre || emp.usuario || "Empleado");
+        const id = await Notifications.scheduleNotificationAsync({
+          content: {
+            title: "Cumpleanos de empleado",
+            body: days === 0 ? `${name} cumple anos hoy.` : `${name} cumple anos en 3 dias.`,
+            sound: "default",
+            data: { type: "employee-birthday" }
+          },
+          trigger: { type: "date", date: days === 0 ? new Date(Date.now() + 5000) : date, channelId: "erp-alerts" } as Notifications.NotificationTriggerInput
+        });
+        ids.push(id);
+      }
+    }
+
+    const statusReports = await apiRequest<Record<string, unknown>>("/status-informes?status=Pending", { session }).catch(() => null);
+    const regularPending = Number(statusReports?.count || (Array.isArray(statusReports?.data) ? statusReports?.data.length : 0)) || 0;
+    const ongReports = await apiRequest<Record<string, unknown>>("/logra-reports", { session }).catch(() => null);
+    const ongPending = (Array.isArray(ongReports?.data) ? ongReports?.data : []).filter((row) => String((row as Record<string, unknown>).status || "").toLowerCase() === "pending").length;
+    const pendingTotal = regularPending + ongPending;
+    if (pendingTotal > 0) {
+      const immediateId = await Notifications.scheduleNotificationAsync({
+        content: {
+          title: "Informes pendientes",
+          body: `Hay ${pendingTotal} informe(s) Pending. Deben marcarse Approved o Rejected.`,
+          sound: "default",
+          data: { type: "pending-reports" }
+        },
+        trigger: { type: "date", date: new Date(Date.now() + 5000), channelId: "erp-alerts" } as Notifications.NotificationTriggerInput
+      });
+      ids.push(immediateId);
+      const id = await Notifications.scheduleNotificationAsync({
+        content: {
+          title: "Informes pendientes",
+          body: `Hay ${pendingTotal} informe(s) Pending. Se avisara cada 24 horas hasta aprobar o rechazar.`,
+          sound: "default",
+          data: { type: "pending-reports" }
+        },
+        trigger: { type: "timeInterval", seconds: 86400, repeats: true, channelId: "erp-alerts" } as Notifications.NotificationTriggerInput
+      });
+      ids.push(id);
+    }
+
+    await AsyncStorage.setItem(ERP_NOTIFICATION_IDS_KEY, JSON.stringify(ids));
+  } catch {
+    // Notifications are supportive; the ERP must continue even if permissions or fetches fail.
   }
 }
 
@@ -13201,6 +13350,7 @@ function ServiceActionModal({
       return formatted === "-" ? "" : formatted;
     };
     setForm({
+      buque_contenedor: cleanField(service.buque_contenedor),
       surveyor: cleanField(service.surveyor),
       honorarios: cleanField(service.honorarios),
       costo_operativo: cleanField(service.costo_operativo),
@@ -13320,6 +13470,7 @@ function ServiceActionModal({
           session,
           offlineLabel: `Editar Servicio ${consec}`,
           body: {
+            buque_contenedor: form.buque_contenedor,
             surveyor: form.surveyor,
             honorarios: toNumber(form.honorarios),
             costo_operativo: toNumber(form.costo_operativo),
@@ -13421,6 +13572,8 @@ function ServiceActionModal({
 
           {mode === "edit" ? (
             <>
+              <Text style={styles.label}>Buque / Contenedor</Text>
+              <TextInput style={styles.input} value={form.buque_contenedor} onChangeText={(value) => setValue("buque_contenedor", value)} />
               <Text style={styles.label}>Surveyor</Text>
               <TextInput style={styles.input} value={form.surveyor} onChangeText={(value) => setValue("surveyor", value)} />
               <Text style={styles.label}>Honorarios</Text>

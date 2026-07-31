@@ -22,6 +22,7 @@ class PopupTaxCenter(tk.Toplevel):
         self.minsize(980, 620)
         self.period = tk.StringVar(value=period or date.today().strftime("%Y-%m"))
         self.status = tk.StringVar(value="Listo")
+        self.show_all_books = tk.BooleanVar(value=False)
         self._shown_obligation_alerts = set()
         self._build()
         self.after(100, self.refresh_all)
@@ -36,6 +37,7 @@ class PopupTaxCenter(tk.Toplevel):
         ttk.Button(top, text="Cargar XML venta", command=lambda: self._upload_xml("SALE")).pack(side="left", padx=4)
         ttk.Button(top, text="Cargar XML compra", command=lambda: self._upload_xml("PURCHASE")).pack(side="left", padx=4)
         ttk.Button(top, text="Correo fiscal Outlook", command=self._open_gmail_inbox).pack(side="left", padx=4)
+        ttk.Checkbutton(top, text="Libros todos los periodos", variable=self.show_all_books, command=self.refresh_all).pack(side="left", padx=10)
 
         self.tabs = ttk.Notebook(self)
         self.tabs.pack(fill="both", expand=True, padx=10, pady=(0, 6))
@@ -45,7 +47,7 @@ class PopupTaxCenter(tk.Toplevel):
         self.tab_quality = ttk.Frame(self.tabs, padding=8)
         self.tab_obligations = ttk.Frame(self.tabs, padding=8)
         self.tab_cabys = ttk.Frame(self.tabs, padding=8)
-        for tab, name in ((self.tab_dashboard,"IVA y conciliación"),(self.tab_sales,"Libro de ventas"),
+        for tab, name in ((self.tab_dashboard,"IVA y conciliacion"),(self.tab_sales,"Libro de ventas"),
                           (self.tab_purchases,"Libro de compras"),(self.tab_quality,"Control documental"),
                           (self.tab_obligations,"Obligaciones"),(self.tab_cabys,"CAByS")):
             self.tabs.add(tab, text=name)
@@ -61,16 +63,16 @@ class PopupTaxCenter(tk.Toplevel):
         self.kpis = {}
         cards = ttk.Frame(self.tab_dashboard)
         cards.pack(fill="x")
-        for col, (key, label) in enumerate((("sales_tax","IVA débito fiscal"),("purchase_tax_credit","Crédito fiscal"),
+        for col, (key, label) in enumerate((("sales_tax","IVA debito fiscal"),("purchase_tax_credit","Credito fiscal"),
                                             ("net_tax","IVA neto documental"),("accounting_net","IVA neto contable"),
                                             ("difference","Diferencia"))):
             box = ttk.LabelFrame(cards, text=label, padding=12)
             box.grid(row=0, column=col, sticky="nsew", padx=4)
             cards.columnconfigure(col, weight=1)
-            value = tk.StringVar(value="₡0.00")
+            value = tk.StringVar(value="0.00")
             ttk.Label(box, textvariable=value, font=("Segoe UI", 13, "bold")).pack()
             self.kpis[key] = value
-        self.ready = tk.StringVar(value="Pendiente de revisión")
+        self.ready = tk.StringVar(value="Pendiente de revision")
         ttk.Label(self.tab_dashboard, textvariable=self.ready, font=("Segoe UI", 12, "bold")).pack(anchor="w", pady=(20, 8))
         self.quality_text = tk.Text(self.tab_dashboard, height=9, state="disabled", wrap="word")
         self.quality_text.pack(fill="both", expand=True)
@@ -94,7 +96,7 @@ class PopupTaxCenter(tk.Toplevel):
         ).pack(anchor="w", pady=(0, 6))
         cols=("id","direction","date","number","xml","key","lines","cabys","duplicates","hacienda")
         tree=ttk.Treeview(parent,columns=cols,show="headings")
-        for col,label in zip(cols,("ID","Tipo","Fecha","Documento","XML","Clave","Líneas","CAByS faltante","Clave repetida","Hacienda")):
+        for col,label in zip(cols,("ID","Tipo","Fecha","Documento","XML","Clave","Lineas","CAByS faltante","Clave repetida","Hacienda")):
             tree.heading(col,text=label); tree.column(col,width=110)
         tree.column("number",width=190); tree.pack(fill="both",expand=True)
         ttk.Button(parent,text="Adjuntar respuesta de Hacienda al seleccionado",
@@ -109,26 +111,26 @@ class PopupTaxCenter(tk.Toplevel):
         self.obligations_tree.tag_configure("DUE_TOMORROW", background="#FEF3C7", foreground="#92400E")
         self.obligations_tree.tag_configure("DUE_SOON", background="#FEF3C7", foreground="#92400E")
         self.obligations_tree.tag_configure("PENDING", foreground="#1F2937")
-        for col,label,width in (("code","Código",150),("name","Obligación",300),("periodicity","Periodicidad",110),("period","Periodo",90),("due","Vencimiento estimado",160)):
+        for col,label,width in (("code","Codigo",150),("name","Obligacion",300),("periodicity","Periodicidad",110),("period","Periodo",90),("due","Vencimiento real / regla",170)):
             self.obligations_tree.heading(col,text=label); self.obligations_tree.column(col,width=width)
         self.obligations_tree.pack(fill="both",expand=True)
-        ttk.Label(self.tab_obligations,text="Las fechas estimadas deben contrastarse con feriados, prórrogas y el calendario oficial de Hacienda.").pack(anchor="w",pady=6)
+        ttk.Label(self.tab_obligations,text="Las fechas estimadas deben contrastarse con feriados, prorrogas y el calendario oficial de Hacienda.").pack(anchor="w",pady=6)
 
     def _build_cabys(self):
         search_frame=ttk.Frame(self.tab_cabys); search_frame.pack(fill="x",pady=(0,6))
         self.cabys_search=tk.StringVar(); ttk.Entry(search_frame,textvariable=self.cabys_search,width=50).pack(side="left")
         ttk.Button(search_frame,text="Buscar",command=self._load_cabys).pack(side="left",padx=5)
         self.cabys_tree=ttk.Treeview(self.tab_cabys,columns=("code","description","rate","source"),show="headings")
-        for col,label,width in (("code","Código CAByS",150),("description","Descripción",600),("rate","Tarifa sugerida",120),("source","Fuente",100)):
+        for col,label,width in (("code","Codigo CAByS",150),("description","Descripcion",600),("rate","Tarifa sugerida",120),("source","Fuente",100)):
             self.cabys_tree.heading(col,text=label); self.cabys_tree.column(col,width=width)
         self.cabys_tree.pack(fill="both",expand=True)
 
     def refresh_all(self):
         try:
-            self.status.set("Consultando registro fiscal…")
+            self.status.set("Consultando registro fiscal...")
             self._load_dashboard(); self._load_book("SALE",self.sales_tree); self._load_book("PURCHASE",self.purchases_tree)
             self._load_quality(); self._load_obligations(); self._load_cabys()
-            self.status.set("Información fiscal actualizada")
+            self.status.set("Informacion fiscal actualizada")
         except Exception as exc:
             self.status.set("No se pudo actualizar")
             messagebox.showerror("Centro fiscal",str(exc),parent=self)
@@ -137,24 +139,23 @@ class PopupTaxCenter(tk.Toplevel):
         data=get_tax_iva_api(self.period.get()); fiscal=data["fiscal"]; accounting=data["accounting"]; diff=data["differences"]
         values={"sales_tax":fiscal["sales_tax"],"purchase_tax_credit":fiscal["purchase_tax_credit"],"net_tax":fiscal["net_tax"],
                 "accounting_net":accounting["net_tax"],"difference":diff["net"]}
-        for key,value in values.items(): self.kpis[key].set(f"₡{value:,.2f}")
-        self.ready.set("LISTO PARA REVISIÓN Y PRESENTACIÓN" if data["ready_to_file"] else "NO PRESENTAR: existen diferencias o datos incompletos")
+        for key,value in values.items(): self.kpis[key].set(self._format_iva_position(value, key))
+        self.ready.set("LISTO PARA REVISION Y PRESENTACION" if data["ready_to_file"] else "NO PRESENTAR: existen diferencias o datos incompletos")
         q=data["quality"]
         text=(f"XML faltantes: {q.get('missing_xml',0)}\nRespuestas de Hacienda pendientes: {q.get('pending_hacienda',0)}\n"
-              f"Documentos sin detalle: {q.get('documents_without_lines',0)}\nLíneas sin CAByS: {q.get('missing_cabys',0)}\n\n"
-              "El cálculo documental se compara con las cuentas configuradas de IVA. Una diferencia requiere revisión antes de declarar.")
+              f"Documentos sin detalle: {q.get('documents_without_lines',0)}\nLineas sin CAByS: {q.get('missing_cabys',0)}\n\n"
+              "Debito fiscal = IVA de ventas. Credito fiscal = IVA de compras. "
+              "Si compras supera ventas, el resultado es credito a favor, no un IVA negativo. "
+              "La diferencia compara documentos fiscales contra cuentas contables de IVA antes de declarar.")
         self.quality_text.configure(state="normal"); self.quality_text.delete("1.0","end"); self.quality_text.insert("1.0",text); self.quality_text.configure(state="disabled")
-
     def _load_book(self,direction,tree):
-        data=get_tax_book_api(direction,self.period.get())
+        data=get_tax_book_api(direction,"ALL" if self.show_all_books.get() else self.period.get())
         tree.delete(*tree.get_children())
         for row in data["data"]:
             party=row.get("receiver_name") if direction=="SALE" else row.get("issuer_name")
             total = float(row.get("total") or 0)
             missing_detail = not row.get("xml_path") or total == 0
-            hacienda = row.get("hacienda_status") or ""
-            if missing_detail:
-                hacienda = f"{hacienda} / INCOMPLETO".strip(" /")
+            hacienda = self._format_hacienda_status(row.get("hacienda_status"), missing_detail)
             tree.insert("","end",values=(str(row.get("issue_datetime") or "")[:10],row.get("document_number") or "",party or "",
               row.get("currency_code"),f"{float(row.get('subtotal') or 0):,.2f}",f"{float(row.get('tax_amount') or 0):,.2f}",
               f"{total:,.2f}",hacienda))
@@ -164,8 +165,9 @@ class PopupTaxCenter(tk.Toplevel):
         self.quality_tree.delete(*self.quality_tree.get_children())
         for row in rows:
             self.quality_tree.insert("","end",iid=str(row["id"]),values=(row["id"],row["direction"],str(row.get("issue_datetime") or "")[:10],
-              row.get("document_number") or "","Sí" if row.get("xml_path") else "No","Sí" if row.get("electronic_key") else "No",
-              row.get("line_count"),row.get("missing_cabys_lines"),row.get("duplicate_key_count"),row.get("hacienda_status")))
+              row.get("document_number") or "","Si" if row.get("xml_path") else "No","Si" if row.get("electronic_key") else "No",
+              row.get("line_count"),row.get("missing_cabys_lines"),row.get("duplicate_key_count"),
+              self._format_hacienda_status(row.get("hacienda_status"))))
 
     def _load_obligations(self):
         data=get_tax_obligations_api(int(self.period.get()[:4]), period=self.period.get(), pending_only=True); self.obligations_tree.delete(*self.obligations_tree.get_children())
@@ -183,6 +185,37 @@ class PopupTaxCenter(tk.Toplevel):
         if alerts:
             messagebox.showwarning("Obligaciones fiscales", "Vencimientos fiscales proximos:\n\n" + "\n".join(alerts[:8]), parent=self)
 
+    @staticmethod
+    def _format_iva_position(value, key):
+        try:
+            amount = float(value or 0)
+        except Exception:
+            amount = 0.0
+        if key in {"net_tax", "accounting_net"}:
+            if abs(amount) < 0.005:
+                return "Sin saldo 0.00"
+            label = "IVA por pagar" if amount > 0 else "Credito a favor"
+            return f"{label} {abs(amount):,.2f}"
+        if key == "difference":
+            if abs(amount) < 0.005:
+                return "Cuadrado 0.00"
+            return f"Revisar {abs(amount):,.2f}"
+        return f"{amount:,.2f}"
+
+    @staticmethod
+    def _format_hacienda_status(status, incomplete=False):
+        status = str(status or "PENDING").upper()
+        labels = {
+            "PENDING": "Pendiente respuesta Hacienda",
+            "ACCEPTED": "Aceptado por Hacienda",
+            "PARTIAL": "Aceptado parcial",
+            "REJECTED": "Rechazado por Hacienda",
+        }
+        text = labels.get(status, status)
+        if incomplete:
+            text = f"{text} - incompleto en ERP"
+        return text
+
     def _load_cabys(self):
         rows=search_tax_cabys_api(self.cabys_search.get()); self.cabys_tree.delete(*self.cabys_tree.get_children())
         for row in rows: self.cabys_tree.insert("","end",values=(row["code"],row["description"],row.get("suggested_tax_rate") or "",row.get("source")))
@@ -190,9 +223,9 @@ class PopupTaxCenter(tk.Toplevel):
     def _sync(self):
         try:
             result=sync_accounting_tax_api(); counts=result.get("counts",{})
-            messagebox.showinfo("Centro fiscal",f"Sincronización terminada.\nVentas: {counts.get('sales',0)}\nCompras: {counts.get('purchases',0)}",parent=self)
+            messagebox.showinfo("Centro fiscal",f"Sincronizacion terminada.\nVentas: {counts.get('sales',0)}\nCompras: {counts.get('purchases',0)}",parent=self)
             self.refresh_all()
-        except Exception as exc: messagebox.showerror("Sincronización fiscal",str(exc),parent=self)
+        except Exception as exc: messagebox.showerror("Sincronizacion fiscal",str(exc),parent=self)
 
     def _upload_xml(self,direction):
         path=filedialog.askopenfilename(parent=self,filetypes=[("XML","*.xml")])
@@ -213,3 +246,5 @@ class PopupTaxCenter(tk.Toplevel):
     def _open_gmail_inbox(self):
         from Modulos.Finanzas.sections.Accounting.popups.popup_outlook_fiscal import PopupOutlookFiscal
         PopupOutlookFiscal(self)
+
+

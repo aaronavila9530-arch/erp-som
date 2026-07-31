@@ -8,6 +8,7 @@ from api_client import (
 )
 
 from Modulos.HHRR.popups.popup_empleado import PopupEmpleado
+from Modulos.HHRR.date_utils import to_long_english_date
 
 
 class VistaEmpleadosHHRR(ttk.Frame):
@@ -166,7 +167,13 @@ class VistaEmpleadosHHRR(ttk.Frame):
     def _cargar_tabla(self, data):
         self.tabla.delete(*self.tabla.get_children())
         for row in data:
-            self.tabla.insert("", "end", values=[row.get(col) for col in self.columnas])
+            values = []
+            for col in self.columnas:
+                value = row.get(col)
+                if col == "fecha_ingreso":
+                    value = to_long_english_date(value)
+                values.append(value)
+            self.tabla.insert("", "end", values=values)
 
     def _alimentar_filtros(self, data):
         self.filtro_nombre["values"] = sorted({d["nombre"] for d in data if d.get("nombre")})

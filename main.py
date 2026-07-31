@@ -73,6 +73,7 @@ class MainApp(tk.Frame):
 
         self.menu_visible = True
         self._logra_alert_shown = set()
+        self._global_alert_shown = {}
 
         self._build_menu_lateral()
         self._build_content_area()
@@ -86,9 +87,30 @@ class MainApp(tk.Frame):
             justify="center"
         ).pack(pady=(5, 15))
 
-        self.cambiar_modulo("Dashboard")
+        self.cambiar_modulo(self._initial_module())
         self._start_logra_global_alerts()
+        self._start_global_business_alerts()
         self._start_outlook_fiscal_background_sync()
+
+    def _initial_module(self) -> str:
+        """Open the first module the current role can actually access."""
+        rol = (self.rol or "").strip().lower()
+        if rol == "accounting":
+            return "Finanzas"
+        if self._has_permission("dashboard", "view"):
+            return "Dashboard"
+        for label, module_code in [
+            ("Finanzas", "finanzas"),
+            ("Informes", "informes"),
+            ("Servicios", "servicios"),
+            ("Comercial", "comercial"),
+            ("HHRR", "hhrre"),
+            ("Master Data", "master_data"),
+            ("Q&A SOM", "qa_som"),
+        ]:
+            if self._has_permission(module_code, "view"):
+                return label
+        return "Q&A SOM"
 
     def _start_outlook_fiscal_background_sync(self):
         try:
@@ -322,6 +344,14 @@ class MainApp(tk.Frame):
         self._logra_alert_shown.add(key)
         return True
 
+    def _should_show_global_alert(self, key, cooldown_hours=24):
+        now = datetime.now()
+        previous = self._global_alert_shown.get(key)
+        if previous and now - previous < timedelta(hours=cooldown_hours):
+            return False
+        self._global_alert_shown[key] = now
+        return True
+
     def _check_logra_global_alerts(self):
         try:
             resp = api_client.list_logra_reports_api()
@@ -375,6 +405,117 @@ class MainApp(tk.Frame):
         finally:
             if self.winfo_exists():
                 self.after(60000, self._check_logra_global_alerts)
+
+    # =========================================================
+    # Global ERP alerts: tax declarations, birthdays, reports
+    # =========================================================
+    def _start_global_business_alerts(self):
+        self.after(20000, self._check_global_business_alerts)
+
+    def _check_global_business_alerts(self):
+        try:
+            self._check_tax_declaration_alerts()
+            self._check_employee_birthday_alerts()
+            self._check_pending_report_alerts()
+        except Exception:
+            pass
+        finally:
+            if self.winfo_exists():
+                self.after(60 * 60 * 1000, self._check_global_business_alerts)
+
+    def _check_tax_declaration_alerts(self):
+        period = datetime.now().strftime("%Y-%m")
+        try:
+            data = api_client.get_tax_obligations_api(datetime.now().year, period=period, pending_only=True)
+        except Exception:
+            return
+
+        alerts = []
+        for item in (data.get("data") or []):
+            for due in (item.get("calendar") or []):
+                status = str(due.get("alert_status") or "").upper()
+                if status not in {"DUE_TODAY", "DUE_TOMORROW"}:
+                    continue
+                due_date = due.get("estimated_due_date") or "sin fecha"
+                obligation = item.get("name") or item.get("tax_code") or "Declaracion"
+                due_period = due.get("period") or ""
+                key = ("tax", item.get("tax_code"), due_period, due_date)
+                if self._should_show_global_alert(key, cooldown_hours=12):
+                    alerts.append(f"{obligation} {due_period}: vence {due_date}")
+
+        if alerts:
+            messagebox.showwarning(
+                "Declaraciones pendientes",
+                "Hay declaraciones pendientes por presentar:\n\n" + "\n".join(alerts[:8]),
+                parent=self.parent,
+            )
+
+    def _parse_date_only(self, value):
+        text = str(value or "").strip()
+        for fmt in ("%Y-%m-%d", "%B %d, %Y", "%d/%m/%Y", "%m/%d/%Y"):
+            try:
+                return datetime.strptime(text[:10] if fmt == "%Y-%m-%d" else text, fmt).date()
+            except Exception:
+                continue
+        return None
+
+    def _check_employee_birthday_alerts(self):
+        current_role = str(getattr(self, "rol", "") or "").strip().lower()
+        if current_role not in {"master", "admin"}:
+            return
+
+        try:
+            resp = api_client.hr_listar_empleados(page=1, page_size=500, estado="ACTIVO")
+        except Exception:
+            return
+
+        today = datetime.now().date()
+        alerts = []
+        for emp in (resp.get("data") or []):
+            birth = self._parse_date_only(emp.get("fecha_nacimiento"))
+            if not birth:
+                continue
+            this_year = birth.replace(year=today.year)
+            days = (this_year - today).days
+            if days < 0:
+                days = ((birth.replace(year=today.year + 1)) - today).days
+            if days not in {0, 3}:
+                continue
+            name = emp.get("nombre_completo") or emp.get("nombre") or emp.get("usuario") or "Empleado"
+            key = ("birthday", emp.get("id") or emp.get("usuario") or name, days, today.isoformat())
+            if self._should_show_global_alert(key, cooldown_hours=24):
+                when = "hoy" if days == 0 else "en 3 dias"
+                alerts.append(f"{name}: cumpleanos {when}")
+
+        if alerts:
+            messagebox.showinfo(
+                "Cumpleanos de empleados",
+                "Recordatorio de cumpleanos:\n\n" + "\n".join(alerts[:8]),
+                parent=self.parent,
+            )
+
+    def _check_pending_report_alerts(self):
+        total = 0
+        try:
+            resp = api_client.get_status_informes_api(status="Pending")
+            total += int(resp.get("count") or len(resp.get("data") or []))
+        except Exception:
+            pass
+        try:
+            resp = api_client.list_logra_reports_api()
+            for row in resp.get("data") or []:
+                status = str(row.get("status") or "").strip().lower()
+                if status == "pending":
+                    total += 1
+        except Exception:
+            pass
+
+        if total and self._should_show_global_alert(("reports_pending",), cooldown_hours=24):
+            messagebox.showwarning(
+                "Informes pendientes",
+                f"Hay {total} informe(s) en estado Pending. Se avisara cada 24 horas hasta aprobarlos o rechazarlos.",
+                parent=self.parent,
+            )
 
     # =========================================================
     # INFORMES — callbacks

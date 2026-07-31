@@ -3,6 +3,7 @@ from tkinter import ttk, messagebox
 import requests
 
 from api_client import BASE_URL
+from Modulos.Finanzas.date_utils import to_db_date
 
 
 class PopupDisputa(tk.Toplevel):
@@ -49,8 +50,8 @@ class PopupDisputa(tk.Toplevel):
         info_row("N° Factura:", self.row[4])
         info_row("Cliente:", self.row[1])
         info_row("Fecha emisión:", self.row[5])
-        info_row("Fecha vencimiento:", self.row[6])
-        info_row("Monto:", f"{self.row[8]} {self.row[9]}")
+        info_row("Fecha vencimiento:", self.row[7])
+        info_row("Monto:", f"{self.row[9]} {self.row[10]}")
 
         # ================= DISPUTA =================
         disputa = tk.LabelFrame(container, text="Detalle de la Disputa")
@@ -102,14 +103,14 @@ class PopupDisputa(tk.Toplevel):
             "numero_documento": self.row[4],
             "codigo_cliente": self.row[0],
             "nombre_cliente": self.row[1],
-            "fecha_factura": self.row[5],
-            "fecha_vencimiento": self.row[6],
-            "monto": self.row[9],
+            "fecha_factura": to_db_date(self.row[5]),
+            "fecha_vencimiento": to_db_date(self.row[7]),
+            "monto": self.row[10],
             "motivo": self.motivo.get(),
             "comentario": comentario,
-            "buque_contenedor": self.row[11],
-            "operacion": self.row[12],
-            "periodo_operacion": self.row[13],
+            "buque_contenedor": self.row[13],
+            "operacion": self.row[14],
+            "periodo_operacion": self.row[15],
             "descripcion_servicio": None  # ✅ CORREGIDO
         }
 

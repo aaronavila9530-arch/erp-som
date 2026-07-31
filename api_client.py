@@ -904,6 +904,67 @@ def get_paid_invoices_report_api(
         }
 
 
+def import_bank_statement_api(payload):
+    r = api_request("POST", f"{BASE_URL}/bank-reconciliation/statements/import", json=payload, timeout=90)
+    r.raise_for_status()
+    return r.json()
+
+
+def get_bank_reconciliation_statements_api(bank_account_code=None, currency_code=None, period=None, status=None):
+    params = {}
+    if bank_account_code:
+        params["bank_account_code"] = bank_account_code
+    if currency_code:
+        params["currency_code"] = currency_code
+    if period:
+        params["period"] = period
+    if status:
+        params["status"] = status
+    r = api_request("GET", f"{BASE_URL}/bank-reconciliation/statements", params=params or None, timeout=30)
+    r.raise_for_status()
+    return r.json().get("data", [])
+
+
+def get_bank_reconciliation_statement_lines_api(statement_id, status=None):
+    params = {"status": status} if status else None
+    r = api_request("GET", f"{BASE_URL}/bank-reconciliation/statements/{statement_id}/lines", params=params, timeout=30)
+    r.raise_for_status()
+    return r.json().get("data", [])
+
+
+def auto_match_bank_statement_api(statement_id, tolerance="1.00"):
+    r = api_request(
+        "POST",
+        f"{BASE_URL}/bank-reconciliation/statements/{statement_id}/auto-match",
+        json={"tolerance": str(tolerance)},
+        timeout=90,
+    )
+    r.raise_for_status()
+    return r.json()
+
+
+def mark_bank_statement_line_fee_api(line_id, note=None):
+    r = api_request(
+        "POST",
+        f"{BASE_URL}/bank-reconciliation/lines/{line_id}/bank-fee",
+        json={"note": note},
+        timeout=30,
+    )
+    r.raise_for_status()
+    return r.json()
+
+
+def close_bank_reconciliation_statement_api(statement_id, note=None, force_close=False):
+    r = api_request(
+        "POST",
+        f"{BASE_URL}/bank-reconciliation/statements/{statement_id}/close",
+        json={"note": note, "force_close": bool(force_close)},
+        timeout=45,
+    )
+    r.raise_for_status()
+    return r.json()
+
+
 def download_monthly_financial_report_api(year: int, month: int, fmt: str, save_path: str):
     endpoint = "word" if str(fmt).lower() in ("word", "docx") else "pdf"
     try:
@@ -1781,6 +1842,100 @@ def get_accounting_ledger_api(
     return r.json().get("data", [])
 
 
+def get_accounting_complete_financial_statements_api(
+    period=None,
+    period_from=None,
+    period_to=None,
+    limit=1000,
+):
+    params = {"limit": limit}
+    if period:
+        params["period"] = period
+    if period_from:
+        params["period_from"] = period_from
+    if period_to:
+        params["period_to"] = period_to
+    r = api_request(
+        "GET",
+        f"{BASE_URL}/accounting/financial-statements/complete",
+        params=params,
+        timeout=60,
+    )
+    r.raise_for_status()
+    return r.json()
+
+
+def get_accounting_advanced_dashboard_api(period):
+    r = api_request("GET", f"{BASE_URL}/accounting/advanced/executive-dashboard", params={"period": period}, timeout=60)
+    r.raise_for_status()
+    return r.json()
+
+
+def get_accounting_smart_alerts_api(period):
+    r = api_request("GET", f"{BASE_URL}/accounting/advanced/smart-alerts", params={"period": period}, timeout=60)
+    r.raise_for_status()
+    return r.json()
+
+
+def get_accounting_tax_deep_summary_api(period):
+    r = api_request("GET", f"{BASE_URL}/accounting/advanced/tax/deep-summary", params={"period": period}, timeout=60)
+    r.raise_for_status()
+    return r.json()
+
+
+def get_accounting_fx_revaluation_preview_api(period, currency_code="USD"):
+    r = api_request(
+        "GET",
+        f"{BASE_URL}/accounting/advanced/fx/revaluation-preview",
+        params={"period": period, "currency_code": currency_code},
+        timeout=90,
+    )
+    r.raise_for_status()
+    return r.json()
+
+
+def post_accounting_fx_revaluation_api(payload):
+    r = api_request("POST", f"{BASE_URL}/accounting/advanced/fx/revaluation-post", json=payload, timeout=90)
+    r.raise_for_status()
+    return r.json()
+
+
+def get_accounting_budget_vs_actual_api(period):
+    r = api_request("GET", f"{BASE_URL}/accounting/advanced/budget-vs-actual", params={"period": period}, timeout=60)
+    r.raise_for_status()
+    return r.json()
+
+
+def upsert_accounting_budget_api(payload):
+    r = api_request("PUT", f"{BASE_URL}/accounting/advanced/budget", json=payload, timeout=30)
+    r.raise_for_status()
+    return r.json()
+
+
+def post_portia_accounting_review_api(period, language="ES"):
+    r = api_request(
+        "POST",
+        f"{BASE_URL}/accounting/advanced/portia/review",
+        json={"period": period, "language": language},
+        timeout=90,
+    )
+    r.raise_for_status()
+    return r.json()
+
+
+def search_accounting_supports_api(entry_id=None, search=None, document_type=None, limit=200):
+    params = {"limit": limit}
+    if entry_id:
+        params["entry_id"] = entry_id
+    if search:
+        params["search"] = search
+    if document_type:
+        params["document_type"] = document_type
+    r = api_request("GET", f"{BASE_URL}/accounting/advanced/documents", params=params, timeout=30)
+    r.raise_for_status()
+    return r.json().get("data", [])
+
+
 
 # ============================================================
 # ACCOUNTING — MANUAL ENTRY
@@ -1816,13 +1971,14 @@ def post_accounting_manual_entry_api(payload: dict):
 # ACCOUNTING - CHART OF ACCOUNTS
 # ============================================================
 
-def get_accounting_accounts_api():
+def get_accounting_accounts_api(include_inactive=False):
     """
     Obtiene el catálogo contable para combobox
     """
     r = api_request(
         "GET",
         f"{BASE_URL}/accounting/accounts",
+        params={"include_inactive": True} if include_inactive else None,
         timeout=15
     )
     r.raise_for_status()
@@ -1866,6 +2022,44 @@ def create_accounting_account_api(payload):
 
 def update_accounting_account_api(account_code, payload):
     r = api_request("PUT", f"{BASE_URL}/accounting/accounts/{account_code}", json=payload, timeout=20)
+    r.raise_for_status()
+    return r.json()
+
+
+def harden_accounting_chart_api(user="ERP_USER", reason="Definitive chart cleanup"):
+    r = api_request(
+        "POST",
+        f"{BASE_URL}/accounting/accounts/harden",
+        json={"user": user, "reason": reason},
+        timeout=60,
+    )
+    r.raise_for_status()
+    return r.json()
+
+
+def get_accounting_posting_rules_api(origin=None, include_inactive=False):
+    params = {}
+    if origin:
+        params["origin"] = origin
+    if include_inactive:
+        params["include_inactive"] = True
+    r = api_request(
+        "GET",
+        f"{BASE_URL}/accounting/posting-rules",
+        params=params or None,
+        timeout=20,
+    )
+    r.raise_for_status()
+    return r.json().get("data", [])
+
+
+def seed_accounting_posting_rules_api(user="ERP_USER", reason="Seed formal accounting engine"):
+    r = api_request(
+        "POST",
+        f"{BASE_URL}/accounting/posting-rules/seed",
+        json={"user": user, "reason": reason},
+        timeout=30,
+    )
     r.raise_for_status()
     return r.json()
 
@@ -1999,6 +2193,22 @@ def get_accounting_auxiliary_aging_api(entity_type, as_of=None):
 def get_accounting_auxiliary_reconciliation_api(period=None):
     params = {"period": period} if period else None
     r = api_request("GET", f"{BASE_URL}/accounting/auxiliaries/reconciliation", params=params, timeout=30)
+    r.raise_for_status()
+    return r.json().get("data", [])
+
+
+def get_accounting_auxiliary_reconciliation_details_api(entity_type=None, period=None):
+    params = {}
+    if entity_type:
+        params["entity_type"] = entity_type
+    if period:
+        params["period"] = period
+    r = api_request(
+        "GET",
+        f"{BASE_URL}/accounting/auxiliaries/reconciliation/details",
+        params=params or None,
+        timeout=45,
+    )
     r.raise_for_status()
     return r.json().get("data", [])
 
@@ -7238,16 +7448,33 @@ def update_full_draft_survey_api(draft_report_number: str, payload: dict):
 
         url = f"{BASE_URL}/draft-survey/unified/{draft_report_number}"
 
-        response = requests.put(url, json=payload)
+        response = requests.put(url, json=payload, timeout=60)
+
+        try:
+            data = response.json()
+        except Exception:
+            data = None
 
         if response.status_code != 200:
-            raise Exception(response.text)
+            backend_msg = None
+            if isinstance(data, dict):
+                backend_msg = data.get("detail") or data.get("error") or data.get("message")
+            return {
+                "success": False,
+                "status_code": response.status_code,
+                "error": backend_msg or response.text,
+                "detail": data or response.text
+            }
 
-        return response.json()
+        if isinstance(data, dict):
+            data.setdefault("success", True)
+            return data
+
+        return {"success": True, "data": data}
 
     except Exception as e:
         print("UPDATE FULL DRAFT ERROR:", e)
-        raise
+        return {"success": False, "error": str(e), "status_code": None}
 
 # =========================================================
 # post draft unified
@@ -7287,7 +7514,7 @@ def update_draft_survey_word_api(draft_survey_id: int, payload: dict):
 
     import requests
 
-    url = f"{API_BASE_URL}/word/{draft_survey_id}"
+    url = f"{BASE_URL}/draft-survey-extra/word/{draft_survey_id}"
 
     try:
         response = requests.put(

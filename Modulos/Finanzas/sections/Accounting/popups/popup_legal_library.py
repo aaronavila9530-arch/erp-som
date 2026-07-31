@@ -37,7 +37,7 @@ class PopupLegalLibrary(tk.Toplevel):
 
         note = ttk.Label(
             self,
-            text="Referencia operativa. Para texto vigente, reformas y versiones oficiales, abrir siempre la fuente SCIJ/PGR o Hacienda.",
+            text="Texto documental basado en fuente oficial. Para reformas o uso legal final, abrir siempre SCIJ/PGR o Hacienda.",
             foreground="#555",
             anchor="w",
         )
@@ -47,7 +47,7 @@ class PopupLegalLibrary(tk.Toplevel):
         body.pack(fill="both", expand=True, padx=10, pady=(0, 8))
 
         list_frame = ttk.LabelFrame(body, text="Normativa", padding=6)
-        detail_frame = ttk.LabelFrame(body, text="Detalle ejecutivo", padding=6)
+        detail_frame = ttk.LabelFrame(body, text="Texto legal vigente", padding=6)
         body.add(list_frame, weight=3)
         body.add(detail_frame, weight=2)
 
@@ -121,16 +121,17 @@ class PopupLegalLibrary(tk.Toplevel):
             return
         row = self.rows[int(selected[0])]
         self.selected_url = row.get("official_url") or ""
-        extra = []
-        if row.get("legal_extracts"):
-            extra.append("Que exige / que dice la norma:\n" + "\n".join(f"- {item}" for item in row.get("legal_extracts") or []))
-        if row.get("key_points"):
-            extra.append("Puntos clave:\n" + "\n".join(f"- {item}" for item in row.get("key_points") or []))
-        if row.get("erp_controls"):
-            extra.append("Controles sugeridos en ERP-SOM:\n" + "\n".join(f"- {item}" for item in row.get("erp_controls") or []))
-        if row.get("practical_use"):
-            extra.append(f"Uso practico:\n{row.get('practical_use')}")
-        extra_text = "\n\n".join(extra)
+        articles = []
+        for article in row.get("legal_articles") or []:
+            articles.append(
+                f"{article.get('article') or 'Articulo'} - {article.get('title') or ''}\n"
+                f"{article.get('text') or ''}\n"
+                f"Fuente: {article.get('source') or self.selected_url}"
+            )
+        article_text = "\n\n".join(articles) or (
+            "No hay articulo cargado en biblioteca local para esta norma.\n"
+            "Abra la fuente oficial para consultar el texto completo vigente."
+        )
         text = (
             f"{row.get('title')}\n"
             f"{'-' * 80}\n"
@@ -141,9 +142,7 @@ class PopupLegalLibrary(tk.Toplevel):
             f"Emisor: {row.get('issuer')}\n"
             f"Fecha: {row.get('date') or '-'}\n\n"
             f"Vigencia:\n{row.get('current_status') or 'Vigente segun fuente oficial indicada.'}\n\n"
-            f"Resumen operativo:\n{row.get('summary')}\n\n"
-            f"Relevancia para ERP-SOM:\n{row.get('erp_relevance')}\n\n"
-            f"{extra_text}\n\n"
+            f"Articulos / texto legal:\n{article_text}\n\n"
             f"Palabras clave:\n{', '.join(row.get('keywords') or [])}\n\n"
             f"Fuente oficial:\n{self.selected_url}"
         )

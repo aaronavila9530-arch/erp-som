@@ -29,6 +29,9 @@ class VesselCargoConditionTable(ttk.Frame):
     def __init__(self, parent):
         super().__init__(parent)
 
+        # 🔒 Usuario heredado (estándar ERP)
+        self.usuario = getattr(parent, "usuario", None)
+
         self._data_all = []
         self._page = 1
 
@@ -258,9 +261,68 @@ class VesselCargoConditionTable(ttk.Frame):
             messagebox.showwarning("Acciones", "Selecciona un reporte.")
             return
 
-        x = self.btn_actions.winfo_rootx()
-        y = self.btn_actions.winfo_rooty() + self.btn_actions.winfo_height()
-        self.actions_menu.tk_popup(x, y)
+        try:
+            # ==================================================
+            # 🔒 CONTROL DE USUARIOS RESTRINGIDOS
+            # ==================================================
+            restricted_users = {"surveyor01", "surveyor02"}
+            is_restricted = str(self.usuario or "").strip().lower() in restricted_users
+
+            # ==================================================
+            # 🔁 RECONSTRUIR MENU DINÁMICAMENTE
+            # ==================================================
+            self.actions_menu.delete(0, "end")
+
+            # --- Review ---
+            self.actions_menu.add_command(
+                label="🔍 Review",
+                command=self._review_selected
+            )
+
+            # --- Reject / Approve ---
+            if is_restricted:
+                self.actions_menu.add_command(
+                    label="❌ Rechazar",
+                    state="disabled"
+                )
+                self.actions_menu.add_command(
+                    label="✅ Aprobar",
+                    state="disabled"
+                )
+            else:
+                self.actions_menu.add_command(
+                    label="❌ Rechazar",
+                    command=lambda: self._change_status("Rejected")
+                )
+                self.actions_menu.add_command(
+                    label="✅ Aprobar",
+                    command=lambda: self._change_status("Approved")
+                )
+
+            self.actions_menu.add_separator()
+
+            # --- Word ---
+            self.actions_menu.add_command(
+                label="📄 Generar Word",
+                command=self._generate_word_selected
+            )
+
+            # --- Final Report ---
+            self.actions_menu.add_command(
+                label="📑 Generar Informe Final",
+                command=self._generate_final_report_selected
+            )
+
+            # ==================================================
+            # 📍 MOSTRAR MENU
+            # ==================================================
+            x = self.btn_actions.winfo_rootx()
+            y = self.btn_actions.winfo_rooty() + self.btn_actions.winfo_height()
+
+            self.actions_menu.tk_popup(x, y)
+
+        finally:
+            self.actions_menu.grab_release()
 
 
     # =========================================================
@@ -294,7 +356,11 @@ class VesselCargoConditionTable(ttk.Frame):
             self.destroy()
 
             # abrir form
-            form = VesselCargoConditionSurveyForm(self.master)
+            form = VesselCargoConditionSurveyForm(
+                self.master,
+                usuario=self.usuario,
+                rol=getattr(self.master, "rol", None)
+            )
 
             # cargar datos completos
             form.load_record(data)

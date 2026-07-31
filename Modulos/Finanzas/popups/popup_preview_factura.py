@@ -1,6 +1,8 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 
+from Modulos.Finanzas.date_utils import to_long_english_date
+
 
 class PopupPreviewFactura(tk.Toplevel):
 
@@ -59,7 +61,7 @@ class PopupPreviewFactura(tk.Toplevel):
         lbl(cliente, "FACTURA N° —", bold=True).pack(anchor="w")
         lbl(cliente, f"Cliente: {self.data.get('cliente', '')}").pack(anchor="w")
         lbl(cliente, f"N° Informe: {self.data.get('num_informe', '')}").pack(anchor="w")
-        lbl(cliente, f"Fecha factura: {self.data.get('fecha_factura', '')}").pack(anchor="w")
+        lbl(cliente, f"Fecha factura: {to_long_english_date(self.data.get('fecha_factura', ''))}").pack(anchor="w")
 
         ttk.Separator(pdf).pack(fill="x", pady=8)
 

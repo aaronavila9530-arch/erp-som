@@ -8,6 +8,7 @@ from api_client import (
 )
 
 from tkinter import filedialog
+from Modulos.Informes.date_utils import to_long_english_date
 
 
 class VesselTruckSupervisionTable(ttk.Frame):
@@ -19,6 +20,9 @@ class VesselTruckSupervisionTable(ttk.Frame):
     # =========================================================
     def __init__(self, parent):
         super().__init__(parent)
+
+        # 🔒 Usuario heredado (estándar ERP)
+        self.usuario = getattr(parent, "usuario", None)
 
         self._data_all = []
         self._data_map = {}
@@ -207,7 +211,7 @@ class VesselTruckSupervisionTable(ttk.Frame):
                         "cert_no": r.get("cert_no"),
                         "vessel": r.get("vessel_name"),
                         "port": r.get("port"),
-                        "date": r.get("report_date"),
+                        "date": to_long_english_date(r.get("report_date")),
                         "status": r.get("status")
                     }
 
@@ -258,7 +262,7 @@ class VesselTruckSupervisionTable(ttk.Frame):
                     r.get("cert_no"),
                     r.get("vessel"),
                     r.get("port"),
-                    r.get("date"),
+                    to_long_english_date(r.get("date")),
                     r.get("status")
                 )
             )
@@ -289,14 +293,71 @@ class VesselTruckSupervisionTable(ttk.Frame):
     def _open_actions_menu(self):
 
         rid = self._get_selected_id()
+
         if not rid:
             messagebox.showwarning("Acciones", "Selecciona un reporte.")
             return
 
         try:
+            # ==================================================
+            # 🔒 CONTROL DE USUARIOS RESTRINGIDOS
+            # ==================================================
+            restricted_users = {"surveyor01", "surveyor02"}
+            is_restricted = str(self.usuario or "").strip().lower() in restricted_users
+
+            # ==================================================
+            # 🔁 RECONSTRUIR MENU DINÁMICAMENTE
+            # ==================================================
+            self.actions_menu.delete(0, "end")
+
+            # --- Review ---
+            self.actions_menu.add_command(
+                label="🔍 Review",
+                command=self._review_selected
+            )
+
+            self.actions_menu.add_separator()
+
+            # --- Approve ---
+            if is_restricted:
+                self.actions_menu.add_command(
+                    label="✅ Approve",
+                    state="disabled"
+                )
+            else:
+                self.actions_menu.add_command(
+                    label="✅ Approve",
+                    command=self._approve_selected
+                )
+
+            # --- Reject ---
+            if is_restricted:
+                self.actions_menu.add_command(
+                    label="❌ Reject",
+                    state="disabled"
+                )
+            else:
+                self.actions_menu.add_command(
+                    label="❌ Reject",
+                    command=lambda: self._change_status("Rejected")
+                )
+
+            self.actions_menu.add_separator()
+
+            # --- Final Report (SIEMPRE permitido) ---
+            self.actions_menu.add_command(
+                label="📄 Crear Informe Final",
+                command=self._open_final_report_popup
+            )
+
+            # ==================================================
+            # 📍 MOSTRAR MENU
+            # ==================================================
             x = self.btn_actions.winfo_rootx()
             y = self.btn_actions.winfo_rooty() + self.btn_actions.winfo_height()
+
             self.actions_menu.tk_popup(x, y)
+
         finally:
             self.actions_menu.grab_release()
 
@@ -324,7 +385,7 @@ class VesselTruckSupervisionTable(ttk.Frame):
             for widget in self.master.winfo_children():
                 widget.destroy()
 
-            form = VesselTruckSupervisionForm(self.master)
+            form = VesselTruckSupervisionForm(self.master, mode="review")
 
             form.load_report(int(rid))
 

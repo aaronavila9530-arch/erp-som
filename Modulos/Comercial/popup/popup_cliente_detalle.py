@@ -7,6 +7,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 from api_client import get_comercial_clientes_api
+from Modulos.Comercial.date_utils import to_long_english_date
 
 
 class PopupClienteDetalle(tk.Toplevel):
@@ -124,8 +125,8 @@ class PopupClienteDetalle(tk.Toplevel):
 
         self._row(sec_admin, 0, "Cédula / VAT", self.cliente_data.get("cedulajuridicavat"))
         self._row(sec_admin, 1, "Actividad Económica", self.cliente_data.get("actividad_economica"))
-        self._row(sec_admin, 2, "Fecha Creación", self.cliente_data.get("creado_en"))
-        self._row(sec_admin, 3, "Fecha de Pago", self.cliente_data.get("fecha_pago"))
+        self._row(sec_admin, 2, "Fecha Creación", to_long_english_date(self.cliente_data.get("creado_en")))
+        self._row(sec_admin, 3, "Fecha de Pago", to_long_english_date(self.cliente_data.get("fecha_pago")))
 
         # ====================================================
         # SECCIÓN 5 — COMENTARIOS

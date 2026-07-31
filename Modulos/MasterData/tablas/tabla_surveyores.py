@@ -18,6 +18,7 @@ class TablaSurveyoresUI(BasePaginatedTable):
             ("codigo", "Código"),
             ("nombre", "Nombre"),
             ("apellidos", "Apellidos"),
+            ("email", "Email"),
             ("estado_civil", "Estado Civil"),
             ("genero", "Género"),
             ("nacionalidad", "Nacionalidad"),
@@ -32,6 +33,7 @@ class TablaSurveyoresUI(BasePaginatedTable):
             ("honorario", "Honorario"),
             ("pago", "Método Pago"),
             ("banco", "Banco"),
+            ("direccion_banco", "Dirección Banco"),
             ("cuenta_iban", "Cuenta IBAN"),
             ("moneda", "Moneda"),
             ("swift", "SWIFT"),
@@ -125,6 +127,7 @@ class TablaSurveyoresUI(BasePaginatedTable):
         # 🔹 Cargar datos
         popup.nombre.set(data.get("nombre", ""))
         popup.apellidos.set(data.get("apellidos", ""))
+        popup.email.set(data.get("email", ""))
         popup.estado_civil.set(data.get("estado_civil", ""))
         popup.genero.set(data.get("genero", ""))
         popup.nacionalidad.set(data.get("nacionalidad", ""))
@@ -141,6 +144,7 @@ class TablaSurveyoresUI(BasePaginatedTable):
         popup.honorario.set(data.get("honorario", ""))
         popup.frecuencia_pago.set(data.get("pago", ""))
         popup.banco.set(data.get("banco", ""))
+        popup.direccion_banco.set(data.get("direccion_banco", ""))
         popup.cuenta_iban.set(data.get("cuenta_iban", ""))
         popup.moneda.set(data.get("moneda", ""))
         popup.swift.set(data.get("swift", ""))
@@ -150,6 +154,7 @@ class TablaSurveyoresUI(BasePaginatedTable):
         popup.contacto_emergencia.set(data.get("contacto_emergencia", ""))
         popup.telefono_emergencia.set(data.get("telefono_emergencia", ""))
         popup.puerto.set(data.get("puerto", ""))
+        popup.set_tarifas(data.get("tarifas", []))
 
         # 🔹 Deshabilitar todo (modo solo lectura)
         self._disable_widgets_recursive(popup)
@@ -185,6 +190,7 @@ class TablaSurveyoresUI(BasePaginatedTable):
                     getattr(popup, f"entry_{col}").insert(0, data.get(col, ""))
                 except:
                     pass
+        popup.set_tarifas(data.get("tarifas", []))
 
     # ==========================================================
     # GUARDAR EDICIÓN

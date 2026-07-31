@@ -9,7 +9,9 @@ from api_client import (
     get_accounting_accounts_api,
     get_accounting_iva_api,
     get_accounting_periods_api,
-    get_accounting_validation_alerts_api
+    get_tax_iva_api,
+    get_accounting_validation_alerts_api,
+    sync_accounting_tax_api,
 )
 from Modulos.Finanzas.date_utils import to_long_english_date
 from Modulos.Finanzas.sections.Accounting.accounting_table import AccountingTable
@@ -272,6 +274,11 @@ class AccountingUI(tk.Frame):
         )
 
         declarations_menu.add_command(
+            label="102 - Impuesto sobre las utilidades ISU - PJ",
+            command=self._open_d102
+        )
+
+        declarations_menu.add_command(
             label="D-101 – Declaración de Renta",
             command=lambda: messagebox.showinfo(
                 "Pendiente",
@@ -319,6 +326,10 @@ class AccountingUI(tk.Frame):
             label="Flujo de Caja",
             command=lambda: self._open_report("Flujo de Caja")
         )
+        reports_menu.add_command(
+            label="Estados financieros completos",
+            command=self._open_complete_financial_statements
+        )
         reports_menu.add_separator()
         reports_menu.add_command(
             label="Reporte financiero ejecutivo",
@@ -339,6 +350,8 @@ class AccountingUI(tk.Frame):
         final_actions_menu.add_command(label="Centro fiscal Costa Rica", command=self._open_tax_center)
         final_actions_menu.add_command(label="Biblioteca legal Costa Rica", command=self._open_legal_library)
         final_actions_menu.add_command(label="Catalogo maestro de cuentas", command=self._open_chart_of_accounts)
+        final_actions_menu.add_command(label="Motor de contabilizacion", command=self._open_posting_rules)
+        final_actions_menu.add_command(label="Accounting avanzado", command=self._open_accounting_advanced)
         final_actions_menu.add_separator()
         final_actions_menu.add_command(label="Alertas y validaciones", command=self._open_validation_alerts)
         final_actions_menu.add_command(label="Auditoria por usuario", command=self._open_finance_audit)
@@ -408,6 +421,13 @@ class AccountingUI(tk.Frame):
             PopupMonthlyFinancialReport
         )
         PopupMonthlyFinancialReport(self)
+
+    def _open_complete_financial_statements(self):
+        from Modulos.Finanzas.sections.Accounting.popups.popup_complete_financial_statements import (
+            PopupCompleteFinancialStatements,
+        )
+        period = self.cmb_period.get() if hasattr(self, "cmb_period") else None
+        PopupCompleteFinancialStatements(self, period=period)
 
     def _open_finance_audit(self):
         try:
@@ -607,12 +627,28 @@ class AccountingUI(tk.Frame):
                 if self.search_mode.get() == "SINGLE"
                 else self.period_to.get()
             )
-            iva = get_accounting_iva_api(iva_period)
-            self.kpi_iva_var.set(f"{iva.get('iva_total', 0):,.2f}")
+            tax_iva = get_tax_iva_api(iva_period)
+            fiscal = tax_iva.get("fiscal") or {}
+            self.kpi_iva_var.set(self._format_iva_kpi(fiscal.get("net_tax") or 0))
         except Exception:
-            self.kpi_iva_var.set("0.00")
+            try:
+                iva = get_accounting_iva_api(iva_period)
+                self.kpi_iva_var.set(self._format_iva_kpi(iva.get("iva_total", 0)))
+            except Exception:
+                self.kpi_iva_var.set("0.00")
 
         self._refresh_validation_alerts_summary()
+
+    @staticmethod
+    def _format_iva_kpi(value):
+        try:
+            amount = float(value or 0)
+        except Exception:
+            amount = 0.0
+        if abs(amount) < 0.005:
+            return "Sin saldo 0.00"
+        label = "Por pagar" if amount > 0 else "A favor"
+        return f"{label} {abs(amount):,.2f}"
 
 
     def _current_validation_filters(self):
@@ -794,6 +830,21 @@ class AccountingUI(tk.Frame):
         except Exception as exc:
             messagebox.showerror("Catálogo contable", str(exc))
 
+    def _open_posting_rules(self):
+        try:
+            from Modulos.Finanzas.sections.Accounting.popups.popup_posting_rules import PopupPostingRules
+            PopupPostingRules(self)
+        except Exception as exc:
+            messagebox.showerror("Motor de contabilizacion", str(exc))
+
+    def _open_accounting_advanced(self):
+        try:
+            from Modulos.Finanzas.sections.Accounting.popups.popup_accounting_advanced import PopupAccountingAdvanced
+            period = self.cmb_period.get() if hasattr(self, "cmb_period") else None
+            PopupAccountingAdvanced(self, period=period)
+        except Exception as exc:
+            messagebox.showerror("Accounting avanzado", str(exc))
+
     def _open_auxiliaries(self):
         try:
             from Modulos.Finanzas.sections.Accounting.popups.popup_auxiliaries import PopupAccountingAuxiliaries
@@ -854,6 +905,19 @@ class AccountingUI(tk.Frame):
             messagebox.showerror(
                 "Formulario 150",
                 f"Error abriendo el formulario 150:\n{str(e)}"
+            )
+
+    def _open_d102(self):
+        """
+        Abre el formulario TRIBU-CR 102 de impuesto sobre utilidades.
+        """
+        try:
+            from Modulos.Finanzas.sections.Accounting.popups.popup_d102 import PopupD102
+            PopupD102(self, period=self.cmb_period.get())
+        except Exception as e:
+            messagebox.showerror(
+                "Formulario 102",
+                f"Error abriendo el formulario 102:\n{str(e)}"
             )
 
     def _open_tax_center(self):

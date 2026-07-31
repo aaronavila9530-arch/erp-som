@@ -1,7 +1,7 @@
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, Border, Side
 from tkinter import filedialog
-from datetime import datetime
+from Modulos.Finanzas.date_utils import to_long_english_date
 
 THIN = Side(style="thin")
 BORDER = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
@@ -98,11 +98,7 @@ def export_diario_excel(rows: list[dict], fiscal_year: int, period: int):
     # =============================
     for r in rows:
         # created_at real
-        fecha = r.get("created_at")
-        try:
-            fecha = datetime.fromisoformat(fecha)
-        except Exception:
-            pass
+        fecha = to_long_english_date(r.get("created_at"))
 
         ws.cell(row=row, column=1, value=fecha)
         ws.cell(row=row, column=2, value=r.get("entry_id"))

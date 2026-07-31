@@ -585,7 +585,7 @@ export const ERP_MODULES: AppModule[] = [
       { key: "sampling-certificate", label: "Sampling certificate", endpoint: "/sampling-certificates" },
       { key: "sealing-certificate", label: "Sealing certificate", endpoint: "/sealing-certificates" },
       { key: "lashing-certificate", label: "Lashing certificate", endpoint: "/lashing-certificates" },
-      { key: "logra", label: "LOGRA", endpoint: "/logra-reports" }
+      { key: "logra", label: "ONG", endpoint: "/logra-reports" }
     ]
   },
   {

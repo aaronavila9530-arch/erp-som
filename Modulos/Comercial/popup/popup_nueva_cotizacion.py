@@ -14,6 +14,7 @@ from api_client import (
 
 from Modulos.Comercial.exporters.cotizacion_word_exporter import export_cotizacion_word
 from Modulos.Comercial.exporters.cotizacion_pdf_exporter import export_cotizacion_pdf
+from Modulos.Comercial.date_utils import to_long_english_date
 
 
 class PopupNuevaCotizacion(tk.Toplevel):
@@ -140,6 +141,12 @@ class PopupNuevaCotizacion(tk.Toplevel):
         self.cb_pais = ttk.Combobox(form, textvariable=self.pais_var, state="readonly", width=20)
         self.cb_puerto = ttk.Combobox(form, textvariable=self.puerto_var, state="readonly", width=20)
 
+        self.cb_cliente.bind("<<ComboboxSelected>>", self._on_cliente_change)
+        self.cb_continente.bind("<<ComboboxSelected>>", self._on_continente_change)
+        self.cb_pais.bind("<<ComboboxSelected>>", self._on_pais_change)
+        self.cb_puerto.bind("<<ComboboxSelected>>", self._on_puerto_change)
+
+
         ttk.Label(form, text="Cliente").grid(row=0, column=0, sticky="w", padx=6)
         self.cb_cliente.grid(row=1, column=0, padx=6)
 
@@ -249,38 +256,296 @@ class PopupNuevaCotizacion(tk.Toplevel):
     # =========================================================
     # DATA
     # =========================================================
+    # =========================================================
+    # DATA
+    # =========================================================
     def _load_precios(self):
         resp = get_comercial_precios_api()
-        self.precios_all = resp.get("data", [])
+        self.precios_all = resp.get("data", []) or []
 
-        self.cb_cliente["values"] = sorted({p["cliente"] for p in self.precios_all})
-        self.cb_servicio["values"] = sorted({p["servicio"] for p in self.precios_all})
-        self.cb_continente["values"] = sorted({p["continente"] for p in self.precios_all if p.get("continente")})
-        self.cb_pais["values"] = sorted({p["pais"] for p in self.precios_all if p.get("pais")})
-        self.cb_puerto["values"] = sorted({p["puerto"] for p in self.precios_all if p.get("puerto")})
+        # Solo activos
+        self.precios_all = [
+            p for p in self.precios_all
+            if p.get("activo", True)
+        ]
+
+        # Cliente arranca global
+        clientes = sorted({
+            str(p.get("cliente")).strip()
+            for p in self.precios_all
+            if p.get("cliente")
+        })
+        self.cb_cliente["values"] = clientes
+
+        # Limpiar dependientes
+        self.cb_servicio["values"] = []
+        self.cb_continente["values"] = []
+        self.cb_pais["values"] = []
+        self.cb_puerto["values"] = []
+
+        self.cliente_var.set("")
+        self.continente_var.set("")
+        self.pais_var.set("")
+        self.puerto_var.set("")
+        self.cb_servicio.set("")
+
+    def _safe_str(self, value):
+        if value is None:
+            return ""
+        return str(value).strip()
+
+    def _filter_precios_disponibles(
+        self,
+        cliente=None,
+        continente=None,
+        pais=None,
+        puerto=None,
+        servicio=None
+    ):
+        rows = self.precios_all or []
+
+        def match(row):
+            if cliente and self._safe_str(row.get("cliente")) != self._safe_str(cliente):
+                return False
+            if continente and self._safe_str(row.get("continente")) != self._safe_str(continente):
+                return False
+            if pais and self._safe_str(row.get("pais")) != self._safe_str(pais):
+                return False
+            if puerto and self._safe_str(row.get("puerto")) != self._safe_str(puerto):
+                return False
+            if servicio and self._safe_str(row.get("servicio")) != self._safe_str(servicio):
+                return False
+            if not row.get("activo", True):
+                return False
+            return True
+
+        return [r for r in rows if match(r)]
+
+    def _set_combo_values(self, combo, values, current_var=None):
+        clean = sorted({
+            self._safe_str(v)
+            for v in values
+            if self._safe_str(v)
+        })
+        combo["values"] = clean
+
+        if current_var is not None:
+            current_value = self._safe_str(current_var.get())
+            if current_value not in clean:
+                current_var.set("")
+                try:
+                    combo.set("")
+                except Exception:
+                    pass
+
+    def _refresh_cascada_desde_cliente(self):
+        cliente = self.cliente_var.get().strip()
+
+        if not cliente:
+            self.cb_servicio["values"] = []
+            self.cb_continente["values"] = []
+            self.cb_pais["values"] = []
+            self.cb_puerto["values"] = []
+
+            self.cb_servicio.set("")
+            self.continente_var.set("")
+            self.pais_var.set("")
+            self.puerto_var.set("")
+            return
+
+        rows_cliente = self._filter_precios_disponibles(cliente=cliente)
+
+        self._set_combo_values(
+            self.cb_servicio,
+            [r.get("servicio") for r in rows_cliente],
+            None
+        )
+
+        self._set_combo_values(
+            self.cb_continente,
+            [r.get("continente") for r in rows_cliente],
+            self.continente_var
+        )
+
+        rows_cliente_cont = self._filter_precios_disponibles(
+            cliente=cliente,
+            continente=self.continente_var.get().strip() or None
+        )
+
+        self._set_combo_values(
+            self.cb_pais,
+            [r.get("pais") for r in rows_cliente_cont],
+            self.pais_var
+        )
+
+        rows_cliente_cont_pais = self._filter_precios_disponibles(
+            cliente=cliente,
+            continente=self.continente_var.get().strip() or None,
+            pais=self.pais_var.get().strip() or None
+        )
+
+        self._set_combo_values(
+            self.cb_puerto,
+            [r.get("puerto") for r in rows_cliente_cont_pais],
+            self.puerto_var
+        )
+
+        self._refresh_servicios_disponibles()
+
+    def _refresh_cascada_desde_continente(self):
+        cliente = self.cliente_var.get().strip()
+        continente = self.continente_var.get().strip()
+
+        rows = self._filter_precios_disponibles(
+            cliente=cliente or None,
+            continente=continente or None
+        )
+
+        self._set_combo_values(
+            self.cb_pais,
+            [r.get("pais") for r in rows],
+            self.pais_var
+        )
+
+        rows_pais = self._filter_precios_disponibles(
+            cliente=cliente or None,
+            continente=continente or None,
+            pais=self.pais_var.get().strip() or None
+        )
+
+        self._set_combo_values(
+            self.cb_puerto,
+            [r.get("puerto") for r in rows_pais],
+            self.puerto_var
+        )
+
+        self._refresh_servicios_disponibles()
+
+    def _refresh_cascada_desde_pais(self):
+        cliente = self.cliente_var.get().strip()
+        continente = self.continente_var.get().strip()
+        pais = self.pais_var.get().strip()
+
+        rows = self._filter_precios_disponibles(
+            cliente=cliente or None,
+            continente=continente or None,
+            pais=pais or None
+        )
+
+        self._set_combo_values(
+            self.cb_puerto,
+            [r.get("puerto") for r in rows],
+            self.puerto_var
+        )
+
+        self._refresh_servicios_disponibles()
+
+    def _refresh_servicios_disponibles(self):
+        rows = self._filter_precios_disponibles(
+            cliente=self.cliente_var.get().strip() or None,
+            continente=self.continente_var.get().strip() or None,
+            pais=self.pais_var.get().strip() or None,
+            puerto=self.puerto_var.get().strip() or None
+        )
+
+        servicios = [r.get("servicio") for r in rows]
+
+        current = self._safe_str(self.cb_servicio.get())
+        self._set_combo_values(self.cb_servicio, servicios, None)
+
+        if current and current in self.cb_servicio["values"]:
+            self.cb_servicio.set(current)
+        else:
+            self.cb_servicio.set("")
+
+    def _on_cliente_change(self, event=None):
+        self.continente_var.set("")
+        self.pais_var.set("")
+        self.puerto_var.set("")
+        self.cb_puerto.set("")
+        self.cb_servicio.set("")
+        self._refresh_cascada_desde_cliente()
+        self._build_text_base()
+
+    def _on_continente_change(self, event=None):
+        self.pais_var.set("")
+        self.puerto_var.set("")
+        self.cb_puerto.set("")
+        self.cb_servicio.set("")
+        self._refresh_cascada_desde_continente()
+        self._build_text_base()
+
+    def _on_pais_change(self, event=None):
+        self.puerto_var.set("")
+        self.cb_puerto.set("")
+        self.cb_servicio.set("")
+        self._refresh_cascada_desde_pais()
+        self._build_text_base()
+
+    def _on_puerto_change(self, event=None):
+        self.cb_servicio.set("")
+        self._refresh_servicios_disponibles()
+        self._build_text_base()
 
     # =========================================================
     # SERVICIOS
     # =========================================================
+    # =========================================================
+    # SERVICIOS
+    # =========================================================
     def _agregar_servicio(self):
-        servicio = self.cb_servicio.get()
+        cliente = self.cliente_var.get().strip()
+        servicio = self.cb_servicio.get().strip()
+        continente = self.continente_var.get().strip()
+        pais = self.pais_var.get().strip()
+        puerto = self.puerto_var.get().strip()
+
+        if not cliente:
+            messagebox.showwarning("Servicio", "Debe seleccionar un cliente")
+            return
+
         if not servicio:
+            messagebox.showwarning("Servicio", "Debe seleccionar un servicio")
             return
 
-        for p in self.precios_all:
-            if (
-                p["cliente"] == self.cliente_var.get()
-                and p["servicio"] == servicio
-                and p.get("pais") == self.pais_var.get()
-                and p.get("puerto") == self.puerto_var.get()
-                and p.get("activo")
-            ):
-                self.servicios_seleccionados.append(p)
-                break
+        candidatos = self._filter_precios_disponibles(
+            cliente=cliente,
+            continente=continente or None,
+            pais=pais or None,
+            puerto=puerto or None,
+            servicio=servicio
+        )
+
+        if not candidatos:
+            messagebox.showwarning("Servicio", "No existe precio configurado para esa combinación")
+            return
+
+        # Elegir la coincidencia más específica
+        exactos = [
+            p for p in candidatos
+            if self._safe_str(p.get("continente")) == continente
+            and self._safe_str(p.get("pais")) == pais
+            and self._safe_str(p.get("puerto")) == puerto
+        ]
+
+        if exactos:
+            elegido = exactos[0]
         else:
-            messagebox.showwarning("Servicio", "No existe precio configurado")
-            return
+            elegido = candidatos[0]
 
+        # Evitar duplicado exacto
+        for s in self.servicios_seleccionados:
+            if (
+                self._safe_str(s.get("cliente")) == self._safe_str(elegido.get("cliente"))
+                and self._safe_str(s.get("servicio")) == self._safe_str(elegido.get("servicio"))
+                and self._safe_str(s.get("continente")) == self._safe_str(elegido.get("continente"))
+                and self._safe_str(s.get("pais")) == self._safe_str(elegido.get("pais"))
+                and self._safe_str(s.get("puerto")) == self._safe_str(elegido.get("puerto"))
+            ):
+                messagebox.showwarning("Servicio", "Ese servicio ya fue agregado")
+                return
+
+        self.servicios_seleccionados.append(elegido)
         self._refresh_servicios()
 
     def _quitar_servicio(self):
@@ -314,7 +579,7 @@ class PopupNuevaCotizacion(tk.Toplevel):
         self.text.delete("1.0", "end")
 
         hoy = date.today()
-        valido = hoy + timedelta(days=self.validez_var.get())
+        valido = to_long_english_date(hoy + timedelta(days=self.validez_var.get()))
         cliente = self.cliente_var.get() or "Client"
 
         servicios_txt = "\n".join(

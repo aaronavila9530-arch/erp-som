@@ -7,6 +7,7 @@ from api_client import (
     generate_container_presentation_pdf_api,
     generate_container_unified_pdf_api
 )
+from Modulos.Informes.date_utils import to_long_english_date
 
 
 class PopupGenerateContainerPresentation(tk.Toplevel):
@@ -77,11 +78,11 @@ class PopupGenerateContainerPresentation(tk.Toplevel):
             .grid(row=row + 1, column=0, sticky="w", pady=(0, 10))
         row += 2
 
-        ttk.Label(main, text="DATE (MM-DD-YYYY)").grid(row=row, column=0, sticky="w")
+        ttk.Label(main, text="DATE").grid(row=row, column=0, sticky="w")
         DateEntry(
             main,
             textvariable=self.var_date,
-            date_pattern="mm-dd-yyyy",
+            date_pattern="yyyy-mm-dd",
             state="readonly",
             width=18
         ).grid(row=row + 1, column=0, sticky="w", pady=(0, 14))
@@ -123,7 +124,7 @@ class PopupGenerateContainerPresentation(tk.Toplevel):
             self.var_container.set(data.get("container") or "")
             self.var_to.set(data.get("to") or "")
             self.var_place.set(data.get("place") or "")
-            self.var_date.set(data.get("date") or "")
+            self.var_date.set(to_long_english_date(data.get("date")) or "")
 
             self._data_loaded = True
             self.btn_generate_presentation.config(state="normal")

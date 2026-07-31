@@ -5,6 +5,7 @@ from datetime import datetime
 # Importar widgets personalizados
 from Modulos.Servicios.widgets.date_picker import DatePicker
 from Modulos.Servicios.widgets.time_picker import TimePicker
+from Modulos.Servicios.date_utils import LONG_DATE_FORMAT, to_db_date
 
 
 def calcular_diferencia(f1, h1, f2, h2):
@@ -45,7 +46,7 @@ class LineaDemora:
         tk.Button(
             self.frame,
             text="📅",
-            command=lambda: DatePicker(self.frame, self.entry_f_ini)
+            command=lambda: DatePicker(self.frame, self.entry_f_ini, output_format=LONG_DATE_FORMAT)
         ).grid(row=0, column=2)
 
         # =============================
@@ -71,7 +72,7 @@ class LineaDemora:
         tk.Button(
             self.frame,
             text="📅",
-            command=lambda: DatePicker(self.frame, self.entry_f_fin)
+            command=lambda: DatePicker(self.frame, self.entry_f_fin, output_format=LONG_DATE_FORMAT)
         ).grid(row=1, column=2)
 
         # =============================
@@ -100,9 +101,9 @@ class LineaDemora:
     def get_values(self):
         """Devuelve fecha inicio, hora inicio, fecha fin, hora fin."""
         return (
-            self.entry_f_ini.get().strip(),
+            to_db_date(self.entry_f_ini.get().strip()),
             self.entry_h_ini.get().strip(),
-            self.entry_f_fin.get().strip(),
+            to_db_date(self.entry_f_fin.get().strip()),
             self.entry_h_fin.get().strip(),
         )
 

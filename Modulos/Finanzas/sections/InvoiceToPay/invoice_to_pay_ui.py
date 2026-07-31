@@ -1,13 +1,14 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 from datetime import date
-from tkcalendar import DateEntry
 
 
 from tkinter import filedialog
 import csv
 from openpyxl import Workbook
 
+from Modulos.Finanzas.date_utils import LONG_DATE_FORMAT, to_db_date, to_long_english_date
+from Modulos.Servicios.widgets.date_picker import DatePicker
 
 from api_client import (
     get_invoice_to_pay_search_api,
@@ -54,38 +55,20 @@ class InvoiceToPayUI(tk.Frame):
         # ---- Fechas factura ----
         tk.Label(filter_frame, text="Fecha factura").grid(row=1, column=0, sticky="w", padx=5)
 
-        self.fecha_factura_from = DateEntry(filter_frame, width=12, date_pattern="yyyy-mm-dd")
-        self.fecha_factura_to = DateEntry(filter_frame, width=12, date_pattern="yyyy-mm-dd")
-
-        self.fecha_factura_from.delete(0, tk.END)
-        self.fecha_factura_to.delete(0, tk.END)
-
-        self.fecha_factura_from.grid(row=1, column=1, padx=5, pady=3, sticky="w")
-        self.fecha_factura_to.grid(row=1, column=1, padx=5, pady=3, sticky="e")
+        self.fecha_factura_from = self._date_filter(filter_frame, row=1, column=1, sticky="w")
+        self.fecha_factura_to = self._date_filter(filter_frame, row=1, column=1, sticky="e")
 
         # ---- Fechas vencimiento ----
         tk.Label(filter_frame, text="Fecha vencimiento").grid(row=2, column=0, sticky="w", padx=5)
 
-        self.fecha_venc_from = DateEntry(filter_frame, width=12, date_pattern="yyyy-mm-dd")
-        self.fecha_venc_to = DateEntry(filter_frame, width=12, date_pattern="yyyy-mm-dd")
-
-        self.fecha_venc_from.delete(0, tk.END)
-        self.fecha_venc_to.delete(0, tk.END)
-
-        self.fecha_venc_from.grid(row=2, column=1, padx=5, pady=3, sticky="w")
-        self.fecha_venc_to.grid(row=2, column=1, padx=5, pady=3, sticky="e")
+        self.fecha_venc_from = self._date_filter(filter_frame, row=2, column=1, sticky="w")
+        self.fecha_venc_to = self._date_filter(filter_frame, row=2, column=1, sticky="e")
 
         # ---- Último pago ----
         tk.Label(filter_frame, text="Último pago").grid(row=3, column=0, sticky="w", padx=5)
 
-        self.fecha_pago_from = DateEntry(filter_frame, width=12, date_pattern="yyyy-mm-dd")
-        self.fecha_pago_to = DateEntry(filter_frame, width=12, date_pattern="yyyy-mm-dd")
-
-        self.fecha_pago_from.delete(0, tk.END)
-        self.fecha_pago_to.delete(0, tk.END)
-
-        self.fecha_pago_from.grid(row=3, column=1, padx=5, pady=3, sticky="w")
-        self.fecha_pago_to.grid(row=3, column=1, padx=5, pady=3, sticky="e")
+        self.fecha_pago_from = self._date_filter(filter_frame, row=3, column=1, sticky="w")
+        self.fecha_pago_to = self._date_filter(filter_frame, row=3, column=1, sticky="e")
 
         ttk.Button(filter_frame, text="Buscar", command=self._on_search).grid(row=0, column=4, padx=10)
         ttk.Button(filter_frame, text="Limpiar", command=self._on_clear).grid(row=0, column=5)
@@ -224,14 +207,14 @@ class InvoiceToPayUI(tk.Frame):
             payee=self.cmb_payee.get() or None,
             status=None if self.cmb_status.get() in ("", "ALL") else self.cmb_status.get(),
 
-            issue_date_from=self.fecha_factura_from.get() or None,
-            issue_date_to=self.fecha_factura_to.get() or None,
+            issue_date_from=to_db_date(self.fecha_factura_from.get()) or None,
+            issue_date_to=to_db_date(self.fecha_factura_to.get()) or None,
 
-            due_date_from=self.fecha_venc_from.get() or None,
-            due_date_to=self.fecha_venc_to.get() or None,
+            due_date_from=to_db_date(self.fecha_venc_from.get()) or None,
+            due_date_to=to_db_date(self.fecha_venc_to.get()) or None,
 
-            payment_date_from=self.fecha_pago_from.get() or None,
-            payment_date_to=self.fecha_pago_to.get() or None
+            payment_date_from=to_db_date(self.fecha_pago_from.get()) or None,
+            payment_date_to=to_db_date(self.fecha_pago_to.get()) or None
         )
 
         self._load_dynamic_filters(rows)
@@ -261,15 +244,15 @@ class InvoiceToPayUI(tk.Frame):
                     row["payee_name"],
                     row["obligation_type"],
                     row["referencia"],
-                    row.get("issue_date") or "",
-                    row.get("due_date") or "",
+                    to_long_english_date(row.get("issue_date")) if row.get("issue_date") else "",
+                    to_long_english_date(row.get("due_date")) if row.get("due_date") else "",
                     row["vessel"],
                     row["country"],
                     row["operation"],
                     row["currency"],
                     row["total"],
                     row["balance"],
-                    row["last_payment_date"],
+                    to_long_english_date(row.get("last_payment_date")) if row.get("last_payment_date") else "",
                     row["status"]
                 ),
                 tags=tuple(tags)
@@ -413,6 +396,22 @@ class InvoiceToPayUI(tk.Frame):
         lbl_value.pack(expand=True)
 
         return frame, lbl_value
+
+    def _date_filter(self, parent, row, column, sticky):
+        frame = tk.Frame(parent)
+        frame.grid(row=row, column=column, padx=5, pady=3, sticky=sticky)
+
+        entry = ttk.Entry(frame, width=12)
+        entry.pack(side="left")
+
+        ttk.Button(
+            frame,
+            text="📅",
+            width=3,
+            command=lambda: DatePicker(self, entry, output_format=LONG_DATE_FORMAT)
+        ).pack(side="left", padx=(3, 0))
+
+        return entry
 
 
     # ============================================================

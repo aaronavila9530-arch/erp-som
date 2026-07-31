@@ -3,7 +3,7 @@ from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 from tkinter import filedialog
-from datetime import datetime
+from Modulos.Finanzas.date_utils import to_long_english_date
 
 
 def export_diario_pdf(rows: list[dict], fiscal_year: int, period: int):
@@ -81,11 +81,7 @@ def export_diario_pdf(rows: list[dict], fiscal_year: int, period: int):
     total_haber = 0.0
 
     for r in rows:
-        fecha = r.get("created_at")
-        try:
-            fecha = datetime.fromisoformat(fecha).strftime("%Y-%m-%d")
-        except Exception:
-            pass
+        fecha = to_long_english_date(r.get("created_at"))
 
         debe = float(r.get("debit") or 0)
         haber = float(r.get("credit") or 0)

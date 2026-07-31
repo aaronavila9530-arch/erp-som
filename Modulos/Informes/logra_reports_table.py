@@ -29,8 +29,17 @@ class LograReportsTable(ttk.Frame):
             top,
             textvariable=self.action_var,
             state="readonly",
-            width=18,
-            values=["Revisar", "Exportar Word", "Exportar PDF"]
+            width=26,
+            values=["Revisar", "Exportar Word", "Exportar PDF", "Reporte Ejecutivo IA Word", "Reporte Ejecutivo IA PDF"]
+        ).pack(side="left")
+        ttk.Label(top, text="Idioma").pack(side="left", padx=(10, 4))
+        self.language_var = tk.StringVar(value="ES")
+        ttk.Combobox(
+            top,
+            textvariable=self.language_var,
+            state="readonly",
+            width=10,
+            values=["ES", "EN"]
         ).pack(side="left")
         ttk.Button(top, text="Ejecutar", command=self._run_action).pack(side="left", padx=6)
         self.info_label = ttk.Label(top, text="")
@@ -96,6 +105,10 @@ class LograReportsTable(ttk.Frame):
             self._export_selected_word()
         elif action == "Exportar PDF":
             self._export_selected_pdf()
+        elif action == "Reporte Ejecutivo IA Word":
+            self._export_ai_report_all("Word")
+        elif action == "Reporte Ejecutivo IA PDF":
+            self._export_ai_report_all("PDF")
         else:
             self._review_selected()
 
@@ -200,6 +213,27 @@ class LograReportsTable(ttk.Frame):
             messagebox.showinfo("ONG", "Reporte PDF generado correctamente.")
         except Exception as exc:
             messagebox.showerror("ONG", f"No se pudo generar PDF:\n{exc}")
+
+    def _export_ai_report_all(self, fmt):
+        extension = ".docx" if fmt == "Word" else ".pdf"
+        safe = "ONG_Executive_Consolidated_AI_Report"
+        path = filedialog.asksaveasfilename(
+            defaultextension=extension,
+            initialfile=f"{safe}_{self.language_var.get()}{extension}",
+            filetypes=[("Word", "*.docx")] if fmt == "Word" else [("PDF", "*.pdf")]
+        )
+        if not path:
+            return
+
+        self.configure(cursor="watch")
+        self.update_idletasks()
+        resp = api_client.download_logra_ai_report_api("ALL", fmt, path, language=self.language_var.get())
+        self.configure(cursor="")
+
+        if not resp.get("success"):
+            messagebox.showerror("ONG", f"No se pudo generar reporte IA:\n{resp.get('error') or resp}")
+            return
+        messagebox.showinfo("ONG", "Reporte IA generado correctamente.")
 
     def _report_meta_rows(self, payload):
         report = payload.get("report") or {}

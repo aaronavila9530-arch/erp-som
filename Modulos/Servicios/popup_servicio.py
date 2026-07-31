@@ -2,6 +2,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 from Modulos.Servicios.widgets.date_picker import DatePicker
 from Modulos.Servicios.widgets.time_picker import TimePicker
+from Modulos.Servicios.date_utils import LONG_DATE_FORMAT, to_db_date
 from api_client import (
     post_servicio,
     get_clientes_api,
@@ -119,7 +120,7 @@ class PopupServicio(tk.Toplevel):
             self,
             text="📅",
             width=3,
-            command=lambda: DatePicker(self, self.fecha_inicio)
+            command=lambda: DatePicker(self, self.fecha_inicio, output_format=LONG_DATE_FORMAT)
         ).grid(row=11, column=2, padx=pad)
 
         # HORA INICIO
@@ -444,7 +445,7 @@ class PopupServicio(tk.Toplevel):
             "surveyor": self.cmb_surveyor.get(),
             "honorarios": honorarios_val,
             "costo_operativo": costo_op_val,
-            "fecha_inicio": self.fecha_inicio.get(),
+            "fecha_inicio": to_db_date(self.fecha_inicio.get()),
             "hora_inicio": self.hora_inicio.get(),
         }
 

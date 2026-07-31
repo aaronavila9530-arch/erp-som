@@ -18,9 +18,11 @@ class PopupDraftSurveyPresentation(tk.Toplevel):
         self.report_data = None
 
         self.title("Generate Draft Survey Presentation")
-        self.geometry("450x470")
+        self.geometry("450x670")
         self.resizable(False, False)
         self.grab_set()
+
+        self.pdf_files = []
 
         self._build_ui()
 
@@ -29,8 +31,35 @@ class PopupDraftSurveyPresentation(tk.Toplevel):
     # =====================================================
     def _build_ui(self):
 
-        frame = ttk.Frame(self, padding=20)
-        frame.pack(fill="both", expand=True)
+        # ================= CONTAINER SCROLL =================
+        container = ttk.Frame(self)
+        container.pack(fill="both", expand=True)
+
+        canvas = tk.Canvas(container)
+        canvas.pack(side="left", fill="both", expand=True)
+
+        scrollbar = ttk.Scrollbar(container, orient="vertical", command=canvas.yview)
+        scrollbar.pack(side="right", fill="y")
+
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        self.frame = ttk.Frame(canvas, padding=20)
+        canvas.create_window((0, 0), window=self.frame, anchor="nw")
+
+        self.frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        # ================= SCROLL CON MOUSE =================
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
+        frame = self.frame
+
+        # ================= CONTENIDO =================
 
         ttk.Button(
             frame,
@@ -44,17 +73,59 @@ class PopupDraftSurveyPresentation(tk.Toplevel):
         self.place_entry = self._readonly_field(frame, "PLACE")
         self.date_entry = self._readonly_field(frame, "DATE")
 
-        ttk.Button(
-            frame,
-            text="Generate Presentation",
-            command=self._generate_presentation
-        ).pack(fill="x", pady=(20, 5))
+        # ================= OPCIÓN 1 =================
+        ttk.Label(frame, text="Recrear Informe Final", font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(10,5))
 
         ttk.Button(
             frame,
-            text="Generate Unified Report (Presentation + Final)",
+            text="Recrear Informe (Backend)",
             command=self._generate_unified
         ).pack(fill="x")
+
+        ttk.Separator(frame).pack(fill="x", pady=15)
+
+        # ================= OPCIÓN 2 =================
+        ttk.Label(frame, text="Crear Informe Final (Subir PDFs)", font=("Segoe UI", 10, "bold")).pack(anchor="w")
+
+        ttk.Label(
+            frame,
+            text="PDF Files",
+            font=("Segoe UI", 11, "bold")
+        ).pack(anchor="w")
+
+        list_frame = ttk.Frame(frame)
+        list_frame.pack(fill="both", expand=True)
+
+        self.listbox = tk.Listbox(list_frame, height=6)
+        self.listbox.pack(side="left", fill="both", expand=True)
+
+        scrollbar_list = ttk.Scrollbar(
+            list_frame,
+            orient="vertical",
+            command=self.listbox.yview
+        )
+        scrollbar_list.pack(side="right", fill="y")
+
+        self.listbox.configure(yscrollcommand=scrollbar_list.set)
+
+        ttk.Button(
+            frame,
+            text="➕ Agregar PDF",
+            command=self._add_pdf
+        ).pack(fill="x", pady=2)
+
+        ttk.Button(
+            frame,
+            text="❌ Quitar PDF",
+            command=self._remove_pdf
+        ).pack(fill="x", pady=2)
+
+        ttk.Button(
+            frame,
+            text="Generar Informe Final (Manual)",
+            command=self._generate_final_full
+        ).pack(fill="x", pady=10, ipady=6)
+
 
     # =====================================================
     # READONLY FIELD
@@ -134,6 +205,14 @@ class PopupDraftSurveyPresentation(tk.Toplevel):
                 "Debe presionar Buscar primero."
             )
             return
+
+        if not self.pdf_files:
+            confirm = messagebox.askyesno(
+                "Confirmación",
+                "No has agregado PDFs.\n\n¿Deseas generar solo la presentación?"
+            )
+            if not confirm:
+                return
 
         try:
             resp = generate_draft_survey_presentation_pdf_api(
@@ -244,3 +323,195 @@ class PopupDraftSurveyPresentation(tk.Toplevel):
 
         except Exception as e:
             messagebox.showerror("Error", str(e))
+
+
+    def _add_pdf(self):
+
+        files = filedialog.askopenfilenames(
+            filetypes=[("PDF Files", "*.pdf")]
+        )
+
+        if not files:
+            return
+
+        for f in files:
+            self.pdf_files.append(f)
+            self.listbox.insert("end", f.split("/")[-1])
+
+
+    def _remove_pdf(self):
+
+        sel = self.listbox.curselection()
+
+        if not sel:
+            return
+
+        index = sel[0]
+
+        self.listbox.delete(index)
+        self.pdf_files.pop(index)
+
+    def _generate_final_full(self):
+
+        if not self.report_data:
+            messagebox.showwarning(
+                "Warning",
+                "Debe presionar Buscar primero."
+            )
+            return
+
+        try:
+            from pypdf import PdfWriter, PdfReader
+            import tempfile
+            import os
+
+            self.config(cursor="watch")
+            self.update_idletasks()
+
+            # =====================================================
+            # 1️⃣ PRESENTATION (SIEMPRE PRIMERO)
+            # =====================================================
+            resp_presentation = generate_draft_survey_presentation_pdf_api(
+                self.draft_report_number
+            )
+
+            if isinstance(resp_presentation, dict) or resp_presentation.status_code != 200:
+                messagebox.showerror("Error", "Error generando Presentation.")
+                return
+
+            temp_presentation = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+            presentation_path = temp_presentation.name
+            temp_presentation.close()
+
+            with open(presentation_path, "wb") as f:
+                for chunk in resp_presentation.iter_content(8192):
+                    if chunk:
+                        f.write(chunk)
+
+            # =====================================================
+            # 2️⃣ WORD PDF (SERVICE CORRECTO)
+            # =====================================================
+            from api_client import generate_draft_survey_word_pdf_api
+
+            resp_word_pdf = generate_draft_survey_word_pdf_api(
+                self.draft_report_number
+            )
+
+            if not resp_word_pdf or not resp_word_pdf.get("success"):
+                try:
+                    os.remove(presentation_path)
+                except Exception:
+                    pass
+
+                messagebox.showerror(
+                    "Error",
+                    resp_word_pdf.get("message", "Error generando Word PDF.")
+                )
+                return
+
+            temp_word = tempfile.NamedTemporaryFile(
+                delete=False,
+                suffix=".pdf"
+            )
+            word_pdf_path = temp_word.name
+            temp_word.close()
+
+            with open(word_pdf_path, "wb") as f:
+                f.write(resp_word_pdf["content"])
+
+            # =====================================================
+            # 3️⃣ SAVE AS FINAL
+            # =====================================================
+            save_path = filedialog.asksaveasfilename(
+                defaultextension=".pdf",
+                filetypes=[("PDF File", "*.pdf")],
+                initialfile=f"{self.draft_report_number}_FINAL.pdf"
+            )
+
+            if not save_path:
+                os.remove(presentation_path)
+                os.remove(word_pdf_path)
+                return
+
+            writer = PdfWriter()
+
+            # =====================================================
+            # 4️⃣ MERGE ORDEN CORRECTO
+            # =====================================================
+
+            # A) PRESENTATION
+            reader_presentation = PdfReader(presentation_path)
+            for page in reader_presentation.pages:
+                writer.add_page(page)
+
+            # B) WORD PDF COMPLETO (YA NO CORTAMOS PÁGINAS)
+            reader_word = PdfReader(word_pdf_path)
+            for page in reader_word.pages:
+                writer.add_page(page)
+
+            # C) PDFs DEL USUARIO (AL FINAL)
+            for pdf in self.pdf_files:
+
+                if not os.path.exists(pdf):
+                    continue
+
+                try:
+                    reader = PdfReader(pdf)
+                    for page in reader.pages:
+                        writer.add_page(page)
+                except Exception:
+                    messagebox.showwarning(
+                        "PDF inválido",
+                        f"Se omitió:\n{pdf}"
+                    )
+
+            # =====================================================
+            # 5️⃣ WRITE FINAL
+            # =====================================================
+            with open(save_path, "wb") as f:
+                writer.write(f)
+
+            writer.close()
+
+            # =====================================================
+            # CLEANUP
+            # =====================================================
+            try:
+                os.remove(presentation_path)
+            except Exception:
+                pass
+
+            try:
+                os.remove(word_pdf_path)
+            except Exception:
+                pass
+
+            messagebox.showinfo(
+                "Success",
+                "Informe final generado correctamente."
+            )
+
+            os.startfile(save_path)
+
+        except Exception as e:
+            messagebox.showerror("Error", str(e))
+
+        finally:
+            self.config(cursor="")
+
+
+    def _bind_mousewheel(self, widget):
+
+        def _on_mousewheel(event):
+            widget.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        def _on_mousewheel_linux_up(event):
+            widget.yview_scroll(-1, "units")
+
+        def _on_mousewheel_linux_down(event):
+            widget.yview_scroll(1, "units")
+
+        widget.bind_all("<MouseWheel>", _on_mousewheel)
+        widget.bind_all("<Button-4>", _on_mousewheel_linux_up)
+        widget.bind_all("<Button-5>", _on_mousewheel_linux_down)
+

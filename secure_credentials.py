@@ -3,8 +3,10 @@ import json
 import os
 import subprocess
 import tempfile
+import time
 from ctypes import (
     Structure,
+    WINFUNCTYPE,
     byref,
     cast,
     create_string_buffer,
@@ -15,12 +17,13 @@ from ctypes import (
     string_at,
     windll,
 )
-from ctypes.wintypes import BOOL, DWORD, HWND
+from ctypes.wintypes import BOOL, DWORD, HWND, LPARAM
 
 
 APP_DIR_NAME = "ERP-SOM"
 CREDENTIALS_FILE = "saved_credentials.dat"
 ENTROPY = b"ERP-SOM.WindowsCredentials.v1"
+_RAISED_WINDOWS_SECURITY_HWND = set()
 
 
 class DATA_BLOB(Structure):
@@ -168,6 +171,95 @@ def is_windows_protection_available() -> bool:
     return os.name == "nt"
 
 
+def _force_window_foreground(hwnd) -> None:
+    if os.name != "nt" or not hwnd:
+        return
+
+    try:
+        SW_RESTORE = 9
+        HWND_TOPMOST = HWND(-1)
+        SWP_NOMOVE = 0x0002
+        SWP_NOSIZE = 0x0001
+        SWP_SHOWWINDOW = 0x0040
+        VK_MENU = 0x12
+        KEYEVENTF_KEYUP = 0x0002
+
+        windll.user32.ShowWindow(hwnd, SW_RESTORE)
+        windll.user32.keybd_event(VK_MENU, 0, 0, 0)
+        windll.user32.keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0)
+        windll.user32.SetWindowPos(
+            hwnd,
+            HWND_TOPMOST,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW,
+        )
+        windll.user32.BringWindowToTop(hwnd)
+        windll.user32.SetForegroundWindow(hwnd)
+    except Exception:
+        pass
+
+
+def _bring_windows_security_prompt_to_front(parent_hwnd: int | None = None) -> bool:
+    if os.name != "nt":
+        return False
+
+    patterns = (
+        "seguridad de windows",
+        "windows security",
+        "windows hello",
+        "pin",
+        "credential",
+        "credencial",
+        "credenciales",
+    )
+    class_patterns = (
+        "credential",
+        "credui",
+        "windows.ui.core",
+    )
+    found = []
+
+    @WINFUNCTYPE(BOOL, HWND, LPARAM)
+    def enum_proc(hwnd, _lparam):
+        try:
+            if not windll.user32.IsWindowVisible(hwnd):
+                return True
+
+            title_buf = create_unicode_buffer(512)
+            class_buf = create_unicode_buffer(256)
+            windll.user32.GetWindowTextW(hwnd, title_buf, 512)
+            windll.user32.GetClassNameW(hwnd, class_buf, 256)
+            title = (title_buf.value or "").strip().lower()
+            class_name = (class_buf.value or "").strip().lower()
+
+            title_match = any(pattern in title for pattern in patterns)
+            class_match = any(pattern in class_name for pattern in class_patterns)
+
+            if title_match or class_match:
+                found.append(hwnd)
+        except Exception:
+            pass
+        return True
+
+    try:
+        windll.user32.EnumWindows(enum_proc, 0)
+    except Exception:
+        return False
+
+    for hwnd in found:
+        hwnd_value = int(hwnd)
+        if hwnd_value in _RAISED_WINDOWS_SECURITY_HWND:
+            continue
+
+        _RAISED_WINDOWS_SECURITY_HWND.add(hwnd_value)
+        _force_window_foreground(hwnd)
+        return True
+
+    return False
+
 def _split_windows_identity(username: str):
     username = str(username or "").strip()
     if "\\" in username:
@@ -309,7 +401,7 @@ def _prompt_windows_password(parent_hwnd: int | None = None) -> bool:
             windll.ole32.CoTaskMemFree(out_auth_buffer)
 
 
-def _prompt_windows_hello() -> bool | None:
+def _prompt_windows_hello(parent_hwnd: int | None = None) -> bool | None:
     powershell = os.path.join(
         os.environ.get("SystemRoot", r"C:\Windows"),
         "System32",
@@ -376,7 +468,7 @@ exit 4
             f.write(script)
             script_path = f.name
 
-        result = subprocess.run(
+        process = subprocess.Popen(
             [
                 powershell,
                 "-NoProfile",
@@ -385,15 +477,26 @@ exit 4
                 "-File",
                 script_path,
             ],
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=120,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
-        output = (result.stdout or result.stderr or "").strip()
-        if result.returncode == 0 and "Verified" in output:
+        deadline = time.monotonic() + 120
+        prompt_raised = False
+        while process.poll() is None:
+            if not prompt_raised:
+                prompt_raised = _bring_windows_security_prompt_to_front(parent_hwnd)
+            if time.monotonic() > deadline:
+                process.kill()
+                raise TimeoutError("Windows Hello validation timed out")
+            time.sleep(0.5)
+
+        stdout, stderr = process.communicate()
+        output = (stdout or stderr or "").strip()
+        if process.returncode == 0 and "Verified" in output:
             return True
-        if result.returncode == 3:
+        if process.returncode == 3:
             return False
         return None
     except Exception:
@@ -416,7 +519,10 @@ def prompt_windows_identity(parent_hwnd: int | None = None) -> bool:
     if os.name != "nt":
         raise RuntimeError("La validacion de Windows solo esta disponible en Windows")
 
-    hello_result = _prompt_windows_hello()
+    _RAISED_WINDOWS_SECURITY_HWND.clear()
+    _bring_windows_security_prompt_to_front(parent_hwnd)
+
+    hello_result = _prompt_windows_hello(parent_hwnd)
     if hello_result is not None:
         return hello_result
 

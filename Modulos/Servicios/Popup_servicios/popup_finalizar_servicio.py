@@ -8,6 +8,7 @@ from api_client import (
 
 from Modulos.Servicios.widgets.date_picker import DatePicker
 from Modulos.Servicios.widgets.time_picker import TimePicker
+from Modulos.Servicios.date_utils import LONG_DATE_FORMAT, to_db_date, to_long_english_date
 from Modulos.Servicios.Popup_servicios.popup_editar_servicio import PopupEditarServicio
 
 
@@ -73,7 +74,7 @@ class PopupFinalizarServicio(tk.Toplevel):
         row("Honorarios:", self.data.get("honorarios"), 6)
         row("Costo operativo:", self.data.get("costo_operativo"), 7)
         row("Costo tarjetas:", self.data.get("costo_tarjetas"), 8)
-        row("Fecha inicio:", self.data.get("fecha_inicio"), 9)
+        row("Fecha inicio:", to_long_english_date(self.data.get("fecha_inicio")), 9)
         row("Hora inicio:", self.data.get("hora_inicio"), 10)
 
         ttk.Separator(self.frame).grid(
@@ -177,7 +178,7 @@ class PopupFinalizarServicio(tk.Toplevel):
         tk.Button(
             self.top_fin,
             text="📅",
-            command=lambda: DatePicker(self.top_fin, self.entry_fecha_fin)
+            command=lambda: DatePicker(self.top_fin, self.entry_fecha_fin, output_format=LONG_DATE_FORMAT)
         ).pack()
 
         tk.Label(self.top_fin, text="Hora finalización").pack(pady=5)
@@ -201,7 +202,7 @@ class PopupFinalizarServicio(tk.Toplevel):
     # ============================================================
     def _finalizar(self):
 
-        fecha_fin = self.entry_fecha_fin.get().strip()
+        fecha_fin = to_db_date(self.entry_fecha_fin.get().strip())
         hora_fin = self.entry_hora_fin.get().strip()
 
         if not fecha_fin or not hora_fin:

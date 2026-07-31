@@ -14,6 +14,8 @@ from reportlab.lib.units import cm
 import os
 from datetime import date
 
+from Modulos.HHRR.date_utils import to_long_english_date
+
 
 # ============================================================
 # CONSTANTES COSTA RICA 2026 (SOLO PARA DESGLOSE VISUAL)
@@ -133,7 +135,7 @@ def generar_colilla_pdf(path: str, data: dict, year: int, month: int):
             ["Usuario:", data["usuario"]],
             ["Jornada:", data["jornada"]],
             ["Tipo de pago:", data["pago"]],
-            ["Fecha emisión:", date.today().strftime("%d/%m/%Y")]
+            ["Fecha emisión:", to_long_english_date(date.today())]
         ],
         colWidths=[6 * cm, 16 * cm]
     )

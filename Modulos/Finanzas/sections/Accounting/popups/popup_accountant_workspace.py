@@ -14,6 +14,18 @@ from session_context import get_user
 
 class PopupAccountantWorkspace(tk.Toplevel):
     PRIORITY_COLORS = {"CRITICAL":"#B91C1C","HIGH":"#DC2626","MEDIUM":"#D97706","LOW":"#2563EB"}
+    CLOSE_LABELS = {
+        "SOURCE_SYNC": "Sincronizar fuentes operativas",
+        "ENTRY_WORKFLOW": "Contabilizar asientos completos",
+        "BANK_RECONCILIATION": "Cerrar conciliaciones bancarias",
+        "AR_REVIEW": "Revisar cuentas por cobrar",
+        "AP_REVIEW": "Revisar cuentas por pagar",
+        "AUX_RECONCILIATION": "Cuadrar auxiliares vs mayor",
+        "TAX_REVIEW": "Revisar IVA y documentos fiscales",
+        "FX_REVALUATION": "Revaluar saldos en USD",
+        "FINANCIAL_STATEMENTS": "Revisar estados financieros",
+        "MANAGEMENT_APPROVAL": "Aprobacion final del cierre",
+    }
 
     def __init__(self, parent, period=None):
         super().__init__(parent)
@@ -76,6 +88,11 @@ class PopupAccountantWorkspace(tk.Toplevel):
         summary=ttk.Frame(self.close_tab); summary.pack(fill="x",pady=(0,7))
         self.close_summary=tk.StringVar(value="—"); ttk.Label(summary,textvariable=self.close_summary,font=("Segoe UI",11,"bold")).pack(side="left")
         ttk.Button(summary,text="Actualizar validaciones",command=self._load_checklist).pack(side="right")
+        ttk.Label(
+            self.close_tab,
+            text="Complete los pasos de arriba hacia abajo. Las lineas rojas bloquean el cierre; resuelva el punto indicado y pulse Actualizar validaciones.",
+            wraplength=1100,
+        ).pack(anchor="w", pady=(0, 6))
         self.checklist=ttk.Treeview(self.close_tab,columns=("seq","category","title","validation","status","user"),show="headings")
         for c,l,w in (("seq","#",40),("category","Área",110),("title","Paso de cierre",390),("validation","Validación",310),("status","Estado",110),("user","Completado por",120)):
             self.checklist.heading(c,text=l); self.checklist.column(c,width=w)
@@ -117,7 +134,11 @@ class PopupAccountantWorkspace(tk.Toplevel):
     def _apply_refresh(self,data,checklist):
         self.health.set(f"{data['health_score']} / 100"); self.period_status.set(f"Periodo: {data['period_control'].get('status','OPEN')}")
         scope=data.get("kpi_scope") or {}
-        if scope.get("from") and scope.get("to"):
+        if scope.get("as_of"):
+            fx = scope.get("fx_rate")
+            fx_date = scope.get("fx_date") or scope.get("as_of")
+            self.kpi_scope.set(f"Saldos abiertos al {scope.get('as_of')}. USD convertido a CRC con TC {fx:,.2f} ({fx_date}).")
+        elif scope.get("from") and scope.get("to"):
             self.kpi_scope.set(f"KPIs calculados para el periodo seleccionado: {scope.get('from')} a {scope.get('to')}.")
         else:
             self.kpi_scope.set("")
@@ -156,7 +177,8 @@ class PopupAccountantWorkspace(tk.Toplevel):
         self.checklist.delete(*self.checklist.get_children())
         for row in data["data"]:
             check=row["automatic_check"]; tag="COMPLETE" if row["status"]=="COMPLETE" else ("BLOCKED" if not check["ready"] else "")
-            self.checklist.insert("","end",iid=row["item_code"],values=(row["sequence"],row["category"],row["title"],check["detail"],row["status"],row.get("completed_by") or ""),tags=(tag,))
+            title = self.CLOSE_LABELS.get(row["item_code"], row["title"])
+            self.checklist.insert("","end",iid=row["item_code"],values=(row["sequence"],row["category"],title,check["detail"],row["status"],row.get("completed_by") or ""),tags=(tag,))
         ready="LISTO PARA CERRAR" if data["ready_to_close"] else "CIERRE PENDIENTE"
         self.close_summary.set(f"{ready} · {data['completed']} de {data['total']} pasos completados · Periodo {data['period_status']}")
 
@@ -168,7 +190,6 @@ class PopupAccountantWorkspace(tk.Toplevel):
         except Exception as exc: messagebox.showerror("Cierre mensual",str(exc),parent=self)
 
     def _search(self):
-        if len(self.query.get().strip())<2: return
         try:
             data=search_accounting_workspace_api(self.query.get()); self.results.delete(*self.results.get_children())
             for row in data["data"]: self.results.insert("","end",values=(row["result_type"],row["reference"],row["title"],row["subtitle"]))
