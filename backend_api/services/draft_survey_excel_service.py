@@ -119,6 +119,8 @@ class DraftSurveyExcelGenerator:
 
                 "init_tpc_p": "Q16",
                 "init_tpc_s": "U16",
+                "init_light_ship": "M29",
+                "init_historic_constant": "M30",
                 "init_bl_figure": "M35",
 
                 # =====================================================
@@ -237,6 +239,8 @@ class DraftSurveyExcelGenerator:
 
                 "final_tpc_p": "AP16",
                 "final_tpc_s": "AT16",
+                "final_light_ship": "AG29",
+                "final_historic_constant": "AG30",
                 "final_bl_figure": "AG35",
 
                 # =====================================================

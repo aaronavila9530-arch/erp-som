@@ -18,6 +18,10 @@ from database import get_db
 from rbac_service import has_permission
 from services.finance_audit import actor_from_headers, audit_event, row_to_dict
 from services.accounting_bank_rules import resolve_itp_bank
+from services.employee_payee_rules import (
+    deactivate_employee_itp_obligations,
+    is_employee_payee,
+)
 
 
 router = APIRouter(
@@ -229,6 +233,8 @@ def _sync_servicios_to_itp(cur):
             AND po.total IS DISTINCT FROM s.costo_tarjetas
     """)
 
+    deactivate_employee_itp_obligations(cur)
+
 @router.get("/search")
 def search_invoice_to_pay(
     obligation_type: Optional[str] = Query(None),
@@ -244,9 +250,10 @@ def search_invoice_to_pay(
 
     # 🔁 Sync servicios → Invoice To Pay
     _sync_servicios_to_itp(cur)
+    deactivate_employee_itp_obligations(cur)
     conn.commit()
 
-    filters = []
+    filters = ["COALESCE(active, TRUE) = TRUE"]
     params = []
 
     # =================
@@ -356,6 +363,8 @@ def search_invoice_to_pay(
 @router.get("/kpis")
 def invoice_to_pay_kpis(conn=Depends(get_db)):
     cur = conn.cursor()
+    deactivate_employee_itp_obligations(cur)
+    conn.commit()
 
     cur.execute("""
         SELECT
@@ -439,6 +448,7 @@ def invoice_to_pay_kpis(conn=Depends(get_db)):
 
         FROM payment_obligations
         WHERE record_type = 'OBLIGATION'
+          AND COALESCE(active, TRUE) = TRUE
     """)
 
     pending, paid, dpo, overdue, overdue_amount = cur.fetchone()
@@ -502,6 +512,7 @@ def apply_payment(
             FROM payment_obligations
             WHERE id = %s
               AND record_type = 'OBLIGATION'
+              AND COALESCE(active, TRUE) = TRUE
             FOR UPDATE
         """, (obligation_id,))
 
@@ -703,6 +714,12 @@ def create_manual_obligation(
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     try:
+        if is_employee_payee(cur, payee_name):
+            raise HTTPException(
+                status_code=400,
+                detail="El beneficiario existe como empleado en Master Data; no se registra en ITP."
+            )
+
         cur.execute("""
             INSERT INTO payment_obligations (
                 record_type,
@@ -748,6 +765,10 @@ def create_manual_obligation(
 
         new_id = cur.fetchone()["id"]
         conn.commit()
+
+    except HTTPException:
+        conn.rollback()
+        raise
 
     except Exception as e:
         conn.rollback()
@@ -897,6 +918,17 @@ def upload_invoice_xml(
     # INSERTAR payment_obligations
     # ============================================================
     try:
+        if is_employee_payee(cur, emisor):
+            return {
+                "message": "XML omitido para ITP: el emisor existe como empleado en Master Data.",
+                "type": obligation_type,
+                "reference": clave,
+                "supplier": emisor,
+                "total": total,
+                "currency": moneda,
+                "skipped": True,
+            }
+
         cur.execute("""
             INSERT INTO payment_obligations (
                 record_type,

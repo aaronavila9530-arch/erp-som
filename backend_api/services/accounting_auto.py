@@ -6,6 +6,7 @@ from services.accounting_bank_rules import (
     resolve_collections_bank,
     resolve_itp_bank,
 )
+from services.employee_payee_rules import employee_obligation_ids, is_employee_payee, load_employee_name_keys
 
 def create_accounting_entry(
     conn,
@@ -717,6 +718,22 @@ def sync_itp_to_accounting(conn):
             ADD COLUMN IF NOT EXISTS payment_bank_account_name TEXT
         """)
         backfill_missing_bank_accounts(cur)
+        employee_itp_ids = employee_obligation_ids(cur)
+        if employee_itp_ids:
+            cur.execute("""
+                DELETE FROM accounting_lines
+                WHERE entry_id IN (
+                    SELECT id
+                    FROM accounting_entries
+                    WHERE origin IN ('ITP', 'ITP_PAYMENT')
+                      AND origin_id = ANY(%s)
+                )
+            """, (employee_itp_ids,))
+            cur.execute("""
+                DELETE FROM accounting_entries
+                WHERE origin IN ('ITP', 'ITP_PAYMENT')
+                  AND origin_id = ANY(%s)
+            """, (employee_itp_ids,))
 
         today = date.today()
         _delete_future_system_entries()
@@ -763,6 +780,7 @@ def sync_itp_to_accounting(conn):
         """)
 
         obligations = cur.fetchall() or []
+        employee_name_keys = load_employee_name_keys(cur)
 
 
         # ============================================================
@@ -772,6 +790,8 @@ def sync_itp_to_accounting(conn):
 
             obligation_id = ob.get("id")
             payee_name = (ob.get("payee_name") or "").strip() or "N/A"
+            if is_employee_payee(cur, payee_name, employee_name_keys):
+                continue
             current_payee_name = payee_name
             current_country = (ob.get("country") or "").strip()
             current_reference = (ob.get("reference") or "").strip()

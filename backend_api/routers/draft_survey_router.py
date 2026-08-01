@@ -73,7 +73,8 @@ def _ensure_current_draft_form_columns(cur):
         "draft_aft_port", "draft_aft_stb", "draft_aft_marks",
         "sg", "lpp", "tpc_p", "tpc_s",
         "ballast", "fresh_water", "fuel_oil", "diesel_oil", "lub_oil",
-        "slop", "swimming_pool", "others", "bl_figure",
+        "slop", "swimming_pool", "others", "light_ship",
+        "historic_constant", "bl_figure",
     ]
     hydro_fields = []
 

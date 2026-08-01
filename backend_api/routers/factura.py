@@ -93,6 +93,10 @@ def crear_factura_manual(payload: dict, conn=Depends(get_db)):
 
         if total in (None, ""):
             raise HTTPException(status_code=400, detail="Total requerido")
+        try:
+            total = float(str(total).replace(",", "").strip())
+        except Exception:
+            raise HTTPException(status_code=400, detail="Total invalido")
 
         cur = conn.cursor(cursor_factory=RealDictCursor)
 
@@ -121,10 +125,10 @@ def crear_factura_manual(payload: dict, conn=Depends(get_db)):
         # ====================================================
         cur.execute("""
             SELECT codigo
-            FROM cliente  -- Modificado de 'clientes' a 'cliente'
+            FROM cliente
             WHERE
-                nombrecomercial = %s
-                OR nombrejuridico = %s
+                LOWER(TRIM(nombrecomercial)) = LOWER(TRIM(%s))
+                OR LOWER(TRIM(nombrejuridico)) = LOWER(TRIM(%s))
         """, (
             servicio["cliente"],
             servicio["cliente"]
@@ -151,13 +155,16 @@ def crear_factura_manual(payload: dict, conn=Depends(get_db)):
 
         credito = cur.fetchone()
 
-        if not credito or credito.get("termino_pago") is None:
+        termino_raw = credito.get("termino_pago") if credito else payload.get("termino_pago")
+        if termino_raw in (None, ""):
+            termino_raw = 0
+        try:
+            termino_pago = int(float(termino_raw))
+        except Exception:
             raise HTTPException(
                 status_code=400,
-                detail="El cliente no tiene término de pago configurado"
+                detail="Termino de pago invalido"
             )
-
-        termino_pago = int(credito["termino_pago"])
 
         # ====================================================
         # NÚMERO Y FECHA FACTURA

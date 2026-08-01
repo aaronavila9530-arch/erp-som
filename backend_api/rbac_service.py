@@ -71,6 +71,14 @@ def has_permission(
             "finanzas": ["view", "create", "edit"],
             "dashboard": ["view"]
 
+        },
+
+        "accounting01": {
+
+            "finanzas": ["view", "create", "edit", "apply", "reverse", "sync", "generate", "reports"],
+            "accounting": ["view", "create", "edit", "apply", "reverse", "sync", "generate", "reports"],
+            "qa_som": ["view"]
+
         }
 
     }
