@@ -158,14 +158,24 @@ def sync_collections_to_accounting(conn):
             # ========================================================
             # 3️⃣ FECHA CONTABLE
             # ========================================================
-            created_at = c.get("created_at") or today
+            fecha_emision = c.get("fecha_emision") or c.get("created_at") or today
 
-            if isinstance(created_at, datetime):
-                fecha = created_at.date()
+            if isinstance(fecha_emision, datetime):
+                fecha = fecha_emision.date()
             else:
-                fecha = created_at
+                fecha = fecha_emision
 
             period = fecha.strftime("%Y-%m")
+
+            cur.execute("""
+                SELECT rate
+                FROM exchange_rate
+                WHERE rate_date <= %s
+                ORDER BY rate_date DESC
+                LIMIT 1
+            """, (fecha,))
+            row_tc_invoice = cur.fetchone()
+            tc_invoice = float((row_tc_invoice or {}).get("rate") or tc)
 
 
             # ========================================================
@@ -192,7 +202,7 @@ def sync_collections_to_accounting(conn):
             # 5️⃣ CONVERSIÓN MONEDA
             # ========================================================
             if moneda == "USD":
-                total_crc = round(total_raw * tc, 2)
+                total_crc = round(total_raw * tc_invoice, 2)
             else:
                 total_crc = round(total_raw, 2)
 
@@ -219,9 +229,10 @@ def sync_collections_to_accounting(conn):
                 FROM accounting_entries
                 WHERE origin = 'COLLECTIONS'
                   AND origin_id = %s
-                  AND period = %s
+                  AND COALESCE(reversed, FALSE) = FALSE
+                ORDER BY id DESC
                 LIMIT 1
-            """, (collection_id, period))
+            """, (collection_id,))
 
             row_entry = cur.fetchone()
 
@@ -231,7 +242,24 @@ def sync_collections_to_accounting(conn):
             # ========================================================
             # 8️⃣ CREAR ASIENTO CONTABLE
             # ========================================================
-            if not entry_id:
+            AR_ACCOUNT_CODE = "1.1.04.01"
+            AR_ACCOUNT_NAME = "Cuentas por cobrar comerciales"
+            REV_ACCOUNT_CODE = "4.1.01"
+            REV_ACCOUNT_NAME = "Ingresos por servicios"
+            IVA_ACCOUNT_CODE = "2.1.02.03"
+            IVA_ACCOUNT_NAME = "Impuesto sobre valor agregado (IVA) por pagar"
+
+            if entry_id:
+                cur.execute("""
+                    UPDATE accounting_entries
+                    SET entry_date = %s,
+                        period = %s,
+                        description = %s
+                    WHERE id = %s
+                """, (fecha, period, detail_text, entry_id))
+                cur.execute("DELETE FROM accounting_lines WHERE entry_id = %s", (entry_id,))
+
+            else:
 
                 cur.execute("""
                     INSERT INTO accounting_entries
@@ -288,6 +316,42 @@ def sync_collections_to_accounting(conn):
                 # ---------------- IVA ----------------
                 if iva > 0:
 
+                    cur.execute("""
+                        INSERT INTO accounting_lines
+                        (entry_id, account_code, account_name, debit, credit, line_description)
+                        VALUES (%s, %s, %s, 0, %s, %s)
+                    """, (
+                        entry_id,
+                        IVA_ACCOUNT_CODE,
+                        IVA_ACCOUNT_NAME,
+                        iva,
+                        detail_text
+                    ))
+
+            if row_entry:
+                cur.execute("""
+                    INSERT INTO accounting_lines
+                    (entry_id, account_code, account_name, debit, credit, line_description)
+                    VALUES (%s, %s, %s, %s, 0, %s)
+                """, (
+                    entry_id,
+                    AR_ACCOUNT_CODE,
+                    AR_ACCOUNT_NAME,
+                    total_crc,
+                    detail_text
+                ))
+                cur.execute("""
+                    INSERT INTO accounting_lines
+                    (entry_id, account_code, account_name, debit, credit, line_description)
+                    VALUES (%s, %s, %s, 0, %s, %s)
+                """, (
+                    entry_id,
+                    REV_ACCOUNT_CODE,
+                    REV_ACCOUNT_NAME,
+                    subtotal,
+                    detail_text
+                ))
+                if iva > 0:
                     cur.execute("""
                         INSERT INTO accounting_lines
                         (entry_id, account_code, account_name, debit, credit, line_description)
