@@ -82,7 +82,7 @@ def create_accounting_entry(
             line["account_name"],
             money(line.get("debit")),
             money(line.get("credit")),
-            line.get("description")
+            line.get("description") or line.get("line_description")
         ))
 
     # 🔥🔥🔥 ESTA ES LA LÍNEA QUE FALTABA 🔥🔥🔥
@@ -371,6 +371,248 @@ def sync_collections_to_accounting(conn):
         conn.rollback()
         raise Exception(f"sync_collections_to_accounting error: {str(e)}")
 
+    finally:
+        cur.close()
+
+
+def sync_payroll_to_accounting(conn):
+    """
+    Sincroniza payroll_runs con formato formal de planilla:
+    devengo de sueldos, cargas, reservas, retenciones y pago bancario del neto.
+    """
+    from datetime import date, datetime
+    from decimal import Decimal
+    from calendar import monthrange
+    from psycopg2.extras import RealDictCursor
+
+    if not conn:
+        raise Exception("DB connection is required")
+
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+
+    def _money(value):
+        return Decimal(str(value or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+    def _normalize_date(value):
+        if not value:
+            return date.today()
+        if isinstance(value, datetime):
+            return value.date()
+        return value
+
+    def _rate_for_run(gross, employee_salary, half_rate, full_rate):
+        gross_d = Decimal(str(gross or 0))
+        salary_d = Decimal(str(employee_salary or 0))
+        if salary_d > 0 and gross_d <= (salary_d / Decimal("2") + Decimal("1.00")):
+            return Decimal(str(half_rate))
+        return Decimal(str(full_rate))
+
+    def _is_half_run(gross, employee_salary):
+        gross_d = Decimal(str(gross or 0))
+        salary_d = Decimal(str(employee_salary or 0))
+        return salary_d > 0 and gross_d <= (salary_d / Decimal("2") + Decimal("1.00"))
+
+    def _entry_date_for_payroll(year, month, gross, employee_salary, fallback):
+        if _is_half_run(gross, employee_salary):
+            return date(int(year), int(month), 15)
+        last_day = monthrange(int(year), int(month))[1]
+        return date(int(year), int(month), last_day) or fallback
+
+    def _ensure_account(code, name, level, account_type, parent=None):
+        cur.execute("SELECT id FROM accounting_ledger WHERE account_code = %s LIMIT 1", (code,))
+        row = cur.fetchone()
+        if row:
+            cur.execute("""
+                UPDATE accounting_ledger
+                   SET account_name = %s,
+                       active = TRUE
+                 WHERE id = %s
+            """, (name, row["id"]))
+        else:
+            cur.execute("""
+                INSERT INTO accounting_ledger (
+                    account_code, account_name, account_level, account_type, parent_account,
+                    description, active, source_module
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, TRUE, 'PAYROLL')
+            """, (code, name, level, account_type, parent, name))
+
+    accounts = {
+        "salary_exp": ("500-001-001-001", "Sueldos"),
+        "social_exp": ("500-001-001-002", "Cargas Sociales"),
+        "bonus_exp": ("500-001-001-003", "Aguinaldos"),
+        "vacation_exp": ("500-001-001-004", "Vacaciones"),
+        "salary_payable": ("2.1.02.07", "Salarios por pagar"),
+        "worker_payable": ("2.1.03.01", "Retenciones obreras por pagar-CCSS"),
+        "employer_payable": ("2.1.05.01", "Obligaciones patronales por pagar-CCSS"),
+        "bonus_payable": ("2.1.04.03", "Provisión aguinaldo"),
+        "vacation_payable": ("2.1.04.01", "Provisión vacaciones"),
+        "bank": ("1.1.02", "Bancos"),
+    }
+
+    def _line(key, debit, credit, detail):
+        code, name = accounts[key]
+        return {
+            "account_code": code,
+            "account_name": name,
+            "debit": _money(debit),
+            "credit": _money(credit),
+            "line_description": detail,
+        }
+
+    def _payroll_lines(gross, employee_salary, detail):
+        gross = _money(gross)
+        worker_rate = _rate_for_run(gross, employee_salary, "0.0517", "0.1034")
+        employer_rate = _rate_for_run(gross, employee_salary, "0.0850", "0.1700")
+        worker = _money(gross * worker_rate)
+        employer = _money(gross * employer_rate)
+        bonus = _money(gross * Decimal("0.0833"))
+        vacation = _money(gross * Decimal("0.0417"))
+        net_salary = _money(gross - worker)
+
+        return [
+            _line("salary_exp", gross, 0, f"{detail} - Sueldos"),
+            _line("social_exp", employer, 0, f"{detail} - Cargas Sociales"),
+            _line("bonus_exp", bonus, 0, f"{detail} - Aguinaldo"),
+            _line("vacation_exp", vacation, 0, f"{detail} - Vacaciones"),
+            _line("employer_payable", 0, employer, f"{detail} - CCSS Cuota Patronal"),
+            _line("worker_payable", 0, worker, f"{detail} - CCSS Cuota Obrera"),
+            _line("salary_payable", 0, net_salary, f"{detail} - Salario neto"),
+            _line("bonus_payable", 0, bonus, f"{detail} - Reserva Aguinaldo"),
+            _line("vacation_payable", 0, vacation, f"{detail} - Reserva Vacaciones"),
+        ], net_salary
+
+    try:
+        _ensure_account("500-001-001-004", "Vacaciones", 5, "EXPENSE", "500-001-001")
+
+        cur.execute("""
+            SELECT id, usuario, year, month, salario_bruto, creado_en
+            FROM payroll_runs
+            ORDER BY id
+        """)
+        runs = cur.fetchall() or []
+
+        for payroll in runs:
+            payroll_id = payroll.get("id")
+            gross = _money(payroll.get("salario_bruto"))
+            if gross <= 0:
+                continue
+
+            period = f"{payroll['year']}-{int(payroll['month']):02d}"
+            detail = f"Payroll {payroll.get('usuario')} {period}"
+
+            cur.execute("SELECT salario FROM empleados WHERE usuario = %s LIMIT 1", (payroll.get("usuario"),))
+            employee = cur.fetchone()
+            employee_salary = employee.get("salario") if employee else 0
+            entry_date = _entry_date_for_payroll(
+                payroll["year"],
+                payroll["month"],
+                gross,
+                employee_salary,
+                _normalize_date(payroll.get("creado_en")),
+            )
+            lines, net_salary = _payroll_lines(gross, employee_salary, detail)
+
+            cur.execute("""
+                UPDATE payroll_runs
+                   SET salario_neto = %s
+                 WHERE id = %s
+            """, (net_salary, payroll_id))
+
+            cur.execute("""
+                SELECT id
+                FROM accounting_entries
+                WHERE origin = 'PAYROLL'
+                  AND origin_id = %s
+                  AND period = %s
+                ORDER BY id
+                LIMIT 1
+            """, (payroll_id, period))
+            payroll_entry = cur.fetchone()
+
+            if payroll_entry:
+                entry_id = payroll_entry["id"]
+                cur.execute("""
+                    UPDATE accounting_entries
+                       SET entry_date = %s,
+                           description = %s,
+                           workflow_status = COALESCE(workflow_status, 'POSTED'),
+                           updated_at = NOW()
+                     WHERE id = %s
+                """, (entry_date, detail, entry_id))
+                cur.execute("DELETE FROM accounting_lines WHERE entry_id = %s", (entry_id,))
+                for line in lines:
+                    cur.execute("""
+                        INSERT INTO accounting_lines
+                            (entry_id, account_code, account_name, debit, credit, line_description)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                    """, (
+                        entry_id, line["account_code"], line["account_name"],
+                        line["debit"], line["credit"], line["line_description"]
+                    ))
+            else:
+                create_accounting_entry(
+                    conn=conn,
+                    entry_date=entry_date,
+                    period=period,
+                    description=detail,
+                    origin="PAYROLL",
+                    origin_id=payroll_id,
+                    lines=lines,
+                )
+
+            payment_detail = f"Pago salarios {detail}"
+            payment_lines = [
+                _line("salary_payable", net_salary, 0, payment_detail),
+                _line("bank", 0, net_salary, payment_detail),
+            ]
+            cur.execute("""
+                SELECT id
+                FROM accounting_entries
+                WHERE origin = 'PAYROLL_PAYMENT'
+                  AND origin_id = %s
+                  AND period = %s
+                ORDER BY id
+                LIMIT 1
+            """, (payroll_id, period))
+            payment_entry = cur.fetchone()
+
+            if payment_entry:
+                entry_id = payment_entry["id"]
+                cur.execute("""
+                    UPDATE accounting_entries
+                       SET entry_date = %s,
+                           description = %s,
+                           workflow_status = COALESCE(workflow_status, 'POSTED'),
+                           updated_at = NOW()
+                     WHERE id = %s
+                """, (entry_date, payment_detail, entry_id))
+                cur.execute("DELETE FROM accounting_lines WHERE entry_id = %s", (entry_id,))
+                for line in payment_lines:
+                    cur.execute("""
+                        INSERT INTO accounting_lines
+                            (entry_id, account_code, account_name, debit, credit, line_description)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                    """, (
+                        entry_id, line["account_code"], line["account_name"],
+                        line["debit"], line["credit"], line["line_description"]
+                    ))
+            else:
+                create_accounting_entry(
+                    conn=conn,
+                    entry_date=entry_date,
+                    period=period,
+                    description=payment_detail,
+                    origin="PAYROLL_PAYMENT",
+                    origin_id=payroll_id,
+                    lines=payment_lines,
+                )
+
+        conn.commit()
+
+    except Exception as e:
+        conn.rollback()
+        raise Exception(f"sync_payroll_to_accounting error: {str(e)}")
     finally:
         cur.close()
 
@@ -1167,7 +1409,7 @@ def sync_itp_to_accounting(conn):
         cur.close()
 
 
-def sync_payroll_to_accounting(conn):
+def _sync_payroll_to_accounting_legacy(conn):
     """
     Sincroniza payroll_runs → accounting_entries / accounting_lines
     Usa salario_bruto como gasto total de salarios

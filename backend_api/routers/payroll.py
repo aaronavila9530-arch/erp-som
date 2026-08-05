@@ -74,6 +74,15 @@ def calcular_renta(monto: float) -> float:
 
     return round(impuesto, 2)
 
+
+def _payroll_rates(pago: str) -> tuple[float, float, bool]:
+    is_quincenal = "QUINC" in ((pago or "").upper())
+    return (
+        0.0517 if is_quincenal else 0.1034,
+        0.085 if is_quincenal else 0.17,
+        is_quincenal,
+    )
+
 # ============================================================
 # 1️⃣ LISTADO BASE PAYROLL (TABLA FIJA)
 # ============================================================
@@ -196,7 +205,9 @@ def calcular_payroll(
 
     horas_registradas = float(cur.fetchone()["total"] or 0)
 
-    salario_base = float(emp["salario"] or 0)
+    salario_base_mensual = float(emp["salario"] or 0)
+    pago = (emp["pago"] or "").upper()
+    salario_base = salario_base_mensual / 2 if "QUINC" in pago else salario_base_mensual
     jornada = (emp["jornada"] or "").upper()
 
     horas_ot = 0.0
@@ -228,22 +239,17 @@ def calcular_payroll(
     # --------------------------------------------------------
     # DEDUCCIONES Y RENTA (SOBRE SALARIO BRUTO)
     # --------------------------------------------------------
-    deducciones_trabajador = round(
-        sum(salario_bruto * tasa for tasa in DEDUCCIONES_TRABAJADOR.values()),
-        2
-    )
+    deduccion_rate, patronal_rate, is_quincenal = _payroll_rates(pago)
+    deducciones_trabajador = round(salario_bruto * deduccion_rate, 2)
 
-    impuesto_renta = calcular_renta(salario_bruto)
+    impuesto_renta = 0 if is_quincenal else calcular_renta(salario_bruto)
 
     salario_neto = round(
         salario_bruto - deducciones_trabajador - impuesto_renta,
         2
     )
 
-    cargas_patronales = round(
-        sum(salario_bruto * tasa for tasa in CARGAS_PATRONALES.values()),
-        2
-    )
+    cargas_patronales = round(salario_bruto * patronal_rate, 2)
 
     # --------------------------------------------------------
     # RESPONSE
@@ -779,17 +785,10 @@ def descargar_colilla_pdf(
     monto_horas_extra = float(run["monto_horas_extra"] or 0)
     salario_base = salario_bruto - monto_horas_extra
 
-    deducciones_trabajador = round(
-        sum(salario_bruto * tasa for tasa in DEDUCCIONES_TRABAJADOR.values()),
-        2
-    )
-
-    impuesto_renta = calcular_renta(salario_bruto)
-
-    cargas_patronales = round(
-        sum(salario_bruto * tasa for tasa in CARGAS_PATRONALES.values()),
-        2
-    )
+    deduccion_rate, patronal_rate, is_quincenal = _payroll_rates(emp["pago"])
+    deducciones_trabajador = round(salario_bruto * deduccion_rate, 2)
+    impuesto_renta = 0 if is_quincenal else calcular_renta(salario_bruto)
+    cargas_patronales = round(salario_bruto * patronal_rate, 2)
 
     data = {
         "usuario": run["usuario"],
@@ -903,15 +902,10 @@ def descargar_colilla_pdf_mobile_v2(
     salario_bruto = float(run["salario_bruto"] or 0)
     monto_horas_extra = float(run["monto_horas_extra"] or 0)
     salario_base = salario_bruto - monto_horas_extra
-    deducciones_trabajador = round(
-        sum(salario_bruto * tasa for tasa in DEDUCCIONES_TRABAJADOR.values()),
-        2
-    )
-    impuesto_renta = calcular_renta(salario_bruto)
-    cargas_patronales = round(
-        sum(salario_bruto * tasa for tasa in CARGAS_PATRONALES.values()),
-        2
-    )
+    deduccion_rate, patronal_rate, is_quincenal = _payroll_rates(emp["pago"])
+    deducciones_trabajador = round(salario_bruto * deduccion_rate, 2)
+    impuesto_renta = 0 if is_quincenal else calcular_renta(salario_bruto)
+    cargas_patronales = round(salario_bruto * patronal_rate, 2)
 
     data = {
         "usuario": run["usuario"],
