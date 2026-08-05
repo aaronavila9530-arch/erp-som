@@ -3,6 +3,7 @@ from datetime import date
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from services.accounting_bank_rules import (
     backfill_missing_bank_accounts,
+    is_bcr_account,
     resolve_collections_bank,
     resolve_itp_bank,
 )
@@ -694,6 +695,50 @@ def sync_cash_app_to_accounting(conn):
                 return account["account_code"], account["account_name"]
             return fallback_code, fallback_name
 
+        def _ensure_posting_account(code, name, account_type, normal_balance, parent_account=None):
+            cur.execute("""
+                UPDATE accounting_ledger
+                   SET account_name = %s,
+                       account_type = %s,
+                       parent_account = COALESCE(parent_account, %s),
+                       active = TRUE
+                 WHERE account_code = %s
+            """, (name, account_type, parent_account, code))
+            cur.execute("""
+                INSERT INTO accounting_ledger (
+                    account_code, account_name, account_type, account_level,
+                    parent_account, active, source_module
+                )
+                SELECT %s, %s, %s, %s, %s, TRUE, 'COLLECTIONS'
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM accounting_ledger WHERE account_code = %s
+                )
+            """, (code, name, account_type, 4, parent_account, code))
+            cur.execute("""
+                UPDATE accounting_accounts
+                   SET account_name = %s,
+                       account_type = %s,
+                       normal_balance = %s,
+                       parent_account = COALESCE(parent_account, %s),
+                       active = TRUE,
+                       accepts_posting = TRUE,
+                       updated_at = NOW()
+                 WHERE account_code = %s
+            """, (name, account_type, normal_balance, parent_account, code))
+            cur.execute("""
+                INSERT INTO accounting_accounts (
+                    account_code, account_name, account_type, normal_balance,
+                    account_level, parent_account, accepts_posting, active,
+                    created_by, updated_by
+                )
+                SELECT %s, %s, %s, %s, %s, %s, TRUE, TRUE, 'COLLECTIONS', 'COLLECTIONS'
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM accounting_accounts WHERE account_code = %s
+                )
+            """, (code, name, account_type, normal_balance, 4, parent_account, code))
+
+        _ensure_posting_account("5.2.03", "Comisiones bancarias", "EXPENSE", "DEBIT", "5.2")
+
         # ============================================================
         # 0️⃣ TRAER TODOS LOS PAGOS CASH_APP
         # ============================================================
@@ -782,7 +827,8 @@ def sync_cash_app_to_accounting(conn):
             # ========================================================
             monto_crc = round(monto * tc, 2)
             comision_crc = round(comision * tc, 2)
-            banco_crc = round(monto_crc - comision_crc, 2)
+            banco_crc = monto_crc
+            total_aplicado_crc = round((monto + comision) * tc, 2)
 
             if banco_crc < 0:
                 raise Exception(
@@ -847,6 +893,28 @@ def sync_cash_app_to_accounting(conn):
                 BANK_ACCOUNT_NAME
             )
 
+            if is_bcr_account(BANK_ACCOUNT_CODE, BANK_ACCOUNT_NAME, current_raw_bank):
+                total_aplicado = round(monto + comision, 2)
+                if total_aplicado <= 25:
+                    raise Exception(
+                        f"Pago BCR menor o igual a comision de 25 USD en cash_app id={cash_id}"
+                    )
+                monto = round(total_aplicado - 25, 2)
+                comision = 25.0
+                cur.execute("""
+                    UPDATE cash_app
+                       SET monto_pagado = %s,
+                           comision = %s,
+                           bank_account_code = %s,
+                           bank_account_name = %s
+                     WHERE id = %s
+                """, (monto, comision, BANK_ACCOUNT_CODE, BANK_ACCOUNT_NAME, cash_id))
+
+                monto_crc = round(monto * tc, 2)
+                comision_crc = round(comision * tc, 2)
+                banco_crc = monto_crc
+                total_aplicado_crc = round((monto + comision) * tc, 2)
+
             BANK_FEE_CODE = "5.2.03"
             BANK_FEE_NAME = "Comisiones bancarias"
 
@@ -901,7 +969,7 @@ def sync_cash_app_to_accounting(conn):
                 entry_id,
                 AR_ACCOUNT_CODE,
                 AR_ACCOUNT_NAME,
-                monto_crc,
+                total_aplicado_crc,
                 detail
             ))
 

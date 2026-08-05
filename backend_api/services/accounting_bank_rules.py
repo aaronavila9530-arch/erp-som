@@ -131,6 +131,16 @@ def resolve_collections_bank(cur, code=None, name=None, client_name=None, raw_ba
     return canonicalize_bank_account(cur, code, name) or infer_collections_bank(cur, client_name, raw_bank)
 
 
+def is_bcr_account(code=None, name=None, raw_bank=None):
+    text = normalize_text(" ".join(str(x or "") for x in (code, name, raw_bank))).upper()
+    return (
+        str(code or "").strip() in BCR_PREFERRED_CODES
+        or "BANCO DE COSTA RICA" in text
+        or " BCR " in f" {text} "
+        or text == "BCR"
+    )
+
+
 def resolve_itp_bank(cur, code=None, name=None, payee_name=None, country=None, reference=None, notes=None, payee_type=None, obligation_type=None):
     return (
         canonicalize_bank_account(cur, code, name)
