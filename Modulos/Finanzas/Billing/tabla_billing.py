@@ -1,11 +1,10 @@
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
-import requests
 import shutil
 import csv
 import os
 
-from api_client import BASE_URL
+from api_client import BASE_URL, api_request
 from Modulos.Finanzas.date_utils import to_long_english_date
 from Modulos.Finanzas.export_formatting import normalize_invoice_text_columns
 from Modulos.Finanzas.popups.popup_preview_factura import PopupPreviewFactura
@@ -147,7 +146,8 @@ class TablaBilling(tk.Frame):
             self.tree.delete(row)
 
         try:
-            r = requests.get(
+            r = api_request(
+                "GET",
                 f"{BASE_URL}/billing/search",
                 params={**self.filtros, "page": self.page, "page_size": self.page_size},
                 timeout=15
@@ -222,7 +222,8 @@ class TablaBilling(tk.Frame):
 
         try:
             # 1️⃣ Cargar factura completa desde API
-            r = requests.get(
+            r = api_request(
+                "GET",
                 f"{BASE_URL}/billing/{numero_factura}",
                 timeout=15
             )
@@ -279,7 +280,8 @@ class TablaBilling(tk.Frame):
             return
 
         try:
-            r = requests.get(
+            r = api_request(
+                "GET",
                 f"{BASE_URL}/billing/pdf/{numero_factura}",
                 timeout=30,
                 stream=True
@@ -337,7 +339,8 @@ class TablaBilling(tk.Frame):
     def _exportar(self):
 
         try:
-            r = requests.get(
+            r = api_request(
+                "GET",
                 f"{BASE_URL}/billing/search",
                 params=self._get_export_params(),
                 timeout=30
@@ -397,7 +400,8 @@ class TablaBilling(tk.Frame):
         try:
             from openpyxl import Workbook
 
-            r = requests.get(
+            r = api_request(
+                "GET",
                 f"{BASE_URL}/billing/search",
                 params=self._get_export_params(),
                 timeout=30

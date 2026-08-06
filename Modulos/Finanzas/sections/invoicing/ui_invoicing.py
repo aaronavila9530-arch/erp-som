@@ -1,8 +1,7 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
-import requests
 
-from api_client import BASE_URL
+from api_client import BASE_URL, api_request
 from Modulos.Finanzas.date_utils import to_long_english_date
 
 
@@ -131,7 +130,7 @@ class InvoicingUI(tk.Frame):
             return
 
         try:
-            r = requests.get(f"{BASE_URL}/clientes", timeout=15)
+            r = api_request("GET", f"{BASE_URL}/clientes", timeout=15)
             r.raise_for_status()
 
             data = r.json().get("data", [])
@@ -161,7 +160,8 @@ class InvoicingUI(tk.Frame):
         nombre_cliente = self.selected_cliente.get()
 
         try:
-            r = requests.get(
+            r = api_request(
+                "GET",
                 f"{BASE_URL}/invoicing/facturables",
                 params={"cliente": nombre_cliente},
                 timeout=20

@@ -1,8 +1,7 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
-import requests
 
-from api_client import BASE_URL, sync_collections_from_invoicing_api
+from api_client import BASE_URL, api_request, sync_collections_from_invoicing_api
 from Modulos.Finanzas.sections.Collections.tabla_collections import TablaCollections
 
 
@@ -133,7 +132,8 @@ class CollectionsUI(tk.Frame):
             page_size = 200  # <-- FIX: máximo permitido por tu API
 
             while True:
-                r = requests.get(
+                r = api_request(
+                    "GET",
                     f"{BASE_URL}/collections/search",
                     params={
                         "page": page,

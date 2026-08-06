@@ -17,6 +17,7 @@ from services.accounting_bank_rules import (
     resolve_collections_bank,
     should_apply_bcr_collection_fee,
 )
+from services.tenanting import company_code, ensure_company_column
 
 
 router = APIRouter(
@@ -61,34 +62,48 @@ def _safe_int(v, default=0) -> int:
     except Exception:
         return default
 
+
+def _ensure_tenant_schema():
+    ensure_company_column("collections")
+    ensure_company_column("cash_app")
+    ensure_company_column("disputa")
+    ensure_company_column("invoicing")
+
 # ============================================================
 # POST /collections/sync-from-invoicing
 # Sincroniza FACTURA + NOTA_CREDITO EMITIDAS → Collections
 # ALINEADO con GET /search
 # ============================================================
 @router.post("/sync-from-invoicing")
-def sync_collections_from_invoicing(conn=Depends(get_db)):
+def sync_collections_from_invoicing(
+    conn=Depends(get_db),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+):
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
+    company = company_code(header_value=x_company_code)
 
     inserted = 0
     skipped = 0
     errors = []
 
     try:
+        _ensure_tenant_schema()
         cur.execute("""
             SELECT *
             FROM invoicing i
             WHERE i.tipo_documento IN ('FACTURA', 'NOTA_CREDITO')
               AND i.estado = 'EMITIDA'
               AND i.total > 0
+              AND i.company_code = %s
               AND NOT EXISTS (
                   SELECT 1
                   FROM collections c
                   WHERE c.numero_documento = i.numero_documento
                     AND c.codigo_cliente = i.codigo_cliente
+                    AND c.company_code = i.company_code
               )
-        """)
+        """, (company,))
 
         facturas = cur.fetchall()
         hoy = date.today()
@@ -166,6 +181,7 @@ def sync_collections_from_invoicing(conn=Depends(get_db)):
                 # ------------------------------------------------
                 cur.execute("""
                     INSERT INTO collections (
+                        company_code,
                         numero_documento,
                         codigo_cliente,
                         nombre_cliente,
@@ -188,6 +204,7 @@ def sync_collections_from_invoicing(conn=Depends(get_db)):
                         saldo_pendiente,
                         created_at
                     ) VALUES (
+                        %(company_code)s,
                         %(numero_documento)s,
                         %(codigo_cliente)s,
                         %(nombre_cliente)s,
@@ -211,6 +228,7 @@ def sync_collections_from_invoicing(conn=Depends(get_db)):
                         NOW()
                     )
                 """, {
+                    "company_code": company,
                     "numero_documento": f.get("numero_documento"),
                     "codigo_cliente": f.get("codigo_cliente"),
                     "nombre_cliente": f.get("nombre_cliente"),
@@ -261,7 +279,10 @@ def sync_collections_from_invoicing(conn=Depends(get_db)):
 # Genera asientos contables para facturas existentes (y futuras que caigan a collections)
 # ============================================================
 @router.post("/post-to-accounting")
-def post_collections_to_accounting(conn=Depends(get_db)) -> dict:
+def post_collections_to_accounting(
+    conn=Depends(get_db),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+) -> dict:
     """
     Sincroniza collections → accounting:
     - Inserta accounting_entries + accounting_lines
@@ -272,7 +293,7 @@ def post_collections_to_accounting(conn=Depends(get_db)) -> dict:
         from services.accounting_auto import sync_collections_to_accounting
 
         # Ejecuta sincronización real
-        sync_collections_to_accounting(conn)
+        sync_collections_to_accounting(conn, company_code_filter=company_code(header_value=x_company_code))
 
         return {
             "status": "ok",
@@ -294,8 +315,10 @@ def search_collections(
     bucket_aging: Optional[str] = Query(None),
     estado_factura: Optional[str] = Query(None),
     disputada: Optional[bool] = Query(None),
+    company_code_param: Optional[str] = Query(None, alias="company_code"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
     conn=Depends(get_db)
 ):
     """
@@ -307,9 +330,11 @@ def search_collections(
 
     offset = (page - 1) * page_size
     cur = conn.cursor(cursor_factory=RealDictCursor)
+    company = company_code(company_code_param, x_company_code)
 
-    filtros = []
-    params = {}
+    _ensure_tenant_schema()
+    filtros = ["x.company_code = %(company_code)s"]
+    params = {"company_code": company}
 
     if cliente and cliente.upper() != "ALL":
         filtros.append("""
@@ -340,6 +365,7 @@ def search_collections(
         FROM (
             SELECT
                 c.codigo_cliente,
+                c.company_code,
                 c.nombre_cliente,
                 c.estado_factura,
                 c.disputada,
@@ -384,6 +410,7 @@ def search_collections(
         FROM (
             SELECT
                 c.codigo_cliente,
+                c.company_code,
                 c.nombre_cliente,
                 c.tipo_factura,
                 c.tipo_documento,
@@ -464,12 +491,15 @@ def aplicar_pago(
     x_user: str | None = Header(None, alias="X-User"),
     x_role: str | None = Header(None, alias="X-Role"),
     x_user_role: str | None = Header(None, alias="X-User-Role"),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
 ):
 
     cur = None
 
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
+        _ensure_tenant_schema()
+        company = company_code(payload.get("company_code"), x_company_code)
         performed_by, performed_role = actor_from_headers(x_user, x_role, x_user_role)
 
         # ==============================
@@ -569,6 +599,7 @@ def aplicar_pago(
         # ==============================
         cur.execute("""
             INSERT INTO cash_app (
+                company_code,
                 numero_documento,
                 codigo_cliente,
                 nombre_cliente,
@@ -582,6 +613,7 @@ def aplicar_pago(
                 bank_account_name,
                 created_at
             ) VALUES (
+                %s,
                 %s, %s, %s,
                 %s, %s, %s,
                 %s, %s,
@@ -591,6 +623,7 @@ def aplicar_pago(
             )
             RETURNING id
         """, (
+            company,
             numero_documento,
             codigo_cliente,
             nombre_cliente,
@@ -613,9 +646,10 @@ def aplicar_pago(
             FROM collections
             WHERE ltrim(numero_documento, '0') = %s
               AND codigo_cliente = %s
+              AND company_code = %s
               AND tipo_documento = 'FACTURA'
             FOR UPDATE
-        """, (numero_norm, codigo_cliente))
+        """, (numero_norm, codigo_cliente, company))
 
         factura = cur.fetchone()
 
@@ -634,8 +668,9 @@ def aplicar_pago(
             FROM cash_app
             WHERE ltrim(numero_documento, '0') = %s
               AND codigo_cliente = %s
+              AND company_code = %s
               AND tipo_aplicacion = 'PAGO'
-        """, (numero_norm, codigo_cliente))
+        """, (numero_norm, codigo_cliente, company))
 
         total_pagado = float(cur.fetchone()["total_pagado"] or 0)
 
@@ -659,12 +694,14 @@ def aplicar_pago(
                 estado_factura = %s
             WHERE ltrim(numero_documento, '0') = %s
               AND codigo_cliente = %s
+              AND company_code = %s
               AND tipo_documento = 'FACTURA'
         """, (
             saldo_actual,
             estado_factura,
             numero_norm,
-            codigo_cliente
+            codigo_cliente,
+            company
         ))
 
         cur.execute("""
@@ -672,9 +709,10 @@ def aplicar_pago(
             FROM collections
             WHERE ltrim(numero_documento, '0') = %s
               AND codigo_cliente = %s
+              AND company_code = %s
               AND tipo_documento = 'FACTURA'
             LIMIT 1
-        """, (numero_norm, codigo_cliente))
+        """, (numero_norm, codigo_cliente, company))
         after_collection = row_to_dict(cur.fetchone())
 
         cur.execute("SELECT * FROM cash_app WHERE id = %s", (cash_id,))
@@ -738,12 +776,18 @@ def aplicar_pago(
 # ============================================================
 @router.post("/aplicar-nota-credito")
 @router.post("/aplicar-nota-credito/")
-def aplicar_nota_credito(payload: dict, conn=Depends(get_db)):
+def aplicar_nota_credito(
+    payload: dict,
+    conn=Depends(get_db),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+):
 
     cur = None
 
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
+        _ensure_tenant_schema()
+        company = company_code(payload.get("company_code"), x_company_code)
 
         # ==============================
         # 1) Leer payload
@@ -767,9 +811,10 @@ def aplicar_nota_credito(payload: dict, conn=Depends(get_db)):
             FROM collections
             WHERE ltrim(numero_documento,'0') = %s
               AND codigo_cliente = %s
+              AND company_code = %s
               AND tipo_documento = 'FACTURA'
             FOR UPDATE
-        """, (factura_norm, codigo_cliente))
+        """, (factura_norm, codigo_cliente, company))
 
         factura = cur.fetchone()
         if not factura:
@@ -785,10 +830,11 @@ def aplicar_nota_credito(payload: dict, conn=Depends(get_db)):
             FROM collections
             WHERE ltrim(numero_documento,'0') = %s
               AND codigo_cliente = %s
+              AND company_code = %s
               AND tipo_documento = 'NOTA_CREDITO'
               AND estado_factura = 'PENDIENTE_PAGO'
             FOR UPDATE
-        """, (nota_norm, codigo_cliente))
+        """, (nota_norm, codigo_cliente, company))
 
         nota = cur.fetchone()
         if not nota:
@@ -803,6 +849,7 @@ def aplicar_nota_credito(payload: dict, conn=Depends(get_db)):
         # ==============================
         cur.execute("""
             INSERT INTO cash_app (
+                company_code,
                 numero_documento,
                 codigo_cliente,
                 nombre_cliente,
@@ -814,6 +861,7 @@ def aplicar_nota_credito(payload: dict, conn=Depends(get_db)):
                 tipo_aplicacion,
                 created_at
             ) VALUES (
+                %s,
                 %s, %s, %s,
                 NULL,
                 CURRENT_DATE,
@@ -825,6 +873,7 @@ def aplicar_nota_credito(payload: dict, conn=Depends(get_db)):
             )
             RETURNING id
         """, (
+            company,
             factura_numero,
             codigo_cliente,
             nombre_cliente,
@@ -842,7 +891,8 @@ def aplicar_nota_credito(payload: dict, conn=Depends(get_db)):
             FROM cash_app
             WHERE ltrim(numero_documento,'0') = %s
               AND codigo_cliente = %s
-        """, (factura_norm, codigo_cliente))
+              AND company_code = %s
+        """, (factura_norm, codigo_cliente, company))
 
         total_aplicado = float(cur.fetchone()["aplicado"] or 0)
         saldo_actual = total_factura - total_aplicado
@@ -864,11 +914,13 @@ def aplicar_nota_credito(payload: dict, conn=Depends(get_db)):
                 estado_factura = %s
             WHERE ltrim(numero_documento,'0') = %s
               AND codigo_cliente = %s
+              AND company_code = %s
         """, (
             saldo_actual,
             estado_factura,
             factura_norm,
-            codigo_cliente
+            codigo_cliente,
+            company
         ))
 
         # ==============================
@@ -880,7 +932,8 @@ def aplicar_nota_credito(payload: dict, conn=Depends(get_db)):
                 estado_factura = 'APLICADA'
             WHERE ltrim(numero_documento,'0') = %s
               AND codigo_cliente = %s
-        """, (nota_norm, codigo_cliente))
+              AND company_code = %s
+        """, (nota_norm, codigo_cliente, company))
 
         conn.commit()
 
@@ -911,11 +964,17 @@ def aplicar_nota_credito(payload: dict, conn=Depends(get_db)):
 # Crear una disputa de factura (BLINDADO)
 # ============================================================
 @router.post("/disputa")
-def crear_disputa(payload: dict, conn=Depends(get_db)):
+def crear_disputa(
+    payload: dict,
+    conn=Depends(get_db),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+):
     cur = None
 
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
+        _ensure_tenant_schema()
+        company = company_code(payload.get("company_code"), x_company_code)
 
         # ================================
         # VALIDAR PAYLOAD MÍNIMO
@@ -946,7 +1005,8 @@ def crear_disputa(payload: dict, conn=Depends(get_db)):
                 0
             ) AS last_num
             FROM disputa
-        """)
+            WHERE company_code = %s
+        """, (company,))
         dispute_case = f"DISP-{cur.fetchone()['last_num'] + 1:04d}"
 
         # ================================
@@ -966,8 +1026,9 @@ def crear_disputa(payload: dict, conn=Depends(get_db)):
             FROM collections
             WHERE numero_documento = %s
               AND codigo_cliente = %s
+              AND company_code = %s
             LIMIT 1
-        """, (numero_documento, codigo_cliente))
+        """, (numero_documento, codigo_cliente, company))
 
         base = cur.fetchone()
 
@@ -994,6 +1055,7 @@ def crear_disputa(payload: dict, conn=Depends(get_db)):
         # ================================
         cur.execute("""
             INSERT INTO disputa (
+                company_code,
                 dispute_case,
                 numero_documento,
                 codigo_cliente,
@@ -1009,10 +1071,12 @@ def crear_disputa(payload: dict, conn=Depends(get_db)):
                 descripcion_servicio,
                 created_at
             ) VALUES (
+                %s,
                 %s, %s, %s, %s, %s, %s, %s,
                 %s, %s, %s, %s, %s, %s, NOW()
             )
         """, (
+            company,
             dispute_case,
             numero_documento,
             codigo_cliente,
@@ -1037,7 +1101,8 @@ def crear_disputa(payload: dict, conn=Depends(get_db)):
                 estado_factura = 'DISPUTADA'
             WHERE numero_documento = %s
               AND codigo_cliente = %s
-        """, (numero_documento, codigo_cliente))
+              AND company_code = %s
+        """, (numero_documento, codigo_cliente, company))
 
         conn.commit()
 

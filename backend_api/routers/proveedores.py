@@ -1,11 +1,16 @@
 from fastapi import APIRouter, HTTPException
 import database
-from fastapi import APIRouter, HTTPException, Depends, Header
+from fastapi import APIRouter, HTTPException, Depends, Header, Query
 from rbac_service import has_permission
+from services.tenanting import company_code, company_prefix, ensure_company_column, set_payload_company
 
 
 
 router = APIRouter(prefix="/proveedores", tags=["Proveedores"])
+
+
+def _ensure_tenant_schema():
+    ensure_company_column("proveedor")
 
 
 def require_permission(module: str, action: str):
@@ -23,10 +28,13 @@ def require_permission(module: str, action: str):
 # INSERTAR NUEVO PROVEEDOR EN BD
 # ============================================================
 @router.post("/add")
-def add_proveedor(data: dict):
+def add_proveedor(data: dict, x_company_code: str | None = Header(None, alias="X-Company-Code")):
     try:
+        _ensure_tenant_schema()
+        data = set_payload_company(data, company_code(data.get("company_code"), x_company_code))
         sql = """
         INSERT INTO proveedor (
+            company_code,
             codigo,
             nombre,
             apellidos,
@@ -50,6 +58,7 @@ def add_proveedor(data: dict):
             comentarios
         )
         VALUES (
+            %(company_code)s,
             %(Codigo)s,
             %(Nombre)s,
             %(Apellidos)s,
@@ -84,12 +93,17 @@ def add_proveedor(data: dict):
 # OBTENER ÚLTIMO CÓDIGO CORRELATIVO
 # ============================================================
 @router.get("/ultimo")
-def get_ultimo_proveedor():
+def get_ultimo_proveedor(company_code_param: str | None = Query(None, alias="company_code"), x_company_code: str | None = Header(None, alias="X-Company-Code")):
+    _ensure_tenant_schema()
+    company = company_code(company_code_param, x_company_code)
+    prefix = company_prefix(company)
     sql_query = """
         SELECT MAX(CAST(SUBSTRING(codigo FROM 5 FOR 4) AS INTEGER))
-        FROM proveedor;
+        FROM proveedor
+        WHERE company_code = %s
+          AND codigo LIKE %s;
     """
-    result = database.sql(sql_query, fetch=True)
+    result = database.sql(sql_query, (company, f"{prefix}-%-P"), fetch=True)
 
     ultimo = result[0][0] if result and result[0][0] is not None else 0
     return {"ultimo": ultimo}
@@ -98,7 +112,14 @@ def get_ultimo_proveedor():
 # LISTAR PROVEEDORES — PAGINADO
 # ============================================================
 @router.get("/")
-def get_proveedores(page: int = 1, page_size: int = 50):
+def get_proveedores(
+    page: int = 1,
+    page_size: int = 50,
+    company_code_param: str | None = Query(None, alias="company_code"),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+):
+    _ensure_tenant_schema()
+    company = company_code(company_code_param, x_company_code)
     offset = (page - 1) * page_size
 
     rows = database.sql(f"""
@@ -108,11 +129,12 @@ def get_proveedores(page: int = 1, page_size: int = 50):
                terminospago, banco, cuenta_iban, swiftcode,
                uid, direccionbanco, tipoproveeduria, comentarios
         FROM proveedor
+        WHERE company_code = %(company_code)s
         ORDER BY codigo ASC
         LIMIT {page_size} OFFSET {offset}
-    """, fetch=True)
+    """, {"company_code": company}, fetch=True)
 
-    total = database.sql("SELECT COUNT(*) FROM proveedor", fetch=True)[0][0]
+    total = database.sql("SELECT COUNT(*) FROM proveedor WHERE company_code = %s", (company,), fetch=True)[0][0]
 
     data = [
         {
@@ -147,7 +169,9 @@ def get_proveedores(page: int = 1, page_size: int = 50):
 # OBTENER UN PROVEEDOR POR CÓDIGO
 # ============================================================
 @router.get("/{codigo}")
-def get_proveedor(codigo: str):
+def get_proveedor(codigo: str, x_company_code: str | None = Header(None, alias="X-Company-Code")):
+    _ensure_tenant_schema()
+    company = company_code(None, x_company_code)
     row = database.sql("""
         SELECT codigo, nombre, apellidos, nombrecomercial,
                cedula_vat, pais, provincia, canton, distrito,
@@ -156,7 +180,8 @@ def get_proveedor(codigo: str):
                uid, direccionbanco, tipoproveeduria, comentarios
         FROM proveedor
         WHERE codigo = %s
-    """, (codigo,), fetch=True)
+          AND company_code = %s
+    """, (codigo, company), fetch=True)
 
     if not row:
         raise HTTPException(status_code=404, detail="Proveedor no encontrado")
@@ -191,7 +216,9 @@ def get_proveedor(codigo: str):
 # ACTUALIZAR PROVEEDOR
 # ============================================================
 @router.put("/update")
-def update_proveedor(data: dict):
+def update_proveedor(data: dict, x_company_code: str | None = Header(None, alias="X-Company-Code")):
+    _ensure_tenant_schema()
+    data = set_payload_company(data, company_code(data.get("company_code"), x_company_code))
     sql = """
         UPDATE proveedor SET
             nombre = %(Nombre)s,
@@ -215,6 +242,7 @@ def update_proveedor(data: dict):
             tipoproveeduria = %(TipoProveeduria)s,
             comentarios = %(Comentarios)s
         WHERE codigo = %(Codigo)s
+          AND company_code = %(company_code)s
     """
     database.sql(sql, data)
     return {"status": "OK", "msg": "Proveedor actualizado ✔"}
@@ -224,7 +252,9 @@ def update_proveedor(data: dict):
 # ELIMINAR PROVEEDOR
 # ============================================================
 @router.delete("/{codigo}")
-def delete_proveedor(codigo: str):
-    database.sql("DELETE FROM proveedor WHERE codigo = %s", (codigo,))
+def delete_proveedor(codigo: str, x_company_code: str | None = Header(None, alias="X-Company-Code")):
+    _ensure_tenant_schema()
+    company = company_code(None, x_company_code)
+    database.sql("DELETE FROM proveedor WHERE codigo = %s AND company_code = %s", (codigo, company))
     return {"status": "OK", "msg": "Proveedor eliminado 🗑️"}
 

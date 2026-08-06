@@ -1,8 +1,6 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
-import requests
-
-from api_client import BASE_URL
+from api_client import BASE_URL, api_request
 
 
 class CreditControlPopup(tk.Toplevel):
@@ -56,7 +54,8 @@ class CreditControlPopup(tk.Toplevel):
         }
 
         try:
-            r = requests.post(
+            r = api_request(
+                "POST",
                 f"{BASE_URL}/cliente-credito/",  # ← SLASH FINAL CORRECTO
                 json=payload,
                 timeout=15

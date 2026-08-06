@@ -1,8 +1,7 @@
 import tkinter as tk
 from tkinter import ttk
-import requests
 
-from api_client import BASE_URL
+from api_client import BASE_URL, api_request
 from Modulos.Finanzas.date_utils import LONG_DATE_FORMAT, to_db_date
 from Modulos.Finanzas.Billing.tabla_billing import TablaBilling
 from Modulos.Servicios.widgets.date_picker import DatePicker
@@ -97,7 +96,8 @@ class BillingUI(tk.Frame):
     def _cargar_clientes(self):
 
         try:
-            r = requests.get(
+            r = api_request(
+                "GET",
                 f"{BASE_URL}/clientes",
                 params={"page": 1, "page_size": 500},
                 timeout=15

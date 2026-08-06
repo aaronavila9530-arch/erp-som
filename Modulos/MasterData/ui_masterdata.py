@@ -1,8 +1,17 @@
 import tkinter as tk
 from tkinter import messagebox
+from tkinter import filedialog
 from tkinter import ttk
-import requests
+from api_client import api_request
+from session_context import get_company_code
 from Modulos.MasterData.popups.popup_empleado import PopupEmpleado
+from Modulos.MasterData.masterdata_forms import (
+    FORM_SPECS,
+    export_masterdata_form,
+    get_spec,
+    import_masterdata_files,
+    validate_record,
+)
 
 
 
@@ -10,6 +19,10 @@ COLOR_MENU = "#003A75"
 COLOR_BG = "white"
 
 BASE_URL = "https://api-som-fastapi-production-e66d.up.railway.app"
+
+
+def _company_prefix():
+    return (get_company_code() or "MSL-CR").split("-")[0].strip().upper() or "MSL"
 
 
 class MasterDataUI(tk.Frame):
@@ -125,6 +138,185 @@ class MasterDataUI(tk.Frame):
                              width=15, command=self._add_servicio)
         btn_serv.grid(row=0, column=4, padx=5)
 
+        btn_export = tk.Button(frame, text="Exportar form", bg="#00703C", fg="white",
+                               width=16, command=self._export_masterdata_form)
+        btn_export.grid(row=0, column=5, padx=5)
+
+        btn_import = tk.Button(frame, text="Cargar form", bg="#6F4E00", fg="white",
+                               width=16, command=self._import_masterdata_form)
+        btn_import.grid(row=0, column=6, padx=5)
+
+
+    def _ask_masterdata_form_options(self):
+        win = tk.Toplevel(self)
+        win.title("Formulario Master Data")
+        win.configure(bg=COLOR_BG)
+        win.resizable(False, False)
+        win.transient(self.winfo_toplevel())
+        win.grab_set()
+
+        entity_var = tk.StringVar(value="Cliente")
+        format_var = tk.StringVar(value="Excel")
+        result = {"value": None}
+
+        body = tk.Frame(win, bg=COLOR_BG, padx=18, pady=16)
+        body.pack(fill="both", expand=True)
+
+        ttk.Label(body, text="Tipo:", background=COLOR_BG).grid(row=0, column=0, sticky="w", pady=5)
+        ttk.Combobox(
+            body,
+            textvariable=entity_var,
+            values=["Cliente", "Proveedor", "Empleado", "Surveyor"],
+            state="readonly",
+            width=24,
+        ).grid(row=0, column=1, sticky="ew", padx=(8, 0), pady=5)
+
+        ttk.Label(body, text="Formato:", background=COLOR_BG).grid(row=1, column=0, sticky="w", pady=5)
+        ttk.Combobox(
+            body,
+            textvariable=format_var,
+            values=["Excel", "Word"],
+            state="readonly",
+            width=24,
+        ).grid(row=1, column=1, sticky="ew", padx=(8, 0), pady=5)
+
+        actions = tk.Frame(body, bg=COLOR_BG)
+        actions.grid(row=2, column=0, columnspan=2, sticky="e", pady=(12, 0))
+
+        def accept():
+            result["value"] = (entity_var.get(), format_var.get())
+            win.destroy()
+
+        tk.Button(actions, text="Cancelar", width=10, command=win.destroy).pack(side="right", padx=(6, 0))
+        tk.Button(actions, text="Continuar", width=10, bg=COLOR_MENU, fg="white", command=accept).pack(side="right")
+
+        self.wait_window(win)
+        return result["value"]
+
+
+    def _export_masterdata_form(self):
+        try:
+            selected = self._ask_masterdata_form_options()
+            if not selected:
+                return
+            entity_label, fmt = selected
+            spec = get_spec(entity_label)
+            ext = ".xlsx" if fmt == "Excel" else ".docx"
+            output_path = filedialog.asksaveasfilename(
+                parent=self,
+                title="Exportar formulario Master Data",
+                defaultextension=ext,
+                initialfile=f"Formulario_MasterData_{spec.label}{ext}",
+                filetypes=[
+                    ("Excel", "*.xlsx"),
+                    ("Word", "*.docx"),
+                ],
+            )
+            if not output_path:
+                return
+            export_masterdata_form(spec.key, fmt, output_path)
+            messagebox.showinfo("Master Data", f"Formulario exportado correctamente:\n{output_path}")
+        except Exception as e:
+            messagebox.showerror("Master Data", f"No se pudo exportar el formulario:\n{e}")
+
+
+    def _import_masterdata_form(self):
+        paths = filedialog.askopenfilenames(
+            parent=self,
+            title="Cargar formularios Master Data",
+            filetypes=[
+                ("Word o Excel", "*.docx *.xlsx"),
+                ("Word", "*.docx"),
+                ("Excel", "*.xlsx"),
+            ],
+        )
+        if not paths:
+            return
+
+        try:
+            records = import_masterdata_files(list(paths))
+        except Exception as e:
+            messagebox.showerror("Master Data", f"No se pudieron leer los formularios:\n{e}")
+            return
+
+        created = 0
+        updated = 0
+        failed = []
+        for idx, record in enumerate(records, start=1):
+            if record.get("error"):
+                failed.append(f"{idx}. {record.get('file')}: {record.get('error')}")
+                continue
+            try:
+                spec = FORM_SPECS[record["entity"]]
+                status = self._send_masterdata_record(spec, record["data"])
+                if status == "updated":
+                    updated += 1
+                else:
+                    created += 1
+            except Exception as e:
+                failed.append(f"{idx}. {record.get('file')}: {e}")
+
+        summary = f"Registros creados: {created}\nRegistros actualizados: {updated}"
+        if failed:
+            summary += "\n\nNo cargados:\n" + "\n".join(failed[:8])
+            if len(failed) > 8:
+                summary += f"\n... y {len(failed) - 8} mas."
+            messagebox.showwarning("Master Data", summary)
+        else:
+            messagebox.showinfo("Master Data", summary)
+
+        try:
+            self.buscar()
+        except Exception:
+            pass
+
+
+    def _send_masterdata_record(self, spec, data):
+        from api_client import api_request, raise_for_status_with_detail
+
+        self._assign_masterdata_code_if_needed(spec, data)
+        missing = validate_record(spec, data)
+        if missing:
+            raise ValueError("Faltan campos requeridos: " + ", ".join(missing))
+
+        response = api_request("POST", f"{spec.endpoint}/add", json=data, timeout=30)
+        if response.status_code < 400:
+            return "created"
+
+        code = str(data.get(spec.code_field) or "").strip()
+        if not code:
+            raise_for_status_with_detail(response)
+
+        update_response = api_request("PUT", f"{spec.endpoint}/update", json=data, timeout=30)
+        if update_response.status_code < 400:
+            return "updated"
+
+        raise_for_status_with_detail(update_response)
+
+
+    def _assign_masterdata_code_if_needed(self, spec, data):
+        code = str(data.get(spec.code_field) or "").strip()
+        if code or spec.key == "empleado":
+            return
+
+        from api_client import api_request
+        from session_context import get_company_code
+
+        suffix_by_entity = {
+            "cliente": "C",
+            "proveedor": "P",
+            "surveyor": "S",
+        }
+        suffix = suffix_by_entity.get(spec.key)
+        if not suffix:
+            return
+
+        response = api_request("GET", f"{spec.endpoint}/ultimo", timeout=15)
+        response.raise_for_status()
+        ultimo = int((response.json() or {}).get("ultimo", 0) or 0)
+        prefix = str(get_company_code() or "MSL").split("-")[0].strip().upper() or "MSL"
+        data[spec.code_field] = f"{prefix}-{ultimo + 1:04d}-{suffix}"
+
 
     # ======================================================
     # TABLA RESULTADOS
@@ -146,7 +338,7 @@ class MasterDataUI(tk.Frame):
     def load_continentes(self):
         try:
             url = f"{BASE_URL}/cpp/continentes"
-            response = requests.get(url, timeout=15)
+            response = api_request("GET", url, timeout=15)
             response.raise_for_status()
 
             res = response.json()
@@ -172,7 +364,7 @@ class MasterDataUI(tk.Frame):
 
         try:
             url = f"{BASE_URL}/cpp/paises?continente={cont}"
-            response = requests.get(url, timeout=15)
+            response = api_request("GET", url, timeout=15)
             response.raise_for_status()
 
             res = response.json()
@@ -196,7 +388,7 @@ class MasterDataUI(tk.Frame):
 
         try:
             url = f"{BASE_URL}/cpp/puertos?pais={pais}"
-            response = requests.get(url, timeout=15)
+            response = api_request("GET", url, timeout=15)
             response.raise_for_status()
 
             res = response.json()
@@ -287,14 +479,14 @@ class MasterDataUI(tk.Frame):
     # ======================================================
     def _add_empleado(self):
         from Modulos.MasterData.popups.popup_empleado import PopupEmpleado
-        nuevo_codigo = "MSL-0001-E"
+        nuevo_codigo = f"{_company_prefix()}-0001-E"
         PopupEmpleado(self, codigo=nuevo_codigo, on_save=self._empleado_guardado)
 
     def _empleado_guardado(self, data):
         print("🏁 Enviando empleado al API…")
         try:
             url = f"{BASE_URL}/empleados/add"
-            response = requests.post(url, json=data, timeout=10)
+            response = api_request("POST", url, json=data, timeout=10)
             print("📥 Status:", response.status_code)
             if response.status_code == 200:
                 messagebox.showinfo("✔", "Empleado guardado correctamente")
@@ -325,16 +517,16 @@ class MasterDataUI(tk.Frame):
         # 3. Generar código incremental
         try:
             url = f"{BASE_URL}/surveyores/ultimo"
-            response = requests.get(url, timeout=10)
+            response = api_request("GET", url, timeout=10)
             data = response.json()
 
             ultimo = data.get("ultimo", 0)
             nuevo_num = f"{ultimo + 1:04d}"
-            nuevo_codigo = f"MSL-{nuevo_num}-S"
+            nuevo_codigo = f"{_company_prefix()}-{nuevo_num}-S"
 
         except Exception as e:
             messagebox.showerror("Error API", f"No se pudo generar el código: {e}")
-            nuevo_codigo = "MSL-0001-S"
+            nuevo_codigo = f"{_company_prefix()}-0001-S"
 
         # 4. Abrir popup con operaciones y puertos cargados
         popup = PopupSurveyor(
@@ -353,7 +545,7 @@ class MasterDataUI(tk.Frame):
         print("🏁 Enviando surveyor al API…")
         try:
             url = f"{BASE_URL}/surveyores/add"
-            response = requests.post(url, json=data, timeout=10)
+            response = api_request("POST", url, json=data, timeout=10)
             print("📥 Status:", response.status_code)
             if response.status_code == 200:
                 messagebox.showinfo("✔", "Surveyor guardado correctamente")
@@ -372,7 +564,7 @@ class MasterDataUI(tk.Frame):
         try:
             # Obtener consecutivo desde el API
             url = f"{BASE_URL}/clientes/ultimo"
-            response = requests.get(url, timeout=10)
+            response = api_request("GET", url, timeout=10)
             data = response.json()
 
             # Leer llave correcta
@@ -380,7 +572,7 @@ class MasterDataUI(tk.Frame):
 
             # Generar consecutivo
             nuevo_num = f"{ultimo + 1:04d}"
-            nuevo_codigo = f"MSL-{nuevo_num}-C"
+            nuevo_codigo = f"{_company_prefix()}-{nuevo_num}-C"
 
         except Exception as e:
             messagebox.showerror("Error API", f"No se pudo generar el código: {e}")
@@ -395,7 +587,7 @@ class MasterDataUI(tk.Frame):
         print("🏁 Enviando cliente al API…")
         try:
             url = f"{BASE_URL}/clientes/add"
-            response = requests.post(url, json=data, timeout=10)
+            response = api_request("POST", url, json=data, timeout=10)
             print("📥 Status:", response.status_code)
             if response.status_code == 200:
                 messagebox.showinfo("✔", "Cliente guardado correctamente")
@@ -415,7 +607,7 @@ class MasterDataUI(tk.Frame):
         try:
             # ENDPOINT CORRECTO DEL BACKEND
             url = f"{BASE_URL}/proveedores/ultimo"
-            response = requests.get(url, timeout=10)
+            response = api_request("GET", url, timeout=10)
             data = response.json()
 
             # LLAVE CORRECTA DEL JSON
@@ -423,7 +615,7 @@ class MasterDataUI(tk.Frame):
 
             # GENERAR SIGUIENTE CONSECUTIVO
             nuevo_num = f"{ultimo + 1:04d}"
-            nuevo_codigo = f"MSL-{nuevo_num}-P"
+            nuevo_codigo = f"{_company_prefix()}-{nuevo_num}-P"
 
         except Exception as e:
             messagebox.showerror("Error API", f"No se pudo generar el código: {e}")
@@ -439,7 +631,7 @@ class MasterDataUI(tk.Frame):
     def _proveedor_guardado(self, data):
         try:
             url = f"{BASE_URL}/proveedores/add"
-            response = requests.post(url, json=data, timeout=10)
+            response = api_request("POST", url, json=data, timeout=10)
 
             if response.status_code == 200:
                 messagebox.showinfo("✔", "Proveedor guardado correctamente")
@@ -455,12 +647,11 @@ class MasterDataUI(tk.Frame):
     # ======================================================
     def _add_servicio(self):
         from Modulos.MasterData.popups.popup_servicio import PopupServicio
-        import requests
 
         try:
             # 🔹 Usar el router correcto de ServiciosMD
             url = f"{BASE_URL}/servicios_md/ultimo"
-            response = requests.get(url, timeout=25)
+            response = api_request("GET", url, timeout=25)
             data = response.json()
 
             # "ultimo" viene del backend (MAX del código en ServiciosMD)
@@ -468,11 +659,11 @@ class MasterDataUI(tk.Frame):
 
             # Generar siguiente consecutivo
             nuevo_num = str(ultimo + 1).zfill(4)   # 0001, 0002, 0003...
-            nuevo_codigo = f"MSL-{nuevo_num}-S"
+            nuevo_codigo = f"{_company_prefix()}-{nuevo_num}-S"
         except Exception as e:
             print("❌ Error generando código servicio:", e)
             # Fallback si algo falla
-            nuevo_codigo = "MSL-0001-S"
+            nuevo_codigo = f"{_company_prefix()}-0001-S"
 
         popup = PopupServicio(self, codigo=nuevo_codigo, on_save=self._servicio_guardado)
         popup.grab_set()
@@ -487,7 +678,7 @@ class MasterDataUI(tk.Frame):
         print("🏁 Enviando servicio al API…")
         try:
             url = f"{BASE_URL}/servicios_md/add"
-            response = requests.post(url, json=data, timeout=10)
+            response = api_request("POST", url, json=data, timeout=10)
             print("📥 Status:", response.status_code)
             print("📥 Respuesta:", response.text)
             if response.status_code == 200:

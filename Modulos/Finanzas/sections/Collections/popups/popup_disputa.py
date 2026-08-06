@@ -1,8 +1,7 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
-import requests
 
-from api_client import BASE_URL
+from api_client import BASE_URL, api_request
 from Modulos.Finanzas.date_utils import to_db_date
 
 
@@ -115,7 +114,8 @@ class PopupDisputa(tk.Toplevel):
         }
 
         try:
-            r = requests.post(
+            r = api_request(
+                "POST",
                 f"{BASE_URL}/collections/disputa",
                 json=payload,
                 timeout=15

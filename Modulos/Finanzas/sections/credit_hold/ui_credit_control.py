@@ -1,8 +1,7 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
-import requests
 
-from api_client import BASE_URL
+from api_client import BASE_URL, api_request
 from Modulos.Finanzas.sections.credit_hold.PopupEditarCreditoCliente import PopupEditarCreditoCliente
 from Modulos.Finanzas.sections.credit_hold.ui_credit_control_popup import CreditControlPopup
 
@@ -146,7 +145,7 @@ class CreditControlUI(tk.Frame):
         if self.clientes_loaded:
             return
         try:
-            r = requests.get(f"{BASE_URL}/clientes", timeout=15)
+            r = api_request("GET", f"{BASE_URL}/clientes", timeout=15)
             r.raise_for_status()
             data = r.json().get("data", [])
 
@@ -170,7 +169,8 @@ class CreditControlUI(tk.Frame):
 
         # -------- CREDIT CONFIG --------
         try:
-            r = requests.get(
+            r = api_request(
+                "GET",
                 f"{BASE_URL}/cliente-credito/{codigo}",
                 timeout=15
             )
@@ -205,7 +205,8 @@ class CreditControlUI(tk.Frame):
 
         # -------- NUEVO: CREDIT EXPOSURE --------
         try:
-            r = requests.get(
+            r = api_request(
+                "GET",
                 f"{BASE_URL}/cliente-credito/exposure/{codigo}",
                 timeout=15
             )
@@ -279,7 +280,8 @@ class CreditControlUI(tk.Frame):
         }
 
         try:
-            r = requests.put(
+            r = api_request(
+                "PUT",
                 f"{BASE_URL}/cliente-credito/{codigo}",
                 json=payload,
                 timeout=15
@@ -308,7 +310,8 @@ class CreditControlUI(tk.Frame):
             return
 
         try:
-            r = requests.delete(
+            r = api_request(
+                "DELETE",
                 f"{BASE_URL}/cliente-credito/{codigo}",
                 timeout=15
             )

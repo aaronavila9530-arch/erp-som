@@ -10,6 +10,7 @@ from services.accounting_bank_rules import (
     should_apply_bcr_collection_fee,
 )
 from services.employee_payee_rules import employee_obligation_ids, is_employee_payee, load_employee_name_keys
+from services.tenanting import DEFAULT_COMPANY_CODE, company_code as normalize_company_code, ensure_company_column
 
 
 def _apply_current_fiscal_classification(conn):
@@ -104,7 +105,7 @@ def create_accounting_entry(
     return entry_id
 
 
-def sync_collections_to_accounting(conn):
+def sync_collections_to_accounting(conn, company_code_filter: str | None = None):
 
     from psycopg2.extras import RealDictCursor
     from datetime import date, datetime
@@ -113,8 +114,11 @@ def sync_collections_to_accounting(conn):
         raise Exception("DB connection is required")
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
+    company = normalize_company_code(company_code_filter)
 
     try:
+        ensure_company_column("collections")
+        ensure_company_column("accounting_entries")
         # ============================================================
         # 1️⃣ TC DEL DÍA
         # ============================================================
@@ -149,8 +153,9 @@ def sync_collections_to_accounting(conn):
                 c.moneda,
                 c.total
             FROM collections c
+            WHERE c.company_code = %s
             ORDER BY c.id ASC
-        """)
+        """, (company,))
 
         rows = cur.fetchall() or []
 
@@ -242,10 +247,11 @@ def sync_collections_to_accounting(conn):
                 FROM accounting_entries
                 WHERE origin = 'COLLECTIONS'
                   AND origin_id = %s
+                  AND company_code = %s
                   AND COALESCE(reversed, FALSE) = FALSE
                 ORDER BY id DESC
                 LIMIT 1
-            """, (collection_id,))
+            """, (collection_id, company))
 
             row_entry = cur.fetchone()
 
@@ -276,10 +282,10 @@ def sync_collections_to_accounting(conn):
 
                 cur.execute("""
                     INSERT INTO accounting_entries
-                    (entry_date, period, description, origin, origin_id, created_by)
-                    VALUES (%s, %s, %s, 'COLLECTIONS', %s, 'SYSTEM')
+                    (company_code, entry_date, period, description, origin, origin_id, created_by)
+                    VALUES (%s, %s, %s, %s, 'COLLECTIONS', %s, 'SYSTEM')
                     RETURNING id
-                """, (fecha, period, detail_text, collection_id))
+                """, (company, fecha, period, detail_text, collection_id))
 
                 entry_id = cur.fetchone()["id"]
 

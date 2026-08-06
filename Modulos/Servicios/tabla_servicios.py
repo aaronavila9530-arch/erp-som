@@ -1,9 +1,7 @@
 from Modulos.MasterData.tablas.base_table import BasePaginatedTable
-import requests
 from datetime import datetime, date, timedelta
 from Modulos.Servicios.date_utils import to_long_english_date
-
-BASE_URL = "https://api-som-fastapi-production-e66d.up.railway.app"
+from api_client import BASE_URL, api_request
 
 
 class TablaServiciosUI(BasePaginatedTable):
@@ -59,7 +57,8 @@ class TablaServiciosUI(BasePaginatedTable):
         # ============================================================
         # LLAMADA API
         # ============================================================
-        resp = requests.get(
+        resp = api_request(
+            "GET",
             f"{BASE_URL}/servicios",
             params=params,
             timeout=15

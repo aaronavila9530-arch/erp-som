@@ -1,7 +1,7 @@
 import requests
 from typing import Optional, Any
 from datetime import datetime
-from session_context import get_user, get_rol
+from session_context import get_user, get_rol, get_company_code, get_company_name
 import os
 import tempfile
 from email.message import Message
@@ -911,7 +911,7 @@ def import_bank_statement_api(payload):
 
 
 def get_bank_reconciliation_statements_api(bank_account_code=None, currency_code=None, period=None, status=None):
-    params = {}
+    params = {"company_code": get_company_code()}
     if bank_account_code:
         params["bank_account_code"] = bank_account_code
     if currency_code:
@@ -1023,6 +1023,7 @@ def get_accounting_periods_api():
         r = api_request(
             "GET",
             f"{BASE_URL}/accounting/periods",
+            params={"company_code": get_company_code()},
             timeout=15
         )
         r.raise_for_status()
@@ -1034,27 +1035,44 @@ def get_accounting_periods_api():
 
 def get_clientes_finanzas_api():
     try:
-        r = api_request(
-            "GET",
-            f"{BASE_URL}/clientes?page=1&page_size=500",
-            timeout=15
-        )
-        r.raise_for_status()
-        data = r.json().get("data", [])
-        return [
-            {
-                "codigo": c.get("codigo"),
-                "nombre": c.get("nombrecomercial")
-            }
-            for c in data
-        ]
+        data = []
+        page = 1
+        page_size = 500
+        while True:
+            r = api_request(
+                "GET",
+                f"{BASE_URL}/clientes?page={page}&page_size={page_size}",
+                timeout=15
+            )
+            r.raise_for_status()
+            payload = r.json()
+            batch = payload.get("data", []) or []
+            data.extend(batch)
+            total = int(payload.get("total") or len(data))
+            if len(data) >= total or not batch:
+                break
+            page += 1
+
+        clientes = []
+        seen = set()
+        for c in data:
+            codigo = (c.get("codigo") or "").strip()
+            nombre = (c.get("nombrecomercial") or c.get("nombrejuridico") or codigo).strip()
+            if not codigo or not nombre:
+                continue
+            key = (codigo, nombre)
+            if key in seen:
+                continue
+            seen.add(key)
+            clientes.append({"codigo": codigo, "nombre": nombre})
+        return clientes
     except Exception as e:
-        print("❌ Error clientes finanzas:", e)
+        print("Error clientes finanzas:", e)
         return []
 
 
 # ============================================================
-# INCOMING PAYMENTS — REGISTRAR PAGO MANUAL
+# INCOMING PAYMENTS - REGISTRAR PAGO MANUAL
 # ============================================================
 def post_incoming_payment_api(data: dict):
     """
@@ -1848,7 +1866,7 @@ def get_accounting_complete_financial_statements_api(
     period_to=None,
     limit=1000,
 ):
-    params = {"limit": limit}
+    params = {"limit": limit, "company_code": get_company_code()}
     if period:
         params["period"] = period
     if period_from:
@@ -1862,6 +1880,70 @@ def get_accounting_complete_financial_statements_api(
         timeout=60,
     )
     r.raise_for_status()
+    return r.json()
+
+
+def get_accounting_fixed_assets_api(search=None, status="ACTIVE", classification=None, limit=1000):
+    params = {"limit": limit, "company_code": get_company_code()}
+    if search:
+        params["search"] = search
+    if status:
+        params["status"] = status
+    if classification:
+        params["classification"] = classification
+    r = api_request("GET", f"{BASE_URL}/accounting/fixed-assets", params=params, timeout=60)
+    r.raise_for_status()
+    return r.json()
+
+
+def get_accounting_fixed_asset_schedule_api(asset_id):
+    r = api_request("GET", f"{BASE_URL}/accounting/fixed-assets/{asset_id}/schedule", timeout=60)
+    r.raise_for_status()
+    return r.json().get("data", [])
+
+
+def create_accounting_fixed_asset_api(payload):
+    payload = dict(payload or {})
+    payload.setdefault("company_code", get_company_code())
+    r = api_request("POST", f"{BASE_URL}/accounting/fixed-assets", json=payload, timeout=60)
+    raise_for_status_with_detail(r)
+    return r.json()
+
+
+def update_accounting_fixed_asset_api(asset_id, payload):
+    payload = dict(payload or {})
+    payload.setdefault("company_code", get_company_code())
+    r = api_request("PUT", f"{BASE_URL}/accounting/fixed-assets/{asset_id}", json=payload, timeout=60)
+    raise_for_status_with_detail(r)
+    return r.json()
+
+
+def disable_accounting_fixed_asset_api(asset_id):
+    r = api_request("PUT", f"{BASE_URL}/accounting/fixed-assets/{asset_id}/disable", json={}, timeout=60)
+    raise_for_status_with_detail(r)
+    return r.json()
+
+
+def get_accounting_inventory_items_api(search=None, status="ACTIVE"):
+    params = {"company_code": get_company_code()}
+    if search:
+        params["search"] = search
+    if status:
+        params["status"] = status
+    r = api_request("GET", f"{BASE_URL}/accounting/fixed-assets/inventory/items", params=params, timeout=60)
+    r.raise_for_status()
+    return r.json()
+
+
+def create_accounting_inventory_item_api(payload):
+    r = api_request("POST", f"{BASE_URL}/accounting/fixed-assets/inventory/items", json=payload, timeout=60)
+    raise_for_status_with_detail(r)
+    return r.json()
+
+
+def update_accounting_inventory_item_api(item_id, payload):
+    r = api_request("PUT", f"{BASE_URL}/accounting/fixed-assets/inventory/items/{item_id}", json=payload, timeout=60)
+    raise_for_status_with_detail(r)
     return r.json()
 
 
@@ -2112,7 +2194,7 @@ def get_accounting_validation_alerts_api(
     origin=None,
     limit=200,
 ):
-    params = {"limit": limit}
+    params = {"limit": limit, "company_code": get_company_code()}
     if period:
         params["period"] = period
     if period_from:
@@ -2230,7 +2312,7 @@ def update_accounting_auxiliary_setting_api(entity_type, account_code, user):
 # CENTRO FISCAL COSTA RICA
 # ============================================================
 def sync_accounting_tax_api():
-    r = api_request("POST", f"{BASE_URL}/accounting/tax/sync", timeout=180)
+    r = api_request("POST", f"{BASE_URL}/accounting/tax/sync", params={"company_code": get_company_code()}, timeout=180)
     raise_for_status_with_detail(r)
     return r.json()
 
@@ -2252,7 +2334,7 @@ def get_tax_book_api(direction, period):
 
 
 def get_tax_iva_api(period):
-    r = api_request("GET", f"{BASE_URL}/accounting/tax/iva", params={"period": period}, timeout=45)
+    r = api_request("GET", f"{BASE_URL}/accounting/tax/iva", params={"period": period, "company_code": get_company_code()}, timeout=45)
     raise_for_status_with_detail(r)
     return r.json()
 
@@ -2333,26 +2415,27 @@ def get_gmail_fiscal_messages_api(status=None):
 # ESPACIO DE TRABAJO DEL CONTADOR
 # ============================================================
 def get_accountant_dashboard_api(period):
-    r = api_request("GET", f"{BASE_URL}/accounting/workspace/dashboard", params={"period": period}, timeout=45)
+    r = api_request("GET", f"{BASE_URL}/accounting/workspace/dashboard", params={"period": period, "company_code": get_company_code()}, timeout=45)
     raise_for_status_with_detail(r)
     return r.json()
 
 
 def get_accounting_close_checklist_api(period):
-    r = api_request("GET", f"{BASE_URL}/accounting/workspace/close-checklist", params={"period": period}, timeout=45)
+    r = api_request("GET", f"{BASE_URL}/accounting/workspace/close-checklist", params={"period": period, "company_code": get_company_code()}, timeout=45)
     raise_for_status_with_detail(r)
     return r.json()
 
 
 def update_accounting_close_checklist_api(period, item_code, status, user, notes="", evidence=None):
     r = api_request("PUT", f"{BASE_URL}/accounting/workspace/close-checklist/{period}/{item_code}",
+                    params={"company_code": get_company_code()},
                     json={"status": status, "user": user, "notes": notes, "evidence": evidence or {}}, timeout=30)
     raise_for_status_with_detail(r)
     return r.json()
 
 
 def get_accounting_guided_close_api(period):
-    r = api_request("GET", f"{BASE_URL}/accounting/workspace/guided-close", params={"period": period}, timeout=45)
+    r = api_request("GET", f"{BASE_URL}/accounting/workspace/guided-close", params={"period": period, "company_code": get_company_code()}, timeout=45)
     raise_for_status_with_detail(r)
     return r.json()
 
@@ -2361,6 +2444,7 @@ def post_accounting_guided_close_api(period, user, notes=""):
     r = api_request(
         "POST",
         f"{BASE_URL}/accounting/workspace/guided-close/{period}/close",
+        params={"company_code": get_company_code()},
         json={"user": user, "notes": notes or ""},
         timeout=45,
     )
@@ -2833,7 +2917,7 @@ def get_accounting_iva_api(period):
     r = api_request(
         "GET",
         f"{BASE_URL}/accounting/iva",
-        params={"period": period},
+        params={"period": period, "company_code": get_company_code()},
         timeout=20
     )
     r.raise_for_status()
@@ -3031,13 +3115,19 @@ def post_factura_manual_api(payload: dict):
         timeout=30
     )
 
-    r.raise_for_status()
+    try:
+        r.raise_for_status()
+    except Exception as e:
+        try:
+            detail = r.json().get("detail")
+        except Exception:
+            detail = getattr(r, "text", "")
+        raise Exception(detail or str(e))
     return r.json()
 
 
-
 # ============================================================
-# OBTENER TÉRMINO DE PAGO (cliente -> cliente_credito)
+# OBTENER TERMINO DE PAGO (cliente -> cliente_credito)
 # ============================================================
 def get_termino_pago_cliente_api(nombre_cliente: str) -> dict:
     r = api_request(
@@ -3214,6 +3304,8 @@ def _headers():
 def api_request(method: str, url: str, **kwargs):
     headers = kwargs.pop("headers", {})
     headers.update(_headers())
+    headers["X-Company-Code"] = get_company_code()
+    headers["X-Company-Name"] = get_company_name()
 
     # ======================================================
     # NORMALIZAR URL (BLINDAJE TOTAL)

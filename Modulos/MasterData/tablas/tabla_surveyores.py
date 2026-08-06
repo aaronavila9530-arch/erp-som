@@ -1,6 +1,7 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 import requests
+from api_client import api_request
 
 from Modulos.MasterData.tablas.base_table import BasePaginatedTable
 from Modulos.MasterData.popups.popup_surveyor import PopupSurveyor
@@ -68,7 +69,7 @@ class TablaSurveyoresUI(BasePaginatedTable):
     def load_data(self):
         try:
             url = f"{BASE_URL}/surveyores?page={self.page}&page_size={self.page_size}"
-            r = requests.get(url, timeout=15)
+            r = api_request("GET", url, timeout=15)
             data = r.json()
 
             self.total_items = data.get("total", 0)
@@ -107,7 +108,7 @@ class TablaSurveyoresUI(BasePaginatedTable):
 
         try:
             url = f"{BASE_URL}/surveyores/{codigo}"
-            r = requests.get(url, timeout=10)
+            r = api_request("GET", url, timeout=10)
             r.raise_for_status()
         except:
             messagebox.showerror("Error", f"Surveyor {codigo} no encontrado")
@@ -169,7 +170,7 @@ class TablaSurveyoresUI(BasePaginatedTable):
             return
         try:
             url = f"{BASE_URL}/surveyores/{codigo}"
-            r = requests.get(url, timeout=10)
+            r = api_request("GET", url, timeout=10)
             r.raise_for_status()
         except:
             messagebox.showerror("Error", f"Surveyor {codigo} no encontrado")
@@ -198,7 +199,7 @@ class TablaSurveyoresUI(BasePaginatedTable):
     def _guardar_edicion(self, data):
         try:
             url = f"{BASE_URL}/surveyores/update"
-            r = requests.put(url, json=data, timeout=15)
+            r = api_request("PUT", url, json=data, timeout=15)
             if r.status_code == 200:
                 messagebox.showinfo("OK", "Surveyor actualizado correctamente")
                 self.refresh()
@@ -228,7 +229,7 @@ class TablaSurveyoresUI(BasePaginatedTable):
             return
         try:
             url = f"{BASE_URL}/surveyores/{codigo}"
-            r = requests.delete(url, timeout=15)
+            r = api_request("DELETE", url, timeout=15)
             if r.status_code == 200:
                 messagebox.showinfo("OK", "Surveyor eliminado")
                 self.refresh()

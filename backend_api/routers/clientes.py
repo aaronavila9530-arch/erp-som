@@ -1,11 +1,16 @@
 # backend_api/routers/clientes.py
 from fastapi import APIRouter, HTTPException
 import database
-from fastapi import APIRouter, HTTPException, Depends, Header
+from fastapi import APIRouter, HTTPException, Depends, Header, Query
 from rbac_service import has_permission
 from datetime import date, datetime
+from services.tenanting import company_code, company_prefix, ensure_company_column, set_payload_company
 
 router = APIRouter(prefix="/clientes", tags=["Clientes"])
+
+
+def _ensure_tenant_schema():
+    ensure_company_column("cliente")
 
 
 def _normalize_fecha_pago(value):
@@ -59,11 +64,14 @@ def require_permission(module: str, action: str):
 
 
 @router.post("/add")
-def add_cliente(data: dict):
-    data = dict(data)
+def add_cliente(data: dict, x_company_code: str | None = Header(None, alias="X-Company-Code")):
+    _ensure_tenant_schema()
+    company = company_code(data.get("company_code"), x_company_code)
+    data = set_payload_company(data, company)
     data["FechaDePago"] = _normalize_fecha_pago(data.get("FechaDePago"))
     sql = """
         INSERT INTO cliente (
+            company_code,
             codigo,
             nombrejuridico,
             nombrecomercial,
@@ -83,6 +91,7 @@ def add_cliente(data: dict):
             contacto_secundario
         )
         VALUES (
+            %(company_code)s,
             %(Codigo)s,
             %(NombreJuridico)s,
             %(NombreComercial)s,
@@ -114,12 +123,20 @@ def add_cliente(data: dict):
 # OBTENER ÚLTIMO CÓDIGO CORRELATIVO  ✅ MOVER ARRIBA
 # ============================================================
 @router.get("/ultimo")
-def get_ultimo_cliente():
+def get_ultimo_cliente(
+    company_code_param: str | None = Query(None, alias="company_code"),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+):
+    _ensure_tenant_schema()
+    company = company_code(company_code_param, x_company_code)
+    prefix = company_prefix(company)
     sql = """
         SELECT MAX(CAST(SUBSTRING(codigo FROM 5 FOR 4) AS INTEGER))
-        FROM cliente;
+        FROM cliente
+        WHERE company_code = %s
+          AND codigo LIKE %s;
     """
-    result = database.sql(sql, fetch=True)
+    result = database.sql(sql, (company, f"{prefix}-%-C"), fetch=True)
     ultimo = result[0][0] if result and result[0][0] is not None else 0
     return {"ultimo": ultimo}
 
@@ -129,7 +146,14 @@ def get_ultimo_cliente():
 # LISTAR CLIENTES — PAGINADO
 # ============================================================
 @router.get("")
-def get_clientes(page: int = 1, page_size: int = 50):
+def get_clientes(
+    page: int = 1,
+    page_size: int = 50,
+    company_code_param: str | None = Query(None, alias="company_code"),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+):
+    _ensure_tenant_schema()
+    company = company_code(company_code_param, x_company_code)
     offset = (page - 1) * page_size
 
     rows = database.sql("""
@@ -152,11 +176,12 @@ def get_clientes(page: int = 1, page_size: int = 50):
             contacto_principal,
             contacto_secundario
         FROM cliente
+        WHERE company_code = %s
         ORDER BY codigo ASC
         LIMIT %s OFFSET %s
-    """, (page_size, offset), fetch=True)
+    """, (company, page_size, offset), fetch=True)
 
-    total = database.sql("SELECT COUNT(*) FROM cliente", fetch=True)[0][0]
+    total = database.sql("SELECT COUNT(*) FROM cliente WHERE company_code = %s", (company,), fetch=True)[0][0]
 
     data = [
         {
@@ -188,7 +213,9 @@ def get_clientes(page: int = 1, page_size: int = 50):
 # OBTENER UN CLIENTE POR CÓDIGO
 # ============================================================
 @router.get("/{codigo}")
-def get_cliente(codigo: str):
+def get_cliente(codigo: str, x_company_code: str | None = Header(None, alias="X-Company-Code")):
+    _ensure_tenant_schema()
+    company = company_code(None, x_company_code)
     row = database.sql("""
         SELECT
             codigo,
@@ -210,7 +237,8 @@ def get_cliente(codigo: str):
             contacto_secundario
         FROM cliente
         WHERE codigo = %s
-    """, (codigo,), fetch=True)
+          AND company_code = %s
+    """, (codigo, company), fetch=True)
 
     if not row:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
@@ -238,8 +266,10 @@ def get_cliente(codigo: str):
 
 
 @router.put("/update")
-def update_cliente(data: dict):
-    data = dict(data)
+def update_cliente(data: dict, x_company_code: str | None = Header(None, alias="X-Company-Code")):
+    _ensure_tenant_schema()
+    company = company_code(data.get("company_code"), x_company_code)
+    data = set_payload_company(data, company)
     data["FechaDePago"] = _normalize_fecha_pago(data.get("FechaDePago"))
     sql = """
         UPDATE cliente SET
@@ -259,6 +289,7 @@ def update_cliente(data: dict):
             contacto_principal = %(ContactoPrincipal)s,
             contacto_secundario = %(ContactoSecundario)s
         WHERE codigo = %(Codigo)s
+          AND company_code = %(company_code)s
     """
     try:
         database.sql(sql, data)
@@ -271,7 +302,9 @@ def update_cliente(data: dict):
 # ELIMINAR CLIENTE
 # ============================================================
 @router.delete("/{codigo}")
-def delete_cliente(codigo: str):
-    database.sql("DELETE FROM cliente WHERE codigo = %s", (codigo,))
+def delete_cliente(codigo: str, x_company_code: str | None = Header(None, alias="X-Company-Code")):
+    _ensure_tenant_schema()
+    company = company_code(None, x_company_code)
+    database.sql("DELETE FROM cliente WHERE codigo = %s AND company_code = %s", (codigo, company))
     return {"status": "OK", "msg": "Cliente eliminado 🗑️"}
 

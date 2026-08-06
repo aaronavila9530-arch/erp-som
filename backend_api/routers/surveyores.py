@@ -1,10 +1,15 @@
 from fastapi import APIRouter, HTTPException
 import database
-from fastapi import APIRouter, HTTPException, Depends, Header
+from fastapi import APIRouter, HTTPException, Depends, Header, Query
 from rbac_service import has_permission
+from services.tenanting import company_code, company_prefix, ensure_company_column, set_payload_company
 
 router = APIRouter(prefix="/surveyores", tags=["Surveyores"])
 _tarifas_table_checked = False
+
+
+def _ensure_tenant_schema():
+    ensure_company_column("surveyor")
 
 
 def _ensure_tarifas_table():
@@ -137,10 +142,13 @@ def require_permission(module: str, action: str):
 
 
 @router.post("/add")
-def add_surveyor(data: dict):
+def add_surveyor(data: dict, x_company_code: str | None = Header(None, alias="X-Company-Code")):
     try:
+        _ensure_tenant_schema()
+        data = set_payload_company(data, company_code(data.get("company_code"), x_company_code))
         sql = """
         INSERT INTO surveyor (
+            company_code,
             codigo,
             nombre,
             apellidos,
@@ -170,6 +178,7 @@ def add_surveyor(data: dict):
             puerto
         )
         VALUES (
+            %(company_code)s,
             %(codigo)s,
             %(nombre)s,
             %(apellidos)s,
@@ -212,12 +221,17 @@ def add_surveyor(data: dict):
 # OBTENER ÚLTIMO CÓDIGO CORRELATIVO
 # ============================================================
 @router.get("/ultimo")
-def get_ultimo_surveyor():
+def get_ultimo_surveyor(company_code_param: str | None = Query(None, alias="company_code"), x_company_code: str | None = Header(None, alias="X-Company-Code")):
+    _ensure_tenant_schema()
+    company = company_code(company_code_param, x_company_code)
+    prefix = company_prefix(company)
     sql = """
         SELECT MAX(CAST(SUBSTRING(codigo FROM 5 FOR 4) AS INTEGER))
-        FROM surveyor;
+        FROM surveyor
+        WHERE company_code = %s
+          AND codigo LIKE %s;
     """
-    result = database.sql(sql, fetch=True)
+    result = database.sql(sql, (company, f"{prefix}-%-S"), fetch=True)
     ultimo = result[0][0] if result and result[0][0] is not None else 0
     return {"ultimo": ultimo}
 
@@ -226,7 +240,14 @@ def get_ultimo_surveyor():
 # LISTAR SURVEYORS — PAGINADO
 # ============================================================
 @router.get("/")
-def get_surveyores(page: int = 1, page_size: int = 50):
+def get_surveyores(
+    page: int = 1,
+    page_size: int = 50,
+    company_code_param: str | None = Query(None, alias="company_code"),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+):
+    _ensure_tenant_schema()
+    company = company_code(company_code_param, x_company_code)
     offset = (page - 1) * page_size
 
     rows = database.sql(f"""
@@ -237,11 +258,12 @@ def get_surveyores(page: int = 1, page_size: int = 50):
             moneda,swift,uid,enfermedades,contacto_emergencia,
             telefono_emergencia,puerto,email,direccion_banco
         FROM surveyor
+        WHERE company_code = %(company_code)s
         ORDER BY codigo ASC
         LIMIT {page_size} OFFSET {offset}
-    """, fetch=True)
+    """, {"company_code": company}, fetch=True)
 
-    total = database.sql("SELECT COUNT(*) FROM surveyor", fetch=True)[0][0]
+    total = database.sql("SELECT COUNT(*) FROM surveyor WHERE company_code = %s", (company,), fetch=True)[0][0]
 
     data = [
         {
@@ -284,7 +306,9 @@ def get_surveyores(page: int = 1, page_size: int = 50):
 # OBTENER UN SURVEYOR POR CÓDIGO
 # ============================================================
 @router.get("/{codigo}")
-def get_surveyor(codigo: str):
+def get_surveyor(codigo: str, x_company_code: str | None = Header(None, alias="X-Company-Code")):
+    _ensure_tenant_schema()
+    company = company_code(None, x_company_code)
     row = database.sql("""
         SELECT
             codigo,nombre,apellidos,estado_civil,genero,nacionalidad,
@@ -294,7 +318,8 @@ def get_surveyor(codigo: str):
             telefono_emergencia,puerto,email,direccion_banco
         FROM surveyor
         WHERE codigo = %s
-    """, (codigo,), fetch=True)
+          AND company_code = %s
+    """, (codigo, company), fetch=True)
 
     if not row:
         raise HTTPException(status_code=404, detail="Surveyor no encontrado")
@@ -348,7 +373,9 @@ def update_surveyor_tarifas(codigo: str, data: dict):
 # ACTUALIZAR SURVEYOR
 # ============================================================
 @router.put("/update")
-def update_surveyor(data: dict):
+def update_surveyor(data: dict, x_company_code: str | None = Header(None, alias="X-Company-Code")):
+    _ensure_tenant_schema()
+    data = set_payload_company(data, company_code(data.get("company_code"), x_company_code))
     sql = """
         UPDATE surveyor SET
             nombre = %(nombre)s,
@@ -378,6 +405,7 @@ def update_surveyor(data: dict):
             telefono_emergencia = %(telefono_emergencia)s,
             puerto = %(puerto)s
         WHERE codigo = %(codigo)s
+          AND company_code = %(company_code)s
     """
     try:
         data = _sync_legacy_fields(data)
@@ -392,9 +420,11 @@ def update_surveyor(data: dict):
 # ELIMINAR SURVEYOR
 # ============================================================
 @router.delete("/{codigo}")
-def delete_surveyor(codigo: str):
+def delete_surveyor(codigo: str, x_company_code: str | None = Header(None, alias="X-Company-Code")):
     try:
-        database.sql("DELETE FROM surveyor WHERE codigo = %s", (codigo,))
+        _ensure_tenant_schema()
+        company = company_code(None, x_company_code)
+        database.sql("DELETE FROM surveyor WHERE codigo = %s AND company_code = %s", (codigo, company))
         return {"status": "OK", "msg": "Surveyor eliminado 🗑️"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

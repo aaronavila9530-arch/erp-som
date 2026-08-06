@@ -1,12 +1,17 @@
 import tkinter as tk
 from tkinter import messagebox
-import requests
+from api_client import api_request
+from session_context import get_company_code
 
 from Modulos.MasterData.tablas.base_table import BasePaginatedTable
 from Modulos.MasterData.popups.popup_proveedor import PopupProveedor
 
 
 BASE_URL = "https://api-som-fastapi-production-e66d.up.railway.app"
+
+
+def _company_prefix():
+    return (get_company_code() or "MSL-CR").split("-")[0].strip().upper() or "MSL"
 
 
 class TablaProveedoresUI(BasePaginatedTable):
@@ -61,7 +66,7 @@ class TablaProveedoresUI(BasePaginatedTable):
     def load_data(self):
         try:
             url = f"{BASE_URL}/proveedores?page={self.page}&page_size={self.page_size}"
-            r = requests.get(url, timeout=15)
+            r = api_request("GET", url, timeout=15)
             data = r.json()
 
             self.total_items = data.get("total", 0)
@@ -109,7 +114,7 @@ class TablaProveedoresUI(BasePaginatedTable):
 
         # Crear el nuevo consecutivo
         nuevo_num = ultimo + 1
-        codigo = f"MSL-{nuevo_num:04d}-P"
+        codigo = f"{_company_prefix()}-{nuevo_num:04d}-P"
 
         # Abrir popup
         popup = PopupProveedor(self, codigo, self._guardar_nuevo)
@@ -125,7 +130,7 @@ class TablaProveedoresUI(BasePaginatedTable):
         if not codigo: return
 
         try:
-            r = requests.get(f"{BASE_URL}/proveedores/{codigo}", timeout=10)
+            r = api_request("GET", f"{BASE_URL}/proveedores/{codigo}", timeout=10)
             r.raise_for_status()
         except:
             messagebox.showerror("Error", f"Proveedor {codigo} no encontrado")
@@ -157,7 +162,7 @@ class TablaProveedoresUI(BasePaginatedTable):
         # GET API
         url = f"{BASE_URL}/proveedores/{codigo}"
         try:
-            r = requests.get(url, timeout=10)
+            r = api_request("GET", url, timeout=10)
             r.raise_for_status()
         except:
             messagebox.showerror("Error", f"Proveedor {codigo} no encontrado")
@@ -198,7 +203,7 @@ class TablaProveedoresUI(BasePaginatedTable):
     def _guardar_edicion(self, data):
         try:
             url = f"{BASE_URL}/proveedores/update"
-            r = requests.put(url, json=data, timeout=15)
+            r = api_request("PUT", url, json=data, timeout=15)
             if r.status_code == 200:
                 messagebox.showinfo("OK", "Proveedor actualizado correctamente")
                 self.refresh()  # refrescar tabla luego de guardar
@@ -219,7 +224,7 @@ class TablaProveedoresUI(BasePaginatedTable):
 
         try:
             url = f"{BASE_URL}/proveedores/{codigo}"
-            r = requests.delete(url, timeout=15)
+            r = api_request("DELETE", url, timeout=15)
             if r.status_code == 200:
                 messagebox.showinfo("OK", "Proveedor eliminado")
                 self.refresh()
