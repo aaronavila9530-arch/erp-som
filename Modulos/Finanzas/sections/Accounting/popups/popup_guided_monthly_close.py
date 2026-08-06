@@ -11,6 +11,13 @@ from session_context import get_user
 
 
 class PopupGuidedMonthlyClose(tk.Toplevel):
+    REVIEW_ALERT_MAP = {
+        "TAX_XML_PENDING": "TAX_REVIEW",
+        "IVA_NOT_REVIEWED": "TAX_REVIEW",
+        "AUXILIARY_DIFFERENCE": "AUX_RECONCILIATION",
+        "AUXILIARY_UNMAPPED": "AUX_RECONCILIATION",
+    }
+
     def __init__(self, parent, period):
         super().__init__(parent)
         self.parent = parent
@@ -140,6 +147,7 @@ class PopupGuidedMonthlyClose(tk.Toplevel):
         messagebox.showerror("Cierre mensual guiado", message, parent=self)
 
     def _apply_data(self, data):
+        data = self._normalize_close_payload(data)
         self.data = data
         summary = data.get("summary") or {}
         for key, var in self.summary_vars.items():
@@ -217,6 +225,7 @@ class PopupGuidedMonthlyClose(tk.Toplevel):
             messagebox.showerror("Cierre mensual", str(exc), parent=self)
 
     def _close_period(self):
+        self.data = self._normalize_close_payload(self.data)
         if not self.data.get("ready_to_close"):
             messagebox.showwarning(
                 "Cierre mensual",
@@ -240,6 +249,53 @@ class PopupGuidedMonthlyClose(tk.Toplevel):
                 self.parent._refresh_validation_alerts_summary()
         except Exception as exc:
             messagebox.showerror("Cierre mensual", str(exc), parent=self)
+
+    def _normalize_close_payload(self, data):
+        data = dict(data or {})
+        checklist = list(data.get("checklist") or [])
+        validation = dict(data.get("validation") or {})
+        completed = {
+            row.get("item_code")
+            for row in checklist
+            if row.get("status") in {"COMPLETE", "NOT_APPLICABLE"}
+        }
+
+        remaining_critical = []
+        mitigated = []
+        for alert in validation.get("critical") or []:
+            checklist_code = self.REVIEW_ALERT_MAP.get(alert.get("code"))
+            if checklist_code and checklist_code in completed:
+                mitigated.append({
+                    **alert,
+                    "message": f"{alert.get('message') or ''} Revision completada en checklist.",
+                })
+            else:
+                remaining_critical.append(alert)
+
+        warnings = list(validation.get("warnings") or []) + mitigated
+        validation["critical"] = remaining_critical
+        validation["warnings"] = warnings
+        validation["counts"] = {
+            **(validation.get("counts") or {}),
+            "critical": len(remaining_critical),
+            "warning": len(warnings),
+        }
+        data["validation"] = validation
+
+        summary = dict(data.get("summary") or {})
+        blockers = [
+            row for row in checklist
+            if row.get("mandatory") and row.get("status") not in {"COMPLETE", "NOT_APPLICABLE"}
+        ]
+        summary["mandatory_blockers"] = len(blockers)
+        summary["critical_alerts"] = len(remaining_critical)
+        summary["warning_alerts"] = len(warnings)
+        summary["completed"] = len(checklist) - len(blockers)
+        summary["total"] = len(checklist)
+        data["summary"] = summary
+        data["blockers"] = blockers
+        data["ready_to_close"] = len(blockers) == 0 and len(remaining_critical) == 0
+        return data
 
     def _open_alerts(self):
         try:
