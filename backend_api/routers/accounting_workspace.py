@@ -4,7 +4,7 @@ import re
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from psycopg2.extras import Json, RealDictCursor
 from pydantic import BaseModel, Field
 
@@ -36,6 +36,11 @@ CLOSE_ITEMS = (
 def _valid_period(period: str):
     if not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", period or ""):
         raise HTTPException(400, "El periodo debe usar el formato YYYY-MM")
+
+
+def _company_code(value: str | None = None, header_value: str | None = None) -> str:
+    code = str(value or header_value or "MSL-CR").strip().upper()
+    return code or "MSL-CR"
 
 
 def _ensure_schema(conn):
@@ -208,41 +213,51 @@ def _work_items(cur, period, period_start=None, period_end=None):
 
 
 @router.get("/dashboard")
-def accountant_dashboard(period: str, conn=Depends(get_db)):
+def accountant_dashboard(
+    period: str,
+    company_code: str | None = None,
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+    conn=Depends(get_db),
+):
     _valid_period(period)
     _ensure_schema(conn)
+    company = _company_code(company_code, x_company_code)
     period_start, period_end = _period_bounds(period)
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        work_items = _work_items(cur, period, period_start, period_end)
+        work_items = _work_items(cur, period, period_start, period_end) if company == "MSL-CR" else []
         fx_rate, fx_date = _latest_fx_rate(cur)
         cur.execute("""SELECT COALESCE(SUM(l.debit),0) debit,COALESCE(SUM(l.credit),0) credit,
           COUNT(DISTINCT e.id) entries FROM accounting_entries e
           LEFT JOIN accounting_lines l ON l.entry_id=e.id
-          WHERE e.period=%s AND e.workflow_status='POSTED'""", (period,))
+          WHERE e.company_code=%s AND e.period=%s AND e.workflow_status='POSTED'""", (company, period))
         ledger = cur.fetchone()
-        ar_amount = _crc_amount_sql("saldo_pendiente", "moneda")
-        cur.execute(f"""SELECT COALESCE(SUM({ar_amount}),0) open_ar,
-          COALESCE(SUM({ar_amount}) FILTER(WHERE fecha_vencimiento<CURRENT_DATE),0) overdue_ar,
-          COUNT(*) open_ar_count,
-          COUNT(*) FILTER(WHERE fecha_vencimiento<CURRENT_DATE) overdue_ar_count
-          FROM collections
-          WHERE COALESCE(saldo_pendiente,0)>0""", (fx_rate, fx_rate))
-        ar = cur.fetchone()
-        ap_amount = _crc_amount_sql("balance", "currency")
-        cur.execute(f"""SELECT COALESCE(SUM({ap_amount}),0) open_ap,
-          COALESCE(SUM({ap_amount}) FILTER(WHERE due_date<CURRENT_DATE),0) overdue_ap,
-          COUNT(*) open_ap_count,
-          COUNT(*) FILTER(WHERE due_date<CURRENT_DATE) overdue_ap_count
-          FROM payment_obligations
-          WHERE active=TRUE
-            AND record_type='OBLIGATION'
-            AND COALESCE(balance,0)>0""", (fx_rate, fx_rate))
-        ap = cur.fetchone()
+        if company == "MSL-CR":
+            ar_amount = _crc_amount_sql("saldo_pendiente", "moneda")
+            cur.execute(f"""SELECT COALESCE(SUM({ar_amount}),0) open_ar,
+              COALESCE(SUM({ar_amount}) FILTER(WHERE fecha_vencimiento<CURRENT_DATE),0) overdue_ar,
+              COUNT(*) open_ar_count,
+              COUNT(*) FILTER(WHERE fecha_vencimiento<CURRENT_DATE) overdue_ar_count
+              FROM collections
+              WHERE COALESCE(saldo_pendiente,0)>0""", (fx_rate, fx_rate))
+            ar = cur.fetchone()
+            ap_amount = _crc_amount_sql("balance", "currency")
+            cur.execute(f"""SELECT COALESCE(SUM({ap_amount}),0) open_ap,
+              COALESCE(SUM({ap_amount}) FILTER(WHERE due_date<CURRENT_DATE),0) overdue_ap,
+              COUNT(*) open_ap_count,
+              COUNT(*) FILTER(WHERE due_date<CURRENT_DATE) overdue_ap_count
+              FROM payment_obligations
+              WHERE active=TRUE
+                AND record_type='OBLIGATION'
+                AND COALESCE(balance,0)>0""", (fx_rate, fx_rate))
+            ap = cur.fetchone()
+        else:
+            ar = {"open_ar": 0, "overdue_ar": 0, "open_ar_count": 0, "overdue_ar_count": 0}
+            ap = {"open_ap": 0, "overdue_ap": 0, "open_ap_count": 0, "overdue_ap_count": 0}
         cur.execute("""SELECT status,closed_by,closed_at,reopened_by,reopened_at FROM accounting_period_controls
-          WHERE company_code='MSL-CR' AND period=%s""", (period,))
+          WHERE company_code=%s AND period=%s""", (company, period))
         period_control = cur.fetchone() or {"status":"OPEN"}
         cur.execute("""SELECT id,entry_date,description,origin,workflow_status,created_by,updated_at
-          FROM accounting_entries WHERE period=%s ORDER BY updated_at DESC NULLS LAST,id DESC LIMIT 12""", (period,))
+          FROM accounting_entries WHERE company_code=%s AND period=%s ORDER BY updated_at DESC NULLS LAST,id DESC LIMIT 12""", (company, period))
         recent = cur.fetchall()
 
     deductions = sum(min(item["count"], 10) * ({"CRITICAL":5,"HIGH":2,"MEDIUM":1,"LOW":0.5}[item["priority"]]) for item in work_items)
@@ -509,14 +524,14 @@ def _validation_alert_summary(cur, period):
     }
 
 
-def _close_snapshot(cur, period):
-    _seed_checklist(cur, period)
-    checks = _automatic_checks(cur, period)
+def _close_snapshot(cur, period, company="MSL-CR"):
+    _seed_checklist(cur, period, company)
+    checks = _automatic_checks(cur, period) if company == "MSL-CR" else {}
     cur.execute("""
         SELECT * FROM accounting_close_checklist
-        WHERE company_code='MSL-CR' AND period=%s
+        WHERE company_code=%s AND period=%s
         ORDER BY sequence
-    """, (period,))
+    """, (company, period))
     checklist = []
     for row in cur.fetchall():
         checklist.append({
@@ -532,14 +547,18 @@ def _close_snapshot(cur, period):
             or not item["automatic_check"].get("ready")
         )
     ]
-    validation = _validation_alert_summary(cur, period)
+    validation = _validation_alert_summary(cur, period) if company == "MSL-CR" else {
+        "counts": {"critical": 0, "warning": 0, "info": 0},
+        "critical": [],
+        "warnings": [],
+    }
     cur.execute("""
         SELECT COALESCE(SUM(l.debit),0) debit, COALESCE(SUM(l.credit),0) credit,
                COUNT(DISTINCT e.id) entries
         FROM accounting_entries e
         LEFT JOIN accounting_lines l ON l.entry_id=e.id
-        WHERE e.period=%s
-    """, (period,))
+        WHERE e.company_code=%s AND e.period=%s
+    """, (company, period))
     totals = cur.fetchone() or {}
     debit = float(totals.get("debit") or 0)
     credit = float(totals.get("credit") or 0)
@@ -558,14 +577,20 @@ def _close_snapshot(cur, period):
 
 
 @router.get("/close-checklist")
-def close_checklist(period: str, conn=Depends(get_db)):
+def close_checklist(
+    period: str,
+    company_code: str | None = None,
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+    conn=Depends(get_db),
+):
     _valid_period(period); _ensure_schema(conn)
+    company = _company_code(company_code, x_company_code)
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        _seed_checklist(cur, period); conn.commit()
-        checks = _automatic_checks(cur, period)
-        cur.execute("SELECT * FROM accounting_close_checklist WHERE company_code='MSL-CR' AND period=%s ORDER BY sequence", (period,))
+        _seed_checklist(cur, period, company); conn.commit()
+        checks = _automatic_checks(cur, period) if company == "MSL-CR" else {}
+        cur.execute("SELECT * FROM accounting_close_checklist WHERE company_code=%s AND period=%s ORDER BY sequence", (company, period))
         rows = cur.fetchall()
-        cur.execute("SELECT status FROM accounting_period_controls WHERE company_code='MSL-CR' AND period=%s", (period,))
+        cur.execute("SELECT status FROM accounting_period_controls WHERE company_code=%s AND period=%s", (company, period))
         control = cur.fetchone() or {"status":"OPEN"}
     data=[]
     for row in rows:
@@ -576,17 +601,23 @@ def close_checklist(period: str, conn=Depends(get_db)):
 
 
 @router.get("/guided-close")
-def guided_monthly_close(period: str, conn=Depends(get_db)):
+def guided_monthly_close(
+    period: str,
+    company_code: str | None = None,
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+    conn=Depends(get_db),
+):
     _valid_period(period)
     _ensure_schema(conn)
+    company = _company_code(company_code, x_company_code)
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        checklist, validation, summary, blockers = _close_snapshot(cur, period)
+        checklist, validation, summary, blockers = _close_snapshot(cur, period, company)
         status = "READY" if not blockers and validation["counts"]["critical"] == 0 else "DRAFT"
         cur.execute("""
             INSERT INTO accounting_monthly_close_runs(
                 company_code, period, status, checklist_snapshot, validation_snapshot, summary
             )
-            VALUES('MSL-CR', %s, %s, %s, %s, %s)
+            VALUES(%s, %s, %s, %s, %s, %s)
             ON CONFLICT(company_code, period) DO UPDATE SET
                 status=CASE
                     WHEN accounting_monthly_close_runs.status='CLOSED' THEN 'CLOSED'
@@ -598,6 +629,7 @@ def guided_monthly_close(period: str, conn=Depends(get_db)):
                 updated_at=NOW()
             RETURNING *
         """, (
+            company,
             period,
             status,
             Json(checklist, dumps=_json_default),
@@ -608,8 +640,8 @@ def guided_monthly_close(period: str, conn=Depends(get_db)):
         cur.execute("""
             SELECT status, closed_by, closed_at
             FROM accounting_period_controls
-            WHERE company_code='MSL-CR' AND period=%s
-        """, (period,))
+            WHERE company_code=%s AND period=%s
+        """, (company, period))
         control = cur.fetchone() or {"status": "OPEN", "closed_by": None, "closed_at": None}
     conn.commit()
     return {
@@ -630,12 +662,19 @@ class GuidedClosePayload(BaseModel):
 
 
 @router.post("/guided-close/{period}/close")
-def close_guided_month(period: str, payload: GuidedClosePayload, conn=Depends(get_db)):
+def close_guided_month(
+    period: str,
+    payload: GuidedClosePayload,
+    company_code: str | None = None,
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+    conn=Depends(get_db),
+):
     _valid_period(period)
     _ensure_schema(conn)
+    company = _company_code(company_code, x_company_code)
     user = (payload.user or "unknown").strip() or "unknown"
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        checklist, validation, summary, blockers = _close_snapshot(cur, period)
+        checklist, validation, summary, blockers = _close_snapshot(cur, period, company)
         if blockers:
             raise HTTPException(409, f"El checklist obligatorio tiene {len(blockers)} pasos pendientes.")
         if validation["counts"]["critical"]:
@@ -643,29 +682,29 @@ def close_guided_month(period: str, payload: GuidedClosePayload, conn=Depends(ge
         cur.execute("""
             SELECT *
             FROM accounting_period_controls
-            WHERE company_code='MSL-CR' AND period=%s
+            WHERE company_code=%s AND period=%s
             FOR UPDATE
-        """, (period,))
+        """, (company, period))
         before = cur.fetchone()
         if before and before.get("status") == "CLOSED":
             raise HTTPException(409, f"El periodo {period} ya esta cerrado.")
         cur.execute("""
             INSERT INTO accounting_period_controls(company_code, period, status, closed_by, closed_at)
-            VALUES('MSL-CR', %s, 'CLOSED', %s, NOW())
+            VALUES(%s, %s, 'CLOSED', %s, NOW())
             ON CONFLICT(company_code, period) DO UPDATE SET
                 status='CLOSED',
                 closed_by=EXCLUDED.closed_by,
                 closed_at=NOW(),
                 updated_at=NOW()
             RETURNING *
-        """, (period, user))
+        """, (company, period, user))
         control = cur.fetchone()
         cur.execute("""
             INSERT INTO accounting_monthly_close_runs(
                 company_code, period, status, closed_by, closed_at, notes,
                 checklist_snapshot, validation_snapshot, summary
             )
-            VALUES('MSL-CR', %s, 'CLOSED', %s, NOW(), %s, %s, %s, %s)
+            VALUES(%s, %s, 'CLOSED', %s, NOW(), %s, %s, %s, %s)
             ON CONFLICT(company_code, period) DO UPDATE SET
                 status='CLOSED',
                 closed_by=EXCLUDED.closed_by,
@@ -677,6 +716,7 @@ def close_guided_month(period: str, payload: GuidedClosePayload, conn=Depends(ge
                 updated_at=NOW()
             RETURNING *
         """, (
+            company,
             period,
             user,
             payload.notes,
@@ -715,21 +755,29 @@ class ChecklistUpdate(BaseModel):
 
 
 @router.put("/close-checklist/{period}/{item_code}")
-def update_checklist(period: str, item_code: str, payload: ChecklistUpdate, conn=Depends(get_db)):
+def update_checklist(
+    period: str,
+    item_code: str,
+    payload: ChecklistUpdate,
+    company_code: str | None = None,
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+    conn=Depends(get_db),
+):
     _valid_period(period); _ensure_schema(conn)
+    company = _company_code(company_code, x_company_code)
     status=payload.status.upper()
     if status not in {"PENDING","IN_PROGRESS","COMPLETE","NOT_APPLICABLE"}: raise HTTPException(400,"Estado inválido")
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        if status == "COMPLETE" and item_code in {"ENTRY_WORKFLOW","AUX_RECONCILIATION","TAX_REVIEW","FX_REVALUATION"}:
+        if company == "MSL-CR" and status == "COMPLETE" and item_code in {"ENTRY_WORKFLOW","AUX_RECONCILIATION","TAX_REVIEW","FX_REVALUATION"}:
             validation = _automatic_checks(cur, period).get(item_code, {})
             if not validation.get("ready"):
                 raise HTTPException(409, f"El control automático aún presenta incidencias: {validation.get('detail','revisión pendiente')}")
-        _seed_checklist(cur,period)
+        _seed_checklist(cur, period, company)
         cur.execute("""UPDATE accounting_close_checklist SET status=%s,notes=%s,evidence=%s,
           completed_by=CASE WHEN %s IN ('COMPLETE','NOT_APPLICABLE') THEN %s ELSE NULL END,
           completed_at=CASE WHEN %s IN ('COMPLETE','NOT_APPLICABLE') THEN NOW() ELSE NULL END,updated_at=NOW()
-          WHERE company_code='MSL-CR' AND period=%s AND item_code=%s RETURNING *""",
-                    (status,payload.notes,Json(payload.evidence),status,payload.user,status,period,item_code))
+          WHERE company_code=%s AND period=%s AND item_code=%s RETURNING *""",
+                    (status,payload.notes,Json(payload.evidence),status,payload.user,status,company,period,item_code))
         row=cur.fetchone()
         if not row: raise HTTPException(404,"Paso de cierre no encontrado")
     conn.commit(); return {"message":"Checklist actualizado","item":row}

@@ -3,6 +3,7 @@ from fastapi import (
     Depends,
     HTTPException,
     Header,
+    Query,
 )
 from fastapi.responses import FileResponse
 from psycopg2.extras import Json, RealDictCursor
@@ -37,6 +38,7 @@ from services.accounting_rule_engine import (
     list_posting_rules,
     seed_default_posting_rules,
 )
+from services.accounting_fiscal_rules import ensure_accounting_fiscal_schema
 
 
 router = APIRouter(
@@ -46,6 +48,11 @@ router = APIRouter(
 
 MONEY_QUANT = Decimal("0.01")
 ENTRY_STATUSES = {"DRAFT", "IN_REVIEW", "APPROVED", "POSTED", "REVERSED"}
+
+
+def _company_code(value: str | None = None, header_value: str | None = None) -> str:
+    code = str(value or header_value or "MSL-CR").strip().upper()
+    return code or "MSL-CR"
 
 
 def _money(value, field="amount"):
@@ -163,6 +170,7 @@ def _ensure_accounting_professional_schema(conn):
         cur.execute("CREATE INDEX IF NOT EXISTS idx_accounting_entries_workflow ON accounting_entries(period, workflow_status)")
         ensure_finance_audit_schema(cur)
         ensure_posting_rule_schema(cur)
+        ensure_accounting_fiscal_schema(cur)
     conn.commit()
 
 
@@ -403,17 +411,24 @@ def _report_filename(extension: str, report: str | None, period: str | None, per
 
 
 @router.get("/periods")
-def get_accounting_periods(conn=Depends(get_db)):
+def get_accounting_periods(
+    company_code: str | None = None,
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+    conn=Depends(get_db),
+):
     """
     Devuelve solamente los periodos que realmente tienen movimientos contables.
     Evita mostrar meses futuros o meses sin data en Accounting.
     """
+    company = _company_code(company_code, x_company_code)
+    _ensure_accounting_professional_schema(conn)
     current_period = date.today().strftime("%Y-%m")
     cur = conn.cursor(cursor_factory=RealDictCursor)
     cur.execute("""
         SELECT period, COUNT(*) AS count
         FROM accounting_entries
         WHERE period IS NOT NULL
+          AND company_code = %s
           AND period ~ '^[0-9]{4}-[0-9]{2}$'
           AND period >= '2025-01'
           AND period <= %s
@@ -421,7 +436,7 @@ def get_accounting_periods(conn=Depends(get_db)):
         GROUP BY period
         HAVING COUNT(*) > 0
         ORDER BY period ASC
-    """, (current_period,))
+    """, (company, current_period))
     rows = cur.fetchall()
     return {
         "data": [row["period"] for row in rows],
@@ -439,6 +454,7 @@ def create_manual_entry(
     x_user: str | None = Header(None, alias="X-User"),
     x_role: str | None = Header(None, alias="X-Role"),
     x_user_role: str | None = Header(None, alias="X-User-Role"),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
 ):
     """
     payload:
@@ -467,7 +483,7 @@ def create_manual_entry(
 
     header_user, header_role = actor_from_headers(x_user, x_role, x_user_role)
     created_by = str(payload.get("created_by") or header_user or "unknown").strip()
-    company_code = str(payload.get("company_code") or "MSL-CR").strip()
+    company_code = _company_code(payload.get("company_code"), x_company_code)
     currency_code = str(payload.get("currency_code") or "CRC").strip().upper()
     exchange_rate = Decimal(str(payload.get("exchange_rate") or 1))
     if exchange_rate <= 0:
@@ -1056,10 +1072,18 @@ def seed_accounting_posting_rules(
 
 
 @router.get("/period-controls")
-def list_accounting_period_controls(conn=Depends(get_db)):
+def list_accounting_period_controls(
+    company_code: str | None = None,
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+    conn=Depends(get_db),
+):
     _ensure_accounting_professional_schema(conn)
+    company = _company_code(company_code, x_company_code)
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        cur.execute("SELECT * FROM accounting_period_controls ORDER BY period DESC")
+        cur.execute(
+            "SELECT * FROM accounting_period_controls WHERE company_code=%s ORDER BY period DESC",
+            (company,),
+        )
         return {"data": cur.fetchall()}
 
 
@@ -1076,12 +1100,15 @@ def close_accounting_period(period: str, payload: dict, conn=Depends(get_db)):
     except HTTPException:
         raise
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        checklist, validation, summary, blockers = _close_snapshot(cur, period)
+        checklist, validation, summary, blockers = _close_snapshot(cur, period, company)
         if blockers:
             raise HTTPException(409, f"Robust close blocked: {len(blockers)} mandatory controls are pending or failing.")
         if validation["counts"]["critical"]:
             raise HTTPException(409, f"Robust close blocked: {validation['counts']['critical']} critical validations remain.")
-        cur.execute("SELECT COUNT(*) AS count FROM accounting_entries WHERE period=%s AND workflow_status <> 'POSTED'", (period,))
+        cur.execute(
+            "SELECT COUNT(*) AS count FROM accounting_entries WHERE company_code=%s AND period=%s AND workflow_status <> 'POSTED'",
+            (company, period),
+        )
         pending = int(cur.fetchone()["count"])
         if pending:
             raise HTTPException(409, f"Period has {pending} entries that are not posted")
@@ -1124,6 +1151,8 @@ def reopen_accounting_period(period: str, payload: dict, conn=Depends(get_db)):
 @router.get("/entry/{entry_id}")
 def get_accounting_entry(
     entry_id: int,
+    company_code: str | None = None,
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
     conn=Depends(get_db)
 ):
     """
@@ -1131,6 +1160,8 @@ def get_accounting_entry(
     para edición en popup
     """
 
+    _ensure_accounting_professional_schema(conn)
+    company = _company_code(company_code, x_company_code)
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     # --------------------------------------------------------
@@ -1154,8 +1185,8 @@ def get_accounting_entry(
             approved_by,
             posted_by
         FROM accounting_entries
-        WHERE id = %s
-    """, (entry_id,))
+        WHERE id = %s AND company_code = %s
+    """, (entry_id, company))
 
     entry = cur.fetchone()
 
@@ -1536,10 +1567,13 @@ def get_accounting_validation_alerts(
     period_from: str | None = None,
     period_to: str | None = None,
     origin: str | None = None,
+    company_code: str | None = None,
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
     limit: int = 200,
     conn=Depends(get_db),
 ):
     _ensure_accounting_professional_schema(conn)
+    company = _company_code(company_code, x_company_code)
     limit = max(1, min(int(limit or 200), 1000))
     alerts = []
 
@@ -1554,8 +1588,8 @@ def get_accounting_validation_alerts(
             "metadata": metadata or {},
         })
 
-    conditions = []
-    params = []
+    conditions = ["e.company_code = %s"]
+    params = [company]
     if period:
         conditions.append("e.period = %s")
         params.append(period)
@@ -1662,7 +1696,7 @@ def get_accounting_validation_alerts(
                 row,
             )
 
-        if not origin or origin in ("TODOS", "CASH_APP"):
+        if company == "MSL-CR" and (not origin or origin in ("TODOS", "CASH_APP")):
             cur.execute("""
                 SELECT id, numero_documento, nombre_cliente, banco, bank_account_code, bank_account_name, fecha_pago
                 FROM cash_app
@@ -1682,7 +1716,7 @@ def get_accounting_validation_alerts(
                     row,
                 )
 
-        if not origin or origin in ("TODOS", "COLLECTIONS"):
+        if company == "MSL-CR" and (not origin or origin in ("TODOS", "COLLECTIONS")):
             cur.execute("""
                 SELECT c.id, c.numero_documento, c.nombre_cliente, c.total, c.moneda, c.fecha_emision
                 FROM collections c
@@ -1733,7 +1767,7 @@ def get_accounting_validation_alerts(
                     row,
                 )
 
-        if not origin or origin in ("TODOS", "ITP", "ITP_PAYMENT"):
+        if company == "MSL-CR" and (not origin or origin in ("TODOS", "ITP", "ITP_PAYMENT")):
             cur.execute("""
                 SELECT id, payee_name, reference, status, payment_bank_account_code, payment_bank_account_name, last_payment_date
                 FROM payment_obligations
@@ -1956,6 +1990,8 @@ def get_accounting_ledger(
     period_to: str | None = None,
     origin: str | None = None,
     account_code: str | None = None,   # ✅ NUEVO FILTRO
+    company_code: str | None = None,
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
     conn=Depends(get_db)
 ):
     """
@@ -1969,10 +2005,11 @@ def get_accounting_ledger(
     """
 
     _ensure_accounting_professional_schema(conn)
+    company = _company_code(company_code, x_company_code)
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
-    conditions = ["e.entry_date <= CURRENT_DATE"]
-    params = []
+    conditions = ["e.entry_date <= CURRENT_DATE", "e.company_code = %s"]
+    params = [company]
 
     # -----------------------------
     # VALIDACIONES
@@ -2218,6 +2255,8 @@ def download_accounting_report_pdf(
 @router.get("/iva")
 def get_accounting_iva(
     period: str,  # 'YYYY-MM'
+    company_code: str | None = None,
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
     conn=Depends(get_db)
 ):
     """
@@ -2229,6 +2268,8 @@ def get_accounting_iva(
     - Arrastra saldo a favor SOLO si existe en el mes anterior
     """
 
+    _ensure_accounting_professional_schema(conn)
+    company = _company_code(company_code, x_company_code)
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     try:
@@ -2256,7 +2297,8 @@ def get_accounting_iva(
                 FROM accounting_lines l
                 JOIN accounting_entries e ON e.id = l.entry_id
                 WHERE e.period = %s
-            """, (p,))
+                  AND e.company_code = %s
+            """, (p, company))
 
             row = cur.fetchone() or {}
             return (

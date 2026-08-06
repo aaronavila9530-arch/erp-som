@@ -12,7 +12,11 @@ from datetime import date, datetime, timedelta
 from database import get_db
 from rbac_service import has_permission
 from services.finance_audit import actor_from_headers, audit_event, row_to_dict
-from services.accounting_bank_rules import is_bcr_account, resolve_collections_bank
+from services.accounting_bank_rules import (
+    BCR_COLLECTION_FEE_USD,
+    resolve_collections_bank,
+    should_apply_bcr_collection_fee,
+)
 
 
 router = APIRouter(
@@ -540,17 +544,25 @@ def aplicar_pago(
             bank_account_code = bank_row["account_code"]
             bank_account_name = bank_row["account_name"]
 
-        if is_bcr_account(bank_account_code, bank_account_name, banco):
-            total_aplicado = monto_pagado + max(comision, 0.0)
-            if total_aplicado <= 25:
-                raise HTTPException(400, "El pago BCR debe ser mayor a la comision bancaria de 25 USD")
-            monto_pagado = round(total_aplicado - 25.0, 2)
-            comision = 25.0
-
         # ==============================
         # NORMALIZAR DOCUMENTO
         # ==============================
         numero_norm = numero_documento.lstrip("0")
+
+        if should_apply_bcr_collection_fee(
+            cur,
+            bank_account_code,
+            bank_account_name,
+            banco,
+            numero_documento,
+            codigo_cliente,
+            nombre_cliente,
+        ):
+            total_aplicado = monto_pagado + max(comision, 0.0)
+            if total_aplicado <= BCR_COLLECTION_FEE_USD:
+                raise HTTPException(400, "El pago BCR debe ser mayor a la comision bancaria de 25 USD")
+            monto_pagado = round(total_aplicado - BCR_COLLECTION_FEE_USD, 2)
+            comision = BCR_COLLECTION_FEE_USD
 
         # ==============================
         # 3) Insertar en cash_app

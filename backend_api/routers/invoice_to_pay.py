@@ -17,7 +17,7 @@ import shutil
 from database import get_db
 from rbac_service import has_permission
 from services.finance_audit import actor_from_headers, audit_event, row_to_dict
-from services.accounting_bank_rules import resolve_itp_bank
+from services.accounting_bank_rules import external_surveyor_settlement, resolve_itp_bank
 from services.employee_payee_rules import (
     deactivate_employee_itp_obligations,
     is_employee_payee,
@@ -591,6 +591,15 @@ def apply_payment(
         # =====================================================
         # 4️⃣ CÁLCULO SEGURO DE NUEVO SALDO
         # =====================================================
+        settlement = external_surveyor_settlement(
+            cur,
+            amount_decimal,
+            payee_name=obligation.get("payee_name"),
+            fallback_country=obligation.get("country"),
+            payee_type=obligation.get("payee_type"),
+            obligation_type=obligation.get("obligation_type"),
+        )
+
         new_balance = (balance - amount_decimal).quantize(
             Decimal("0.01"),
             rounding=ROUND_HALF_UP
@@ -648,6 +657,10 @@ def apply_payment(
             after=after_obligation,
             metadata={
                 "applied_amount": str(amount_decimal),
+                "external_surveyor_rule_applied": bool(settlement["applies"]),
+                "deduction_usd": str(settlement["deduction"]),
+                "withholding_usd": str(settlement["withholding"]),
+                "net_payment_usd": str(settlement["net_payment"]),
                 "payment_date": payment_date,
                 "bank_account_code": bank_account_code or None,
                 "bank_account_name": bank_account_name or None,
@@ -669,6 +682,10 @@ def apply_payment(
             "obligation_id": obligation_id,
             "previous_balance": float(balance),
             "applied_amount": float(amount_decimal),
+            "external_surveyor_rule_applied": bool(settlement["applies"]),
+            "deduction_usd": float(settlement["deduction"]),
+            "withholding_usd": float(settlement["withholding"]),
+            "net_payment_usd": float(settlement["net_payment"]),
             "new_balance": float(new_balance),
             "status": new_status,
             "accounting_warning": accounting_warning

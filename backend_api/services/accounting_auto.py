@@ -2,12 +2,23 @@ from psycopg2.extras import RealDictCursor
 from datetime import date
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from services.accounting_bank_rules import (
+    BCR_COLLECTION_FEE_USD,
     backfill_missing_bank_accounts,
-    is_bcr_account,
     resolve_collections_bank,
     resolve_itp_bank,
+    external_surveyor_settlement,
+    should_apply_bcr_collection_fee,
 )
 from services.employee_payee_rules import employee_obligation_ids, is_employee_payee, load_employee_name_keys
+
+
+def _apply_current_fiscal_classification(conn):
+    try:
+        from services.accounting_fiscal_rules import apply_fiscal_classification
+        apply_fiscal_classification(conn, year=date.today().year, apply=True)
+    except Exception:
+        # Fiscal tags must not block balanced accounting syncs; validation alerts catch gaps.
+        pass
 
 def create_accounting_entry(
     conn,
@@ -87,6 +98,7 @@ def create_accounting_entry(
         ))
 
     # 🔥🔥🔥 ESTA ES LA LÍNEA QUE FALTABA 🔥🔥🔥
+    _apply_current_fiscal_classification(conn)
     conn.commit()
 
     return entry_id
@@ -365,6 +377,8 @@ def sync_collections_to_accounting(conn):
                         detail_text
                     ))
 
+        _apply_current_fiscal_classification(conn)
+        _apply_current_fiscal_classification(conn)
         conn.commit()
 
     except Exception as e:
@@ -658,6 +672,7 @@ def sync_payroll_to_accounting(conn):
                 ]
                 _upsert_entry("PAYROLL_PAYMENT", payroll_id, period, entry_date, payment_detail, payment_lines)
 
+        _apply_current_fiscal_classification(conn)
         conn.commit()
 
     except Exception as e:
@@ -746,6 +761,7 @@ def sync_cash_app_to_accounting(conn):
             SELECT
                 c.id,
                 c.numero_documento,
+                c.codigo_cliente,
                 c.fecha_pago,
                 c.nombre_cliente,
                 c.banco,
@@ -767,6 +783,7 @@ def sync_cash_app_to_accounting(conn):
 
             cash_id = p.get("id")
             numero = (p.get("numero_documento") or "").strip()
+            current_client_code = (p.get("codigo_cliente") or "").strip()
             current_client_name = (p.get("nombre_cliente") or "").strip()
             current_raw_bank = (p.get("banco") or "").strip()
             fecha_pago = p.get("fecha_pago")
@@ -893,14 +910,22 @@ def sync_cash_app_to_accounting(conn):
                 BANK_ACCOUNT_NAME
             )
 
-            if is_bcr_account(BANK_ACCOUNT_CODE, BANK_ACCOUNT_NAME, current_raw_bank):
+            if should_apply_bcr_collection_fee(
+                cur,
+                BANK_ACCOUNT_CODE,
+                BANK_ACCOUNT_NAME,
+                current_raw_bank,
+                numero,
+                current_client_code,
+                current_client_name,
+            ):
                 total_aplicado = round(monto + comision, 2)
-                if total_aplicado <= 25:
+                if total_aplicado <= BCR_COLLECTION_FEE_USD:
                     raise Exception(
                         f"Pago BCR menor o igual a comision de 25 USD en cash_app id={cash_id}"
                     )
-                monto = round(total_aplicado - 25, 2)
-                comision = 25.0
+                monto = round(total_aplicado - BCR_COLLECTION_FEE_USD, 2)
+                comision = BCR_COLLECTION_FEE_USD
                 cur.execute("""
                     UPDATE cash_app
                        SET monto_pagado = %s,
@@ -974,6 +999,7 @@ def sync_cash_app_to_accounting(conn):
             ))
 
 
+        _apply_current_fiscal_classification(conn)
         conn.commit()
 
     except Exception as e:
@@ -1339,9 +1365,16 @@ def sync_itp_to_accounting(conn):
                 BANK_NAME
             )
 
+            WITHHOLDING_CODE = "2.1.02.04"
+            WITHHOLDING_NAME = "Impuesto de renta por pagar"
+            SURVEYOR_DEDUCTION_CODE = "2.1.02.09"
+            SURVEYOR_DEDUCTION_NAME = "Deducciones a surveyors del exterior por pagar"
+
             # El IVA de compras debe existir para que el asiento ITP balancee:
             # Debe gasto + IVA credito fiscal / Haber CxP.
             _ensure_account(IVA_CF_CODE, IVA_CF_NAME, "ASSET", "DEBIT", "1.1.13")
+            _ensure_account(WITHHOLDING_CODE, WITHHOLDING_NAME, "LIABILITY", "CREDIT", "2.1.02")
+            _ensure_account(SURVEYOR_DEDUCTION_CODE, SURVEYOR_DEDUCTION_NAME, "LIABILITY", "CREDIT", "2.1.02")
 
             def _first_existing(candidates):
                 for code, name in candidates:
@@ -1504,17 +1537,60 @@ def sync_itp_to_accounting(conn):
                     desc=payment_detail
                 )
 
+                settlement = external_surveyor_settlement(
+                    cur,
+                    total_raw,
+                    payee_name=payee_name,
+                    fallback_country=current_country,
+                    payee_type=payee_type,
+                    obligation_type=obligation_type,
+                )
+                if settlement["applies"]:
+                    if currency == "USD":
+                        withholding_crc = round(float(settlement["withholding"]) * tc, 2)
+                        deduction_crc = round(float(settlement["deduction"]) * tc, 2)
+                        bank_payment_crc = max(round(calc_total - withholding_crc - deduction_crc, 2), 0)
+                    else:
+                        withholding_crc = round(calc_total * 0.25, 2)
+                        deduction_crc = min(round(25.0 * tc, 2), max(round(calc_total - withholding_crc, 2), 0))
+                        bank_payment_crc = max(round(calc_total - withholding_crc - deduction_crc, 2), 0)
+                else:
+                    withholding_crc = 0
+                    deduction_crc = 0
+                    bank_payment_crc = calc_total
+
+                if withholding_crc > 0:
+                    _insert_line(
+                        entry_id=pay_entry_id,
+                        code=WITHHOLDING_CODE,
+                        name=WITHHOLDING_NAME,
+                        debit=0,
+                        credit=withholding_crc,
+                        desc=f"Retencion 25% - {payment_detail}"
+                    )
+
+                if deduction_crc > 0:
+                    _insert_line(
+                        entry_id=pay_entry_id,
+                        code=SURVEYOR_DEDUCTION_CODE,
+                        name=SURVEYOR_DEDUCTION_NAME,
+                        debit=0,
+                        credit=deduction_crc,
+                        desc=f"Deduccion transferencia exterior - {payment_detail}"
+                    )
+
                 # Cr Bancos
                 _insert_line(
                     entry_id=pay_entry_id,
                     code=BANK_CODE,
                     name=BANK_NAME,
                     debit=0,
-                    credit=calc_total,
+                    credit=bank_payment_crc,
                     desc=payment_detail
                 )
 
 
+        _apply_current_fiscal_classification(conn)
         conn.commit()
 
     except Exception as e:

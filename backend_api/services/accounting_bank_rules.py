@@ -15,6 +15,9 @@ ITP_BAC_PAYEES = (
     "PABEL",
     "SIN DEFINIR",
 )
+BCR_COLLECTION_FEE_USD = 25.0
+SURVEYOR_EXTERNAL_DEDUCTION_USD = 25.0
+SURVEYOR_EXTERNAL_WITHHOLDING_RATE = 0.25
 
 
 def normalize_text(value):
@@ -24,6 +27,11 @@ def normalize_text(value):
         if not unicodedata.combining(char)
     )
     return " ".join(text.split())
+
+
+def is_costa_rica_country(value):
+    text = normalize_text(value)
+    return text in {"costa rica", "cr", "c.r.", "c r", "costarricense", "costaricense"}
 
 
 def _account_by_code(cur, code):
@@ -139,6 +147,151 @@ def is_bcr_account(code=None, name=None, raw_bank=None):
         or " BCR " in f" {text} "
         or text == "BCR"
     )
+
+
+def _table_has_columns(cur, table_name, columns):
+    cur.execute("""
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = ANY (current_schemas(FALSE))
+          AND table_name = %s
+          AND column_name = ANY(%s)
+    """, (table_name, list(columns)))
+    found = {row.get("column_name") for row in (cur.fetchall() or [])}
+    return all(column in found for column in columns)
+
+
+def collections_invoice_country(cur, numero_documento=None, codigo_cliente=None, nombre_cliente=None):
+    numero = str(numero_documento or "").strip().lstrip("0")
+    codigo = str(codigo_cliente or "").strip()
+    nombre = str(nombre_cliente or "").strip()
+    if not numero and not codigo and not nombre:
+        return ""
+
+    collection = None
+    if numero or codigo:
+        cur.execute("""
+            SELECT num_informe, codigo_cliente, nombre_cliente
+            FROM collections c
+            WHERE (%s = '' OR LTRIM(c.numero_documento, '0') = %s)
+              AND (%s = '' OR c.codigo_cliente = %s)
+              AND c.tipo_documento = 'FACTURA'
+            ORDER BY c.id DESC
+            LIMIT 1
+        """, (numero, numero, codigo, codigo))
+        collection = cur.fetchone()
+
+    if collection:
+        codigo = codigo or str(collection.get("codigo_cliente") or "").strip()
+        nombre = nombre or str(collection.get("nombre_cliente") or "").strip()
+        num_informe = str(collection.get("num_informe") or "").strip()
+
+    if (codigo or nombre) and _table_has_columns(cur, "cliente", ("codigo", "nombrecomercial", "pais")):
+        cur.execute("""
+            SELECT pais AS country
+            FROM cliente
+            WHERE (%s <> '' AND codigo = %s)
+               OR (%s <> '' AND LOWER(nombrecomercial) = LOWER(%s))
+            ORDER BY CASE WHEN %s <> '' AND codigo = %s THEN 0 ELSE 1 END
+            LIMIT 1
+        """, (codigo, codigo, nombre, nombre, codigo, codigo))
+        row = cur.fetchone()
+        if row and row.get("country"):
+            return str(row.get("country") or "").strip()
+
+    if collection:
+        num_informe = str(collection.get("num_informe") or "").strip()
+        if num_informe and _table_has_columns(cur, "servicios", ("num_informe", "pais")):
+            cur.execute("""
+                SELECT pais AS country
+                FROM servicios
+                WHERE num_informe::text = %s
+                  AND NULLIF(BTRIM(pais), '') IS NOT NULL
+                LIMIT 1
+            """, (num_informe,))
+            row = cur.fetchone()
+            if row and row.get("country"):
+                return str(row.get("country") or "").strip()
+
+    return ""
+
+
+def should_apply_bcr_collection_fee(cur, code=None, name=None, raw_bank=None, numero_documento=None, codigo_cliente=None, nombre_cliente=None):
+    if not is_bcr_account(code, name, raw_bank):
+        return False
+    country = collections_invoice_country(
+        cur,
+        numero_documento=numero_documento,
+        codigo_cliente=codigo_cliente,
+        nombre_cliente=nombre_cliente,
+    )
+    return bool(country) and not is_costa_rica_country(country)
+
+
+def surveyor_country(cur, payee_name=None, fallback_country=None):
+    name = str(payee_name or "").strip()
+    if name and _table_has_columns(cur, "surveyor", ("codigo", "nombre", "apellidos", "nacionalidad", "provincia", "canton", "distrito")):
+        cur.execute("""
+            SELECT nacionalidad, provincia, canton, distrito
+            FROM surveyor
+            WHERE LOWER(BTRIM(CONCAT_WS(' ', nombre, apellidos))) = LOWER(BTRIM(%s))
+               OR LOWER(BTRIM(nombre)) = LOWER(BTRIM(%s))
+            ORDER BY codigo ASC
+            LIMIT 1
+        """, (name, name))
+        row = cur.fetchone()
+        if row:
+            nacionalidad = str(row.get("nacionalidad") or "").strip()
+            if nacionalidad:
+                return nacionalidad
+            if any(str(row.get(field) or "").strip() for field in ("provincia", "canton", "distrito")):
+                return "Costa Rica"
+    return str(fallback_country or "").strip()
+
+
+def is_external_surveyor(cur, payee_name=None, fallback_country=None, payee_type=None, obligation_type=None):
+    if normalize_text(payee_type).upper() != "SURVEYOR" and normalize_text(obligation_type).upper() != "SURVEYOR_FEE":
+        return False
+    country = surveyor_country(cur, payee_name=payee_name, fallback_country=fallback_country)
+    return bool(country) and not is_costa_rica_country(country)
+
+
+def external_surveyor_settlement(cur, gross_amount, payee_name=None, fallback_country=None, payee_type=None, obligation_type=None):
+    from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+
+    try:
+        gross = Decimal(str(gross_amount or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    except (InvalidOperation, ValueError, TypeError):
+        gross = Decimal("0.00")
+
+    if gross <= 0 or not is_external_surveyor(
+        cur,
+        payee_name=payee_name,
+        fallback_country=fallback_country,
+        payee_type=payee_type,
+        obligation_type=obligation_type,
+    ):
+        return {
+            "applies": False,
+            "gross": gross,
+            "deduction": Decimal("0.00"),
+            "withholding": Decimal("0.00"),
+            "net_payment": gross,
+        }
+
+    deduction = Decimal(str(SURVEYOR_EXTERNAL_DEDUCTION_USD)).quantize(Decimal("0.01"))
+    withholding = (gross * Decimal(str(SURVEYOR_EXTERNAL_WITHHOLDING_RATE))).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    deduction = min(deduction, max(gross - withholding, Decimal("0.00")))
+    net_payment = gross - deduction - withholding
+    if net_payment < 0:
+        net_payment = Decimal("0.00")
+    return {
+        "applies": True,
+        "gross": gross,
+        "deduction": deduction,
+        "withholding": withholding,
+        "net_payment": net_payment,
+    }
 
 
 def resolve_itp_bank(cur, code=None, name=None, payee_name=None, country=None, reference=None, notes=None, payee_type=None, obligation_type=None):

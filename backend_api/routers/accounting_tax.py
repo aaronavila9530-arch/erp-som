@@ -11,7 +11,7 @@ from pathlib import Path
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, UploadFile
 from psycopg2.extras import Json, RealDictCursor
 from pydantic import BaseModel
 
@@ -20,6 +20,11 @@ from database import get_db
 
 router = APIRouter(prefix="/accounting/tax", tags=["Accounting Tax Costa Rica"])
 MONEY = Decimal("0.01")
+
+
+def _company_code(value: str | None = None, header_value: str | None = None) -> str:
+    code = str(value or header_value or "MSL-CR").strip().upper()
+    return code or "MSL-CR"
 
 
 def _money(value) -> Decimal:
@@ -682,7 +687,13 @@ def tax_book(direction:str,period:str,conn=Depends(get_db)):
 
 
 @router.get("/iva")
-def tax_iva(period:str,conn=Depends(get_db)):
+def tax_iva(
+    period: str,
+    company_code: str | None = None,
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+    conn=Depends(get_db),
+):
+    company = _company_code(company_code, x_company_code)
     _ensure_schema(conn); start,end=_period_bounds(period)
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         amount_crc = """
@@ -692,28 +703,32 @@ def tax_iva(period:str,conn=Depends(get_db)):
               ELSE %s * COALESCE(NULLIF(exchange_rate,0),1)
             END
         """
-        cur.execute(f"""SELECT direction,
-          COALESCE(SUM({amount_crc % ('subtotal', 'subtotal')}),0) subtotal,
-          COALESCE(SUM({amount_crc % ('exempt_amount', 'exempt_amount')}),0) exempt,
-          COALESCE(SUM({amount_crc % ('tax_amount', 'tax_amount')}),0) tax,
-          COALESCE(SUM({amount_crc % ('total', 'total')}),0) total,
-          COUNT(*) documents,
-          COUNT(*) FILTER(WHERE xml_path IS NULL) missing_xml,COUNT(*) FILTER(WHERE hacienda_status='PENDING') pending_hacienda
-          FROM tax_electronic_documents
-          WHERE issue_datetime >= %s
-            AND issue_datetime < %s
-            AND COALESCE(issue_datetime::date, CURRENT_DATE) <= CURRENT_DATE
-          GROUP BY direction""",(start,end))
-        by_direction={r["direction"]:r for r in cur.fetchall()}
+        if company == "MSL-CR":
+            cur.execute(f"""SELECT direction,
+              COALESCE(SUM({amount_crc % ('subtotal', 'subtotal')}),0) subtotal,
+              COALESCE(SUM({amount_crc % ('exempt_amount', 'exempt_amount')}),0) exempt,
+              COALESCE(SUM({amount_crc % ('tax_amount', 'tax_amount')}),0) tax,
+              COALESCE(SUM({amount_crc % ('total', 'total')}),0) total,
+              COUNT(*) documents,
+              COUNT(*) FILTER(WHERE xml_path IS NULL) missing_xml,COUNT(*) FILTER(WHERE hacienda_status='PENDING') pending_hacienda
+              FROM tax_electronic_documents
+              WHERE issue_datetime >= %s
+                AND issue_datetime < %s
+                AND COALESCE(issue_datetime::date, CURRENT_DATE) <= CURRENT_DATE
+              GROUP BY direction""",(start,end))
+            by_direction={r["direction"]:r for r in cur.fetchall()}
+        else:
+            by_direction = {}
         cur.execute("SELECT setting_key,setting_value FROM tax_settings WHERE setting_key IN ('IVA_DEBIT_ACCOUNT','IVA_CREDIT_ACCOUNT')")
         settings={r["setting_key"]:r["setting_value"] for r in cur.fetchall()}
         debit_codes = list(dict.fromkeys([settings.get("IVA_DEBIT_ACCOUNT","2108"), "2.1.02.03", "2108"]))
         credit_codes = list(dict.fromkeys([settings.get("IVA_CREDIT_ACCOUNT","1131"), "1.1.13.99", "1131"]))
         cur.execute("""SELECT account_code,COALESCE(SUM(debit),0) debit,COALESCE(SUM(credit),0) credit
           FROM accounting_lines l JOIN accounting_entries e ON e.id=l.entry_id
-          WHERE e.entry_date >= %s
-            AND e.entry_date < %s
-            AND e.workflow_status='POSTED'
+            WHERE e.entry_date >= %s
+              AND e.entry_date < %s
+              AND e.company_code = %s
+              AND e.workflow_status='POSTED'
             AND (account_code = ANY(%s) OR account_code = ANY(%s))
             AND (
               (e.origin='COLLECTIONS' AND EXISTS (
@@ -733,16 +748,19 @@ def tax_iva(period:str,conn=Depends(get_db)):
               (COALESCE(e.origin,'') NOT IN ('COLLECTIONS','ITP'))
             )
           GROUP BY account_code""",
-                    (start,end,debit_codes,credit_codes,start,end,start,end))
+                    (start,end,company,debit_codes,credit_codes,start,end,start,end))
         gl={r["account_code"]:r for r in cur.fetchall()}
-        cur.execute("""SELECT
-          COUNT(*) FILTER(WHERE NOT EXISTS(SELECT 1 FROM tax_document_lines x WHERE x.document_id=d.id)) documents_without_lines,
-          COALESCE(SUM((SELECT COUNT(*) FROM tax_document_lines l WHERE l.document_id=d.id AND COALESCE(l.cabys_code,'')='')),0) missing_cabys
-          FROM tax_electronic_documents d
-          WHERE d.issue_datetime >= %s
-            AND d.issue_datetime < %s
-            AND COALESCE(d.issue_datetime::date, CURRENT_DATE) <= CURRENT_DATE""",(start,end))
-        quality=cur.fetchone()
+        if company == "MSL-CR":
+            cur.execute("""SELECT
+              COUNT(*) FILTER(WHERE NOT EXISTS(SELECT 1 FROM tax_document_lines x WHERE x.document_id=d.id)) documents_without_lines,
+              COALESCE(SUM((SELECT COUNT(*) FROM tax_document_lines l WHERE l.document_id=d.id AND COALESCE(l.cabys_code,'')='')),0) missing_cabys
+              FROM tax_electronic_documents d
+              WHERE d.issue_datetime >= %s
+                AND d.issue_datetime < %s
+                AND COALESCE(d.issue_datetime::date, CURRENT_DATE) <= CURRENT_DATE""",(start,end))
+            quality=cur.fetchone()
+        else:
+            quality = {"documents_without_lines": 0, "missing_cabys": 0}
     sales=by_direction.get("SALE",{}); purchases=by_direction.get("PURCHASE",{})
     debit=_money(sales.get("tax")); credit=_money(purchases.get("tax")); net=debit-credit
     debit_gl=sum((_money(gl.get(code,{}).get("credit"))-_money(gl.get(code,{}).get("debit")) for code in debit_codes), Decimal("0"))
