@@ -553,6 +553,53 @@ def _validation_alert_summary(cur, period):
     }
 
 
+def _mitigate_reviewed_validation_alerts(validation, checklist):
+    reviewed_codes = {
+        item["item_code"]
+        for item in checklist
+        if item.get("status") in {"COMPLETE", "NOT_APPLICABLE"}
+    }
+    alert_to_checklist = {
+        "TAX_XML_PENDING": "TAX_REVIEW",
+        "IVA_NOT_REVIEWED": "TAX_REVIEW",
+        "AUXILIARY_DIFFERENCE": "AUX_RECONCILIATION",
+        "AUXILIARY_UNMAPPED": "AUX_RECONCILIATION",
+    }
+    remaining_critical = []
+    mitigated = []
+    for alert in validation.get("critical", []):
+        checklist_code = alert_to_checklist.get(alert.get("code"))
+        if checklist_code and checklist_code in reviewed_codes:
+            mitigated.append({
+                **alert,
+                "level": "warning",
+                "mitigated_by_checklist": checklist_code,
+                "message": f"{alert.get('message', '')} Revision completada en checklist de cierre.",
+            })
+        else:
+            remaining_critical.append(alert)
+    warnings = [*validation.get("warnings", []), *mitigated]
+    return {
+        **validation,
+        "critical": remaining_critical,
+        "warnings": warnings,
+        "counts": {
+            "critical": len(remaining_critical),
+            "warning": len(warnings),
+            "info": validation.get("counts", {}).get("info", 0),
+        },
+    }
+
+
+def _checklist_item_blocks_close(item):
+    status = item.get("status")
+    if status in {"COMPLETE", "NOT_APPLICABLE"}:
+        return False
+    if item.get("mandatory"):
+        return True
+    return False
+
+
 def _close_snapshot(cur, period, company="MSL-CR"):
     _seed_checklist(cur, period, company)
     checks = _automatic_checks(cur, period) if company == "MSL-CR" else {}
@@ -568,19 +615,14 @@ def _close_snapshot(cur, period, company="MSL-CR"):
             "automatic_check": checks.get(row["item_code"], {"ready": False, "detail": "Revision manual"}),
         })
 
-    blockers = [
-        item for item in checklist
-        if item["mandatory"]
-        and (
-            item["status"] not in {"COMPLETE", "NOT_APPLICABLE"}
-            or not item["automatic_check"].get("ready")
-        )
-    ]
+    blockers = [item for item in checklist if item["mandatory"] and _checklist_item_blocks_close(item)]
     validation = _validation_alert_summary(cur, period) if company == "MSL-CR" else {
         "counts": {"critical": 0, "warning": 0, "info": 0},
         "critical": [],
         "warnings": [],
     }
+    if company == "MSL-CR":
+        validation = _mitigate_reviewed_validation_alerts(validation, checklist)
     cur.execute("""
         SELECT COALESCE(SUM(l.debit),0) debit, COALESCE(SUM(l.credit),0) credit,
                COUNT(DISTINCT e.id) entries
