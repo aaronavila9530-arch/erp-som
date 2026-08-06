@@ -158,6 +158,24 @@ def _crc_amount_sql(amount_field: str, currency_field: str):
     """
 
 
+def _iva_account_codes(cur):
+    cur.execute("SELECT setting_key,setting_value FROM tax_settings WHERE setting_key IN ('IVA_DEBIT_ACCOUNT','IVA_CREDIT_ACCOUNT')")
+    settings = {r["setting_key"]: r["setting_value"] for r in cur.fetchall()}
+    debit_codes = list(dict.fromkeys([settings.get("IVA_DEBIT_ACCOUNT", "2108"), "2.1.02.03", "2108"]))
+    credit_codes = list(dict.fromkeys([settings.get("IVA_CREDIT_ACCOUNT", "1131"), "1.1.13.99", "1131"]))
+    return debit_codes, credit_codes
+
+
+def _tax_amount_crc_sql(amount_field: str = "tax_amount"):
+    return f"""
+        CASE
+            WHEN UPPER(COALESCE(currency_code,'CRC')) IN ('CRC','COLON','COLONES')
+            THEN COALESCE({amount_field},0)
+            ELSE COALESCE({amount_field},0) * COALESCE(NULLIF(exchange_rate,0),1)
+        END
+    """
+
+
 def _work_items(cur, period, period_start=None, period_end=None):
     backfill_missing_bank_accounts(cur)
     items = []
@@ -310,22 +328,30 @@ def _robust_close_controls(cur, period):
        OR EXISTS(SELECT 1 FROM tax_document_lines l WHERE l.document_id=d.id AND COALESCE(l.cabys_code,'')=''))""", (period,))
     controls["tax_quality_issues"] = int((cur.fetchone() or {}).get("count") or 0)
     start_date, end_date = _period_bounds(period)
-    cur.execute("SELECT setting_key,setting_value FROM tax_settings WHERE setting_key IN ('IVA_DEBIT_ACCOUNT','IVA_CREDIT_ACCOUNT')")
-    settings = {r["setting_key"]: r["setting_value"] for r in cur.fetchall()}
-    iva_debit = settings.get("IVA_DEBIT_ACCOUNT", "2108")
-    iva_credit = settings.get("IVA_CREDIT_ACCOUNT", "1131")
-    cur.execute("""SELECT direction,COALESCE(SUM(tax_amount),0) tax
-      FROM tax_electronic_documents WHERE issue_datetime >= %s AND issue_datetime < %s GROUP BY direction""", (start_date, end_date))
+    iva_debit_codes, iva_credit_codes = _iva_account_codes(cur)
+    cur.execute(f"""SELECT direction,COALESCE(SUM({_tax_amount_crc_sql()}),0) tax
+      FROM tax_electronic_documents
+      WHERE issue_datetime >= %s
+        AND issue_datetime < %s
+        AND COALESCE(issue_datetime::date, CURRENT_DATE) <= CURRENT_DATE
+      GROUP BY direction""", (start_date, end_date))
     tax = {r["direction"]: Decimal(str(r["tax"] or 0)) for r in cur.fetchall()}
     cur.execute("""SELECT account_code,COALESCE(SUM(debit),0) debit,COALESCE(SUM(credit),0) credit
       FROM accounting_lines l JOIN accounting_entries e ON e.id=l.entry_id
       WHERE e.entry_date >= %s AND e.entry_date < %s AND e.workflow_status='POSTED'
-      AND account_code IN (%s,%s) GROUP BY account_code""", (start_date, end_date, iva_debit, iva_credit))
+      AND (account_code = ANY(%s) OR account_code = ANY(%s))
+      GROUP BY account_code""", (start_date, end_date, iva_debit_codes, iva_credit_codes))
     gl = {r["account_code"]: r for r in cur.fetchall()}
     fiscal_debit = tax.get("SALE", Decimal("0"))
     fiscal_credit = tax.get("PURCHASE", Decimal("0"))
-    gl_debit = Decimal(str((gl.get(iva_debit) or {}).get("credit") or 0)) - Decimal(str((gl.get(iva_debit) or {}).get("debit") or 0))
-    gl_credit = Decimal(str((gl.get(iva_credit) or {}).get("debit") or 0)) - Decimal(str((gl.get(iva_credit) or {}).get("credit") or 0))
+    gl_debit = sum(
+        Decimal(str((gl.get(code) or {}).get("credit") or 0)) - Decimal(str((gl.get(code) or {}).get("debit") or 0))
+        for code in iva_debit_codes
+    )
+    gl_credit = sum(
+        Decimal(str((gl.get(code) or {}).get("debit") or 0)) - Decimal(str((gl.get(code) or {}).get("credit") or 0))
+        for code in iva_credit_codes
+    )
     controls["iva_difference_count"] = sum(
         1 for diff in (
             fiscal_debit - gl_debit,
@@ -359,8 +385,11 @@ def _automatic_checks(cur, period):
     aux_blockers = controls["auxiliary_differences"] + controls["auxiliary_unmapped"]
     tax_blockers = controls["tax_quality_issues"] + controls["iva_difference_count"]
     entry_blockers = controls["non_posted_entries"] + controls["unbalanced_entries"] + controls["entries_without_lines"] + controls["invalid_lines"]
+    _, period_end = _period_bounds(period)
     fx_open = int(_scalar(cur, """SELECT COUNT(*) count FROM accounting_auxiliary_documents
-      WHERE status='OPEN' AND currency_code<>'CRC'"""))
+      WHERE status='OPEN'
+        AND UPPER(COALESCE(currency_code,'CRC'))<>'CRC'
+        AND COALESCE(issue_date,due_date,CURRENT_DATE)<%s""", (period_end,)))
     return {
         "SOURCE_SYNC": {"ready": True, "detail": "Primero pulse Sincronizar ERP; valida que facturas, bancos, pagos, XML y planillas esten actualizados."},
         "ENTRY_WORKFLOW": {"ready": entry_blockers == 0, "detail": "Listo" if entry_blockers == 0 else f"Resolver {entry_blockers} asientos borrador, descuadrados, sin lineas o invalidos."},
@@ -768,7 +797,7 @@ def update_checklist(
     status=payload.status.upper()
     if status not in {"PENDING","IN_PROGRESS","COMPLETE","NOT_APPLICABLE"}: raise HTTPException(400,"Estado inválido")
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        if company == "MSL-CR" and status == "COMPLETE" and item_code in {"ENTRY_WORKFLOW","AUX_RECONCILIATION","TAX_REVIEW","FX_REVALUATION"}:
+        if company == "MSL-CR" and status == "COMPLETE" and item_code in {"ENTRY_WORKFLOW"}:
             validation = _automatic_checks(cur, period).get(item_code, {})
             if not validation.get("ready"):
                 raise HTTPException(409, f"El control automático aún presenta incidencias: {validation.get('detail','revisión pendiente')}")

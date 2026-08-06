@@ -704,6 +704,7 @@ def reconcile_auxiliaries(period: str | None = Query(None), conn=Depends(get_db)
     _ensure_schema(conn)
     results = []
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        as_of = _period_as_of(period) if period else None
         for entity_type in sorted(ENTITY_TYPES):
             cur.execute("SELECT control_account_code FROM accounting_auxiliary_settings WHERE entity_type=%s", (entity_type,))
             setting = cur.fetchone(); account = setting.get("control_account_code") if setting else None
@@ -716,11 +717,12 @@ def reconcile_auxiliaries(period: str | None = Query(None), conn=Depends(get_db)
                 JOIN accounting_auxiliary_entities e ON e.id=d.entity_id
                 WHERE e.entity_type=%s
                   AND e.active=TRUE
+                  AND (%s IS NULL OR COALESCE(d.issue_date,d.due_date,CURRENT_DATE)<=%s)
                   AND (
                         d.status='OPEN'
                      OR d.document_type IN ('BANK_MOVEMENT','TAX_MOVEMENT','RETENTION_MOVEMENT','ADVANCE_MOVEMENT')
                   )
-            """, (entity_type,))
+            """, (entity_type, as_of, as_of))
             auxiliary_row = cur.fetchone()
             auxiliary = auxiliary_row["balance"]
             ledger = Decimal("0")
