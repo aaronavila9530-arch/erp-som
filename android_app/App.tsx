@@ -40,6 +40,12 @@ const ONG_NOTIFICATION_IDS_KEY = "erp_som_logra_notification_ids";
 const ERP_NOTIFICATION_IDS_KEY = "erp_som_business_notification_ids";
 const ONG_AUTOSAVE_DRAFT_KEY = "erp_som_ong_autosave_draft";
 
+const COMPANIES = [
+  { code: "MSL-CR", name: "MSL MARINE SURVEYORS AND LOGISTICS GROUP SRL", label: "MSL" },
+  { code: "MMS-CR", name: "MMS MARITIME MASTER SURVEYORS SRL", label: "MMS" }
+];
+const DEFAULT_COMPANY = COMPANIES[0];
+
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
     shouldShowBanner: true,
@@ -52,6 +58,7 @@ Notifications.setNotificationHandler({
 type SavedCredentials = {
   usuario: string;
   password: string;
+  company_code?: string;
 };
 
 type OfflineQueueItem = {
@@ -297,10 +304,24 @@ function formatValue(value: unknown) {
   return String(value);
 }
 
+function companyByCode(code?: string) {
+  return COMPANIES.find((company) => company.code === code) || DEFAULT_COMPANY;
+}
+
+function companyPrefix(code?: string) {
+  return companyByCode(code).code.split("-")[0] || "MSL";
+}
+
+function withCompanySession(session: Session, companyCode?: string): Session {
+  const company = companyByCode(companyCode);
+  return { ...session, company_code: company.code, company_name: company.name };
+}
+
 function LoginScreen() {
   const { setSession } = useAuth();
   const [usuario, setUsuario] = useState("");
   const [password, setPassword] = useState("");
+  const [companyCode, setCompanyCode] = useState(DEFAULT_COMPANY.code);
   const [remember, setRemember] = useState(true);
   const [hasSavedCredentials, setHasSavedCredentials] = useState(false);
   const [pending, setPending] = useState<LoginResponse | null>(null);
@@ -314,7 +335,7 @@ function LoginScreen() {
 
   async function saveCredentials() {
     if (!remember) return;
-    await SecureStore.setItemAsync(CREDS_KEY, JSON.stringify({ usuario, password }), {
+    await SecureStore.setItemAsync(CREDS_KEY, JSON.stringify({ usuario, password, company_code: companyCode }), {
       keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY
     });
     setHasSavedCredentials(true);
@@ -359,6 +380,7 @@ function LoginScreen() {
       const saved = JSON.parse(raw) as SavedCredentials;
       setUsuario(saved.usuario);
       setPassword(saved.password);
+      setCompanyCode(companyByCode(saved.company_code).code);
 
       const response = await login(saved.usuario, saved.password);
       setPending(response);
@@ -378,7 +400,7 @@ function LoginScreen() {
         pending.action === "ENROLL_TOTP"
           ? await confirmTotp(pending.usuario, codigo)
           : await verifyTotp(pending.usuario, codigo);
-      await setSession(response);
+      await setSession(withCompanySession(response, companyCode));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Código inválido");
     } finally {
@@ -396,6 +418,13 @@ function LoginScreen() {
 
         {!pending ? (
           <View style={styles.panel}>
+            <SelectField
+              label="Empresa"
+              value={companyByCode(companyCode).label}
+              options={COMPANIES.map((company) => company.label)}
+              onChange={(label) => setCompanyCode(COMPANIES.find((company) => company.label === label)?.code || DEFAULT_COMPANY.code)}
+            />
+
             <Text style={styles.label}>Usuario</Text>
             <TextInput
               autoCapitalize="none"
@@ -10836,7 +10865,11 @@ function DesktopTable({
     setBusy(true);
     setMessage("");
     try {
-      await apiRequest(endpointWithId(endpoint, id), { method, body: form, session });
+      await apiRequest(endpointWithId(endpoint, id), {
+        method,
+        body: { ...form, company_code: session.company_code || DEFAULT_COMPANY.code },
+        session
+      });
       setModalMode(null);
       onReload();
     } catch (err) {
@@ -12367,14 +12400,16 @@ function MasterDataModal({
     );
 
     if (mode === "add") {
-      nextForm[config.codeKey] = config.fallbackCode;
+      const prefix = companyPrefix(session.company_code);
+      const fallbackCode = config.codeSuffix ? `${prefix}-0001-${config.codeSuffix}` : config.fallbackCode.replace(/^MSL/, prefix);
+      nextForm[config.codeKey] = fallbackCode;
       if (config.ultimoEndpoint && config.codePrefix && config.codeSuffix) {
         apiRequest<{ ultimo?: number }>(config.ultimoEndpoint, { session })
           .then((payload) => {
             const nextNumber = Number(payload.ultimo || 0) + 1;
             setForm((current) => ({
               ...current,
-              [config.codeKey]: `${config.codePrefix}-${String(nextNumber).padStart(4, "0")}-${config.codeSuffix}`
+              [config.codeKey]: `${prefix}-${String(nextNumber).padStart(4, "0")}-${config.codeSuffix}`
             }));
           })
           .catch((err) => setMessage(err instanceof Error ? err.message : "No se pudo generar el codigo."));
@@ -12427,7 +12462,7 @@ function MasterDataModal({
       await apiRequest(endpointWithId(endpoint, form[config.codeKey] || ""), {
         method,
         session,
-        body: normalizeMasterPayload(sectionKey, form)
+        body: { ...normalizeMasterPayload(sectionKey, form), company_code: session.company_code || DEFAULT_COMPANY.code }
       });
       onSaved();
     } catch (err) {
@@ -12878,7 +12913,7 @@ function FinanceFilters({
     onMessage("");
     try {
       const status = await apiRequest<Record<string, unknown>>(
-        `/closing/period/status?company_code=MSL-CR&fiscal_year=${year}&period=${Number(month)}&ledger=0L`,
+        `/closing/period/status?company_code=${encodeURIComponent(session.company_code || DEFAULT_COMPANY.code)}&fiscal_year=${year}&period=${Number(month)}&ledger=0L`,
         { session }
       );
       onMessage(
@@ -12907,6 +12942,7 @@ function FinanceFilters({
       }
       if (form.origin && form.origin !== "TODOS") params.set("origin", form.origin);
       if (form.account && form.account !== "TODOS") params.set("account_code", form.account.split(" - ")[0]);
+      params.set("company_code", session.company_code || DEFAULT_COMPANY.code);
 
       const format = form.report_format === "PDF" ? "pdf" : "excel";
       const url = `${API_BASE_URL}/accounting/reports/${format}?${params.toString()}`;

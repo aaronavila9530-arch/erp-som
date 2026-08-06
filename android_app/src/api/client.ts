@@ -4,6 +4,8 @@ export type Session = {
   usuario: string;
   rol: string;
   token: string;
+  company_code?: string;
+  company_name?: string;
   modules: Array<{ label: string; code: string }>;
 };
 
@@ -39,7 +41,9 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
           ? {
               "X-User": options.session.usuario,
               "X-Role": options.session.rol,
-              "X-User-Role": options.session.rol
+              "X-User-Role": options.session.rol,
+              "X-Company-Code": options.session.company_code || "MSL-CR",
+              "X-Company-Name": options.session.company_name || "MSL MARINE SURVEYORS AND LOGISTICS GROUP SRL"
             }
           : {})
       },
