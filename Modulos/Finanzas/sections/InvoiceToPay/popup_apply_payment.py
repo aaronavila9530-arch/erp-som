@@ -197,11 +197,21 @@ class PopupApplyPayment(tk.Toplevel):
             return
 
         # ---------------- SUCCESS ----------------
+        rule_detail = ""
+        if data.get("external_surveyor_rule_applied"):
+            rule_detail = (
+                "\n\nSurveyor exterior:\n"
+                f"Retencion 25%: {float(data.get('withholding_usd') or 0):,.2f} USD\n"
+                f"Deduccion transferencia: {float(data.get('deduction_usd') or 0):,.2f} USD\n"
+                f"Neto a pagar: {float(data.get('net_payment_usd') or 0):,.2f} USD"
+            )
+
         messagebox.showinfo(
             "Success",
             f"Payment applied successfully.\n\n"
             f"New Balance: {data.get('new_balance')}\n"
             f"Status: {data.get('status')}"
+            f"{rule_detail}"
         )
 
         if self.on_success:

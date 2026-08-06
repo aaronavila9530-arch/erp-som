@@ -23,6 +23,24 @@ class InvoiceToPayUI(tk.Frame):
         self.pack(fill="both", expand=True)
         self._build_ui()
 
+    @staticmethod
+    def _fmt_money(value):
+        try:
+            if value in (None, ""):
+                return ""
+            return f"{float(value):,.2f}"
+        except Exception:
+            return str(value)
+
+    @staticmethod
+    def _parse_money(value):
+        try:
+            if value in (None, ""):
+                return 0.0
+            return float(str(value).replace(",", ""))
+        except Exception:
+            return 0.0
+
     # ============================================================
     # UI BUILD
     # ============================================================
@@ -138,7 +156,9 @@ class InvoiceToPayUI(tk.Frame):
 
         for col in self.tree["columns"][1:]:
             self.tree.heading(col, text=col)
-            self.tree.column(col, width=130, anchor="center")
+            anchor = "e" if col in {"total", "saldo"} else "center"
+            width = 145 if col in {"total", "saldo"} else 130
+            self.tree.column(col, width=width, anchor=anchor)
 
         v_scroll = ttk.Scrollbar(table_frame, orient="vertical", command=self.tree.yview)
         h_scroll = ttk.Scrollbar(table_frame, orient="horizontal", command=self.tree.xview)
@@ -250,8 +270,8 @@ class InvoiceToPayUI(tk.Frame):
                     row["country"],
                     row["operation"],
                     row["currency"],
-                    row["total"],
-                    row["balance"],
+                    self._fmt_money(row.get("total")),
+                    self._fmt_money(row.get("balance")),
                     to_long_english_date(row.get("last_payment_date")) if row.get("last_payment_date") else "",
                     row["status"]
                 ),
@@ -306,7 +326,7 @@ class InvoiceToPayUI(tk.Frame):
                 "payee": values[1],                   # beneficiario
                 "reference": values[3],               # referencia ✅
                 "currency": values[9],                # moneda ✅
-                "balance": float(values[11])          # saldo ✅
+                "balance": self._parse_money(values[11])  # saldo ✅
             }
         except Exception as e:
             messagebox.showerror(

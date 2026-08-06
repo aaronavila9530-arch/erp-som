@@ -7,7 +7,7 @@ from api_client import (
     post_accounting_reverse_entry_api,
     transition_accounting_entry_api,
 )
-from session_context import get_user
+from session_context import get_user, get_company_code
 from Modulos.Finanzas.date_utils import to_long_english_date
 
 PAGE_SIZE = 150  # líneas por página
@@ -258,7 +258,7 @@ class AccountingTable(tk.Frame):
     # ============================================================
     def _open_closing_wizard(self):
         from Modulos.Finanzas.sections.Accounting.popups.popup_closing_wizard import PopupClosingWizard
-        PopupClosingWizard(self, company_code="MSL-CR", ledger="0L")
+        PopupClosingWizard(self, company_code=get_company_code(), ledger="0L")
 
     # ============================================================
     # AJUSTES / REVERSOS

@@ -1,11 +1,11 @@
-; =========================================================
-; ERP-SOM — INSTALADOR PRODUCCIÓN (PyInstaller onedir)
-; Enfocado en copiar el árbol de dist tal cual y evitar
-; efectos de compresión/mezcla que rompan módulos como Informes
+﻿; =========================================================
+; ERP-SOM â€” INSTALADOR PRODUCCIÃ“N (PyInstaller onedir)
+; Enfocado en copiar el Ã¡rbol de dist tal cual y evitar
+; efectos de compresiÃ³n/mezcla que rompan mÃ³dulos como Informes
 ; =========================================================
 
 #define MyAppName "ERP-SOM"
-#define MyAppVersion "1.7.5"
+#define MyAppVersion "1.7.8"
 #define MyAppPublisher "InnovaCore SRL"
 #define MyAppExeName "ERP-SOM.exe"
 
@@ -46,7 +46,7 @@ RestartApplications=no
 DisableFinishedPage=no
 
 [Files]
-; Copia todo el árbol exactamente como sale de dist
+; Copia todo el Ã¡rbol exactamente como sale de dist
 Source: "dist\ERP-SOM\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
@@ -58,7 +58,7 @@ Name: "{autodesktop}\ERP-SOM"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{
 Name: "{app}"
 
 [InstallDelete]
-; Limpiar SOLO el contenido, no el directorio raíz
+; Limpiar SOLO el contenido, no el directorio raÃ­z
 Type: files; Name: "{app}\*"
 Type: filesandordirs; Name: "{app}\*"
 
@@ -74,7 +74,7 @@ var
 begin
   Exec(
     ExpandConstant('{sys}\taskkill.exe'),
-    '/F /IM "{#MyAppExeName}"',
+    '/F /T /IM "{#MyAppExeName}"',
     '',
     SW_HIDE,
     ewWaitUntilTerminated,

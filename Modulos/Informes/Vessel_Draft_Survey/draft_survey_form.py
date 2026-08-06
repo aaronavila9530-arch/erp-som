@@ -482,6 +482,10 @@ class DraftSurveyForm(ttk.Frame):
                        right=("summer_deadweight", "Summer deadweight", 18))
         self._row_2cols(lf_constants, 3, left=("net_register_tons", "Net register tons", 18),
                        right=("gross_register_tons", "Gross register tons", 18))
+        self._row_2cols(lf_constants, 4, left=("init_light_ship", "Initial LIGHT SHIP", 18),
+                       right=("final_light_ship", "Final LIGHT SHIP", 18))
+        self._row_2cols(lf_constants, 5, left=("init_historic_constant", "Initial HISTORIC CONSTANT", 18),
+                       right=("final_historic_constant", "Final HISTORIC CONSTANT", 18))
 
         # ---------------- Hydrostatic / Tables ----------------
         lf_hydro = ttk.LabelFrame(parent, text="Hydrostatic / Tables")

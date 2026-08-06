@@ -13,6 +13,7 @@ from api_client import (
     get_accounting_validation_alerts_api,
     sync_accounting_tax_api,
 )
+from session_context import get_company_code, get_company_name
 from Modulos.Finanzas.date_utils import to_long_english_date
 from Modulos.Finanzas.sections.Accounting.accounting_table import AccountingTable
 from Modulos.Finanzas.sections.Accounting.popups.popup_report_selector import PopupReportSelector
@@ -75,6 +76,13 @@ class AccountingUI(tk.Frame):
             font=("Segoe UI", 16, "bold"),
             bg="white"
         ).pack(anchor="w", padx=15, pady=(5, 2))
+        tk.Label(
+            self,
+            text=f"Empresa activa: {get_company_name()} ({get_company_code()})",
+            font=("Segoe UI", 9, "bold"),
+            bg="white",
+            fg="#475569"
+        ).pack(anchor="w", padx=15, pady=(0, 4))
 
         # ================= TC =================
         tc_frame = tk.LabelFrame(self, text="Tipo de Cambio BCCR", bg="white")
@@ -347,6 +355,8 @@ class AccountingUI(tk.Frame):
         final_actions_menu.add_command(label="Sincronizar asientos ERP", command=self._sync_accounting_entries)
         final_actions_menu.add_separator()
         final_actions_menu.add_command(label="Auxiliares contables", command=self._open_auxiliaries)
+        final_actions_menu.add_command(label="Activos fijos", command=self._open_fixed_assets)
+        final_actions_menu.add_command(label="Inventarios", command=self._open_inventory)
         final_actions_menu.add_command(label="Centro fiscal Costa Rica", command=self._open_tax_center)
         final_actions_menu.add_command(label="Biblioteca legal Costa Rica", command=self._open_legal_library)
         final_actions_menu.add_command(label="Catalogo maestro de cuentas", command=self._open_chart_of_accounts)
@@ -788,7 +798,7 @@ class AccountingUI(tk.Frame):
         try:
             from Modulos.Finanzas.sections.Accounting.popups.popup_closing_wizard import PopupClosingWizard
 
-            PopupClosingWizard(self, company_code="MSL-CR", ledger="0L")
+            PopupClosingWizard(self, company_code=get_company_code(), ledger="0L")
         except Exception as e:
             messagebox.showerror(
                 "Mayorizacion tecnica",
@@ -851,6 +861,20 @@ class AccountingUI(tk.Frame):
             PopupAccountingAuxiliaries(self, period=self.cmb_period.get() or None)
         except Exception as exc:
             messagebox.showerror("Auxiliares contables", str(exc))
+
+    def _open_fixed_assets(self):
+        try:
+            from Modulos.Finanzas.sections.Accounting.popups.popup_fixed_assets import PopupFixedAssets
+            PopupFixedAssets(self)
+        except Exception as exc:
+            messagebox.showerror("Activos fijos", str(exc))
+
+    def _open_inventory(self):
+        try:
+            from Modulos.Finanzas.sections.Accounting.popups.popup_inventory import PopupInventory
+            PopupInventory(self)
+        except Exception as exc:
+            messagebox.showerror("Inventarios", str(exc))
 
 
     def _adjust_selected_entry(self):

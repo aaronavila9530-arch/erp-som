@@ -90,7 +90,9 @@ class OTPWindow(tk.Toplevel):
         mode,
         qr_bytes=None,
         password=None,
-        remember_credentials=False
+        remember_credentials=False,
+        company_code="MSL-CR",
+        company_name="MSL MARINE SURVEYORS AND LOGISTICS GROUP SRL"
     ):
         super().__init__(parent)
 
@@ -101,6 +103,8 @@ class OTPWindow(tk.Toplevel):
         self.qr_bytes = qr_bytes
         self.password = password
         self.remember_credentials = bool(remember_credentials)
+        self.company_code = company_code
+        self.company_name = company_name
         self._submitting = False
 
         self.title("Verificación de Seguridad")
@@ -393,7 +397,9 @@ class OTPWindow(tk.Toplevel):
         set_user_context(
             usuario_ctx,
             rol_ctx,
-            "LOCAL_SESSION"
+            "LOCAL_SESSION",
+            company_code=self.company_code,
+            company_name=self.company_name
         )
 
         if self.remember_credentials and self.password:

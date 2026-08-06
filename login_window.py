@@ -7,6 +7,7 @@ from tkinter import ttk, messagebox
 
 from auth_api import login_usuario
 from api_client import set_user_role, get_version_info
+from companies import company_by_label, company_labels
 from resource_utils import resource_path
 from update_window import UpdateWindow
 from version import APP_VERSION
@@ -32,6 +33,7 @@ class LoginWindow(tk.Toplevel):
         super().__init__(parent)
         self.parent = parent
         self.remember_credentials = tk.BooleanVar(value=has_saved_credentials())
+        self.company_var = tk.StringVar(value=company_labels()[0])
         self._switch_canvas = None
         self._switch_label = None
 
@@ -93,20 +95,35 @@ class LoginWindow(tk.Toplevel):
         self.password = ttk.Entry(self.left, width=30, show="*")
         self.password.grid(row=4, column=0, sticky="w")
 
-        self._build_credentials_switch(row=5)
+        tk.Label(
+            self.left,
+            text="Empresa",
+            bg="white"
+        ).grid(row=5, column=0, sticky="w", pady=(20, 5))
+
+        self.company_combo = ttk.Combobox(
+            self.left,
+            textvariable=self.company_var,
+            values=company_labels(),
+            width=52,
+            state="readonly"
+        )
+        self.company_combo.grid(row=6, column=0, sticky="w")
+
+        self._build_credentials_switch(row=7)
 
         ttk.Button(
             self.left,
             text="Ingresar",
             command=self._login
-        ).grid(row=6, column=0, sticky="w", pady=(22, 10))
+        ).grid(row=8, column=0, sticky="w", pady=(22, 10))
 
         self.btn_windows_unlock = ttk.Button(
             self.left,
             text="Usar credenciales guardadas",
             command=self._unlock_with_windows
         )
-        self.btn_windows_unlock.grid(row=7, column=0, sticky="w", pady=(0, 10))
+        self.btn_windows_unlock.grid(row=9, column=0, sticky="w", pady=(0, 10))
 
         if not has_saved_credentials() or not is_windows_protection_available():
             self.btn_windows_unlock.state(["disabled"])
@@ -115,7 +132,7 @@ class LoginWindow(tk.Toplevel):
             self.left,
             text="Olvidé mi contraseña",
             command=self._forgot
-        ).grid(row=8, column=0, sticky="w")
+        ).grid(row=10, column=0, sticky="w")
 
         # ENTER = LOGIN
         self.bind("<Return>", lambda e: self._login())
@@ -368,6 +385,7 @@ class LoginWindow(tk.Toplevel):
     def _login(self):
         usuario = self.usuario.get().strip()
         password = self.password.get()
+        company = company_by_label(self.company_var.get())
 
         if not usuario or not password:
             messagebox.showwarning(
@@ -421,7 +439,9 @@ class LoginWindow(tk.Toplevel):
                 mode="ENROLL_TOTP",
                 qr_bytes=data.get("qr"),
                 password=password,
-                remember_credentials=self.remember_credentials.get()
+                remember_credentials=self.remember_credentials.get(),
+                company_code=company["code"],
+                company_name=company["name"]
             )
 
         elif action == "VERIFY_TOTP":
@@ -431,7 +451,9 @@ class LoginWindow(tk.Toplevel):
                 rol=rol,
                 mode="VERIFY_TOTP",
                 password=password,
-                remember_credentials=self.remember_credentials.get()
+                remember_credentials=self.remember_credentials.get(),
+                company_code=company["code"],
+                company_name=company["name"]
             )
         else:
             messagebox.showerror(
