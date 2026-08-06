@@ -407,6 +407,18 @@ def _json_default(value):
     return __import__("json").dumps(value, default=str)
 
 
+def _json_ready(value):
+    if isinstance(value, Decimal):
+        return float(value)
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {key: _json_ready(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_ready(item) for item in value]
+    return value
+
+
 def _validation_alert_summary(cur, period):
     backfill_missing_bank_accounts(cur)
     critical = []
@@ -744,78 +756,105 @@ def close_guided_month(
     _ensure_schema(conn)
     company = _company_code(company_code, x_company_code)
     user = (payload.user or "unknown").strip() or "unknown"
-    with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        checklist, validation, summary, blockers = _close_snapshot(cur, period, company)
-        if blockers:
-            raise HTTPException(409, f"El checklist obligatorio tiene {len(blockers)} pasos pendientes.")
-        if validation["counts"]["critical"]:
-            raise HTTPException(409, f"Existen {validation['counts']['critical']} alertas criticas antes del cierre.")
-        cur.execute("""
-            SELECT *
-            FROM accounting_period_controls
-            WHERE company_code=%s AND period=%s
-            FOR UPDATE
-        """, (company, period))
-        before = cur.fetchone()
-        if before and before.get("status") == "CLOSED":
-            raise HTTPException(409, f"El periodo {period} ya esta cerrado.")
-        cur.execute("""
-            INSERT INTO accounting_period_controls(company_code, period, status, closed_by, closed_at)
-            VALUES(%s, %s, 'CLOSED', %s, NOW())
-            ON CONFLICT(company_code, period) DO UPDATE SET
-                status='CLOSED',
-                closed_by=EXCLUDED.closed_by,
-                closed_at=NOW(),
-                updated_at=NOW()
-            RETURNING *
-        """, (company, period, user))
-        control = cur.fetchone()
-        cur.execute("""
-            INSERT INTO accounting_monthly_close_runs(
-                company_code, period, status, closed_by, closed_at, notes,
-                checklist_snapshot, validation_snapshot, summary
-            )
-            VALUES(%s, %s, 'CLOSED', %s, NOW(), %s, %s, %s, %s)
-            ON CONFLICT(company_code, period) DO UPDATE SET
-                status='CLOSED',
-                closed_by=EXCLUDED.closed_by,
-                closed_at=NOW(),
-                notes=EXCLUDED.notes,
-                checklist_snapshot=EXCLUDED.checklist_snapshot,
-                validation_snapshot=EXCLUDED.validation_snapshot,
-                summary=EXCLUDED.summary,
-                updated_at=NOW()
-            RETURNING *
-        """, (
-            company,
-            period,
-            user,
-            payload.notes,
-            Json(checklist, dumps=_json_default),
-            Json(validation, dumps=_json_default),
-            Json(summary),
-        ))
-        run = cur.fetchone()
-        audit_event(
-            cur,
-            module="accounting",
-            action="MONTHLY_PERIOD_CLOSED",
-            entity_type="accounting_period",
-            entity_id=period,
-            performed_by=user,
-            performed_role="",
-            before=row_to_dict(before),
-            after={"period_control": row_to_dict(control), "close_run": row_to_dict(run)},
-            metadata={"summary": summary, "notes": payload.notes or ""},
-        )
-    conn.commit()
-    return {
-        "status": "ok",
-        "period": period,
-        "period_control": control,
-        "run": run,
-        "summary": summary,
-    }
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            checklist, validation, summary, blockers = _close_snapshot(cur, period, company)
+            if blockers:
+                raise HTTPException(409, f"El checklist obligatorio tiene {len(blockers)} pasos pendientes.")
+            if validation["counts"]["critical"]:
+                raise HTTPException(409, f"Existen {validation['counts']['critical']} alertas criticas antes del cierre.")
+            cur.execute("""
+                SELECT *
+                FROM accounting_period_controls
+                WHERE company_code=%s AND period=%s
+                FOR UPDATE
+            """, (company, period))
+            before = cur.fetchone()
+            if before and before.get("status") == "CLOSED":
+                cur.execute("""
+                    SELECT *
+                    FROM accounting_monthly_close_runs
+                    WHERE company_code=%s AND period=%s
+                """, (company, period))
+                run = cur.fetchone()
+                conn.commit()
+                return _json_ready({
+                    "status": "ok",
+                    "message": "Periodo ya estaba cerrado.",
+                    "period": period,
+                    "period_control": row_to_dict(before),
+                    "run": row_to_dict(run),
+                    "summary": summary,
+                })
+            cur.execute("""
+                INSERT INTO accounting_period_controls(company_code, period, status, closed_by, closed_at)
+                VALUES(%s, %s, 'CLOSED', %s, NOW())
+                ON CONFLICT(company_code, period) DO UPDATE SET
+                    status='CLOSED',
+                    closed_by=EXCLUDED.closed_by,
+                    closed_at=NOW(),
+                    updated_at=NOW()
+                RETURNING *
+            """, (company, period, user))
+            control = cur.fetchone()
+            cur.execute("""
+                INSERT INTO accounting_monthly_close_runs(
+                    company_code, period, status, closed_by, closed_at, notes,
+                    checklist_snapshot, validation_snapshot, summary
+                )
+                VALUES(%s, %s, 'CLOSED', %s, NOW(), %s, %s, %s, %s)
+                ON CONFLICT(company_code, period) DO UPDATE SET
+                    status='CLOSED',
+                    closed_by=EXCLUDED.closed_by,
+                    closed_at=NOW(),
+                    notes=EXCLUDED.notes,
+                    checklist_snapshot=EXCLUDED.checklist_snapshot,
+                    validation_snapshot=EXCLUDED.validation_snapshot,
+                    summary=EXCLUDED.summary,
+                    updated_at=NOW()
+                RETURNING *
+            """, (
+                company,
+                period,
+                user,
+                payload.notes,
+                Json(checklist, dumps=_json_default),
+                Json(validation, dumps=_json_default),
+                Json(summary, dumps=_json_default),
+            ))
+            run = cur.fetchone()
+        conn.commit()
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                audit_event(
+                    cur,
+                    module="accounting",
+                    action="MONTHLY_PERIOD_CLOSED",
+                    entity_type="accounting_period",
+                    entity_id=period,
+                    performed_by=user,
+                    performed_role="",
+                    before=row_to_dict(before),
+                    after={"period_control": row_to_dict(control), "close_run": row_to_dict(run)},
+                    metadata={"summary": summary, "notes": payload.notes or ""},
+                )
+            conn.commit()
+        except Exception as audit_error:
+            conn.rollback()
+            summary = {**summary, "audit_warning": str(audit_error)}
+        return _json_ready({
+            "status": "ok",
+            "period": period,
+            "period_control": row_to_dict(control),
+            "run": row_to_dict(run),
+            "summary": summary,
+        })
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as exc:
+        conn.rollback()
+        raise HTTPException(500, f"No se pudo cerrar el periodo {period}: {exc}")
 
 
 class ChecklistUpdate(BaseModel):
