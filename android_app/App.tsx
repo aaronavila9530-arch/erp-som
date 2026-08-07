@@ -10563,6 +10563,23 @@ type MasterFormConfig = {
   fields: MasterField[];
 };
 
+const COMPANY_FISCAL_FIELDS = [
+  { key: "company_name", label: "Empresa" },
+  { key: "legal_name", label: "Razon social" },
+  { key: "trade_name", label: "Nombre comercial" },
+  { key: "tax_id", label: "Cedula juridica" },
+  { key: "economic_activity", label: "Actividad economica" },
+  { key: "phone", label: "Telefono" },
+  { key: "billing_email", label: "Correo facturacion" },
+  { key: "email", label: "Correo general" },
+  { key: "country", label: "Pais" },
+  { key: "province", label: "Provincia" },
+  { key: "canton", label: "Canton" },
+  { key: "district", label: "Distrito" },
+  { key: "address", label: "Direccion" },
+  { key: "notes", label: "Notas" }
+];
+
 const MASTER_FORMS: Record<string, MasterFormConfig> = {
   clientes: {
     title: "Cliente",
@@ -10709,6 +10726,71 @@ const MASTER_FORMS: Record<string, MasterFormConfig> = {
   }
 };
 
+function csvEscape(value: unknown) {
+  const text = formatValue(value) === "-" ? "" : formatValue(value);
+  return `"${text.replaceAll('"', '""')}"`;
+}
+
+function buildMasterCsvTemplate(config: MasterFormConfig) {
+  const headers = config.fields.map((field) => field.key);
+  const labels = config.fields.map((field) => field.label);
+  return `${headers.map(csvEscape).join(",")}\n${labels.map(csvEscape).join(",")}\n`;
+}
+
+function splitCsvLine(line: string) {
+  const cells: string[] = [];
+  let current = "";
+  let quoted = false;
+
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    const next = line[index + 1];
+    if (char === '"' && quoted && next === '"') {
+      current += '"';
+      index += 1;
+      continue;
+    }
+    if (char === '"') {
+      quoted = !quoted;
+      continue;
+    }
+    if (char === "," && !quoted) {
+      cells.push(current);
+      current = "";
+      continue;
+    }
+    current += char;
+  }
+  cells.push(current);
+  return cells.map((cell) => cell.trim());
+}
+
+function parseMasterCsv(content: string, config: MasterFormConfig) {
+  const lines = content
+    .replace(/^\uFEFF/, "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (!lines.length) return [];
+
+  const headers = splitCsvLine(lines[0]);
+  const validKeys = new Set(config.fields.map((field) => field.key));
+  const dataLines = lines.slice(1).filter((line) => {
+    const cells = splitCsvLine(line);
+    return cells.some((cell) => cell.trim()) && !cells.every((cell, index) => cell === config.fields[index]?.label);
+  });
+
+  return dataLines.map((line) => {
+    const cells = splitCsvLine(line);
+    const row: Record<string, string> = {};
+    headers.forEach((header, index) => {
+      const cleanHeader = header.trim();
+      if (validKeys.has(cleanHeader)) row[cleanHeader] = cells[index] || "";
+    });
+    return row;
+  });
+}
+
 function DesktopTable({
   section,
   rows,
@@ -10730,6 +10812,7 @@ function DesktopTable({
   const [showServiceForm, setShowServiceForm] = useState(false);
   const [serviceAction, setServiceAction] = useState<string | null>(null);
   const [serviceDetail, setServiceDetail] = useState<Record<string, unknown> | null>(null);
+  const [companyFiscalOpen, setCompanyFiscalOpen] = useState(false);
   const [tableRows, setTableRows] = useState(rows);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -10879,6 +10962,76 @@ function DesktopTable({
     }
   }
 
+  async function exportMasterForm() {
+    if (!masterForm) return;
+    const filename = `Formulario_MasterData_${masterForm.title}_${session.company_code || DEFAULT_COMPANY.code}.csv`;
+    const uri = `${FileSystem.cacheDirectory || ""}${cleanFilePart(filename)}`;
+    setMessage("");
+    try {
+      await FileSystem.writeAsStringAsync(uri, buildMasterCsvTemplate(masterForm));
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(uri, { dialogTitle: filename, mimeType: "text/csv" });
+      } else {
+        await Share.share({ title: filename, message: buildMasterCsvTemplate(masterForm) });
+      }
+      setMessage("Plantilla generada para llenar y cargar de nuevo.");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo exportar la plantilla.");
+    }
+  }
+
+  async function importMasterForm() {
+    if (!masterForm) return;
+    setMessage("");
+    try {
+      const picked = await DocumentPicker.getDocumentAsync({
+        type: ["text/csv", "text/comma-separated-values", "text/plain", "application/vnd.ms-excel"],
+        multiple: false,
+        copyToCacheDirectory: true
+      });
+      if (picked.canceled || !picked.assets?.length) return;
+      const content = await FileSystem.readAsStringAsync(picked.assets[0].uri);
+      const records = parseMasterCsv(content, masterForm).filter((row) => Object.values(row).some((value) => String(value || "").trim()));
+      if (!records.length) {
+        setMessage("El archivo no contiene lineas para cargar.");
+        return;
+      }
+
+      const createEndpoint = table.createEndpoint;
+      const updateEndpoint = table.updateEndpoint;
+      if (!createEndpoint) {
+        setMessage("Esta seccion no permite carga desde plantilla.");
+        return;
+      }
+
+      setBusy(true);
+      let created = 0;
+      let updated = 0;
+      const errors: string[] = [];
+      for (const record of records) {
+        const payload = { ...normalizeMasterPayload(section.key, record), company_code: session.company_code || DEFAULT_COMPANY.code };
+        const id = String(record[masterForm.codeKey] || "").trim();
+        try {
+          if (id && updateEndpoint) {
+            await apiRequest(endpointWithId(updateEndpoint, id), { method: "PUT", body: payload, session });
+            updated += 1;
+          } else {
+            await apiRequest(createEndpoint, { method: "POST", body: payload, session });
+            created += 1;
+          }
+        } catch (err) {
+          errors.push(`${id || masterForm.title}: ${err instanceof Error ? err.message : "No se pudo cargar."}`);
+        }
+      }
+      onReload();
+      setMessage(`Creados: ${created}. Actualizados: ${updated}.${errors.length ? ` Errores: ${errors.slice(0, 3).join(" | ")}` : ""}`);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo cargar el archivo.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <View style={styles.tableShell}>
       <FinanceFilters
@@ -10938,6 +11091,19 @@ function DesktopTable({
             <Text style={styles.actionButtonText}>{action.label}</Text>
           </Pressable>
         ))}
+        {masterForm ? (
+          <>
+            <Pressable style={styles.actionButton} onPress={exportMasterForm}>
+              <Text style={styles.actionButtonText}>Exportar form</Text>
+            </Pressable>
+            <Pressable style={styles.actionButton} onPress={importMasterForm}>
+              <Text style={styles.actionButtonText}>Cargar form</Text>
+            </Pressable>
+            <Pressable style={styles.actionButton} onPress={() => setCompanyFiscalOpen(true)}>
+              <Text style={styles.actionButtonText}>Datos fiscales</Text>
+            </Pressable>
+          </>
+        ) : null}
       </ScrollView>
 
       {busy ? <ActivityIndicator color={BLUE} style={styles.loader} /> : null}
@@ -11010,7 +11176,88 @@ function DesktopTable({
           onReload();
         }}
       />
+      <CompanyFiscalModal
+        visible={companyFiscalOpen}
+        session={session}
+        onClose={() => setCompanyFiscalOpen(false)}
+      />
     </View>
+  );
+}
+
+function CompanyFiscalModal({
+  visible,
+  session,
+  onClose
+}: {
+  visible: boolean;
+  session: NonNullable<ReturnType<typeof useAuth>["session"]>;
+  onClose: () => void;
+}) {
+  const [form, setForm] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    if (!visible) return;
+    setBusy(true);
+    setMessage("");
+    apiRequest<Record<string, unknown>>("/companies/current", { session })
+      .then((payload) => {
+        const next = Object.fromEntries(COMPANY_FISCAL_FIELDS.map((field) => [field.key, formatValue(payload[field.key]) === "-" ? "" : formatValue(payload[field.key])]));
+        setForm(next);
+      })
+      .catch((err) => setMessage(err instanceof Error ? err.message : "No se pudieron cargar los datos fiscales."))
+      .finally(() => setBusy(false));
+  }, [session, visible]);
+
+  function update(key: string, value: string) {
+    setForm((current) => ({ ...current, [key]: value }));
+  }
+
+  async function save() {
+    setBusy(true);
+    setMessage("");
+    try {
+      await apiRequest(`/companies/${encodeURIComponent(session.company_code || DEFAULT_COMPANY.code)}`, {
+        method: "PUT",
+        session,
+        body: form
+      });
+      setMessage("Datos fiscales guardados.");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudieron guardar los datos fiscales.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+      <SafeAreaView style={styles.modalScreen}>
+        <View style={styles.modalHeader}>
+          <Text style={styles.modalTitle}>Datos fiscales</Text>
+          <Pressable style={styles.modalClose} onPress={onClose}>
+            <Text style={styles.modalCloseText}>Cerrar</Text>
+          </Pressable>
+        </View>
+        <ScrollView contentContainerStyle={styles.modalBody} keyboardShouldPersistTaps="handled">
+          {COMPANY_FISCAL_FIELDS.map((field) => (
+            <View key={field.key} style={styles.formField}>
+              <Text style={styles.label}>{field.label}</Text>
+              <TextInput
+                value={form[field.key] || ""}
+                onChangeText={(value) => update(field.key, value)}
+                style={styles.input}
+                multiline={field.key === "address" || field.key === "notes"}
+              />
+            </View>
+          ))}
+          <PrimaryButton label="Guardar datos fiscales" loading={busy} onPress={save} />
+          {message ? <Text style={message.includes("guardados") ? styles.helperText : styles.error}>{message}</Text> : null}
+        </ScrollView>
+      </SafeAreaView>
+    </Modal>
   );
 }
 
@@ -12818,7 +13065,13 @@ function FinanceFilters({
     try {
       let syncSummary: Record<string, unknown> | null = null;
       if (sectionKey === "accounting") {
-        syncSummary = await apiRequest<Record<string, unknown>>("/accounting/sync/all", { method: "POST", session });
+        const syncResults = await Promise.all([
+          apiRequest<Record<string, unknown>>("/accounting/sync/collections", { method: "POST", session }),
+          apiRequest<Record<string, unknown>>("/accounting/sync/cash-app", { method: "POST", session }),
+          apiRequest<Record<string, unknown>>("/accounting/sync/itp", { method: "POST", session }),
+          apiRequest<Record<string, unknown>>("/accounting/sync/payroll", { method: "POST", session })
+        ]);
+        syncSummary = { synced_modules: syncResults.length };
       }
       const payload = await apiRequest(endpoint, { session });
       const rawRows = rowsForSection(sectionKey, payload);
@@ -12840,7 +13093,7 @@ function FinanceFilters({
           onMessage("No existen asientos contables despues de sincronizar.");
         }
       } else if (sectionKey === "accounting" && syncSummary) {
-        onMessage(`Asientos cargados. Nuevos creados: ${formatValue(syncSummary.created)}.`);
+        onMessage(`Asientos cargados. Modulos sincronizados: ${formatValue(syncSummary.synced_modules)}.`);
       }
     } catch (err) {
       onMessage(err instanceof Error ? err.message : "No se pudo aplicar el filtro.");
