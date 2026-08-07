@@ -79,7 +79,8 @@ def start_totp_enrollment(usuario: str) -> bytes:
         cur.execute("""
             SELECT id
             FROM usuarios
-            WHERE usuario=%s AND activo=TRUE
+            WHERE LOWER(TRIM(usuario)) = LOWER(TRIM(%s)) AND activo=TRUE
+            LIMIT 1
         """, (usuario,))
         if not cur.fetchone():
             return None
@@ -88,7 +89,7 @@ def start_totp_enrollment(usuario: str) -> bytes:
             UPDATE usuarios
             SET totp_secret=%s,
                 totp_enabled=FALSE
-            WHERE usuario=%s
+            WHERE LOWER(TRIM(usuario)) = LOWER(TRIM(%s))
         """, (secret, usuario))
 
         conn.commit()
@@ -117,7 +118,8 @@ def confirm_totp_enrollment(usuario: str, codigo: str) -> bool:
         cur.execute("""
             SELECT totp_secret
             FROM usuarios
-            WHERE usuario=%s AND activo=TRUE
+            WHERE LOWER(TRIM(usuario)) = LOWER(TRIM(%s)) AND activo=TRUE
+            LIMIT 1
         """, (usuario,))
         row = cur.fetchone()
 
@@ -133,7 +135,7 @@ def confirm_totp_enrollment(usuario: str, codigo: str) -> bool:
         cur.execute("""
             UPDATE usuarios
             SET totp_enabled=TRUE
-            WHERE usuario=%s
+            WHERE LOWER(TRIM(usuario)) = LOWER(TRIM(%s))
         """, (usuario,))
 
         conn.commit()
@@ -161,7 +163,8 @@ def validate_totp(usuario: str, codigo: str) -> bool:
         cur.execute("""
             SELECT totp_secret, totp_enabled
             FROM usuarios
-            WHERE usuario=%s AND activo=TRUE
+            WHERE LOWER(TRIM(usuario)) = LOWER(TRIM(%s)) AND activo=TRUE
+            LIMIT 1
         """, (usuario,))
         row = cur.fetchone()
 

@@ -69,7 +69,8 @@ def login_usuario(usuario: str, password: str):
             """
             SELECT pass_hash, rol, activo, totp_enabled
             FROM usuarios
-            WHERE usuario=%s
+            WHERE LOWER(TRIM(usuario)) = LOWER(TRIM(%s))
+            LIMIT 1
             """,
             (usuario,),
         )
@@ -153,7 +154,8 @@ def validar_totp_login(usuario: str, codigo: str):
             """
             SELECT rol
             FROM usuarios
-            WHERE usuario=%s
+            WHERE LOWER(TRIM(usuario)) = LOWER(TRIM(%s))
+            LIMIT 1
             """,
             (usuario,),
         )
@@ -168,7 +170,7 @@ def validar_totp_login(usuario: str, codigo: str):
             """
             UPDATE usuarios
             SET last_login=%s
-            WHERE usuario=%s
+            WHERE LOWER(TRIM(usuario)) = LOWER(TRIM(%s))
             """,
             (datetime.now(), usuario),
         )
