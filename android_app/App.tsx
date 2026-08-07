@@ -45,7 +45,7 @@ const COMPANIES = [
   { code: "MMS-CR", name: "MMS MARITIME MASTER SURVEYORS SRL", label: "MMS" }
 ];
 const DEFAULT_COMPANY = COMPANIES[0];
-const MOBILE_APP_VERSION = "1.7.14";
+const MOBILE_APP_VERSION = "1.7.15";
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -2268,11 +2268,11 @@ async function openDownloadedFile(uri: string, filename: string, mimeType?: stri
       return;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err || "");
-      throw new Error(
-        message.includes("No Activity found")
-          ? `No hay una aplicacion instalada para abrir ${filename}.`
-          : `No se pudo abrir ${filename}: ${message}`
-      );
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(uri, { dialogTitle: filename, mimeType: type });
+        return;
+      }
+      throw new Error(message.includes("No Activity found") ? `No hay una aplicacion instalada para abrir ${filename}.` : `No se pudo abrir ${filename}: ${message}`);
     }
   }
   if (await Sharing.isAvailableAsync()) {
@@ -2290,12 +2290,15 @@ async function downloadSessionFile(
   body?: Record<string, unknown>
 ) {
   const fileUri = `${FileSystem.cacheDirectory || ""}${cleanFilePart(filename)}`;
+  const companySession = session as (Session | null);
   const headers: Record<string, string> = session
     ? {
         Accept: "application/octet-stream, application/pdf, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, */*",
         "X-User": session.usuario,
         "X-Role": session.rol,
-        "X-User-Role": session.rol
+        "X-User-Role": session.rol,
+        "X-Company-Code": companySession?.company_code || DEFAULT_COMPANY.code,
+        "X-Company-Name": companySession?.company_name || DEFAULT_COMPANY.name
       }
     : { Accept: "application/octet-stream, application/pdf, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, */*" };
   if (body) headers["Content-Type"] = "application/json";
@@ -10841,10 +10844,14 @@ async function shareMasterCsvTemplate(config: MasterFormConfig, session: Session
   const csv = buildMasterCsvTemplate(config);
   const uri = `${FileSystem.cacheDirectory || ""}${cleanFilePart(filename)}`;
   await FileSystem.writeAsStringAsync(uri, csv);
-  if (await Sharing.isAvailableAsync()) {
-    await Sharing.shareAsync(uri, { dialogTitle: filename, mimeType: "text/csv" });
-  } else {
-    await Share.share({ title: filename, message: csv });
+  try {
+    await Share.share({ title: filename, message: `${filename}\n\n${csv}` });
+  } catch {
+    if (await Sharing.isAvailableAsync()) {
+      await Sharing.shareAsync(uri, { dialogTitle: filename, mimeType: "text/csv" });
+      return;
+    }
+    await openDownloadedFile(uri, filename, "text/csv");
   }
 }
 
@@ -12903,13 +12910,14 @@ function buildAccountingPeriods() {
 }
 
 function currentAccountingPeriod() {
-  const periods = buildAccountingPeriods();
-  return periods[periods.length - 1];
+  const today = new Date();
+  return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
 }
 
 function previousAccountingPeriod() {
-  const periods = buildAccountingPeriods();
-  return periods[0];
+  const today = new Date();
+  const previous = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+  return `${previous.getFullYear()}-${String(previous.getMonth() + 1).padStart(2, "0")}`;
 }
 
 function clientLabelsAndCodes(payload: unknown) {
@@ -13162,13 +13170,23 @@ function FinanceFilters({
     try {
       let syncSummary: Record<string, unknown> | null = null;
       if (sectionKey === "accounting") {
-        const syncResults = await Promise.all([
-          apiRequest<Record<string, unknown>>("/accounting/sync/collections", { method: "POST", session }),
-          apiRequest<Record<string, unknown>>("/accounting/sync/cash-app", { method: "POST", session }),
-          apiRequest<Record<string, unknown>>("/accounting/sync/itp", { method: "POST", session }),
-          apiRequest<Record<string, unknown>>("/accounting/sync/payroll", { method: "POST", session })
-        ]);
-        syncSummary = { synced_modules: syncResults.length };
+        const syncSteps = [
+          ["Collections", "/accounting/sync/collections"],
+          ["Bancos", "/accounting/sync/cash-app"],
+          ["ITP", "/accounting/sync/itp"],
+          ["Payroll", "/accounting/sync/payroll"]
+        ] as const;
+        const syncErrors: string[] = [];
+        let syncedModules = 0;
+        for (const [label, syncEndpoint] of syncSteps) {
+          try {
+            await apiRequest<Record<string, unknown>>(syncEndpoint, { method: "POST", session });
+            syncedModules += 1;
+          } catch (err) {
+            syncErrors.push(`${label}: ${err instanceof Error ? err.message : "Error"}`);
+          }
+        }
+        syncSummary = { synced_modules: syncedModules, sync_errors: syncErrors };
       }
       const payload = await apiRequest(endpoint, { session });
       const rawRows = rowsForSection(sectionKey, payload);
@@ -13190,7 +13208,12 @@ function FinanceFilters({
           onMessage("No existen asientos contables despues de sincronizar.");
         }
       } else if (sectionKey === "accounting" && syncSummary) {
-        onMessage(`Asientos cargados. Modulos sincronizados: ${formatValue(syncSummary.synced_modules)}.`);
+        const syncErrors = Array.isArray(syncSummary.sync_errors) ? syncSummary.sync_errors : [];
+        onMessage(
+          syncErrors.length
+            ? `Asientos cargados con alertas. Modulos OK: ${formatValue(syncSummary.synced_modules)}. ${syncErrors.join(" | ")}`
+            : `Asientos cargados. Modulos sincronizados: ${formatValue(syncSummary.synced_modules)}.`
+        );
       }
     } catch (err) {
       onMessage(err instanceof Error ? err.message : "No se pudo aplicar el filtro.");
@@ -13293,12 +13316,11 @@ function FinanceFilters({
       params.set("company_code", session.company_code || DEFAULT_COMPANY.code);
 
       const format = form.report_format === "PDF" ? "pdf" : "excel";
-      const url = `${API_BASE_URL}/accounting/reports/${format}?${params.toString()}`;
+      const extension = form.report_format === "PDF" ? "pdf" : "xlsx";
+      const filename = cleanFilePart(`${label}.${extension}`);
       onMessage("");
       try {
-        const supported = await Linking.canOpenURL(url);
-        if (!supported) throw new Error("El telefono no puede abrir la descarga.");
-        await Linking.openURL(url);
+        await downloadSessionFile(`/accounting/reports/${format}?${params.toString()}`, session, filename);
         onMessage(`Descarga ${form.report_format} abierta.`);
       } catch (err) {
         const message = err instanceof Error ? err.message : "No se pudo abrir la descarga.";
