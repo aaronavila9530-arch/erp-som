@@ -140,15 +140,15 @@ class MasterDataUI(tk.Frame):
 
         btn_export = tk.Button(frame, text="Exportar form", bg="#00703C", fg="white",
                                width=16, command=self._export_masterdata_form)
-        btn_export.grid(row=0, column=5, padx=5)
+        btn_export.grid(row=1, column=0, padx=5, pady=(10, 0))
 
         btn_import = tk.Button(frame, text="Cargar form", bg="#6F4E00", fg="white",
                                width=16, command=self._import_masterdata_form)
-        btn_import.grid(row=0, column=6, padx=5)
+        btn_import.grid(row=1, column=1, padx=5, pady=(10, 0))
 
         btn_company = tk.Button(frame, text="Datos fiscales", bg="#4B5563", fg="white",
                                 width=16, command=self._open_company_fiscal)
-        btn_company.grid(row=0, column=7, padx=5)
+        btn_company.grid(row=1, column=2, padx=5, pady=(10, 0))
 
 
     def _open_company_fiscal(self):
