@@ -5,6 +5,7 @@ from collections import defaultdict
 
 from api_client import (
     get_accounting_lines_api,
+    get_accounting_periods_api,
     post_closing_tb_preview_api
 )
 
@@ -44,6 +45,8 @@ from Modulos.Finanzas.sections.Accounting.reports.pdf_tb import (
     export_tb_pdf
 )
 
+ALL_MONTHS = [f"{month:02d}" for month in range(1, 13)]
+
 
 class PopupReportSelector(tk.Toplevel):
     """
@@ -81,7 +84,7 @@ class PopupReportSelector(tk.Toplevel):
             self.destroy()
             return
 
-        if not isinstance(self.all_lines, list) or not self.all_lines:
+        if not isinstance(self.all_lines, list):
             messagebox.showwarning(
                 "Sin datos",
                 "No existen líneas contables registradas."
@@ -195,8 +198,21 @@ class PopupReportSelector(tk.Toplevel):
     def _extract_periods_from_lines(self):
         periods = defaultdict(set)
 
+        try:
+            for value in get_accounting_periods_api() or []:
+                text = str(value or "").strip()
+                if len(text) == 7 and text[4] == "-":
+                    periods[int(text[:4])].add(text[5:7])
+        except Exception:
+            pass
+
         for r in self.all_lines:
             if not isinstance(r, dict):
+                continue
+
+            period = str(r.get("period") or "").strip()
+            if len(period) == 7 and period[4] == "-":
+                periods[int(period[:4])].add(period[5:7])
                 continue
 
             dt = self._safe_parse_iso(r.get("created_at"))
@@ -206,9 +222,23 @@ class PopupReportSelector(tk.Toplevel):
             periods[dt.year].add(f"{dt.month:02d}")
 
         return {
-            year: sorted(months)
+            year: ALL_MONTHS
             for year, months in sorted(periods.items(), reverse=True)
         }
+
+    def _line_period_tuple(self, row):
+        if not isinstance(row, dict):
+            return None
+        period = str(row.get("period") or "").strip()
+        if len(period) == 7 and period[4] == "-":
+            try:
+                return int(period[:4]), int(period[5:7])
+            except Exception:
+                return None
+        dt = self._safe_parse_iso(row.get("created_at"))
+        if dt:
+            return dt.year, dt.month
+        return None
 
     # ==================================================
     # UI
@@ -456,10 +486,16 @@ class PopupReportSelector(tk.Toplevel):
             year = int(year)
             month = int(month)
 
-            for r in self.all_lines:
-                dt = self._safe_parse_iso(r.get("created_at"))
-                if dt and dt.year == year and dt.month == month:
-                    rows.append(r)
+            selected_period = f"{year}-{month:02d}"
+            try:
+                rows = get_accounting_lines_api(period=selected_period)
+            except Exception:
+                rows = []
+            if not rows:
+                rows = [
+                    r for r in self.all_lines
+                    if self._line_period_tuple(r) == (year, month)
+                ]
 
             period_label_year = year
             period_label_month = month
@@ -489,13 +525,17 @@ class PopupReportSelector(tk.Toplevel):
                 )
                 return
 
-            for r in self.all_lines:
-                dt = self._safe_parse_iso(r.get("created_at"))
-                if not dt:
-                    continue
-
-                if (fy, fm) <= (dt.year, dt.month) <= (ty, tm):
-                    rows.append(r)
+            from_period = f"{fy}-{fm:02d}"
+            to_period = f"{ty}-{tm:02d}"
+            try:
+                rows = get_accounting_lines_api(period_from=from_period, period_to=to_period)
+            except Exception:
+                rows = []
+            if not rows:
+                rows = [
+                    r for r in self.all_lines
+                    if self._line_period_tuple(r) and (fy, fm) <= self._line_period_tuple(r) <= (ty, tm)
+                ]
 
             period_label_year = ty
             period_label_month = tm

@@ -1,10 +1,13 @@
 from openpyxl import Workbook
-from openpyxl.styles import Font, Alignment, Border, Side
+from openpyxl.styles import Font, Alignment, Border, PatternFill, Side
 from tkinter import filedialog
 from Modulos.Finanzas.date_utils import to_long_english_date
 
 THIN = Side(style="thin")
 BORDER = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
+HEADER_FILL = PatternFill("solid", fgColor="003A75")
+ENTRY_FILL = PatternFill("solid", fgColor="D9EAF7")
+ALT_FILL = PatternFill("solid", fgColor="F7FBFF")
 
 
 def export_diario_excel(rows: list[dict], fiscal_year: int, period: int):
@@ -84,7 +87,8 @@ def export_diario_excel(rows: list[dict], fiscal_year: int, period: int):
 
     for col, h in enumerate(headers, start=1):
         c = ws.cell(row=row, column=col, value=h)
-        c.font = Font(bold=True)
+        c.font = Font(bold=True, color="FFFFFF")
+        c.fill = HEADER_FILL
         c.alignment = Alignment(horizontal="center")
         c.border = BORDER
 
@@ -92,16 +96,44 @@ def export_diario_excel(rows: list[dict], fiscal_year: int, period: int):
 
     total_debe = 0.0
     total_haber = 0.0
+    last_entry_id = None
+    first_entry = True
+
+    rows = sorted(
+        rows,
+        key=lambda item: (
+            str(item.get("period") or ""),
+            str(item.get("entry_date") or item.get("created_at") or ""),
+            int(item.get("entry_id") or 0),
+            int(item.get("line_id") or 0),
+        ),
+    )
 
     # =============================
     # DATA (SQL PURO)
     # =============================
     for r in rows:
+        entry_id = r.get("entry_id")
+        if entry_id != last_entry_id:
+            if not first_entry:
+                row += 1
+            marker = ws.cell(row=row, column=1, value=f"Asiento {entry_id} | {r.get('period') or period_label}")
+            marker.font = Font(bold=True, color="003A75")
+            marker.fill = ENTRY_FILL
+            marker.alignment = Alignment(horizontal="left")
+            for c in range(1, 9):
+                cell = ws.cell(row=row, column=c)
+                cell.fill = ENTRY_FILL
+                cell.border = BORDER
+            row += 1
+            last_entry_id = entry_id
+            first_entry = False
+
         # created_at real
-        fecha = to_long_english_date(r.get("created_at"))
+        fecha = to_long_english_date(r.get("entry_date") or r.get("created_at"))
 
         ws.cell(row=row, column=1, value=fecha)
-        ws.cell(row=row, column=2, value=r.get("entry_id"))
+        ws.cell(row=row, column=2, value=entry_id)
         ws.cell(row=row, column=3, value=r.get("account_code"))
         ws.cell(row=row, column=4, value=r.get("account_name"))
 
@@ -120,7 +152,10 @@ def export_diario_excel(rows: list[dict], fiscal_year: int, period: int):
         total_haber += haber
 
         for c in range(1, 9):
-            ws.cell(row=row, column=c).border = BORDER
+            cell = ws.cell(row=row, column=c)
+            cell.border = BORDER
+            if row % 2 == 0:
+                cell.fill = ALT_FILL
 
         row += 1
 

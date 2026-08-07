@@ -197,13 +197,6 @@ class AccountingUI(tk.Frame):
             command=self._on_search
         ).grid(row=1, column=7, padx=10)
 
-        export_btn = ttk.Menubutton(filter_frame, text="Exportar")
-        export_menu = tk.Menu(export_btn, tearoff=0)
-        export_menu.add_command(label="CSV", command=self._export_csv)
-        export_menu.add_command(label="Excel", command=self._export_excel)
-        export_btn["menu"] = export_menu
-        export_btn.grid(row=1, column=8, padx=5)
-
         # ================= ACCIONES =================
         actions_btn = ttk.Menubutton(filter_frame, text="Acciones")
         actions_menu = tk.Menu(actions_btn, tearoff=0)
@@ -376,7 +369,7 @@ class AccountingUI(tk.Frame):
         actions_menu = final_actions_menu
 
         actions_btn["menu"] = actions_menu
-        actions_btn.grid(row=1, column=9, padx=5)
+        actions_btn.grid(row=1, column=8, padx=5)
 
 
         # ================= KPI =================

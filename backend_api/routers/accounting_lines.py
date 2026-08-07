@@ -9,6 +9,7 @@ from psycopg2.extras import RealDictCursor
 
 from database import get_db
 from rbac_service import has_permission
+from services.tenanting import company_code
 
 
 router = APIRouter(
@@ -38,6 +39,11 @@ def require_permission(module: str, action: str):
 @router.get("")
 def get_accounting_lines(
     account_code: str | None = Query(None),
+    period: str | None = Query(None),
+    period_from: str | None = Query(None),
+    period_to: str | None = Query(None),
+    company_code_param: str | None = Query(None, alias="company_code"),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
     conn=Depends(get_db)
 ):
     """
@@ -65,6 +71,11 @@ def get_accounting_lines(
             SELECT
                 al.id              AS line_id,
                 al.entry_id,
+                ae.period,
+                ae.entry_date,
+                ae.origin,
+                ae.workflow_status,
+                ae.company_code,
                 al.account_code,
                 al.account_name,
                 al.debit,
@@ -72,10 +83,24 @@ def get_accounting_lines(
                 al.line_description,
                 al.created_at
             FROM accounting_lines al
+            JOIN accounting_entries ae ON ae.id = al.entry_id
         """
 
         filtros = []
         params = []
+        company = company_code(company_code_param, x_company_code)
+        filtros.append("ae.company_code = %s")
+        params.append(company)
+
+        if period:
+            filtros.append("ae.period = %s")
+            params.append(period)
+        if period_from:
+            filtros.append("ae.period >= %s")
+            params.append(period_from)
+        if period_to:
+            filtros.append("ae.period <= %s")
+            params.append(period_to)
 
         # ----------------------------------------------------
         # FILTRO CUENTA (jerárquico)
@@ -99,7 +124,8 @@ def get_accounting_lines(
         # ----------------------------------------------------
         sql += """
             ORDER BY
-                al.created_at,
+                ae.period,
+                ae.entry_date,
                 al.entry_id,
                 al.id
         """
