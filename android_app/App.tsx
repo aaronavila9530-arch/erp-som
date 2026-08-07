@@ -12554,10 +12554,8 @@ function normalizeMasterPayload(sectionKey: string, form: Record<string, string>
 
 function buildAccountingPeriods() {
   const today = new Date();
-  const current = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
-  const previousDate = new Date(today.getFullYear(), today.getMonth() - 1, 1);
-  const previous = `${previousDate.getFullYear()}-${String(previousDate.getMonth() + 1).padStart(2, "0")}`;
-  return [previous, current];
+  const currentYear = today.getFullYear();
+  return Array.from({ length: 12 }, (_, index) => `${currentYear}-${String(index + 1).padStart(2, "0")}`);
 }
 
 function currentAccountingPeriod() {
