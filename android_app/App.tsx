@@ -45,6 +45,7 @@ const COMPANIES = [
   { code: "MMS-CR", name: "MMS MARITIME MASTER SURVEYORS SRL", label: "MMS" }
 ];
 const DEFAULT_COMPANY = COMPANIES[0];
+const MOBILE_APP_VERSION = "1.7.14";
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -560,6 +561,7 @@ function Shell() {
         <View style={styles.topRow}>
           <View>
             <Text style={styles.headerTitle}>ERP SOM</Text>
+            <Text style={styles.headerSub}>App {MOBILE_APP_VERSION}</Text>
             <Text style={styles.headerSub}>
               {session.usuario} · {session.rol}
             </Text>
@@ -603,6 +605,9 @@ function Shell() {
         ) : (
           <>
             <Text style={styles.moduleTitle}>{activeModule.label}</Text>
+            {activeModule.code === "master_data" && session ? (
+              <MasterDataHomeActions module={activeModule} session={session} onReload={() => activeSection && openSection(activeSection)} />
+            ) : null}
             {activeModule.code !== "informes" ? (
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sectionTabs}>
                 {activeModule.sections.map((section) => (
@@ -10783,6 +10788,145 @@ function parseMasterCsv(content: string, config: MasterFormConfig) {
   });
 }
 
+async function importMasterRecordsFromCsv({
+  section,
+  config,
+  session
+}: {
+  section: AppSection;
+  config: MasterFormConfig;
+  session: Session;
+}) {
+  const table = section.table;
+  if (!table?.createEndpoint) {
+    throw new Error("Esta seccion no permite carga desde plantilla.");
+  }
+
+  const picked = await DocumentPicker.getDocumentAsync({
+    type: ["text/csv", "text/comma-separated-values", "text/plain", "application/vnd.ms-excel"],
+    multiple: false,
+    copyToCacheDirectory: true
+  });
+  if (picked.canceled || !picked.assets?.length) return null;
+
+  const content = await FileSystem.readAsStringAsync(picked.assets[0].uri);
+  const records = parseMasterCsv(content, config).filter((row) => Object.values(row).some((value) => String(value || "").trim()));
+  if (!records.length) {
+    throw new Error("El archivo no contiene lineas para cargar.");
+  }
+
+  let created = 0;
+  let updated = 0;
+  const errors: string[] = [];
+  for (const record of records) {
+    const payload = { ...normalizeMasterPayload(section.key, record), company_code: session.company_code || DEFAULT_COMPANY.code };
+    const id = String(record[config.codeKey] || "").trim();
+    try {
+      if (id && table.updateEndpoint) {
+        await apiRequest(endpointWithId(table.updateEndpoint, id), { method: "PUT", body: payload, session });
+        updated += 1;
+      } else {
+        await apiRequest(table.createEndpoint, { method: "POST", body: payload, session });
+        created += 1;
+      }
+    } catch (err) {
+      errors.push(`${id || config.title}: ${err instanceof Error ? err.message : "No se pudo cargar."}`);
+    }
+  }
+  return { created, updated, errors };
+}
+
+async function shareMasterCsvTemplate(config: MasterFormConfig, session: Session) {
+  const filename = `Formulario_MasterData_${config.title}_${session.company_code || DEFAULT_COMPANY.code}.csv`;
+  const csv = buildMasterCsvTemplate(config);
+  const uri = `${FileSystem.cacheDirectory || ""}${cleanFilePart(filename)}`;
+  await FileSystem.writeAsStringAsync(uri, csv);
+  if (await Sharing.isAvailableAsync()) {
+    await Sharing.shareAsync(uri, { dialogTitle: filename, mimeType: "text/csv" });
+  } else {
+    await Share.share({ title: filename, message: csv });
+  }
+}
+
+function MasterDataHomeActions({
+  module,
+  session,
+  onReload
+}: {
+  module: AppModule;
+  session: Session;
+  onReload: () => void;
+}) {
+  const sections = module.sections.filter((section) => section.table && MASTER_FORMS[section.key]);
+  const [entityKey, setEntityKey] = useState(sections[0]?.key || "clientes");
+  const [companyFiscalOpen, setCompanyFiscalOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+
+  const selectedSection = sections.find((section) => section.key === entityKey) || sections[0];
+  const selectedConfig = selectedSection ? MASTER_FORMS[selectedSection.key] : null;
+
+  async function exportForm() {
+    if (!selectedConfig) return;
+    setBusy(true);
+    setMessage("");
+    try {
+      await shareMasterCsvTemplate(selectedConfig, session);
+      setMessage("Plantilla exportada.");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo exportar.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function importForm() {
+    if (!selectedSection || !selectedConfig) return;
+    setBusy(true);
+    setMessage("");
+    try {
+      const result = await importMasterRecordsFromCsv({ section: selectedSection, config: selectedConfig, session });
+      if (!result) return;
+      onReload();
+      setMessage(`Creados: ${result.created}. Actualizados: ${result.updated}.${result.errors.length ? ` Errores: ${result.errors.slice(0, 3).join(" | ")}` : ""}`);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo cargar.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <View style={styles.masterMobilePanel}>
+      <Text style={styles.cardTitle}>Acciones Master Data</Text>
+      <Text style={styles.helperText}>Visible desde el modulo. Empresa activa: {session.company_name || DEFAULT_COMPANY.name}.</Text>
+      <SelectField
+        label="Formulario"
+        value={selectedSection?.label || ""}
+        options={sections.map((section) => section.label)}
+        onChange={(label) => {
+          const next = sections.find((section) => section.label === label);
+          if (next) setEntityKey(next.key);
+        }}
+      />
+      <View style={styles.masterMobileActions}>
+        <Pressable style={styles.actionButton} onPress={exportForm} disabled={busy}>
+          <Text style={styles.actionButtonText}>Exportar formulario</Text>
+        </Pressable>
+        <Pressable style={styles.actionButton} onPress={importForm} disabled={busy}>
+          <Text style={styles.actionButtonText}>Cargar formulario</Text>
+        </Pressable>
+        <Pressable style={styles.actionButton} onPress={() => setCompanyFiscalOpen(true)} disabled={busy}>
+          <Text style={styles.actionButtonText}>Tarjeta fiscal</Text>
+        </Pressable>
+      </View>
+      {busy ? <ActivityIndicator color={BLUE} style={styles.loader} /> : null}
+      {message ? <Text style={message.includes("Errores") ? styles.error : styles.helperText}>{message}</Text> : null}
+      <CompanyFiscalModal visible={companyFiscalOpen} session={session} onClose={() => setCompanyFiscalOpen(false)} />
+    </View>
+  );
+}
+
 function DesktopTable({
   section,
   rows,
@@ -10956,16 +11100,9 @@ function DesktopTable({
 
   async function exportMasterForm() {
     if (!masterForm) return;
-    const filename = `Formulario_MasterData_${masterForm.title}_${session.company_code || DEFAULT_COMPANY.code}.csv`;
-    const uri = `${FileSystem.cacheDirectory || ""}${cleanFilePart(filename)}`;
     setMessage("");
     try {
-      await FileSystem.writeAsStringAsync(uri, buildMasterCsvTemplate(masterForm));
-      if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(uri, { dialogTitle: filename, mimeType: "text/csv" });
-      } else {
-        await Share.share({ title: filename, message: buildMasterCsvTemplate(masterForm) });
-      }
+      await shareMasterCsvTemplate(masterForm, session);
       setMessage("Plantilla generada para llenar y cargar de nuevo.");
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "No se pudo exportar la plantilla.");
@@ -10976,47 +11113,11 @@ function DesktopTable({
     if (!masterForm) return;
     setMessage("");
     try {
-      const picked = await DocumentPicker.getDocumentAsync({
-        type: ["text/csv", "text/comma-separated-values", "text/plain", "application/vnd.ms-excel"],
-        multiple: false,
-        copyToCacheDirectory: true
-      });
-      if (picked.canceled || !picked.assets?.length) return;
-      const content = await FileSystem.readAsStringAsync(picked.assets[0].uri);
-      const records = parseMasterCsv(content, masterForm).filter((row) => Object.values(row).some((value) => String(value || "").trim()));
-      if (!records.length) {
-        setMessage("El archivo no contiene lineas para cargar.");
-        return;
-      }
-
-      const createEndpoint = table.createEndpoint;
-      const updateEndpoint = table.updateEndpoint;
-      if (!createEndpoint) {
-        setMessage("Esta seccion no permite carga desde plantilla.");
-        return;
-      }
-
       setBusy(true);
-      let created = 0;
-      let updated = 0;
-      const errors: string[] = [];
-      for (const record of records) {
-        const payload = { ...normalizeMasterPayload(section.key, record), company_code: session.company_code || DEFAULT_COMPANY.code };
-        const id = String(record[masterForm.codeKey] || "").trim();
-        try {
-          if (id && updateEndpoint) {
-            await apiRequest(endpointWithId(updateEndpoint, id), { method: "PUT", body: payload, session });
-            updated += 1;
-          } else {
-            await apiRequest(createEndpoint, { method: "POST", body: payload, session });
-            created += 1;
-          }
-        } catch (err) {
-          errors.push(`${id || masterForm.title}: ${err instanceof Error ? err.message : "No se pudo cargar."}`);
-        }
-      }
+      const result = await importMasterRecordsFromCsv({ section, config: masterForm, session });
+      if (!result) return;
       onReload();
-      setMessage(`Creados: ${created}. Actualizados: ${updated}.${errors.length ? ` Errores: ${errors.slice(0, 3).join(" | ")}` : ""}`);
+      setMessage(`Creados: ${result.created}. Actualizados: ${result.updated}.${result.errors.length ? ` Errores: ${result.errors.slice(0, 3).join(" | ")}` : ""}`);
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "No se pudo cargar el archivo.");
     } finally {
