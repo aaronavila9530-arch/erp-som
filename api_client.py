@@ -1,4 +1,5 @@
 import requests
+from requests.adapters import HTTPAdapter
 from typing import Optional, Any
 from datetime import datetime
 from session_context import get_user, get_rol, get_company_code, get_company_name
@@ -6,9 +7,29 @@ import os
 import tempfile
 from email.message import Message
 from urllib.parse import unquote
+from urllib3.util.retry import Retry
 
 BASE_URL = "https://api-som-fastapi-production-e66d.up.railway.app"
 TIMEOUT = 30
+
+
+def _build_session() -> requests.Session:
+    session = requests.Session()
+    retry = Retry(
+        total=2,
+        connect=1,
+        read=1,
+        backoff_factor=0.2,
+        status_forcelist=(429, 500, 502, 503, 504),
+        allowed_methods=frozenset({"GET", "HEAD", "OPTIONS"}),
+    )
+    adapter = HTTPAdapter(pool_connections=20, pool_maxsize=50, max_retries=retry)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    return session
+
+
+_SESSION = _build_session()
 
 
 # ============================================================
@@ -3252,9 +3273,9 @@ def get_version_info():
     """
 
     try:
-        r = requests.get(
+        r = _SESSION.get(
             f"{BASE_URL}/version",
-            timeout=5
+            timeout=(2, 4)
         )
         r.raise_for_status()
 
@@ -3326,7 +3347,7 @@ def api_request(method: str, url: str, **kwargs):
             url = f"/{url}"
         url = f"{BASE_URL}{url}"
 
-    return requests.request(
+    return _SESSION.request(
         method=method,
         url=url,
         headers=headers,

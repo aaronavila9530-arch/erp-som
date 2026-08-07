@@ -19,6 +19,7 @@ SAFE_DEFAULT_FOLDER="xml gastos electronicos"
 DEFAULT_FOLDER="xml gastos electrónicos"
 MAX_ATTACHMENT_BYTES=20*1024*1024
 MAX_ZIP_MEMBERS=50
+STARTUP_SYNC_DELAY_SECONDS=180
 _scan_lock=threading.Lock()
 _background_lock=threading.Lock()
 _background_started=False
@@ -57,12 +58,13 @@ def start_background_sync():
         _background_started=True
 
     def worker():
-        last_run=0
+        last_run=time.time()
         while True:
             try:
                 config=load_config()
                 interval=max(1,int(config.get("interval_minutes") or 15))*60
-                if config.get("enabled") and time.time()-last_run>=interval:
+                elapsed=time.time()-last_run
+                if config.get("enabled") and elapsed>=min(interval,STARTUP_SYNC_DELAY_SECONDS):
                     last_run=time.time()
                     try:
                         scan_and_import(max_messages=int(config.get("batch_size") or 50))
