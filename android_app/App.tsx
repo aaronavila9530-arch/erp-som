@@ -513,15 +513,7 @@ function Shell() {
 
   useEffect(() => {
     if (!session) return;
-    syncBusinessNotifications(session);
-    const timer = setInterval(() => syncBusinessNotifications(session), 15 * 60 * 1000);
-    const subscription = AppState.addEventListener("change", (state) => {
-      if (state === "active") syncBusinessNotifications(session);
-    });
-    return () => {
-      clearInterval(timer);
-      subscription.remove();
-    };
+    // Disabled while mobile stability is reviewed. Business alerts must never close the ERP app.
   }, [session]);
 
   useEffect(() => {
@@ -11046,6 +11038,23 @@ function DesktopTable({
         rows={tableRows}
         columns={table.columns}
       />
+      {masterForm ? (
+        <View style={styles.masterMobilePanel}>
+          <Text style={styles.cardTitle}>Acciones Master Data</Text>
+          <Text style={styles.helperText}>Plantillas, carga masiva y datos fiscales de {session.company_name || DEFAULT_COMPANY.name}.</Text>
+          <View style={styles.masterMobileActions}>
+            <Pressable style={styles.actionButton} onPress={exportMasterForm}>
+              <Text style={styles.actionButtonText}>Exportar form</Text>
+            </Pressable>
+            <Pressable style={styles.actionButton} onPress={importMasterForm}>
+              <Text style={styles.actionButtonText}>Cargar form</Text>
+            </Pressable>
+            <Pressable style={styles.actionButton} onPress={() => setCompanyFiscalOpen(true)}>
+              <Text style={styles.actionButtonText}>Datos fiscales</Text>
+            </Pressable>
+          </View>
+        </View>
+      ) : null}
       <View style={styles.tableToolbar}>
         <TextInput
           autoCapitalize="none"
@@ -11091,19 +11100,6 @@ function DesktopTable({
             <Text style={styles.actionButtonText}>{action.label}</Text>
           </Pressable>
         ))}
-        {masterForm ? (
-          <>
-            <Pressable style={styles.actionButton} onPress={exportMasterForm}>
-              <Text style={styles.actionButtonText}>Exportar form</Text>
-            </Pressable>
-            <Pressable style={styles.actionButton} onPress={importMasterForm}>
-              <Text style={styles.actionButtonText}>Cargar form</Text>
-            </Pressable>
-            <Pressable style={styles.actionButton} onPress={() => setCompanyFiscalOpen(true)}>
-              <Text style={styles.actionButtonText}>Datos fiscales</Text>
-            </Pressable>
-          </>
-        ) : null}
       </ScrollView>
 
       {busy ? <ActivityIndicator color={BLUE} style={styles.loader} /> : null}
@@ -14184,6 +14180,15 @@ const styles = StyleSheet.create({
   moduleTabTextActive: { color: BLUE },
   moduleTabs: { paddingHorizontal: 14, paddingTop: 10 },
   moduleTitle: { color: "#101828", fontSize: 21, fontWeight: "800", marginBottom: 12 },
+  masterMobileActions: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 2 },
+  masterMobilePanel: {
+    backgroundColor: "#EEF6FF",
+    borderColor: "#98C7F5",
+    borderRadius: 8,
+    borderWidth: 1,
+    marginBottom: 12,
+    padding: 12
+  },
   panel: {
     backgroundColor: "white",
     borderColor: BORDER,
