@@ -162,6 +162,14 @@ def normalize_import_key(value: Any) -> str:
 def _company_header() -> tuple[str, str]:
     name = get_company_name()
     code = get_company_code()
+    try:
+        from api_client import get_current_company_profile_api
+
+        profile = get_current_company_profile_api()
+        name = profile.get("legal_name") or profile.get("company_name") or name
+        code = profile.get("company_code") or code
+    except Exception:
+        pass
     return name, code
 
 

@@ -146,6 +146,15 @@ class MasterDataUI(tk.Frame):
                                width=16, command=self._import_masterdata_form)
         btn_import.grid(row=0, column=6, padx=5)
 
+        btn_company = tk.Button(frame, text="Datos fiscales", bg="#4B5563", fg="white",
+                                width=16, command=self._open_company_fiscal)
+        btn_company.grid(row=0, column=7, padx=5)
+
+
+    def _open_company_fiscal(self):
+        from Modulos.MasterData.popup_company_fiscal import PopupCompanyFiscal
+
+        PopupCompanyFiscal(self)
 
     def _ask_masterdata_form_options(self):
         win = tk.Toplevel(self)

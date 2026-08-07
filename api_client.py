@@ -3340,6 +3340,18 @@ def raise_for_status_with_detail(response):
         raise
 
 # ============================================================
+def get_current_company_profile_api():
+    response = api_request("GET", "/companies/current", timeout=TIMEOUT)
+    raise_for_status_with_detail(response)
+    return response.json()
+
+
+def update_company_profile_api(company_code: str, payload: dict):
+    response = api_request("PUT", f"/companies/{company_code}", json=payload, timeout=TIMEOUT)
+    raise_for_status_with_detail(response)
+    return response.json()
+
+
 # HHRR — EVENTS (API REAL)
 # ============================================================
 
