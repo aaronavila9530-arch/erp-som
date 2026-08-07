@@ -465,6 +465,28 @@ class AccountingUI(tk.Frame):
         clean = sorted(set(clean), reverse=True)
         return clean or [today_period]
 
+    def _refresh_period_controls(self, prefer_current=True):
+        """
+        Refresca los combos de periodos despues de sincronizar o crear asientos.
+        """
+        previous = self.cmb_period.get() if hasattr(self, "cmb_period") else ""
+        today_period = date.today().strftime("%Y-%m")
+        self.periods = self._build_period_list()
+        target = previous if previous in self.periods else self.periods[0]
+        if prefer_current and today_period in self.periods:
+            target = today_period
+
+        self.current_period = target
+        self.cmb_period["values"] = self.periods
+        self.cmb_period.set(target)
+        self.cmb_period_from["values"] = self.periods
+        self.cmb_period_to["values"] = self.periods
+
+        if not self.period_from.get() or self.period_from.get() not in self.periods:
+            self.period_from.set(self.periods[-1])
+        if not self.period_to.get() or self.period_to.get() not in self.periods:
+            self.period_to.set(target)
+
 
     def _on_fetch_tc(self):
         """
@@ -538,6 +560,7 @@ class AccountingUI(tk.Frame):
             post_accounting_sync_cash_app_api()
             post_accounting_sync_itp_api()
             post_accounting_sync_payroll_api()
+            self._refresh_period_controls(prefer_current=True)
             messagebox.showinfo("Sincronizacion contable", "Asientos sincronizados correctamente.")
             self._on_search()
         except Exception as e:

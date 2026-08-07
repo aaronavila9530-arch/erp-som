@@ -15,6 +15,7 @@ from api_client import upload_tax_response_auto_api, upload_tax_xml_api
 
 
 ACCOUNT="gastos@mslogisticsgroup.com"
+SAFE_DEFAULT_FOLDER="xml gastos electronicos"
 DEFAULT_FOLDER="xml gastos electrónicos"
 MAX_ATTACHMENT_BYTES=20*1024*1024
 MAX_ZIP_MEMBERS=50
@@ -33,10 +34,11 @@ def _state_path(): return _data_dir()/"outlook_fiscal_state.json"
 
 
 def load_config():
-    default={"enabled":True,"interval_minutes":15,"account":ACCOUNT,"folder":DEFAULT_FOLDER,"batch_size":50}
+    default={"enabled":True,"interval_minutes":15,"account":ACCOUNT,"folder":SAFE_DEFAULT_FOLDER,"batch_size":50}
     try:
         saved=json.loads(_config_path().read_text(encoding="utf-8")); default.update(saved if isinstance(saved,dict) else {})
     except Exception: pass
+    default["folder"]=_repair_mojibake(default.get("folder") or SAFE_DEFAULT_FOLDER)
     return default
 
 
@@ -82,26 +84,72 @@ def _load_state():
 
 def _save_state(state):
     if len(state)>20000:
+        runtime=state.get("__runtime__")
         state=dict(list(state.items())[-20000:])
+        if runtime:
+            state["__runtime__"]=runtime
     tmp=_state_path().with_suffix(".tmp"); tmp.write_text(json.dumps(state,ensure_ascii=False),encoding="utf-8"); os.replace(tmp,_state_path())
 
 
+def _update_runtime_status(**values):
+    state=_load_state()
+    runtime=state.get("__runtime__",{})
+    if not isinstance(runtime,dict):
+        runtime={}
+    runtime.update(values)
+    state["__runtime__"]=runtime
+    _save_state(state)
+
+
+def _repair_mojibake(value):
+    text=str(value or "").strip()
+    if "Ã" not in text and "Ă" not in text and "Â" not in text:
+        return text
+    try:
+        return text.encode("latin1").decode("utf-8")
+    except Exception:
+        return text
+
+
 def _normalized(value):
-    return "".join(x for x in unicodedata.normalize("NFKD",str(value or "").lower()) if not unicodedata.combining(x)).strip()
+    text=_repair_mojibake(value)
+    return "".join(x for x in unicodedata.normalize("NFKD",str(text or "").lower()) if not unicodedata.combining(x)).strip()
+
+
+def _folder_candidates(folder_name):
+    candidates=[folder_name,_repair_mojibake(folder_name),SAFE_DEFAULT_FOLDER,"xml gastos electronicos","xml gastos electrónicos"]
+    seen=set(); output=[]
+    for item in candidates:
+        key=_normalized(item)
+        if key and key not in seen:
+            seen.add(key); output.append(item)
+    return output
+
+
+def _iter_folders(folder,depth=0,max_depth=4):
+    if depth>max_depth:
+        return
+    for index in range(1,folder.Folders.Count+1):
+        child=folder.Folders.Item(index)
+        yield child
+        yield from _iter_folders(child,depth+1,max_depth)
 
 
 def _find_folder(namespace,account,folder_name):
     target_store=None
+    account_norm=_normalized(account)
     for index in range(1,namespace.Stores.Count+1):
         store=namespace.Stores.Item(index)
-        if _normalized(store.DisplayName)==_normalized(account) or _normalized(store.DisplayName).startswith("gastos@"):
+        store_name=_normalized(store.DisplayName)
+        if store_name==account_norm or store_name.startswith("gastos@") or account_norm in store_name:
             target_store=store; break
     if target_store is None: raise RuntimeError(f"Outlook no contiene el buzón {account}")
     root=target_store.GetRootFolder()
-    for index in range(1,root.Folders.Count+1):
-        folder=root.Folders.Item(index)
-        if _normalized(folder.Name)==_normalized(folder_name): return target_store.DisplayName,folder
-    available=[str(root.Folders.Item(i).Name) for i in range(1,root.Folders.Count+1)]
+    wanted={_normalized(item) for item in _folder_candidates(folder_name)}
+    for folder in _iter_folders(root):
+        if _normalized(folder.Name) in wanted:
+            return target_store.DisplayName,folder
+    available=[str(folder.Name) for folder in _iter_folders(root,max_depth=2)]
     raise RuntimeError(f"No se encontró la carpeta '{folder_name}'. Carpetas disponibles: {', '.join(available)}")
 
 
@@ -111,7 +159,8 @@ def inspect_outlook():
     pythoncom.CoInitialize()
     try:
         namespace=win32com.client.Dispatch("Outlook.Application").GetNamespace("MAPI")
-        store,folder=_find_folder(namespace,ACCOUNT,load_config()["folder"])
+        config=load_config()
+        store,folder=_find_folder(namespace,config["account"],config["folder"])
         return {"connected":True,"store":str(store),"folder":str(folder.Name),"message_count":int(folder.Items.Count)}
     finally: pythoncom.CoUninitialize()
 
@@ -145,6 +194,7 @@ def scan_and_import(max_messages=None,progress=None):
     import win32com.client
     config=load_config(); limit=int(max_messages or config.get("batch_size",50)); state=_load_state(); results=[]
     summary={"status":"ok","messages":0,"attachments":0,"xml":0,"imported":0,"duplicates":0,"errors":0,"results":results}
+    _update_runtime_status(last_started_at=time.strftime("%Y-%m-%d %H:%M:%S"),last_error=None)
     pythoncom.CoInitialize()
     try:
         namespace=win32com.client.Dispatch("Outlook.Application").GetNamespace("MAPI")
@@ -191,6 +241,11 @@ def scan_and_import(max_messages=None,progress=None):
                         state[key]={"status":"ERROR","filename":filename,"updated_at":received}
                 _save_state(state)
                 if progress: progress(dict(summary))
-        summary["store"]=str(store); summary["folder"]=str(folder.Name); return summary
+        summary["store"]=str(store); summary["folder"]=str(folder.Name)
+        _update_runtime_status(last_finished_at=time.strftime("%Y-%m-%d %H:%M:%S"),last_summary={k:v for k,v in summary.items() if k!="results"},last_error=None)
+        return summary
+    except Exception as exc:
+        _update_runtime_status(last_finished_at=time.strftime("%Y-%m-%d %H:%M:%S"),last_error=str(exc))
+        raise
     finally:
         pythoncom.CoUninitialize(); _scan_lock.release()
