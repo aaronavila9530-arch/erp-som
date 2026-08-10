@@ -45,7 +45,7 @@ const COMPANIES = [
   { code: "MMS-CR", name: "MMS MARITIME MASTER SURVEYORS SRL", label: "MMS" }
 ];
 const DEFAULT_COMPANY = COMPANIES[0];
-const MOBILE_APP_VERSION = "1.7.16";
+const MOBILE_APP_VERSION = "1.7.17";
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -237,28 +237,65 @@ function extractRows(payload: unknown): Record<string, unknown>[] {
   return [];
 }
 
+function pickAccountingValue(row: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    const value = row[key];
+    if (value !== null && value !== undefined && value !== "") return value;
+  }
+  return undefined;
+}
+
+function normalizeAccountingFlatRow(row: Record<string, unknown>) {
+  const accountCode = pickAccountingValue(row, ["account_code", "cuenta_codigo", "codigo_cuenta"]);
+  const accountName = pickAccountingValue(row, ["account_name", "cuenta_nombre", "nombre_cuenta"]);
+  const account = pickAccountingValue(row, ["account", "cuenta_contable"]);
+  const accountLabel = [accountCode, accountName].map(formatValue).filter((value) => value !== "-").join(" ");
+  const lineDescription = pickAccountingValue(row, [
+    "line_description",
+    "detalle",
+    "detail",
+    "description",
+    "entry_description"
+  ]);
+
+  return {
+    ...row,
+    entry_date: pickAccountingValue(row, ["entry_date", "fecha", "date", "created_at"]),
+    entry_id: pickAccountingValue(row, ["entry_id", "asiento", "id"]),
+    period: pickAccountingValue(row, ["period", "periodo"]),
+    origin: pickAccountingValue(row, ["origin", "origen"]),
+    origin_id: pickAccountingValue(row, ["origin_id", "origen_id"]),
+    workflow_status: pickAccountingValue(row, ["workflow_status", "estado"]),
+    line_id: pickAccountingValue(row, ["line_id", "linea_id"]),
+    account_code: accountCode,
+    account_name: accountName,
+    account: account || accountLabel,
+    line_description: lineDescription,
+    debit: pickAccountingValue(row, ["debit", "debe"]),
+    credit: pickAccountingValue(row, ["credit", "haber"])
+  };
+}
+
 function flattenAccountingLedger(payload: unknown): Record<string, unknown>[] {
   return extractRows(payload).flatMap((entry) => {
     const lines = Array.isArray(entry.lines) ? entry.lines : [];
-    if (!lines.length) return [entry];
+    if (!lines.length) return [normalizeAccountingFlatRow(entry)];
 
     return lines
       .map((line) => asRecord(line))
       .filter(Boolean)
       .map((line) => ({
-        entry_date: entry.entry_date,
-        entry_id: entry.entry_id,
-        period: entry.period,
-        origin: entry.origin,
-        origin_id: entry.origin_id,
-        entry_description: entry.description,
-        line_id: line?.line_id,
-        account_code: line?.account_code,
-        account_name: line?.account_name,
-        account: `${formatValue(line?.account_code)} ${formatValue(line?.account_name)}`.trim(),
-        line_description: line?.line_description,
-        debit: line?.debit,
-        credit: line?.credit
+        ...normalizeAccountingFlatRow({
+          ...entry,
+          ...line,
+          entry_id: pickAccountingValue(entry, ["entry_id", "asiento", "id"]),
+          entry_date: pickAccountingValue(entry, ["entry_date", "fecha", "date", "created_at"]),
+          period: pickAccountingValue(entry, ["period", "periodo"]),
+          origin: pickAccountingValue(entry, ["origin", "origen"]),
+          origin_id: pickAccountingValue(entry, ["origin_id", "origen_id"]),
+          entry_description: pickAccountingValue(entry, ["description", "entry_description"]),
+          line_description: pickAccountingValue(line || {}, ["line_description", "detalle", "detail", "description"])
+        })
       }));
   });
 }
