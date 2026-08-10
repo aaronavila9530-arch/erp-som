@@ -45,7 +45,7 @@ const COMPANIES = [
   { code: "MMS-CR", name: "MMS MARITIME MASTER SURVEYORS SRL", label: "MMS" }
 ];
 const DEFAULT_COMPANY = COMPANIES[0];
-const MOBILE_APP_VERSION = "1.7.15";
+const MOBILE_APP_VERSION = "1.7.16";
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -10842,17 +10842,7 @@ async function importMasterRecordsFromCsv({
 async function shareMasterCsvTemplate(config: MasterFormConfig, session: Session) {
   const filename = `Formulario_MasterData_${config.title}_${session.company_code || DEFAULT_COMPANY.code}.csv`;
   const csv = buildMasterCsvTemplate(config);
-  const uri = `${FileSystem.cacheDirectory || ""}${cleanFilePart(filename)}`;
-  await FileSystem.writeAsStringAsync(uri, csv);
-  try {
-    await Share.share({ title: filename, message: `${filename}\n\n${csv}` });
-  } catch {
-    if (await Sharing.isAvailableAsync()) {
-      await Sharing.shareAsync(uri, { dialogTitle: filename, mimeType: "text/csv" });
-      return;
-    }
-    await openDownloadedFile(uri, filename, "text/csv");
-  }
+  await Share.share({ title: filename, message: `${filename}\n\n${csv}` });
 }
 
 function MasterDataHomeActions({
@@ -11319,6 +11309,10 @@ function CompanyFiscalModal({
     setForm((current) => ({ ...current, [key]: value }));
   }
 
+  function isLongFiscalField(key: string) {
+    return ["company_name", "legal_name", "economic_activity", "billing_email", "email", "address", "notes"].includes(key);
+  }
+
   async function save() {
     setBusy(true);
     setMessage("");
@@ -11352,8 +11346,9 @@ function CompanyFiscalModal({
               <TextInput
                 value={form[field.key] || ""}
                 onChangeText={(value) => update(field.key, value)}
-                style={styles.input}
-                multiline={field.key === "address" || field.key === "notes"}
+                style={[styles.input, isLongFiscalField(field.key) && styles.longTextInput]}
+                multiline={isLongFiscalField(field.key)}
+                textAlignVertical={isLongFiscalField(field.key) ? "top" : "center"}
               />
             </View>
           ))}
@@ -14260,6 +14255,7 @@ const styles = StyleSheet.create({
   label: { color: "#344054", fontSize: 13, fontWeight: "700", marginBottom: 6 },
   list: { marginTop: 12 },
   loader: { marginTop: 16 },
+  longTextInput: { minHeight: 82, textAlignVertical: "top" },
   lograAgendaCell: { color: "#101828", fontSize: 11, fontWeight: "700", paddingHorizontal: 8, paddingVertical: 8, width: 132 },
   lograAgendaHeader: { backgroundColor: BLUE },
   lograAgendaHeaderCell: { color: "white", fontWeight: "900" },
