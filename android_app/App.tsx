@@ -13121,7 +13121,7 @@ function FinanceFilters({
 
   function appendParam(params: URLSearchParams, key: string, value?: string) {
     const clean = String(value || "").trim();
-    if (!clean || clean === "ALL") return;
+    if (!clean || ["ALL", "TODOS", "Todos"].includes(clean)) return;
     params.set(key, clean);
   }
 
