@@ -253,6 +253,11 @@ class AccountingUI(tk.Frame):
             command=self._open_accounting_ai
         )
 
+        actions_menu.add_command(
+            label="Simulador fiscal multiempresa",
+            command=self._open_tax_scenario_planner
+        )
+
 
         actions_menu.add_command(
             label="✏️ Ajustar asiento",
@@ -360,6 +365,7 @@ class AccountingUI(tk.Frame):
         final_actions_menu.add_command(label="Auditoria por usuario", command=self._open_finance_audit)
         final_actions_menu.add_command(label="Cierre mensual guiado", command=self._open_closing_wizard)
         final_actions_menu.add_command(label="PORTIA contable", command=self._open_accounting_ai)
+        final_actions_menu.add_command(label="Simulador fiscal multiempresa", command=self._open_tax_scenario_planner)
         final_actions_menu.add_separator()
         final_actions_menu.add_command(label="Ajustar asiento", command=self._adjust_selected_entry)
         final_actions_menu.add_command(label="Reversar asiento", command=self._reverse_selected_entry)
@@ -737,6 +743,15 @@ class AccountingUI(tk.Frame):
             PopupAccountingAI(self, filters=self._current_validation_filters())
         except Exception as e:
             messagebox.showerror("PORTIA contable", f"No se pudo abrir:\n{str(e)}")
+
+    def _open_tax_scenario_planner(self):
+        try:
+            from Modulos.Finanzas.sections.Accounting.popups.popup_tax_scenario_planner import (
+                PopupTaxScenarioPlanner,
+            )
+            PopupTaxScenarioPlanner(self)
+        except Exception as e:
+            messagebox.showerror("Simulador fiscal", f"No se pudo abrir:\n{str(e)}")
 
 
     def _toggle_period_mode(self):

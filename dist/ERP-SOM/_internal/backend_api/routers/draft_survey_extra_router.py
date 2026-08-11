@@ -817,10 +817,7 @@ def update_word_report(draft_survey_id: str, payload: dict, conn=Depends(get_db)
         )
         existing = cur.fetchone()
 
-        if not existing:
-            raise HTTPException(404, "No existe registro word para actualizar")
-
-        if len(existing) > 1 and existing[1] == "Approved":
+        if existing and len(existing) > 1 and existing[1] == "Approved":
             raise HTTPException(403, "Already approved")
 
         clean_payload = {}
@@ -844,6 +841,60 @@ def update_word_report(draft_survey_id: str, payload: dict, conn=Depends(get_db)
                 "success": True,
                 "action": "no_changes",
                 "draft_survey_id": real_id
+            }
+
+        if not existing:
+            insert_payload = dict(clean_payload)
+            insert_payload["draft_survey_id"] = real_id
+
+            insert_fields = {
+                key: value
+                for key, value in insert_payload.items()
+                if key in word_meta and key not in ("id", "created_at", "updated_at")
+            }
+
+            if "status" in word_meta and "status" not in insert_fields:
+                insert_fields["status"] = "Pending for review"
+
+            if not insert_fields:
+                raise HTTPException(400, "No hay campos válidos para crear Word Report")
+
+            fields_sql = ", ".join(insert_fields.keys())
+            values_sql = ", ".join(["%s"] * len(insert_fields))
+            values = list(insert_fields.values())
+
+            created_cols = []
+            created_vals = []
+            if "created_at" in word_meta:
+                created_cols.append("created_at")
+                created_vals.append("NOW()")
+            if "updated_at" in word_meta:
+                created_cols.append("updated_at")
+                created_vals.append("NOW()")
+
+            extra_cols_sql = f", {', '.join(created_cols)}" if created_cols else ""
+            extra_vals_sql = f", {', '.join(created_vals)}" if created_vals else ""
+
+            cur.execute(
+                f"""
+                INSERT INTO draft_survey_word_report ({fields_sql}{extra_cols_sql})
+                VALUES ({values_sql}{extra_vals_sql})
+                RETURNING id
+                """,
+                values
+            )
+            created = cur.fetchone()
+
+            if not created:
+                raise HTTPException(500, "Fallo el INSERT de Word Report")
+
+            conn.commit()
+            return {
+                "success": True,
+                "action": "created_by_put",
+                "word_report_id": created[0],
+                "draft_survey_id": real_id,
+                "saved_fields": len(clean_payload)
             }
 
         set_clause = ", ".join([f"{field} = %s" for field in clean_payload.keys()])

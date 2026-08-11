@@ -167,6 +167,7 @@ def _apply_projection_lock(row: dict[str, Any], locked: bool, factor: float) -> 
     ytd = _money(row.get("ytd_amount_crc"))
     row["ytd_amount_crc"] = ytd
     row["projected_annual_crc"] = ytd if locked else _money(ytd * factor)
+    row["future_projected_crc"] = _money(max(row["projected_annual_crc"] - ytd, 0))
     row["projection_mode"] = "FIXED" if locked else "PROJECTED"
     return row
 
@@ -500,6 +501,7 @@ def _scenario(
     for row in company_results:
         ytd = _money(gross_ytd.get(row["company_code"], 0))
         row["gross_ytd_crc"] = ytd
+        row["gross_future_projected_crc"] = _money(max(row["gross_projected_crc"] - ytd, 0))
         row["pyme_threshold_ytd_remaining_crc"] = _money(CORPORATE_GROSS_THRESHOLD_ANNUAL - ytd)
         row["pyme_threshold_ytd_usage_pct"] = _money(ytd / CORPORATE_GROSS_THRESHOLD_ANNUAL * 100) if CORPORATE_GROSS_THRESHOLD_ANNUAL else 0
     total_tax = _money(sum(row["income_tax_projected_crc"] for row in company_results))

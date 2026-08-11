@@ -1,6 +1,7 @@
 from reportlab.lib.pagesizes import LETTER
 from reportlab.pdfgen import canvas
 from reportlab.lib.units import inch
+from reportlab.pdfbase.pdfmetrics import stringWidth
 from datetime import date
 import os
 
@@ -47,46 +48,116 @@ def export_cotizacion_pdf(data: dict, output_path: str):
     c = canvas.Canvas(output_path, pagesize=LETTER)
     width, height = LETTER
 
-    LEFT_MARGIN = 1 * inch
+    LEFT_MARGIN = 0.75 * inch
+    RIGHT_MARGIN = 0.75 * inch
+    BODY_WIDTH = width - LEFT_MARGIN - RIGHT_MARGIN
 
     HEADER_Y = height - 1.9 * inch
     TOP_MARGIN = HEADER_Y - 0.5 * inch
 
     FOOTER_Y = 0.7 * inch
 
-    SIGNATURE_BLOCK_HEIGHT = 2.1 * inch
-    BODY_MIN_Y = FOOTER_Y + SIGNATURE_BLOCK_HEIGHT
+    SIGNATURE_BLOCK_HEIGHT = 1.35 * inch
+    BODY_MIN_Y = FOOTER_Y + 0.35 * inch
 
-    # =========================================================
-    # WATERMARK
-    # =========================================================
-    watermark_path = os.path.join(ASSETS_PATH, "watermark.png")
-    if os.path.isfile(watermark_path):
-        c.saveState()
-        c.setFillAlpha(0.08)
-        c.drawImage(
-            watermark_path,
-            1.2 * inch,
-            2.5 * inch,
-            width=4.5 * inch,
-            preserveAspectRatio=True,
-            mask="auto"
-        )
-        c.restoreState()
+    def _wrap_text(text: str, font_name: str, font_size: int, max_width: float) -> list[str]:
+        text = str(text or "")
+        if not text:
+            return [""]
 
-    # =========================================================
-    # HEADER
-    # =========================================================
-    header_path = os.path.join(ASSETS_PATH, "header.png")
-    if os.path.isfile(header_path):
-        c.drawImage(
-            header_path,
-            LEFT_MARGIN,
-            HEADER_Y,
-            width=3.6 * inch,
-            preserveAspectRatio=True,
-            mask="auto"
+        wrapped = []
+        for raw_line in text.splitlines() or [""]:
+            line = raw_line.strip()
+            if not line:
+                wrapped.append("")
+                continue
+
+            words = line.split(" ")
+            current = ""
+            for word in words:
+                candidate = word if not current else f"{current} {word}"
+                if stringWidth(candidate, font_name, font_size) <= max_width:
+                    current = candidate
+                    continue
+
+                if current:
+                    wrapped.append(current)
+                    current = word
+                else:
+                    piece = ""
+                    for ch in word:
+                        candidate_piece = piece + ch
+                        if stringWidth(candidate_piece, font_name, font_size) <= max_width:
+                            piece = candidate_piece
+                        else:
+                            if piece:
+                                wrapped.append(piece)
+                            piece = ch
+                    current = piece
+
+            wrapped.append(current)
+
+        return wrapped
+
+    def _draw_footer():
+        c.setFont("Helvetica", 8)
+        footer = (
+            "Head Office - Costa Rica, Alajuela, Plaza Aeropuerto G-14 - "
+            "Phone (506) 8814-07-84 - (506) 4052-8382"
         )
+        c.drawCentredString(width / 2, FOOTER_Y, footer)
+
+    def _draw_static():
+        # =========================================================
+        # WATERMARK
+        # =========================================================
+        watermark_path = os.path.join(ASSETS_PATH, "watermark.png")
+        if os.path.isfile(watermark_path):
+            c.saveState()
+            c.setFillAlpha(0.08)
+            c.drawImage(
+                watermark_path,
+                1.2 * inch,
+                2.5 * inch,
+                width=4.5 * inch,
+                preserveAspectRatio=True,
+                mask="auto"
+            )
+            c.restoreState()
+
+        # =========================================================
+        # HEADER
+        # =========================================================
+        header_path = os.path.join(ASSETS_PATH, "header.png")
+        if os.path.isfile(header_path):
+            c.drawImage(
+                header_path,
+                LEFT_MARGIN,
+                HEADER_Y,
+                width=3.6 * inch,
+                preserveAspectRatio=True,
+                mask="auto"
+            )
+
+        _draw_footer()
+
+    def _new_page():
+        c.showPage()
+        _draw_static()
+        c.setFont("Helvetica", 10)
+        return TOP_MARGIN
+
+    def _draw_wrapped_line(text: str, font_name: str, font_size: int, y_pos: float, min_y: float) -> float:
+        c.setFont(font_name, font_size)
+        for wrapped_line in _wrap_text(text, font_name, font_size, BODY_WIDTH):
+            if y_pos < min_y:
+                y_pos = _new_page()
+                c.setFont(font_name, font_size)
+            c.drawString(LEFT_MARGIN, y_pos, wrapped_line)
+            y_pos -= 14 if font_size <= 10 else 16
+        return y_pos
+
+    _draw_static()
 
     y = TOP_MARGIN
 
@@ -95,18 +166,15 @@ def export_cotizacion_pdf(data: dict, output_path: str):
     # =========================================================
     quotation_number = data.get("quotation_number")
     if quotation_number:
-        c.setFont("Helvetica-Bold", 11)
-        c.drawString(LEFT_MARGIN, y, quotation_number)
-        y -= 22
+        y = _draw_wrapped_line(quotation_number, "Helvetica-Bold", 11, y, BODY_MIN_Y)
+        y -= 8
 
     # =========================================================
     # FECHA / LUGAR
     # =========================================================
-    c.setFont("Helvetica-Bold", 10)
-    c.drawString(LEFT_MARGIN, y, "Alajuela, Costa Rica")
-    y -= 14
-    c.drawString(LEFT_MARGIN, y, to_long_english_date(date.today()))
-    y -= 26
+    y = _draw_wrapped_line("Alajuela, Costa Rica", "Helvetica-Bold", 10, y, BODY_MIN_Y)
+    y = _draw_wrapped_line(to_long_english_date(date.today()), "Helvetica-Bold", 10, y, BODY_MIN_Y)
+    y -= 12
 
     # =========================================================
     # ASUNTO
@@ -119,49 +187,14 @@ def export_cotizacion_pdf(data: dict, output_path: str):
         else f"Cotización – {data.get('servicio', '')}"
     )
 
-    c.setFont("Helvetica-Bold", 11)
-    c.drawString(LEFT_MARGIN, y, asunto)
-    y -= 24
+    y = _draw_wrapped_line(asunto, "Helvetica-Bold", 11, y, BODY_MIN_Y)
+    y -= 8
 
     # =========================================================
     # BODY
     # =========================================================
-    c.setFont("Helvetica", 10)
-
     for line in data.get("texto", "").split("\n"):
-        if y < BODY_MIN_Y:
-            c.showPage()
-
-            # Watermark repetido
-            if os.path.isfile(watermark_path):
-                c.saveState()
-                c.setFillAlpha(0.08)
-                c.drawImage(
-                    watermark_path,
-                    1.2 * inch,
-                    2.5 * inch,
-                    width=4.5 * inch,
-                    preserveAspectRatio=True,
-                    mask="auto"
-                )
-                c.restoreState()
-
-            # Header repetido
-            if os.path.isfile(header_path):
-                c.drawImage(
-                    header_path,
-                    LEFT_MARGIN,
-                    HEADER_Y,
-                    width=3.6 * inch,
-                    preserveAspectRatio=True,
-                    mask="auto"
-                )
-
-            y = TOP_MARGIN
-            c.setFont("Helvetica", 10)
-
-        c.drawString(LEFT_MARGIN, y, line)
-        y -= 14
+        y = _draw_wrapped_line(line, "Helvetica", 10, y, BODY_MIN_Y)
 
     # =========================================================
     # FIRMA
@@ -174,6 +207,9 @@ def export_cotizacion_pdf(data: dict, output_path: str):
     title_y = FOOTER_Y + GAP_ABOVE_FOOTER
     name_y = title_y + 14
     signature_img_y = name_y + 18
+
+    if y < FOOTER_Y + SIGNATURE_BLOCK_HEIGHT:
+        y = _new_page()
 
     if os.path.isfile(signature_path):
         c.drawImage(
@@ -195,17 +231,6 @@ def export_cotizacion_pdf(data: dict, output_path: str):
         LEFT_MARGIN,
         title_y - 12,
         "MSL MARINE SURVEYORS & LOGISTICS GROUP SRL"
-    )
-
-    # =========================================================
-    # FOOTER
-    # =========================================================
-    c.setFont("Helvetica", 8)
-    c.drawCentredString(
-        width / 2,
-        FOOTER_Y,
-        "Head Office – Costa Rica, Alajuela, Plaza Aeropuerto G-14 – "
-        "Phone (506) 8814-07-84 – (506) 4052-8382"
     )
 
     c.save()

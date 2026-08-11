@@ -193,19 +193,33 @@ class DraftSurveyExcelGenerator:
                 "init_hydro2_mtc_p50_2":  "BH42",
                 "init_hydro2_mtc_m50_2":  "BJ42",
 
-                "final_hydro1_draft_1": "BG36",
-                "final_hydro1_disp_1":  "BH36",
-                "final_hydro1_tpc_1":   "BI36",
-                "final_hydro1_lcf_1":   "BJ36",
-                "final_hydro1_draft_2": "BG38",
-                "final_hydro1_disp_2":  "BH38",
-                "final_hydro1_tpc_2":   "BI38",
-                "final_hydro1_lcf_2":   "BJ38",
-                "final_hydro1_draft_mtc":  "BG40",
-                "final_hydro1_mtc_p50_1":  "BH40",
-                "final_hydro1_mtc_m50_1":  "BJ40",
-                "final_hydro1_mtc_p50_2":  "BH42",
-                "final_hydro1_mtc_m50_2":  "BJ42",
+                "final_hydro1_draft_1": "BG27",
+                "final_hydro1_disp_1":  "BH27",
+                "final_hydro1_tpc_1":   "BI27",
+                "final_hydro1_lcf_1":   "BJ27",
+                "final_hydro1_draft_2": "BG29",
+                "final_hydro1_disp_2":  "BH29",
+                "final_hydro1_tpc_2":   "BI29",
+                "final_hydro1_lcf_2":   "BJ29",
+                "final_hydro1_draft_mtc":  "BG31",
+                "final_hydro1_mtc_p50_1":  "BH31",
+                "final_hydro1_mtc_m50_1":  "BJ31",
+                "final_hydro1_mtc_p50_2":  "BH33",
+                "final_hydro1_mtc_m50_2":  "BJ33",
+
+                "final_hydro2_draft_1": "BG36",
+                "final_hydro2_disp_1":  "BH36",
+                "final_hydro2_tpc_1":   "BI36",
+                "final_hydro2_lcf_1":   "BJ36",
+                "final_hydro2_draft_2": "BG38",
+                "final_hydro2_disp_2":  "BH38",
+                "final_hydro2_tpc_2":   "BI38",
+                "final_hydro2_lcf_2":   "BJ38",
+                "final_hydro2_draft_mtc":  "BG40",
+                "final_hydro2_mtc_p50_1":  "BH40",
+                "final_hydro2_mtc_m50_1":  "BJ40",
+                "final_hydro2_mtc_p50_2":  "BH42",
+                "final_hydro2_mtc_m50_2":  "BJ42",
 
                 # =====================================================
                 # FINAL â€” TOP
@@ -348,6 +362,41 @@ class DraftSurveyExcelGenerator:
             return int(number)
         return number
 
+    def _coerce_number(self, value):
+        coerced = self._coerce_excel_value(value)
+        if isinstance(coerced, (int, float)):
+            return float(coerced)
+        return None
+
+    def _is_empty(self, value) -> bool:
+        return value is None or (isinstance(value, str) and value.strip() == "")
+
+    def _prepare_hydrostatic_payload(self, payload: dict) -> dict:
+        prepared = dict(payload or {})
+
+        # The template needs the MTC draft base. If the user leaves it blank,
+        # derive it from the first hydrostatic draft plus 0.50, as in the
+        # vessel spreadsheet reference.
+        for prefix in ("init", "final"):
+            for table_no in (1, 2):
+                draft_key = f"{prefix}_hydro{table_no}_draft_1"
+                mtc_draft_key = f"{prefix}_hydro{table_no}_draft_mtc"
+                if self._is_empty(prepared.get(mtc_draft_key)):
+                    draft_value = self._coerce_number(prepared.get(draft_key))
+                    if draft_value is not None:
+                        prepared[mtc_draft_key] = round(draft_value + 0.5, 6)
+
+        # Final Draft tables for this workflow expect LCF to carry the negative
+        # sign when the hydrostatic table is supplied as an absolute value.
+        for table_no in (1, 2):
+            for row_no in (1, 2):
+                lcf_key = f"final_hydro{table_no}_lcf_{row_no}"
+                lcf_value = self._coerce_number(prepared.get(lcf_key))
+                if lcf_value is not None and lcf_value > 0:
+                    prepared[lcf_key] = -abs(lcf_value)
+
+        return prepared
+
     def _safe_set(self, ws: Worksheet, cell: str, value):
 
         if value in [None, ""]:
@@ -440,6 +489,8 @@ class DraftSurveyExcelGenerator:
         if not os.path.exists(TEMPLATE_PATH):
             raise FileNotFoundError("Draft Survey template not found.")
 
+        payload = self._prepare_hydrostatic_payload(payload or {})
+
         wb = load_workbook(TEMPLATE_PATH)
 
         # =====================================================
@@ -489,6 +540,39 @@ class DraftSurveyExcelGenerator:
 
                     return []
 
+                def _value_present(value) -> bool:
+                    return value is not None and str(value).strip() != ""
+
+                def _with_defaults(items, section_key, phase_key, initial_items=None):
+                    normalized = []
+                    initial_items = initial_items or []
+
+                    for i, item in enumerate((items or [])[:20]):
+                        item = dict(item or {})
+                        initial_item = (
+                            initial_items[i]
+                            if i < len(initial_items) and isinstance(initial_items[i], dict)
+                            else {}
+                        )
+
+                        if phase_key == "final":
+                            if not _value_present(item.get("tank_name")) and _value_present(initial_item.get("tank_name")):
+                                item["tank_name"] = initial_item.get("tank_name")
+                            if not _value_present(item.get("height")) and _value_present(initial_item.get("height")):
+                                item["height"] = initial_item.get("height")
+
+                        if section_key == "ballast":
+                            if not _value_present(item.get("height")):
+                                item["height"] = 0
+
+                        if section_key == "fresh_water":
+                            if _value_present(item.get("volume")) and not _value_present(item.get("density")):
+                                item["density"] = 1
+
+                        normalized.append(item)
+
+                    return normalized
+
                 def _clear_block(start_row, cols, max_rows=20):
                     for i in range(max_rows):
                         row = start_row + i
@@ -513,7 +597,11 @@ class DraftSurveyExcelGenerator:
                 # BALLAST INITIAL
                 # A11 / D11 / G11 / J11 / M11
                 # -------------------------------------------------
-                ballast_initial = _get_nested_list("ballast", "init")
+                ballast_initial = _with_defaults(
+                    _get_nested_list("ballast", "init"),
+                    "ballast",
+                    "init"
+                )
 
                 _clear_block(11, ["A", "D", "G", "J", "M"])
 
@@ -527,7 +615,12 @@ class DraftSurveyExcelGenerator:
                 # BALLAST FINAL
                 # T11 / W11 / Z11 / AC11 / AF11
                 # -------------------------------------------------
-                ballast_final = _get_nested_list("ballast", "final")
+                ballast_final = _with_defaults(
+                    _get_nested_list("ballast", "final"),
+                    "ballast",
+                    "final",
+                    ballast_initial
+                )
 
                 _clear_block(11, ["T", "W", "Z", "AC", "AF"])
 
@@ -541,7 +634,11 @@ class DraftSurveyExcelGenerator:
                 # FRESH WATER INITIAL
                 # A47 / D47 / G47 / J47 / M47
                 # -------------------------------------------------
-                fw_initial = _get_nested_list("fresh_water", "init")
+                fw_initial = _with_defaults(
+                    _get_nested_list("fresh_water", "init"),
+                    "fresh_water",
+                    "init"
+                )
 
                 _clear_block(47, ["A", "D", "G", "J", "M"])
 
@@ -555,7 +652,12 @@ class DraftSurveyExcelGenerator:
                 # FRESH WATER FINAL
                 # T47 / W47 / Z47 / AC47 / AF47
                 # -------------------------------------------------
-                fw_final = _get_nested_list("fresh_water", "final")
+                fw_final = _with_defaults(
+                    _get_nested_list("fresh_water", "final"),
+                    "fresh_water",
+                    "final",
+                    fw_initial
+                )
 
                 _clear_block(47, ["T", "W", "Z", "AC", "AF"])
 

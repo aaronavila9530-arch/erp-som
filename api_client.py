@@ -2245,6 +2245,28 @@ def post_accounting_ai_analysis_api(payload: dict):
     return r.json()
 
 
+def post_accounting_tax_scenario_analysis_api(payload: dict):
+    r = api_request(
+        "POST",
+        f"{BASE_URL}/accounting/tax-scenarios/analyze",
+        json=payload,
+        timeout=90,
+    )
+    raise_for_status_with_detail(r)
+    return r.json()
+
+
+def get_accounting_tax_scenario_history_api(limit: int = 25):
+    r = api_request(
+        "GET",
+        f"{BASE_URL}/accounting/tax-scenarios/history",
+        params={"limit": limit},
+        timeout=30,
+    )
+    raise_for_status_with_detail(r)
+    return r.json()
+
+
 def sync_accounting_auxiliaries_api():
     r = api_request("POST", f"{BASE_URL}/accounting/auxiliaries/sync", timeout=180)
     r.raise_for_status()
