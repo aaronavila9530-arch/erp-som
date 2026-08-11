@@ -15,6 +15,8 @@ from services.tenanting import company_code
 
 router = APIRouter(prefix="/hr/salary-calculator", tags=["HHRR - Salary Calculator"])
 
+SCENARIO_LABELS = {"EMPLOYEE": "Asalariado", "INDEPENDENT": "Independiente", "OWNER": "Dueño de empresa"}
+
 
 EMPLOYEE_WORKER_RATES = {
     "SEM - Enfermedad y Maternidad": 0.055,
@@ -375,6 +377,91 @@ def calculate_payload(req: SalaryCalculatorRequest) -> dict[str, Any]:
     return result
 
 
+def _scenario_monthly_income(result: dict[str, Any]) -> float:
+    scenario = result.get("scenario")
+    if scenario == "EMPLOYEE":
+        return _money(result.get("net_salary", 0))
+    if scenario == "INDEPENDENT":
+        return _money(result.get("cash_remaining_monthly_reference", 0))
+    return _money(result.get("cash_remaining_monthly_reference") or result.get("distribution_net_monthly") or 0)
+
+
+def _scenario_total_burden(result: dict[str, Any]) -> float:
+    scenario = result.get("scenario")
+    if scenario == "EMPLOYEE":
+        return _money(result.get("worker_contributions_total", 0) + result.get("salary_income_tax", 0))
+    if scenario == "INDEPENDENT":
+        return _money(result.get("ccss_independent", 0) + result.get("monthly_income_tax_reference", 0))
+    return _money(result.get("distribution_withholding_15", 0) + result.get("monthly_corporate_income_tax_reference", 0))
+
+
+def _scenario_notes(result: dict[str, Any]) -> tuple[list[str], list[str]]:
+    scenario = result.get("scenario")
+    if scenario == "EMPLOYEE":
+        return (
+            ["Mayor simplicidad operativa.", "Cargas y renta se calculan directo sobre salario."],
+            ["Mayor costo total para la empresa.", "Menos flexibilidad para deducir gastos propios."],
+        )
+    if scenario == "INDEPENDENT":
+        pros = ["Permite reconocer gastos deducibles y depreciación.", "Factura separa IVA 13% y base del servicio."]
+        cons = ["Debe administrar CCSS e impuesto anual.", "El beneficio PYME se pierde si excede el umbral anual."]
+        if result.get("pyme_applied"):
+            pros.append("Beneficio PYME activo en este escenario.")
+        if result.get("pyme_gross_limit_exceeded"):
+            cons.append("Venta bruta anual excede el límite PYME 2026.")
+        return pros, cons
+    pros = ["Permite modelar dietas o dividendos con retención automática del 15%.", "Calcula renta jurídica y exoneración PYME si aplica."]
+    cons = ["Dividendos no reducen la renta imponible de la empresa.", "Requiere revisar sustancia, actas y tratamiento contable."]
+    if result.get("distribution_type") == "DIETAS":
+        pros.append("Dietas se consideran deducibles en este modelo.")
+    return pros, cons
+
+
+def _comparison_from_request(req: SalaryCalculatorRequest) -> dict[str, Any]:
+    scenarios = []
+    base = req.dict()
+    base["save"] = False
+    for scenario in ("EMPLOYEE", "INDEPENDENT", "OWNER"):
+        payload = dict(base)
+        payload["scenario"] = scenario
+        if scenario == "EMPLOYEE":
+            payload["expenses"] = []
+            payload["vehicle_debt_amount"] = 0
+            payload["vehicle_monthly_payment"] = 0
+            payload["distribution_type"] = "NONE"
+            payload["is_pyme"] = False
+        if scenario == "OWNER" and payload.get("distribution_type") == "NONE":
+            payload["distribution_type"] = "DIETAS"
+        result = calculate_payload(SalaryCalculatorRequest(**payload))
+        pros, cons = _scenario_notes(result)
+        scenarios.append({
+            "scenario": scenario,
+            "label": SCENARIO_LABELS.get(scenario, scenario),
+            "monthly_income_reference": _scenario_monthly_income(result),
+            "monthly_tax_and_social_burden": _scenario_total_burden(result),
+            "annual_gross_income": result.get("annual_gross_income") or _money(result.get("gross_salary", 0) * 12),
+            "pyme_applied": result.get("pyme_applied", False),
+            "pyme_gross_limit_exceeded": result.get("pyme_gross_limit_exceeded", False),
+            "pros": pros,
+            "cons": cons,
+        })
+    scenarios.sort(key=lambda item: item["monthly_income_reference"], reverse=True)
+    best = scenarios[0] if scenarios else {}
+    return {
+        "currency": "CRC",
+        "rule_version": "CR-2026",
+        "recommended_by_income": best.get("scenario"),
+        "recommended_label": best.get("label"),
+        "summary": f"Por ingreso mensual de referencia, la mejor opción calculada es {best.get('label')} con {_fmt_text(best.get('monthly_income_reference', 0))}.",
+        "scenarios": scenarios,
+        "disclaimer": "Comparativa referencial: no sustituye análisis legal, tributario ni laboral del caso concreto.",
+    }
+
+
+def _fmt_text(value: float) -> str:
+    return f"CRC {float(value or 0):,.2f}"
+
+
 @router.get("/rules", dependencies=[Depends(require_permission("hhrr", "view"))])
 def get_rules():
     return {
@@ -423,6 +510,11 @@ def calculate_salary(
         result["saved_id"] = cur.fetchone()[0]
         conn.commit()
     return result
+
+
+@router.post("/compare", dependencies=[Depends(require_permission("hhrr", "view"))])
+def compare_salary(req: SalaryCalculatorRequest):
+    return _comparison_from_request(req)
 
 
 @router.get("/history", dependencies=[Depends(require_permission("hhrr", "view"))])

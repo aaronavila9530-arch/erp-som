@@ -11561,6 +11561,7 @@ function HRSalaryCalculatorView({
   const [isPyme, setIsPyme] = useState(false);
   const [pymeYear, setPymeYear] = useState("1");
   const [result, setResult] = useState<Record<string, unknown> | null>(null);
+  const [comparison, setComparison] = useState<Record<string, unknown> | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const currentYear = new Date().getFullYear();
@@ -11580,30 +11581,34 @@ function HRSalaryCalculatorView({
     setExpenseYear("");
   }
 
+  function buildSalaryPayload(save = false) {
+    return {
+      scenario,
+      amount: parseMoneyInput(amount),
+      expenses,
+      vehicle_debt_amount: parseMoneyInput(vehicleDebt),
+      vehicle_purchase_year: vehicleYear ? Number(vehicleYear) : null,
+      vehicle_useful_life_years: Number(vehicleLife || 10),
+      vehicle_monthly_payment: parseMoneyInput(vehiclePayment),
+      distribution_type: distributionType,
+      distribution_amount: 0,
+      is_pyme: isPyme,
+      pyme_year: Number(pymeYear || 0),
+      save
+    };
+  }
+
   async function calculate(save = false) {
     setBusy(true);
     setMessage("");
     try {
-      const payload = {
-        scenario,
-        amount: parseMoneyInput(amount),
-        expenses,
-        vehicle_debt_amount: parseMoneyInput(vehicleDebt),
-        vehicle_purchase_year: vehicleYear ? Number(vehicleYear) : null,
-        vehicle_useful_life_years: Number(vehicleLife || 10),
-        vehicle_monthly_payment: parseMoneyInput(vehiclePayment),
-        distribution_type: distributionType,
-        distribution_amount: 0,
-        is_pyme: isPyme,
-        pyme_year: Number(pymeYear || 0),
-        save
-      };
       const data = await apiRequest<Record<string, unknown>>("/hr/salary-calculator/calculate", {
         method: "POST",
-        body: payload,
+        body: buildSalaryPayload(save),
         session
       });
       setResult(data);
+      setComparison(null);
       setMessage(save ? "Calculo guardado." : "Calculo listo.");
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "No se pudo calcular.");
@@ -11612,11 +11617,25 @@ function HRSalaryCalculatorView({
     }
   }
 
-  const resultRows = result
-    ? Object.entries(result).filter(([key, value]) =>
-        !["scenario", "currency", "rule_version", "disclaimer"].includes(key) && !Array.isArray(value) && typeof value !== "object"
-      )
-    : [];
+  async function compareOptions() {
+    setBusy(true);
+    setMessage("");
+    try {
+      const data = await apiRequest<Record<string, unknown>>("/hr/salary-calculator/compare", {
+        method: "POST",
+        body: buildSalaryPayload(false),
+        session
+      });
+      setComparison(data);
+      setResult(null);
+      setMessage("Comparativa IA lista.");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo comparar.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const resultLists = result
     ? Object.entries(result).filter(([key, value]) =>
         !["scenario", "currency", "rule_version", "disclaimer"].includes(key) && Array.isArray(value)
@@ -11624,19 +11643,63 @@ function HRSalaryCalculatorView({
     : [];
   const scenarioLabel = SALARY_SCENARIO_LABELS[scenario] || scenario;
   const distributionLabel = DISTRIBUTION_LABELS[distributionType] || distributionType;
+  const amountValue = parseMoneyInput(amount);
+  const annualGrossPreview = amountValue * 12;
+  const pymeLimitExceededPreview = isPyme && annualGrossPreview > 119174000;
+  const automationNotes = scenario === "EMPLOYEE"
+    ? ["SEM, IVM y Banco Popular", "Renta salarial 2026", "Costo patronal automático"]
+    : scenario === "INDEPENDENT"
+      ? ["IVA 13% sobre factura", "CCSS por escala mensual", "Renta anual y beneficio PYME"]
+      : ["IVA 13% sobre ingreso", "Retención 15% dietas/dividendos", "Renta jurídica y PYME"];
+  const focusKeys = scenario === "EMPLOYEE"
+    ? ["net_salary", "worker_contributions_total", "salary_income_tax", "total_company_cost"]
+    : scenario === "INDEPENDENT"
+      ? ["monthly_invoice_total", "cash_remaining_monthly_reference", "ccss_independent", "annual_income_tax"]
+      : ["monthly_income_total_with_vat", "distribution_net_monthly", "distribution_withholding_15", "annual_corporate_income_tax"];
+  const focusRows = result ? focusKeys.filter((key) => result[key] !== undefined).map((key) => [key, result[key]] as [string, unknown]) : [];
+  const resultRows = result
+    ? Object.entries(result).filter(([key, value]) =>
+        !["scenario", "currency", "rule_version", "disclaimer"].includes(key) && !focusKeys.includes(key) && !Array.isArray(value) && typeof value !== "object"
+      )
+    : [];
 
   return (
-    <View style={styles.tableShell}>
-      <Text style={styles.cardTitle}>Calculadora salarial</Text>
-      <Text style={styles.helperText}>Reglas Costa Rica 2026. Cálculo referencial para HHRR y planeación.</Text>
+    <View style={styles.salaryShell}>
+      <View style={styles.salaryHeader}>
+        <Text style={styles.salaryTitle}>Calculadora salarial</Text>
+        <Text style={styles.salaryBadge}>CR 2026</Text>
+      </View>
+      <Text style={styles.salarySubtitle}>Impuestos, cargas, IVA, PYME y depreciación calculados en un solo flujo.</Text>
+      <View style={styles.salaryAutomationPanel}>
+        <Text style={styles.salaryPanelTitle}>IA activa</Text>
+        {automationNotes.map((note) => <Text key={note} style={styles.salaryAutomationItem}>• {note}</Text>)}
+        {scenario !== "EMPLOYEE" ? (
+          <Text style={pymeLimitExceededPreview ? styles.salaryWarningText : styles.salaryHintText}>
+            {pymeLimitExceededPreview ? "PYME se desactiva por superar CRC 119,174,000 anuales." : `Venta anual estimada: ${moneyCrc(annualGrossPreview)}`}
+          </Text>
+        ) : null}
+      </View>
       <SelectField label="Escenario" value={scenarioLabel} options={["Asalariado", "Independiente", "Dueño de empresa"]} onChange={(value) => setScenario(SALARY_SCENARIO_CODES[value] || "EMPLOYEE")} />
       <Text style={styles.label}>{scenario === "EMPLOYEE" ? "Salario mensual bruto" : "Ingreso / factura mensual sin IVA"}</Text>
       <TextInput style={styles.input} value={amount} onChangeText={setAmount} keyboardType="decimal-pad" placeholder="0.00" />
+      {scenario !== "EMPLOYEE" ? (
+        <View style={styles.salaryPreviewGrid}>
+          <View style={styles.salaryPreviewCard}>
+            <Text style={styles.salaryPreviewLabel}>IVA estimado</Text>
+            <Text style={styles.salaryPreviewValue}>{moneyCrc(amountValue * 0.13)}</Text>
+          </View>
+          <View style={styles.salaryPreviewCard}>
+            <Text style={styles.salaryPreviewLabel}>Total con IVA</Text>
+            <Text style={styles.salaryPreviewValue}>{moneyCrc(amountValue * 1.13)}</Text>
+          </View>
+        </View>
+      ) : null}
 
       {scenario !== "EMPLOYEE" ? (
         <>
-          <Text style={styles.label}>Gasto deducible</Text>
+          <Text style={styles.salarySectionTitle}>Gastos deducibles</Text>
           <SelectField label="Rubro" value={expenseCategory} options={categories} onChange={setExpenseCategory} />
+          <Text style={styles.salaryHintText}>{expenseIsDepreciable ? "Este rubro se tratará como activo y se deducirá por depreciación mensual." : "Este rubro se deduce como gasto corriente mensual."}</Text>
           <TextInput style={styles.input} value={expenseAmount} onChangeText={setExpenseAmount} keyboardType="decimal-pad" placeholder="Monto gasto" />
           {expenseIsDepreciable ? (
             <>
@@ -11649,13 +11712,15 @@ function HRSalaryCalculatorView({
             <Text style={styles.actionButtonText}>Agregar gasto</Text>
           </Pressable>
           <ScrollView style={styles.salaryExpenseList} nestedScrollEnabled>
-            {expenses.map((item, index) => (
-              <Text key={`${formatValue(item.category)}-${index}`} style={styles.helperText}>
-                {formatValue(item.category)}: {moneyCrc(item.amount)}
-                {item.purchase_year ? ` | compra ${formatValue(item.purchase_year)}` : ""}
-              </Text>
-            ))}
+            {expenses.length ? expenses.map((item, index) => (
+              <View key={`${formatValue(item.category)}-${index}`} style={styles.salaryExpenseRow}>
+                <Text style={styles.salaryExpenseName}>{formatValue(item.category)}</Text>
+                <Text style={styles.salaryExpenseAmount}>{moneyCrc(item.amount)}</Text>
+                {item.purchase_year ? <Text style={styles.salaryHintText}>Compra {formatValue(item.purchase_year)} · vida útil {formatValue(item.useful_life_years)} años</Text> : null}
+              </View>
+            )) : <Text style={styles.salaryHintText}>Sin gastos agregados.</Text>}
           </ScrollView>
+          <Text style={styles.salarySectionTitle}>Vehículo</Text>
           <Text style={styles.label}>Monto deuda vehicular / costo original</Text>
           <TextInput style={styles.input} value={vehicleDebt} onChangeText={setVehicleDebt} keyboardType="decimal-pad" placeholder="0.00" />
           <SelectField label="Año compra vehículo" value={vehicleYear} options={yearOptions} onChange={setVehicleYear} />
@@ -11678,7 +11743,11 @@ function HRSalaryCalculatorView({
       {scenario === "OWNER" ? (
         <>
           <SelectField label="Dietas / Dividendos" value={distributionLabel} options={["No aplica", "Dietas", "Dividendos"]} onChange={(value) => setDistributionType(DISTRIBUTION_CODES[value] || "NONE")} />
-          <Text style={styles.helperText}>El 15% se calcula automático sobre el ingreso mensual. Ejemplo: CRC 1,400,000.00 genera CRC 210,000.00 de retención.</Text>
+          <View style={styles.salaryPreviewCard}>
+            <Text style={styles.salaryPreviewLabel}>Retención automática 15%</Text>
+            <Text style={styles.salaryPreviewValue}>{moneyCrc(distributionType === "NONE" ? 0 : amountValue * 0.15)}</Text>
+            <Text style={styles.salaryHintText}>Neto estimado: {moneyCrc(distributionType === "NONE" ? 0 : amountValue * 0.85)}</Text>
+          </View>
           <View style={styles.switchRow}>
             <Text style={styles.label}>PYME registrada</Text>
             <Switch value={isPyme} onValueChange={setIsPyme} />
@@ -11691,15 +11760,59 @@ function HRSalaryCalculatorView({
         <Pressable style={styles.actionButton} onPress={() => calculate(false)} disabled={busy}>
           <Text style={styles.actionButtonText}>{busy ? "Calculando..." : "Calcular"}</Text>
         </Pressable>
+        <Pressable style={styles.actionButton} onPress={compareOptions} disabled={busy}>
+          <Text style={styles.actionButtonText}>Comparar con IA</Text>
+        </Pressable>
         <Pressable style={styles.modalClose} onPress={() => calculate(true)} disabled={busy}>
           <Text style={styles.modalCloseText}>Guardar</Text>
         </Pressable>
       </View>
 
       {message ? <Text style={message.includes("No se") ? styles.error : styles.helperText}>{message}</Text> : null}
+      {comparison ? (
+        <View style={styles.reportBox}>
+          <Text style={styles.cardTitle}>Comparativa IA {formatValue(comparison.rule_version)}</Text>
+          <Text style={styles.helperText}>{formatValue(comparison.summary)}</Text>
+          {(Array.isArray(comparison.scenarios) ? comparison.scenarios : []).map((item, index) => {
+            const row = asRecord(item) || {};
+            return (
+              <View key={`${formatValue(row.scenario)}-${index}`} style={styles.salaryComparisonCard}>
+                <View style={styles.salaryComparisonHeader}>
+                  <Text style={styles.salaryComparisonRank}>#{index + 1}</Text>
+                  <Text style={styles.salaryComparisonTitle}>{formatValue(row.label)}</Text>
+                </View>
+                <View style={styles.detailRow}>
+                  <Text style={styles.detailKey}>Ingreso mensual ref.</Text>
+                  <Text style={styles.detailValue}>{moneyCrc(row.monthly_income_reference)}</Text>
+                </View>
+                <View style={styles.detailRow}>
+                  <Text style={styles.detailKey}>Carga mensual fiscal/social</Text>
+                  <Text style={styles.detailValue}>{moneyCrc(row.monthly_tax_and_social_burden)}</Text>
+                </View>
+                {row.pyme_gross_limit_exceeded ? <Text style={styles.salaryWarningText}>Excede límite PYME anual 2026.</Text> : null}
+                <Text style={styles.salaryProsTitle}>Pros</Text>
+                {(Array.isArray(row.pros) ? row.pros : []).map((text, noteIndex) => <Text key={`pro-${noteIndex}`} style={styles.salaryHintText}>• {formatValue(text)}</Text>)}
+                <Text style={styles.salaryConsTitle}>Contras</Text>
+                {(Array.isArray(row.cons) ? row.cons : []).map((text, noteIndex) => <Text key={`con-${noteIndex}`} style={styles.salaryHintText}>• {formatValue(text)}</Text>)}
+              </View>
+            );
+          })}
+          <Text style={styles.helperText}>{formatValue(comparison.disclaimer)}</Text>
+        </View>
+      ) : null}
       {result ? (
         <View style={styles.reportBox}>
           <Text style={styles.cardTitle}>Resultado {formatValue(result.rule_version)}</Text>
+          {focusRows.length ? (
+            <View style={styles.salaryResultGrid}>
+              {focusRows.map(([key, value]) => (
+                <View key={key} style={styles.salaryResultCard}>
+                  <Text style={styles.salaryPreviewLabel}>{SALARY_RESULT_LABELS[key] || key.replaceAll("_", " ")}</Text>
+                  <Text style={styles.salaryPreviewValue}>{typeof value === "number" ? moneyCrc(value) : formatValue(value)}</Text>
+                </View>
+              ))}
+            </View>
+          ) : null}
           {resultRows.map(([key, value]) => (
             <View key={key} style={styles.detailRow}>
               <Text style={styles.detailKey}>{SALARY_RESULT_LABELS[key] || key.replaceAll("_", " ")}</Text>
@@ -14710,7 +14823,83 @@ const styles = StyleSheet.create({
   },
   selectText: { color: "#101828", fontSize: 14, fontWeight: "700" },
   selectedRow: { borderColor: BLUE, borderWidth: 2 },
+  salaryAutomationItem: { color: "#1D2939", fontSize: 12, fontWeight: "800", marginTop: 4 },
+  salaryAutomationPanel: {
+    backgroundColor: "#EEF6FF",
+    borderColor: "#98C7F5",
+    borderRadius: 8,
+    borderWidth: 1,
+    marginBottom: 12,
+    padding: 12
+  },
+  salaryBadge: {
+    backgroundColor: "#D1FADF",
+    borderRadius: 999,
+    color: "#027A48",
+    fontSize: 11,
+    fontWeight: "900",
+    paddingHorizontal: 10,
+    paddingVertical: 5
+  },
+  salaryComparisonCard: {
+    backgroundColor: "white",
+    borderColor: BORDER,
+    borderRadius: 8,
+    borderWidth: 1,
+    marginBottom: 12,
+    padding: 12
+  },
+  salaryComparisonHeader: { alignItems: "center", flexDirection: "row", gap: 8, marginBottom: 8 },
+  salaryComparisonRank: { backgroundColor: BLUE, borderRadius: 999, color: "white", fontSize: 12, fontWeight: "900", paddingHorizontal: 9, paddingVertical: 5 },
+  salaryComparisonTitle: { color: "#101828", flex: 1, fontSize: 15, fontWeight: "900" },
+  salaryConsTitle: { color: "#B42318", fontSize: 12, fontWeight: "900", marginTop: 8 },
+  salaryExpenseAmount: { color: BLUE, fontSize: 12, fontWeight: "900" },
+  salaryExpenseName: { color: "#101828", flex: 1, fontSize: 12, fontWeight: "800" },
+  salaryExpenseRow: {
+    backgroundColor: "white",
+    borderColor: BORDER,
+    borderRadius: 6,
+    borderWidth: 1,
+    marginBottom: 8,
+    padding: 10
+  },
   salaryExpenseList: { maxHeight: 150, marginBottom: 10 },
+  salaryHeader: { alignItems: "center", flexDirection: "row", gap: 10, justifyContent: "space-between", marginBottom: 4 },
+  salaryHintText: { color: "#667085", fontSize: 12, fontWeight: "700", marginBottom: 8 },
+  salaryPanelTitle: { color: BLUE, fontSize: 13, fontWeight: "900", marginBottom: 4, textTransform: "uppercase" },
+  salaryPreviewCard: {
+    backgroundColor: "white",
+    borderColor: BORDER,
+    borderRadius: 8,
+    borderWidth: 1,
+    flex: 1,
+    marginBottom: 10,
+    padding: 12
+  },
+  salaryPreviewGrid: { flexDirection: "row", gap: 10, marginBottom: 8 },
+  salaryPreviewLabel: { color: "#667085", fontSize: 11, fontWeight: "900", marginBottom: 5, textTransform: "uppercase" },
+  salaryPreviewValue: { color: BLUE, fontSize: 18, fontWeight: "900" },
+  salaryProsTitle: { color: "#027A48", fontSize: 12, fontWeight: "900", marginTop: 8 },
+  salaryResultCard: {
+    backgroundColor: "white",
+    borderColor: BORDER,
+    borderRadius: 8,
+    borderWidth: 1,
+    flexBasis: "48%",
+    padding: 10
+  },
+  salaryResultGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 12 },
+  salarySectionTitle: { color: "#101828", fontSize: 15, fontWeight: "900", marginBottom: 8, marginTop: 4 },
+  salaryShell: {
+    backgroundColor: "#F8FAFC",
+    borderColor: BORDER,
+    borderRadius: 8,
+    borderWidth: 1,
+    padding: 12
+  },
+  salarySubtitle: { color: "#475467", fontSize: 13, fontWeight: "700", marginBottom: 12 },
+  salaryTitle: { color: "#101828", flex: 1, fontSize: 20, fontWeight: "900" },
+  salaryWarningText: { color: "#B42318", fontSize: 12, fontWeight: "900", marginBottom: 8 },
   switchRow: { alignItems: "center", flexDirection: "row", justifyContent: "space-between", marginBottom: 10 },
   summaryBox: {
     backgroundColor: "white",

@@ -3,6 +3,7 @@ from tkinter import ttk, messagebox
 
 from api_client import (
     hr_salary_calculator_calculate_api,
+    hr_salary_calculator_compare_api,
     hr_salary_calculator_history_api,
     hr_salary_calculator_rules_api,
 )
@@ -10,6 +11,11 @@ from api_client import (
 
 SCENARIOS = {"EMPLOYEE": "Asalariado", "INDEPENDENT": "Independiente", "OWNER": "Dueño de empresa"}
 DISTRIBUTIONS = {"NONE": "No aplica", "DIETAS": "Dietas", "DIVIDENDS": "Dividendos"}
+HIGHLIGHT_KEYS = {
+    "EMPLOYEE": ("net_salary", "worker_contributions_total", "salary_income_tax", "total_company_cost"),
+    "INDEPENDENT": ("monthly_invoice_total", "cash_remaining_monthly_reference", "ccss_independent", "annual_income_tax"),
+    "OWNER": ("monthly_income_total_with_vat", "distribution_net_monthly", "distribution_withholding_15", "annual_corporate_income_tax"),
+}
 LABELS = {
     "gross_salary": "Salario bruto",
     "worker_contributions_total": "Total deducciones trabajador",
@@ -79,6 +85,7 @@ class VistaCalculadoraSalarial(ttk.Frame):
         header = ttk.Frame(self)
         header.grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 6))
         ttk.Label(header, text="Calculadora salarial", font=("Segoe UI", 14, "bold")).pack(side="left")
+        ttk.Label(header, text="CR 2026 · impuestos, cargas, IVA, PYME y depreciación", foreground="#475467").pack(side="left", padx=10)
         ttk.Button(header, text="Historial", command=self._load_history).pack(side="right")
 
         body = ttk.PanedWindow(self, orient="horizontal")
@@ -125,16 +132,30 @@ class VistaCalculadoraSalarial(ttk.Frame):
         actions.grid(row=1, column=0, sticky="ew", pady=8)
         ttk.Button(actions, text="Calcular", command=lambda: self._calculate(False)).pack(side="left", padx=4)
         ttk.Button(actions, text="Calcular y guardar", command=lambda: self._calculate(True)).pack(side="left", padx=4)
+        ttk.Button(actions, text="Comparar opciones", command=self._compare).pack(side="left", padx=4)
         ttk.Button(actions, text="Limpiar gastos", command=self._clear_expenses).pack(side="left", padx=4)
 
-        result_box = ttk.LabelFrame(right, text="Resultado")
+        result_box = ttk.LabelFrame(right, text="Resultado automático")
         result_box.grid(row=0, column=0, sticky="nsew")
-        result_box.rowconfigure(0, weight=1)
+        result_box.rowconfigure(2, weight=1)
         result_box.columnconfigure(0, weight=1)
-        self.result = tk.Text(result_box, height=24, wrap="word")
-        self.result.grid(row=0, column=0, sticky="nsew")
+        self.status_var = tk.StringVar(value="Ingrese un monto y presione Calcular.")
+        ttk.Label(result_box, textvariable=self.status_var, foreground="#344054").grid(row=0, column=0, sticky="ew", padx=8, pady=(8, 2))
+        self.kpi_frame = ttk.Frame(result_box)
+        self.kpi_frame.grid(row=1, column=0, sticky="ew", padx=6, pady=6)
+        for col in range(2):
+            self.kpi_frame.columnconfigure(col, weight=1)
+        self.kpi_vars = []
+        for idx in range(4):
+            card = ttk.LabelFrame(self.kpi_frame, text="Pendiente")
+            card.grid(row=idx // 2, column=idx % 2, sticky="ew", padx=4, pady=4)
+            value_var = tk.StringVar(value="CRC 0.00")
+            ttk.Label(card, textvariable=value_var, font=("Segoe UI", 11, "bold"), foreground="#003A75").pack(anchor="w", padx=8, pady=(4, 8))
+            self.kpi_vars.append((card, value_var))
+        self.result = tk.Text(result_box, height=18, wrap="word")
+        self.result.grid(row=2, column=0, sticky="nsew", padx=(0, 0))
         scroll = ttk.Scrollbar(result_box, command=self.result.yview)
-        scroll.grid(row=0, column=1, sticky="ns")
+        scroll.grid(row=2, column=1, sticky="ns")
         self.result.configure(yscrollcommand=scroll.set)
 
         history_box = ttk.LabelFrame(right, text="Historial")
@@ -166,7 +187,7 @@ class VistaCalculadoraSalarial(ttk.Frame):
         self.tabs.add(tab, text="Asalariado")
         self._field(tab, 0, "Etiqueta", self.employee_vars["label"])
         self._field(tab, 1, "Salario mensual bruto", self.employee_vars["amount"])
-        ttk.Label(tab, text="Calcula deducciones del trabajador, cargas patronales y renta salarial 2026.").grid(row=2, column=0, columnspan=2, sticky="w", padx=6, pady=8)
+        ttk.Label(tab, text="Automatiza: SEM, IVM, Banco Popular, renta salarial y costo patronal 2026.", foreground="#475467").grid(row=2, column=0, columnspan=2, sticky="w", padx=6, pady=8)
 
     def _expense_editor(self, parent, row):
         box = ttk.LabelFrame(parent, text="Gastos deducibles")
@@ -219,9 +240,10 @@ class VistaCalculadoraSalarial(ttk.Frame):
         self._combo_field(tab, 3, "Año compra vehículo", self.independent_vars["vehicle_purchase_year"], self._year_values())
         self._field(tab, 4, "Vida útil vehículo en años", self.independent_vars["vehicle_useful_life_years"])
         self._field(tab, 5, "Cuota vehicular mensual", self.independent_vars["vehicle_monthly_payment"])
-        ttk.Checkbutton(tab, text="PYME registrada", variable=self.independent_vars["is_pyme"]).grid(row=6, column=0, sticky="w", padx=6, pady=4)
-        self._combo_field(tab, 7, "Año PYME", self.independent_vars["pyme_year"], ["1", "2", "3", "4", "5", "6"])
-        self._expense_editor(tab, 8)
+        ttk.Label(tab, text="Vehículo usa vida útil referencial de 10 años; gastos corrientes no requieren año ni vida útil.", foreground="#475467").grid(row=6, column=0, columnspan=2, sticky="w", padx=6, pady=4)
+        ttk.Checkbutton(tab, text="PYME registrada", variable=self.independent_vars["is_pyme"]).grid(row=7, column=0, sticky="w", padx=6, pady=4)
+        self._combo_field(tab, 8, "Año PYME", self.independent_vars["pyme_year"], ["1", "2", "3", "4", "5", "6"])
+        self._expense_editor(tab, 9)
 
     def _build_owner_tab(self):
         tab = ttk.Frame(self.tabs)
@@ -336,13 +358,23 @@ class VistaCalculadoraSalarial(ttk.Frame):
         except Exception as exc:
             messagebox.showerror("Calculadora salarial", str(exc))
 
+    def _compare(self):
+        try:
+            payload = self._payload(False)
+            data = hr_salary_calculator_compare_api(payload)
+            self._render_comparison(data)
+        except Exception as exc:
+            messagebox.showerror("Comparativa salarial", str(exc))
+
     def _label(self, key):
         return LABELS.get(key, key.replace("_", " ").title())
 
     def _render_result(self, data):
         self.result.delete("1.0", "end")
         scenario = SCENARIOS.get(data.get("scenario"), data.get("scenario"))
-        lines = [f"Escenario: {scenario}", f"Regla: {data.get('rule_version')}", ""]
+        self.status_var.set(f"{scenario} · regla {data.get('rule_version')} · cálculo automático listo")
+        self._render_kpis(data)
+        lines = ["Desglose del cálculo", ""]
         for key, value in data.items():
             if key in {"scenario", "rule_version", "currency", "disclaimer"}:
                 continue
@@ -372,6 +404,51 @@ class VistaCalculadoraSalarial(ttk.Frame):
         lines.append("")
         lines.append(str(data.get("disclaimer") or ""))
         self.result.insert("1.0", "\n".join(lines))
+
+    def _render_comparison(self, data):
+        self.result.delete("1.0", "end")
+        self.status_var.set(f"IA activa · comparativa {data.get('rule_version')} · {data.get('recommended_label')}")
+        for idx, (card, value_var) in enumerate(self.kpi_vars):
+            scenario = (data.get("scenarios") or [])[idx] if idx < len(data.get("scenarios") or []) else None
+            if scenario:
+                card.configure(text=scenario.get("label", "Escenario"))
+                value_var.set(_fmt(scenario.get("monthly_income_reference", 0)))
+            else:
+                card.configure(text="Pendiente")
+                value_var.set("CRC 0.00")
+
+        lines = ["IA activa: comparativa de escenarios", "", str(data.get("summary") or ""), ""]
+        for idx, scenario in enumerate(data.get("scenarios") or [], start=1):
+            lines.append(f"{idx}. {scenario.get('label')}")
+            lines.append(f"   Ingreso mensual ref.: {_fmt(scenario.get('monthly_income_reference'))}")
+            lines.append(f"   Carga mensual fiscal/social: {_fmt(scenario.get('monthly_tax_and_social_burden'))}")
+            lines.append(f"   PYME aplicado: {'Sí' if scenario.get('pyme_applied') else 'No'}")
+            if scenario.get("pyme_gross_limit_exceeded"):
+                lines.append("   Nota: excede el límite PYME anual 2026.")
+            lines.append("   Pros:")
+            for item in scenario.get("pros") or []:
+                lines.append(f"     - {item}")
+            lines.append("   Contras:")
+            for item in scenario.get("cons") or []:
+                lines.append(f"     - {item}")
+            lines.append("")
+        lines.append(str(data.get("disclaimer") or ""))
+        self.result.insert("1.0", "\n".join(lines))
+
+    def _render_kpis(self, data):
+        scenario = data.get("scenario")
+        keys = HIGHLIGHT_KEYS.get(scenario, ())
+        for idx, (card, value_var) in enumerate(self.kpi_vars):
+            key = keys[idx] if idx < len(keys) else None
+            label = self._label(key) if key else "Pendiente"
+            value = data.get(key) if key else 0
+            card.configure(text=label)
+            if isinstance(value, bool):
+                value_var.set("Sí" if value else "No")
+            elif isinstance(value, (int, float)):
+                value_var.set(_fmt(value))
+            else:
+                value_var.set(str(value or ""))
 
     def _load_history(self):
         try:

@@ -3396,6 +3396,12 @@ def hr_salary_calculator_calculate_api(payload: dict):
     return response.json()
 
 
+def hr_salary_calculator_compare_api(payload: dict):
+    response = api_request("POST", "/hr/salary-calculator/compare", json=payload, timeout=TIMEOUT)
+    raise_for_status_with_detail(response)
+    return response.json()
+
+
 def hr_salary_calculator_history_api(limit: int = 50):
     response = api_request("GET", "/hr/salary-calculator/history", params={"limit": limit}, timeout=TIMEOUT)
     raise_for_status_with_detail(response)
