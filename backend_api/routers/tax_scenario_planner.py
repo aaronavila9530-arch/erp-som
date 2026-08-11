@@ -404,8 +404,11 @@ def _build_auto_moves(req: TaxScenarioRequest, clients: list[dict[str, Any]]) ->
     selected = []
     moved = 0.0
     for row in sorted([r for r in clients if r["company_code"] == source], key=lambda r: r["projected_annual_crc"], reverse=True):
-        selected.append(ClientMove(client_name=row["client_name"], from_company=source, to_company=company_code(req.target_company), projected_amount_crc=row["projected_annual_crc"]))
-        moved += row["projected_annual_crc"]
+        future_amount = _money(max(_money(row.get("projected_annual_crc")) - _money(row.get("ytd_amount_crc")), 0))
+        if future_amount <= 0:
+            continue
+        selected.append(ClientMove(client_name=row["client_name"], from_company=source, to_company=company_code(req.target_company), projected_amount_crc=future_amount))
+        moved += future_amount
         if moved >= excess:
             break
     return selected
@@ -437,16 +440,26 @@ def _scenario(
     for move in client_moves:
         src = company_code(move.from_company)
         dst = company_code(move.to_company)
+        client_row = next((row for row in clients if row["company_code"] == src and row["client_name"] == move.client_name), None)
+        future_available = _money(
+            max(_money((client_row or {}).get("projected_annual_crc")) - _money((client_row or {}).get("ytd_amount_crc")), 0)
+        )
         amount = move.projected_amount_crc
         if amount is None:
-            amount = next((row["projected_annual_crc"] for row in clients if row["company_code"] == src and row["client_name"] == move.client_name), 0)
-        amount = _money(amount)
+            amount = future_available
+        amount = _money(min(_money(amount), future_available))
+        if amount <= 0:
+            continue
         gross[src] = _money(gross.get(src, 0) - amount)
         gross[dst] = _money(gross.get(dst, 0) + amount)
-        ytd_amount = next((row["ytd_amount_crc"] for row in clients if row["company_code"] == src and row["client_name"] == move.client_name), 0)
-        gross_ytd[src] = _money(gross_ytd.get(src, 0) - ytd_amount)
-        gross_ytd[dst] = _money(gross_ytd.get(dst, 0) + ytd_amount)
-        moved_clients.append({"client_name": move.client_name, "from_company": src, "to_company": dst, "projected_amount_crc": amount})
+        moved_clients.append({
+            "client_name": move.client_name,
+            "from_company": src,
+            "to_company": dst,
+            "projected_amount_crc": amount,
+            "movement_basis": "FUTURE_ONLY",
+            "ytd_kept_crc": _money((client_row or {}).get("ytd_amount_crc")),
+        })
 
     expense_totals = {code: sum(row["projected_annual_crc"] for row in expense_rows if row["company_code"] == code) for code in companies}
     expense_totals = {code: _money(expense_totals.get(code, 0) + options[code].manual_expenses_crc) for code in companies}
