@@ -1236,7 +1236,7 @@ class DraftSurveyForm(ttk.Frame):
         self.update_idletasks()
         self.update()
 
-        full_payload = self.get_payload()
+        full_payload = self._normalize_hydrostatic_payload(self.get_payload())
         draft_report_number = str(
             full_payload.get("draft_report_number") or self.draft_report_number or ""
         ).strip()
@@ -1577,7 +1577,7 @@ class DraftSurveyForm(ttk.Frame):
                         "density": density
                     })
 
-        return data
+        return self._normalize_hydrostatic_payload(data)
 
     def set_payload(self, data: dict):
         """
@@ -3197,6 +3197,55 @@ class DraftSurveyForm(ttk.Frame):
                     return "'" + value
 
         return value
+
+    def _coerce_draft_number(self, value):
+        if value in (None, ""):
+            return None
+
+        if isinstance(value, (int, float)):
+            return float(value)
+
+        if isinstance(value, str):
+            text = value.strip().replace("\u00a0", "").replace(" ", "")
+            if not text:
+                return None
+
+            if "," in text and "." in text:
+                if text.rfind(",") > text.rfind("."):
+                    text = text.replace(".", "").replace(",", ".")
+                else:
+                    text = text.replace(",", "")
+            elif "," in text:
+                text = text.replace(",", ".")
+
+            try:
+                return float(text)
+            except Exception:
+                return None
+
+        return None
+
+    def _normalize_hydrostatic_payload(self, payload: dict) -> dict:
+        data = dict(payload or {})
+
+        for prefix in ("init", "final"):
+            for table_no in (1, 2):
+                draft_key = f"{prefix}_hydro{table_no}_draft_1"
+                mtc_key = f"{prefix}_hydro{table_no}_draft_mtc"
+
+                if data.get(mtc_key) in (None, ""):
+                    draft_value = self._coerce_draft_number(data.get(draft_key))
+                    if draft_value is not None:
+                        data[mtc_key] = round(draft_value + 0.5, 6)
+
+        for table_no in (1, 2):
+            for row_no in (1, 2):
+                lcf_key = f"final_hydro{table_no}_lcf_{row_no}"
+                lcf_value = self._coerce_draft_number(data.get(lcf_key))
+                if lcf_value is not None and lcf_value > 0:
+                    data[lcf_key] = -abs(lcf_value)
+
+        return data
 
 
     # =========================================================

@@ -7683,19 +7683,46 @@ def update_draft_survey_word_api(draft_survey_id: int, payload: dict):
             timeout=30
         )
 
-        response.raise_for_status()
+        try:
+            data = response.json()
+        except Exception:
+            data = None
 
-        return response.json()
+        if not response.ok:
+            detail = None
+            if isinstance(data, dict):
+                detail = data.get("detail") or data.get("error") or data.get("message")
+            return {
+                "success": False,
+                "status_code": response.status_code,
+                "error": detail or response.text,
+                "detail": data or response.text,
+            }
+
+        if isinstance(data, dict):
+            data.setdefault("success", True)
+            data.setdefault("status_code", response.status_code)
+            return data
+
+        return {"success": True, "status_code": response.status_code}
 
     except requests.exceptions.HTTPError as e:
         try:
             detail = response.json().get("detail", str(e))
         except Exception:
             detail = str(e)
-        raise Exception(f"Error updating Word Report: {detail}")
+        return {
+            "success": False,
+            "status_code": getattr(response, "status_code", None),
+            "error": f"Error updating Word Report: {detail}",
+        }
 
     except requests.exceptions.RequestException as e:
-        raise Exception(f"Connection error updating Word Report: {str(e)}")
+        return {
+            "success": False,
+            "status_code": None,
+            "error": f"Connection error updating Word Report: {str(e)}",
+        }
 
 
 
