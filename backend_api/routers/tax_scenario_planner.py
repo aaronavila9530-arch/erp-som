@@ -31,6 +31,14 @@ class ClientMove(BaseModel):
     projected_amount_crc: float | None = None
 
 
+class ExpenseMove(BaseModel):
+    account_code: str
+    account_name: str | None = None
+    from_company: str = "MSL-CR"
+    to_company: str = "MMS-CR"
+    projected_amount_crc: float | None = None
+
+
 class CompanyOption(BaseModel):
     company_code: str
     is_pyme: bool = True
@@ -45,6 +53,7 @@ class TaxScenarioRequest(BaseModel):
     target_company: str = "MMS-CR"
     company_options: list[CompanyOption] = []
     client_moves: list[ClientMove] = []
+    expense_moves: list[ExpenseMove] = []
     save: bool = False
     label: str | None = None
 
@@ -195,6 +204,41 @@ def _fetch_expenses(cur, req: TaxScenarioRequest) -> dict[str, dict[str, Any]]:
     return data
 
 
+def _fetch_expense_rows(cur, req: TaxScenarioRequest) -> list[dict[str, Any]]:
+    period_from = f"{req.year}-01"
+    period_to = f"{req.year}-{int(req.through_month):02d}"
+    cur.execute(
+        """
+        SELECT
+            e.company_code,
+            COALESCE(NULLIF(l.account_code, ''), 'SIN-CUENTA') AS account_code,
+            COALESCE(NULLIF(l.account_name, ''), 'Gasto sin nombre') AS account_name,
+            COUNT(DISTINCT e.id) AS entry_count,
+            COALESCE(SUM(GREATEST(COALESCE(l.debit, 0) - COALESCE(l.credit, 0), 0)), 0) AS ytd_amount_crc
+        FROM accounting_entries e
+        JOIN accounting_lines l ON l.entry_id = e.id
+        WHERE e.company_code IN (%s, %s)
+          AND e.period >= %s
+          AND e.period <= %s
+          AND (l.account_code LIKE '5%%' OR l.account_code LIKE '6%%')
+        GROUP BY e.company_code, COALESCE(NULLIF(l.account_code, ''), 'SIN-CUENTA'), COALESCE(NULLIF(l.account_name, ''), 'Gasto sin nombre')
+        HAVING COALESCE(SUM(GREATEST(COALESCE(l.debit, 0) - COALESCE(l.credit, 0), 0)), 0) <> 0
+        ORDER BY ytd_amount_crc DESC
+        """,
+        (company_code(req.source_company), company_code(req.target_company), period_from, period_to),
+    )
+    factor = 12 / max(int(req.through_month or 1), 1)
+    return [
+        {
+            **dict(row),
+            "entry_count": int(row.get("entry_count") or 0),
+            "ytd_amount_crc": _money(row["ytd_amount_crc"]),
+            "projected_annual_crc": _money(_money(row["ytd_amount_crc"]) * factor),
+        }
+        for row in cur.fetchall()
+    ]
+
+
 def _company_tax(company: str, gross: float, expenses: float, option: CompanyOption) -> dict[str, Any]:
     net = _money(max(gross - expenses, 0))
     if gross > CORPORATE_GROSS_THRESHOLD_ANNUAL:
@@ -219,6 +263,9 @@ def _company_tax(company: str, gross: float, expenses: float, option: CompanyOpt
         "pyme_gross_limit_exceeded": limit_exceeded,
         "income_tax_projected_crc": final_tax,
         "effective_tax_rate": _money(final_tax / gross * 100) if gross else 0,
+        "pyme_threshold_crc": CORPORATE_GROSS_THRESHOLD_ANNUAL,
+        "pyme_threshold_remaining_crc": _money(CORPORATE_GROSS_THRESHOLD_ANNUAL - gross),
+        "pyme_threshold_usage_pct": _money(gross / CORPORATE_GROSS_THRESHOLD_ANNUAL * 100) if CORPORATE_GROSS_THRESHOLD_ANNUAL else 0,
         "tax_detail": detail,
     }
 
@@ -239,12 +286,19 @@ def _build_auto_moves(req: TaxScenarioRequest, clients: list[dict[str, Any]]) ->
     return selected
 
 
-def _scenario(req: TaxScenarioRequest, clients: list[dict[str, Any]], expenses: dict[str, dict[str, Any]], moves: list[ClientMove], label: str) -> dict[str, Any]:
+def _scenario(
+    req: TaxScenarioRequest,
+    clients: list[dict[str, Any]],
+    expense_rows: list[dict[str, Any]],
+    client_moves: list[ClientMove],
+    expense_moves: list[ExpenseMove],
+    label: str,
+) -> dict[str, Any]:
     options = _company_options(req)
     companies = list(options.keys())
     gross = {code: sum(row["projected_annual_crc"] for row in clients if row["company_code"] == code) for code in companies}
     moved_clients = []
-    for move in moves:
+    for move in client_moves:
         src = company_code(move.from_company)
         dst = company_code(move.to_company)
         amount = move.projected_amount_crc
@@ -255,15 +309,37 @@ def _scenario(req: TaxScenarioRequest, clients: list[dict[str, Any]], expenses: 
         gross[dst] = _money(gross.get(dst, 0) + amount)
         moved_clients.append({"client_name": move.client_name, "from_company": src, "to_company": dst, "projected_amount_crc": amount})
 
-    expense_totals = {}
-    total_gross_before = sum(sum(row["projected_annual_crc"] for row in clients if row["company_code"] == code) for code in companies)
+    expense_totals = {code: sum(row["projected_annual_crc"] for row in expense_rows if row["company_code"] == code) for code in companies}
+    expense_totals = {code: _money(expense_totals.get(code, 0) + options[code].manual_expenses_crc) for code in companies}
+    moved_expenses = []
+    for move in expense_moves:
+        src = company_code(move.from_company)
+        dst = company_code(move.to_company)
+        amount = move.projected_amount_crc
+        if amount is None:
+            amount = next(
+                (
+                    row["projected_annual_crc"]
+                    for row in expense_rows
+                    if row["company_code"] == src and row["account_code"] == move.account_code
+                ),
+                0,
+            )
+        amount = _money(amount)
+        expense_totals[src] = _money(expense_totals.get(src, 0) - amount)
+        expense_totals[dst] = _money(expense_totals.get(dst, 0) + amount)
+        moved_expenses.append(
+            {
+                "account_code": move.account_code,
+                "account_name": move.account_name,
+                "from_company": src,
+                "to_company": dst,
+                "projected_amount_crc": amount,
+            }
+        )
+
     for code in companies:
-        base_expenses = _money((expenses.get(code) or {}).get("projected_annual_expense_crc", 0) + options[code].manual_expenses_crc)
-        if total_gross_before and moved_clients:
-            ratio = gross.get(code, 0) / max(sum(gross.values()), 1)
-            total_expenses = sum(_money((expenses.get(c) or {}).get("projected_annual_expense_crc", 0) + options[c].manual_expenses_crc) for c in companies)
-            base_expenses = _money(total_expenses * ratio)
-        expense_totals[code] = base_expenses
+        expense_totals[code] = _money(max(expense_totals.get(code, 0), 0))
 
     company_results = [_company_tax(code, gross.get(code, 0), expense_totals.get(code, 0), options[code]) for code in companies]
     total_tax = _money(sum(row["income_tax_projected_crc"] for row in company_results))
@@ -274,6 +350,7 @@ def _scenario(req: TaxScenarioRequest, clients: list[dict[str, Any]], expenses: 
     return {
         "label": label,
         "moved_clients": moved_clients,
+        "moved_expenses": moved_expenses,
         "companies": company_results,
         "total_projected_tax_crc": total_tax,
         "warnings": warnings,
@@ -283,12 +360,15 @@ def _scenario(req: TaxScenarioRequest, clients: list[dict[str, Any]], expenses: 
 def _analysis(baseline: dict[str, Any], optimized: dict[str, Any]) -> dict[str, Any]:
     tax_delta = _money(baseline["total_projected_tax_crc"] - optimized["total_projected_tax_crc"])
     moved = optimized.get("moved_clients") or []
+    moved_expenses = optimized.get("moved_expenses") or []
     pros = ["Visualiza el impacto fiscal antes de facturar.", "Mantiene la regla de ventas brutas PYME separada por sociedad.", "Usa datos reales del ERP y proyecta a diciembre."]
     cons = ["La reasignacion debe tener sustancia comercial real, contratos y operacion en la sociedad correcta.", "Los gastos se distribuyen proporcionalmente si no se asignan de forma manual.", "Es una simulacion gerencial; la declaracion final debe validarse con contador."]
-    if moved and tax_delta > 0:
-        recommendation = f"Mover {len(moved)} cliente(s) al escenario alterno reduce impuesto proyectado en CRC {tax_delta:,.2f} y ayuda a controlar el umbral PYME."
-    elif moved:
-        recommendation = f"Mover {len(moved)} cliente(s) al escenario alterno no cambia el impuesto proyectado con los gastos actuales, pero ayuda a controlar ventas brutas y riesgo de perder PYME."
+    if (moved or moved_expenses) and tax_delta > 0:
+        recommendation = f"El escenario con {len(moved)} cliente(s) y {len(moved_expenses)} gasto(s) reasignados reduce impuesto proyectado en CRC {tax_delta:,.2f} y ayuda a controlar el umbral PYME."
+    elif (moved or moved_expenses) and tax_delta < 0:
+        recommendation = f"El escenario con {len(moved)} cliente(s) y {len(moved_expenses)} gasto(s) reasignados aumenta el impuesto proyectado en CRC {abs(tax_delta):,.2f}. Revise si el gasto movido debe quedarse donde se genera la venta."
+    elif moved or moved_expenses:
+        recommendation = f"El escenario con {len(moved)} cliente(s) y {len(moved_expenses)} gasto(s) reasignados no cambia el impuesto proyectado con los gastos actuales, pero ayuda a controlar ventas brutas y sustancia por sociedad."
     else:
         recommendation = "Con los datos actuales no hace falta mover clientes para el umbral PYME, salvo estrategia comercial o riesgo operativo."
     return {"recommendation": recommendation, "tax_saving_crc": tax_delta, "pros": pros, "cons": cons}
@@ -308,10 +388,12 @@ def analyze_tax_scenarios(
         names = _fetch_company_names(cur)
         clients = _fetch_clients(cur, req)
         expenses = _fetch_expenses(cur, req)
+        expense_rows = _fetch_expense_rows(cur, req)
     manual_moves = req.client_moves or []
+    manual_expense_moves = req.expense_moves or []
     auto_moves = _build_auto_moves(req, clients)
-    baseline = _scenario(req, clients, expenses, [], "Actual sin mover clientes")
-    optimized = _scenario(req, clients, expenses, manual_moves or auto_moves, "Escenario recomendado")
+    baseline = _scenario(req, clients, expense_rows, [], [], "Actual sin mover clientes")
+    optimized = _scenario(req, clients, expense_rows, manual_moves or auto_moves, manual_expense_moves, "Escenario recomendado")
     result = {
         "currency": "CRC",
         "rule_version": "CR-2026",
@@ -321,6 +403,7 @@ def analyze_tax_scenarios(
         "company_names": names,
         "clients": clients,
         "expenses": expenses,
+        "expense_rows": expense_rows,
         "baseline": baseline,
         "optimized": optimized,
         "auto_moves": [item.dict() for item in auto_moves],
