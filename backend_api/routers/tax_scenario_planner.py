@@ -17,9 +17,9 @@ router = APIRouter(prefix="/accounting/tax-scenarios", tags=["Accounting - Tax S
 
 CORPORATE_GROSS_THRESHOLD_ANNUAL = 119_174_000
 CORPORATE_TAX_BRACKETS_ANNUAL = [
-    (5_621_000, 0.05),
-    (8_433_000, 0.10),
-    (11_243_000, 0.15),
+    (5_687_000, 0.05),
+    (8_532_000, 0.10),
+    (11_376_000, 0.15),
     (None, 0.20),
 ]
 
@@ -211,8 +211,10 @@ def _fetch_expense_rows(cur, req: TaxScenarioRequest) -> list[dict[str, Any]]:
         """
         SELECT
             e.company_code,
+            'POSTED_GL' AS source_type,
             COALESCE(NULLIF(l.account_code, ''), 'SIN-CUENTA') AS account_code,
             COALESCE(NULLIF(l.account_name, ''), 'Gasto sin nombre') AS account_name,
+            'POSTED' AS status,
             COUNT(DISTINCT e.id) AS entry_count,
             COALESCE(SUM(GREATEST(COALESCE(l.debit, 0) - COALESCE(l.credit, 0), 0)), 0) AS ytd_amount_crc
         FROM accounting_entries e
@@ -228,7 +230,7 @@ def _fetch_expense_rows(cur, req: TaxScenarioRequest) -> list[dict[str, Any]]:
         (company_code(req.source_company), company_code(req.target_company), period_from, period_to),
     )
     factor = 12 / max(int(req.through_month or 1), 1)
-    return [
+    rows = [
         {
             **dict(row),
             "entry_count": int(row.get("entry_count") or 0),
@@ -237,6 +239,75 @@ def _fetch_expense_rows(cur, req: TaxScenarioRequest) -> list[dict[str, Any]]:
         }
         for row in cur.fetchall()
     ]
+    cur.execute(
+        """
+        SELECT
+            %s AS company_code,
+            'ITP_PENDING' AS source_type,
+            'ITP-' || COALESCE(NULLIF(p.obligation_type, ''), NULLIF(p.payee_type, ''), 'GASTO') AS account_code,
+            COALESCE(NULLIF(p.payee_name, ''), NULLIF(p.obligation_type, ''), 'Factura/obligacion pendiente') AS account_name,
+            COALESCE(NULLIF(p.status, ''), 'PENDING') AS status,
+            COUNT(*) AS entry_count,
+            COALESCE(SUM(COALESCE(NULLIF(p.balance, 0), p.total, 0) *
+                CASE
+                    WHEN UPPER(COALESCE(p.currency, 'CRC')) = 'USD' THEN COALESCE(fx.rate, 1)
+                    ELSE 1
+                END
+            ), 0) AS ytd_amount_crc
+        FROM payment_obligations p
+        LEFT JOIN accounting_entries e
+          ON e.origin = 'ITP'
+         AND e.origin_id = p.id
+         AND e.workflow_status = 'POSTED'
+        LEFT JOIN LATERAL (
+            SELECT er.rate
+            FROM exchange_rate er
+            WHERE er.rate_date <= COALESCE(p.issue_date, p.created_at::date, CURRENT_DATE)
+            ORDER BY er.rate_date DESC
+            LIMIT 1
+        ) fx ON TRUE
+        WHERE p.active = TRUE
+          AND p.record_type = 'OBLIGATION'
+          AND COALESCE(p.issue_date, p.created_at::date, CURRENT_DATE) >= %s
+          AND COALESCE(p.issue_date, p.created_at::date, CURRENT_DATE) <= %s
+          AND e.id IS NULL
+        GROUP BY COALESCE(NULLIF(p.obligation_type, ''), NULLIF(p.payee_type, ''), 'GASTO'),
+                 COALESCE(NULLIF(p.payee_name, ''), NULLIF(p.obligation_type, ''), 'Factura/obligacion pendiente'),
+                 COALESCE(NULLIF(p.status, ''), 'PENDING')
+        HAVING COALESCE(SUM(COALESCE(NULLIF(p.balance, 0), p.total, 0)), 0) <> 0
+        ORDER BY ytd_amount_crc DESC
+        """,
+        (company_code(req.source_company), date(req.year, 1, 1), date(req.year, req.through_month, calendar.monthrange(req.year, req.through_month)[1])),
+    )
+    for row in cur.fetchall():
+        ytd = _money(row["ytd_amount_crc"])
+        rows.append({**dict(row), "entry_count": int(row.get("entry_count") or 0), "ytd_amount_crc": ytd, "projected_annual_crc": _money(ytd * factor)})
+    cur.execute(
+        """
+        SELECT
+            %s AS company_code,
+            'PAYROLL_PENDING' AS source_type,
+            'PAYROLL' AS account_code,
+            'Planilla y salarios sin asiento POSTED' AS account_name,
+            'PAYROLL' AS status,
+            COUNT(*) AS entry_count,
+            COALESCE(SUM(COALESCE(pr.salario_bruto, 0)), 0) AS ytd_amount_crc
+        FROM payroll_runs pr
+        LEFT JOIN accounting_entries e
+          ON e.origin = 'PAYROLL'
+         AND e.origin_id = pr.id
+         AND e.workflow_status = 'POSTED'
+        WHERE pr.year = %s
+          AND pr.month <= %s
+          AND e.id IS NULL
+        HAVING COALESCE(SUM(COALESCE(pr.salario_bruto, 0)), 0) <> 0
+        """,
+        (company_code(req.source_company), req.year, req.through_month),
+    )
+    for row in cur.fetchall():
+        ytd = _money(row["ytd_amount_crc"])
+        rows.append({**dict(row), "entry_count": int(row.get("entry_count") or 0), "ytd_amount_crc": ytd, "projected_annual_crc": _money(ytd * factor)})
+    return rows
 
 
 def _company_tax(company: str, gross: float, expenses: float, option: CompanyOption) -> dict[str, Any]:
@@ -284,6 +355,16 @@ def _build_auto_moves(req: TaxScenarioRequest, clients: list[dict[str, Any]]) ->
         if moved >= excess:
             break
     return selected
+
+
+def _expense_summary(expense_rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    summary: dict[str, dict[str, Any]] = {}
+    for row in expense_rows:
+        code = company_code(row.get("company_code"))
+        item = summary.setdefault(code, {"ytd_expense_crc": 0.0, "projected_annual_expense_crc": 0.0})
+        item["ytd_expense_crc"] = _money(item["ytd_expense_crc"] + _money(row.get("ytd_amount_crc")))
+        item["projected_annual_expense_crc"] = _money(item["projected_annual_expense_crc"] + _money(row.get("projected_annual_crc")))
+    return summary
 
 
 def _scenario(
@@ -387,8 +468,8 @@ def analyze_tax_scenarios(
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         names = _fetch_company_names(cur)
         clients = _fetch_clients(cur, req)
-        expenses = _fetch_expenses(cur, req)
         expense_rows = _fetch_expense_rows(cur, req)
+        expenses = _expense_summary(expense_rows)
     manual_moves = req.client_moves or []
     manual_expense_moves = req.expense_moves or []
     auto_moves = _build_auto_moves(req, clients)
