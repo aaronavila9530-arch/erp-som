@@ -45,7 +45,7 @@ const COMPANIES = [
   { code: "MMS-CR", name: "MMS MARITIME MASTER SURVEYORS SRL", label: "MMS" }
 ];
 const DEFAULT_COMPANY = COMPANIES[0];
-const MOBILE_APP_VERSION = "1.7.20";
+const MOBILE_APP_VERSION = "1.7.22";
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -13397,6 +13397,269 @@ function filterAccountingRowsByPeriodRange(rows: Record<string, unknown>[], from
   });
 }
 
+function taxCompany(result: Record<string, unknown> | null, code: string) {
+  const companies = Array.isArray(result?.companies) ? result?.companies : [];
+  return (companies.find((item) => asRecord(item)?.company_code === code) as Record<string, unknown> | undefined) || {};
+}
+
+function taxMoveKey(company: unknown, detail: unknown, extra = "") {
+  return `${formatValue(company)}|${formatValue(detail)}|${extra}`;
+}
+
+function pymeStatusText(row: Record<string, unknown>, projected = true) {
+  const usage = Number(row[projected ? "pyme_threshold_usage_pct" : "pyme_threshold_ytd_usage_pct"] || 0);
+  const margin = Number(row[projected ? "pyme_threshold_remaining_crc" : "pyme_threshold_ytd_remaining_crc"] || 0);
+  const status = usage > 100 ? "EXCEDIDO" : "NO excedido";
+  const marginText = margin < 0 ? `exceso ${moneyCrc(Math.abs(margin))}` : `margen ${moneyCrc(margin)}`;
+  return `${status} · ${usage.toFixed(2)}% · ${marginText}`;
+}
+
+function TaxScenarioPlannerMobile({ session }: { session: NonNullable<ReturnType<typeof useAuth>["session"]> }) {
+  const today = new Date();
+  const [open, setOpen] = useState(false);
+  const [year, setYear] = useState(String(today.getFullYear()));
+  const [month, setMonth] = useState(String(today.getMonth() + 1));
+  const [sourceCompany, setSourceCompany] = useState(session.company_code || DEFAULT_COMPANY.code);
+  const [targetCompany, setTargetCompany] = useState(sourceCompany === "MMS-CR" ? "MSL-CR" : "MMS-CR");
+  const [sourcePymeYear, setSourcePymeYear] = useState("4");
+  const [targetPymeYear, setTargetPymeYear] = useState("1");
+  const [clientMoves, setClientMoves] = useState<Record<string, unknown>[]>([]);
+  const [expenseMoves, setExpenseMoves] = useState<Record<string, unknown>[]>([]);
+  const [fixedClients, setFixedClients] = useState<Record<string, unknown>[]>([]);
+  const [fixedExpenses, setFixedExpenses] = useState<Record<string, unknown>[]>([]);
+  const [selectedClientKey, setSelectedClientKey] = useState("");
+  const [selectedExpenseKey, setSelectedExpenseKey] = useState("");
+  const [result, setResult] = useState<Record<string, unknown> | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+
+  const baseline = asRecord(result?.baseline);
+  const optimized = asRecord(result?.optimized);
+  const clients = Array.isArray(result?.clients) ? result?.clients.map((item) => asRecord(item)).filter(Boolean) as Record<string, unknown>[] : [];
+  const expenses = Array.isArray(result?.expense_rows) ? result?.expense_rows.map((item) => asRecord(item)).filter(Boolean) as Record<string, unknown>[] : [];
+  const sourceBase = taxCompany(baseline, sourceCompany);
+  const sourceOpt = taxCompany(optimized, sourceCompany);
+  const targetOpt = taxCompany(optimized, targetCompany);
+  const selectedClient = clients.find((row) => taxMoveKey(row.company_code, row.client_name) === selectedClientKey);
+  const selectedExpense = expenses.find((row) => taxMoveKey(row.company_code, row.account_code, `${formatValue(row.source_type)}|${formatValue(row.account_name)}`) === selectedExpenseKey);
+
+  function buildPayload(nextClientMoves = clientMoves, nextExpenseMoves = expenseMoves, nextFixedClients = fixedClients, nextFixedExpenses = fixedExpenses) {
+    return {
+      year: Number(year || today.getFullYear()),
+      through_month: Number(month || today.getMonth() + 1),
+      source_company: sourceCompany,
+      target_company: targetCompany,
+      client_moves: nextClientMoves,
+      expense_moves: nextExpenseMoves,
+      fixed_clients: nextFixedClients,
+      fixed_expenses: nextFixedExpenses,
+      save: false,
+      company_options: [
+        { company_code: sourceCompany, is_pyme: true, pyme_year: Number(sourcePymeYear || 0) },
+        { company_code: targetCompany, is_pyme: true, pyme_year: Number(targetPymeYear || 0) }
+      ]
+    };
+  }
+
+  async function analyze(nextClientMoves = clientMoves, nextExpenseMoves = expenseMoves, nextFixedClients = fixedClients, nextFixedExpenses = fixedExpenses) {
+    setBusy(true);
+    setMessage("");
+    try {
+      const data = await apiRequest<Record<string, unknown>>("/accounting/tax-scenarios/analyze", {
+        method: "POST",
+        body: buildPayload(nextClientMoves, nextExpenseMoves, nextFixedClients, nextFixedExpenses),
+        session
+      });
+      setResult(data);
+      setMessage("Simulacion lista.");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo simular.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function applyAi() {
+    const autoMoves = Array.isArray(result?.auto_moves) ? result?.auto_moves as Record<string, unknown>[] : [];
+    setClientMoves(autoMoves);
+    analyze(autoMoves, expenseMoves, fixedClients, fixedExpenses);
+  }
+
+  function moveSelectedClient() {
+    if (!selectedClient) {
+      setMessage("Selecciona un cliente.");
+      return;
+    }
+    const futureAmount = Math.max(Number(selectedClient.future_projected_crc || 0), 0);
+    const next = clientMoves.filter((item) => !(item.from_company === selectedClient.company_code && item.client_name === selectedClient.client_name));
+    if (futureAmount > 0 && selectedClient.company_code !== targetCompany) {
+      next.push({
+        client_name: selectedClient.client_name,
+        from_company: selectedClient.company_code,
+        to_company: targetCompany,
+        projected_amount_crc: futureAmount
+      });
+    }
+    setClientMoves(next);
+    analyze(next, expenseMoves, fixedClients, fixedExpenses);
+  }
+
+  function keepSelectedClientAmount() {
+    if (!selectedClient) {
+      setMessage("Selecciona un cliente.");
+      return;
+    }
+    const next = fixedClients.filter((item) => !(item.company_code === selectedClient.company_code && item.client_name === selectedClient.client_name));
+    next.push({ company_code: selectedClient.company_code, client_name: selectedClient.client_name });
+    setFixedClients(next);
+    analyze(clientMoves, expenseMoves, next, fixedExpenses);
+  }
+
+  function moveSelectedExpense() {
+    if (!selectedExpense) {
+      setMessage("Selecciona un gasto.");
+      return;
+    }
+    const next = expenseMoves.filter((item) =>
+      !(item.from_company === selectedExpense.company_code && item.account_code === selectedExpense.account_code && item.source_type === selectedExpense.source_type && item.account_name === selectedExpense.account_name)
+    );
+    if (selectedExpense.company_code !== targetCompany) {
+      next.push({
+        account_code: selectedExpense.account_code,
+        account_name: selectedExpense.account_name,
+        source_type: selectedExpense.source_type,
+        from_company: selectedExpense.company_code,
+        to_company: targetCompany,
+        projected_amount_crc: Number(selectedExpense.projected_annual_crc || 0)
+      });
+    }
+    setExpenseMoves(next);
+    analyze(clientMoves, next, fixedClients, fixedExpenses);
+  }
+
+  function keepSelectedExpenseAmount() {
+    if (!selectedExpense) {
+      setMessage("Selecciona un gasto.");
+      return;
+    }
+    const next = fixedExpenses.filter((item) =>
+      !(item.company_code === selectedExpense.company_code && item.account_code === selectedExpense.account_code && item.source_type === selectedExpense.source_type && item.account_name === selectedExpense.account_name)
+    );
+    next.push({
+      company_code: selectedExpense.company_code,
+      account_code: selectedExpense.account_code,
+      account_name: selectedExpense.account_name,
+      source_type: selectedExpense.source_type
+    });
+    setFixedExpenses(next);
+    analyze(clientMoves, expenseMoves, fixedClients, next);
+  }
+
+  const d102Rows = optimized ? [
+    ["1. Ventas reales 2026", sourceOpt.gross_ytd_crc, targetOpt.gross_ytd_crc],
+    ["1.1 Venta futura estimada", sourceOpt.gross_future_projected_crc, targetOpt.gross_future_projected_crc],
+    ["1.2 Renta bruta proyectada", sourceOpt.gross_projected_crc, targetOpt.gross_projected_crc],
+    ["2. Gastos y deducciones", sourceOpt.deductible_expenses_projected_crc, targetOpt.deductible_expenses_projected_crc],
+    ["3. Renta neta", sourceOpt.net_taxable_projected_crc, targetOpt.net_taxable_projected_crc],
+    ["4. Impuesto base", sourceOpt.base_income_tax_crc, targetOpt.base_income_tax_crc],
+    ["5. Exoneracion PYME", Number(sourceOpt.base_income_tax_crc || 0) * Number(sourceOpt.pyme_exemption_rate || 0), Number(targetOpt.base_income_tax_crc || 0) * Number(targetOpt.pyme_exemption_rate || 0)],
+    ["6. Impuesto determinado", sourceOpt.income_tax_projected_crc, targetOpt.income_tax_projected_crc]
+  ] : [];
+
+  return (
+    <View style={styles.reportBox}>
+      <View style={styles.salaryHeader}>
+        <Text style={styles.cardTitle}>Simulador fiscal multiempresa</Text>
+        <Pressable style={styles.modalClose} onPress={() => setOpen((current) => !current)}>
+          <Text style={styles.modalCloseText}>{open ? "Ocultar" : "Abrir"}</Text>
+        </Pressable>
+      </View>
+      <Text style={styles.helperText}>Planea ventas futuras, gastos deducibles, PYME y D-102 sin cambiar contabilidad real.</Text>
+      {open ? (
+        <>
+          <Text style={styles.label}>Ano</Text>
+          <TextInput style={styles.input} value={year} onChangeText={setYear} keyboardType="number-pad" />
+          <Text style={styles.label}>Mes corte</Text>
+          <TextInput style={styles.input} value={month} onChangeText={setMonth} keyboardType="number-pad" />
+          <SelectField label="Empresa actual" value={sourceCompany} options={COMPANIES.map((item) => item.code)} onChange={(value) => setSourceCompany(value)} />
+          <SelectField label="Empresa alterna" value={targetCompany} options={COMPANIES.map((item) => item.code)} onChange={(value) => setTargetCompany(value)} />
+          <SelectField label="Ano PYME actual" value={sourcePymeYear} options={["1", "2", "3", "4", "5", "6"]} onChange={setSourcePymeYear} />
+          <SelectField label="Ano PYME alterna" value={targetPymeYear} options={["1", "2", "3", "4", "5", "6"]} onChange={setTargetPymeYear} />
+          <View style={styles.financeFilterActions}>
+            <Pressable style={styles.actionButton} onPress={() => analyze()} disabled={busy}>
+              <Text style={styles.actionButtonText}>{busy ? "Analizando..." : "Analizar"}</Text>
+            </Pressable>
+            <Pressable style={styles.modalClose} onPress={applyAi} disabled={!result || busy}>
+              <Text style={styles.modalCloseText}>Aplicar IA</Text>
+            </Pressable>
+          </View>
+          {message ? <Text style={message.includes("No se") ? styles.error : styles.helperText}>{message}</Text> : null}
+          {optimized ? (
+            <>
+              <View style={styles.salaryPreviewGrid}>
+                <View style={styles.salaryPreviewCard}>
+                  <Text style={styles.salaryPreviewLabel}>Impuesto actual</Text>
+                  <Text style={styles.salaryPreviewValue}>{moneyCrc(baseline?.total_projected_tax_crc)}</Text>
+                </View>
+                <View style={styles.salaryPreviewCard}>
+                  <Text style={styles.salaryPreviewLabel}>Escenario</Text>
+                  <Text style={styles.salaryPreviewValue}>{moneyCrc(optimized?.total_projected_tax_crc)}</Text>
+                </View>
+              </View>
+              <View style={styles.salaryAutomationPanel}>
+                <Text style={styles.salaryPanelTitle}>Estado PYME</Text>
+                <Text style={styles.salaryAutomationItem}>Hoy {sourceCompany}: {pymeStatusText(sourceBase, false)}</Text>
+                <Text style={styles.salaryAutomationItem}>Dic con movimientos {sourceCompany}: {pymeStatusText(sourceOpt, true)}</Text>
+                <Text style={styles.salaryAutomationItem}>Dic con movimientos {targetCompany}: {pymeStatusText(targetOpt, true)}</Text>
+              </View>
+              <Text style={styles.salarySectionTitle}>D-102 resumido</Text>
+              {d102Rows.map(([label, sourceValue, targetValue]) => (
+                <View key={formatValue(label)} style={styles.detailRow}>
+                  <Text style={styles.detailKey}>{formatValue(label)}</Text>
+                  <Text style={styles.detailValue}>{sourceCompany}: {moneyCrc(sourceValue)}{"\n"}{targetCompany}: {moneyCrc(targetValue)}</Text>
+                </View>
+              ))}
+              <Text style={styles.salarySectionTitle}>Ventas por cliente</Text>
+              <SelectField
+                label="Cliente"
+                value={selectedClientKey || "Seleccionar"}
+                options={["Seleccionar", ...clients.slice(0, 30).map((row) => taxMoveKey(row.company_code, row.client_name))]}
+                onChange={(value) => setSelectedClientKey(value === "Seleccionar" ? "" : value)}
+              />
+              {selectedClient ? (
+                <Text style={styles.helperText}>
+                  Real {moneyCrc(selectedClient.ytd_amount_crc)} · Futuro movible {moneyCrc(selectedClient.future_projected_crc)} · Proyectado {moneyCrc(selectedClient.projected_annual_crc)}
+                </Text>
+              ) : null}
+              <View style={styles.financeFilterActions}>
+                <Pressable style={styles.actionButton} onPress={moveSelectedClient}><Text style={styles.actionButtonText}>Mover venta futura</Text></Pressable>
+                <Pressable style={styles.modalClose} onPress={keepSelectedClientAmount}><Text style={styles.modalCloseText}>Mantener monto</Text></Pressable>
+              </View>
+              <Text style={styles.salarySectionTitle}>Gastos deducibles</Text>
+              <SelectField
+                label="Gasto"
+                value={selectedExpenseKey || "Seleccionar"}
+                options={["Seleccionar", ...expenses.slice(0, 30).map((row) => taxMoveKey(row.company_code, row.account_code, `${formatValue(row.source_type)}|${formatValue(row.account_name)}`))]}
+                onChange={(value) => setSelectedExpenseKey(value === "Seleccionar" ? "" : value)}
+              />
+              {selectedExpense ? (
+                <Text style={styles.helperText}>
+                  {formatValue(selectedExpense.account_name)} · YTD {moneyCrc(selectedExpense.ytd_amount_crc)} · Proyectado {moneyCrc(selectedExpense.projected_annual_crc)}
+                </Text>
+              ) : null}
+              <View style={styles.financeFilterActions}>
+                <Pressable style={styles.actionButton} onPress={moveSelectedExpense}><Text style={styles.actionButtonText}>Mover gasto</Text></Pressable>
+                <Pressable style={styles.modalClose} onPress={keepSelectedExpenseAmount}><Text style={styles.modalCloseText}>Mantener monto</Text></Pressable>
+              </View>
+              <Text style={styles.helperText}>{formatValue((asRecord(result?.analysis) || {}).recommendation)}</Text>
+            </>
+          ) : null}
+        </>
+      ) : null}
+    </View>
+  );
+}
+
 function accountingPeriodSummary(rows: Record<string, unknown>[]) {
   const periods = new Map<string, Set<string>>();
   rows.forEach((row) => {
@@ -13835,6 +14098,7 @@ function FinanceFilters({
 
       {sectionKey === "accounting" ? (
         <>
+          <TaxScenarioPlannerMobile session={session} />
           <View style={styles.accountingTcBox}>
             <View style={styles.accountingTcFields}>
               <View style={styles.accountingTcItem}>
