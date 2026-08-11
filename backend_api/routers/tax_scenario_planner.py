@@ -34,9 +34,22 @@ class ClientMove(BaseModel):
 class ExpenseMove(BaseModel):
     account_code: str
     account_name: str | None = None
+    source_type: str | None = None
     from_company: str = "MSL-CR"
     to_company: str = "MMS-CR"
     projected_amount_crc: float | None = None
+
+
+class ClientProjectionLock(BaseModel):
+    client_name: str
+    company_code: str = "MSL-CR"
+
+
+class ExpenseProjectionLock(BaseModel):
+    account_code: str
+    account_name: str | None = None
+    source_type: str | None = None
+    company_code: str = "MSL-CR"
 
 
 class CompanyOption(BaseModel):
@@ -51,9 +64,11 @@ class TaxScenarioRequest(BaseModel):
     through_month: int = Field(default_factory=lambda: date.today().month, ge=1, le=12)
     source_company: str = "MSL-CR"
     target_company: str = "MMS-CR"
-    company_options: list[CompanyOption] = []
-    client_moves: list[ClientMove] = []
-    expense_moves: list[ExpenseMove] = []
+    company_options: list[CompanyOption] = Field(default_factory=list)
+    client_moves: list[ClientMove] = Field(default_factory=list)
+    expense_moves: list[ExpenseMove] = Field(default_factory=list)
+    fixed_clients: list[ClientProjectionLock] = Field(default_factory=list)
+    fixed_expenses: list[ExpenseProjectionLock] = Field(default_factory=list)
     save: bool = False
     label: str | None = None
 
@@ -122,6 +137,40 @@ def _company_options(req: TaxScenarioRequest) -> dict[str, CompanyOption]:
     return options
 
 
+def _fixed_client_keys(req: TaxScenarioRequest) -> set[tuple[str, str]]:
+    return {
+        (company_code(item.company_code), (item.client_name or "").strip().upper())
+        for item in req.fixed_clients or []
+        if (item.client_name or "").strip()
+    }
+
+
+def _fixed_expense_matches(row: dict[str, Any], req: TaxScenarioRequest) -> bool:
+    row_company = company_code(row.get("company_code"))
+    row_account = (row.get("account_code") or "").strip().upper()
+    row_name = (row.get("account_name") or "").strip().upper()
+    row_source = (row.get("source_type") or "").strip().upper()
+    for item in req.fixed_expenses or []:
+        if company_code(item.company_code) != row_company:
+            continue
+        if (item.account_code or "").strip().upper() != row_account:
+            continue
+        if item.source_type and item.source_type.strip().upper() != row_source:
+            continue
+        if item.account_name and item.account_name.strip().upper() != row_name:
+            continue
+        return True
+    return False
+
+
+def _apply_projection_lock(row: dict[str, Any], locked: bool, factor: float) -> dict[str, Any]:
+    ytd = _money(row.get("ytd_amount_crc"))
+    row["ytd_amount_crc"] = ytd
+    row["projected_annual_crc"] = ytd if locked else _money(ytd * factor)
+    row["projection_mode"] = "FIXED" if locked else "PROJECTED"
+    return row
+
+
 def _fetch_company_names(cur) -> dict[str, str]:
     cur.execute(
         """
@@ -175,15 +224,15 @@ def _fetch_clients(cur, req: TaxScenarioRequest) -> list[dict[str, Any]]:
         (company_code(req.source_company), company_code(req.target_company), start_date, end_date),
     )
     factor = 12 / max(int(req.through_month or 1), 1)
-    return [
-        {
-            **dict(row),
-            "ytd_amount_crc": _money(row["ytd_amount_crc"]),
-            "projected_annual_crc": _money(_money(row["ytd_amount_crc"]) * factor),
-            "missing_fx_count": int(row.get("missing_fx_count") or 0),
-        }
-        for row in cur.fetchall()
-    ]
+    fixed_keys = _fixed_client_keys(req)
+    rows = []
+    for row in cur.fetchall():
+        item = dict(row)
+        locked = (company_code(item.get("company_code")), (item.get("client_name") or "").strip().upper()) in fixed_keys
+        _apply_projection_lock(item, locked, factor)
+        item["missing_fx_count"] = int(item.get("missing_fx_count") or 0)
+        rows.append(item)
+    return rows
 
 
 def _fetch_expenses(cur, req: TaxScenarioRequest) -> dict[str, dict[str, Any]]:
@@ -238,15 +287,10 @@ def _fetch_expense_rows(cur, req: TaxScenarioRequest) -> list[dict[str, Any]]:
         (company_code(req.source_company), company_code(req.target_company), period_from, period_to),
     )
     factor = 12 / max(int(req.through_month or 1), 1)
-    rows = [
-        {
-            **dict(row),
-            "entry_count": int(row.get("entry_count") or 0),
-            "ytd_amount_crc": _money(row["ytd_amount_crc"]),
-            "projected_annual_crc": _money(_money(row["ytd_amount_crc"]) * factor),
-        }
-        for row in cur.fetchall()
-    ]
+    rows = []
+    for row in cur.fetchall():
+        item = {**dict(row), "entry_count": int(row.get("entry_count") or 0)}
+        rows.append(_apply_projection_lock(item, _fixed_expense_matches(item, req), factor))
     cur.execute(
         """
         SELECT
@@ -289,7 +333,8 @@ def _fetch_expense_rows(cur, req: TaxScenarioRequest) -> list[dict[str, Any]]:
     )
     for row in cur.fetchall():
         ytd = _money(row["ytd_amount_crc"])
-        rows.append({**dict(row), "entry_count": int(row.get("entry_count") or 0), "ytd_amount_crc": ytd, "projected_annual_crc": _money(ytd * factor)})
+        item = {**dict(row), "entry_count": int(row.get("entry_count") or 0), "ytd_amount_crc": ytd}
+        rows.append(_apply_projection_lock(item, _fixed_expense_matches(item, req), factor))
     cur.execute(
         """
         SELECT
@@ -314,7 +359,8 @@ def _fetch_expense_rows(cur, req: TaxScenarioRequest) -> list[dict[str, Any]]:
     )
     for row in cur.fetchall():
         ytd = _money(row["ytd_amount_crc"])
-        rows.append({**dict(row), "entry_count": int(row.get("entry_count") or 0), "ytd_amount_crc": ytd, "projected_annual_crc": _money(ytd * factor)})
+        item = {**dict(row), "entry_count": int(row.get("entry_count") or 0), "ytd_amount_crc": ytd}
+        rows.append(_apply_projection_lock(item, _fixed_expense_matches(item, req), factor))
     return rows
 
 
@@ -415,6 +461,8 @@ def _scenario(
                     row["projected_annual_crc"]
                     for row in expense_rows
                     if row["company_code"] == src and row["account_code"] == move.account_code
+                    and (not move.source_type or row.get("source_type") == move.source_type)
+                    and (not move.account_name or row.get("account_name") == move.account_name)
                 ),
                 0,
             )
@@ -425,6 +473,7 @@ def _scenario(
             {
                 "account_code": move.account_code,
                 "account_name": move.account_name,
+                "source_type": move.source_type,
                 "from_company": src,
                 "to_company": dst,
                 "projected_amount_crc": amount,
@@ -505,6 +554,8 @@ def analyze_tax_scenarios(
         "baseline": baseline,
         "optimized": optimized,
         "auto_moves": [item.dict() for item in auto_moves],
+        "fixed_clients": [item.dict() for item in req.fixed_clients],
+        "fixed_expenses": [item.dict() for item in req.fixed_expenses],
         "analysis": _analysis(baseline, optimized),
         "disclaimer": "Simulacion referencial de planeacion fiscal. No sustituye criterio legal, tributario ni contable.",
     }
