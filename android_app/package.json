@@ -1,6 +1,6 @@
 {
   "name": "erp-som-android",
-  "version": "1.7.22",
+  "version": "1.7.23",
   "private": true,
   "main": "index.js",
   "scripts": {

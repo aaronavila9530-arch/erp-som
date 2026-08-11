@@ -45,7 +45,7 @@ const COMPANIES = [
   { code: "MMS-CR", name: "MMS MARITIME MASTER SURVEYORS SRL", label: "MMS" }
 ];
 const DEFAULT_COMPANY = COMPANIES[0];
-const MOBILE_APP_VERSION = "1.7.22";
+const MOBILE_APP_VERSION = "1.7.23";
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
