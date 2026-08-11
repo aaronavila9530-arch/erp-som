@@ -143,14 +143,22 @@ def _fetch_clients(cur, req: TaxScenarioRequest) -> list[dict[str, Any]]:
             COALESCE(c.codigo_cliente, '') AS client_code,
             COUNT(*) AS invoice_count,
             COALESCE(SUM(
-                COALESCE(c.total, 0) *
-                CASE
-                    WHEN UPPER(COALESCE(c.moneda, 'CRC')) = 'USD' THEN COALESCE(fx.rate, 1)
-                    ELSE 1
-                END
+                COALESCE(NULLIF(rev.revenue_crc, 0), c.total *
+                    CASE
+                        WHEN UPPER(COALESCE(c.moneda, 'CRC')) = 'USD' THEN COALESCE(fx.rate, 1)
+                        ELSE 1
+                    END)
             ), 0) AS ytd_amount_crc,
             SUM(CASE WHEN UPPER(COALESCE(c.moneda, 'CRC')) = 'USD' AND fx.rate IS NULL THEN 1 ELSE 0 END) AS missing_fx_count
         FROM collections c
+        LEFT JOIN LATERAL (
+            SELECT COALESCE(SUM(CASE WHEN l.account_code LIKE '4%%' THEN GREATEST(l.credit - l.debit, 0) ELSE 0 END), 0) AS revenue_crc
+            FROM accounting_entries e
+            JOIN accounting_lines l ON l.entry_id = e.id
+            WHERE e.origin = 'COLLECTIONS'
+              AND e.origin_id = c.id
+              AND e.workflow_status = 'POSTED'
+        ) rev ON TRUE
         LEFT JOIN LATERAL (
             SELECT er.rate
             FROM exchange_rate er
@@ -377,6 +385,7 @@ def _scenario(
 ) -> dict[str, Any]:
     options = _company_options(req)
     companies = list(options.keys())
+    gross_ytd = {code: sum(row["ytd_amount_crc"] for row in clients if row["company_code"] == code) for code in companies}
     gross = {code: sum(row["projected_annual_crc"] for row in clients if row["company_code"] == code) for code in companies}
     moved_clients = []
     for move in client_moves:
@@ -388,6 +397,9 @@ def _scenario(
         amount = _money(amount)
         gross[src] = _money(gross.get(src, 0) - amount)
         gross[dst] = _money(gross.get(dst, 0) + amount)
+        ytd_amount = next((row["ytd_amount_crc"] for row in clients if row["company_code"] == src and row["client_name"] == move.client_name), 0)
+        gross_ytd[src] = _money(gross_ytd.get(src, 0) - ytd_amount)
+        gross_ytd[dst] = _money(gross_ytd.get(dst, 0) + ytd_amount)
         moved_clients.append({"client_name": move.client_name, "from_company": src, "to_company": dst, "projected_amount_crc": amount})
 
     expense_totals = {code: sum(row["projected_annual_crc"] for row in expense_rows if row["company_code"] == code) for code in companies}
@@ -423,6 +435,11 @@ def _scenario(
         expense_totals[code] = _money(max(expense_totals.get(code, 0), 0))
 
     company_results = [_company_tax(code, gross.get(code, 0), expense_totals.get(code, 0), options[code]) for code in companies]
+    for row in company_results:
+        ytd = _money(gross_ytd.get(row["company_code"], 0))
+        row["gross_ytd_crc"] = ytd
+        row["pyme_threshold_ytd_remaining_crc"] = _money(CORPORATE_GROSS_THRESHOLD_ANNUAL - ytd)
+        row["pyme_threshold_ytd_usage_pct"] = _money(ytd / CORPORATE_GROSS_THRESHOLD_ANNUAL * 100) if CORPORATE_GROSS_THRESHOLD_ANNUAL else 0
     total_tax = _money(sum(row["income_tax_projected_crc"] for row in company_results))
     warnings = []
     for row in company_results:
