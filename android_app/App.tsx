@@ -45,7 +45,7 @@ const COMPANIES = [
   { code: "MMS-CR", name: "MMS MARITIME MASTER SURVEYORS SRL", label: "MMS" }
 ];
 const DEFAULT_COMPANY = COMPANIES[0];
-const MOBILE_APP_VERSION = "1.7.23";
+const MOBILE_APP_VERSION = "1.7.24";
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -13696,6 +13696,7 @@ function FinanceFilters({
   const [clientes, setClientes] = useState<string[]>(["ALL"]);
   const [clientCodes, setClientCodes] = useState<Record<string, string>>({});
   const [accounts, setAccounts] = useState<string[]>(["TODOS"]);
+  const [accountingActionsOpen, setAccountingActionsOpen] = useState(false);
   const accountingPeriods = useMemo(() => buildAccountingPeriods(), []);
   const [form, setForm] = useState<Record<string, string>>({
     cliente: sectionKey === "billing" ? "" : "ALL",
@@ -14098,7 +14099,6 @@ function FinanceFilters({
 
       {sectionKey === "accounting" ? (
         <>
-          <TaxScenarioPlannerMobile session={session} />
           <View style={styles.accountingTcBox}>
             <View style={styles.accountingTcFields}>
               <View style={styles.accountingTcItem}>
@@ -14113,6 +14113,34 @@ function FinanceFilters({
             <Pressable style={styles.actionButton} onPress={fetchExchangeRate}>
               <Text style={styles.actionButtonText}>Buscar TC</Text>
             </Pressable>
+          </View>
+          <View style={styles.reportBox}>
+            <View style={styles.salaryHeader}>
+              <Text style={styles.cardTitle}>Acciones Accounting</Text>
+              <Pressable style={styles.actionButton} onPress={() => setAccountingActionsOpen((current) => !current)}>
+                <Text style={styles.actionButtonText}>{accountingActionsOpen ? "Ocultar" : "Acciones"}</Text>
+              </Pressable>
+            </View>
+            <Text style={styles.helperText}>Simulador multiempresa, reportes, tipo de cambio y estado de cierre con los mismos filtros contables.</Text>
+            {accountingActionsOpen ? (
+              <>
+                <TaxScenarioPlannerMobile session={session} />
+                <View style={styles.reportBox}>
+                  <Text style={styles.cardTitle}>Reportes contables</Text>
+                  <SelectField label="Reporte" value={form.report} options={["ASIENTOS", "MAYOR", "BC", "ESF", "ER", "FC"]} onChange={(value) => setValue("report", value)} />
+                  <SelectField label="Formato" value={form.report_format} options={["CSV", "EXCEL", "PDF"]} onChange={(value) => setValue("report_format", value)} />
+                  <View style={styles.financeFilterActions}>
+                    <Pressable style={styles.actionButton} onPress={shareAccountingReport}>
+                      <Text style={styles.actionButtonText}>Descargar Reporte</Text>
+                    </Pressable>
+                    <Pressable style={styles.modalClose} onPress={openClosingStatus}>
+                      <Text style={styles.modalCloseText}>Mayorizar / Cierre</Text>
+                    </Pressable>
+                  </View>
+                  <Text style={styles.helperText}>Excel/PDF se generan en backend; CSV usa los asientos visibles en pantalla.</Text>
+                </View>
+              </>
+            ) : null}
           </View>
           <SelectField label="Buscar por" value={form.search_mode === "RANGE" ? "Rango" : "Periodo"} options={["Periodo", "Rango"]} onChange={(value) => setValue("search_mode", value === "Rango" ? "RANGE" : "SINGLE")} />
           {form.search_mode === "RANGE" ? (
@@ -14134,22 +14162,6 @@ function FinanceFilters({
               <Text style={styles.kpiLabel}>Total Haber</Text>
               <Text style={styles.kpiValue}>{formatValue(rows.reduce((sum, row) => sum + Number(row.credit || 0), 0))}</Text>
             </View>
-          </View>
-          <View style={styles.reportBox}>
-            <Text style={styles.cardTitle}>Reportes</Text>
-            <SelectField label="Reporte" value={form.report} options={["ASIENTOS", "MAYOR", "BC", "ESF", "ER", "FC"]} onChange={(value) => setValue("report", value)} />
-            <SelectField label="Formato" value={form.report_format} options={["CSV", "EXCEL", "PDF"]} onChange={(value) => setValue("report_format", value)} />
-            <View style={styles.financeFilterActions}>
-              <Pressable style={styles.actionButton} onPress={shareAccountingReport}>
-                <Text style={styles.actionButtonText}>Descargar Reporte</Text>
-              </Pressable>
-              <Pressable style={styles.modalClose} onPress={openClosingStatus}>
-                <Text style={styles.modalCloseText}>Mayorizar / Cierre</Text>
-              </Pressable>
-            </View>
-            {form.report_format !== "CSV" ? (
-              <Text style={styles.helperText}>La descarga se abre desde el backend con los filtros contables seleccionados.</Text>
-            ) : null}
           </View>
         </>
       ) : null}
