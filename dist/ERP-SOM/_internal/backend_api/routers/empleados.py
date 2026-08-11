@@ -1,14 +1,19 @@
-from fastapi import APIRouter, HTTPException, Depends, Header
+from fastapi import APIRouter, HTTPException, Depends, Header, Query
 from pydantic import BaseModel
 import database
 import psycopg2
 import os
 
 from rbac_service import has_permission
+from services.tenanting import company_code, company_prefix, ensure_company_column
 
 DB_URL = os.getenv("DATABASE_URL")  # ← NUEVO
 
 router = APIRouter(prefix="/empleados", tags=["Empleados"])
+
+
+def _ensure_tenant_schema():
+    ensure_company_column("empleados")
 
 
 # ============================================================
@@ -58,14 +63,18 @@ class Empleado(BaseModel):
     activo3: str | None = None
     marca3: str | None = None
     serial3: str | None = None
+    company_code: str | None = None
 
 
 @router.post("/add")
-def agregar_empleado(emp: Empleado):
+def agregar_empleado(emp: Empleado, x_company_code: str | None = Header(None, alias="X-Company-Code")):
     conn = None
     cursor = None
 
     try:
+        _ensure_tenant_schema()
+        company = company_code(emp.company_code, x_company_code)
+        prefix = company_prefix(company)
         conn = psycopg2.connect(DB_URL)
         cursor = conn.cursor()
 
@@ -76,11 +85,12 @@ def agregar_empleado(emp: Empleado):
         cursor.execute("""
             SELECT codigo
             FROM empleados
-            WHERE codigo LIKE 'MSL-%-E'
+            WHERE company_code = %s
+              AND codigo LIKE %s
             ORDER BY
                 CAST(SUBSTRING(codigo FROM 5 FOR 4) AS INTEGER) DESC
             LIMIT 1
-        """)
+        """, (company, f"{prefix}-%-E"))
         row = cursor.fetchone()
 
         if row:
@@ -90,13 +100,14 @@ def agregar_empleado(emp: Empleado):
         else:
             next_number = 1
 
-        nuevo_codigo = f"MSL-{next_number:04d}-E"
+        nuevo_codigo = f"{prefix}-{next_number:04d}-E"
 
         # ============================================================
         # PREPARAR DATA (SOBRESCRIBE CÓDIGO)
         # ============================================================
         data = emp.dict()
         data["codigo"] = nuevo_codigo
+        data["company_code"] = company
 
         # Blindaje salario (NUMERIC)
         if data.get("salario"):
@@ -112,7 +123,7 @@ def agregar_empleado(emp: Empleado):
         # ============================================================
         cursor.execute("""
             INSERT INTO empleados (
-                codigo, nombre, apellidos, estado_civil, genero, nacionalidad,
+                company_code, codigo, nombre, apellidos, estado_civil, genero, nacionalidad,
                 prefijo, telefono, provincia, canton, distrito, direccion,
                 jornada, salario, pago, banco, cuenta_iban, moneda,
                 enfermedades, contacto_emergencia, telefono_emergencia,
@@ -121,7 +132,7 @@ def agregar_empleado(emp: Empleado):
                 activo3, marca3, serial3
             )
             VALUES (
-                %(codigo)s, %(nombre)s, %(apellidos)s, %(estado_civil)s, %(genero)s, %(nacionalidad)s,
+                %(company_code)s, %(codigo)s, %(nombre)s, %(apellidos)s, %(estado_civil)s, %(genero)s, %(nacionalidad)s,
                 %(prefijo)s, %(telefono)s, %(provincia)s, %(canton)s, %(distrito)s, %(direccion)s,
                 %(jornada)s, %(salario)s, %(pago)s, %(banco)s, %(cuenta_iban)s, %(moneda)s,
                 %(enfermedades)s, %(contacto_emergencia)s, %(telefono_emergencia)s,
@@ -154,10 +165,17 @@ def agregar_empleado(emp: Empleado):
 # LISTAR empleados — paginado
 # ============================================================
 @router.get("/")
-def get_empleados(page: int = 1, page_size: int = 50):
+def get_empleados(
+    page: int = 1,
+    page_size: int = 50,
+    company_code_param: str | None = Query(None, alias="company_code"),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+):
+    _ensure_tenant_schema()
+    company = company_code(company_code_param, x_company_code)
     offset = (page - 1) * page_size
 
-    rows = database.sql(f"""
+    rows = database.sql("""
         SELECT
             codigo, nombre, apellidos, estado_civil, genero, nacionalidad,
             prefijo, telefono, provincia, canton, distrito, direccion,
@@ -168,11 +186,12 @@ def get_empleados(page: int = 1, page_size: int = 50):
             activo3, marca3, serial3,
             fecharegistro
         FROM empleados
+        WHERE company_code = %s
         ORDER BY codigo ASC
-        LIMIT {page_size} OFFSET {offset}
-    """, fetch=True)
+        LIMIT %s OFFSET %s
+    """, (company, page_size, offset), fetch=True)
 
-    total = database.sql("SELECT COUNT(*) FROM empleados", fetch=True)[0][0]
+    total = database.sql("SELECT COUNT(*) FROM empleados WHERE company_code = %s", (company,), fetch=True)[0][0]
 
     columnas = [
         "codigo", "nombre", "apellidos", "estado_civil", "genero", "nacionalidad",
@@ -200,7 +219,9 @@ def get_empleados(page: int = 1, page_size: int = 50):
 # GET por código
 # ============================================================
 @router.get("/{codigo}")
-def get_empleado(codigo: str):
+def get_empleado(codigo: str, x_company_code: str | None = Header(None, alias="X-Company-Code")):
+    _ensure_tenant_schema()
+    company = company_code(None, x_company_code)
     row = database.sql("""
         SELECT
             codigo, nombre, apellidos, estado_civil, genero, nacionalidad,
@@ -213,7 +234,8 @@ def get_empleado(codigo: str):
             fecharegistro
         FROM empleados
         WHERE codigo = %s
-    """, (codigo,), fetch=True)
+          AND company_code = %s
+    """, (codigo, company), fetch=True)
 
     if not row:
         raise HTTPException(status_code=404, detail="Empleado no encontrado")
@@ -237,7 +259,10 @@ def get_empleado(codigo: str):
 # UPDATE — alineado con front
 # ============================================================
 @router.put("/update")
-def update_empleado(data: dict):
+def update_empleado(data: dict, x_company_code: str | None = Header(None, alias="X-Company-Code")):
+    _ensure_tenant_schema()
+    data = dict(data or {})
+    data["company_code"] = company_code(data.get("company_code"), x_company_code)
     sql = """
         UPDATE empleados SET
             nombre = %(nombre)s,
@@ -269,6 +294,7 @@ def update_empleado(data: dict):
             marca3 = %(marca3)s,
             serial3 = %(serial3)s
         WHERE codigo = %(codigo)s
+          AND company_code = %(company_code)s
     """
     database.sql(sql, data)
     return {"status": "OK", "msg": "Empleado actualizado ✔"}
@@ -278,6 +304,8 @@ def update_empleado(data: dict):
 # DELETE
 # ============================================================
 @router.delete("/{codigo}")
-def delete_empleado(codigo: str):
-    database.sql("DELETE FROM empleados WHERE codigo = %s", (codigo,))
+def delete_empleado(codigo: str, x_company_code: str | None = Header(None, alias="X-Company-Code")):
+    _ensure_tenant_schema()
+    company = company_code(None, x_company_code)
+    database.sql("DELETE FROM empleados WHERE codigo = %s AND company_code = %s", (codigo, company))
     return {"status": "OK", "msg": "Empleado eliminado 🗑️"}

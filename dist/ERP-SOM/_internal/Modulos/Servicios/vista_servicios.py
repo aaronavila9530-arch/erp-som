@@ -1,6 +1,5 @@
 import tkinter as tk
 from tkinter import ttk, messagebox, Menu, filedialog
-import requests
 import csv
 import xml.etree.ElementTree as ET
 from reportlab.pdfgen import canvas  # para exportar PDF
@@ -10,8 +9,7 @@ from Modulos.Servicios.date_utils import to_long_english_date
 from openpyxl import Workbook
 from Modulos.Core.report_router import ReportRouter
 from Modulos.Finanzas.export_formatting import normalize_invoice_text_columns
-
-BASE_URL = "https://api-som-fastapi-production-e66d.up.railway.app"
+from api_client import BASE_URL, api_request
 
 
 class VistaServicios(tk.Frame):
@@ -302,7 +300,8 @@ class VistaServicios(tk.Frame):
         params = {"page": self.page, "page_size": self.page_size}
         params.update(self.filtros)
 
-        resp = requests.get(
+        resp = api_request(
+            "GET",
             f"{BASE_URL}/servicios",
             params=params,
             timeout=15
@@ -814,15 +813,13 @@ class VistaServicios(tk.Frame):
         # ============================================================
         # 2. LLAMAR API (BLINDADO)
         # ============================================================
-        import requests
-        from api_client import BASE_URL
-
         params = self.filtros.copy()
         params["page"] = self.page
         params["page_size"] = self.page_size
 
         try:
-            r = requests.get(
+            r = api_request(
+                "GET",
                 f"{BASE_URL}/servicios",
                 params=params,
                 timeout=15

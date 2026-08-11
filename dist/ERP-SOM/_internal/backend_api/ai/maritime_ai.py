@@ -315,6 +315,94 @@ Return only the improved bullet text. No headings, no markdown, no extra comment
     return output_text.strip()
 
 
+def generate_logra_questionnaire_report(
+    report_title: str,
+    answers: list[dict],
+    language: str = "ES"
+) -> str:
+    if not answers:
+        raise ValueError("No hay respuestas validas para generar el reporte.")
+
+    client = _get_openai_client()
+    language = (language or "ES").upper()
+    if language not in ("ES", "EN"):
+        language = "ES"
+
+    lines = []
+    for index, item in enumerate(answers, start=1):
+        bullets = item.get("bullets") or []
+        bullet_text = "\n".join(f"- {str(b).strip()}" for b in bullets if str(b or "").strip())
+        lines.append(
+            f"{index}. Formulario: {item.get('form_title') or 'N/A'}\n"
+            f"Seccion: {item.get('section') or 'N/A'}\n"
+            f"Pregunta: {item.get('question_text') or 'N/A'}\n"
+            f"Respuestas:\n{bullet_text}"
+        )
+
+    if language == "ES":
+        language_instruction = "Escribe el informe en espanol profesional, ejecutivo y tecnico."
+        headings = (
+            "Resumen Ejecutivo\n"
+            "Hallazgos Operativos\n"
+            "Analisis De Riesgos Y Prioridades\n"
+            "Brechas De Evidencia E Informacion\n"
+            "Seguimiento Recomendado\n"
+            "Analisis Detallado Basado En Cuestionarios\n"
+            "Conclusion"
+        )
+    else:
+        language_instruction = "Write the report in professional executive maritime English."
+        headings = (
+            "Executive Summary\n"
+            "Operational Findings\n"
+            "Risk And Priority Analysis\n"
+            "Evidence And Information Gaps\n"
+            "Recommended Follow Up\n"
+            "Detailed Questionnaire-Based Analysis\n"
+            "Conclusion"
+        )
+
+    prompt = f"""
+You are PORTIA, a senior maritime, port operations, and feasibility reporting assistant.
+
+Task:
+Create a detailed professional narrative report from ONG questionnaire answers.
+This must be much more than a questionnaire transcript.
+
+Rules:
+- Use only the provided questions and answers.
+- Do not invent facts, dates, names, measurements, evidence, conclusions, or liabilities.
+- Ignore any answer that looks like test/prueba/demo/blank if it appears in the input.
+- Consolidate repeated ideas instead of duplicating them.
+- Identify operational patterns, risks, constraints, dependencies, evidence gaps, and recommended follow-up.
+- Keep a formal consulting/reporting tone.
+- {language_instruction}
+
+Return the report with these exact headings:
+{headings}
+
+Report title:
+{report_title or "ONG Questionnaire Report"}
+
+Questionnaire evidence:
+\"\"\"
+{chr(10).join(lines)}
+\"\"\"
+""".strip()
+
+    response = client.responses.create(
+        model="gpt-4o-mini",
+        input=prompt,
+        temperature=0.2,
+        max_output_tokens=3500
+    )
+
+    output_text = getattr(response, "output_text", None)
+    if not output_text or not output_text.strip():
+        raise RuntimeError("PORTIA devolvio una respuesta vacia.")
+    return output_text.strip()
+
+
 # =========================================================
 # CLEAN CARGO CONDITION PORTIA OUTPUT
 # =========================================================

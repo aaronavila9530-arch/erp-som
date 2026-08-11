@@ -16,6 +16,12 @@ import shutil
 
 from database import get_db
 from rbac_service import has_permission
+from services.finance_audit import actor_from_headers, audit_event, row_to_dict
+from services.accounting_bank_rules import external_surveyor_settlement, resolve_itp_bank
+from services.employee_payee_rules import (
+    deactivate_employee_itp_obligations,
+    is_employee_payee,
+)
 
 
 router = APIRouter(
@@ -227,6 +233,8 @@ def _sync_servicios_to_itp(cur):
             AND po.total IS DISTINCT FROM s.costo_tarjetas
     """)
 
+    deactivate_employee_itp_obligations(cur)
+
 @router.get("/search")
 def search_invoice_to_pay(
     obligation_type: Optional[str] = Query(None),
@@ -242,9 +250,10 @@ def search_invoice_to_pay(
 
     # 🔁 Sync servicios → Invoice To Pay
     _sync_servicios_to_itp(cur)
+    deactivate_employee_itp_obligations(cur)
     conn.commit()
 
-    filters = []
+    filters = ["COALESCE(active, TRUE) = TRUE"]
     params = []
 
     # =================
@@ -354,6 +363,8 @@ def search_invoice_to_pay(
 @router.get("/kpis")
 def invoice_to_pay_kpis(conn=Depends(get_db)):
     cur = conn.cursor()
+    deactivate_employee_itp_obligations(cur)
+    conn.commit()
 
     cur.execute("""
         SELECT
@@ -437,6 +448,7 @@ def invoice_to_pay_kpis(conn=Depends(get_db)):
 
         FROM payment_obligations
         WHERE record_type = 'OBLIGATION'
+          AND COALESCE(active, TRUE) = TRUE
     """)
 
     pending, paid, dpo, overdue, overdue_amount = cur.fetchone()
@@ -462,21 +474,45 @@ def apply_payment(
     obligation_id: int,
     amount: float,
     payment_date: date,
-    conn=Depends(get_db)
+    bank_account_code: Optional[str] = Query(None),
+    bank_account_name: Optional[str] = Query(None),
+    bank_name: Optional[str] = Query(None),
+    conn=Depends(get_db),
+    x_user: str | None = Header(None, alias="X-User"),
+    x_role: str | None = Header(None, alias="X-Role"),
+    x_user_role: str | None = Header(None, alias="X-User-Role"),
 ):
     cur = None
 
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
+        bank_account_code = str(bank_account_code or "").strip()
+        bank_account_name = str(bank_account_name or "").strip()
+        bank_name = str(bank_name or bank_account_name or "").strip()
+        performed_by, performed_role = actor_from_headers(x_user, x_role, x_user_role)
+
+        cur.execute("""
+            ALTER TABLE payment_obligations
+            ADD COLUMN IF NOT EXISTS payment_bank TEXT
+        """)
+        cur.execute("""
+            ALTER TABLE payment_obligations
+            ADD COLUMN IF NOT EXISTS payment_bank_account_code TEXT
+        """)
+        cur.execute("""
+            ALTER TABLE payment_obligations
+            ADD COLUMN IF NOT EXISTS payment_bank_account_name TEXT
+        """)
 
         # =====================================================
         # 1️⃣ BLOQUEAR FILA (ANTI CONCURRENCIA)
         # =====================================================
         cur.execute("""
-            SELECT id, balance, status
+            SELECT *
             FROM payment_obligations
             WHERE id = %s
               AND record_type = 'OBLIGATION'
+              AND COALESCE(active, TRUE) = TRUE
             FOR UPDATE
         """, (obligation_id,))
 
@@ -487,6 +523,29 @@ def apply_payment(
                 status_code=404,
                 detail="Obligation not found"
             )
+
+        bank_row = resolve_itp_bank(
+            cur,
+            bank_account_code,
+            bank_account_name,
+            payee_name=obligation.get("payee_name"),
+            payee_type=obligation.get("payee_type"),
+            obligation_type=obligation.get("obligation_type"),
+            country=obligation.get("country"),
+            reference=obligation.get("reference"),
+            notes=obligation.get("notes"),
+        )
+        if bank_account_code and not bank_row:
+            raise HTTPException(
+                status_code=400,
+                detail="Selected bank account does not exist or is inactive"
+            )
+        if bank_row:
+            bank_account_code = bank_row["account_code"]
+            bank_account_name = bank_row["account_name"]
+            bank_name = bank_account_name
+
+        before_obligation = row_to_dict(obligation)
 
         # =====================================================
         # 2️⃣ CONVERTIR A DECIMAL (FINANCIERO CORRECTO)
@@ -532,6 +591,15 @@ def apply_payment(
         # =====================================================
         # 4️⃣ CÁLCULO SEGURO DE NUEVO SALDO
         # =====================================================
+        settlement = external_surveyor_settlement(
+            cur,
+            amount_decimal,
+            payee_name=obligation.get("payee_name"),
+            fallback_country=obligation.get("country"),
+            payee_type=obligation.get("payee_type"),
+            obligation_type=obligation.get("obligation_type"),
+        )
+
         new_balance = (balance - amount_decimal).quantize(
             Decimal("0.01"),
             rounding=ROUND_HALF_UP
@@ -559,24 +627,68 @@ def apply_payment(
                 balance = %s,
                 status = %s,
                 last_payment_date = %s,
+                payment_bank = %s,
+                payment_bank_account_code = %s,
+                payment_bank_account_name = %s,
                 updated_at = NOW()
             WHERE id = %s
         """, (
             new_balance,
             new_status,
             payment_date,
+            bank_name or None,
+            bank_account_code or None,
+            bank_account_name or None,
             obligation_id
         ))
 
+        cur.execute("SELECT * FROM payment_obligations WHERE id = %s", (obligation_id,))
+        after_obligation = row_to_dict(cur.fetchone())
+
+        audit_event(
+            cur,
+            module="itp",
+            action="PAYMENT_APPLIED",
+            entity_type="payment_obligation",
+            entity_id=obligation_id,
+            performed_by=performed_by,
+            performed_role=performed_role,
+            before=before_obligation,
+            after=after_obligation,
+            metadata={
+                "applied_amount": str(amount_decimal),
+                "external_surveyor_rule_applied": bool(settlement["applies"]),
+                "deduction_usd": str(settlement["deduction"]),
+                "withholding_usd": str(settlement["withholding"]),
+                "net_payment_usd": str(settlement["net_payment"]),
+                "payment_date": payment_date,
+                "bank_account_code": bank_account_code or None,
+                "bank_account_name": bank_account_name or None,
+                "new_balance": str(new_balance),
+            },
+        )
+
         conn.commit()
+
+        accounting_warning = None
+        try:
+            from services.accounting_auto import sync_itp_to_accounting
+            sync_itp_to_accounting(conn)
+        except Exception as sync_error:
+            accounting_warning = str(sync_error)
 
         return {
             "message": "Payment applied successfully",
             "obligation_id": obligation_id,
             "previous_balance": float(balance),
             "applied_amount": float(amount_decimal),
+            "external_surveyor_rule_applied": bool(settlement["applies"]),
+            "deduction_usd": float(settlement["deduction"]),
+            "withholding_usd": float(settlement["withholding"]),
+            "net_payment_usd": float(settlement["net_payment"]),
             "new_balance": float(new_balance),
-            "status": new_status
+            "status": new_status,
+            "accounting_warning": accounting_warning
         }
 
     except HTTPException:
@@ -619,6 +731,12 @@ def create_manual_obligation(
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     try:
+        if is_employee_payee(cur, payee_name):
+            raise HTTPException(
+                status_code=400,
+                detail="El beneficiario existe como empleado en Master Data; no se registra en ITP."
+            )
+
         cur.execute("""
             INSERT INTO payment_obligations (
                 record_type,
@@ -664,6 +782,10 @@ def create_manual_obligation(
 
         new_id = cur.fetchone()["id"]
         conn.commit()
+
+    except HTTPException:
+        conn.rollback()
+        raise
 
     except Exception as e:
         conn.rollback()
@@ -813,6 +935,17 @@ def upload_invoice_xml(
     # INSERTAR payment_obligations
     # ============================================================
     try:
+        if is_employee_payee(cur, emisor):
+            return {
+                "message": "XML omitido para ITP: el emisor existe como empleado en Master Data.",
+                "type": obligation_type,
+                "reference": clave,
+                "supplier": emisor,
+                "total": total,
+                "currency": moneda,
+                "skipped": True,
+            }
+
         cur.execute("""
             INSERT INTO payment_obligations (
                 record_type,

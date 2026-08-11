@@ -2,10 +2,6 @@ import os
 import tempfile
 from datetime import datetime, date
 from openpyxl import load_workbook
-try:
-    from services.template_autofit import apply_workbook_autofit
-except ModuleNotFoundError:
-    from backend_api.services.template_autofit import apply_workbook_autofit
 from openpyxl.worksheet.worksheet import Worksheet
 
 
@@ -123,6 +119,8 @@ class DraftSurveyExcelGenerator:
 
                 "init_tpc_p": "Q16",
                 "init_tpc_s": "U16",
+                "init_light_ship": "M29",
+                "init_historic_constant": "M30",
                 "init_bl_figure": "M35",
 
                 # =====================================================
@@ -195,6 +193,20 @@ class DraftSurveyExcelGenerator:
                 "init_hydro2_mtc_p50_2":  "BH42",
                 "init_hydro2_mtc_m50_2":  "BJ42",
 
+                "final_hydro1_draft_1": "BG36",
+                "final_hydro1_disp_1":  "BH36",
+                "final_hydro1_tpc_1":   "BI36",
+                "final_hydro1_lcf_1":   "BJ36",
+                "final_hydro1_draft_2": "BG38",
+                "final_hydro1_disp_2":  "BH38",
+                "final_hydro1_tpc_2":   "BI38",
+                "final_hydro1_lcf_2":   "BJ38",
+                "final_hydro1_draft_mtc":  "BG40",
+                "final_hydro1_mtc_p50_1":  "BH40",
+                "final_hydro1_mtc_m50_1":  "BJ40",
+                "final_hydro1_mtc_p50_2":  "BH42",
+                "final_hydro1_mtc_m50_2":  "BJ42",
+
                 # =====================================================
                 # FINAL â€” TOP
                 # =====================================================
@@ -208,10 +220,10 @@ class DraftSurveyExcelGenerator:
                 # =====================================================
 
                 "final_draft_fwd_port": "Z8",
-                "final_draft_fwd_stb": "Z9",
-                "final_draft_mid_port": "Z10",
-                "final_draft_mid_stb": "AD8",
-                "final_draft_aft_port": "AD9",
+                "final_draft_fwd_stb": "AD8",
+                "final_draft_mid_port": "Z9",
+                "final_draft_mid_stb": "AD9",
+                "final_draft_aft_port": "Z10",
                 "final_draft_aft_stb": "AD10",
 
                 "final_draft_fwd_marks": "AU8",
@@ -227,6 +239,8 @@ class DraftSurveyExcelGenerator:
 
                 "final_tpc_p": "AP16",
                 "final_tpc_s": "AT16",
+                "final_light_ship": "AG29",
+                "final_historic_constant": "AG30",
                 "final_bl_figure": "AG35",
 
                 # =====================================================
@@ -245,25 +259,12 @@ class DraftSurveyExcelGenerator:
                 # =====================================================
 
                 # Fila 1
-                "final_hydro1_draft_1": "BG27",
-                "final_hydro1_disp_1":  "BH27",
-                "final_hydro1_tpc_1":   "BI27",
-                "final_hydro1_lcf_1":   "BJ27",
 
                 # Fila 2
-                "final_hydro1_draft_2": "BG29",
-                "final_hydro1_disp_2":  "BH29",
-                "final_hydro1_tpc_2":   "BI29",
-                "final_hydro1_lcf_2":   "BJ29",
 
                 # Fila 3
-                "final_hydro1_draft_mtc": "BG31",
-                "final_hydro1_mtc_p50_1": "BH31",
-                "final_hydro1_mtc_m50_1": "BJ31",
 
                 # Fila 4
-                "final_hydro1_mtc_p50_2": "BH33",
-                "final_hydro1_mtc_m50_2": "BJ33",
 
 
                 # =====================================================
@@ -271,25 +272,12 @@ class DraftSurveyExcelGenerator:
                 # =====================================================
 
                 # Fila 1
-                "final_hydro2_draft_1": "BG36",
-                "final_hydro2_disp_1":  "BH36",
-                "final_hydro2_tpc_1":   "BI36",
-                "final_hydro2_lcf_1":   "BJ36",
 
                 # Fila 2
-                "final_hydro2_draft_2": "BG38",
-                "final_hydro2_disp_2":  "BH38",
-                "final_hydro2_tpc_2":   "BI38",
-                "final_hydro2_lcf_2":   "BJ38",
 
                 # Fila 3
-                "final_hydro2_draft_mtc": "BG40",
-                "final_hydro2_mtc_p50_1": "BH40",
-                "final_hydro2_mtc_m50_1": "BJ40",
 
                 # Fila 4
-                "final_hydro2_mtc_p50_2": "BH42",
-                "final_hydro2_mtc_m50_2": "BJ42",
 
                 # =====================================================
                 # SIGNATURES
@@ -313,32 +301,66 @@ class DraftSurveyExcelGenerator:
     # =========================================================
     # SAFE SETTERS (MERGE SAFE + NUMERIC SAFE + BOOL SAFE)
     # =========================================================
+    def _coerce_excel_value(self, value):
+        if value in [None, ""]:
+            return value
+
+        if isinstance(value, bool):
+            return "YES" if value else "NO"
+
+        if isinstance(value, (int, float)):
+            return value
+
+        if not isinstance(value, str):
+            return value
+
+        text = value.strip()
+        if not text:
+            return value
+        if text.startswith("="):
+            return text
+
+        number_text = text.replace("\u00a0", "").replace(" ", "")
+        allowed = set("0123456789+-.,")
+        if any(ch not in allowed for ch in number_text):
+            return value
+        if any(sign in number_text[1:] for sign in "+-"):
+            return value
+
+        if "," in number_text and "." in number_text:
+            if number_text.rfind(",") > number_text.rfind("."):
+                number_text = number_text.replace(".", "").replace(",", ".")
+            else:
+                number_text = number_text.replace(",", "")
+        elif "," in number_text:
+            parts = number_text.split(",")
+            if len(parts) == 2:
+                number_text = f"{parts[0]}.{parts[1]}"
+            else:
+                number_text = number_text.replace(",", "")
+
+        try:
+            number = float(number_text)
+        except Exception:
+            return value
+
+        if number.is_integer() and "." not in number_text:
+            return int(number)
+        return number
+
     def _safe_set(self, ws: Worksheet, cell: str, value):
 
         if value in [None, ""]:
             return
 
-        # Normalizar booleanos a YES/NO si aplica
-        if isinstance(value, bool):
-            value = "YES" if value else "NO"
+        value = self._coerce_excel_value(value)
 
-        # Intentar convertir a nÃºmero si es numÃ©rico
-        try:
-            if isinstance(value, str):
-                v = value.replace(",", ".")
-                if v.replace(".", "", 1).isdigit():
-                    value = float(v)
-        except Exception:
-            pass
-
-        # Manejo de merged cells
         for merged in ws.merged_cells.ranges:
             if cell in merged:
                 ws.cell(row=merged.min_row, column=merged.min_col).value = value
                 return
 
         ws[cell].value = value
-
 
     def _safe_set_date(self, ws: Worksheet, cell: str, value):
 
@@ -359,7 +381,7 @@ class DraftSurveyExcelGenerator:
             # -------------------------------------------------
             elif isinstance(value, str):
 
-                v = value.strip().split(" ")[0]
+                v = " ".join(value.strip().replace(",", " ").split())
 
                 # Intentar formatos comunes usados en el ERP
                 date_formats = [
@@ -369,6 +391,12 @@ class DraftSurveyExcelGenerator:
                     "%m/%d/%Y",
                     "%d/%m/%Y",
                     "%Y/%m/%d",
+                    "%B %d %Y",
+                    "%b %d %Y",
+                    "%Y-%m-%d %H:%M",
+                    "%Y-%m-%d %H:%M:%S",
+                    "%Y-%m-%dT%H:%M",
+                    "%Y-%m-%dT%H:%M:%S",
                 ]
 
                 for fmt in date_formats:
@@ -546,7 +574,6 @@ class DraftSurveyExcelGenerator:
         tmp_dir = tempfile.mkdtemp(prefix="draft_excel_")
         tmp_path = os.path.join(tmp_dir, "draft_survey.xlsx")
 
-        apply_workbook_autofit(wb)
         wb.save(tmp_path)
 
         return tmp_path

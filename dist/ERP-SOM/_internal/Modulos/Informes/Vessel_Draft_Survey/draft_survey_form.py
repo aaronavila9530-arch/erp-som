@@ -117,7 +117,7 @@ class DraftSurveyForm(ttk.Frame):
         # 2 -> botones acción
         header.grid_columnconfigure(0, weight=1)
 
-        # ---------------- TÍTULO ----------------
+        # ---------------- TITLE ----------------
         ttk.Label(
             header,
             text="Vessel Draft Survey",
@@ -146,7 +146,7 @@ class DraftSurveyForm(ttk.Frame):
 
         ttk.Button(
             header,
-            text="← Back",
+            text="Back",
             command=go_home
         ).grid(row=0, column=1, padx=(10, 0))
 
@@ -482,6 +482,10 @@ class DraftSurveyForm(ttk.Frame):
                        right=("summer_deadweight", "Summer deadweight", 18))
         self._row_2cols(lf_constants, 3, left=("net_register_tons", "Net register tons", 18),
                        right=("gross_register_tons", "Gross register tons", 18))
+        self._row_2cols(lf_constants, 4, left=("init_light_ship", "Initial LIGHT SHIP", 18),
+                       right=("final_light_ship", "Final LIGHT SHIP", 18))
+        self._row_2cols(lf_constants, 5, left=("init_historic_constant", "Initial HISTORIC CONSTANT", 18),
+                       right=("final_historic_constant", "Final HISTORIC CONSTANT", 18))
 
         # ---------------- Hydrostatic / Tables ----------------
         lf_hydro = ttk.LabelFrame(parent, text="Hydrostatic / Tables")
@@ -656,7 +660,7 @@ class DraftSurveyForm(ttk.Frame):
 
 
     # =========================================================
-    # HEADER BLOCK (SIN DATE - YA ESTÁ EN TOP BLOCK)
+    # HEADER BLOCK
     # =========================================================
     def _draft_header_block(self, parent, prefix: str, include_cargo_ports: bool = True):
 
@@ -1167,119 +1171,213 @@ class DraftSurveyForm(ttk.Frame):
             messagebox.showinfo("Editar", "Modo edición deshabilitado.")
 
 
-    def _guardar(self):
-        """
-        ✅ Guardar:
-        - SOLO UPDATE (PUT)
-        - ENVÍA TODO EL PAYLOAD REAL (NO FRAGMENTADO)
-        """
+    def _build_word_payload(self, full_payload: dict) -> dict:
+        """Build the word-report payload from the flat form payload."""
+        metadata_keys = [
+            "year", "month", "continent", "country", "port", "client",
+            "draft_report_number"
+        ]
+        datetime_fields = [
+            "word_arrived_buoy",
+            "word_nor_tendered",
+            "word_all_fast",
+            "word_initial_draft",
+            "word_commenced",
+            "word_completed",
+            "word_final_draft"
+        ]
 
+        word_payload = {}
+        for key, value in full_payload.items():
+            if not str(key).startswith("word_"):
+                continue
+
+            if key in datetime_fields:
+                date_widget = self.vars.get(f"{key}_date_widget")
+                hour_var = self.vars.get(f"{key}_hour")
+                minute_var = self.vars.get(f"{key}_minute")
+
+                dt_value = None
+                try:
+                    if date_widget:
+                        if DateEntry and hasattr(date_widget, "get_date"):
+                            dt_value = date_widget.get_date()
+                        else:
+                            raw = str(date_widget.get()).strip()
+                            parsed = to_db_date(raw) if raw else None
+                            if parsed:
+                                dt_value = datetime.strptime(parsed, "%Y-%m-%d")
+                except Exception:
+                    dt_value = None
+
+                word_payload[f"{key}_date"] = (
+                    dt_value.strftime("%Y-%m-%d") if dt_value else None
+                )
+                try:
+                    hh = str(hour_var.get()).zfill(2) if hour_var else "00"
+                    mm = str(minute_var.get()).zfill(2) if minute_var else "00"
+                except Exception:
+                    hh, mm = "00", "00"
+                word_payload[f"{key}_time"] = f"{hh}:{mm}"
+                continue
+
+            word_payload[key] = value
+
+        for key in metadata_keys:
+            word_payload[key] = full_payload.get(key)
+
+        return word_payload
+
+    def _persist_current_draft(self, submit_for_review: bool = False) -> bool:
+        """
+        Upsert Draft Survey. The same draft_report_number is used for the
+        general, draft, ballast/fresh-water, and word-report tables.
+        """
         self.update_idletasks()
         self.update()
 
         full_payload = self.get_payload()
+        draft_report_number = str(
+            full_payload.get("draft_report_number") or self.draft_report_number or ""
+        ).strip()
+        if submit_for_review:
+            full_payload["status"] = "Pending for review"
 
-        # 🔥 DEBUG REAL
-        print("===================================")
-        print("PAYLOAD ENVIADO AL PUT:")
-        print(full_payload)
-        print("===================================")
+        if not full_payload.get("vessel_mv"):
+            messagebox.showwarning("Validacion", "Debe seleccionar un servicio.")
+            return False
 
-        # =====================================================
-        # 🔒 BLOQUEO TOTAL DE CREATE
-        # =====================================================
-        if not self.draft_report_number:
+        required = [
+            "year", "month", "continent", "country", "port", "client",
+            "draft_report_number"
+        ]
+        missing = [key for key in required if not full_payload.get(key)]
+        if missing:
             messagebox.showwarning(
-                "Aviso",
-                "Debe enviar a revisión primero antes de poder guardar."
+                "Validacion",
+                f"Falta metadata obligatoria: {', '.join(missing)}"
             )
-            return
+            return False
 
         try:
             from api_client import (
+                create_draft_survey_api,
                 update_draft_survey_api,
+                create_draft_survey_ballast_api,
                 update_draft_survey_ballast_api,
-                update_draft_survey_word_api
+                create_draft_survey_word_api,
+                update_draft_survey_word_api,
             )
 
-            draft_id = self.draft_report_number
+            if self.mode == "edit" or self.draft_report_number:
+                response_main = update_draft_survey_api(draft_report_number, full_payload)
+                if not response_main.get("success"):
+                    detail = str(
+                        response_main.get("error")
+                        or response_main.get("detail")
+                        or ""
+                    )
+                    if response_main.get("status_code") == 404 or "No existe" in detail:
+                        response_main = create_draft_survey_api(full_payload)
+            else:
+                response_main = create_draft_survey_api(full_payload)
+                if not response_main.get("success"):
+                    detail = str(
+                        response_main.get("error")
+                        or response_main.get("detail")
+                        or ""
+                    )
+                    if (
+                        response_main.get("status_code") in (400, 409)
+                        and "already exists" in detail
+                    ):
+                        response_main = update_draft_survey_api(
+                            draft_report_number,
+                            full_payload
+                        )
 
-            # =====================================================
-            # 🔥 1️⃣ UPDATE MAIN (ENVÍO COMPLETO)
-            # =====================================================
-            response_main = update_draft_survey_api(
-                draft_id,
-                full_payload   # ✅ AQUÍ ESTABA EL ERROR
-            )
-
-            if not response_main.get("success"):
+            if not response_main or not response_main.get("success"):
                 messagebox.showerror(
                     "Error",
-                    response_main.get("error", "Error actualizando Draft.")
+                    (response_main or {}).get("error", "No se pudo guardar Draft Survey.")
                 )
-                return
+                return False
 
-            # =====================================================
-            # 🔥 2️⃣ BALLAST + FRESH WATER
-            # =====================================================
+            self.draft_report_number = draft_report_number
+            self.mode = "edit"
+            self._db_autoload_enabled = True
+
             ballast_payload = {
                 "ballast": full_payload.get("ballast") or {},
-                "fresh_water": full_payload.get("fresh_water") or {}
+                "fresh_water": full_payload.get("fresh_water") or {},
             }
-
             if ballast_payload["ballast"] or ballast_payload["fresh_water"]:
                 response_ballast = update_draft_survey_ballast_api(
-                    draft_id,
+                    draft_report_number,
                     ballast_payload
                 )
-
-                print("===================================")
-                print("RESPUESTA BALLAST PUT:")
-                print(response_ballast)
-                print("===================================")
+                if not response_ballast.get("success"):
+                    detail = str(
+                        response_ballast.get("error")
+                        or response_ballast.get("detail")
+                        or ""
+                    )
+                    if response_ballast.get("status_code") == 404 or "No existe" in detail:
+                        response_ballast = create_draft_survey_ballast_api(
+                            draft_report_number,
+                            ballast_payload
+                        )
 
                 if not response_ballast.get("success"):
                     messagebox.showerror(
                         "Error",
-                        response_ballast.get("error", "Error actualizando Ballast.")
+                        response_ballast.get("error", "Error guardando Ballast.")
                     )
-                    return
+                    return False
 
-            # =====================================================
-            # 🔥 3️⃣ WORD
-            # =====================================================
-            word_payload = full_payload.get("word")
-
-            if isinstance(word_payload, dict):
+            word_payload = self._build_word_payload(full_payload)
+            if submit_for_review:
+                word_payload["status"] = "Pending for review"
+            if word_payload:
                 response_word = update_draft_survey_word_api(
-                    draft_id,
+                    draft_report_number,
                     word_payload
                 )
+                if not response_word.get("success"):
+                    detail = str(
+                        response_word.get("error")
+                        or response_word.get("detail")
+                        or ""
+                    )
+                    if response_word.get("status_code") == 404 or "No existe" in detail:
+                        response_word = create_draft_survey_word_api(
+                            draft_report_number,
+                            word_payload
+                        )
 
                 if not response_word.get("success"):
                     messagebox.showerror(
                         "Error",
-                        response_word.get("error", "Error actualizando Word Report.")
+                        response_word.get("error", "Error guardando Word Report.")
                     )
-                    return
+                    return False
 
-            # =====================================================
-            # ✅ OK
-            # =====================================================
-            messagebox.showinfo(
-                "Éxito",
-                "Draft actualizado correctamente."
-            )
+            if self.btn_editar:
+                try:
+                    self.btn_editar.config(state="normal")
+                except Exception:
+                    pass
 
             self._set_edit_mode(False)
+            return True
 
         except Exception as e:
-            messagebox.showerror(
-                "Error",
-                f"Error guardando Draft:\n{e}"
-            )
+            messagebox.showerror("Error", f"Error guardando Draft:\n{e}")
+            return False
 
-
+    def _guardar(self):
+        if self._persist_current_draft(submit_for_review=False):
+            messagebox.showinfo("Exito", "Draft guardado correctamente.")
     # =========================================================
     # PUBLIC: GET / SET PAYLOAD
     # =========================================================
@@ -1300,7 +1398,10 @@ class DraftSurveyForm(ttk.Frame):
 
             # DateEntry
             if DateEntry and isinstance(widget, DateEntry):
-                return to_db_date(widget.get())
+                try:
+                    return to_db_date(widget.get_date())
+                except Exception:
+                    return to_db_date(widget.get())
 
             # Entry
             if isinstance(widget, ttk.Entry):
@@ -1319,13 +1420,13 @@ class DraftSurveyForm(ttk.Frame):
         data = {}
 
         # ============================================
-        # 1️⃣ CAMPOS NORMALES DEL FORM (FIX MULTI-WIDGET)
+        # 1�?⃣ CAMPOS NORMALES DEL FORM (FIX MULTI-WIDGET)
         # ============================================
         for key, w in self.fields.items():
 
             try:
 
-                # 🔥 SI ES LISTA → TOMAR EL PRIMER WIDGET VÁLIDO
+                # 🔥 SI ES LISTA → TOMAR EL PRIMER WIDGET V�?LIDO
                 if isinstance(w, list):
 
                     value = None
@@ -1347,7 +1448,7 @@ class DraftSurveyForm(ttk.Frame):
                 data[key] = None
 
         # ============================================
-        # 2️⃣ HEADER META (CRÍTICO)
+        # 2�?⃣ HEADER META (CR�?TICO)
         # ============================================
         try:
             data["year"] = self.meta_vars["anio"].get()
@@ -1361,7 +1462,7 @@ class DraftSurveyForm(ttk.Frame):
             pass
 
         # ============================================
-        # 3️⃣ NORMALIZAR TRIM TABLES
+        # 3�?⃣ NORMALIZAR TRIM TABLES
         # ============================================
         if "trim_tables_yes" in self.fields and "trim_tables_no" in self.fields:
             try:
@@ -1372,7 +1473,7 @@ class DraftSurveyForm(ttk.Frame):
                 data["trim_tables_available"] = False
 
         # ============================================
-        # 4️⃣ 🔥 DYNAMIC BALLAST (CRÍTICO)
+        # 4�?⃣ 🔥 DYNAMIC BALLAST (CR�?TICO)
         # ============================================
         if hasattr(self, "dynamic_ballast") and isinstance(self.dynamic_ballast, dict):
 
@@ -1422,7 +1523,7 @@ class DraftSurveyForm(ttk.Frame):
                     })
 
         # ============================================
-        # 5️⃣ 🔥 DYNAMIC FRESH WATER
+        # 5�?⃣ 🔥 DYNAMIC FRESH WATER
         # ============================================
         if hasattr(self, "dynamic_freshwater") and isinstance(self.dynamic_freshwater, dict):
 
@@ -1504,9 +1605,23 @@ class DraftSurveyForm(ttk.Frame):
         else:
             payload.update(data or {})
 
+        ballast_json_block = payload.get("ballast_json")
+        if isinstance(ballast_json_block, str):
+            try:
+                import json
+                ballast_json_block = json.loads(ballast_json_block)
+            except Exception:
+                ballast_json_block = {}
+
+        if isinstance(ballast_json_block, dict):
+            if isinstance(ballast_json_block.get("ballast"), dict):
+                payload["ballast"] = ballast_json_block.get("ballast") or {}
+            if isinstance(ballast_json_block.get("fresh_water"), dict):
+                payload["fresh_water"] = ballast_json_block.get("fresh_water") or {}
+
         # 🔥 NO PISAR metadata; solo guardar FW como bloque aparte
         fresh_water_block = data.get("fresh_water")
-        if isinstance(fresh_water_block, dict):
+        if isinstance(fresh_water_block, dict) and fresh_water_block:
             payload["fresh_water"] = dict(fresh_water_block)
 
         if not isinstance(payload, dict):
@@ -1565,14 +1680,11 @@ class DraftSurveyForm(ttk.Frame):
             if DateEntry and isinstance(widget, DateEntry):
                 try:
                     if value:
-                        raw = str(value).split(" ")[0]
-                        parsed = to_db_date(raw)
+                        parsed = to_db_date(value)
                         if not parsed:
                             return
                         dt = datetime.strptime(parsed, "%Y-%m-%d")
                         widget.set_date(dt)
-                        widget.delete(0, "end")
-                        widget.insert(0, to_long_english_date(dt))
                 except Exception:
                     pass
                 return
@@ -1587,6 +1699,15 @@ class DraftSurveyForm(ttk.Frame):
             if isinstance(widget, ttk.Entry):
                 _set_entry(widget, value)
                 return
+
+        # Clear previous report values first. Otherwise fields missing from an
+        # older/newer backend payload can keep stale UI values after GET.
+        for key, widget in self.fields.items():
+            if key not in payload:
+                try:
+                    _apply(widget, None)
+                except Exception:
+                    pass
 
         # =====================================================
         # 3) SET CAMPOS NORMALES
@@ -1729,55 +1850,72 @@ class DraftSurveyForm(ttk.Frame):
                         })
 
         # =====================================================
-        # 6) 🔥 RECONSTRUIR BALLAST (CRÍTICO)
+        # 6) 🔥 RECONSTRUIR BALLAST (CR�?TICO)
         # =====================================================
         reconstructed_ballast = {
             "init": [],
             "final": []
         }
 
-        for prefix in ["init", "final"]:
+        ballast_json = payload.get("ballast")
 
-            for i in range(1, 21):
+        if isinstance(ballast_json, dict):
+            for prefix in ["init", "final"]:
+                tanks = ballast_json.get(prefix, [])
+                if isinstance(tanks, list):
+                    for tank in tanks:
+                        if not isinstance(tank, dict):
+                            continue
+                        reconstructed_ballast[prefix].append({
+                            "tank_name": tank.get("tank_name"),
+                            "sounding": tank.get("sounding"),
+                            "volume": tank.get("volume"),
+                            "density": tank.get("density")
+                        })
 
-                for side in ["p", "s"]:
+        if not reconstructed_ballast["init"] and not reconstructed_ballast["final"]:
+            for prefix in ["init", "final"]:
 
-                    # Ej: init_wbt_1p
-                    base = f"{prefix}_wbt_{i}{side}"
+                for i in range(1, 21):
 
-                    name = payload.get(f"{base}_name")
-                    sounding = payload.get(f"{base}_sounding")
-                    volume = payload.get(f"{base}_volume")
-                    density = payload.get(f"{base}_density")
+                    for side in ["p", "s"]:
+
+                        # Ej: init_wbt_1p
+                        base = f"{prefix}_wbt_{i}{side}"
+
+                        name = payload.get(f"{base}_name")
+                        sounding = payload.get(f"{base}_sounding")
+                        volume = payload.get(f"{base}_volume")
+                        density = payload.get(f"{base}_density")
+
+                        if any(v not in [None, ""] for v in [name, sounding, volume, density]):
+
+                            reconstructed_ballast[prefix].append({
+                                "tank_name": name or f"WBT {i}{side.upper()}",
+                                "sounding": sounding,
+                                "volume": volume,
+                                "density": density
+                            })
+
+                # 🔹 FPT / APT / SLOP
+                for tank in ["fpt", "apt", "slop_tank"]:
+
+                    name = payload.get(f"{prefix}_{tank}_name")
+                    sounding = payload.get(f"{prefix}_{tank}_sounding")
+                    volume = payload.get(f"{prefix}_{tank}_volume")
+                    density = payload.get(f"{prefix}_{tank}_density")
 
                     if any(v not in [None, ""] for v in [name, sounding, volume, density]):
 
                         reconstructed_ballast[prefix].append({
-                            "tank_name": name or f"WBT {i}{side.upper()}",
+                            "tank_name": name or tank.upper().replace("_", " "),
                             "sounding": sounding,
                             "volume": volume,
                             "density": density
                         })
 
-            # 🔹 FPT / APT / SLOP
-            for tank in ["fpt", "apt", "slop_tank"]:
-
-                name = payload.get(f"{prefix}_{tank}_name")
-                sounding = payload.get(f"{prefix}_{tank}_sounding")
-                volume = payload.get(f"{prefix}_{tank}_volume")
-                density = payload.get(f"{prefix}_{tank}_density")
-
-                if any(v not in [None, ""] for v in [name, sounding, volume, density]):
-
-                    reconstructed_ballast[prefix].append({
-                        "tank_name": name or tank.upper().replace("_", " "),
-                        "sounding": sounding,
-                        "volume": volume,
-                        "density": density
-                    })
-
         # =====================================================
-        # 8) LIMPIAR + RECREAR UI DINÁMICA BALLAST (BLINDADO)
+        # 8) LIMPIAR + RECREAR UI DIN�?MICA BALLAST (BLINDADO)
         # =====================================================
         if hasattr(self, "dynamic_ballast") and isinstance(self.dynamic_ballast, dict):
 
@@ -1800,7 +1938,7 @@ class DraftSurveyForm(ttk.Frame):
             self.dynamic_ballast = {"init": [], "final": []}
 
         # =====================================================
-        # 🔥 9) LIMPIAR + RECREAR UI FRESH WATER (CRÍTICO)
+        # 🔥 9) LIMPIAR + RECREAR UI FRESH WATER (CR�?TICO)
         # =====================================================
         if hasattr(self, "dynamic_freshwater") and isinstance(self.dynamic_freshwater, dict):
 
@@ -1866,7 +2004,7 @@ class DraftSurveyForm(ttk.Frame):
                         pass
 
                 except Exception as e:
-                    print("❌ ERROR RECONSTRUYENDO FW:", e)
+                    print("�?� ERROR RECONSTRUYENDO FW:", e)
 
         # =====================================================
         # RECREAR DESDE DATA
@@ -1927,7 +2065,7 @@ class DraftSurveyForm(ttk.Frame):
                         pass
 
                 except Exception as e:
-                    print("❌ ERROR RECONSTRUYENDO BALLAST:", e)
+                    print("�?� ERROR RECONSTRUYENDO BALLAST:", e)
 
 
         # =====================================================
@@ -1947,16 +2085,27 @@ class DraftSurveyForm(ttk.Frame):
         # =====================================================
         # 8) RECALCULAR TOTALES BALLAST VISUALES
         # =====================================================
+        def _parse_decimal_for_total(value):
+            text = str(value or "").strip()
+            if not text:
+                return 0.0
+            text = text.replace(" ", "")
+            if "," in text and "." in text:
+                text = text.replace(".", "").replace(",", ".")
+            else:
+                text = text.replace(",", ".")
+            try:
+                return float(text)
+            except Exception:
+                return 0.0
+
         for prefix in ["init", "final"]:
             total_ballast = 0.0
 
             for tank in self.dynamic_ballast.get(prefix, []):
-                try:
-                    volume = float(tank["volume"].get() or 0)
-                    density = float(tank["density"].get() or 0)
-                    total = volume * density
-                except Exception:
-                    total = 0.0
+                volume = _parse_decimal_for_total(tank["volume"].get())
+                density = _parse_decimal_for_total(tank["density"].get())
+                total = volume * density
 
                 try:
                     tank["total_var"].set(f"{total:.2f}")
@@ -2015,7 +2164,7 @@ class DraftSurveyForm(ttk.Frame):
                 payload["fresh_water"] = fresh_water_block
 
             # =====================================================
-            # 1️⃣ Cargar TODO el form
+            # 1�?⃣ Cargar TODO el form
             # =====================================================
             self.set_payload({
                 "data": payload,
@@ -2023,7 +2172,7 @@ class DraftSurveyForm(ttk.Frame):
             })
 
             # =====================================================
-            # 2️⃣ HEADER META — USAR PAYLOAD UNWRAPPED, NO response crudo
+            # 2�?⃣ HEADER META — USAR PAYLOAD UNWRAPPED, NO response crudo
             # =====================================================
             try:
                 self.meta_vars["anio"].set(str(payload.get("year", "") or ""))
@@ -2039,7 +2188,7 @@ class DraftSurveyForm(ttk.Frame):
                 pass
 
             # =====================================================
-            # 3️⃣ Bloquear edición (modo lectura)
+            # 3�?⃣ Bloquear edición (modo lectura)
             # =====================================================
             self._set_edit_mode(False)
 
@@ -2202,216 +2351,11 @@ class DraftSurveyForm(ttk.Frame):
     # ENVIAR A REVISION (GENERAL + BALLAST + WORD) — ULTRA FIX FINAL
     # =========================================================
     def _enviar_revision(self):
-
-        self.update_idletasks()
-        self.update()
-
-        full_payload = self.get_payload()
-
-        # ================= VALIDACIÓN =================
-        if not full_payload.get("vessel_mv"):
-            messagebox.showwarning(
-                "Validación",
-                "Debe seleccionar un servicio antes de enviar."
-            )
-            return
-
-        metadata_keys = [
-            "year", "month", "continent",
-            "country", "port", "client",
-            "draft_report_number"
-        ]
-
-        for key in metadata_keys:
-            if not full_payload.get(key):
-                messagebox.showwarning(
-                    "Validación",
-                    f"Falta metadata obligatoria: {key}"
-                )
-                return
-
-        try:
-            from api_client import (
-                create_draft_survey_api,
-                create_draft_survey_ballast_api,
-                create_draft_survey_word_api
-            )
-
-            # =====================================================
-            # 1️⃣ GENERAL — TAL CUAL SALE DEL FORM
-            # =====================================================
-            response = create_draft_survey_api(full_payload)
-
-            if not response.get("success"):
-                messagebox.showerror(
-                    "Error",
-                    response.get("error", "No se pudo crear el Draft Survey.")
-                )
-                return
-
-            draft_survey_id = response.get("general_id")
-
-            if not draft_survey_id:
-                messagebox.showerror(
-                    "Error",
-                    "El backend no devolvió general_id."
-                )
-                return
-
-            # =====================================================
-            # HELPERS SANITIZACIÓN SOLO PARA NUMÉRICOS/VACÍOS
-            # (NO MODIFICA TEXTO)
-            # =====================================================
-            def clean_value(v):
-
-                if v is None:
-                    return None
-
-                if isinstance(v, str):
-                    if v == "":
-                        return None
-
-                    try:
-                        return float(v.replace(",", "."))
-                    except Exception:
-                        return v
-
-                return v
-
-            # =====================================================
-            # 2️⃣ BALLAST + FRESH WATER
-            #    NUEVO FORMATO PARA API NUEVA
-            # =====================================================
-            ballast_payload = {
-                "ballast": full_payload.get("ballast") or {},
-                "fresh_water": full_payload.get("fresh_water") or {}
-            }
-
-            print("========== DEBUG BALLAST CREATE ==========")
-            print("BALLAST PAYLOAD:")
-            print(ballast_payload)
-            print("==========================================")
-
-            if ballast_payload["ballast"] or ballast_payload["fresh_water"]:
-
-                from api_client import create_draft_survey_ballast_api
-
-                ballast_response = create_draft_survey_ballast_api(
-                    draft_survey_id,
-                    ballast_payload
-                )
-
-                print("===================================")
-                print("RESPUESTA BALLAST POST:")
-                print(ballast_response)
-                print("===================================")
-
-                if not ballast_response.get("success"):
-                    raise Exception(
-                        ballast_response.get("error", "Error enviando ballast")
-                    )
-
-            # =====================================================
-            # 4️⃣ WORD
-            # =====================================================
-            word_payload = {}
-
-            datetime_fields = [
-                "word_arrived_buoy",
-                "word_nor_tendered",
-                "word_all_fast",
-                "word_initial_draft",
-                "word_commenced",
-                "word_completed",
-                "word_final_draft"
-            ]
-
-            for key, value in full_payload.items():
-
-                if not key.startswith("word_"):
-                    continue
-
-                if key in datetime_fields:
-
-                    date_widget = self.vars.get(f"{key}_date_widget")
-                    hour_var = self.vars.get(f"{key}_hour")
-                    minute_var = self.vars.get(f"{key}_minute")
-
-                    dt_value = None
-
-                    try:
-                        if date_widget:
-                            if DateEntry and hasattr(date_widget, "get_date"):
-                                dt_value = date_widget.get_date()
-                            else:
-                                raw = str(date_widget.get()).strip()
-                                if raw:
-                                    parsed = to_db_date(raw)
-                                    if parsed:
-                                        dt_value = datetime.strptime(parsed, "%Y-%m-%d")
-                    except Exception:
-                        dt_value = None
-
-                    word_payload[f"{key}_date"] = (
-                        dt_value.strftime("%Y-%m-%d") if dt_value else None
-                    )
-
-                    hh = "00"
-                    mm = "00"
-
-                    try:
-                        if hour_var:
-                            hh = str(hour_var.get()).zfill(2)
-                        if minute_var:
-                            mm = str(minute_var.get()).zfill(2)
-                    except Exception:
-                        pass
-
-                    word_payload[f"{key}_time"] = f"{hh}:{mm}"
-                    continue
-
-                word_payload[key] = value
-
-            for key in metadata_keys:
-                word_payload[key] = full_payload.get(key)
-
-            if word_payload:
-                word_response = create_draft_survey_word_api(
-                    draft_survey_id,
-                    word_payload
-                )
-
-                if not word_response.get("success"):
-                    raise Exception(word_response)
-
+        if self._persist_current_draft(submit_for_review=True):
             messagebox.showinfo(
-                "Éxito",
-                "Draft Survey enviado correctamente a revisión."
+                "Exito",
+                "Draft Survey enviado correctamente a revision."
             )
-
-            # =====================================================
-            # 🔥 CAMBIAR A MODO EDIT DESPUÉS DEL POST
-            # =====================================================
-            self.draft_report_number = draft_survey_id
-            self.mode = "edit"
-            self._db_autoload_enabled = True
-
-            if self.btn_editar:
-                try:
-                    self.btn_editar.config(state="normal")
-                except Exception:
-                    pass
-
-            # 🔒 bloquear edición hasta que usuario presione Editar
-            self._set_edit_mode(False)
-
-
-        except Exception as e:
-            messagebox.showerror(
-                "Error",
-                f"Error enviando Draft Survey:\n{e}"
-            )
-
     # =========================================================
     # BUILD: BALLAST TAB
     # =========================================================
@@ -2482,14 +2426,24 @@ class DraftSurveyForm(ttk.Frame):
         ballast_canvas = tk.Canvas(ballast_box, highlightthickness=0, height=260)
         ballast_canvas.grid(row=0, column=0, sticky="nsew")
 
-        ballast_scroll = ttk.Scrollbar(
+        ballast_scroll_y = ttk.Scrollbar(
             ballast_box,
             orient="vertical",
             command=ballast_canvas.yview
         )
-        ballast_scroll.grid(row=0, column=1, sticky="ns")
+        ballast_scroll_y.grid(row=0, column=1, sticky="ns")
 
-        ballast_canvas.configure(yscrollcommand=ballast_scroll.set)
+        ballast_scroll_x = ttk.Scrollbar(
+            ballast_box,
+            orient="horizontal",
+            command=ballast_canvas.xview
+        )
+        ballast_scroll_x.grid(row=1, column=0, sticky="ew")
+
+        ballast_canvas.configure(
+            yscrollcommand=ballast_scroll_y.set,
+            xscrollcommand=ballast_scroll_x.set
+        )
 
         ballast_inner = ttk.Frame(ballast_canvas)
         ballast_window = ballast_canvas.create_window(
@@ -2506,7 +2460,7 @@ class DraftSurveyForm(ttk.Frame):
 
         def _on_ballast_canvas_configure(event):
             try:
-                ballast_canvas.itemconfigure(ballast_window, width=event.width)
+                ballast_canvas.itemconfigure(ballast_window)
             except Exception:
                 pass
 
@@ -2611,7 +2565,7 @@ class DraftSurveyForm(ttk.Frame):
         # AVAILABLE TANKS
         # =========================================================
         available_tanks = [
-            "FPT", "APT", "SLOP TANK",
+            "FPT", "APT", "SLOP TANK", "GRAY WT P", "GRAYWT S",
             "WBT 1P", "WBT 1S",
             "WBT 2P", "WBT 2S",
             "WBT 3P", "WBT 3S",
@@ -2640,17 +2594,28 @@ class DraftSurveyForm(ttk.Frame):
         # =========================================================
         # HELPERS BALLAST
         # =========================================================
+        def parse_decimal(value):
+            text = str(value or "").strip()
+            if not text:
+                return 0.0
+            text = text.replace(" ", "")
+            if "," in text and "." in text:
+                text = text.replace(".", "").replace(",", ".")
+            else:
+                text = text.replace(",", ".")
+            try:
+                return float(text)
+            except Exception:
+                return 0.0
+
         def recalc_ballast():
 
             grand_total = 0.0
 
             for tank in self.dynamic_ballast[prefix]:
-                try:
-                    volume = float(tank["volume"].get() or 0)
-                    density = float(tank["density"].get() or 0)
-                    total = volume * density
-                except Exception:
-                    total = 0.0
+                volume = parse_decimal(tank["volume"].get())
+                density = parse_decimal(tank["density"].get())
+                total = volume * density
 
                 try:
                     tank["total_var"].set(f"{total:.2f}")
@@ -2751,8 +2716,10 @@ class DraftSurveyForm(ttk.Frame):
             }
 
             remove_btn.config(command=lambda: remove_ballast_row(tank_dict))
-            volume.bind("<KeyRelease>", lambda e: recalc_ballast())
-            density.bind("<KeyRelease>", lambda e: recalc_ballast())
+            for widget in (volume, density):
+                widget.bind("<KeyRelease>", lambda e: recalc_ballast())
+                widget.bind("<FocusOut>", lambda e: recalc_ballast())
+                widget.bind("<<Paste>>", lambda e: self.after(50, recalc_ballast))
 
             self.dynamic_ballast[prefix].append(tank_dict)
 
@@ -2768,7 +2735,7 @@ class DraftSurveyForm(ttk.Frame):
             ballast_inner,
             text="+ Add Tank",
             command=add_tank_row
-        ).grid(row=0, column=6, padx=(10, 0), pady=2, sticky="w")
+        ).grid(row=0, column=5, padx=(10, 0), pady=2, sticky="w")
 
         # =========================================================
         # TOTAL BALLAST
@@ -2800,9 +2767,9 @@ class DraftSurveyForm(ttk.Frame):
             pady=(16, 6)
         )
 
-        for c in range(7):
+        for c in range(6):
             ballast_inner.grid_columnconfigure(c, weight=0)
-        ballast_inner.grid_columnconfigure(6, weight=1)
+        ballast_inner.grid_columnconfigure(5, weight=1)
 
         # =========================================================
         # REGISTRAR BUILDER BALLAST
@@ -3291,7 +3258,7 @@ class DraftSurveyForm(ttk.Frame):
         return result["value"]
 
     # =========================================================
-    # VISUALIZAR DRAFT (BLINDADO + RECÁLCULO REAL + BLOQUEO)
+    # VISUALIZAR DRAFT (BLINDADO + REC�?LCULO REAL + BLOQUEO)
     # =========================================================
     def _visualizar_draft(self):
 
@@ -3317,7 +3284,7 @@ class DraftSurveyForm(ttk.Frame):
         }
 
         # =====================================================
-        # VALIDACIÓN MÍNIMA
+        # VALIDACIÓN M�?NIMA
         # =====================================================
         if not sanitized_payload.get("vessel_mv"):
             messagebox.showwarning(
@@ -3350,7 +3317,7 @@ class DraftSurveyForm(ttk.Frame):
             return
 
         # =====================================================
-        # 3) ABRIR EXCEL + FORZAR RECÁLCULO + BLOQUEAR
+        # 3) ABRIR EXCEL + FORZAR REC�?LCULO + BLOQUEAR
         # =====================================================
         try:
             import win32com.client
@@ -3379,7 +3346,7 @@ class DraftSurveyForm(ttk.Frame):
             return
 
             # =====================================================
-            # 🔥 FORZAR RECÁLCULO COMPLETO REAL
+            # 🔥 FORZAR REC�?LCULO COMPLETO REAL
             # =====================================================
             try:
                 # Modo automático
@@ -3478,14 +3445,11 @@ class DraftSurveyForm(ttk.Frame):
 
 
     # =========================================================
-    # 🔥 BUILDER BALLAST (CRÍTICO PARA set_payload)
+    # 🔥 BUILDER BALLAST (CR�?TICO PARA set_payload)
     # =========================================================
     def _add_ballast_row(self, prefix):
         try:
             return self._ballast_adders[prefix]()
         except Exception as e:
-            print("❌ ERROR _add_ballast_row:", e)
+            print("�?� ERROR _add_ballast_row:", e)
             return None
-
-
-

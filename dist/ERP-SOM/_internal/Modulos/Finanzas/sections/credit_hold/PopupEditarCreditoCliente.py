@@ -1,8 +1,7 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
-import requests
 
-from api_client import BASE_URL
+from api_client import BASE_URL, api_request
 
 
 class PopupEditarCreditoCliente(tk.Toplevel):
@@ -81,7 +80,8 @@ class PopupEditarCreditoCliente(tk.Toplevel):
     # ======================================================
     def _load_from_backend(self):
         try:
-            r = requests.get(
+            r = api_request(
+                "GET",
                 f"{BASE_URL}/cliente-credito/{self.codigo_cliente}",
                 timeout=15
             )
@@ -153,7 +153,8 @@ class PopupEditarCreditoCliente(tk.Toplevel):
             return
 
         try:
-            r = requests.put(
+            r = api_request(
+                "PUT",
                 f"{BASE_URL}/cliente-credito/{self.codigo_cliente}",
                 json=payload,
                 timeout=15

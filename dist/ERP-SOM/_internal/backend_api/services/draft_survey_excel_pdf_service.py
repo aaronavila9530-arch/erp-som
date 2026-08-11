@@ -5,10 +5,6 @@ from datetime import datetime, date
 from pathlib import Path
 
 from openpyxl import load_workbook
-try:
-    from services.template_autofit import apply_workbook_autofit
-except ModuleNotFoundError:
-    from backend_api.services.template_autofit import apply_workbook_autofit
 from openpyxl.worksheet.worksheet import Worksheet
 from psycopg2.extras import RealDictCursor
 
@@ -207,6 +203,53 @@ class DraftSurveyExcelPdfService:
     # =========================================================
     # SAFE SETTERS (MERGE SAFE + NUM SAFE)
     # =========================================================
+    def _coerce_excel_value(self, value):
+        if value in (None, ""):
+            return value
+
+        if isinstance(value, bool):
+            return "YES" if value else "NO"
+
+        if isinstance(value, (int, float)):
+            return value
+
+        if not isinstance(value, str):
+            return value
+
+        text = value.strip()
+        if not text:
+            return value
+        if text.startswith("="):
+            return text
+
+        number_text = text.replace("\u00a0", "").replace(" ", "")
+        allowed = set("0123456789+-.,")
+        if any(ch not in allowed for ch in number_text):
+            return value
+        if any(sign in number_text[1:] for sign in "+-"):
+            return value
+
+        if "," in number_text and "." in number_text:
+            if number_text.rfind(",") > number_text.rfind("."):
+                number_text = number_text.replace(".", "").replace(",", ".")
+            else:
+                number_text = number_text.replace(",", "")
+        elif "," in number_text:
+            parts = number_text.split(",")
+            if len(parts) == 2:
+                number_text = f"{parts[0]}.{parts[1]}"
+            else:
+                number_text = number_text.replace(",", "")
+
+        try:
+            number = float(number_text)
+        except Exception:
+            return value
+
+        if number.is_integer() and "." not in number_text:
+            return int(number)
+        return number
+
     def _safe_set(self, ws: Worksheet, cell: str, value):
 
         try:
@@ -216,16 +259,7 @@ class DraftSurveyExcelPdfService:
             if not isinstance(cell, str) or not cell.strip():
                 return
 
-            if isinstance(value, bool):
-                value = "YES" if value else "NO"
-
-            try:
-                if isinstance(value, str):
-                    vv = value.strip().replace(",", ".")
-                    if vv.replace(".", "", 1).isdigit():
-                        value = float(vv) if "." in vv else int(vv)
-            except Exception:
-                pass
+            value = self._coerce_excel_value(value)
 
             for merged in ws.merged_cells.ranges:
                 if cell in merged:
@@ -252,8 +286,7 @@ class DraftSurveyExcelPdfService:
                 parsed = value
 
             elif isinstance(value, str):
-                v = value.strip()
-                date_part = v.split(" ")[0]
+                date_part = " ".join(value.strip().replace(",", " ").split())
 
                 date_formats = [
                     "%m-%d-%Y",
@@ -262,6 +295,12 @@ class DraftSurveyExcelPdfService:
                     "%m/%d/%Y",
                     "%d/%m/%Y",
                     "%Y/%m/%d",
+                    "%B %d %Y",
+                    "%b %d %Y",
+                    "%Y-%m-%d %H:%M",
+                    "%Y-%m-%d %H:%M:%S",
+                    "%Y-%m-%dT%H:%M",
+                    "%Y-%m-%dT%H:%M:%S",
                 ]
 
                 for fmt in date_formats:
@@ -362,7 +401,6 @@ class DraftSurveyExcelPdfService:
         tmp_dir = tempfile.mkdtemp(prefix="draft_excel_")
         out_xlsx = os.path.join(tmp_dir, f"draft_survey_{draft_report_number}.xlsx")
 
-        apply_workbook_autofit(wb)
         wb.save(out_xlsx)
 
         if not os.path.exists(out_xlsx) or os.path.getsize(out_xlsx) == 0:

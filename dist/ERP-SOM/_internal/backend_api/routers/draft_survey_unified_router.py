@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from typing import Any, Dict, Optional
 from database import get_db
 
+import json
 import psycopg2
 from psycopg2 import sql
 
@@ -17,6 +18,26 @@ def _row_to_dict(cur, row) -> Dict[str, Any]:
         return {}
     cols = [d[0] for d in cur.description]
     return {cols[i]: row[i] for i in range(len(cols))}
+
+
+def _normalize_ballast_json(payload: Dict[str, Any]) -> None:
+    ballast_json = payload.get("ballast_json")
+    if not ballast_json:
+        return
+
+    if isinstance(ballast_json, str):
+        try:
+            ballast_json = json.loads(ballast_json)
+        except Exception:
+            return
+
+    if not isinstance(ballast_json, dict):
+        return
+
+    if isinstance(ballast_json.get("ballast"), dict):
+        payload["ballast"] = ballast_json.get("ballast") or {}
+    if isinstance(ballast_json.get("fresh_water"), dict):
+        payload["fresh_water"] = ballast_json.get("fresh_water") or {}
 
 
 def _get_table_columns(conn, table_name: str) -> set:
@@ -260,6 +281,14 @@ def get_draft_survey_unified(draft_report_number: str, conn=Depends(get_db)):
         ballast_row = cur.fetchone()
         ballast = _row_to_dict(cur, ballast_row)
 
+        if not ballast and draft and draft.get("id") is not None:
+            cur.execute(
+                "SELECT * FROM draft_survey_ballast WHERE draft_survey_id = %s LIMIT 1",
+                (draft.get("id"),)
+            )
+            ballast_row = cur.fetchone()
+            ballast = _row_to_dict(cur, ballast_row)
+
         # 3) word
         cur.execute(
             "SELECT * FROM draft_survey_word_report WHERE draft_report_number = %s LIMIT 1",
@@ -267,6 +296,14 @@ def get_draft_survey_unified(draft_report_number: str, conn=Depends(get_db)):
         )
         word_row = cur.fetchone()
         word = _row_to_dict(cur, word_row)
+
+        if not word and draft and draft.get("id") is not None:
+            cur.execute(
+                "SELECT * FROM draft_survey_word_report WHERE draft_survey_id = %s LIMIT 1",
+                (draft.get("id"),)
+            )
+            word_row = cur.fetchone()
+            word = _row_to_dict(cur, word_row)
 
         # 4) general
         cur.execute(
@@ -293,6 +330,7 @@ def get_draft_survey_unified(draft_report_number: str, conn=Depends(get_db)):
 
         if ballast:
             unified.update(ballast)
+            _normalize_ballast_json(unified)
 
         if word:
             unified.update(word)

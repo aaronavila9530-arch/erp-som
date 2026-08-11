@@ -40,11 +40,22 @@ from routers.closing import router as closing_router
 from routers.closing_reports import router as closing_reports_router
 from routers.closing_status import router as closing_status_router
 from routers.accounting_lines import router as accounting_lines_router
+from routers.accounting_auxiliaries import router as accounting_auxiliaries_router
+from routers.accounting_tax import router as accounting_tax_router
+from routers.accounting_workspace import router as accounting_workspace_router
+from routers.accounting_legal_library import router as accounting_legal_library_router
+from routers.accounting_ai import router as accounting_ai_router
+from routers.accounting_financial_statements import router as accounting_financial_statements_router
+from routers.accounting_advanced import router as accounting_advanced_router
+from routers.fixed_assets import router as fixed_assets_router
+from routers.gmail_fiscal import router as gmail_fiscal_router, start_gmail_fiscal_scheduler
+from routers.monthly_financial_report import router as monthly_financial_report_router
 
 from routers.exchange_rate import router as exchange_rate_router
 
 from routers.password_reset import router as password_reset_router
 from routers.mobile_auth import router as mobile_auth_router
+from routers.companies import router as companies_router
 
 # HHRR
 from routers import hr
@@ -131,6 +142,7 @@ app.add_middleware(
 # ============================================================
 @app.on_event("startup")
 def _debug_routes_all():
+    start_gmail_fiscal_scheduler()
     print("\n=== TODAS LAS RUTAS REGISTRADAS ===")
     for r in app.router.routes:
         path = getattr(r, "path", "")
@@ -216,11 +228,22 @@ app.include_router(closing_router)
 app.include_router(closing_reports_router)
 app.include_router(closing_status_router)
 app.include_router(accounting_lines_router)
+app.include_router(accounting_auxiliaries_router)
+app.include_router(accounting_tax_router)
+app.include_router(accounting_workspace_router)
+app.include_router(accounting_legal_library_router)
+app.include_router(accounting_ai_router)
+app.include_router(accounting_financial_statements_router)
+app.include_router(accounting_advanced_router)
+app.include_router(fixed_assets_router)
+app.include_router(gmail_fiscal_router)
+app.include_router(monthly_financial_report_router)
 
 app.include_router(exchange_rate_router)
 
 app.include_router(password_reset_router)
 app.include_router(mobile_auth_router)
+app.include_router(companies_router)
 
 app.include_router(hr.router)
 app.include_router(hr_ot_log_router)

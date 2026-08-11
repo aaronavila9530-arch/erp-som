@@ -24,6 +24,7 @@ from services.xml.electronic_documents_parser import (
 from services.xml.electronic_documents_parser import (
     parse_electronic_document_from_bytes
 )
+from services.tenanting import company_code, ensure_company_column
 
 
 
@@ -53,11 +54,14 @@ def require_permission(module: str, action: str):
 @router.get("/facturables")
 def get_servicios_facturables(
     cliente: str = Query(..., min_length=1),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
     conn=Depends(get_db)
 ):
     cur = conn.cursor(cursor_factory=RealDictCursor)
+    company = company_code(header_value=x_company_code)
 
     try:
+        ensure_company_column("servicios")
         cur.execute("""
             SELECT
                 s.consec,
@@ -80,11 +84,12 @@ def get_servicios_facturables(
             FROM servicios s
             WHERE
                 s.cliente = %s
+                AND s.company_code = %s
                 AND s.estado = 'Finalizado'
                 AND s.num_informe IS NOT NULL
                 AND s.factura IS NULL
             ORDER BY s.fecha_inicio
-        """, (cliente,))
+        """, (cliente, company))
 
         data = cur.fetchall()
 
@@ -102,14 +107,20 @@ def get_servicios_facturables(
 # FACTURA ANTICIPADA (MANUAL / XML)
 # ============================================================
 @router.post("/anticipada")
-def emitir_factura_anticipada(payload: dict, conn=Depends(get_db)):
+def emitir_factura_anticipada(
+    payload: dict,
+    conn=Depends(get_db),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+):
 
     from datetime import date
     from psycopg2.extras import RealDictCursor
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
+    company = company_code(payload.get("company_code"), x_company_code)
 
     try:
+        ensure_company_column("invoicing")
         tipo = payload.get("tipo_factura")
 
         if tipo not in ("MANUAL", "XML"):
@@ -157,8 +168,9 @@ def emitir_factura_anticipada(payload: dict, conn=Depends(get_db)):
                 WHERE
                     tipo_documento = 'FACTURA'
                     AND tipo_factura = 'MANUAL'
+                    AND company_code = %s
                     AND numero_documento ~ '^[0-9]+$'
-            """)
+            """, (company,))
 
             ultimo = cur.fetchone()["ultimo"]
             numero_factura = int(ultimo) + 1
@@ -189,6 +201,7 @@ def emitir_factura_anticipada(payload: dict, conn=Depends(get_db)):
             # ====================================================
             cur.execute("""
                 INSERT INTO invoicing (
+                    company_code,
                     factura_id,
                     tipo_factura,
                     tipo_documento,
@@ -209,6 +222,7 @@ def emitir_factura_anticipada(payload: dict, conn=Depends(get_db)):
                     descripcion_servicio
                 )
                 VALUES (
+                    %s,
                     NULL,
                     'MANUAL',
                     'FACTURA',
@@ -230,6 +244,7 @@ def emitir_factura_anticipada(payload: dict, conn=Depends(get_db)):
                 )
                 RETURNING id
             """, (
+                company,
                 str(numero_factura),
                 codigo_cliente,
                 nombre_cliente,
@@ -269,6 +284,7 @@ def emitir_factura_anticipada(payload: dict, conn=Depends(get_db)):
 
             cur.execute("""
                 INSERT INTO invoicing (
+                    company_code,
                     factura_id,
                     tipo_factura,
                     tipo_documento,
@@ -288,6 +304,7 @@ def emitir_factura_anticipada(payload: dict, conn=Depends(get_db)):
                     descripcion_servicio
                 )
                 VALUES (
+                    %s,
                     NULL,
                     'ELECTRONICA',
                     'FACTURA',
@@ -307,6 +324,7 @@ def emitir_factura_anticipada(payload: dict, conn=Depends(get_db)):
                     %s
                 )
             """, (
+                company,
                 data["numero_factura"],   # STRING
                 codigo_cliente,
                 nombre_cliente,
@@ -341,7 +359,8 @@ def emitir_factura_anticipada(payload: dict, conn=Depends(get_db)):
 @router.post("/nota-credito")
 def emitir_nota_credito(
     payload: dict,
-    conn=Depends(get_db)
+    conn=Depends(get_db),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
 ):
     """
     payload esperado (MANUAL):
@@ -368,8 +387,10 @@ def emitir_nota_credito(
     """
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
+    company = company_code(payload.get("company_code"), x_company_code)
 
     try:
+        ensure_company_column("invoicing")
         tipo = payload.get("tipo_factura")
 
         if tipo not in ("MANUAL", "XML"):
@@ -409,7 +430,8 @@ def emitir_nota_credito(
                 ) AS ultimo
                 FROM invoicing
                 WHERE tipo_documento = 'NOTA_CREDITO'
-            """)
+                  AND company_code = %s
+            """, (company,))
             numero_nc = int(cur.fetchone()["ultimo"]) + 1
 
             fecha_emision = date.today()
@@ -436,6 +458,7 @@ def emitir_nota_credito(
             # ================= INSERT INVOICING =================
             cur.execute("""
                 INSERT INTO invoicing (
+                    company_code,
                     factura_id,
                     tipo_factura,
                     tipo_documento,
@@ -450,6 +473,7 @@ def emitir_nota_credito(
                     created_at
                 )
                 VALUES (
+                    %s,
                     NULL,
                     'MANUAL',
                     'NOTA_CREDITO',
@@ -465,6 +489,7 @@ def emitir_nota_credito(
                 )
                 RETURNING id
             """, (
+                company,
                 numero_nc,
                 codigo_cliente,
                 nombre_cliente,
@@ -542,6 +567,7 @@ def emitir_nota_credito(
             cur.execute(
                 """
                 INSERT INTO invoicing (
+                    company_code,
                     factura_id,
                     tipo_factura,
                     tipo_documento,
@@ -555,6 +581,7 @@ def emitir_nota_credito(
                     created_at
                 )
                 VALUES (
+                    %s,
                     NULL,
                     'ELECTRONICA',
                     'NOTA_CREDITO',
@@ -570,6 +597,7 @@ def emitir_nota_credito(
                 RETURNING id
                 """,
                 (
+                    company,
                     str(data["numero_documento"]),
                     codigo_cliente,
                     nombre_cliente,
@@ -606,11 +634,14 @@ def emitir_factura_anticipada_xml(
     codigo_cliente: str = Form(...),
     nombre_cliente: str = Form(...),
     file: UploadFile = File(...),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
     conn=Depends(get_db)
 ):
     cur = conn.cursor(cursor_factory=RealDictCursor)
+    company = company_code(header_value=x_company_code)
 
     try:
+        ensure_company_column("invoicing")
         # 1️⃣ Validaciones
         if not file or not file.filename:
             raise HTTPException(400, "Archivo XML requerido")
@@ -652,6 +683,7 @@ def emitir_factura_anticipada_xml(
         # 6️⃣ Insert DB
         cur.execute("""
             INSERT INTO invoicing (
+                company_code,
                 factura_id,
                 tipo_factura,
                 tipo_documento,
@@ -667,6 +699,7 @@ def emitir_factura_anticipada_xml(
                 descripcion_servicio
             )
             VALUES (
+                %s,
                 NULL,
                 'ELECTRONICA',
                 'FACTURA',
@@ -683,6 +716,7 @@ def emitir_factura_anticipada_xml(
             )
             RETURNING id
         """, (
+            company,
             str(data["numero_factura"]),
             codigo_cliente,
             nombre_cliente,

@@ -87,7 +87,8 @@ class VistaColillasEmployee(ttk.Frame):
                 "periodo": periodo,
                 "status": d.get("status") or "—",
                 "_year": year,
-                "_month": month
+                "_month": month,
+                "_usuario": payload.get("usuario") or d.get("usuario")
             }
 
             filas.append(fila)
@@ -111,12 +112,13 @@ class VistaColillasEmployee(ttk.Frame):
 
         year = row.get("_year")
         month = row.get("_month")
+        usuario = row.get("_usuario")
 
         if not year or not month:
             messagebox.showerror("Error", "Datos incompletos de la colilla")
             return
 
-        filename = f"COLILLA_{year}_{month}.pdf"
+        filename = f"COLILLA_{usuario or 'COLILLA'}_{year}_{month}.pdf"
 
         path = filedialog.asksaveasfilename(
             defaultextension=".pdf",
@@ -130,7 +132,8 @@ class VistaColillasEmployee(ttk.Frame):
         try:
             resp = hr_download_payslip_pdf(
                 year=year,
-                month=month
+                month=month,
+                usuario=usuario
             )
 
             if resp is None:

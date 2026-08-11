@@ -205,7 +205,12 @@ class VistaColillasEmployee(ttk.Frame):
             messagebox.showerror("Error", "Periodo inválido")
             return
 
-        filename = f"COLILLA_{year}_{month}.pdf"
+        usuario = row.get("usuario")
+        if not usuario:
+            messagebox.showerror("Error", "La colilla seleccionada no tiene usuario asociado")
+            return
+
+        filename = f"COLILLA_{usuario}_{year}_{month}.pdf"
 
         save_path = filedialog.asksaveasfilename(
             title="Guardar colilla",
@@ -220,7 +225,8 @@ class VistaColillasEmployee(ttk.Frame):
         try:
             resp = hr_download_payslip_pdf(
                 year=year,
-                month=month
+                month=month,
+                usuario=usuario
             )
 
             if not resp:

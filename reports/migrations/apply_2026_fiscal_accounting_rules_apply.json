@@ -1,0 +1,210 @@
+{
+  "year": 2026,
+  "applied": true,
+  "line_count": 1508,
+  "rule_counts": {
+    "OPERATING_EXPENSE_REQUIRES_SUPPORT": 153,
+    "IVA_CREDIT_REQUIRES_XML": 91,
+    "BALANCE_SHEET_ACCOUNT": 787,
+    "REVENUE_D101": 74,
+    "IVA_DEBIT_D150": 37,
+    "PAYROLL_DEDUCTIBLE": 315,
+    "WITHHOLDING_PAYABLE": 17,
+    "EXTERNAL_SURVEYOR_TRANSFER_DEDUCTION": 3,
+    "EXTERNAL_SURVEYOR_NET_BANK_PAYMENT": 3,
+    "BANK_FEES_DEDUCTIBLE": 28
+  },
+  "tax_form_counts": {
+    "D101": 573,
+    "D150": 128,
+    "NO_FORM": 790,
+    "TRIBU_RETENCIONES": 17
+  },
+  "support_counts": {
+    "REQUIRES_DOCUMENT": 153,
+    "XML_REQUIRED": 91,
+    "BALANCE_SHEET": 787,
+    "REVENUE": 74,
+    "SALES_XML_REQUIRED": 37,
+    "PAYROLL_SUPPORT": 315,
+    "WITHHOLDING_SUPPORT": 17,
+    "TRANSFER_SUPPORT": 6,
+    "BANK_STATEMENT": 28
+  },
+  "deductible_counts": {
+    "True": 370,
+    "False": 1138
+  },
+  "iva_creditable_counts": {
+    "False": 1417,
+    "True": 91
+  },
+  "summary": [
+    {
+      "fiscal_rule_code": "BALANCE_SHEET_ACCOUNT",
+      "fiscal_support_status": "BALANCE_SHEET",
+      "fiscal_tax_form": null,
+      "fiscal_risk_level": "LOW",
+      "fiscal_deductible": false,
+      "fiscal_iva_creditable": false,
+      "lines": 787,
+      "debit": "1703009522.25",
+      "credit": "895747670.45"
+    },
+    {
+      "fiscal_rule_code": "BANK_FEES_DEDUCTIBLE",
+      "fiscal_support_status": "BANK_STATEMENT",
+      "fiscal_tax_form": "D101",
+      "fiscal_risk_level": "LOW",
+      "fiscal_deductible": true,
+      "fiscal_iva_creditable": false,
+      "lines": 28,
+      "debit": "318507.00",
+      "credit": "0.00"
+    },
+    {
+      "fiscal_rule_code": "EXTERNAL_SURVEYOR_NET_BANK_PAYMENT",
+      "fiscal_support_status": "TRANSFER_SUPPORT",
+      "fiscal_tax_form": null,
+      "fiscal_risk_level": "LOW",
+      "fiscal_deductible": false,
+      "fiscal_iva_creditable": false,
+      "lines": 3,
+      "debit": "0.00",
+      "credit": "1672161.75"
+    },
+    {
+      "fiscal_rule_code": "EXTERNAL_SURVEYOR_TRANSFER_DEDUCTION",
+      "fiscal_support_status": "TRANSFER_SUPPORT",
+      "fiscal_tax_form": "D101",
+      "fiscal_risk_level": "LOW",
+      "fiscal_deductible": false,
+      "fiscal_iva_creditable": false,
+      "lines": 3,
+      "debit": "0.00",
+      "credit": "34125.75"
+    },
+    {
+      "fiscal_rule_code": "IVA_CREDIT_REQUIRES_XML",
+      "fiscal_support_status": "XML_REQUIRED",
+      "fiscal_tax_form": "D150",
+      "fiscal_risk_level": "LOW",
+      "fiscal_deductible": false,
+      "fiscal_iva_creditable": true,
+      "lines": 91,
+      "debit": "48298464.42",
+      "credit": "138626521.59"
+    },
+    {
+      "fiscal_rule_code": "IVA_DEBIT_D150",
+      "fiscal_support_status": "SALES_XML_REQUIRED",
+      "fiscal_tax_form": "D150",
+      "fiscal_risk_level": "LOW",
+      "fiscal_deductible": false,
+      "fiscal_iva_creditable": false,
+      "lines": 37,
+      "debit": "0.00",
+      "credit": "6051094.09"
+    },
+    {
+      "fiscal_rule_code": "OPERATING_EXPENSE_REQUIRES_SUPPORT",
+      "fiscal_support_status": "REQUIRES_DOCUMENT",
+      "fiscal_tax_form": "D101",
+      "fiscal_risk_level": "LOW",
+      "fiscal_deductible": true,
+      "fiscal_iva_creditable": false,
+      "lines": 153,
+      "debit": "342214153.96",
+      "credit": "953580719.61"
+    },
+    {
+      "fiscal_rule_code": "PAYROLL_DEDUCTIBLE",
+      "fiscal_support_status": "PAYROLL_SUPPORT",
+      "fiscal_tax_form": "D101",
+      "fiscal_risk_level": "LOW",
+      "fiscal_deductible": true,
+      "fiscal_iva_creditable": false,
+      "lines": 189,
+      "debit": "28482374.00",
+      "credit": "0.00"
+    },
+    {
+      "fiscal_rule_code": "PAYROLL_DEDUCTIBLE",
+      "fiscal_support_status": "PAYROLL_SUPPORT",
+      "fiscal_tax_form": "D101",
+      "fiscal_risk_level": "LOW",
+      "fiscal_deductible": false,
+      "fiscal_iva_creditable": false,
+      "lines": 126,
+      "debit": "0.00",
+      "credit": "17911849.00"
+    },
+    {
+      "fiscal_rule_code": "REVENUE_D101",
+      "fiscal_support_status": "REVENUE",
+      "fiscal_tax_form": "D101",
+      "fiscal_risk_level": "LOW",
+      "fiscal_deductible": false,
+      "fiscal_iva_creditable": false,
+      "lines": 74,
+      "debit": "0.00",
+      "credit": "107631666.89"
+    },
+    {
+      "fiscal_rule_code": "WITHHOLDING_PAYABLE",
+      "fiscal_support_status": "WITHHOLDING_SUPPORT",
+      "fiscal_tax_form": "TRIBU_RETENCIONES",
+      "fiscal_risk_level": "LOW",
+      "fiscal_deductible": false,
+      "fiscal_iva_creditable": false,
+      "lines": 17,
+      "debit": "0.00",
+      "credit": "1067212.50"
+    }
+  ],
+  "support_required_summary": [
+    {
+      "fiscal_support_status": "BANK_STATEMENT",
+      "lines": 28,
+      "debit": "318507.00",
+      "credit": "0.00"
+    },
+    {
+      "fiscal_support_status": "PAYROLL_SUPPORT",
+      "lines": 315,
+      "debit": "28482374.00",
+      "credit": "17911849.00"
+    },
+    {
+      "fiscal_support_status": "REQUIRES_DOCUMENT",
+      "lines": 153,
+      "debit": "342214153.96",
+      "credit": "953580719.61"
+    },
+    {
+      "fiscal_support_status": "SALES_XML_REQUIRED",
+      "lines": 37,
+      "debit": "0.00",
+      "credit": "6051094.09"
+    },
+    {
+      "fiscal_support_status": "TRANSFER_SUPPORT",
+      "lines": 6,
+      "debit": "0.00",
+      "credit": "1706287.50"
+    },
+    {
+      "fiscal_support_status": "WITHHOLDING_SUPPORT",
+      "lines": 17,
+      "debit": "0.00",
+      "credit": "1067212.50"
+    },
+    {
+      "fiscal_support_status": "XML_REQUIRED",
+      "lines": 91,
+      "debit": "48298464.42",
+      "credit": "138626521.59"
+    }
+  ],
+  "high_risk_lines": []
+}

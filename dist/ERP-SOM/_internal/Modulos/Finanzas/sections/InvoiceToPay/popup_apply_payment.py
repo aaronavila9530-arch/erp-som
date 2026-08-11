@@ -5,7 +5,8 @@ import requests
 
 from Modulos.Finanzas.date_utils import LONG_DATE_FORMAT, to_db_date, to_long_english_date
 from Modulos.Servicios.widgets.date_picker import DatePicker
-from api_client import BASE_URL
+from api_client import BASE_URL, get_accounting_bank_accounts_api
+from session_context import get_rol, get_user
 
 
 class PopupApplyPayment(tk.Toplevel):
@@ -16,9 +17,11 @@ class PopupApplyPayment(tk.Toplevel):
         self.parent = parent
         self.on_success = on_success
         self.obligation = obligation_data or {}
+        self.bank_accounts = []
+        self.bank_account_by_label = {}
 
         self.title("Apply Payment")
-        self.geometry("420x420")
+        self.geometry("470x475")
         self.resizable(False, False)
         self.transient(parent)
         self.grab_set()
@@ -69,6 +72,11 @@ class PopupApplyPayment(tk.Toplevel):
             width=3,
             command=lambda: DatePicker(self, self.ent_date, output_format=LONG_DATE_FORMAT)
         ).pack(side="left", padx=(5, 0))
+
+        tk.Label(frm, text="Bank Account").grid(row=6, column=0, sticky="w", pady=5)
+        self.cmb_bank = ttk.Combobox(frm, state="readonly")
+        self.cmb_bank.grid(row=6, column=1, sticky="ew", pady=5)
+        self._load_bank_accounts()
 
         frm.columnconfigure(1, weight=1)
 
@@ -142,6 +150,10 @@ class PopupApplyPayment(tk.Toplevel):
             messagebox.showerror("Error", "Payment date is required.")
             return
 
+        if not self._selected_bank():
+            messagebox.showerror("Error", "Select a bank account.")
+            return
+
         # ---------------- LLAMAR API ----------------
         try:
             response = requests.post(
@@ -149,7 +161,15 @@ class PopupApplyPayment(tk.Toplevel):
                 params={
                     "obligation_id": int(obligation_id),
                     "amount": float(amount),
-                    "payment_date": payment_date
+                    "payment_date": payment_date,
+                    "bank_account_code": self._selected_bank().get("account_code"),
+                    "bank_account_name": self._selected_bank().get("account_name"),
+                    "bank_name": self._selected_bank().get("account_name")
+                },
+                headers={
+                    "X-User": get_user() or "unknown",
+                    "X-Role": get_rol() or "",
+                    "X-User-Role": get_rol() or "",
                 },
                 timeout=20
             )
@@ -177,14 +197,48 @@ class PopupApplyPayment(tk.Toplevel):
             return
 
         # ---------------- SUCCESS ----------------
+        rule_detail = ""
+        if data.get("external_surveyor_rule_applied"):
+            rule_detail = (
+                "\n\nSurveyor exterior:\n"
+                f"Retencion 25%: {float(data.get('withholding_usd') or 0):,.2f} USD\n"
+                f"Deduccion transferencia: {float(data.get('deduction_usd') or 0):,.2f} USD\n"
+                f"Neto a pagar: {float(data.get('net_payment_usd') or 0):,.2f} USD"
+            )
+
         messagebox.showinfo(
             "Success",
             f"Payment applied successfully.\n\n"
             f"New Balance: {data.get('new_balance')}\n"
             f"Status: {data.get('status')}"
+            f"{rule_detail}"
         )
 
         if self.on_success:
             self.on_success()
 
         self.destroy()
+
+    def _load_bank_accounts(self):
+        try:
+            self.bank_accounts = get_accounting_bank_accounts_api()
+        except Exception:
+            self.bank_accounts = []
+
+        values = []
+        self.bank_account_by_label = {}
+        for account in self.bank_accounts:
+            code = str(account.get("account_code") or "").strip()
+            name = str(account.get("account_name") or "").strip()
+            if not code or not name:
+                continue
+            label = f"{code} - {name}"
+            values.append(label)
+            self.bank_account_by_label[label] = account
+
+        self.cmb_bank["values"] = values
+        if values:
+            self.cmb_bank.set(values[0])
+
+    def _selected_bank(self):
+        return self.bank_account_by_label.get(self.cmb_bank.get().strip(), {})

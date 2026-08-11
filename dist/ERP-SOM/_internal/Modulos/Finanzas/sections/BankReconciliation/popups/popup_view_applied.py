@@ -3,6 +3,7 @@ from tkinter import ttk, messagebox
 import requests
 
 from api_client import BASE_URL
+from session_context import get_rol, get_user
 from Modulos.Finanzas.date_utils import to_long_english_date
 
 
@@ -138,6 +139,11 @@ class PopupViewApplied(tk.Toplevel):
                 json={
                     "reason": reason,
                     "comment": comment
+                },
+                headers={
+                    "X-User": get_user() or "unknown",
+                    "X-Role": get_rol() or "",
+                    "X-User-Role": get_rol() or "",
                 },
                 timeout=20
             )

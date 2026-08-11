@@ -1,6 +1,7 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 import requests
+from api_client import api_request
 
 from Modulos.MasterData.tablas.base_table import BasePaginatedTable
 from Modulos.MasterData.popups.popup_empleado import PopupEmpleado
@@ -72,7 +73,7 @@ class TablaEmpleadosUI(BasePaginatedTable):
     def load_data(self):
         try:
             url = f"{BASE_URL}/empleados?page={self.page}&page_size={self.page_size}"
-            r = requests.get(url, timeout=15)
+            r = api_request("GET", url, timeout=15)
             r.raise_for_status()  # ← si hay 500/404, lanza excepción clara
             data = r.json()
 
@@ -115,7 +116,7 @@ class TablaEmpleadosUI(BasePaginatedTable):
 
         try:
             url = f"{BASE_URL}/empleados/{codigo}"
-            r = requests.get(url, timeout=10)
+            r = api_request("GET", url, timeout=10)
             r.raise_for_status()
             data = r.json()
         except Exception:
@@ -147,7 +148,7 @@ class TablaEmpleadosUI(BasePaginatedTable):
 
         try:
             url = f"{BASE_URL}/empleados/{codigo}"
-            r = requests.get(url, timeout=15)
+            r = api_request("GET", url, timeout=15)
             r.raise_for_status()
             data = r.json()
         except Exception:
@@ -173,7 +174,7 @@ class TablaEmpleadosUI(BasePaginatedTable):
     def _guardar_edicion(self, data):
         try:
             url = f"{BASE_URL}/empleados/update"
-            r = requests.put(url, json=data, timeout=15)
+            r = api_request("PUT", url, json=data, timeout=15)
             if r.status_code == 200:
                 messagebox.showinfo("OK", "Empleado actualizado ✔")
                 self.refresh()
@@ -195,7 +196,7 @@ class TablaEmpleadosUI(BasePaginatedTable):
 
         try:
             url = f"{BASE_URL}/empleados/{codigo}"
-            r = requests.delete(url, timeout=15)
+            r = api_request("DELETE", url, timeout=15)
             if r.status_code == 200:
                 messagebox.showinfo("OK", "Empleado eliminado")
                 self.refresh()

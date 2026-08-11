@@ -2,9 +2,12 @@ from fastapi import APIRouter, Depends, Query, HTTPException, Header
 from psycopg2.extras import RealDictCursor
 from typing import Optional
 from datetime import date
+import os
 
 from database import get_db
 from rbac_service import has_permission
+from services.tenanting import company_code, ensure_company_column
+from fastapi.responses import FileResponse
 
 
 router = APIRouter(
@@ -37,15 +40,19 @@ def buscar_billing(
     fecha_hasta: Optional[date] = Query(None),
     tipo_factura: Optional[str] = Query(None),
     tipo_documento: Optional[str] = Query(None),
+    company_code_param: Optional[str] = Query(None, alias="company_code"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=10000),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
     conn=Depends(get_db)
 ):
     offset = (page - 1) * page_size
     cur = conn.cursor(cursor_factory=RealDictCursor)
+    company = company_code(company_code_param, x_company_code)
+    ensure_company_column("invoicing")
 
-    filtros = []
-    params = {}
+    filtros = ["company_code = %(company_code)s"]
+    params = {"company_code": company}
 
     if cliente and cliente.upper() != "ALL":
         filtros.append("nombre_cliente ILIKE %(cliente)s")
@@ -117,15 +124,22 @@ def buscar_billing(
 # Preview de factura (PopupPreviewFactura)
 # ============================================================
 @router.get("/{numero_documento}")
-def get_factura(numero_documento: str, conn=Depends(get_db)):
+def get_factura(
+    numero_documento: str,
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+    conn=Depends(get_db),
+):
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
+    company = company_code(header_value=x_company_code)
+    ensure_company_column("invoicing")
 
     cur.execute("""
         SELECT *
         FROM invoicing
         WHERE numero_documento = %s
-    """, (numero_documento,))
+          AND company_code = %s
+    """, (numero_documento, company))
 
     factura = cur.fetchone()
     cur.close()
@@ -142,18 +156,22 @@ def get_factura(numero_documento: str, conn=Depends(get_db)):
 @router.get("/pdf/{numero_documento}")
 def obtener_pdf_factura(
     numero_documento: str,
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
     conn=Depends(get_db)
 ):
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
+    company = company_code(header_value=x_company_code)
+    ensure_company_column("invoicing")
 
     cur.execute(
         """
         SELECT pdf_path
         FROM invoicing
         WHERE numero_documento = %s
+          AND company_code = %s
         """,
-        (numero_documento,)
+        (numero_documento, company)
     )
 
     row = cur.fetchone()

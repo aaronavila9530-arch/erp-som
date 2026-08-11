@@ -3,6 +3,9 @@ from tkinter import filedialog, messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 from datetime import datetime, timedelta
 from pathlib import Path
+import json
+import os
+import re
 
 import api_client
 from tkcalendar import DateEntry, Calendar
@@ -40,6 +43,9 @@ class LograQuestionnairesForm(ttk.Frame):
         self.review_mode = review_mode
 
         self.report_id = None
+        self.report_ids_by_form = {}
+        self.report_versions_by_form = {}
+        self.active_form_slug = None
         self.form_var = tk.StringVar()
         self.search_var = tk.StringVar()
         self.section_var = tk.StringVar(value="critical_questions")
@@ -50,10 +56,21 @@ class LograQuestionnairesForm(ttk.Frame):
         self.text_widgets = {}
         self._search_trace = None
         self._agenda_alerted = set()
+        self._autosave_after_id = None
+        self._sync_after_id = None
+        self._realtime_after_id = None
+        self._cache_dir = Path(os.getenv("LOCALAPPDATA") or Path.home()) / "ERP-SOM" / "ong_autosave"
+        self._pending_dir = self._cache_dir / "pending"
+        self._cache_dir.mkdir(parents=True, exist_ok=True)
+        self._pending_dir.mkdir(parents=True, exist_ok=True)
 
         self.pack(fill="both", expand=True)
         self._build_ui()
+        self.active_form_slug = self._current_form()["slug"]
+        self._restore_latest_cache()
         self._start_agenda_alert_monitor()
+        self._schedule_autosave()
+        self._schedule_pending_sync()
 
     # =========================================================
     # UI
@@ -86,11 +103,15 @@ class LograQuestionnairesForm(ttk.Frame):
         actions = ttk.Frame(bar)
         actions.grid(row=0, column=1, sticky="e")
         if not self.review_mode:
+            if callable(self.on_back):
+                ttk.Button(actions, text="Volver", command=self._go_back).pack(side="left", padx=4)
             ttk.Button(actions, text="Agenda", command=self._open_agenda).pack(side="left", padx=4)
             ttk.Button(actions, text="Mejorar con PORTIA", command=self._open_portia).pack(side="left", padx=4)
             ttk.Button(actions, text="Guardar", command=self._save_report).pack(side="left", padx=4)
         else:
+            ttk.Button(actions, text="Volver", command=self._go_back).pack(side="left", padx=4)
             ttk.Button(actions, text="Ver agenda", command=self._open_agenda).pack(side="left", padx=4)
+            ttk.Button(actions, text="Actualizar", command=self._save_report).pack(side="left", padx=4)
         ttk.Button(actions, text="Home", command=self._go_home).pack(side="left", padx=4)
 
     def _build_filters(self):
@@ -193,6 +214,10 @@ class LograQuestionnairesForm(ttk.Frame):
         title = self.form_var.get()
         return next((item for item in ONG_QUESTIONNAIRES if item["title"] == title), ONG_QUESTIONNAIRES[0])
 
+    def _safe_cache_name(self, value):
+        text = re.sub(r"[^a-zA-Z0-9._-]+", "_", str(value or "ong")).strip("_")
+        return text or "ong"
+
     def _all_questions(self, form=None, section=None):
         form = form or self._current_form()
         section = section or self.section_var.get()
@@ -234,6 +259,10 @@ class LograQuestionnairesForm(ttk.Frame):
 
     def _on_context_changed(self, event=None):
         self._collect_visible_text()
+        selected_slug = self._current_form()["slug"]
+        if selected_slug != self.active_form_slug:
+            self.active_form_slug = selected_slug
+            self.report_id = self.report_ids_by_form.get(selected_slug)
         self.page_index = 0
         self._render_current_page()
 
@@ -319,6 +348,7 @@ class LograQuestionnairesForm(ttk.Frame):
             text = ScrolledText(bullets_box, height=2, wrap="word", font=("Segoe UI", 9))
             text.insert("1.0", value)
             text.grid(row=idx - 1, column=1, sticky="ew", pady=3)
+            text.bind("<KeyRelease>", self._schedule_realtime_cache)
             self.text_widgets[key].append(text)
 
         actions = ttk.Frame(card)
@@ -334,6 +364,12 @@ class LograQuestionnairesForm(ttk.Frame):
             ttk.Button(actions, text="Adjuntar", command=lambda f=form, s=section, i=item: self._attach_file(f, s, i)).pack(
                 side="left"
             )
+        if self.report_id:
+            ttk.Button(
+                actions,
+                text="Actualizar pregunta",
+                command=lambda f=form, s=section, i=item: self._update_question(f, s, i)
+            ).pack(side="left", padx=(8, 0))
 
         self._build_attachments(card, form, section, item)
 
@@ -453,46 +489,217 @@ class LograQuestionnairesForm(ttk.Frame):
             bullets.pop()
         self._render_current_page()
 
+    def _update_question(self, form, section, item):
+        if not self.report_id:
+            messagebox.showwarning("ONG", "Guarda o carga primero el reporte ONG.")
+            return
+        self._collect_visible_text()
+        key = self._answer_key(form, section, item)
+        payload = {
+            "form_slug": form["slug"],
+            "form_title": form["title"],
+            "section": section,
+            "item_key": self._item_key(item),
+            "question_text": item.get("question", ""),
+            "bullets": [value.strip() for value in self.answers.get(key, []) if value.strip()],
+        }
+        resp = api_client.update_logra_answer_api(self.report_id, payload)
+        if not resp.get("success"):
+            messagebox.showerror("ONG", f"No se pudo actualizar la pregunta:\n{resp.get('error') or resp}")
+            return
+        messagebox.showinfo("ONG", "Pregunta actualizada correctamente.")
+
     def _answers_payload(self):
         self._collect_visible_text()
         payload = []
-        for form in ONG_QUESTIONNAIRES:
-            for section in self.SECTION_LABELS:
-                for item in form.get(section, []):
-                    key = self._answer_key(form, section, item)
-                    bullets = [value.strip() for value in self.answers.get(key, []) if value.strip()]
-                    if not bullets:
-                        continue
-                    payload.append({
-                        "form_slug": form["slug"],
-                        "form_title": form["title"],
-                        "section": section,
-                        "item_key": self._item_key(item),
-                        "question_text": item.get("question", ""),
-                        "bullets": bullets,
-                    })
+        form = self._current_form()
+        for section in self.SECTION_LABELS:
+            for item in form.get(section, []):
+                key = self._answer_key(form, section, item)
+                bullets = [value.strip() for value in self.answers.get(key, []) if value.strip()]
+                if not bullets:
+                    continue
+                payload.append({
+                    "form_slug": form["slug"],
+                    "form_title": form["title"],
+                    "section": section,
+                    "item_key": self._item_key(item),
+                    "question_text": item.get("question", ""),
+                    "bullets": bullets,
+                })
         return payload
 
-    def _save_report(self, silent=False):
+    def _report_payload(self):
+        form = self._current_form()
+        form_slug = form["slug"]
+        report_id = self.report_ids_by_form.get(form_slug)
+        self.report_id = report_id
         title = f"ONG - {self.form_var.get() or 'Cuestionarios'}"
         payload = {
-            "id": self.report_id,
+            "id": report_id,
             "title": title,
+            "form_slug": form_slug,
             "created_by": self.usuario or get_user(),
-            "agenda_items": self.agenda_items,
-            "agenda_notes": self.agenda_notes,
+            "agenda_items": [],
+            "agenda_notes": "",
             "answers": self._answers_payload(),
         }
+        version = self.report_versions_by_form.get(form_slug)
+        if version is not None:
+            payload["expected_version"] = version
+        return payload
+
+    def _cache_payload(self, payload, pending=False):
+        payload = dict(payload or {})
+        payload["_cached_at"] = datetime.now().isoformat()
+        payload["_usuario"] = self.usuario or get_user()
+        name = self._safe_cache_name(f"{payload.get('id') or 'new'}_{payload.get('title')}")
+        target_dir = self._pending_dir if pending else self._cache_dir
+        path = target_dir / f"{name}.json"
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        return path
+
+    def _restore_latest_cache(self):
+        try:
+            files = sorted(self._cache_dir.glob("*.json"), key=lambda item: item.stat().st_mtime, reverse=True)
+            current_user = (self.usuario or get_user() or "").strip().lower()
+            restored_slugs = set()
+            latest_payload = None
+            for path in files:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+                if str(payload.get("_usuario") or "").strip().lower() != current_user:
+                    continue
+                form_slug = str(payload.get("form_slug") or "").strip()
+                if not form_slug:
+                    answers = payload.get("answers") or []
+                    form_slug = next((str(item.get("form_slug") or "").strip() for item in answers if item.get("form_slug")), "")
+                if not form_slug or form_slug in restored_slugs:
+                    continue
+                form = next((item for item in ONG_QUESTIONNAIRES if item["slug"] == form_slug), None)
+                if not form:
+                    continue
+                restored_slugs.add(form_slug)
+                if payload.get("id"):
+                    self.report_ids_by_form[form_slug] = payload.get("id")
+                if payload.get("expected_version") is not None:
+                    self.report_versions_by_form[form_slug] = payload.get("expected_version")
+                for item in payload.get("answers") or []:
+                    key = f"{item.get('form_slug')}|{item.get('section')}|{item.get('item_key')}"
+                    bullets = item.get("bullets") or []
+                    self.answers[key] = bullets if bullets else [""]
+                if latest_payload is None:
+                    latest_payload = (payload, form)
+            if latest_payload:
+                payload, form = latest_payload
+                self.form_var.set(form["title"])
+                self.active_form_slug = form["slug"]
+                self.report_id = self.report_ids_by_form.get(form["slug"])
+                self._render_current_page()
+        except Exception:
+            pass
+
+    def _schedule_realtime_cache(self, event=None):
+        if self._realtime_after_id:
+            try:
+                self.after_cancel(self._realtime_after_id)
+            except Exception:
+                pass
+        self._realtime_after_id = self.after(700, self._cache_realtime_draft)
+
+    def _cache_realtime_draft(self):
+        self._realtime_after_id = None
+        try:
+            self._cache_payload(self._report_payload(), pending=False)
+        except Exception:
+            pass
+
+    def _post_report_payload(self, payload):
         resp = api_client.save_logra_report_api(payload)
         if not resp.get("success"):
+            self._cache_payload(payload, pending=True)
+            return resp
+        report = resp.get("report") or {}
+        form_slug = str(report.get("form_slug") or payload.get("form_slug") or "").strip()
+        self.report_id = report.get("id") or self.report_id
+        if form_slug and self.report_id:
+            self.report_ids_by_form[form_slug] = self.report_id
+            self.report_versions_by_form[form_slug] = report.get("version") or self.report_versions_by_form.get(form_slug)
+        expected_count = len(payload.get("answers") or [])
+        if int(resp.get("saved_answer_count") or 0) < expected_count:
+            failure = {"success": False, "error": "Backend did not confirm every submitted answer."}
+            self._cache_payload(payload, pending=True)
+            return failure
+        return resp
+
+    def _save_report(self, silent=False):
+        payload = self._report_payload()
+        self._cache_payload(payload, pending=False)
+        resp = self._post_report_payload(payload)
+        if not resp.get("success"):
             if not silent:
-                messagebox.showerror("ONG", f"No se pudo guardar:\n{resp.get('error') or resp}")
+                messagebox.showwarning(
+                    "ONG",
+                    "No se pudo guardar en backend. Quedo en cache local y se reintentara automaticamente."
+                )
             return False
-        self.report_id = (resp.get("report") or {}).get("id") or self.report_id
         if not silent:
             messagebox.showinfo("ONG", "Guardado correctamente.")
             self._render_current_page()
         return True
+
+    def _autosave_report(self):
+        try:
+            payload = self._report_payload()
+            self._cache_payload(payload, pending=False)
+            if not self.report_id and not payload.get("answers"):
+                return
+            self._post_report_payload(payload)
+        except Exception:
+            try:
+                self._cache_payload(self._report_payload(), pending=True)
+            except Exception:
+                pass
+        finally:
+            self._schedule_autosave()
+
+    def _schedule_autosave(self):
+        if self._autosave_after_id:
+            try:
+                self.after_cancel(self._autosave_after_id)
+            except Exception:
+                pass
+        self._autosave_after_id = self.after(20000, self._autosave_report)
+
+    def _sync_pending_cache(self):
+        try:
+            for path in sorted(self._pending_dir.glob("*.json")):
+                try:
+                    payload = json.loads(path.read_text(encoding="utf-8"))
+                    for key in ("_cached_at", "_usuario"):
+                        payload.pop(key, None)
+                    resp = api_client.save_logra_report_api(payload)
+                    if resp.get("success"):
+                        report = resp.get("report") or {}
+                        form_slug = str(report.get("form_slug") or payload.get("form_slug") or "").strip()
+                        report_id = report.get("id")
+                        if form_slug and report_id:
+                            self.report_ids_by_form[form_slug] = report_id
+                            self.report_versions_by_form[form_slug] = report.get("version") or 1
+                            if form_slug == self.active_form_slug:
+                                self.report_id = report_id
+                        path.unlink(missing_ok=True)
+                except Exception:
+                    continue
+        finally:
+            self._schedule_pending_sync()
+
+    def _schedule_pending_sync(self):
+        if self._sync_after_id:
+            try:
+                self.after_cancel(self._sync_after_id)
+            except Exception:
+                pass
+        self._sync_after_id = self.after(10000, self._sync_pending_cache)
 
     def _attach_file(self, form, section, item):
         if not self.report_id:
@@ -566,12 +773,27 @@ class LograQuestionnairesForm(ttk.Frame):
             messagebox.showerror("ONG", f"No se pudo abrir el reporte:\n{resp.get('error') or resp}")
             return
 
-        self.report_id = (resp.get("report") or {}).get("id")
         report = resp.get("report") or {}
+        answers = resp.get("answers") or []
+        form_slug = str(report.get("form_slug") or "").strip()
+        if not form_slug:
+            form_slug = next((str(item.get("form_slug") or "").strip() for item in answers if item.get("form_slug")), "")
+        form = next((item for item in ONG_QUESTIONNAIRES if item["slug"] == form_slug), None)
+        if not form:
+            title = str(report.get("title") or "")
+            form = next((item for item in ONG_QUESTIONNAIRES if item["title"] in title), None)
+            form_slug = form["slug"] if form else ""
+        self.report_id = report.get("id")
+        if form_slug and self.report_id:
+            self.report_ids_by_form[form_slug] = self.report_id
+            self.report_versions_by_form[form_slug] = report.get("version") or 1
+        if form:
+            self.form_var.set(form["title"])
+            self.active_form_slug = form_slug
         self.agenda_items = report.get("agenda_items") or []
         self.agenda_notes = report.get("agenda_notes") or ""
         self.answers.clear()
-        for item in resp.get("answers") or []:
+        for item in answers:
             key = f"{item.get('form_slug')}|{item.get('section')}|{item.get('item_key')}"
             bullets = item.get("bullets") or []
             self.answers[key] = bullets if bullets else [""]
@@ -586,6 +808,12 @@ class LograQuestionnairesForm(ttk.Frame):
         from Modulos.Informes.informes_home_ui import InformesHomeUI
 
         InformesHomeUI(self.parent, usuario=self.usuario, rol=self.rol)
+
+    def _go_back(self):
+        if callable(self.on_back):
+            self.on_back()
+        else:
+            self._go_home()
 
     # =========================================================
     # Agenda alerts
@@ -609,7 +837,9 @@ class LograQuestionnairesForm(ttk.Frame):
         try:
             now = datetime.now()
             for index, item in enumerate(self.agenda_items or []):
-                status = item.get("status") or ""
+                status = (item.get("status") or "").strip().lower()
+                if "complet" in status:
+                    continue
                 start = self._parse_agenda_datetime(item, "start_time")
                 end = self._parse_agenda_datetime(item, "end_time")
                 if not start:
@@ -631,12 +861,6 @@ class LograQuestionnairesForm(ttk.Frame):
                     if key not in self._agenda_alerted:
                         self._agenda_alerted.add(key)
                         messagebox.showinfo("Agenda ONG", f"La reunion '{label}' esta en curso.")
-
-                if end and now > end and status != "Completado":
-                    key = (index, item.get("date_iso") or item.get("date"), item.get("end_time"), "late")
-                    if key not in self._agenda_alerted:
-                        self._agenda_alerted.add(key)
-                        messagebox.showwarning("Agenda ONG", f"La reunion '{label}' ya paso y no esta marcada como completada.")
         finally:
             if self.winfo_exists():
                 self.after(60000, self._check_agenda_alerts)
@@ -760,6 +984,7 @@ class PopupLograAgenda(tk.Toplevel):
         self.priority_var = tk.StringVar(value="Media")
         self.status_var = tk.StringVar(value="Pendiente")
         self.reminder_var = tk.StringVar(value="30")
+        self.agenda_action_var = tk.StringVar(value="Nueva")
         self.export_var = tk.StringVar(value="PDF")
         self.view_mode = tk.StringVar(value="list")
         self.calendar_month = datetime.now().date().replace(day=1)
@@ -829,10 +1054,21 @@ class PopupLograAgenda(tk.Toplevel):
 
         meeting_actions = ttk.LabelFrame(actions, text="Reunion seleccionada", padding=(8, 6))
         meeting_actions.grid(row=0, column=1, sticky="ew", padx=(0, 8))
-        ttk.Button(meeting_actions, text="+ Nueva", command=self._add).pack(side="left", padx=(0, 4))
-        ttk.Button(meeting_actions, text="Status", command=self._change_selected_status).pack(side="left", padx=4)
-        ttk.Button(meeting_actions, text="Notas", command=self._open_notes).pack(side="left", padx=4)
-        ttk.Button(meeting_actions, text="Eliminar", command=self._remove).pack(side="left", padx=(4, 0))
+        ttk.Combobox(
+            meeting_actions,
+            textvariable=self.agenda_action_var,
+            state="readonly",
+            width=22,
+            values=[
+                "Nueva",
+                "Cargar seleccion",
+                "Actualizar seleccion",
+                "Cambiar status",
+                "Notas",
+                "Eliminar",
+            ],
+        ).pack(side="left", padx=(0, 4))
+        ttk.Button(meeting_actions, text="Ejecutar", command=self._run_agenda_action).pack(side="left")
 
         export_actions = ttk.LabelFrame(actions, text="Exportacion", padding=(8, 6))
         export_actions.grid(row=0, column=2, sticky="e")
@@ -869,12 +1105,16 @@ class PopupLograAgenda(tk.Toplevel):
         xscroll = ttk.Scrollbar(self.table_box, orient="horizontal", command=self.tree.xview)
         xscroll.grid(row=1, column=0, sticky="ew")
         self.tree.configure(yscrollcommand=yscroll.set, xscrollcommand=xscroll.set)
+        self.tree.bind("<<TreeviewSelect>>", lambda _event: self._load_selected_into_form(silent=True))
+        self.tree.bind("<Double-1>", lambda _event: self._load_selected_into_form(silent=True))
         self.tree.tag_configure("Alta", background="#F8D7DA")
         self.tree.tag_configure("Media", background="#FFF3CD")
         self.tree.tag_configure("Baja", background="#D1E7DD")
         self.tree.tag_configure("Pendiente", background="#F8D7DA")
         self.tree.tag_configure("En proceso", background="#FFF3CD")
         self.tree.tag_configure("Completado", background="#D1E7DD")
+        self.tree.tag_configure("Vencido", background="#F4B8B8")
+        self.tree.tag_configure("En curso", background="#FFF3CD")
 
         self.calendar_box = ttk.Frame(root)
         self.calendar_box.grid(row=2, column=0, sticky="nsew")
@@ -994,15 +1234,41 @@ class PopupLograAgenda(tk.Toplevel):
                 continue
         return None
 
+    def _agenda_item_datetime(self, item, key):
+        item_date = self._agenda_item_date(item)
+        if not item_date:
+            return None
+        try:
+            item_time = datetime.strptime(str(item.get(key) or "").strip(), "%H:%M").time()
+        except Exception:
+            return None
+        return datetime.combine(item_date, item_time)
+
+    def _agenda_row_tag(self, item):
+        status = str(item.get("status") or "").strip()
+        if "complet" in status.lower():
+            return "Completado"
+        now = datetime.now()
+        start = self._agenda_item_datetime(item, "start_time")
+        end = self._agenda_item_datetime(item, "end_time")
+        if end and now > end:
+            return "Vencido"
+        if start and start <= now and (not end or now <= end):
+            return "En curso"
+        return status or item.get("priority") or ""
+
     def _calendar_color(self, item):
+        tag = self._agenda_row_tag(item)
         return {
+            "Vencido": "#F4B8B8",
+            "En curso": "#FFF3CD",
             "Pendiente": "#F8D7DA",
             "En proceso": "#FFF3CD",
             "Completado": "#D1E7DD",
             "Alta": "#F8D7DA",
             "Media": "#FFF3CD",
             "Baja": "#D1E7DD",
-        }.get(item.get("status") or item.get("priority"), "#FFFFFF")
+        }.get(tag, "#FFFFFF")
 
     def _select_calendar_item(self, index):
         if 0 <= index < len(self.items):
@@ -1083,7 +1349,7 @@ class PopupLograAgenda(tk.Toplevel):
         for row in self.tree.get_children():
             self.tree.delete(row)
         for index, item in enumerate(self.items):
-            tag = item.get("status") or item.get("priority") or ""
+            tag = self._agenda_row_tag(item)
             self.tree.insert(
                 "",
                 "end",
@@ -1093,6 +1359,30 @@ class PopupLograAgenda(tk.Toplevel):
             )
         if getattr(self, "view_mode", None) and self.view_mode.get() == "calendar":
             self._render_calendar()
+
+    def _agenda_item_key(self, item):
+        return "|".join([
+            str(item.get("date_iso") or item.get("date") or "").strip().lower(),
+            str(item.get("start_time") or "").strip().lower(),
+            str(item.get("end_time") or "").strip().lower(),
+            str(item.get("place") or "").strip().lower(),
+            str(item.get("person") or "").strip().lower(),
+            str(item.get("phone") or item.get("telefono") or "").strip().lower(),
+            str(item.get("company") or item.get("company_role") or "").strip().lower(),
+            str(item.get("topic") or "").strip().lower(),
+        ])
+
+    def _run_agenda_action(self):
+        action = self.agenda_action_var.get()
+        handlers = {
+            "Nueva": self._add,
+            "Cargar seleccion": self._load_selected_into_form,
+            "Actualizar seleccion": self._update_selected,
+            "Cambiar status": self._change_selected_status,
+            "Notas": self._open_notes,
+            "Eliminar": self._remove,
+        }
+        handlers.get(action, self._add)()
 
     def _search_backend(self):
         listing = api_client.list_logra_reports_api()
@@ -1108,13 +1398,26 @@ class PopupLograAgenda(tk.Toplevel):
             messagebox.showinfo("Agenda ONG", "No hay agendas ONG guardadas en backend.")
             return
 
+        agenda_rows = [
+            row for row in rows
+            if str(row.get("title") or "").strip().lower() == "ong - agenda"
+        ]
+        source_rows = agenda_rows or rows
+
         all_items = []
-        for report in rows:
+        seen = set()
+        skipped = 0
+        for report in source_rows:
             report_title = report.get("title") or f"ONG #{report.get('id')}"
             for agenda_index, item in enumerate(report.get("agenda_items") or []):
                 if not isinstance(item, dict):
                     continue
                 row = dict(item)
+                key = self._agenda_item_key(row)
+                if key in seen:
+                    skipped += 1
+                    continue
+                seen.add(key)
                 row["report_id"] = report.get("id")
                 row["agenda_index"] = agenda_index
                 row["report_title"] = report_title
@@ -1123,7 +1426,8 @@ class PopupLograAgenda(tk.Toplevel):
         self.items = all_items
         self.form_instance.agenda_items = [dict(item) for item in self.items]
         self._render()
-        messagebox.showinfo("Agenda ONG", f"Agendas cargadas desde backend. Lineas: {len(self.items)}")
+        extra = f" Duplicadas omitidas: {skipped}." if skipped else ""
+        messagebox.showinfo("Agenda ONG", f"Agendas cargadas desde backend. Lineas: {len(self.items)}.{extra}")
 
     def _add(self):
         if len(self.items) >= self.MAX_ITEMS:
@@ -1160,17 +1464,172 @@ class PopupLograAgenda(tk.Toplevel):
             return
         self.items.append(item)
         self._render()
+        self._clear_fields()
 
-    def _change_selected_status(self):
+    def _selected_index(self, silent=False):
         selected = self.tree.selection()
         if not selected:
-            messagebox.showwarning("Agenda ONG", "Selecciona una linea.")
+            if not silent:
+                messagebox.showwarning("Agenda ONG", "Selecciona una linea.")
+            return None
+        try:
+            index = int(selected[0])
+        except Exception:
+            if not silent:
+                messagebox.showwarning("Agenda ONG", "Seleccion invalida.")
+            return None
+        if index < 0 or index >= len(self.items):
+            if not silent:
+                messagebox.showwarning("Agenda ONG", "Seleccion invalida.")
+            return None
+        return index
+
+    def _load_selected_into_form(self, silent=False):
+        index = self._selected_index(silent=silent)
+        if index is None:
             return
-        for iid in selected:
-            index = int(iid)
-            if 0 <= index < len(self.items):
-                self.items[index]["status"] = self.status_var.get()
+        item = self.items[index]
+        item_date = self._agenda_item_date(item)
+        if item_date:
+            self.selected_date = item_date
+            self._sync_long_date()
+        start = str(item.get("start_time") or "09:00")
+        end = str(item.get("end_time") or "10:00")
+        self.start_hour_var.set(start[:2] if len(start) >= 2 else "09")
+        self.start_minute_var.set(start[3:5] if len(start) >= 5 else "00")
+        self.end_hour_var.set(end[:2] if len(end) >= 2 else "10")
+        self.end_minute_var.set(end[3:5] if len(end) >= 5 else "00")
+        self.place_var.set(item.get("place") or "")
+        self.person_var.set(item.get("person") or "")
+        self.phone_var.set(item.get("phone") or item.get("telefono") or "")
+        self.company_var.set(item.get("company") or item.get("company_role") or "")
+        self.topic_var.set(item.get("topic") or "")
+        self.priority_var.set(item.get("priority") or "Media")
+        self.status_var.set(item.get("status") or "Pendiente")
+        self.reminder_var.set(str(item.get("reminder_minutes") or 30))
+
+    def _clear_fields(self):
+        self.selected_date = datetime.now().date()
+        self._sync_long_date()
+        self.start_hour_var.set("09")
+        self.start_minute_var.set("00")
+        self.end_hour_var.set("10")
+        self.end_minute_var.set("00")
+        self.place_var.set("")
+        self.person_var.set("")
+        self.phone_var.set("")
+        self.company_var.set("")
+        self.topic_var.set("")
+        self.priority_var.set("Media")
+        self.status_var.set("Pendiente")
+        self.reminder_var.set("30")
+        try:
+            self.tree.selection_remove(self.tree.selection())
+        except Exception:
+            pass
+
+    def _agenda_payload_from_fields(self, current_item=None):
+        self._sync_long_date()
+        start = self._compose_time(self.start_hour_var, self.start_minute_var)
+        end = self._compose_time(self.end_hour_var, self.end_minute_var)
+        if not start or not end:
+            messagebox.showwarning("Agenda ONG", "Usa hora 00-23 y minutos 00-59.")
+            return None
+        try:
+            reminder = max(0, int(self.reminder_var.get() or 0))
+        except Exception:
+            messagebox.showwarning("Agenda ONG", "Reminder min debe ser un numero entero.")
+            return None
+        payload = dict(current_item or {})
+        payload.update({
+            "date": self.date_long_var.get(),
+            "date_iso": self.selected_date.isoformat(),
+            "start_time": start,
+            "end_time": end,
+            "place": self.place_var.get().strip(),
+            "person": self.person_var.get().strip(),
+            "phone": self.phone_var.get().strip(),
+            "company": self.company_var.get().strip(),
+            "topic": self.topic_var.get().strip(),
+            "priority": self.priority_var.get(),
+            "status": self.status_var.get(),
+            "reminder_minutes": reminder,
+        })
+        if not payload["person"] and not payload["topic"] and not payload["place"]:
+            messagebox.showwarning("Agenda ONG", "Agrega al menos persona, tema o lugar.")
+            return None
+        return payload
+
+    def _update_selected(self):
+        index = self._selected_index()
+        if index is None:
+            return
+        payload = self._agenda_payload_from_fields(self.items[index])
+        if payload is None:
+            return
+        report_id = payload.get("report_id") or self.form_instance.report_id
+        agenda_index = payload.get("agenda_index", index)
+        if not report_id:
+            self.items[index] = payload
+            self.form_instance.agenda_items = [dict(item) for item in self.items]
+            self._render()
+            messagebox.showinfo("Agenda ONG", "Linea actualizada localmente. Guarda la agenda para persistirla.")
+            self._clear_fields()
+            return
+        resp = api_client.update_logra_agenda_item_api(report_id, agenda_index, payload)
+        if not resp.get("success"):
+            messagebox.showerror("Agenda ONG", f"No se pudo actualizar la linea:\n{resp.get('error') or resp}")
+            return
+        self.items[index] = payload
+        self.form_instance.agenda_items = [dict(item) for item in self.items]
         self._render()
+        messagebox.showinfo("Agenda ONG", "Linea actualizada correctamente.")
+        self._clear_fields()
+
+    def _change_selected_status(self):
+        index = self._selected_index()
+        if index is None:
+            return
+
+        popup = tk.Toplevel(self)
+        popup.title("Cambiar status")
+        popup.geometry("330x150")
+        popup.transient(self)
+        popup.grab_set()
+
+        root = ttk.Frame(popup, padding=14)
+        root.pack(fill="both", expand=True)
+        ttk.Label(root, text="Status de la reunion seleccionada").pack(anchor="w")
+        status_value = tk.StringVar(value=self.items[index].get("status") or "Pendiente")
+        combo = ttk.Combobox(
+            root,
+            textvariable=status_value,
+            state="readonly",
+            values=["Pendiente", "En proceso", "Completado"],
+            width=24,
+        )
+        combo.pack(anchor="w", fill="x", pady=(8, 12))
+        combo.focus_set()
+
+        actions = ttk.Frame(root)
+        actions.pack(fill="x")
+
+        def apply_status():
+            self.items[index]["status"] = status_value.get()
+            report_id = self.items[index].get("report_id") or self.form_instance.report_id
+            agenda_index = self.items[index].get("agenda_index", index)
+            if report_id:
+                resp = api_client.update_logra_agenda_item_api(report_id, agenda_index, self.items[index])
+                if not resp.get("success"):
+                    messagebox.showerror("Agenda ONG", f"No se pudo actualizar el status:\n{resp.get('error') or resp}")
+                    return
+            self.form_instance.agenda_items = [dict(item) for item in self.items]
+            self._render()
+            self._clear_fields()
+            popup.destroy()
+
+        ttk.Button(actions, text="Cancelar", command=popup.destroy).pack(side="right")
+        ttk.Button(actions, text="Actualizar status", command=apply_status).pack(side="right", padx=6)
 
     def _open_notes(self):
         popup = tk.Toplevel(self)
@@ -1227,8 +1686,27 @@ class PopupLograAgenda(tk.Toplevel):
         if len(self.form_instance.agenda_items) > self.MAX_ITEMS:
             messagebox.showwarning("Agenda ONG", "La agenda permite maximo 150 lineas.")
             return
-        if self.form_instance._save_report(silent=False):
-            messagebox.showinfo("Agenda ONG", "Agenda guardada correctamente.")
+        resp = api_client.save_logra_agenda_api({
+            "created_by": getattr(self.form_instance, "current_user", "admin"),
+            "agenda_items": self.form_instance.agenda_items,
+            "agenda_notes": self.form_instance.agenda_notes or "",
+        })
+        if not resp.get("success"):
+            messagebox.showerror("Agenda ONG", f"No se pudo guardar la agenda:\n{resp.get('error') or resp}")
+            return
+        report = resp.get("report") or {}
+        report_id = report.get("id")
+        saved_items = report.get("agenda_items") or self.form_instance.agenda_items
+        self.items = [dict(item) for item in saved_items]
+        if report_id:
+            for index, item in enumerate(self.items):
+                item["report_id"] = report_id
+                item["agenda_index"] = index
+                item["report_title"] = "ONG - Agenda"
+        self.form_instance.agenda_items = [dict(item) for item in self.items]
+        self._render()
+        self._clear_fields()
+        messagebox.showinfo("Agenda ONG", "Agenda guardada correctamente.")
 
     def _rows_for_export(self):
         return [[item.get(col, "") for col in self.COLUMNS] for item in self.items]

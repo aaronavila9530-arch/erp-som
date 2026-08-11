@@ -173,6 +173,7 @@ class ReportTypeSelector(ttk.Frame):
             command=self._open_logra_questionnaires,
             disabled=False
         )
+        self._bind_mousewheel_to_children(self)
 
     # =========================================================
     # CARDS
@@ -215,8 +216,8 @@ class ReportTypeSelector(ttk.Frame):
 
     def _bind_mousewheel(self, event=None):
         self.canvas.bind_all("<MouseWheel>", self._on_mousewheel)
-        self.canvas.bind_all("<Button-4>", lambda e: self.canvas.yview_scroll(-3, "units"))
-        self.canvas.bind_all("<Button-5>", lambda e: self.canvas.yview_scroll(3, "units"))
+        self.canvas.bind_all("<Button-4>", self._on_mousewheel)
+        self.canvas.bind_all("<Button-5>", self._on_mousewheel)
 
     def _unbind_mousewheel(self, event=None):
         self.canvas.unbind_all("<MouseWheel>")
@@ -224,7 +225,21 @@ class ReportTypeSelector(ttk.Frame):
         self.canvas.unbind_all("<Button-5>")
 
     def _on_mousewheel(self, event):
-        self.canvas.yview_scroll(int(-1 * (event.delta / 120)) * 3, "units")
+        if getattr(event, "num", None) == 4:
+            direction = -1
+        elif getattr(event, "num", None) == 5:
+            direction = 1
+        else:
+            direction = -1 if getattr(event, "delta", 0) > 0 else 1
+        self.canvas.yview_scroll(direction * 3, "units")
+        return "break"
+
+    def _bind_mousewheel_to_children(self, widget):
+        widget.bind("<MouseWheel>", self._on_mousewheel, add="+")
+        widget.bind("<Button-4>", self._on_mousewheel, add="+")
+        widget.bind("<Button-5>", self._on_mousewheel, add="+")
+        for child in widget.winfo_children():
+            self._bind_mousewheel_to_children(child)
 
     # =========================================================
     # ACTIONS

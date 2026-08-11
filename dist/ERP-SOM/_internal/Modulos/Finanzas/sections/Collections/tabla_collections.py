@@ -1,10 +1,9 @@
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
-import requests
 import csv
 from openpyxl import Workbook
 
-from api_client import BASE_URL
+from api_client import BASE_URL, api_request
 from Modulos.Finanzas.date_utils import to_long_english_date
 from Modulos.Finanzas.export_formatting import normalize_invoice_text_columns
 from Modulos.Finanzas.sections.Collections.popups.popup_disputa import PopupDisputa
@@ -159,7 +158,7 @@ class TablaCollections(tk.Frame):
         }
 
         try:
-            r = requests.get(f"{BASE_URL}/collections/search", params=params, timeout=20)
+            r = api_request("GET", f"{BASE_URL}/collections/search", params=params, timeout=20)
             r.raise_for_status()
             payload = r.json()
         except Exception as e:

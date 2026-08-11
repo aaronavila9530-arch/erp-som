@@ -1,11 +1,9 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
-import requests
 
+from api_client import BASE_URL, api_request
 from Modulos.MasterData.tablas.base_table import BasePaginatedTable
 from Modulos.MasterData.popups.popup_servicio import PopupServicio
-
-BASE_URL = "https://api-som-fastapi-production-e66d.up.railway.app"
 
 
 class TablaServiciosUI(BasePaginatedTable):
@@ -46,7 +44,7 @@ class TablaServiciosUI(BasePaginatedTable):
     def load_data(self):
         try:
             url = f"{BASE_URL}/servicios_md?page={self.page}&page_size={self.page_size}"
-            r = requests.get(url, timeout=15)
+            r = api_request("GET", url, timeout=15)
             data = r.json()
 
             self.total_items = data.get("total", 0)
@@ -89,7 +87,7 @@ class TablaServiciosUI(BasePaginatedTable):
         # API GET
         try:
             url = f"{BASE_URL}/servicios_md/{codigo}"
-            r = requests.get(url, timeout=10)
+            r = api_request("GET", url, timeout=10)
             r.raise_for_status()
         except:
             messagebox.showerror("Error", f"Servicio {codigo} no encontrado")
@@ -132,7 +130,7 @@ class TablaServiciosUI(BasePaginatedTable):
         try:
             # Obtener datos del API
             url = f"{BASE_URL}/servicios_md/{codigo}"
-            r = requests.get(url, timeout=15)
+            r = api_request("GET", url, timeout=15)
             if r.status_code != 200:
                 messagebox.showerror("Error API", r.text)
                 return
@@ -151,7 +149,7 @@ class TablaServiciosUI(BasePaginatedTable):
     def _guardar_edicion(self, data):
         try:
             url = f"{BASE_URL}/servicios_md/update"
-            r = requests.put(url, json=data, timeout=15)
+            r = api_request("PUT", url, json=data, timeout=15)
             if r.status_code == 200:
                 messagebox.showinfo("OK", "Servicio actualizado correctamente")
                 self.refresh()
@@ -172,7 +170,7 @@ class TablaServiciosUI(BasePaginatedTable):
 
         try:
             url = f"{BASE_URL}/servicios_md/{codigo}"
-            r = requests.delete(url, timeout=15)
+            r = api_request("DELETE", url, timeout=15)
             if r.status_code == 200:
                 messagebox.showinfo("OK", "Servicio eliminado")
                 self.refresh()

@@ -2,6 +2,7 @@ fastapi
 uvicorn
 psycopg2-binary
 requests
+cryptography>=42.0.0
 reportlab
 python-multipart
 bcrypt

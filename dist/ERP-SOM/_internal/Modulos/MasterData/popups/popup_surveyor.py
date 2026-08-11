@@ -25,6 +25,7 @@ class PopupSurveyor(tk.Toplevel):
         # Variables
         self.nombre = tk.StringVar()
         self.apellidos = tk.StringVar()
+        self.email = tk.StringVar()
         self.nacionalidad = tk.StringVar()
         self.estado_civil = tk.StringVar()
         self.genero = tk.StringVar()
@@ -39,6 +40,7 @@ class PopupSurveyor(tk.Toplevel):
         self.honorario = tk.StringVar()
         self.frecuencia_pago = tk.StringVar()
         self.banco = tk.StringVar()
+        self.direccion_banco = tk.StringVar()
         self.cuenta_iban = tk.StringVar()
         self.moneda = tk.StringVar()
         self.swift = tk.StringVar()
@@ -170,29 +172,35 @@ class PopupSurveyor(tk.Toplevel):
         self.entry_telefono = ttk.Entry(tab2, textvariable=self.telefono)
         self.entry_telefono.grid(row=1, column=1, padx=10, pady=5, sticky="ew")
 
-        ttk.Label(tab2, text="Provincia:", background="white") \
+        ttk.Label(tab2, text="Email:", background="white") \
             .grid(row=2, column=0, padx=10, pady=5, sticky="w")
 
-        self.entry_provincia = ttk.Entry(tab2, textvariable=self.provincia)
-        self.entry_provincia.grid(row=2, column=1, padx=10, pady=5, sticky="ew")
+        self.entry_email = ttk.Entry(tab2, textvariable=self.email)
+        self.entry_email.grid(row=2, column=1, padx=10, pady=5, sticky="ew")
 
-        ttk.Label(tab2, text="Cantón:", background="white") \
+        ttk.Label(tab2, text="Provincia:", background="white") \
             .grid(row=3, column=0, padx=10, pady=5, sticky="w")
 
-        self.entry_canton = ttk.Entry(tab2, textvariable=self.canton)
-        self.entry_canton.grid(row=3, column=1, padx=10, pady=5, sticky="ew")
+        self.entry_provincia = ttk.Entry(tab2, textvariable=self.provincia)
+        self.entry_provincia.grid(row=3, column=1, padx=10, pady=5, sticky="ew")
 
-        ttk.Label(tab2, text="Distrito:", background="white") \
+        ttk.Label(tab2, text="Cantón:", background="white") \
             .grid(row=4, column=0, padx=10, pady=5, sticky="w")
 
-        self.entry_distrito = ttk.Entry(tab2, textvariable=self.distrito)
-        self.entry_distrito.grid(row=4, column=1, padx=10, pady=5, sticky="ew")
+        self.entry_canton = ttk.Entry(tab2, textvariable=self.canton)
+        self.entry_canton.grid(row=4, column=1, padx=10, pady=5, sticky="ew")
 
-        ttk.Label(tab2, text="Dirección exacta:", background="white") \
+        ttk.Label(tab2, text="Distrito:", background="white") \
             .grid(row=5, column=0, padx=10, pady=5, sticky="w")
 
+        self.entry_distrito = ttk.Entry(tab2, textvariable=self.distrito)
+        self.entry_distrito.grid(row=5, column=1, padx=10, pady=5, sticky="ew")
+
+        ttk.Label(tab2, text="Dirección exacta:", background="white") \
+            .grid(row=6, column=0, padx=10, pady=5, sticky="w")
+
         self.entry_direccion = ttk.Entry(tab2, textvariable=self.direccion)
-        self.entry_direccion.grid(row=5, column=1, padx=10, pady=5, sticky="ew")
+        self.entry_direccion.grid(row=6, column=1, padx=10, pady=5, sticky="ew")
 
         # ==========================
         # TAB 3 — Laboral
@@ -230,26 +238,32 @@ class PopupSurveyor(tk.Toplevel):
         self.entry_banco = ttk.Entry(tab3, textvariable=self.banco)
         self.entry_banco.grid(row=2, column=1, padx=10, pady=5, sticky="ew")
 
-        ttk.Label(tab3, text="Cuenta IBAN:", background="white") \
+        ttk.Label(tab3, text="Dirección banco:", background="white") \
             .grid(row=3, column=0, padx=10, pady=5, sticky="w")
 
-        self.entry_cuenta_iban = ttk.Entry(tab3, textvariable=self.cuenta_iban)
-        self.entry_cuenta_iban.grid(row=3, column=1, padx=10, pady=5, sticky="ew")
+        self.entry_direccion_banco = ttk.Entry(tab3, textvariable=self.direccion_banco)
+        self.entry_direccion_banco.grid(row=3, column=1, padx=10, pady=5, sticky="ew")
 
-        ttk.Label(tab3, text="Swift Code:", background="white") \
+        ttk.Label(tab3, text="Cuenta IBAN:", background="white") \
             .grid(row=4, column=0, padx=10, pady=5, sticky="w")
 
-        self.entry_swift = ttk.Entry(tab3, textvariable=self.swift)
-        self.entry_swift.grid(row=4, column=1, padx=10, pady=5, sticky="ew")
+        self.entry_cuenta_iban = ttk.Entry(tab3, textvariable=self.cuenta_iban)
+        self.entry_cuenta_iban.grid(row=4, column=1, padx=10, pady=5, sticky="ew")
 
-        ttk.Label(tab3, text="UID:", background="white") \
+        ttk.Label(tab3, text="Swift Code:", background="white") \
             .grid(row=5, column=0, padx=10, pady=5, sticky="w")
 
+        self.entry_swift = ttk.Entry(tab3, textvariable=self.swift)
+        self.entry_swift.grid(row=5, column=1, padx=10, pady=5, sticky="ew")
+
+        ttk.Label(tab3, text="UID:", background="white") \
+            .grid(row=6, column=0, padx=10, pady=5, sticky="w")
+
         self.entry_uid = ttk.Entry(tab3, textvariable=self.uid)
-        self.entry_uid.grid(row=5, column=1, padx=10, pady=5, sticky="ew")
+        self.entry_uid.grid(row=6, column=1, padx=10, pady=5, sticky="ew")
 
         ttk.Label(tab3, text="Moneda:", background="white") \
-            .grid(row=6, column=0, padx=10, pady=5, sticky="w")
+            .grid(row=7, column=0, padx=10, pady=5, sticky="w")
 
         monedas = ["CRC", "USD", "EUR"]
 
@@ -259,7 +273,7 @@ class PopupSurveyor(tk.Toplevel):
             values=monedas,
             state="readonly"
         )
-        self.combo_moneda.grid(row=6, column=1, padx=10, pady=5, sticky="ew")
+        self.combo_moneda.grid(row=7, column=1, padx=10, pady=5, sticky="ew")
 
         # ==========================
         # TAB 4 — Salud
@@ -507,6 +521,7 @@ class PopupSurveyor(tk.Toplevel):
             "codigo": self.codigo_generado,
             "nombre": self.entry_nombre.get().strip(),
             "apellidos": self.entry_apellidos.get().strip(),
+            "email": self.entry_email.get().strip(),
             "estado_civil": self.combo_estado_civil.get().strip(),
             "genero": self.combo_genero.get().strip(),
             "nacionalidad": self.entry_nacionalidad.get().strip(),
@@ -521,6 +536,7 @@ class PopupSurveyor(tk.Toplevel):
             "honorario": self.entry_honorario.get().strip(),
             "pago": self.combo_pago.get().strip(),
             "banco": self.entry_banco.get().strip(),
+            "direccion_banco": self.entry_direccion_banco.get().strip(),
             "cuenta_iban": self.entry_cuenta_iban.get().strip(),
             "moneda": self.combo_moneda.get().strip(),
             "swift": self.entry_swift.get().strip(),

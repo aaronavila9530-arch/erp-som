@@ -1,11 +1,16 @@
-from fastapi import APIRouter, HTTPException, Depends, Header
+from fastapi import APIRouter, HTTPException, Depends, Header, Query
 from pydantic import BaseModel
 from datetime import datetime
 import database
 
 from rbac_service import has_permission
+from services.tenanting import company_code, ensure_company_column, set_payload_company
 
 router = APIRouter(prefix="/servicios", tags=["Servicios"])
+
+
+def _ensure_tenant_schema():
+    ensure_company_column("servicios")
 
 # ============================================================
 # RBAC GUARD
@@ -101,12 +106,14 @@ class ServicioCreate(BaseModel):
 # INSERTAR SERVICIO
 # ============================================================
 @router.post("/add")
-def add_servicio(data: ServicioCreate):
-    payload = data.dict()
+def add_servicio(data: ServicioCreate, x_company_code: str | None = Header(None, alias="X-Company-Code")):
+    _ensure_tenant_schema()
+    payload = set_payload_company(data.dict(), company_code(None, x_company_code))
     payload["fecha_inicio"] = _normalize_service_date(payload.get("fecha_inicio"))
 
     sql = """
         INSERT INTO servicios (
+            company_code,
             tipo, estado, num_informe,
             buque_contenedor, cliente, contacto, detalle,
             continente, pais, puerto,
@@ -114,6 +121,7 @@ def add_servicio(data: ServicioCreate):
             fecha_inicio, hora_inicio
         )
         VALUES (
+            %(company_code)s,
             %(tipo)s, 'Confirmado', '',
             %(buque_contenedor)s, %(cliente)s, %(contacto)s, %(detalle)s,
             %(continente)s, %(pais)s, %(puerto)s,
@@ -137,7 +145,9 @@ def add_servicio(data: ServicioCreate):
 # GET /servicios/_meta/filtros
 # ============================================================
 @router.get("/_meta/filtros")
-def listar_filtros_servicios():
+def listar_filtros_servicios(x_company_code: str | None = Header(None, alias="X-Company-Code")):
+    _ensure_tenant_schema()
+    company = company_code(None, x_company_code)
 
     rows = database.sql(
         """
@@ -148,7 +158,9 @@ def listar_filtros_servicios():
         FROM servicios
         WHERE num_informe IS NOT NULL
           AND LENGTH(num_informe) >= 4
+          AND company_code = %s
         """,
+        (company,),
         fetch=True
     )
 
@@ -183,8 +195,12 @@ def listar_servicios(
     page_size: int = 50,
     year: int | None = None,
     status: str | None = None,
-    surveyor: str | None = None
+    surveyor: str | None = None,
+    company_code_param: str | None = Query(None, alias="company_code"),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
 ):
+    _ensure_tenant_schema()
+    company = company_code(company_code_param, x_company_code)
     offset = (page - 1) * page_size
 
     # --------------------------------------------------------
@@ -196,8 +212,8 @@ def listar_servicios(
     if isinstance(surveyor, str) and surveyor.strip() == "":
         surveyor = None
 
-    conditions = []
-    params = {}
+    conditions = ["company_code = %(company_code)s"]
+    params = {"company_code": company}
 
     # --------------------------------------------------------
     # AÑO — LÓGICA ERP-SOM (CORREGIDA Y BLINDADA)
@@ -309,7 +325,9 @@ def listar_servicios(
 # GET POR CONSEC
 # ============================================================
 @router.get("/{consec}")
-def get_servicio(consec: int):
+def get_servicio(consec: int, x_company_code: str | None = Header(None, alias="X-Company-Code")):
+    _ensure_tenant_schema()
+    company = company_code(None, x_company_code)
     row = database.sql("""
         SELECT
             consec, tipo, estado, num_informe,
@@ -323,7 +341,8 @@ def get_servicio(consec: int):
             razon_cancelacion, comentario_cancelacion
         FROM servicios
         WHERE consec = %s
-    """, (consec,), fetch=True)
+          AND company_code = %s
+    """, (consec, company), fetch=True)
 
     if not row:
         raise HTTPException(status_code=404, detail="Servicio no encontrado")
@@ -345,10 +364,12 @@ def get_servicio(consec: int):
 
 
 @router.delete("/{consec}")
-def eliminar_servicio(consec: int):
+def eliminar_servicio(consec: int, x_company_code: str | None = Header(None, alias="X-Company-Code")):
     try:
-        sql = "DELETE FROM servicios WHERE consec = %s"
-        database.sql(sql, (consec,))
+        _ensure_tenant_schema()
+        company = company_code(None, x_company_code)
+        sql = "DELETE FROM servicios WHERE consec = %s AND company_code = %s"
+        database.sql(sql, (consec, company))
 
         return {"status": "ok", "msg": f"Servicio {consec} eliminado"}
     except Exception as e:
@@ -359,14 +380,17 @@ def eliminar_servicio(consec: int):
 
 
 @router.put("/cancelar/{consec}")
-def cancelar_servicio(consec: int, data: dict):
+def cancelar_servicio(consec: int, data: dict, x_company_code: str | None = Header(None, alias="X-Company-Code")):
     try:
+        _ensure_tenant_schema()
+        company = company_code(None, x_company_code)
         sql = """
             UPDATE servicios
             SET estado = %(estado)s,
                 razon_cancelacion = %(razon_cancelacion)s,
                 comentario_cancelacion = %(comentario_cancelacion)s
             WHERE consec = %(consec)s
+              AND company_code = %(company_code)s
         """
 
         params = {
@@ -386,9 +410,11 @@ def cancelar_servicio(consec: int, data: dict):
 # CONFIRMAR SERVICIO + GENERAR CONSECUTIVO
 # ============================================================
 @router.put("/confirmar/{consec}")
-def confirmar_servicio(consec: int, data: dict):
+def confirmar_servicio(consec: int, data: dict, x_company_code: str | None = Header(None, alias="X-Company-Code")):
 
     try:
+        _ensure_tenant_schema()
+        company = company_code(None, x_company_code)
         # --------------------------------------------------
         # 1. Lock para evitar doble ejecución
         # --------------------------------------------------
@@ -415,8 +441,9 @@ def confirmar_servicio(consec: int, data: dict):
             SELECT num_informe
             FROM servicios
             WHERE consec = %s
+              AND company_code = %s
             """,
-            (consec,),
+            (consec, company),
             fetch=True
         )
 
@@ -439,8 +466,9 @@ def confirmar_servicio(consec: int, data: dict):
                     num_informe  = %s,
                     estado       = 'En Operación'
                 WHERE consec = %s
+                  AND company_code = %s
                 """,
-                (fecha_inicio, hora_inicio, num_actualizado, consec)
+                (fecha_inicio, hora_inicio, num_actualizado, consec, company)
             )
 
             return {
@@ -465,8 +493,9 @@ def confirmar_servicio(consec: int, data: dict):
                     AND num_informe <> ''
                     AND split_part(num_informe, '-', 1) ~ '^[0-9]+$'
                     AND split_part(num_informe, '-', 1)::int = %s
+                    AND company_code = %s
                 """,
-                (candidato,),
+                (candidato, company),
                 fetch=True
             )
 
@@ -494,8 +523,9 @@ def confirmar_servicio(consec: int, data: dict):
                 num_informe  = %s,
                 estado       = 'En Operación'
             WHERE consec = %s
+              AND company_code = %s
             """,
-            (fecha_inicio, hora_inicio, num_informe, consec)
+            (fecha_inicio, hora_inicio, num_informe, consec, company)
         )
 
         return {
@@ -515,9 +545,11 @@ def confirmar_servicio(consec: int, data: dict):
 
 
 @router.put("/demoras/{consec}")
-def actualizar_demoras(consec: int, payload: DemoraUpdate):
+def actualizar_demoras(consec: int, payload: DemoraUpdate, x_company_code: str | None = Header(None, alias="X-Company-Code")):
 
     try:
+        _ensure_tenant_schema()
+        company = company_code(None, x_company_code)
         database.sql(
             """
             UPDATE servicios
@@ -532,12 +564,14 @@ def actualizar_demoras(consec: int, payload: DemoraUpdate):
                     - COALESCE(%(d)s, 0)
                 )
             WHERE consec = %(c)s
+              AND company_code = %(company_code)s
               AND fecha_fin IS NOT NULL
               AND hora_fin IS NOT NULL
             """,
             {
                 "d": payload.total,
-                "c": consec
+                "c": consec,
+                "company_code": company
             }
         )
 
@@ -554,18 +588,30 @@ def actualizar_demoras(consec: int, payload: DemoraUpdate):
 # EDITAR SERVICIO (SIN CAMBIAR ESTADO)
 # ============================================================
 @router.put("/editar/{consec}")
-def editar_servicio(consec: int, data: dict):
+def editar_servicio(consec: int, data: dict, x_company_code: str | None = Header(None, alias="X-Company-Code")):
     try:
+        _ensure_tenant_schema()
+        company = company_code(None, x_company_code)
         data = dict(data)
         data["fecha_inicio"] = _normalize_service_date(data.get("fecha_inicio"))
 
         row = database.sql(
             """
-            SELECT num_informe
+            SELECT
+                num_informe,
+                buque_contenedor,
+                cliente,
+                contacto,
+                detalle,
+                continente,
+                pais,
+                puerto,
+                operacion
             FROM servicios
             WHERE consec = %s
+              AND company_code = %s
             """,
-            (consec,),
+            (consec, company),
             fetch=True
         )
 
@@ -573,9 +619,27 @@ def editar_servicio(consec: int, data: dict):
             raise HTTPException(404, "Servicio no encontrado")
 
         num_actualizado = _num_informe_con_fecha(row[0][0], data.get("fecha_inicio"))
+        current = {
+            "buque_contenedor": row[0][1],
+            "cliente": row[0][2],
+            "contacto": row[0][3],
+            "detalle": row[0][4],
+            "continente": row[0][5],
+            "pais": row[0][6],
+            "puerto": row[0][7],
+            "operacion": row[0][8],
+        }
 
         sql = """
             UPDATE servicios SET
+                buque_contenedor = %(buque_contenedor)s,
+                cliente = %(cliente)s,
+                contacto = %(contacto)s,
+                detalle = %(detalle)s,
+                continente = %(continente)s,
+                pais = %(pais)s,
+                puerto = %(puerto)s,
+                operacion = %(operacion)s,
                 surveyor = %(surveyor)s,
                 honorarios = %(honorarios)s,
                 costo_operativo = %(costo_operativo)s,
@@ -584,9 +648,18 @@ def editar_servicio(consec: int, data: dict):
                 hora_inicio = %(hora_inicio)s,
                 num_informe = %(num_informe)s
             WHERE consec = %(consec)s
+              AND company_code = %(company_code)s
         """
 
         params = {
+            "buque_contenedor": data["buque_contenedor"] if "buque_contenedor" in data else current["buque_contenedor"],
+            "cliente": data["cliente"] if "cliente" in data else current["cliente"],
+            "contacto": data["contacto"] if "contacto" in data else current["contacto"],
+            "detalle": data["detalle"] if "detalle" in data else current["detalle"],
+            "continente": data["continente"] if "continente" in data else current["continente"],
+            "pais": data["pais"] if "pais" in data else current["pais"],
+            "puerto": data["puerto"] if "puerto" in data else current["puerto"],
+            "operacion": data["operacion"] if "operacion" in data else current["operacion"],
             "surveyor": data.get("surveyor"),
             "honorarios": data.get("honorarios"),
             "costo_operativo": data.get("costo_operativo"),
@@ -594,7 +667,8 @@ def editar_servicio(consec: int, data: dict):
             "fecha_inicio": data.get("fecha_inicio"),
             "hora_inicio": data.get("hora_inicio"),
             "num_informe": num_actualizado,
-            "consec": consec
+            "consec": consec,
+            "company_code": company
         }
 
         database.sql(sql, params)
@@ -609,7 +683,9 @@ def editar_servicio(consec: int, data: dict):
 # CERRAR OPERACIÓN (FECHA Y HORA DE FINALIZACIÓN)
 # ============================================================
 @router.put("/cerrar/{consec}")
-def cerrar_operacion(consec: int, data: dict):
+def cerrar_operacion(consec: int, data: dict, x_company_code: str | None = Header(None, alias="X-Company-Code")):
+    _ensure_tenant_schema()
+    company = company_code(None, x_company_code)
 
     fecha_fin = _normalize_service_date(data.get("fecha_fin"))
     hora_fin = data.get("hora_fin")
@@ -636,11 +712,13 @@ def cerrar_operacion(consec: int, data: dict):
                     - COALESCE(demoras, 0)
                 )
             WHERE consec = %(c)s
+              AND company_code = %(company_code)s
             """,
             {
                 "f": fecha_fin,
                 "h": hora_fin,
-                "c": consec
+                "c": consec,
+                "company_code": company
             }
         )
 
@@ -659,16 +737,19 @@ def cerrar_operacion(consec: int, data: dict):
 # FINALIZAR SERVICIO (NO GENERA CONSECUTIVO)
 # ============================================================
 @router.put("/generar_informe/{consec}")
-def generar_informe(consec: int):
+def generar_informe(consec: int, x_company_code: str | None = Header(None, alias="X-Company-Code")):
 
     try:
+        _ensure_tenant_schema()
+        company = company_code(None, x_company_code)
         row = database.sql(
             """
             SELECT num_informe
             FROM servicios
             WHERE consec = %s
+              AND company_code = %s
             """,
-            (consec,),
+            (consec, company),
             fetch=True
         )
 
@@ -688,8 +769,9 @@ def generar_informe(consec: int):
             UPDATE servicios
             SET estado = 'Finalizado'
             WHERE consec = %s
+              AND company_code = %s
             """,
-            (consec,)
+            (consec, company)
         )
 
         return {
