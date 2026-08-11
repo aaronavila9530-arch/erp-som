@@ -45,7 +45,7 @@ const COMPANIES = [
   { code: "MMS-CR", name: "MMS MARITIME MASTER SURVEYORS SRL", label: "MMS" }
 ];
 const DEFAULT_COMPANY = COMPANIES[0];
-const MOBILE_APP_VERSION = "1.7.17";
+const MOBILE_APP_VERSION = "1.7.18";
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -178,6 +178,21 @@ async function syncOfflineQueue(currentSession?: Session | null) {
 
   await writeOfflineQueue(remaining);
   return { sent, pending: remaining.length, errors };
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+    promise
+      .then((value) => {
+        clearTimeout(timer);
+        resolve(value);
+      })
+      .catch((err) => {
+        clearTimeout(timer);
+        reject(err);
+      });
+  });
 }
 
 function useOfflineSync(session: Session | null) {
@@ -13172,12 +13187,6 @@ function FinanceFilters({
     }
 
     if (sectionKey === "accounting") {
-      if (!form.tc_rate) {
-        onMessage("Debe obtener el Tipo de Cambio antes de consultar asientos.");
-        onRows([]);
-        return;
-      }
-
       if (form.search_mode === "RANGE") {
         if (!form.period_from || !form.period_to) {
           onMessage("Seleccione periodo desde y hasta.");
@@ -13188,7 +13197,7 @@ function FinanceFilters({
           return;
         }
       } else {
-        params.set("period", currentAccountingPeriod());
+        params.set("period", form.period || currentAccountingPeriod());
       }
       appendParam(params, "origin", form.origin);
       if (form.account && form.account !== "TODOS") {
@@ -13200,26 +13209,6 @@ function FinanceFilters({
     onLoading(true);
     onMessage("");
     try {
-      let syncSummary: Record<string, unknown> | null = null;
-      if (sectionKey === "accounting") {
-        const syncSteps = [
-          ["Collections", "/accounting/sync/collections"],
-          ["Bancos", "/accounting/sync/cash-app"],
-          ["ITP", "/accounting/sync/itp"],
-          ["Payroll", "/accounting/sync/payroll"]
-        ] as const;
-        const syncErrors: string[] = [];
-        let syncedModules = 0;
-        for (const [label, syncEndpoint] of syncSteps) {
-          try {
-            await apiRequest<Record<string, unknown>>(syncEndpoint, { method: "POST", session });
-            syncedModules += 1;
-          } catch (err) {
-            syncErrors.push(`${label}: ${err instanceof Error ? err.message : "Error"}`);
-          }
-        }
-        syncSummary = { synced_modules: syncedModules, sync_errors: syncErrors };
-      }
       const payload = await apiRequest(endpoint, { session });
       const rawRows = rowsForSection(sectionKey, payload);
       const nextRows =
@@ -13234,18 +13223,13 @@ function FinanceFilters({
         const latest = summary[0];
         if (latest) {
           onMessage(
-            `Sin asientos en ${form.search_mode === "RANGE" ? `${form.period_from} a ${form.period_to}` : currentAccountingPeriod()}. Ultimo periodo con asientos: ${latest.period} (${latest.count}).`
+            `Sin asientos en ${form.search_mode === "RANGE" ? `${form.period_from} a ${form.period_to}` : form.period || currentAccountingPeriod()}. Ultimo periodo con asientos: ${latest.period} (${latest.count}).`
           );
         } else {
-          onMessage("No existen asientos contables despues de sincronizar.");
+          onMessage("No existen asientos contables para la empresa y filtros seleccionados.");
         }
-      } else if (sectionKey === "accounting" && syncSummary) {
-        const syncErrors = Array.isArray(syncSummary.sync_errors) ? syncSummary.sync_errors : [];
-        onMessage(
-          syncErrors.length
-            ? `Asientos cargados con alertas. Modulos OK: ${formatValue(syncSummary.synced_modules)}. ${syncErrors.join(" | ")}`
-            : `Asientos cargados. Modulos sincronizados: ${formatValue(syncSummary.synced_modules)}.`
-        );
+      } else if (sectionKey === "accounting") {
+        onMessage(`Asientos cargados: ${nextRows.length} linea(s).`);
       }
     } catch (err) {
       onMessage(err instanceof Error ? err.message : "No se pudo aplicar el filtro.");
@@ -13290,7 +13274,11 @@ function FinanceFilters({
     onLoading(true);
     onMessage("");
     try {
-      const data = await apiRequest<Record<string, unknown>>("/exchange-rate/today", { session });
+      const data = await withTimeout(
+        apiRequest<Record<string, unknown>>("/exchange-rate/today", { session }),
+        12000,
+        "Tipo de cambio tardando demasiado. Puede buscar asientos sin TC."
+      );
       const rate = Number(data.rate || 0);
       setForm((current) => ({
         ...current,
@@ -13299,7 +13287,7 @@ function FinanceFilters({
       }));
       onMessage("Tipo de cambio cargado.");
     } catch (err) {
-      onMessage(err instanceof Error ? err.message : "No se pudo obtener el tipo de cambio.");
+      onMessage(err instanceof Error ? err.message : "No se pudo obtener el tipo de cambio. Puede buscar asientos sin TC.");
     } finally {
       onLoading(false);
     }
@@ -13341,7 +13329,7 @@ function FinanceFilters({
         if (form.period_from) params.set("period_from", form.period_from);
         if (form.period_to) params.set("period_to", form.period_to);
       } else {
-        params.set("period", currentAccountingPeriod());
+        params.set("period", form.period || currentAccountingPeriod());
       }
       if (form.origin && form.origin !== "TODOS") params.set("origin", form.origin);
       if (form.account && form.account !== "TODOS") params.set("account_code", form.account.split(" - ")[0]);
@@ -13475,10 +13463,7 @@ function FinanceFilters({
               <SelectField label="Hasta" value={form.period_to || currentAccountingPeriod()} options={accountingPeriods} onChange={(value) => setValue("period_to", value)} />
             </>
           ) : (
-            <View style={styles.formField}>
-              <Text style={styles.label}>Periodo actual</Text>
-              <TextInput editable={false} style={[styles.input, styles.readonlyInput]} value={currentAccountingPeriod()} />
-            </View>
+            <SelectField label="Periodo" value={form.period || currentAccountingPeriod()} options={accountingPeriods} onChange={(value) => setValue("period", value)} />
           )}
           <SelectField label="Origen" value={form.origin} options={["TODOS", "ITP", "COLLECTIONS", "INVOICING", "MANUAL", "CASH_APP", "REVERSAL"]} onChange={(value) => setValue("origin", value)} />
           <SelectField label="Cuenta" value={form.account} options={accounts} onChange={(value) => setValue("account", value)} />
