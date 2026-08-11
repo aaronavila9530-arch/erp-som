@@ -227,10 +227,25 @@ class PopupTaxScenarioPlanner(tk.Toplevel):
             badges.columnconfigure(idx, weight=1)
             ttk.Label(box, textvariable=self.pyme_badge_vars[key], font=("Segoe UI", 10, "bold"), wraplength=390).pack(anchor="w")
 
+        self.d102_cards = {}
+        cards = ttk.LabelFrame(tab, text="Formulario D-102 por escenario", padding=8)
+        cards.pack(fill="both", expand=True, pady=(0, 8))
+        for idx, (key, title) in enumerate((
+            ("baseline_msl", "1. MSL sin movimientos"),
+            ("scenario_msl", "2. MSL con movimientos"),
+            ("scenario_mms", "3. MMS con movimientos"),
+        )):
+            card = tk.Frame(cards, bg="#ffffff", bd=1, relief="solid")
+            card.grid(row=0, column=idx, sticky="nsew", padx=(0, 8))
+            cards.columnconfigure(idx, weight=1)
+            cards.rowconfigure(0, weight=1)
+            self.d102_cards[key] = card
+            self._render_d102_empty_card(card, title)
+
         d102_frame = ttk.LabelFrame(tab, text="D-102 comparativo principal", padding=6)
         d102_frame.pack(fill="x", pady=(0, 8))
         d102_cols = ("line", "msl_no_move", "msl_scenario", "mms_scenario", "meaning")
-        self.d102_tree = ttk.Treeview(d102_frame, columns=d102_cols, show="headings", height=9)
+        self.d102_tree = ttk.Treeview(d102_frame, columns=d102_cols, show="headings", height=7)
         d102_headers = {
             "line": "Linea D-102",
             "msl_no_move": "MSL dic sin mover",
@@ -243,7 +258,7 @@ class PopupTaxScenarioPlanner(tk.Toplevel):
         self._pack_tree(d102_frame, self.d102_tree)
 
         cols = ("company", "line", "actual", "scenario", "diff", "note")
-        self.statement_tree = ttk.Treeview(tab, columns=cols, show="headings")
+        self.statement_tree = ttk.Treeview(tab, columns=cols, show="headings", height=6)
         headers = {
             "company": "Empresa",
             "line": "Linea D-102 / Estado de resultados",
@@ -321,6 +336,8 @@ class PopupTaxScenarioPlanner(tk.Toplevel):
         for tree in (self.clients_tree, self.expenses_tree, self.d102_tree, self.statement_tree, self.tax_detail_tree):
             for item in tree.get_children():
                 tree.delete(item)
+        for frame in getattr(self, "d102_cards", {}).values():
+            self._clear_frame(frame)
         self.client_rows_by_item.clear()
         self.expense_rows_by_item.clear()
         self.analysis_text.delete("1.0", "end")
@@ -349,7 +366,11 @@ class PopupTaxScenarioPlanner(tk.Toplevel):
             key = (row.get("company_code"), row.get("client_name"))
             decision = ""
             if key in manual_client_moves:
-                decision = f"Manual -> {manual_client_moves[key].get('to_company')}"
+                target_company = manual_client_moves[key].get("to_company")
+                if target_company == row.get("company_code"):
+                    decision = f"Dejar en {target_company}"
+                else:
+                    decision = f"Manual -> {target_company}"
             elif key in auto_moves:
                 decision = f"IA -> {auto_moves[key].get('to_company')}"
             if row.get("projection_mode") == "FIXED":
@@ -393,6 +414,7 @@ class PopupTaxScenarioPlanner(tk.Toplevel):
         self.expenses_tree.tag_configure("moved", background="#e9f7ef")
         self.expenses_tree.tag_configure("pending", background="#fff8e1")
 
+        self._render_d102_cards(baseline, optimized)
         self._render_d102_main(baseline, optimized)
         self._render_statement_comparison(baseline, optimized)
         self._render_statement_summary(baseline, optimized, analysis)
@@ -429,6 +451,57 @@ class PopupTaxScenarioPlanner(tk.Toplevel):
         status = "EXCEDIDO" if usage > 100 else "NO excedido"
         margin_text = f"exceso {_money(abs(margin))}" if margin < 0 else f"margen {_money(margin)}"
         return f"{status} | {_pct(usage)} | {margin_text}"
+
+    def _clear_frame(self, frame):
+        for child in frame.winfo_children():
+            child.destroy()
+
+    def _render_d102_empty_card(self, frame, title):
+        self._clear_frame(frame)
+        tk.Label(frame, text=title, bg="#f4f6f8", fg="#0b3f75", font=("Segoe UI", 10, "bold"), anchor="w", padx=8, pady=6).pack(fill="x")
+        tk.Label(frame, text="Ejecuta Analizar actual para cargar el formulario.", bg="#ffffff", fg="#444444", anchor="w", padx=8, pady=12).pack(fill="x")
+
+    def _render_d102_cards(self, baseline, optimized):
+        source = self.source_company_var.get().strip() or "MSL-CR"
+        target = self.target_company_var.get().strip() or "MMS-CR"
+        cards = (
+            ("baseline_msl", f"{source} sin movimientos", self._company_row(baseline, source)),
+            ("scenario_msl", f"{source} con movimientos", self._company_row(optimized, source)),
+            ("scenario_mms", f"{target} con movimientos", self._company_row(optimized, target)),
+        )
+        for key, title, row in cards:
+            frame = self.d102_cards.get(key)
+            if not frame:
+                continue
+            self._clear_frame(frame)
+            exceeded = bool(row.get("pyme_gross_limit_exceeded"))
+            status_bg = "#fdecea" if exceeded else "#e9f7ef"
+            status_fg = "#8a1f11" if exceeded else "#0d5b2a"
+            tk.Label(frame, text="D-102 | Impuesto sobre utilidades", bg="#0b3f75", fg="#ffffff", font=("Segoe UI", 10, "bold"), anchor="w", padx=8, pady=6).pack(fill="x")
+            tk.Label(frame, text=title, bg="#ffffff", fg="#111111", font=("Segoe UI", 11, "bold"), anchor="w", padx=8, pady=(8, 2)).pack(fill="x")
+            tk.Label(frame, text=self._pyme_status(row, projected=True), bg=status_bg, fg=status_fg, font=("Segoe UI", 9, "bold"), anchor="w", padx=8, pady=5, wraplength=360).pack(fill="x", padx=8, pady=(4, 8))
+            lines = [
+                ("1", "Renta bruta / ingresos", row.get("gross_projected_crc"), True),
+                ("1.1", "Ventas facturadas 2026", row.get("gross_ytd_crc"), False),
+                ("1.2", "Venta futura estimada", row.get("gross_future_projected_crc"), False),
+                ("2", "Costos, gastos y deducciones", row.get("deductible_expenses_projected_crc"), True),
+                ("3", "Renta neta gravable", row.get("net_taxable_projected_crc"), True),
+                ("4", "Impuesto base", row.get("base_income_tax_crc"), False),
+                ("5", "Exoneracion PYME", self._exemption_amount(row), False),
+                ("6", "Total impuesto determinado", row.get("income_tax_projected_crc"), True),
+            ]
+            for line, label, value, strong in lines:
+                self._d102_card_line(frame, line, label, _money(value), strong=strong)
+            tk.Label(frame, text=self._tax_rule_text(row), bg="#ffffff", fg="#555555", font=("Segoe UI", 8), anchor="w", padx=8, pady=6, wraplength=360).pack(fill="x")
+
+    def _d102_card_line(self, frame, line, label, value, strong=False):
+        bg = "#f7f9fb" if strong else "#ffffff"
+        row_frame = tk.Frame(frame, bg=bg)
+        row_frame.pack(fill="x", padx=8)
+        font = ("Segoe UI", 9, "bold") if strong else ("Segoe UI", 9)
+        tk.Label(row_frame, text=line, width=5, bg=bg, fg="#0b3f75", font=font, anchor="w").pack(side="left")
+        tk.Label(row_frame, text=label, bg=bg, fg="#222222", font=font, anchor="w").pack(side="left", fill="x", expand=True)
+        tk.Label(row_frame, text=value, bg=bg, fg="#111111", font=font, anchor="e").pack(side="right")
 
     def _render_d102_main(self, baseline, optimized):
         source = self.source_company_var.get().strip() or "MSL-CR"
@@ -867,14 +940,13 @@ class PopupTaxScenarioPlanner(tk.Toplevel):
             item for item in self.client_moves
             if not (item.get("from_company") == from_company and item.get("client_name") == row.get("client_name"))
         ]
-        if to_company != from_company:
-            future_amount = max(float(row.get("future_projected_crc") or 0), 0)
-            self.client_moves.append({
-                "client_name": row.get("client_name"),
-                "from_company": from_company,
-                "to_company": to_company,
-                "projected_amount_crc": future_amount,
-            })
+        future_amount = max(float(row.get("future_projected_crc") or 0), 0)
+        self.client_moves.append({
+            "client_name": row.get("client_name"),
+            "from_company": from_company,
+            "to_company": to_company,
+            "projected_amount_crc": 0 if to_company == from_company else future_amount,
+        })
 
     def _move_selected_expense_to_target(self):
         row = self._selected_expense_row()

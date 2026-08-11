@@ -415,6 +415,23 @@ def _build_auto_moves(req: TaxScenarioRequest, clients: list[dict[str, Any]]) ->
     return selected
 
 
+def _merge_client_moves(auto_moves: list[ClientMove], manual_moves: list[ClientMove]) -> list[ClientMove]:
+    manual_by_key = {
+        (company_code(move.from_company), (move.client_name or "").strip().upper()): move
+        for move in manual_moves or []
+        if (move.client_name or "").strip()
+    }
+    merged: list[ClientMove] = []
+    for move in auto_moves or []:
+        key = (company_code(move.from_company), (move.client_name or "").strip().upper())
+        if key not in manual_by_key:
+            merged.append(move)
+    for move in manual_by_key.values():
+        if company_code(move.to_company) != company_code(move.from_company):
+            merged.append(move)
+    return merged
+
+
 def _expense_summary(expense_rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     summary: dict[str, dict[str, Any]] = {}
     for row in expense_rows:
@@ -554,8 +571,9 @@ def analyze_tax_scenarios(
     manual_moves = req.client_moves or []
     manual_expense_moves = req.expense_moves or []
     auto_moves = _build_auto_moves(req, clients)
+    scenario_moves = _merge_client_moves(auto_moves, manual_moves)
     baseline = _scenario(req, clients, expense_rows, [], [], "Actual sin mover clientes")
-    optimized = _scenario(req, clients, expense_rows, manual_moves or auto_moves, manual_expense_moves, "Escenario recomendado")
+    optimized = _scenario(req, clients, expense_rows, scenario_moves, manual_expense_moves, "Escenario recomendado")
     result = {
         "currency": "CRC",
         "rule_version": "CR-2026",
