@@ -16,6 +16,7 @@ from Modulos.HHRR.views.view_payroll_admin import VistaPayrollAdmin
 from Modulos.HHRR.views.view_registro_horas import VistaRegistroHoras
 from Modulos.HHRR.views.view_registro_horas_admin import VistaRegistroHorasAdmin
 from Modulos.HHRR.views.ui_policies import VistaPoliticasHHRR
+from Modulos.HHRR.views.view_salary_calculator import VistaCalculadoraSalarial
 
 # ➕ VISTA SOLICITUDES
 from Modulos.HHRR.views.vista_solicitudes import VistaSolicitudesHHRR
@@ -90,6 +91,7 @@ class HHRRUI(ttk.Frame):
             "solicitudes": self._abrir_solicitudes,
             "horas": self._abrir_horas,
             "empleados": self._abrir_empleados,
+            "calculadora_salarial": self._abrir_calculadora_salarial,
             "politicas": self._abrir_politicas,
         }
 
@@ -203,6 +205,17 @@ class HHRRUI(ttk.Frame):
     # =========================================================
     # POLÍTICAS
     # =========================================================
+    def _abrir_calculadora_salarial(self):
+
+        self._limpiar_contenedor()
+        self._mostrar_boton_volver()
+
+        VistaCalculadoraSalarial(
+            parent=self.contenedor,
+            usuario=self.usuario,
+            rol=self.rol
+        ).pack(fill="both", expand=True)
+
     def _abrir_politicas(self):
 
         self._limpiar_contenedor()

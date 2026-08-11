@@ -65,6 +65,7 @@ from routers.hr_events import router as hr_events_router
 from routers.hr_empleados import router as hr_empleados_router
 from routers import noticias
 from routers.hr_policies import router as hr_policies_router
+from routers.hr_salary_calculator import router as hr_salary_calculator_router
 
 
 # Informes
@@ -252,6 +253,7 @@ app.include_router(hr_events_router)
 app.include_router(hr_empleados_router)
 app.include_router(noticias.router)
 app.include_router(hr_policies_router)
+app.include_router(hr_salary_calculator_router)
 
 app.include_router(reports_ai_router)
 app.include_router(container_reports_router)

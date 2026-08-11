@@ -3384,6 +3384,24 @@ def update_company_profile_api(company_code: str, payload: dict):
     return response.json()
 
 
+def hr_salary_calculator_rules_api():
+    response = api_request("GET", "/hr/salary-calculator/rules", timeout=TIMEOUT)
+    raise_for_status_with_detail(response)
+    return response.json()
+
+
+def hr_salary_calculator_calculate_api(payload: dict):
+    response = api_request("POST", "/hr/salary-calculator/calculate", json=payload, timeout=TIMEOUT)
+    raise_for_status_with_detail(response)
+    return response.json()
+
+
+def hr_salary_calculator_history_api(limit: int = 50):
+    response = api_request("GET", "/hr/salary-calculator/history", params={"limit": limit}, timeout=TIMEOUT)
+    raise_for_status_with_detail(response)
+    return response.json()
+
+
 # HHRR — EVENTS (API REAL)
 # ============================================================
 

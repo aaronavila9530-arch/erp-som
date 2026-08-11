@@ -45,7 +45,7 @@ const COMPANIES = [
   { code: "MMS-CR", name: "MMS MARITIME MASTER SURVEYORS SRL", label: "MMS" }
 ];
 const DEFAULT_COMPANY = COMPANIES[0];
-const MOBILE_APP_VERSION = "1.7.18";
+const MOBILE_APP_VERSION = "1.7.19";
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -11443,10 +11443,152 @@ function HHRRSectionMobile({
   if (section.key === "solicitudes") return <HRRequestsView initialRows={rowsFromAny(initialPayload)} session={session} />;
   if (section.key === "registro-horas") return <HRHoursView initialPayload={initialPayload} session={session} />;
   if (section.key === "payroll") return <HRPayrollView initialRows={rowsFromAny(initialPayload)} session={session} />;
+  if (section.key === "salary-calculator") return <HRSalaryCalculatorView initialPayload={initialPayload} session={session} />;
   if (section.key === "colillas") return <HRPayslipsView initialRows={rowsFromAny(initialPayload)} session={session} />;
   if (section.key === "politicas") return <HRPoliciesView initialRows={rowsFromAny(initialPayload)} session={session} />;
   if (section.key === "noticias") return <HRNewsView initialPayload={initialPayload} session={session} />;
   return <ListView rows={rowsFromAny(initialPayload)} />;
+}
+
+function moneyCrc(value: unknown) {
+  const amount = Number(value || 0);
+  if (!Number.isFinite(amount)) return formatValue(value);
+  return `CRC ${amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function HRSalaryCalculatorView({
+  initialPayload,
+  session
+}: {
+  initialPayload: unknown;
+  session: NonNullable<ReturnType<typeof useAuth>["session"]>;
+}) {
+  const rules = asRecord(initialPayload) || {};
+  const categories = Array.isArray(rules.expense_categories) ? rules.expense_categories.map(formatValue) : ["Otro gasto deducible"];
+  const [scenario, setScenario] = useState("EMPLOYEE");
+  const [amount, setAmount] = useState("");
+  const [expenseCategory, setExpenseCategory] = useState(categories[0] || "Otro gasto deducible");
+  const [expenseAmount, setExpenseAmount] = useState("");
+  const [expenses, setExpenses] = useState<Record<string, unknown>[]>([]);
+  const [vehicleDebt, setVehicleDebt] = useState("");
+  const [vehiclePayment, setVehiclePayment] = useState("");
+  const [distributionType, setDistributionType] = useState("NONE");
+  const [distributionAmount, setDistributionAmount] = useState("");
+  const [isPyme, setIsPyme] = useState(false);
+  const [pymeYear, setPymeYear] = useState("");
+  const [result, setResult] = useState<Record<string, unknown> | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+
+  function addExpense() {
+    const value = Number(expenseAmount.replace(/,/g, ".") || 0);
+    if (!Number.isFinite(value) || value <= 0) return;
+    setExpenses((current) => [...current, { category: expenseCategory || "Otro gasto deducible", amount: value }]);
+    setExpenseAmount("");
+  }
+
+  async function calculate(save = false) {
+    setBusy(true);
+    setMessage("");
+    try {
+      const payload = {
+        scenario,
+        amount: Number(amount.replace(/,/g, ".") || 0),
+        expenses,
+        vehicle_debt_amount: Number(vehicleDebt.replace(/,/g, ".") || 0),
+        vehicle_monthly_payment: Number(vehiclePayment.replace(/,/g, ".") || 0),
+        distribution_type: distributionType,
+        distribution_amount: Number(distributionAmount.replace(/,/g, ".") || 0),
+        is_pyme: isPyme,
+        pyme_year: Number(pymeYear || 0),
+        save
+      };
+      const data = await apiRequest<Record<string, unknown>>("/hr/salary-calculator/calculate", {
+        method: "POST",
+        body: payload,
+        session
+      });
+      setResult(data);
+      setMessage(save ? "Calculo guardado." : "Calculo listo.");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo calcular.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const resultRows = result
+    ? Object.entries(result).filter(([key, value]) =>
+        !["scenario", "currency", "rule_version", "disclaimer"].includes(key) && !Array.isArray(value) && typeof value !== "object"
+      )
+    : [];
+
+  return (
+    <View style={styles.tableShell}>
+      <Text style={styles.cardTitle}>Calculadora salarial</Text>
+      <Text style={styles.helperText}>Reglas Costa Rica 2026. Calculo referencial para HHRR y planeacion.</Text>
+      <SelectField label="Escenario" value={scenario} options={["EMPLOYEE", "INDEPENDENT", "OWNER"]} onChange={setScenario} />
+      <Text style={styles.label}>{scenario === "EMPLOYEE" ? "Salario mensual bruto" : "Ingreso / factura mensual sin IVA"}</Text>
+      <TextInput style={styles.input} value={amount} onChangeText={setAmount} keyboardType="decimal-pad" placeholder="0.00" />
+
+      {scenario !== "EMPLOYEE" ? (
+        <>
+          <Text style={styles.label}>Gasto deducible</Text>
+          <SelectField label="Rubro" value={expenseCategory} options={categories} onChange={setExpenseCategory} />
+          <TextInput style={styles.input} value={expenseAmount} onChangeText={setExpenseAmount} keyboardType="decimal-pad" placeholder="Monto gasto" />
+          <Pressable style={styles.actionButton} onPress={addExpense}>
+            <Text style={styles.actionButtonText}>Agregar gasto</Text>
+          </Pressable>
+          {expenses.map((item, index) => (
+            <Text key={`${formatValue(item.category)}-${index}`} style={styles.helperText}>
+              {formatValue(item.category)}: {moneyCrc(item.amount)}
+            </Text>
+          ))}
+          <Text style={styles.label}>Monto deuda vehicular</Text>
+          <TextInput style={styles.input} value={vehicleDebt} onChangeText={setVehicleDebt} keyboardType="decimal-pad" placeholder="0.00" />
+          <Text style={styles.label}>Cuota vehicular mensual</Text>
+          <TextInput style={styles.input} value={vehiclePayment} onChangeText={setVehiclePayment} keyboardType="decimal-pad" placeholder="0.00" />
+        </>
+      ) : null}
+
+      {scenario === "OWNER" ? (
+        <>
+          <SelectField label="Dietas / Dividendos" value={distributionType} options={["NONE", "DIETAS", "DIVIDENDS"]} onChange={setDistributionType} />
+          <Text style={styles.label}>Monto mensual dietas/dividendos</Text>
+          <TextInput style={styles.input} value={distributionAmount} onChangeText={setDistributionAmount} keyboardType="decimal-pad" placeholder="0.00" />
+          <View style={styles.switchRow}>
+            <Text style={styles.label}>PYME registrada</Text>
+            <Switch value={isPyme} onValueChange={setIsPyme} />
+          </View>
+          <Text style={styles.label}>Ano PYME</Text>
+          <TextInput style={styles.input} value={pymeYear} onChangeText={setPymeYear} keyboardType="number-pad" placeholder="1-6" />
+        </>
+      ) : null}
+
+      <View style={styles.financeFilterActions}>
+        <Pressable style={styles.actionButton} onPress={() => calculate(false)} disabled={busy}>
+          <Text style={styles.actionButtonText}>{busy ? "Calculando..." : "Calcular"}</Text>
+        </Pressable>
+        <Pressable style={styles.modalClose} onPress={() => calculate(true)} disabled={busy}>
+          <Text style={styles.modalCloseText}>Guardar</Text>
+        </Pressable>
+      </View>
+
+      {message ? <Text style={message.includes("No se") ? styles.error : styles.helperText}>{message}</Text> : null}
+      {result ? (
+        <View style={styles.reportBox}>
+          <Text style={styles.cardTitle}>Resultado {formatValue(result.rule_version)}</Text>
+          {resultRows.map(([key, value]) => (
+            <View key={key} style={styles.detailRow}>
+              <Text style={styles.detailKey}>{key.replaceAll("_", " ")}</Text>
+              <Text style={styles.detailValue}>{key.endsWith("_rate") ? `${(Number(value) * 100).toFixed(2)}%` : typeof value === "number" ? moneyCrc(value) : formatValue(value)}</Text>
+            </View>
+          ))}
+          <Text style={styles.helperText}>{formatValue(result.disclaimer)}</Text>
+        </View>
+      ) : null}
+    </View>
+  );
 }
 
 function HRMiniTable({
@@ -14383,6 +14525,9 @@ const styles = StyleSheet.create({
   contextActionRow: { alignItems: "center", flexDirection: "row", flexWrap: "wrap", gap: 8 },
   contextActionSelect: { minWidth: 220 },
   contextActionTitle: { color: "#344054", fontSize: 12, fontWeight: "900", marginBottom: 8, textTransform: "uppercase" },
+  detailKey: { color: "#344054", flex: 1, fontSize: 12, fontWeight: "800", textTransform: "capitalize" },
+  detailRow: { borderBottomColor: BORDER, borderBottomWidth: 1, flexDirection: "row", gap: 10, paddingVertical: 8 },
+  detailValue: { color: "#101828", flex: 1, fontSize: 12, fontWeight: "800", textAlign: "right" },
   accountingTcBox: {
     backgroundColor: "#F8FAFC",
     borderColor: BORDER,
@@ -14426,6 +14571,7 @@ const styles = StyleSheet.create({
   },
   selectText: { color: "#101828", fontSize: 14, fontWeight: "700" },
   selectedRow: { borderColor: BLUE, borderWidth: 2 },
+  switchRow: { alignItems: "center", flexDirection: "row", justifyContent: "space-between", marginBottom: 10 },
   summaryBox: {
     backgroundColor: "white",
     borderColor: BORDER,

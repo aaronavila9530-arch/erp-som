@@ -548,6 +548,7 @@ export const ERP_MODULES: AppModule[] = [
       { key: "solicitudes", label: "Solicitudes", endpoint: "/hr/events" },
       { key: "registro-horas", label: "Registro de horas", endpoint: "/hr/ot-log" },
       { key: "payroll", label: "Payroll", endpoint: "/hr/payroll/employees" },
+      { key: "salary-calculator", label: "Calculadora salarial", endpoint: "/hr/salary-calculator/rules" },
       { key: "colillas", label: "Colillas", endpoint: "/hr/payroll/payslips" },
       { key: "politicas", label: "Politicas", endpoint: "/hr/policies" },
       { key: "noticias", label: "Noticias", endpoint: "/noticias/latest" }
