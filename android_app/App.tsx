@@ -11456,6 +11456,23 @@ function moneyCrc(value: unknown) {
   return `CRC ${amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
+function parseMoneyInput(value: string) {
+  const text = String(value || "").trim().replace(/\s/g, "");
+  const normalized = text.includes(",") && text.includes(".")
+    ? text.lastIndexOf(",") > text.lastIndexOf(".")
+      ? text.replace(/\./g, "").replace(/,/g, ".")
+      : text.replace(/,/g, "")
+    : text.replace(/,/g, ".");
+  const amount = Number(normalized || 0);
+  return Number.isFinite(amount) ? amount : 0;
+}
+
+function isDepreciableExpense(category: string) {
+  const text = String(category || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  if (text.includes("terreno")) return false;
+  return ["activo", "mobiliario", "computadora", "periferico", "escritorio", "mueble", "vehicular", "vehiculo", "automovil"].some((word) => text.includes(word));
+}
+
 const SALARY_SCENARIO_LABELS: Record<string, string> = {
   EMPLOYEE: "Asalariado",
   INDEPENDENT: "Independiente",
@@ -11498,8 +11515,12 @@ const SALARY_RESULT_LABELS: Record<string, string> = {
   taxable_income_monthly_reference: "Base imponible mensual ref.",
   taxable_income_annual_reference: "Base imponible anual ref.",
   annual_income_tax: "Renta anual",
+  base_annual_income_tax: "Renta anual antes de exoneración",
+  pyme_applied: "Beneficio PYME aplicado",
+  pyme_gross_limit_exceeded: "Límite PYME excedido",
   monthly_income_tax_reference: "Renta mensual ref.",
   net_after_ccss_and_tax_monthly_reference: "Neto mensual ref.",
+  cash_remaining_monthly_reference: "Dinero mensual después de rebajos",
   monthly_gross_income: "Ingreso bruto mensual",
   monthly_income_total_with_vat: "Ingreso mensual con IVA",
   annual_gross_income: "Ingreso bruto anual",
@@ -11544,15 +11565,16 @@ function HRSalaryCalculatorView({
   const [message, setMessage] = useState("");
   const currentYear = new Date().getFullYear();
   const yearOptions = Array.from({ length: 31 }, (_, index) => String(currentYear - index));
+  const expenseIsDepreciable = isDepreciableExpense(expenseCategory);
 
   function addExpense() {
-    const value = Number(expenseAmount.replace(/,/g, ".") || 0);
+    const value = parseMoneyInput(expenseAmount);
     if (!Number.isFinite(value) || value <= 0) return;
     setExpenses((current) => [...current, {
       category: expenseCategory || "Otro gasto deducible",
       amount: value,
-      purchase_year: expenseYear ? Number(expenseYear) : null,
-      useful_life_years: Number(expenseLife || 10)
+      purchase_year: expenseIsDepreciable && expenseYear ? Number(expenseYear) : null,
+      useful_life_years: expenseIsDepreciable ? Number(expenseLife || 10) : null
     }]);
     setExpenseAmount("");
     setExpenseYear("");
@@ -11564,12 +11586,12 @@ function HRSalaryCalculatorView({
     try {
       const payload = {
         scenario,
-        amount: Number(amount.replace(/,/g, ".") || 0),
+        amount: parseMoneyInput(amount),
         expenses,
-        vehicle_debt_amount: Number(vehicleDebt.replace(/,/g, ".") || 0),
+        vehicle_debt_amount: parseMoneyInput(vehicleDebt),
         vehicle_purchase_year: vehicleYear ? Number(vehicleYear) : null,
         vehicle_useful_life_years: Number(vehicleLife || 10),
-        vehicle_monthly_payment: Number(vehiclePayment.replace(/,/g, ".") || 0),
+        vehicle_monthly_payment: parseMoneyInput(vehiclePayment),
         distribution_type: distributionType,
         distribution_amount: 0,
         is_pyme: isPyme,
@@ -11616,9 +11638,13 @@ function HRSalaryCalculatorView({
           <Text style={styles.label}>Gasto deducible</Text>
           <SelectField label="Rubro" value={expenseCategory} options={categories} onChange={setExpenseCategory} />
           <TextInput style={styles.input} value={expenseAmount} onChangeText={setExpenseAmount} keyboardType="decimal-pad" placeholder="Monto gasto" />
-          <SelectField label="Año compra activo" value={expenseYear || "No aplica"} options={["No aplica", ...yearOptions]} onChange={(value) => setExpenseYear(value === "No aplica" ? "" : value)} />
-          <Text style={styles.label}>Vida útil activo en años</Text>
-          <TextInput style={styles.input} value={expenseLife} onChangeText={setExpenseLife} keyboardType="number-pad" placeholder="10" />
+          {expenseIsDepreciable ? (
+            <>
+              <SelectField label="Año compra activo" value={expenseYear || "No aplica"} options={["No aplica", ...yearOptions]} onChange={(value) => setExpenseYear(value === "No aplica" ? "" : value)} />
+              <Text style={styles.label}>Vida útil activo en años</Text>
+              <TextInput style={styles.input} value={expenseLife} onChangeText={setExpenseLife} keyboardType="number-pad" placeholder="10" />
+            </>
+          ) : null}
           <Pressable style={styles.actionButton} onPress={addExpense}>
             <Text style={styles.actionButtonText}>Agregar gasto</Text>
           </Pressable>
@@ -11637,6 +11663,15 @@ function HRSalaryCalculatorView({
           <TextInput style={styles.input} value={vehicleLife} onChangeText={setVehicleLife} keyboardType="number-pad" placeholder="10" />
           <Text style={styles.label}>Cuota vehicular mensual</Text>
           <TextInput style={styles.input} value={vehiclePayment} onChangeText={setVehiclePayment} keyboardType="decimal-pad" placeholder="0.00" />
+          {scenario === "INDEPENDENT" ? (
+            <>
+              <View style={styles.switchRow}>
+                <Text style={styles.label}>PYME registrada</Text>
+                <Switch value={isPyme} onValueChange={setIsPyme} />
+              </View>
+              <SelectField label="Año PYME" value={pymeYear} options={["1", "2", "3", "4", "5", "6"]} onChange={setPymeYear} />
+            </>
+          ) : null}
         </>
       ) : null}
 
@@ -11668,7 +11703,7 @@ function HRSalaryCalculatorView({
           {resultRows.map(([key, value]) => (
             <View key={key} style={styles.detailRow}>
               <Text style={styles.detailKey}>{SALARY_RESULT_LABELS[key] || key.replaceAll("_", " ")}</Text>
-              <Text style={styles.detailValue}>{key.endsWith("_rate") || key.endsWith("exemption_rate") ? `${(Number(value) * 100).toFixed(2)}%` : typeof value === "number" ? moneyCrc(value) : key === "distribution_type" ? DISTRIBUTION_LABELS[formatValue(value)] || formatValue(value) : formatValue(value)}</Text>
+              <Text style={styles.detailValue}>{key.endsWith("_rate") || key.endsWith("exemption_rate") ? `${(Number(value) * 100).toFixed(2)}%` : typeof value === "boolean" ? (value ? "Sí" : "No") : typeof value === "number" ? moneyCrc(value) : key === "distribution_type" ? DISTRIBUTION_LABELS[formatValue(value)] || formatValue(value) : formatValue(value)}</Text>
             </View>
           ))}
           {resultLists.map(([key, value]) => (
