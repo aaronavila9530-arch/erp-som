@@ -70,16 +70,16 @@ DEFAULT_EXPENSE_CATEGORIES = [
     "Luz",
     "Agua",
     "Internet",
-    "Telefonia celular",
-    "Telefonia fija",
-    "Alimentacion",
+    "Telefonía celular",
+    "Telefonía fija",
+    "Alimentación",
     "Gasolina",
     "Activos / mobiliario",
-    "Computadora y perifericos",
+    "Computadora y periféricos",
     "Escritorio / mesa / mueble",
-    "Depreciacion vehicular",
+    "Depreciación vehicular",
     "Cuota vehicular",
-    "Seguro medico",
+    "Seguro médico",
     "Otro gasto deducible",
 ]
 
@@ -88,6 +88,8 @@ class ExpenseItem(BaseModel):
     category: str
     amount: float = 0
     note: str | None = None
+    purchase_year: int | None = None
+    useful_life_years: int | None = None
 
 
 class SalaryCalculatorRequest(BaseModel):
@@ -96,6 +98,8 @@ class SalaryCalculatorRequest(BaseModel):
     expenses: list[ExpenseItem] = []
     vehicle_debt_amount: float = 0
     vehicle_monthly_payment: float = 0
+    vehicle_purchase_year: int | None = None
+    vehicle_useful_life_years: int = 10
     distribution_type: Literal["NONE", "DIETAS", "DIVIDENDS"] = "NONE"
     distribution_amount: float = 0
     is_pyme: bool = False
@@ -166,15 +170,52 @@ def _scale_rate(amount: float, scale: list[tuple[int | None, float]]) -> float:
     return scale[-1][1]
 
 
+def _asset_depreciation(cost: float, purchase_year: int | None, useful_life_years: int | None) -> dict[str, Any]:
+    useful_life = max(int(useful_life_years or 0), 1)
+    current_year = datetime.now().year
+    age_years = max(current_year - int(purchase_year or current_year), 0)
+    elapsed_years = min(age_years, useful_life)
+    annual_depreciation = cost / useful_life
+    accumulated = min(annual_depreciation * elapsed_years, cost)
+    remaining = max(cost - accumulated, 0)
+    monthly_depreciation = annual_depreciation / 12 if remaining > 0 else 0
+    return {
+        "purchase_year": purchase_year,
+        "useful_life_years": useful_life,
+        "age_years": age_years,
+        "accumulated_depreciation": _money(accumulated),
+        "remaining_book_value": _money(remaining),
+        "monthly_depreciation": _money(monthly_depreciation),
+    }
+
+
+def _is_asset_category(category: str) -> bool:
+    text = (category or "").lower()
+    return any(word in text for word in ("activo", "mobiliario", "computadora", "periferico", "escritorio", "mueble", "vehicular"))
+
+
 def _expense_total(req: SalaryCalculatorRequest) -> tuple[float, list[dict[str, Any]]]:
-    items = [
-        {"category": item.category, "amount": _money(item.amount), "note": item.note}
-        for item in req.expenses
-        if item.amount
-    ]
+    items = []
+    for item in req.expenses:
+        if not item.amount:
+            continue
+        row = {"category": item.category, "amount": _money(item.amount), "note": item.note}
+        if item.purchase_year and _is_asset_category(item.category):
+            dep = _asset_depreciation(item.amount, item.purchase_year, item.useful_life_years or 10)
+            row.update(dep)
+            row["original_cost"] = _money(item.amount)
+            row["amount"] = dep["monthly_depreciation"]
+            row["note"] = item.note or "Gasto por depreciacion mensual referencial"
+        items.append(row)
     if req.vehicle_debt_amount:
-        monthly_depreciation = req.vehicle_debt_amount / 60
-        items.append({"category": "Depreciacion vehicular referencial 60 meses", "amount": _money(monthly_depreciation), "note": "Estimacion mensual"})
+        dep = _asset_depreciation(req.vehicle_debt_amount, req.vehicle_purchase_year, req.vehicle_useful_life_years or 10)
+        items.append({
+            "category": "Depreciacion vehicular referencial",
+            "amount": dep["monthly_depreciation"],
+            "original_cost": _money(req.vehicle_debt_amount),
+            "note": "Estimación mensual por antigüedad y vida útil",
+            **dep,
+        })
     if req.vehicle_monthly_payment:
         items.append({"category": "Cuota vehicular", "amount": _money(req.vehicle_monthly_payment), "note": "Gasto deducible indicado"})
     return _money(sum(item["amount"] for item in items)), items
@@ -232,10 +273,12 @@ def _independent(req: SalaryCalculatorRequest) -> dict[str, Any]:
 
 def _owner(req: SalaryCalculatorRequest) -> dict[str, Any]:
     gross_monthly = _money(req.amount)
+    vat = _money(gross_monthly * 0.13)
     gross_annual = _money(gross_monthly * 12)
     expenses_total_monthly, expenses = _expense_total(req)
-    distribution = _money(req.distribution_amount)
+    distribution = _money(req.distribution_amount if req.distribution_amount else (gross_monthly if req.distribution_type != "NONE" else 0))
     distribution_tax = _money(distribution * 0.15)
+    distribution_net = _money(distribution - distribution_tax)
     deductible_distribution = distribution if req.distribution_type == "DIETAS" else 0
     net_annual = _money(max(gross_annual - expenses_total_monthly * 12 - deductible_distribution * 12, 0))
 
@@ -260,12 +303,15 @@ def _owner(req: SalaryCalculatorRequest) -> dict[str, Any]:
     return {
         "scenario": "OWNER",
         "monthly_gross_income": gross_monthly,
+        "vat_13": vat,
+        "monthly_income_total_with_vat": _money(gross_monthly + vat),
         "annual_gross_income": gross_annual,
         "deductible_expenses": expenses,
         "deductible_expenses_total_monthly": expenses_total_monthly,
         "distribution_type": req.distribution_type,
-        "distribution_amount_monthly": distribution,
+        "distribution_gross_monthly": distribution,
         "distribution_withholding_15": distribution_tax,
+        "distribution_net_monthly": distribution_net,
         "distribution_is_deductible": req.distribution_type == "DIETAS",
         "annual_net_taxable_income": net_annual,
         "corporate_regime": regime,

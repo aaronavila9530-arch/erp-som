@@ -45,7 +45,7 @@ const COMPANIES = [
   { code: "MMS-CR", name: "MMS MARITIME MASTER SURVEYORS SRL", label: "MMS" }
 ];
 const DEFAULT_COMPANY = COMPANIES[0];
-const MOBILE_APP_VERSION = "1.7.19";
+const MOBILE_APP_VERSION = "1.7.20";
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -11456,6 +11456,66 @@ function moneyCrc(value: unknown) {
   return `CRC ${amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
+const SALARY_SCENARIO_LABELS: Record<string, string> = {
+  EMPLOYEE: "Asalariado",
+  INDEPENDENT: "Independiente",
+  OWNER: "Dueño de empresa"
+};
+
+const SALARY_SCENARIO_CODES: Record<string, string> = {
+  Asalariado: "EMPLOYEE",
+  Independiente: "INDEPENDENT",
+  "Dueño de empresa": "OWNER"
+};
+
+const DISTRIBUTION_LABELS: Record<string, string> = {
+  NONE: "No aplica",
+  DIETAS: "Dietas",
+  DIVIDENDS: "Dividendos"
+};
+
+const DISTRIBUTION_CODES: Record<string, string> = {
+  "No aplica": "NONE",
+  Dietas: "DIETAS",
+  Dividendos: "DIVIDENDS"
+};
+
+const SALARY_RESULT_LABELS: Record<string, string> = {
+  gross_salary: "Salario bruto",
+  worker_contributions_total: "Total deducciones trabajador",
+  salary_income_tax: "Impuesto al salario",
+  net_salary: "Salario neto",
+  employer_contributions_total: "Total aporte patronal",
+  total_company_cost: "Costo total empresa",
+  monthly_invoice_subtotal: "Subtotal factura mensual",
+  vat_13: "IVA 13%",
+  monthly_invoice_total: "Total factura con IVA",
+  deductible_expenses_total: "Total gastos deducibles",
+  deductible_expenses_total_monthly: "Total gastos deducibles mensual",
+  net_before_ccss: "Ingreso neto antes de CCSS",
+  ccss_rate: "Tasa CCSS",
+  ccss_independent: "CCSS independiente",
+  taxable_income_monthly_reference: "Base imponible mensual ref.",
+  taxable_income_annual_reference: "Base imponible anual ref.",
+  annual_income_tax: "Renta anual",
+  monthly_income_tax_reference: "Renta mensual ref.",
+  net_after_ccss_and_tax_monthly_reference: "Neto mensual ref.",
+  monthly_gross_income: "Ingreso bruto mensual",
+  monthly_income_total_with_vat: "Ingreso mensual con IVA",
+  annual_gross_income: "Ingreso bruto anual",
+  distribution_type: "Tipo pago socio",
+  distribution_gross_monthly: "Monto bruto dietas/dividendos",
+  distribution_withholding_15: "Retención 15%",
+  distribution_net_monthly: "Neto después del 15%",
+  distribution_is_deductible: "Deducible para empresa",
+  annual_net_taxable_income: "Renta neta imponible anual",
+  corporate_regime: "Régimen renta jurídica",
+  base_corporate_income_tax: "Impuesto base",
+  pyme_exemption_rate: "Exoneración PYME",
+  annual_corporate_income_tax: "Renta jurídica anual",
+  monthly_corporate_income_tax_reference: "Renta jurídica mensual ref."
+};
+
 function HRSalaryCalculatorView({
   initialPayload,
   session
@@ -11469,22 +11529,33 @@ function HRSalaryCalculatorView({
   const [amount, setAmount] = useState("");
   const [expenseCategory, setExpenseCategory] = useState(categories[0] || "Otro gasto deducible");
   const [expenseAmount, setExpenseAmount] = useState("");
+  const [expenseYear, setExpenseYear] = useState("");
+  const [expenseLife, setExpenseLife] = useState("10");
   const [expenses, setExpenses] = useState<Record<string, unknown>[]>([]);
   const [vehicleDebt, setVehicleDebt] = useState("");
+  const [vehicleYear, setVehicleYear] = useState(String(new Date().getFullYear()));
+  const [vehicleLife, setVehicleLife] = useState("10");
   const [vehiclePayment, setVehiclePayment] = useState("");
   const [distributionType, setDistributionType] = useState("NONE");
-  const [distributionAmount, setDistributionAmount] = useState("");
   const [isPyme, setIsPyme] = useState(false);
-  const [pymeYear, setPymeYear] = useState("");
+  const [pymeYear, setPymeYear] = useState("1");
   const [result, setResult] = useState<Record<string, unknown> | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const currentYear = new Date().getFullYear();
+  const yearOptions = Array.from({ length: 31 }, (_, index) => String(currentYear - index));
 
   function addExpense() {
     const value = Number(expenseAmount.replace(/,/g, ".") || 0);
     if (!Number.isFinite(value) || value <= 0) return;
-    setExpenses((current) => [...current, { category: expenseCategory || "Otro gasto deducible", amount: value }]);
+    setExpenses((current) => [...current, {
+      category: expenseCategory || "Otro gasto deducible",
+      amount: value,
+      purchase_year: expenseYear ? Number(expenseYear) : null,
+      useful_life_years: Number(expenseLife || 10)
+    }]);
     setExpenseAmount("");
+    setExpenseYear("");
   }
 
   async function calculate(save = false) {
@@ -11496,9 +11567,11 @@ function HRSalaryCalculatorView({
         amount: Number(amount.replace(/,/g, ".") || 0),
         expenses,
         vehicle_debt_amount: Number(vehicleDebt.replace(/,/g, ".") || 0),
+        vehicle_purchase_year: vehicleYear ? Number(vehicleYear) : null,
+        vehicle_useful_life_years: Number(vehicleLife || 10),
         vehicle_monthly_payment: Number(vehiclePayment.replace(/,/g, ".") || 0),
         distribution_type: distributionType,
-        distribution_amount: Number(distributionAmount.replace(/,/g, ".") || 0),
+        distribution_amount: 0,
         is_pyme: isPyme,
         pyme_year: Number(pymeYear || 0),
         save
@@ -11522,12 +11595,19 @@ function HRSalaryCalculatorView({
         !["scenario", "currency", "rule_version", "disclaimer"].includes(key) && !Array.isArray(value) && typeof value !== "object"
       )
     : [];
+  const resultLists = result
+    ? Object.entries(result).filter(([key, value]) =>
+        !["scenario", "currency", "rule_version", "disclaimer"].includes(key) && Array.isArray(value)
+      )
+    : [];
+  const scenarioLabel = SALARY_SCENARIO_LABELS[scenario] || scenario;
+  const distributionLabel = DISTRIBUTION_LABELS[distributionType] || distributionType;
 
   return (
     <View style={styles.tableShell}>
       <Text style={styles.cardTitle}>Calculadora salarial</Text>
-      <Text style={styles.helperText}>Reglas Costa Rica 2026. Calculo referencial para HHRR y planeacion.</Text>
-      <SelectField label="Escenario" value={scenario} options={["EMPLOYEE", "INDEPENDENT", "OWNER"]} onChange={setScenario} />
+      <Text style={styles.helperText}>Reglas Costa Rica 2026. Cálculo referencial para HHRR y planeación.</Text>
+      <SelectField label="Escenario" value={scenarioLabel} options={["Asalariado", "Independiente", "Dueño de empresa"]} onChange={(value) => setScenario(SALARY_SCENARIO_CODES[value] || "EMPLOYEE")} />
       <Text style={styles.label}>{scenario === "EMPLOYEE" ? "Salario mensual bruto" : "Ingreso / factura mensual sin IVA"}</Text>
       <TextInput style={styles.input} value={amount} onChangeText={setAmount} keyboardType="decimal-pad" placeholder="0.00" />
 
@@ -11536,16 +11616,25 @@ function HRSalaryCalculatorView({
           <Text style={styles.label}>Gasto deducible</Text>
           <SelectField label="Rubro" value={expenseCategory} options={categories} onChange={setExpenseCategory} />
           <TextInput style={styles.input} value={expenseAmount} onChangeText={setExpenseAmount} keyboardType="decimal-pad" placeholder="Monto gasto" />
+          <SelectField label="Año compra activo" value={expenseYear || "No aplica"} options={["No aplica", ...yearOptions]} onChange={(value) => setExpenseYear(value === "No aplica" ? "" : value)} />
+          <Text style={styles.label}>Vida útil activo en años</Text>
+          <TextInput style={styles.input} value={expenseLife} onChangeText={setExpenseLife} keyboardType="number-pad" placeholder="10" />
           <Pressable style={styles.actionButton} onPress={addExpense}>
             <Text style={styles.actionButtonText}>Agregar gasto</Text>
           </Pressable>
-          {expenses.map((item, index) => (
-            <Text key={`${formatValue(item.category)}-${index}`} style={styles.helperText}>
-              {formatValue(item.category)}: {moneyCrc(item.amount)}
-            </Text>
-          ))}
-          <Text style={styles.label}>Monto deuda vehicular</Text>
+          <ScrollView style={styles.salaryExpenseList} nestedScrollEnabled>
+            {expenses.map((item, index) => (
+              <Text key={`${formatValue(item.category)}-${index}`} style={styles.helperText}>
+                {formatValue(item.category)}: {moneyCrc(item.amount)}
+                {item.purchase_year ? ` | compra ${formatValue(item.purchase_year)}` : ""}
+              </Text>
+            ))}
+          </ScrollView>
+          <Text style={styles.label}>Monto deuda vehicular / costo original</Text>
           <TextInput style={styles.input} value={vehicleDebt} onChangeText={setVehicleDebt} keyboardType="decimal-pad" placeholder="0.00" />
+          <SelectField label="Año compra vehículo" value={vehicleYear} options={yearOptions} onChange={setVehicleYear} />
+          <Text style={styles.label}>Vida útil vehículo en años</Text>
+          <TextInput style={styles.input} value={vehicleLife} onChangeText={setVehicleLife} keyboardType="number-pad" placeholder="10" />
           <Text style={styles.label}>Cuota vehicular mensual</Text>
           <TextInput style={styles.input} value={vehiclePayment} onChangeText={setVehiclePayment} keyboardType="decimal-pad" placeholder="0.00" />
         </>
@@ -11553,15 +11642,13 @@ function HRSalaryCalculatorView({
 
       {scenario === "OWNER" ? (
         <>
-          <SelectField label="Dietas / Dividendos" value={distributionType} options={["NONE", "DIETAS", "DIVIDENDS"]} onChange={setDistributionType} />
-          <Text style={styles.label}>Monto mensual dietas/dividendos</Text>
-          <TextInput style={styles.input} value={distributionAmount} onChangeText={setDistributionAmount} keyboardType="decimal-pad" placeholder="0.00" />
+          <SelectField label="Dietas / Dividendos" value={distributionLabel} options={["No aplica", "Dietas", "Dividendos"]} onChange={(value) => setDistributionType(DISTRIBUTION_CODES[value] || "NONE")} />
+          <Text style={styles.helperText}>El 15% se calcula automático sobre el ingreso mensual. Ejemplo: CRC 1,400,000.00 genera CRC 210,000.00 de retención.</Text>
           <View style={styles.switchRow}>
             <Text style={styles.label}>PYME registrada</Text>
             <Switch value={isPyme} onValueChange={setIsPyme} />
           </View>
-          <Text style={styles.label}>Ano PYME</Text>
-          <TextInput style={styles.input} value={pymeYear} onChangeText={setPymeYear} keyboardType="number-pad" placeholder="1-6" />
+          <SelectField label="Año PYME" value={pymeYear} options={["1", "2", "3", "4", "5", "6"]} onChange={setPymeYear} />
         </>
       ) : null}
 
@@ -11580,8 +11667,25 @@ function HRSalaryCalculatorView({
           <Text style={styles.cardTitle}>Resultado {formatValue(result.rule_version)}</Text>
           {resultRows.map(([key, value]) => (
             <View key={key} style={styles.detailRow}>
-              <Text style={styles.detailKey}>{key.replaceAll("_", " ")}</Text>
-              <Text style={styles.detailValue}>{key.endsWith("_rate") ? `${(Number(value) * 100).toFixed(2)}%` : typeof value === "number" ? moneyCrc(value) : formatValue(value)}</Text>
+              <Text style={styles.detailKey}>{SALARY_RESULT_LABELS[key] || key.replaceAll("_", " ")}</Text>
+              <Text style={styles.detailValue}>{key.endsWith("_rate") || key.endsWith("exemption_rate") ? `${(Number(value) * 100).toFixed(2)}%` : typeof value === "number" ? moneyCrc(value) : key === "distribution_type" ? DISTRIBUTION_LABELS[formatValue(value)] || formatValue(value) : formatValue(value)}</Text>
+            </View>
+          ))}
+          {resultLists.map(([key, value]) => (
+            <View key={key} style={styles.summaryBox}>
+              <Text style={styles.cardTitle}>{SALARY_RESULT_LABELS[key] || key.replaceAll("_", " ")}</Text>
+              {(value as unknown[]).map((item, index) => {
+                const row = asRecord(item) || {};
+                const name = formatValue(row.name || row.category || `${formatValue(row.from)} - ${formatValue(row.to)}`);
+                const amountValue = row.amount ?? row.tax ?? row.monthly_depreciation;
+                const rate = typeof row.rate === "number" ? ` (${(row.rate * 100).toFixed(2)}%)` : "";
+                const remaining = row.remaining_book_value !== undefined ? ` | saldo libro ${moneyCrc(row.remaining_book_value)}` : "";
+                return (
+                  <Text key={`${name}-${index}`} style={styles.helperText}>
+                    {name}: {moneyCrc(amountValue)}{rate}{remaining}
+                  </Text>
+                );
+              })}
             </View>
           ))}
           <Text style={styles.helperText}>{formatValue(result.disclaimer)}</Text>
@@ -14571,6 +14675,7 @@ const styles = StyleSheet.create({
   },
   selectText: { color: "#101828", fontSize: 14, fontWeight: "700" },
   selectedRow: { borderColor: BLUE, borderWidth: 2 },
+  salaryExpenseList: { maxHeight: 150, marginBottom: 10 },
   switchRow: { alignItems: "center", flexDirection: "row", justifyContent: "space-between", marginBottom: 10 },
   summaryBox: {
     backgroundColor: "white",
