@@ -505,6 +505,56 @@ def _amount_crc_for_transaction(cur, tx: dict[str, Any]) -> Decimal:
     return amount_crc
 
 
+def _settlement_amounts(cur, statement: dict[str, Any], pay_date: date, override_crc=None, override_usd=None, override_rate=None):
+    amount_crc = _money(override_crc if override_crc is not None else statement.get("cash_payment_crc"))
+    amount_usd = _money(override_usd if override_usd is not None else statement.get("cash_payment_usd"))
+    exchange_rate = Decimal(str(override_rate)) if override_rate else _exchange_rate_for(cur, pay_date)
+    usd_crc = (amount_usd * exchange_rate).quantize(MONEY, rounding=ROUND_HALF_UP)
+    total_crc = amount_crc + usd_crc
+    return amount_crc, amount_usd, exchange_rate, usd_crc, total_crc
+
+
+def _settlement_description(statement: dict[str, Any], amount_crc: Decimal, amount_usd: Decimal, exchange_rate: Decimal, usd_crc: Decimal, total_crc: Decimal) -> str:
+    period = statement.get("statement_period") or ""
+    card = statement.get("card_last4") or ""
+    return (
+        f"Pago tarjeta corporativa BAC {period}"
+        f"{' tarjeta ' + str(card) if card else ''}: "
+        f"contado CRC {amount_crc:,.2f}; "
+        f"contado USD {amount_usd:,.2f} x TC BCCR {exchange_rate:,.6f} = CRC {usd_crc:,.2f}; "
+        f"total CRC {total_crc:,.2f}"
+    )
+
+
+def _settlement_lines(bank_code: str, bank_name: str, description: str, amount_crc: Decimal, amount_usd: Decimal, usd_crc: Decimal, total_crc: Decimal) -> list[dict[str, Any]]:
+    lines = [
+        {
+            "account_code": CARD_PAYABLE_CODE,
+            "account_name": CARD_PAYABLE_NAME,
+            "debit": total_crc,
+            "credit": 0,
+            "description": description,
+        }
+    ]
+    if amount_crc > 0:
+        lines.append({
+            "account_code": bank_code,
+            "account_name": bank_name,
+            "debit": 0,
+            "credit": amount_crc,
+            "description": f"{description} | Rebajo banco por contado CRC",
+        })
+    if amount_usd > 0:
+        lines.append({
+            "account_code": bank_code,
+            "account_name": bank_name,
+            "debit": 0,
+            "credit": usd_crc,
+            "description": f"{description} | Rebajo banco por contado USD {amount_usd:,.2f} convertido a CRC",
+        })
+    return lines
+
+
 def _post_card_transaction(cur, tx: dict[str, Any], force_closed_period: bool = False) -> int | None:
     tx_date = tx.get("transaction_date")
     if not tx_date:
@@ -692,24 +742,44 @@ def _match_candidates(cur, tx_id: int) -> list[dict[str, Any]]:
     desc = (tx.get("description") or "").upper()
     cur.execute("""
         SELECT id, payee_name, reference, issue_date, due_date, currency, total, balance, status,
+               obligation_type, payee_type, notes,
+               ABS(COALESCE(total,0)-%s) AS amount_delta,
                CASE
                  WHEN UPPER(COALESCE(payee_name,'')) <> '' AND %s LIKE '%%' || UPPER(payee_name) || '%%' THEN 30
                  ELSE 0
                END
                + CASE WHEN currency=%s THEN 20 ELSE 0 END
                + CASE WHEN ABS(COALESCE(total,0)-%s) <= 2 THEN 40 ELSE 0 END
+               + CASE WHEN ABS(COALESCE(total,0)-%s) <= 500 THEN 15 ELSE 0 END
+               + CASE WHEN issue_date BETWEEN (%s::date - INTERVAL '20 days') AND (%s::date + INTERVAL '20 days') THEN 15 ELSE 0 END
                + CASE WHEN status IN ('PENDING','PARTIAL') THEN 10 ELSE 0 END
                + CASE WHEN COALESCE(paid_with_card, FALSE) THEN -100 ELSE 0 END AS score
         FROM payment_obligations
         WHERE active=TRUE
-          AND status IN ('PENDING','PARTIAL','PAID')
+          AND status IN ('PENDING','PARTIAL')
           AND COALESCE(paid_with_card, FALSE)=FALSE
           AND currency=%s
-          AND ABS(COALESCE(total,0)-%s) <= 2
-          AND issue_date BETWEEN (%s::date - INTERVAL '20 days') AND (%s::date + INTERVAL '20 days')
-        ORDER BY score DESC, ABS(issue_date - %s::date), issue_date DESC
-        LIMIT 10
-    """, (desc, tx["currency"], amount, tx["currency"], amount, tx["transaction_date"], tx["transaction_date"], tx["transaction_date"]))
+          AND (
+              ABS(COALESCE(total,0)-%s) <= 500
+              OR issue_date BETWEEN (%s::date - INTERVAL '45 days') AND (%s::date + INTERVAL '45 days')
+              OR UPPER(COALESCE(payee_name,'')) <> '' AND %s LIKE '%%' || UPPER(payee_name) || '%%'
+          )
+        ORDER BY score DESC, amount_delta ASC, issue_date DESC NULLS LAST, id DESC
+        LIMIT 50
+    """, (
+        amount,
+        desc,
+        tx["currency"],
+        amount,
+        amount,
+        tx["transaction_date"],
+        tx["transaction_date"],
+        tx["currency"],
+        amount,
+        tx["transaction_date"],
+        tx["transaction_date"],
+        desc,
+    ))
     return [dict(row) for row in cur.fetchall()]
 
 
@@ -917,18 +987,27 @@ def post_settlement(statement_id: int, payload: SettlementRequest, conn=Depends(
         if not statement:
             raise HTTPException(404, "Estado de cuenta no existe")
         pay_date = payload.payment_date or statement.get("payment_due_date") or _due_on_15th(statement.get("cutoff_date"), statement.get("statement_period"))
-        amount_crc = _money(payload.amount_crc if payload.amount_crc is not None else statement.get("cash_payment_crc"))
-        amount_usd = _money(payload.amount_usd if payload.amount_usd is not None else statement.get("cash_payment_usd"))
-        exchange_rate = Decimal(str(payload.exchange_rate)) if payload.exchange_rate else _exchange_rate_for(cur, pay_date)
-        total_crc = amount_crc + (amount_usd * exchange_rate).quantize(MONEY, rounding=ROUND_HALF_UP)
+        amount_crc, amount_usd, exchange_rate, usd_crc, total_crc = _settlement_amounts(
+            cur,
+            statement,
+            pay_date,
+            override_crc=payload.amount_crc,
+            override_usd=payload.amount_usd,
+            override_rate=payload.exchange_rate,
+        )
         if total_crc <= 0:
             raise HTTPException(400, "No hay monto contado para liquidar")
         bank_name = payload.bank_account_name or payload.bank_account_code
-        description = f"Pago tarjeta corporativa BAC {statement.get('statement_period') or ''}"
-        entry_id = _post_entry(cur, statement["company_code"], pay_date, description, "CORP_CARD_SETTLEMENT", statement_id, [
-            {"account_code": CARD_PAYABLE_CODE, "account_name": CARD_PAYABLE_NAME, "debit": total_crc, "credit": 0, "description": description},
-            {"account_code": payload.bank_account_code, "account_name": bank_name, "debit": 0, "credit": total_crc, "description": description},
-        ])
+        description = _settlement_description(statement, amount_crc, amount_usd, exchange_rate, usd_crc, total_crc)
+        entry_id = _post_entry(
+            cur,
+            statement["company_code"],
+            pay_date,
+            description,
+            "CORP_CARD_SETTLEMENT",
+            statement_id,
+            _settlement_lines(payload.bank_account_code, bank_name, description, amount_crc, amount_usd, usd_crc, total_crc),
+        )
         cur.execute("""
             INSERT INTO corporate_card_settlements(
                 statement_id, company_code, payment_date, bank_account_code, bank_account_name,
@@ -964,17 +1043,20 @@ def _post_settlement_for_statement(
     pay_date = statement.get("payment_due_date") or _due_on_15th(statement.get("cutoff_date"), statement.get("statement_period"))
     if not pay_date:
         raise HTTPException(400, f"Estado {statement.get('id')} no tiene fecha para pago de tarjeta")
-    amount_crc = _money(statement.get("cash_payment_crc"))
-    amount_usd = _money(statement.get("cash_payment_usd"))
-    exchange_rate = _exchange_rate_for(cur, pay_date)
-    total_crc = amount_crc + (amount_usd * exchange_rate).quantize(MONEY, rounding=ROUND_HALF_UP)
+    amount_crc, amount_usd, exchange_rate, usd_crc, total_crc = _settlement_amounts(cur, statement, pay_date)
     if total_crc <= 0:
         return 0
-    description = f"Pago tarjeta corporativa BAC {statement.get('statement_period') or ''}"
-    entry_id = _post_entry(cur, statement["company_code"], pay_date, description, "CORP_CARD_SETTLEMENT", statement["id"], [
-        {"account_code": CARD_PAYABLE_CODE, "account_name": CARD_PAYABLE_NAME, "debit": total_crc, "credit": 0, "description": description},
-        {"account_code": code, "account_name": name, "debit": 0, "credit": total_crc, "description": description},
-    ], force_closed_period=force_closed_period)
+    description = _settlement_description(statement, amount_crc, amount_usd, exchange_rate, usd_crc, total_crc)
+    entry_id = _post_entry(
+        cur,
+        statement["company_code"],
+        pay_date,
+        description,
+        "CORP_CARD_SETTLEMENT",
+        statement["id"],
+        _settlement_lines(code, name, description, amount_crc, amount_usd, usd_crc, total_crc),
+        force_closed_period=force_closed_period,
+    )
     cur.execute("""
         INSERT INTO corporate_card_settlements(
             statement_id, company_code, payment_date, bank_account_code, bank_account_name,
@@ -988,6 +1070,7 @@ def _post_settlement_for_statement(
             amount_usd=EXCLUDED.amount_usd,
             exchange_rate=EXCLUDED.exchange_rate,
             accounting_entry_id=EXCLUDED.accounting_entry_id
+        RETURNING id
     """, (statement["id"], statement["company_code"], pay_date, code, name, amount_crc, amount_usd, exchange_rate, entry_id))
     cur.execute("UPDATE corporate_card_statements SET status='SETTLED' WHERE id=%s", (statement["id"],))
     return entry_id
