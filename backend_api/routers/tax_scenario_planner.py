@@ -248,6 +248,9 @@ def _apply_manual_expense_lines(rows: list[dict[str, Any]], req: TaxScenarioRequ
                 "account_name": name,
                 "status": line.status or "MANUAL",
                 "entry_count": int(line.entry_count or 0),
+                "debit_ytd_crc": ytd,
+                "credit_ytd_crc": 0,
+                "net_ytd_crc": ytd,
                 "ytd_amount_crc": ytd,
             }
             rows.append(row)
@@ -255,6 +258,9 @@ def _apply_manual_expense_lines(rows: list[dict[str, Any]], req: TaxScenarioRequ
             row["entry_count"] = int(line.entry_count or row.get("entry_count") or 0)
             row["status"] = line.status or row.get("status") or "MANUAL"
             row["ytd_amount_crc"] = ytd if line.ytd_amount_crc is not None else _money(row.get("ytd_amount_crc"))
+            row["debit_ytd_crc"] = row["ytd_amount_crc"]
+            row["credit_ytd_crc"] = 0
+            row["net_ytd_crc"] = row["ytd_amount_crc"]
         row["projected_annual_crc"] = projected
         row["future_projected_crc"] = _money(max(projected - _money(row.get("ytd_amount_crc")), 0))
         row["projection_mode"] = "MANUAL"
@@ -371,6 +377,9 @@ def _fetch_expense_rows(cur, req: TaxScenarioRequest) -> list[dict[str, Any]]:
             posted.account_name,
             'POSTED' AS status,
             posted.entry_count,
+            posted.debit_ytd_crc,
+            posted.credit_ytd_crc,
+            posted.net_ytd_crc,
             posted.ytd_amount_crc
         FROM (
             SELECT
@@ -379,6 +388,9 @@ def _fetch_expense_rows(cur, req: TaxScenarioRequest) -> list[dict[str, Any]]:
                 COALESCE(NULLIF(l.account_code, ''), 'SIN-CUENTA') AS account_code,
                 COALESCE(NULLIF(l.account_name, ''), 'Gasto sin nombre') AS account_name,
                 COUNT(DISTINCT e.id) AS entry_count,
+                SUM(COALESCE(l.debit, 0)) AS debit_ytd_crc,
+                SUM(COALESCE(l.credit, 0)) AS credit_ytd_crc,
+                SUM(COALESCE(l.debit, 0) - COALESCE(l.credit, 0)) AS net_ytd_crc,
                 GREATEST(SUM(COALESCE(l.debit, 0) - COALESCE(l.credit, 0)), 0) AS ytd_amount_crc
             FROM accounting_lines l
             JOIN accounting_entries e ON e.id = l.entry_id
@@ -389,7 +401,7 @@ def _fetch_expense_rows(cur, req: TaxScenarioRequest) -> list[dict[str, Any]]:
               AND (l.account_code LIKE '5%%' OR l.account_code LIKE '6%%')
             GROUP BY e.company_code, COALESCE(NULLIF(l.account_code, ''), 'SIN-CUENTA'), COALESCE(NULLIF(l.account_name, ''), 'Gasto sin nombre')
         ) posted
-        WHERE posted.ytd_amount_crc <> 0
+        WHERE posted.debit_ytd_crc <> 0 OR posted.credit_ytd_crc <> 0
         ORDER BY ytd_amount_crc DESC
         """,
         (company_code(req.source_company), company_code(req.target_company), period_from, period_to),
@@ -441,7 +453,14 @@ def _fetch_expense_rows(cur, req: TaxScenarioRequest) -> list[dict[str, Any]]:
     )
     for row in cur.fetchall():
         ytd = _money(row["ytd_amount_crc"])
-        item = {**dict(row), "entry_count": int(row.get("entry_count") or 0), "ytd_amount_crc": ytd}
+        item = {
+            **dict(row),
+            "entry_count": int(row.get("entry_count") or 0),
+            "debit_ytd_crc": ytd,
+            "credit_ytd_crc": 0,
+            "net_ytd_crc": ytd,
+            "ytd_amount_crc": ytd,
+        }
         rows.append(_apply_projection_lock(item, _fixed_expense_matches(item, req), factor))
     cur.execute(
         """
@@ -467,7 +486,14 @@ def _fetch_expense_rows(cur, req: TaxScenarioRequest) -> list[dict[str, Any]]:
     )
     for row in cur.fetchall():
         ytd = _money(row["ytd_amount_crc"])
-        item = {**dict(row), "entry_count": int(row.get("entry_count") or 0), "ytd_amount_crc": ytd}
+        item = {
+            **dict(row),
+            "entry_count": int(row.get("entry_count") or 0),
+            "debit_ytd_crc": ytd,
+            "credit_ytd_crc": 0,
+            "net_ytd_crc": ytd,
+            "ytd_amount_crc": ytd,
+        }
         rows.append(_apply_projection_lock(item, _fixed_expense_matches(item, req), factor))
     return _apply_manual_expense_lines(rows, req)
 
