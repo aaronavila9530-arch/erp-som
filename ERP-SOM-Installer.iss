@@ -5,7 +5,7 @@
 ; =========================================================
 
 #define MyAppName "ERP-SOM"
-#define MyAppVersion "1.7.15"
+#define MyAppVersion "1.7.16"
 #define MyAppPublisher "InnovaCore SRL"
 #define MyAppExeName "ERP-SOM.exe"
 

@@ -328,7 +328,7 @@ class PopupTaxScenarioPlanner(tk.Toplevel):
     def _worker(self, payload):
         try:
             data = post_accounting_tax_scenario_analysis_api(payload)
-            self.after(0, lambda: self._render(data))
+            self.after(0, lambda: self._render_safe(data))
         except Exception as exc:
             self.after(0, lambda: self._error(exc))
 
@@ -341,6 +341,12 @@ class PopupTaxScenarioPlanner(tk.Toplevel):
         self.client_rows_by_item.clear()
         self.expense_rows_by_item.clear()
         self.analysis_text.delete("1.0", "end")
+
+    def _render_safe(self, data):
+        try:
+            self._render(data)
+        except Exception as exc:
+            self._error(exc)
 
     def _render(self, data):
         self.result = data
@@ -478,7 +484,7 @@ class PopupTaxScenarioPlanner(tk.Toplevel):
             status_bg = "#fdecea" if exceeded else "#e9f7ef"
             status_fg = "#8a1f11" if exceeded else "#0d5b2a"
             tk.Label(frame, text="D-102 | Impuesto sobre utilidades", bg="#0b3f75", fg="#ffffff", font=("Segoe UI", 10, "bold"), anchor="w", padx=8, pady=6).pack(fill="x")
-            tk.Label(frame, text=title, bg="#ffffff", fg="#111111", font=("Segoe UI", 11, "bold"), anchor="w", padx=8, pady=(8, 2)).pack(fill="x")
+            tk.Label(frame, text=title, bg="#ffffff", fg="#111111", font=("Segoe UI", 11, "bold"), anchor="w", padx=8).pack(fill="x", pady=(8, 2))
             tk.Label(frame, text=self._pyme_status(row, projected=True), bg=status_bg, fg=status_fg, font=("Segoe UI", 9, "bold"), anchor="w", padx=8, pady=5, wraplength=360).pack(fill="x", padx=8, pady=(4, 8))
             lines = [
                 ("1", "Renta bruta / ingresos", row.get("gross_projected_crc"), True),
