@@ -52,6 +52,25 @@ class ExpenseProjectionLock(BaseModel):
     company_code: str = "MSL-CR"
 
 
+class ManualClientLine(BaseModel):
+    client_name: str
+    company_code: str = "MSL-CR"
+    invoice_count: int = 0
+    ytd_amount_crc: float | None = None
+    projected_annual_crc: float
+
+
+class ManualExpenseLine(BaseModel):
+    account_code: str
+    account_name: str
+    company_code: str = "MSL-CR"
+    source_type: str = "MANUAL_SCENARIO"
+    status: str = "MANUAL"
+    entry_count: int = 0
+    ytd_amount_crc: float | None = None
+    projected_annual_crc: float
+
+
 class CompanyOption(BaseModel):
     company_code: str
     is_pyme: bool = True
@@ -69,6 +88,8 @@ class TaxScenarioRequest(BaseModel):
     expense_moves: list[ExpenseMove] = Field(default_factory=list)
     fixed_clients: list[ClientProjectionLock] = Field(default_factory=list)
     fixed_expenses: list[ExpenseProjectionLock] = Field(default_factory=list)
+    manual_client_lines: list[ManualClientLine] = Field(default_factory=list)
+    manual_expense_lines: list[ManualExpenseLine] = Field(default_factory=list)
     save: bool = False
     label: str | None = None
 
@@ -172,6 +193,74 @@ def _apply_projection_lock(row: dict[str, Any], locked: bool, factor: float) -> 
     return row
 
 
+def _apply_manual_client_lines(rows: list[dict[str, Any]], req: TaxScenarioRequest) -> list[dict[str, Any]]:
+    for line in req.manual_client_lines or []:
+        name = (line.client_name or "").strip()
+        if not name:
+            continue
+        code = company_code(line.company_code)
+        projected = _money(line.projected_annual_crc)
+        ytd = _money(line.ytd_amount_crc if line.ytd_amount_crc is not None else 0)
+        key = (code, name.upper())
+        row = next((item for item in rows if (company_code(item.get("company_code")), (item.get("client_name") or "").strip().upper()) == key), None)
+        if row is None:
+            row = {
+                "company_code": code,
+                "client_name": name,
+                "client_code": "MANUAL",
+                "invoice_count": int(line.invoice_count or 0),
+                "ytd_amount_crc": ytd,
+                "missing_fx_count": 0,
+            }
+            rows.append(row)
+        else:
+            row["invoice_count"] = int(line.invoice_count or row.get("invoice_count") or 0)
+            row["ytd_amount_crc"] = ytd if line.ytd_amount_crc is not None else _money(row.get("ytd_amount_crc"))
+        row["projected_annual_crc"] = projected
+        row["future_projected_crc"] = _money(max(projected - _money(row.get("ytd_amount_crc")), 0))
+        row["projection_mode"] = "MANUAL"
+    return rows
+
+
+def _apply_manual_expense_lines(rows: list[dict[str, Any]], req: TaxScenarioRequest) -> list[dict[str, Any]]:
+    for line in req.manual_expense_lines or []:
+        code = company_code(line.company_code)
+        account = (line.account_code or "").strip() or "MANUAL"
+        name = (line.account_name or "").strip() or "Gasto manual"
+        source = (line.source_type or "MANUAL_SCENARIO").strip()
+        projected = _money(line.projected_annual_crc)
+        ytd = _money(line.ytd_amount_crc if line.ytd_amount_crc is not None else 0)
+        row = next(
+            (
+                item for item in rows
+                if company_code(item.get("company_code")) == code
+                and (item.get("source_type") or "").strip().upper() == source.upper()
+                and (item.get("account_code") or "").strip().upper() == account.upper()
+                and (item.get("account_name") or "").strip().upper() == name.upper()
+            ),
+            None,
+        )
+        if row is None:
+            row = {
+                "company_code": code,
+                "source_type": source,
+                "account_code": account,
+                "account_name": name,
+                "status": line.status or "MANUAL",
+                "entry_count": int(line.entry_count or 0),
+                "ytd_amount_crc": ytd,
+            }
+            rows.append(row)
+        else:
+            row["entry_count"] = int(line.entry_count or row.get("entry_count") or 0)
+            row["status"] = line.status or row.get("status") or "MANUAL"
+            row["ytd_amount_crc"] = ytd if line.ytd_amount_crc is not None else _money(row.get("ytd_amount_crc"))
+        row["projected_annual_crc"] = projected
+        row["future_projected_crc"] = _money(max(projected - _money(row.get("ytd_amount_crc")), 0))
+        row["projection_mode"] = "MANUAL"
+    return rows
+
+
 def _fetch_company_names(cur) -> dict[str, str]:
     cur.execute(
         """
@@ -233,7 +322,7 @@ def _fetch_clients(cur, req: TaxScenarioRequest) -> list[dict[str, Any]]:
         _apply_projection_lock(item, locked, factor)
         item["missing_fx_count"] = int(item.get("missing_fx_count") or 0)
         rows.append(item)
-    return rows
+    return _apply_manual_client_lines(rows, req)
 
 
 def _fetch_expenses(cur, req: TaxScenarioRequest) -> dict[str, dict[str, Any]]:
@@ -362,7 +451,7 @@ def _fetch_expense_rows(cur, req: TaxScenarioRequest) -> list[dict[str, Any]]:
         ytd = _money(row["ytd_amount_crc"])
         item = {**dict(row), "entry_count": int(row.get("entry_count") or 0), "ytd_amount_crc": ytd}
         rows.append(_apply_projection_lock(item, _fixed_expense_matches(item, req), factor))
-    return rows
+    return _apply_manual_expense_lines(rows, req)
 
 
 def _company_tax(company: str, gross: float, expenses: float, option: CompanyOption) -> dict[str, Any]:
