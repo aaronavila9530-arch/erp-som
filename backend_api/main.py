@@ -51,6 +51,7 @@ from routers.fixed_assets import router as fixed_assets_router
 from routers.gmail_fiscal import router as gmail_fiscal_router, start_gmail_fiscal_scheduler
 from routers.monthly_financial_report import router as monthly_financial_report_router
 from routers.tax_scenario_planner import router as tax_scenario_planner_router
+from routers.corporate_cards import router as corporate_cards_router
 
 from routers.exchange_rate import router as exchange_rate_router
 
@@ -241,6 +242,7 @@ app.include_router(fixed_assets_router)
 app.include_router(gmail_fiscal_router)
 app.include_router(monthly_financial_report_router)
 app.include_router(tax_scenario_planner_router)
+app.include_router(corporate_cards_router)
 
 app.include_router(exchange_rate_router)
 

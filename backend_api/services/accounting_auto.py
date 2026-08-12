@@ -1172,6 +1172,22 @@ def sync_itp_to_accounting(conn):
             ALTER TABLE payment_obligations
             ADD COLUMN IF NOT EXISTS payment_bank_account_name TEXT
         """)
+        cur.execute("""
+            ALTER TABLE payment_obligations
+            ADD COLUMN IF NOT EXISTS paid_with_card BOOLEAN NOT NULL DEFAULT FALSE
+        """)
+        cur.execute("""
+            ALTER TABLE payment_obligations
+            ADD COLUMN IF NOT EXISTS card_transaction_id BIGINT
+        """)
+        cur.execute("""
+            ALTER TABLE payment_obligations
+            ADD COLUMN IF NOT EXISTS card_paid_at DATE
+        """)
+        cur.execute("""
+            ALTER TABLE payment_obligations
+            ADD COLUMN IF NOT EXISTS card_holder_name TEXT
+        """)
         backfill_missing_bank_accounts(cur)
         employee_itp_ids = employee_obligation_ids(cur)
         if employee_itp_ids:
@@ -1228,7 +1244,8 @@ def sync_itp_to_accounting(conn):
                 p.active,
                 p.notes,
                 p.payment_bank_account_code,
-                p.payment_bank_account_name
+                p.payment_bank_account_name,
+                COALESCE(p.paid_with_card, FALSE) AS paid_with_card
             FROM payment_obligations p
             WHERE p.active = TRUE
             ORDER BY p.id ASC
@@ -1507,7 +1524,7 @@ def sync_itp_to_accounting(conn):
             # B) ASIENTO DE PAGO (origin='ITP_PAYMENT')
             # NO aplica para CREDIT NOTES
             # ============================================================
-            if status == "PAID" and balance_crc == 0 and not is_credit_note:
+            if status == "PAID" and balance_crc == 0 and not is_credit_note and not ob.get("paid_with_card"):
 
                 payment_date = _to_date(ob.get("last_payment_date")) or issue_date
                 if payment_date > today:
