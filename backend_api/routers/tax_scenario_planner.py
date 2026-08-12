@@ -331,15 +331,23 @@ def _fetch_expenses(cur, req: TaxScenarioRequest) -> dict[str, dict[str, Any]]:
     cur.execute(
         """
         SELECT
-            e.company_code,
-            COALESCE(SUM(GREATEST(COALESCE(l.debit, 0) - COALESCE(l.credit, 0), 0)), 0) AS ytd_expense_crc
-        FROM accounting_entries e
-        JOIN accounting_lines l ON l.entry_id = e.id
-        WHERE e.company_code IN (%s, %s)
-          AND e.period >= %s
-          AND e.period <= %s
-          AND (l.account_code LIKE '5%%' OR l.account_code LIKE '6%%')
-        GROUP BY e.company_code
+            account_balance.company_code,
+            COALESCE(SUM(account_balance.ytd_expense_crc), 0) AS ytd_expense_crc
+        FROM (
+            SELECT
+                e.company_code,
+                COALESCE(NULLIF(l.account_code, ''), 'SIN-CUENTA') AS account_code,
+                GREATEST(SUM(COALESCE(l.debit, 0) - COALESCE(l.credit, 0)), 0) AS ytd_expense_crc
+            FROM accounting_entries e
+            JOIN accounting_lines l ON l.entry_id = e.id
+            WHERE e.company_code IN (%s, %s)
+              AND e.period >= %s
+              AND e.period <= %s
+              AND e.workflow_status = 'POSTED'
+              AND (l.account_code LIKE '5%%' OR l.account_code LIKE '6%%')
+            GROUP BY e.company_code, COALESCE(NULLIF(l.account_code, ''), 'SIN-CUENTA')
+        ) account_balance
+        GROUP BY account_balance.company_code
         """,
         (company_code(req.source_company), company_code(req.target_company), period_from, period_to),
     )
@@ -357,21 +365,31 @@ def _fetch_expense_rows(cur, req: TaxScenarioRequest) -> list[dict[str, Any]]:
     cur.execute(
         """
         SELECT
-            e.company_code,
-            'POSTED_GL' AS source_type,
-            COALESCE(NULLIF(l.account_code, ''), 'SIN-CUENTA') AS account_code,
-            COALESCE(NULLIF(l.account_name, ''), 'Gasto sin nombre') AS account_name,
+            posted.company_code,
+            posted.source_type,
+            posted.account_code,
+            posted.account_name,
             'POSTED' AS status,
-            COUNT(DISTINCT e.id) AS entry_count,
-            COALESCE(SUM(GREATEST(COALESCE(l.debit, 0) - COALESCE(l.credit, 0), 0)), 0) AS ytd_amount_crc
-        FROM accounting_entries e
-        JOIN accounting_lines l ON l.entry_id = e.id
-        WHERE e.company_code IN (%s, %s)
-          AND e.period >= %s
-          AND e.period <= %s
-          AND (l.account_code LIKE '5%%' OR l.account_code LIKE '6%%')
-        GROUP BY e.company_code, COALESCE(NULLIF(l.account_code, ''), 'SIN-CUENTA'), COALESCE(NULLIF(l.account_name, ''), 'Gasto sin nombre')
-        HAVING COALESCE(SUM(GREATEST(COALESCE(l.debit, 0) - COALESCE(l.credit, 0), 0)), 0) <> 0
+            posted.entry_count,
+            posted.ytd_amount_crc
+        FROM (
+            SELECT
+                e.company_code,
+                'POSTED_GL' AS source_type,
+                COALESCE(NULLIF(l.account_code, ''), 'SIN-CUENTA') AS account_code,
+                COALESCE(NULLIF(l.account_name, ''), 'Gasto sin nombre') AS account_name,
+                COUNT(DISTINCT e.id) AS entry_count,
+                GREATEST(SUM(COALESCE(l.debit, 0) - COALESCE(l.credit, 0)), 0) AS ytd_amount_crc
+            FROM accounting_lines l
+            JOIN accounting_entries e ON e.id = l.entry_id
+            WHERE e.company_code IN (%s, %s)
+              AND e.period >= %s
+              AND e.period <= %s
+              AND e.workflow_status = 'POSTED'
+              AND (l.account_code LIKE '5%%' OR l.account_code LIKE '6%%')
+            GROUP BY e.company_code, COALESCE(NULLIF(l.account_code, ''), 'SIN-CUENTA'), COALESCE(NULLIF(l.account_name, ''), 'Gasto sin nombre')
+        ) posted
+        WHERE posted.ytd_amount_crc <> 0
         ORDER BY ytd_amount_crc DESC
         """,
         (company_code(req.source_company), company_code(req.target_company), period_from, period_to),
@@ -570,6 +588,7 @@ def _scenario(
 
     expense_totals = {code: sum(row["projected_annual_crc"] for row in expense_rows if row["company_code"] == code) for code in companies}
     expense_totals = {code: _money(expense_totals.get(code, 0) + options[code].manual_expenses_crc) for code in companies}
+    expense_ytd = {code: sum(row["ytd_amount_crc"] for row in expense_rows if row["company_code"] == code) for code in companies}
     moved_expenses = []
     for move in expense_moves:
         src = company_code(move.from_company)
@@ -608,6 +627,9 @@ def _scenario(
         ytd = _money(gross_ytd.get(row["company_code"], 0))
         row["gross_ytd_crc"] = ytd
         row["gross_future_projected_crc"] = _money(max(row["gross_projected_crc"] - ytd, 0))
+        expenses_ytd = _money(expense_ytd.get(row["company_code"], 0))
+        row["deductible_expenses_ytd_crc"] = expenses_ytd
+        row["deductible_expenses_future_projected_crc"] = _money(max(row["deductible_expenses_projected_crc"] - expenses_ytd, 0))
         row["pyme_threshold_ytd_remaining_crc"] = _money(CORPORATE_GROSS_THRESHOLD_ANNUAL - ytd)
         row["pyme_threshold_ytd_usage_pct"] = _money(ytd / CORPORATE_GROSS_THRESHOLD_ANNUAL * 100) if CORPORATE_GROSS_THRESHOLD_ANNUAL else 0
     total_tax = _money(sum(row["income_tax_projected_crc"] for row in company_results))
