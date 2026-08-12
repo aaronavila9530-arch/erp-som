@@ -2267,6 +2267,249 @@ def get_accounting_tax_scenario_history_api(limit: int = 25):
     return r.json()
 
 
+def _is_api_not_found(exc: Exception) -> bool:
+    response = getattr(exc, "response", None)
+    return bool(response is not None and getattr(response, "status_code", None) == 404)
+
+
+def _corporate_cards_local_call(action: str, *args, **kwargs):
+    import sys
+    from pathlib import Path
+
+    backend_dir = Path(__file__).resolve().parent / "backend_api"
+    if str(backend_dir) not in sys.path:
+        sys.path.insert(0, str(backend_dir))
+
+    from database import get_conn, release_conn
+    from psycopg2.extras import RealDictCursor
+    from routers import corporate_cards as cards
+
+    company = get_company_code() or "MSL-CR"
+    conn = get_conn()
+    try:
+        if action == "import_pdf":
+            class _LocalUpload:
+                def __init__(self, path):
+                    self.filename = Path(path).name
+                    self.file = open(path, "rb")
+
+            upload = _LocalUpload(args[0])
+            try:
+                return cards.import_statement_pdf(upload, x_company_code=company, x_user=get_user() or "SYSTEM", conn=conn)
+            finally:
+                upload.file.close()
+        if action == "statements":
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cards.ensure_schema(cur)
+                cur.execute("""
+                    SELECT s.*,
+                           COUNT(t.id) AS transaction_count,
+                           COUNT(t.id) FILTER(WHERE t.match_status='MATCHED_ITP') AS matched_count,
+                           COUNT(t.id) FILTER(WHERE t.accounting_entry_id IS NOT NULL) AS posted_count
+                    FROM corporate_card_statements s
+                    LEFT JOIN corporate_card_transactions t ON t.statement_id=s.id
+                    WHERE s.company_code=%s
+                    GROUP BY s.id
+                    ORDER BY s.cutoff_date DESC NULLS LAST, s.id DESC
+                """, (company,))
+                return {"items": [dict(row) for row in cur.fetchall()]}
+        if action == "transactions":
+            return cards.list_transactions(int(args[0]), conn=conn)
+        if action == "auto_match":
+            return cards.auto_match(int(args[0]), conn=conn)
+        if action == "match_candidates":
+            return cards.match_candidates(int(args[0]), conn=conn)
+        if action == "match_itp":
+            return cards.match_itp(int(args[0]), cards.MatchRequest(**(args[1] or {})), conn=conn)
+        if action == "classify":
+            return cards.classify_transaction(int(args[0]), cards.ClassifyRequest(**(args[1] or {})), conn=conn)
+        if action == "classify_statement":
+            return cards.classify_statement_transactions(int(args[0]), cards.BulkClassifyRequest(**(args[1] or {})), conn=conn)
+        if action == "post_daily":
+            return cards.post_daily(int(args[0]), conn=conn)
+        if action == "post_settlement":
+            return cards.post_settlement(int(args[0]), cards.SettlementRequest(**(args[1] or {})), conn=conn)
+        if action == "post_history":
+            return cards.post_history(cards.HistoryPostRequest(**(args[0] or {})), x_company_code=company, conn=conn)
+        raise ValueError(f"Accion local de tarjetas no soportada: {action}")
+    finally:
+        release_conn(conn)
+
+
+def post_corporate_card_statement_pdf_api(pdf_path: str):
+    try:
+        with open(pdf_path, "rb") as fh:
+            files = {"file": (pdf_path.split("\\")[-1], fh, "application/pdf")}
+            r = api_request(
+                "POST",
+                f"{BASE_URL}/accounting/corporate-cards/statements/import-pdf",
+                files=files,
+                timeout=120,
+            )
+        raise_for_status_with_detail(r)
+        return r.json()
+    except requests.exceptions.HTTPError as exc:
+        if _is_api_not_found(exc):
+            return _corporate_cards_local_call("import_pdf", pdf_path)
+        raise
+
+
+def get_corporate_card_statements_api():
+    try:
+        r = api_request(
+            "GET",
+            f"{BASE_URL}/accounting/corporate-cards/statements",
+            timeout=45,
+        )
+        raise_for_status_with_detail(r)
+        return r.json()
+    except requests.exceptions.HTTPError as exc:
+        if _is_api_not_found(exc):
+            return _corporate_cards_local_call("statements")
+        raise
+
+
+def get_corporate_card_transactions_api(statement_id: int):
+    try:
+        r = api_request(
+            "GET",
+            f"{BASE_URL}/accounting/corporate-cards/statements/{int(statement_id)}/transactions",
+            timeout=45,
+        )
+        raise_for_status_with_detail(r)
+        return r.json()
+    except requests.exceptions.HTTPError as exc:
+        if _is_api_not_found(exc):
+            return _corporate_cards_local_call("transactions", statement_id)
+        raise
+
+
+def post_corporate_card_auto_match_api(statement_id: int):
+    try:
+        r = api_request(
+            "POST",
+            f"{BASE_URL}/accounting/corporate-cards/statements/{int(statement_id)}/auto-match",
+            timeout=90,
+        )
+        raise_for_status_with_detail(r)
+        return r.json()
+    except requests.exceptions.HTTPError as exc:
+        if _is_api_not_found(exc):
+            return _corporate_cards_local_call("auto_match", statement_id)
+        raise
+
+
+def get_corporate_card_match_candidates_api(transaction_id: int):
+    try:
+        r = api_request(
+            "GET",
+            f"{BASE_URL}/accounting/corporate-cards/transactions/{int(transaction_id)}/match-candidates",
+            timeout=45,
+        )
+        raise_for_status_with_detail(r)
+        return r.json()
+    except requests.exceptions.HTTPError as exc:
+        if _is_api_not_found(exc):
+            return _corporate_cards_local_call("match_candidates", transaction_id)
+        raise
+
+
+def put_corporate_card_transaction_classify_api(transaction_id: int, payload: dict):
+    try:
+        r = api_request(
+            "PUT",
+            f"{BASE_URL}/accounting/corporate-cards/transactions/{int(transaction_id)}/classify",
+            json=payload,
+            timeout=45,
+        )
+        raise_for_status_with_detail(r)
+        return r.json()
+    except requests.exceptions.HTTPError as exc:
+        if _is_api_not_found(exc):
+            return _corporate_cards_local_call("classify", transaction_id, payload)
+        raise
+
+
+def put_corporate_card_statement_classify_api(statement_id: int, payload: dict):
+    try:
+        r = api_request(
+            "PUT",
+            f"{BASE_URL}/accounting/corporate-cards/statements/{int(statement_id)}/classify",
+            json=payload,
+            timeout=90,
+        )
+        raise_for_status_with_detail(r)
+        return r.json()
+    except requests.exceptions.HTTPError as exc:
+        if _is_api_not_found(exc):
+            return _corporate_cards_local_call("classify_statement", statement_id, payload)
+        raise
+
+
+def post_corporate_card_match_itp_api(transaction_id: int, obligation_id: int):
+    payload = {"obligation_id": int(obligation_id)}
+    try:
+        r = api_request(
+            "POST",
+            f"{BASE_URL}/accounting/corporate-cards/transactions/{int(transaction_id)}/match-itp",
+            json=payload,
+            timeout=60,
+        )
+        raise_for_status_with_detail(r)
+        return r.json()
+    except requests.exceptions.HTTPError as exc:
+        if _is_api_not_found(exc):
+            return _corporate_cards_local_call("match_itp", transaction_id, payload)
+        raise
+
+
+def post_corporate_card_daily_entries_api(statement_id: int):
+    try:
+        r = api_request(
+            "POST",
+            f"{BASE_URL}/accounting/corporate-cards/statements/{int(statement_id)}/post-daily",
+            timeout=120,
+        )
+        raise_for_status_with_detail(r)
+        return r.json()
+    except requests.exceptions.HTTPError as exc:
+        if _is_api_not_found(exc):
+            return _corporate_cards_local_call("post_daily", statement_id)
+        raise
+
+
+def post_corporate_card_settlement_api(statement_id: int, payload: dict):
+    try:
+        r = api_request(
+            "POST",
+            f"{BASE_URL}/accounting/corporate-cards/statements/{int(statement_id)}/post-settlement",
+            json=payload,
+            timeout=90,
+        )
+        raise_for_status_with_detail(r)
+        return r.json()
+    except requests.exceptions.HTTPError as exc:
+        if _is_api_not_found(exc):
+            return _corporate_cards_local_call("post_settlement", statement_id, payload)
+        raise
+
+
+def post_corporate_card_history_api(payload: dict | None = None):
+    try:
+        r = api_request(
+            "POST",
+            f"{BASE_URL}/accounting/corporate-cards/statements/post-history",
+            json=payload or {},
+            timeout=180,
+        )
+        raise_for_status_with_detail(r)
+        return r.json()
+    except requests.exceptions.HTTPError as exc:
+        if _is_api_not_found(exc):
+            return _corporate_cards_local_call("post_history", payload or {})
+        raise
+
+
 def sync_accounting_auxiliaries_api():
     r = api_request("POST", f"{BASE_URL}/accounting/auxiliaries/sync", timeout=180)
     r.raise_for_status()

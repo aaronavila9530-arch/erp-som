@@ -45,7 +45,7 @@ const COMPANIES = [
   { code: "MMS-CR", name: "MMS MARITIME MASTER SURVEYORS SRL", label: "MMS" }
 ];
 const DEFAULT_COMPANY = COMPANIES[0];
-const MOBILE_APP_VERSION = "1.7.24";
+const MOBILE_APP_VERSION = "1.7.25";
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -13660,6 +13660,655 @@ function TaxScenarioPlannerMobile({ session }: { session: NonNullable<ReturnType
   );
 }
 
+const ACCOUNTING_MOBILE_ACTIONS = [
+  { key: "workspace", label: "Mi espacio contable", description: "Dashboard, pendientes y busqueda contable diaria." },
+  { key: "manual-entry", label: "Asiento manual", description: "Crear un asiento balanceado desde Android." },
+  { key: "sync", label: "Sincronizar ERP", description: "Generar asientos desde cobros, ITP, planilla y bancos." },
+  { key: "auxiliaries", label: "Auxiliares contables", description: "Cuentas por cobrar, pagar y conciliacion contra mayor." },
+  { key: "fixed-assets", label: "Activos fijos", description: "Inventario, depreciacion y control de activos." },
+  { key: "corporate-cards", label: "Tarjetas corporativas", description: "BAC por usuario, cruces ITP, clasificacion y posteos." },
+  { key: "inventory", label: "Inventarios", description: "Items inventariables y activos menores." },
+  { key: "tax-center", label: "Centro fiscal Costa Rica", description: "IVA, XML, libros, CAByS y obligaciones." },
+  { key: "legal-library", label: "Biblioteca legal Costa Rica", description: "Reglas tributarias y contables de referencia." },
+  { key: "chart", label: "Catalogo maestro de cuentas", description: "Cuentas activas y posteables." },
+  { key: "posting-rules", label: "Motor de contabilizacion", description: "Reglas automaticas de asientos." },
+  { key: "advanced", label: "Accounting avanzado", description: "FX, dashboard ejecutivo, presupuesto y alertas inteligentes." },
+  { key: "alerts", label: "Alertas y validaciones", description: "Riesgos criticos antes de postear o cerrar." },
+  { key: "audit", label: "Auditoria por usuario", description: "Trazabilidad de cambios contables." },
+  { key: "closing", label: "Cierre mensual guiado", description: "Checklist y cierre auditable del periodo." },
+  { key: "portia", label: "PORTIA contable", description: "Analisis IA de riesgos y recomendaciones." },
+  { key: "tax-simulator", label: "Simulador fiscal multiempresa", description: "Escenarios PYME/D-102 entre sociedades." },
+  { key: "adjust", label: "Ajustar asiento", description: "Consultar y preparar revision de asiento seleccionado." },
+  { key: "reverse", label: "Reversar asiento", description: "Reversar asiento POSTED por numero." },
+  { key: "declarations", label: "Declaraciones", description: "D-150 IVA y D-102 utilidades." },
+  { key: "reports", label: "Reportes", description: "Asientos, mayor, BC, ESF, ER, flujo y completos." }
+];
+
+const CARD_EXPENSE_ACCOUNT_OPTIONS = [
+  "550-001-000-050 - Alimentacion",
+  "500-001-001-050 - Transporte",
+  "500-001-001-042 - Combustible",
+  "500-001-001-023 - Telefonos",
+  "500-001-001-043 - Hospedaje",
+  "500-001-001-044 - Viaticos",
+  "500-001-001-054 - Pasajes de avion",
+  "500-001-001-036 - Papeleria y Utiles de Oficina",
+  "500-001-001-038 - Mant. y Reparacion Vehiculos",
+  "550-001-000-059 - Gastos Medicos",
+  "500-001-001-006 - Servicios Profesionales",
+  "5.4 - Otros gastos",
+  "5.4.99 - Gastos no deducibles"
+];
+
+function payloadItems(payload: unknown) {
+  const obj = asRecord(payload);
+  if (Array.isArray(payload)) return payload as Record<string, unknown>[];
+  const items = obj?.items;
+  if (Array.isArray(items)) return items as Record<string, unknown>[];
+  const data = obj?.data;
+  if (Array.isArray(data)) return data as Record<string, unknown>[];
+  if (obj) return [obj];
+  return [];
+}
+
+function AccountingActionsHubMobile({
+  session,
+  period,
+  form,
+  rows,
+  onLoading,
+  onMessage,
+  shareAccountingReport,
+  openClosingStatus
+}: {
+  session: NonNullable<ReturnType<typeof useAuth>["session"]>;
+  period: string;
+  form: Record<string, string>;
+  rows: Record<string, unknown>[];
+  onLoading: (loading: boolean) => void;
+  onMessage: (message: string) => void;
+  shareAccountingReport: () => Promise<void>;
+  openClosingStatus: () => Promise<void>;
+}) {
+  const [activeAction, setActiveAction] = useState<string | null>(null);
+
+  return (
+    <View style={styles.reportBox}>
+      <Text style={styles.helperText}>Cada accion abre su propia pantalla movil para no mezclar controles en una vista pequena.</Text>
+      <View style={styles.accountingActionGrid}>
+        {ACCOUNTING_MOBILE_ACTIONS.map((action) => (
+          <Pressable key={action.key} style={styles.accountingActionCard} onPress={() => setActiveAction(action.key)}>
+            <Text style={styles.accountingActionTitle}>{action.label}</Text>
+            <Text style={styles.accountingActionText}>{action.description}</Text>
+          </Pressable>
+        ))}
+      </View>
+      <Modal visible={!!activeAction} animationType="slide" onRequestClose={() => setActiveAction(null)}>
+        {activeAction ? (
+          <AccountingActionScreen
+            actionKey={activeAction}
+            session={session}
+            period={period}
+            form={form}
+            rows={rows}
+            onClose={() => setActiveAction(null)}
+            onLoading={onLoading}
+            onMessage={onMessage}
+            shareAccountingReport={shareAccountingReport}
+            openClosingStatus={openClosingStatus}
+          />
+        ) : null}
+      </Modal>
+    </View>
+  );
+}
+
+function AccountingActionScreen({
+  actionKey,
+  session,
+  period,
+  form,
+  rows,
+  onClose,
+  onLoading,
+  onMessage,
+  shareAccountingReport,
+  openClosingStatus
+}: {
+  actionKey: string;
+  session: NonNullable<ReturnType<typeof useAuth>["session"]>;
+  period: string;
+  form: Record<string, string>;
+  rows: Record<string, unknown>[];
+  onClose: () => void;
+  onLoading: (loading: boolean) => void;
+  onMessage: (message: string) => void;
+  shareAccountingReport: () => Promise<void>;
+  openClosingStatus: () => Promise<void>;
+}) {
+  const action = ACCOUNTING_MOBILE_ACTIONS.find((item) => item.key === actionKey);
+  return (
+    <SafeAreaView style={styles.modalScreen}>
+      <View style={styles.modalHeader}>
+        <Text style={styles.modalTitle}>{action?.label || "Accion Accounting"}</Text>
+        <Pressable style={styles.modalClose} onPress={onClose}><Text style={styles.modalCloseText}>Cerrar</Text></Pressable>
+      </View>
+      <ScrollView style={styles.content} contentContainerStyle={styles.modalBody}>
+        {actionKey === "tax-simulator" ? <TaxScenarioPlannerMobile session={session} /> : null}
+        {actionKey === "corporate-cards" ? <CorporateCardsMobile session={session} /> : null}
+        {actionKey === "manual-entry" ? <ManualEntryMobile session={session} /> : null}
+        {actionKey === "sync" ? <AccountingSyncMobile session={session} period={period} /> : null}
+        {actionKey === "alerts" ? <AccountingListActionMobile session={session} title="Alertas y validaciones" endpoint={`/accounting/validation-alerts?period=${encodeURIComponent(period)}&company_code=${encodeURIComponent(session.company_code || DEFAULT_COMPANY.code)}`} /> : null}
+        {actionKey === "audit" ? <AccountingListActionMobile session={session} title="Auditoria por usuario" endpoint="/accounting/audit?limit=100" /> : null}
+        {actionKey === "workspace" ? <WorkspaceMobile session={session} period={period} /> : null}
+        {actionKey === "closing" ? <ClosingMobile session={session} period={period} openClosingStatus={openClosingStatus} /> : null}
+        {actionKey === "auxiliaries" ? <AccountingListActionMobile session={session} title="Auxiliares contables" endpoint={`/accounting/auxiliaries/reconciliation?period=${encodeURIComponent(period)}`} secondaryEndpoint={`/accounting/auxiliaries/aging?period=${encodeURIComponent(period)}`} /> : null}
+        {actionKey === "fixed-assets" ? <AccountingListActionMobile session={session} title="Activos fijos" endpoint="/accounting/fixed-assets" /> : null}
+        {actionKey === "inventory" ? <AccountingListActionMobile session={session} title="Inventarios" endpoint="/accounting/fixed-assets/inventory/items" /> : null}
+        {actionKey === "chart" ? <AccountingListActionMobile session={session} title="Catalogo maestro de cuentas" endpoint="/accounting/accounts" /> : null}
+        {actionKey === "posting-rules" ? <PostingRulesMobile session={session} /> : null}
+        {actionKey === "advanced" ? <AccountingAdvancedMobile session={session} period={period} /> : null}
+        {actionKey === "tax-center" ? <TaxCenterMobile session={session} period={period} /> : null}
+        {actionKey === "legal-library" ? <AccountingListActionMobile session={session} title="Biblioteca legal Costa Rica" endpoint="/accounting/legal-library" /> : null}
+        {actionKey === "portia" ? <PortiaAccountingMobile session={session} period={period} /> : null}
+        {actionKey === "adjust" ? <EntryLookupMobile session={session} rows={rows} mode="adjust" /> : null}
+        {actionKey === "reverse" ? <EntryLookupMobile session={session} rows={rows} mode="reverse" /> : null}
+        {actionKey === "declarations" ? <DeclarationsMobile session={session} period={period} /> : null}
+        {actionKey === "reports" ? <ReportsMobile form={form} shareAccountingReport={shareAccountingReport} /> : null}
+        <Text style={styles.helperText}>Pantalla conectada a la empresa activa: {session.company_code || DEFAULT_COMPANY.code}.</Text>
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
+
+function MiniRecordCard({ row, titleKeys = [] }: { row: Record<string, unknown>; titleKeys?: string[] }) {
+  const title = titleKeys.map((key) => formatValue(row[key])).find((value) => value && value !== "-") || formatValue(row.id || row.entry_id || row.code || row.account_code || "Registro");
+  const entries = Object.entries(row).filter(([, value]) => value !== null && value !== undefined && formatValue(value) !== "").slice(0, 10);
+  return (
+    <View style={styles.rowCard}>
+      <Text style={styles.rowTitle}>{title}</Text>
+      {entries.map(([key, value]) => (
+        <View key={key} style={styles.detailRow}>
+          <Text style={styles.detailKey}>{key}</Text>
+          <Text style={styles.detailValue}>{formatValue(value)}</Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+function AccountingListActionMobile({
+  session,
+  title,
+  endpoint,
+  secondaryEndpoint
+}: {
+  session: NonNullable<ReturnType<typeof useAuth>["session"]>;
+  title: string;
+  endpoint: string;
+  secondaryEndpoint?: string;
+}) {
+  const [rows, setRows] = useState<Record<string, unknown>[]>([]);
+  const [secondaryRows, setSecondaryRows] = useState<Record<string, unknown>[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+
+  async function load() {
+    setBusy(true);
+    setMessage("");
+    try {
+      const data = await apiRequest(endpoint, { session });
+      setRows(payloadItems(data));
+      if (secondaryEndpoint) {
+        const second = await apiRequest(secondaryEndpoint, { session });
+        setSecondaryRows(payloadItems(second));
+      }
+      setMessage("Datos cargados.");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo cargar.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  useEffect(() => { load(); }, [endpoint, secondaryEndpoint]);
+
+  return (
+    <View>
+      <View style={styles.salaryHeader}>
+        <Text style={styles.cardTitle}>{title}</Text>
+        <Pressable style={styles.actionButton} onPress={load} disabled={busy}><Text style={styles.actionButtonText}>{busy ? "Cargando..." : "Actualizar"}</Text></Pressable>
+      </View>
+      {message ? <Text style={message.includes("No se") ? styles.error : styles.helperText}>{message}</Text> : null}
+      {!rows.length ? <Text style={styles.empty}>Sin datos para mostrar.</Text> : rows.slice(0, 80).map((row, index) => <MiniRecordCard key={`${title}-${index}`} row={row} titleKeys={["title", "account_name", "name", "tax_code", "severity", "period"]} />)}
+      {secondaryRows.length ? (
+        <>
+          <Text style={styles.salarySectionTitle}>Detalle adicional</Text>
+          {secondaryRows.slice(0, 50).map((row, index) => <MiniRecordCard key={`${title}-secondary-${index}`} row={row} />)}
+        </>
+      ) : null}
+    </View>
+  );
+}
+
+function AccountingSyncMobile({ session, period }: { session: NonNullable<ReturnType<typeof useAuth>["session"]>; period: string }) {
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState("");
+  async function run(label: string, endpoint: string) {
+    setBusy(label);
+    setMessage("");
+    try {
+      const data = await apiRequest<Record<string, unknown>>(endpoint, { method: "POST", session });
+      setMessage(`${label}: ${formatValue(data.message || data.status || "listo")}`);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo sincronizar.");
+    } finally {
+      setBusy("");
+    }
+  }
+  return (
+    <View>
+      <Text style={styles.helperText}>Sincroniza asientos ERP para {period}. Usa las mismas reglas del escritorio.</Text>
+      <View style={styles.accountingActionGrid}>
+        {[
+          ["Todo", "/accounting/sync/all"],
+          ["Cobros", "/accounting/sync/collections"],
+          ["Cash App", "/accounting/sync/cash-app"],
+          ["ITP", "/accounting/sync/itp"],
+          ["Planilla", "/accounting/sync/payroll"]
+        ].map(([label, endpoint]) => (
+          <Pressable key={endpoint} style={styles.accountingActionCard} onPress={() => run(label, endpoint)} disabled={!!busy}>
+            <Text style={styles.accountingActionTitle}>{busy === label ? "Procesando..." : label}</Text>
+            <Text style={styles.accountingActionText}>{endpoint}</Text>
+          </Pressable>
+        ))}
+      </View>
+      {message ? <Text style={message.includes("No se") ? styles.error : styles.helperText}>{message}</Text> : null}
+    </View>
+  );
+}
+
+function WorkspaceMobile({ session, period }: { session: NonNullable<ReturnType<typeof useAuth>["session"]>; period: string }) {
+  return (
+    <View>
+      <AccountingListActionMobile session={session} title="Dashboard contable" endpoint={`/accounting/workspace/dashboard?period=${encodeURIComponent(period)}`} />
+      <AccountingListActionMobile session={session} title="Checklist de cierre" endpoint={`/accounting/workspace/close-checklist?period=${encodeURIComponent(period)}`} />
+    </View>
+  );
+}
+
+function ClosingMobile({ session, period, openClosingStatus }: { session: NonNullable<ReturnType<typeof useAuth>["session"]>; period: string; openClosingStatus: () => Promise<void> }) {
+  const [message, setMessage] = useState("");
+  async function closePeriod() {
+    setMessage("");
+    try {
+      const data = await apiRequest<Record<string, unknown>>(`/accounting/workspace/guided-close/${encodeURIComponent(period)}/close`, { method: "POST", session });
+      setMessage(formatValue(data.message || data.status || "Periodo cerrado."));
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo cerrar el periodo.");
+    }
+  }
+  return (
+    <View>
+      <View style={styles.financeFilterActions}>
+        <Pressable style={styles.actionButton} onPress={openClosingStatus}><Text style={styles.actionButtonText}>Ver estado tecnico</Text></Pressable>
+        <Pressable style={styles.modalClose} onPress={closePeriod}><Text style={styles.modalCloseText}>Cerrar periodo</Text></Pressable>
+      </View>
+      {message ? <Text style={message.includes("No se") ? styles.error : styles.helperText}>{message}</Text> : null}
+      <AccountingListActionMobile session={session} title={`Cierre guiado ${period}`} endpoint={`/accounting/workspace/guided-close?period=${encodeURIComponent(period)}`} />
+    </View>
+  );
+}
+
+function PostingRulesMobile({ session }: { session: NonNullable<ReturnType<typeof useAuth>["session"]> }) {
+  const [message, setMessage] = useState("");
+  async function seed() {
+    try {
+      const data = await apiRequest<Record<string, unknown>>("/accounting/posting-rules/seed", { method: "POST", session });
+      setMessage(formatValue(data.message || data.status || "Reglas sembradas."));
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo sembrar reglas.");
+    }
+  }
+  return (
+    <View>
+      <Pressable style={styles.actionButton} onPress={seed}><Text style={styles.actionButtonText}>Sembrar / reparar reglas base</Text></Pressable>
+      {message ? <Text style={message.includes("No se") ? styles.error : styles.helperText}>{message}</Text> : null}
+      <AccountingListActionMobile session={session} title="Reglas de contabilizacion" endpoint="/accounting/posting-rules" />
+    </View>
+  );
+}
+
+function AccountingAdvancedMobile({ session, period }: { session: NonNullable<ReturnType<typeof useAuth>["session"]>; period: string }) {
+  return (
+    <View>
+      <AccountingListActionMobile session={session} title="Dashboard ejecutivo" endpoint={`/accounting/advanced/executive-dashboard?period=${encodeURIComponent(period)}`} />
+      <AccountingListActionMobile session={session} title="Alertas inteligentes" endpoint={`/accounting/advanced/smart-alerts?period=${encodeURIComponent(period)}`} />
+      <AccountingListActionMobile session={session} title="Resumen fiscal profundo" endpoint={`/accounting/advanced/tax/deep-summary?period=${encodeURIComponent(period)}`} />
+      <AccountingListActionMobile session={session} title="Presupuesto vs real" endpoint={`/accounting/advanced/budget-vs-actual?period=${encodeURIComponent(period)}`} />
+    </View>
+  );
+}
+
+function TaxCenterMobile({ session, period }: { session: NonNullable<ReturnType<typeof useAuth>["session"]>; period: string }) {
+  const [message, setMessage] = useState("");
+  async function syncTax() {
+    try {
+      const data = await apiRequest<Record<string, unknown>>("/accounting/tax/sync", { method: "POST", session });
+      setMessage(formatValue(data.message || data.status || "Centro fiscal sincronizado."));
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo sincronizar fiscal.");
+    }
+  }
+  return (
+    <View>
+      <Pressable style={styles.actionButton} onPress={syncTax}><Text style={styles.actionButtonText}>Sincronizar XML / Hacienda</Text></Pressable>
+      {message ? <Text style={message.includes("No se") ? styles.error : styles.helperText}>{message}</Text> : null}
+      <AccountingListActionMobile session={session} title="IVA del periodo" endpoint={`/accounting/tax/iva?period=${encodeURIComponent(period)}`} />
+      <AccountingListActionMobile session={session} title="Documentos fiscales pendientes" endpoint={`/accounting/tax/documents?period=${encodeURIComponent(period)}&quality_only=true`} />
+      <AccountingListActionMobile session={session} title="Obligaciones tributarias" endpoint={`/accounting/tax/obligations?year=${encodeURIComponent(period.slice(0, 4))}&period=${encodeURIComponent(period)}&pending_only=true`} />
+      <AccountingListActionMobile session={session} title="Libro compras" endpoint={`/accounting/tax/books/PURCHASE?period=${encodeURIComponent(period)}`} />
+      <AccountingListActionMobile session={session} title="Libro ventas" endpoint={`/accounting/tax/books/SALE?period=${encodeURIComponent(period)}`} />
+    </View>
+  );
+}
+
+function PortiaAccountingMobile({ session, period }: { session: NonNullable<ReturnType<typeof useAuth>["session"]>; period: string }) {
+  const [question, setQuestion] = useState(`Analiza riesgos contables del periodo ${period}`);
+  const [answer, setAnswer] = useState("");
+  const [busy, setBusy] = useState(false);
+  async function run() {
+    setBusy(true);
+    setAnswer("");
+    try {
+      const data = await apiRequest<Record<string, unknown>>("/accounting/ai/analyze", {
+        method: "POST",
+        session,
+        body: { period, question, filters: { period } }
+      });
+      setAnswer(formatValue(data.analysis || data.recommendation || data.message || data));
+    } catch (err) {
+      setAnswer(err instanceof Error ? err.message : "No se pudo analizar con PORTIA.");
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <View>
+      <Text style={styles.label}>Consulta</Text>
+      <TextInput style={[styles.input, styles.multilineInput]} multiline value={question} onChangeText={setQuestion} />
+      <Pressable style={styles.actionButton} onPress={run} disabled={busy}><Text style={styles.actionButtonText}>{busy ? "Analizando..." : "Analizar con PORTIA"}</Text></Pressable>
+      {answer ? <Text style={answer.includes("No se") ? styles.error : styles.helperText}>{answer}</Text> : null}
+    </View>
+  );
+}
+
+function ReportsMobile({ form, shareAccountingReport }: { form: Record<string, string>; shareAccountingReport: () => Promise<void> }) {
+  return (
+    <View>
+      <Text style={styles.helperText}>Usa los filtros actuales de Accounting: periodo/rango, origen y cuenta. El formato se selecciona en la pantalla principal de filtros.</Text>
+      <MiniRecordCard row={{ reporte: form.report, formato: form.report_format, periodo: form.search_mode === "RANGE" ? `${form.period_from} a ${form.period_to}` : form.period, origen: form.origin, cuenta: form.account }} />
+      <Pressable style={styles.actionButton} onPress={shareAccountingReport}><Text style={styles.actionButtonText}>Descargar / compartir reporte</Text></Pressable>
+    </View>
+  );
+}
+
+function DeclarationsMobile({ session, period }: { session: NonNullable<ReturnType<typeof useAuth>["session"]>; period: string }) {
+  return (
+    <View>
+      <Text style={styles.helperText}>Declaraciones fiscales con la misma informacion del centro fiscal y contabilidad.</Text>
+      <AccountingListActionMobile session={session} title="TRIBU-CR D-150 IVA" endpoint={`/accounting/tax/iva?period=${encodeURIComponent(period)}`} />
+      <Text style={styles.helperText}>D-102 se consulta desde el Simulador fiscal multiempresa porque requiere parametros de escenario y anos PYME.</Text>
+      <Text style={styles.helperText}>D-101 y D-270 siguen marcados como pendientes en escritorio; Android los muestra como referencia cuando el backend los exponga.</Text>
+    </View>
+  );
+}
+
+function EntryLookupMobile({ session, rows, mode }: { session: NonNullable<ReturnType<typeof useAuth>["session"]>; rows: Record<string, unknown>[]; mode: "adjust" | "reverse" }) {
+  const firstEntry = formatValue(rows.find((row) => row.entry_id || row.id)?.entry_id || rows.find((row) => row.entry_id || row.id)?.id || "");
+  const [entryId, setEntryId] = useState(firstEntry);
+  const [entry, setEntry] = useState<Record<string, unknown> | null>(null);
+  const [message, setMessage] = useState("");
+  async function loadEntry() {
+    if (!entryId) {
+      setMessage("Indique el numero de asiento.");
+      return;
+    }
+    try {
+      const data = await apiRequest<Record<string, unknown>>(`/accounting/entry/${encodeURIComponent(entryId)}`, { session });
+      setEntry(data);
+      setMessage("Asiento cargado.");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo cargar el asiento.");
+    }
+  }
+  async function reverse() {
+    if (!entryId) return;
+    try {
+      const data = await apiRequest<Record<string, unknown>>(`/accounting/reverse/${encodeURIComponent(entryId)}`, { method: "POST", session });
+      setMessage(formatValue(data.message || data.status || "Asiento reversado."));
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo reversar.");
+    }
+  }
+  return (
+    <View>
+      <Text style={styles.label}>Numero de asiento</Text>
+      <TextInput style={styles.input} value={entryId} onChangeText={setEntryId} keyboardType="number-pad" />
+      <View style={styles.financeFilterActions}>
+        <Pressable style={styles.actionButton} onPress={loadEntry}><Text style={styles.actionButtonText}>Cargar asiento</Text></Pressable>
+        {mode === "reverse" ? <Pressable style={styles.modalClose} onPress={reverse}><Text style={styles.modalCloseText}>Reversar</Text></Pressable> : null}
+      </View>
+      {message ? <Text style={message.includes("No se") ? styles.error : styles.helperText}>{message}</Text> : null}
+      {entry ? <MiniRecordCard row={entry} titleKeys={["description", "entry_id", "id"]} /> : null}
+      {mode === "adjust" ? <Text style={styles.helperText}>Para ajustes, cargue el asiento y use asiento manual para registrar el ajuste/reclasificacion balanceada.</Text> : null}
+    </View>
+  );
+}
+
+function ManualEntryMobile({ session }: { session: NonNullable<ReturnType<typeof useAuth>["session"]> }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [entryDate, setEntryDate] = useState(today);
+  const [description, setDescription] = useState("");
+  const [debitAccount, setDebitAccount] = useState("");
+  const [creditAccount, setCreditAccount] = useState("");
+  const [amount, setAmount] = useState("");
+  const [message, setMessage] = useState("");
+  async function save() {
+    const value = Number(String(amount).replace(/,/g, ""));
+    if (!entryDate || !description || !debitAccount || !creditAccount || !Number.isFinite(value) || value <= 0) {
+      setMessage("Complete fecha, descripcion, cuentas y monto.");
+      return;
+    }
+    try {
+      const payload = {
+        entry_date: entryDate,
+        description,
+        company_code: session.company_code || DEFAULT_COMPANY.code,
+        lines: [
+          { account_code: debitAccount.split(" - ")[0], debit: value, credit: 0, line_description: description },
+          { account_code: creditAccount.split(" - ")[0], debit: 0, credit: value, line_description: description }
+        ]
+      };
+      const data = await apiRequest<Record<string, unknown>>("/accounting/manual-entry", { method: "POST", session, body: payload });
+      setMessage(`Asiento creado en borrador: ${formatValue(data.entry_id || data.id)}.`);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo crear el asiento.");
+    }
+  }
+  return (
+    <View>
+      <Text style={styles.label}>Fecha</Text>
+      <TextInput style={styles.input} value={entryDate} onChangeText={setEntryDate} placeholder="YYYY-MM-DD" />
+      <Text style={styles.label}>Descripcion</Text>
+      <TextInput style={styles.input} value={description} onChangeText={setDescription} />
+      <Text style={styles.label}>Cuenta Debe</Text>
+      <TextInput style={styles.input} value={debitAccount} onChangeText={setDebitAccount} placeholder="Codigo cuenta" />
+      <Text style={styles.label}>Cuenta Haber</Text>
+      <TextInput style={styles.input} value={creditAccount} onChangeText={setCreditAccount} placeholder="Codigo cuenta" />
+      <Text style={styles.label}>Monto CRC</Text>
+      <TextInput style={styles.input} value={amount} onChangeText={setAmount} keyboardType="numeric" />
+      <Pressable style={styles.actionButton} onPress={save}><Text style={styles.actionButtonText}>Crear asiento borrador</Text></Pressable>
+      {message ? <Text style={message.includes("No se") || message.includes("Complete") ? styles.error : styles.helperText}>{message}</Text> : null}
+    </View>
+  );
+}
+
+function CorporateCardsMobile({ session }: { session: NonNullable<ReturnType<typeof useAuth>["session"]> }) {
+  const [statements, setStatements] = useState<Record<string, unknown>[]>([]);
+  const [transactions, setTransactions] = useState<Record<string, unknown>[]>([]);
+  const [selectedStatementId, setSelectedStatementId] = useState("");
+  const [selectedTxId, setSelectedTxId] = useState("");
+  const [category, setCategory] = useState(CARD_EXPENSE_ACCOUNT_OPTIONS[0]);
+  const [deductible, setDeductible] = useState("DEDUCTIBLE");
+  const [requiresInvoice, setRequiresInvoice] = useState("No");
+  const [message, setMessage] = useState("");
+  const selectedTx = transactions.find((row) => formatValue(row.id) === selectedTxId);
+
+  async function loadStatements() {
+    setMessage("");
+    try {
+      const data = await apiRequest("/accounting/corporate-cards/statements", { session });
+      const next = payloadItems(data);
+      setStatements(next);
+      if (!selectedStatementId && next[0]?.id) setSelectedStatementId(formatValue(next[0].id));
+      setMessage("Estados BAC cargados.");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo cargar tarjetas.");
+    }
+  }
+
+  async function loadTransactions(statementId = selectedStatementId) {
+    if (!statementId) return;
+    try {
+      const data = await apiRequest(`/accounting/corporate-cards/statements/${encodeURIComponent(statementId)}/transactions`, { session });
+      setTransactions(payloadItems(data));
+      setMessage("Movimientos cargados.");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo cargar movimientos.");
+    }
+  }
+
+  useEffect(() => { loadStatements(); }, []);
+  useEffect(() => { if (selectedStatementId) loadTransactions(selectedStatementId); }, [selectedStatementId]);
+
+  async function importPdf() {
+    const picked = await DocumentPicker.getDocumentAsync({ copyToCacheDirectory: true, multiple: false, type: "application/pdf" });
+    if (picked.canceled || !picked.assets?.[0]?.uri) return;
+    const asset = picked.assets[0];
+    const formData = new FormData();
+    formData.append("file", { uri: asset.uri, name: asset.name || "estado_bac.pdf", type: asset.mimeType || "application/pdf" } as unknown as Blob);
+    try {
+      const response = await fetch(`${API_BASE_URL}/accounting/corporate-cards/statements/import-pdf`, {
+        method: "POST",
+        headers: {
+          "X-User": session.usuario,
+          "X-Role": session.rol,
+          "X-User-Role": session.rol,
+          "X-Company-Code": session.company_code || DEFAULT_COMPANY.code,
+          "X-Company-Name": session.company_name || DEFAULT_COMPANY.name
+        },
+        body: formData
+      });
+      const text = await response.text();
+      if (!response.ok) throw new Error(text || `Error ${response.status}`);
+      setMessage("PDF BAC importado.");
+      await loadStatements();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo importar PDF BAC.");
+    }
+  }
+
+  async function statementPost(endpoint: string, body?: Record<string, unknown>) {
+    if (!selectedStatementId) {
+      setMessage("Seleccione un estado de cuenta.");
+      return;
+    }
+    try {
+      const data = await apiRequest<Record<string, unknown>>(`/accounting/corporate-cards/statements/${encodeURIComponent(selectedStatementId)}/${endpoint}`, { method: "POST", session, body });
+      setMessage(formatValue(data.message || data.status || JSON.stringify(data)));
+      await loadStatements();
+      await loadTransactions();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo ejecutar.");
+    }
+  }
+
+  async function postHistory() {
+    try {
+      const data = await apiRequest<Record<string, unknown>>("/accounting/corporate-cards/statements/post-history", {
+        method: "POST",
+        session,
+        body: { years: [2025, 2026], settle_previous: true, leave_latest_pending: true, latest_pending_per_card: true }
+      });
+      setMessage(formatValue(data.message || data.status || JSON.stringify(data)));
+      await loadStatements();
+      await loadTransactions();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo contabilizar historico.");
+    }
+  }
+
+  async function classifyTx() {
+    if (!selectedTxId) {
+      setMessage("Seleccione un movimiento.");
+      return;
+    }
+    const [code, name] = category.split(" - ");
+    try {
+      const data = await apiRequest<Record<string, unknown>>(`/accounting/corporate-cards/transactions/${encodeURIComponent(selectedTxId)}/classify`, {
+        method: "PUT",
+        session,
+        body: {
+          fiscal_category: name || category,
+          deductible_status: deductible,
+          requires_invoice: requiresInvoice === "Si",
+          expense_account_code: code,
+          expense_account_name: name || category,
+          force_closed_period: true
+        }
+      });
+      setMessage(`Clasificado. Posted: ${formatValue(data.posted)} ${formatValue(data.blocked_reason || "")}`);
+      await loadTransactions();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo clasificar.");
+    }
+  }
+
+  return (
+    <View>
+      <Text style={styles.helperText}>Replica movil de tarjetas: importar BAC, cruzar contra ITP, clasificar cuenta contable, postear cargos y liquidar el dia 15.</Text>
+      <View style={styles.financeFilterActions}>
+        <Pressable style={styles.actionButton} onPress={importPdf}><Text style={styles.actionButtonText}>Importar PDF BAC</Text></Pressable>
+        <Pressable style={styles.modalClose} onPress={loadStatements}><Text style={styles.modalCloseText}>Actualizar</Text></Pressable>
+      </View>
+      <SelectField label="Estado BAC" value={selectedStatementId || "Seleccionar"} options={["Seleccionar", ...statements.map((row) => formatValue(row.id))]} onChange={(value) => setSelectedStatementId(value === "Seleccionar" ? "" : value)} />
+      <View style={styles.financeFilterActions}>
+        <Pressable style={styles.actionButton} onPress={() => statementPost("auto-match")}><Text style={styles.actionButtonText}>Auto cruzar ITP</Text></Pressable>
+        <Pressable style={styles.actionButton} onPress={() => statementPost("post-daily")}><Text style={styles.actionButtonText}>Contabilizar cargos</Text></Pressable>
+      </View>
+      <View style={styles.financeFilterActions}>
+        <Pressable style={styles.modalClose} onPress={() => statementPost("post-settlement", { bank_account_code: "1.1.02.02.01" })}><Text style={styles.modalCloseText}>Liquidar dia 15</Text></Pressable>
+        <Pressable style={styles.modalClose} onPress={postHistory}><Text style={styles.modalCloseText}>Historico 2025-2026</Text></Pressable>
+      </View>
+      {message ? <Text style={message.includes("No se") || message.includes("Error") ? styles.error : styles.helperText}>{message}</Text> : null}
+      <Text style={styles.salarySectionTitle}>Movimientos</Text>
+      <SelectField
+        label="Movimiento"
+        value={selectedTxId || "Seleccionar"}
+        options={["Seleccionar", ...transactions.slice(0, 80).map((row) => `${formatValue(row.id)} | ${formatValue(row.transaction_date)} | ${formatValue(row.merchant || row.description)} | ${moneyCrc(row.amount_crc)}`)]}
+        onChange={(value) => setSelectedTxId(value === "Seleccionar" ? "" : value.split(" | ")[0])}
+      />
+      {selectedTx ? <MiniRecordCard row={selectedTx} titleKeys={["merchant", "description"]} /> : null}
+      <SelectField label="Cuenta gasto" value={category} options={CARD_EXPENSE_ACCOUNT_OPTIONS} onChange={setCategory} />
+      <SelectField label="Tratamiento fiscal" value={deductible} options={["DEDUCTIBLE", "NON_DEDUCTIBLE", "PENDING_REVIEW"]} onChange={setDeductible} />
+      <SelectField label="Requiere factura" value={requiresInvoice} options={["No", "Si"]} onChange={setRequiresInvoice} />
+      <Pressable style={styles.actionButton} onPress={classifyTx}><Text style={styles.actionButtonText}>Guardar clasificacion y asiento</Text></Pressable>
+      {transactions.slice(0, 25).map((row) => <MiniRecordCard key={`tx-${formatValue(row.id)}`} row={row} titleKeys={["merchant", "description"]} />)}
+    </View>
+  );
+}
+
 function accountingPeriodSummary(rows: Record<string, unknown>[]) {
   const periods = new Map<string, Set<string>>();
   rows.forEach((row) => {
@@ -14123,23 +14772,16 @@ function FinanceFilters({
             </View>
             <Text style={styles.helperText}>Simulador multiempresa, reportes, tipo de cambio y estado de cierre con los mismos filtros contables.</Text>
             {accountingActionsOpen ? (
-              <>
-                <TaxScenarioPlannerMobile session={session} />
-                <View style={styles.reportBox}>
-                  <Text style={styles.cardTitle}>Reportes contables</Text>
-                  <SelectField label="Reporte" value={form.report} options={["ASIENTOS", "MAYOR", "BC", "ESF", "ER", "FC"]} onChange={(value) => setValue("report", value)} />
-                  <SelectField label="Formato" value={form.report_format} options={["CSV", "EXCEL", "PDF"]} onChange={(value) => setValue("report_format", value)} />
-                  <View style={styles.financeFilterActions}>
-                    <Pressable style={styles.actionButton} onPress={shareAccountingReport}>
-                      <Text style={styles.actionButtonText}>Descargar Reporte</Text>
-                    </Pressable>
-                    <Pressable style={styles.modalClose} onPress={openClosingStatus}>
-                      <Text style={styles.modalCloseText}>Mayorizar / Cierre</Text>
-                    </Pressable>
-                  </View>
-                  <Text style={styles.helperText}>Excel/PDF se generan en backend; CSV usa los asientos visibles en pantalla.</Text>
-                </View>
-              </>
+              <AccountingActionsHubMobile
+                session={session}
+                period={form.search_mode === "RANGE" ? (form.period_to || currentAccountingPeriod()) : (form.period || currentAccountingPeriod())}
+                form={form}
+                rows={rows}
+                onLoading={onLoading}
+                onMessage={onMessage}
+                shareAccountingReport={shareAccountingReport}
+                openClosingStatus={openClosingStatus}
+              />
             ) : null}
           </View>
           <SelectField label="Buscar por" value={form.search_mode === "RANGE" ? "Rango" : "Periodo"} options={["Periodo", "Rango"]} onChange={(value) => setValue("search_mode", value === "Rango" ? "RANGE" : "SINGLE")} />
@@ -15066,6 +15708,18 @@ const styles = StyleSheet.create({
   },
   accountingTcFields: { flexDirection: "row", gap: 10 },
   accountingTcItem: { flex: 1 },
+  accountingActionGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  accountingActionCard: {
+    backgroundColor: "white",
+    borderColor: BORDER,
+    borderRadius: 8,
+    borderWidth: 1,
+    flexBasis: "48%",
+    minHeight: 92,
+    padding: 12
+  },
+  accountingActionTitle: { color: BLUE, fontSize: 13, fontWeight: "900", marginBottom: 6 },
+  accountingActionText: { color: "#475467", fontSize: 11, fontWeight: "700", lineHeight: 15 },
   formField: { marginBottom: 8 },
   helperText: { color: "#667085", fontSize: 13, fontWeight: "700", marginBottom: 12 },
   modalBody: { padding: 16, paddingBottom: 36 },

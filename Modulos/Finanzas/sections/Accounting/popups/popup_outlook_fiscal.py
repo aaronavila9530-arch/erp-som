@@ -7,6 +7,7 @@ from Modulos.Finanzas.sections.Accounting.outlook_fiscal_importer import (
     load_config,
     save_config,
     scan_and_import,
+    scan_corporate_card_history,
 )
 
 
@@ -18,6 +19,7 @@ class PopupOutlookFiscal(tk.Toplevel):
         self.geometry("1120x650"); self.minsize(920,540)
         self.connection=tk.StringVar(value="Verificando Outlook…")
         self.auto=tk.BooleanVar(value=bool(config.get("enabled")))
+        self.cards=tk.BooleanVar(value=bool(config.get("process_corporate_cards",True)))
         self.interval=tk.IntVar(value=int(config.get("interval_minutes",15)))
         self.batch=tk.IntVar(value=int(config.get("batch_size",50)))
         self.footer=tk.StringVar(value="")
@@ -38,6 +40,8 @@ class PopupOutlookFiscal(tk.Toplevel):
         options=ttk.Frame(self,padding=(10,0)); options.pack(fill="x")
         ttk.Label(options,text="Correos nuevos por lote:").pack(side="left")
         batch=ttk.Combobox(options,textvariable=self.batch,values=(10,25,50,100),state="readonly",width=6); batch.pack(side="left",padx=5); batch.bind("<<ComboboxSelected>>",lambda _e:self._save())
+        ttk.Checkbutton(options,text="Detectar estados BAC PDF",variable=self.cards,command=self._save).pack(side="left",padx=10)
+        ttk.Button(options,text="Cargar tarjetas 2025-2026 y contabilizar",command=self._scan_cards_history).pack(side="left",padx=8)
         ttk.Label(options,text="La primera carga se realiza por lotes para poder revisar los resultados.").pack(side="left",padx=15)
 
         cols=("date","subject","file","status","detail")
@@ -61,24 +65,38 @@ class PopupOutlookFiscal(tk.Toplevel):
 
     def _save(self):
         try:
-            save_config({"enabled":self.auto.get(),"interval_minutes":int(self.interval.get()),"batch_size":int(self.batch.get())})
+            save_config({"enabled":self.auto.get(),"interval_minutes":int(self.interval.get()),"batch_size":int(self.batch.get()),"process_corporate_cards":self.cards.get()})
             self.footer.set("Configuración guardada")
         except Exception as exc:messagebox.showerror("Correo fiscal",str(exc),parent=self)
 
     def _scan(self):
         if self._busy:return
-        self._save(); self._busy=True; self._current_batch=int(self.batch.get()); self.footer.set("Leyendo Outlook y cargando XML…")
+        self._save(); self._busy=True; self._current_batch=int(self.batch.get()); self._card_history=False; self.footer.set("Leyendo Outlook y cargando XML/PDF BAC…")
+        threading.Thread(target=self._scan_worker,daemon=True).start()
+
+    def _scan_cards_history(self):
+        if self._busy:return
+        if not messagebox.askyesno("Tarjetas corporativas","Se importaran estados BAC 2025-2026, se contabilizaran cargos y se marcaran pagados todos menos el ultimo. Continuar?",parent=self):
+            return
+        self._save(); self._busy=True; self._current_batch=100; self._card_history=True; self.footer.set("Cargando historial BAC 2025-2026 desde Outlook…")
         threading.Thread(target=self._scan_worker,daemon=True).start()
 
     def _scan_worker(self):
-        try:self.after(0,self._scan_done,scan_and_import(max_messages=self._current_batch))
+        try:
+            if getattr(self,"_card_history",False):
+                result=scan_corporate_card_history()
+            else:
+                result=scan_and_import(max_messages=self._current_batch)
+            self.after(0,self._scan_done,result)
         except Exception as exc:self.after(0,self._error,str(exc))
 
     def _scan_done(self,result):
         self._busy=False; self.tree.delete(*self.tree.get_children())
         for row in result.get("results",[]):
             status=row.get("status","ERROR"); self.tree.insert("","end",values=(row.get("received",""),row.get("subject",""),row.get("filename",""),status,row.get("detail","")),tags=(status,))
-        self.footer.set(f"Correos: {result.get('messages',0)} · XML: {result.get('xml',0)} · Cargados: {result.get('imported',0)} · Duplicados: {result.get('duplicates',0)} · Errores: {result.get('errors',0)}")
+        history=result.get("card_history") or {}
+        history_text=f" · Estados contabilizados: {history.get('statements',0)}" if history else ""
+        self.footer.set(f"Correos: {result.get('messages',0)} · XML: {result.get('xml',0)} · Cargados: {result.get('imported',0)} · BAC PDF: {result.get('card_imported',0)} · Duplicados: {result.get('duplicates',0)+result.get('card_duplicates',0)} · Errores: {result.get('errors',0)}{history_text}")
 
     def _error(self,message):
         self._busy=False; self.connection.set("No disponible"); self.footer.set("No se pudo completar la operación"); messagebox.showerror("Correo fiscal Outlook",message,parent=self)

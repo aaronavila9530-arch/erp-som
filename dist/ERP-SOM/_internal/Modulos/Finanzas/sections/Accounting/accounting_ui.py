@@ -354,6 +354,7 @@ class AccountingUI(tk.Frame):
         final_actions_menu.add_separator()
         final_actions_menu.add_command(label="Auxiliares contables", command=self._open_auxiliaries)
         final_actions_menu.add_command(label="Activos fijos", command=self._open_fixed_assets)
+        final_actions_menu.add_command(label="Tarjetas corporativas", command=self._open_corporate_cards)
         final_actions_menu.add_command(label="Inventarios", command=self._open_inventory)
         final_actions_menu.add_command(label="Centro fiscal Costa Rica", command=self._open_tax_center)
         final_actions_menu.add_command(label="Biblioteca legal Costa Rica", command=self._open_legal_library)
@@ -752,6 +753,15 @@ class AccountingUI(tk.Frame):
             PopupTaxScenarioPlanner(self)
         except Exception as e:
             messagebox.showerror("Simulador fiscal", f"No se pudo abrir:\n{str(e)}")
+
+    def _open_corporate_cards(self):
+        try:
+            from Modulos.Finanzas.sections.Accounting.popups.popup_corporate_cards import (
+                PopupCorporateCards,
+            )
+            PopupCorporateCards(self)
+        except Exception as e:
+            messagebox.showerror("Tarjetas corporativas", f"No se pudo abrir:\n{str(e)}")
 
 
     def _toggle_period_mode(self):

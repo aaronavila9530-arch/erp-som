@@ -1,7 +1,7 @@
 import threading
 import tkinter as tk
 from datetime import date
-from tkinter import ttk, messagebox, filedialog
+from tkinter import ttk, messagebox, filedialog, simpledialog
 
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment
@@ -23,6 +23,26 @@ def _pct(value):
         return "0.00%"
 
 
+def _manual_key(value):
+    return str(value or "").strip().upper()
+
+
+def _float_value(value):
+    try:
+        if isinstance(value, str):
+            value = value.replace("CRC", "").replace(",", "").strip()
+        return float(value or 0)
+    except Exception:
+        return 0.0
+
+
+def _int_value(value):
+    try:
+        return int(float(str(value or 0).replace(",", "").strip()))
+    except Exception:
+        return 0
+
+
 class PopupTaxScenarioPlanner(tk.Toplevel):
     def __init__(self, parent):
         super().__init__(parent)
@@ -40,6 +60,8 @@ class PopupTaxScenarioPlanner(tk.Toplevel):
         self.expense_moves = []
         self.fixed_clients = []
         self.fixed_expenses = []
+        self.manual_client_lines = []
+        self.manual_expense_lines = []
         self.client_rows_by_item = {}
         self.expense_rows_by_item = {}
         self._build_ui()
@@ -129,6 +151,8 @@ class PopupTaxScenarioPlanner(tk.Toplevel):
         ttk.Button(actions, text=f"Dejar venta en {self.source_company_var.get()}", command=self._move_selected_client_to_source).pack(side="right", padx=4)
         ttk.Button(actions, text="Mantener monto", command=self._lock_selected_client_projection).pack(side="right", padx=4)
         ttk.Button(actions, text="Proyectar normal", command=self._unlock_selected_client_projection).pack(side="right", padx=4)
+        ttk.Button(actions, text="Editar linea", command=self._edit_selected_client_amount).pack(side="right", padx=4)
+        ttk.Button(actions, text="Agregar venta", command=self._add_manual_client_line).pack(side="right", padx=4)
 
         cols = ("company", "client", "invoices", "ytd", "future", "projected", "decision")
         self.clients_tree = ttk.Treeview(tab, columns=cols, show="headings")
@@ -158,8 +182,10 @@ class PopupTaxScenarioPlanner(tk.Toplevel):
         ttk.Button(actions, text=f"Dejar gasto en {self.source_company_var.get()}", command=self._move_selected_expense_to_source).pack(side="right", padx=4)
         ttk.Button(actions, text="Mantener monto", command=self._lock_selected_expense_projection).pack(side="right", padx=4)
         ttk.Button(actions, text="Proyectar normal", command=self._unlock_selected_expense_projection).pack(side="right", padx=4)
+        ttk.Button(actions, text="Editar linea", command=self._edit_selected_expense_amount).pack(side="right", padx=4)
+        ttk.Button(actions, text="Agregar gasto", command=self._add_manual_expense_line).pack(side="right", padx=4)
 
-        cols = ("company", "source", "account", "name", "status", "entries", "ytd", "projected", "decision")
+        cols = ("company", "source", "account", "name", "status", "entries", "debit", "credit", "net", "ytd", "projected", "decision")
         self.expenses_tree = ttk.Treeview(tab, columns=cols, show="headings")
         headers = {
             "company": "Empresa",
@@ -168,11 +194,27 @@ class PopupTaxScenarioPlanner(tk.Toplevel):
             "name": "Gasto",
             "status": "Estado",
             "entries": "Asientos",
-            "ytd": "YTD",
+            "debit": "Debe 2026",
+            "credit": "Haber 2026",
+            "net": "Neto",
+            "ytd": "Gasto deducible YTD",
             "projected": "Proyeccion anual",
             "decision": "Decision",
         }
-        widths = {"company": 90, "source": 120, "account": 120, "name": 340, "status": 90, "entries": 70, "ytd": 140, "projected": 150, "decision": 170}
+        widths = {
+            "company": 80,
+            "source": 110,
+            "account": 115,
+            "name": 260,
+            "status": 75,
+            "entries": 65,
+            "debit": 120,
+            "credit": 120,
+            "net": 120,
+            "ytd": 140,
+            "projected": 140,
+            "decision": 170,
+        }
         self._setup_tree(self.expenses_tree, headers, widths)
         self._pack_tree(tab, self.expenses_tree)
         self.expenses_tree.bind("<<TreeviewSelect>>", self._on_expense_select)
@@ -229,7 +271,7 @@ class PopupTaxScenarioPlanner(tk.Toplevel):
 
         self.d102_cards = {}
         cards = ttk.LabelFrame(tab, text="Formulario D-102 por escenario", padding=8)
-        cards.pack(fill="both", expand=True, pady=(0, 8))
+        cards.pack(fill="both", expand=False, pady=(0, 8))
         for idx, (key, title) in enumerate((
             ("baseline_msl", "1. MSL sin movimientos"),
             ("scenario_msl", "2. MSL con movimientos"),
@@ -243,9 +285,9 @@ class PopupTaxScenarioPlanner(tk.Toplevel):
             self._render_d102_empty_card(card, title)
 
         d102_frame = ttk.LabelFrame(tab, text="D-102 comparativo principal", padding=6)
-        d102_frame.pack(fill="x", pady=(0, 8))
+        d102_frame.pack(fill="both", expand=True, pady=(0, 8))
         d102_cols = ("line", "msl_no_move", "msl_scenario", "mms_scenario", "meaning")
-        self.d102_tree = ttk.Treeview(d102_frame, columns=d102_cols, show="headings", height=7)
+        self.d102_tree = ttk.Treeview(d102_frame, columns=d102_cols, show="headings", height=11)
         d102_headers = {
             "line": "Linea D-102",
             "msl_no_move": "MSL dic sin mover",
@@ -258,7 +300,7 @@ class PopupTaxScenarioPlanner(tk.Toplevel):
         self._pack_tree(d102_frame, self.d102_tree)
 
         cols = ("company", "line", "actual", "scenario", "diff", "note")
-        self.statement_tree = ttk.Treeview(tab, columns=cols, show="headings", height=6)
+        self.statement_tree = ttk.Treeview(tab, columns=cols, show="headings", height=5)
         headers = {
             "company": "Empresa",
             "line": "Linea D-102 / Estado de resultados",
@@ -272,9 +314,9 @@ class PopupTaxScenarioPlanner(tk.Toplevel):
         self._pack_tree(tab, self.statement_tree)
 
         detail_frame = ttk.LabelFrame(tab, text="Desglose de tramos de renta")
-        detail_frame.pack(fill="both", expand=True, pady=(8, 0))
+        detail_frame.pack(fill="x", expand=False, pady=(8, 0))
         cols2 = ("scenario", "company", "from", "to", "rate", "taxable", "tax")
-        self.tax_detail_tree = ttk.Treeview(detail_frame, columns=cols2, show="headings", height=8)
+        self.tax_detail_tree = ttk.Treeview(detail_frame, columns=cols2, show="headings", height=4)
         headers2 = {"scenario": "Escenario", "company": "Empresa", "from": "Desde", "to": "Hasta", "rate": "Tarifa", "taxable": "Base", "tax": "Impuesto"}
         widths2 = {"scenario": 130, "company": 90, "from": 130, "to": 130, "rate": 90, "taxable": 150, "tax": 150}
         self._setup_tree(self.tax_detail_tree, headers2, widths2)
@@ -312,6 +354,8 @@ class PopupTaxScenarioPlanner(tk.Toplevel):
             "expense_moves": list(self.expense_moves),
             "fixed_clients": list(self.fixed_clients),
             "fixed_expenses": list(self.fixed_expenses),
+            "manual_client_lines": list(self.manual_client_lines),
+            "manual_expense_lines": list(self.manual_expense_lines),
             "save": bool(self.save_var.get()),
             "label": f"Escenario fiscal {self.year_var.get()}-{int(self.month_var.get() or 1):02d}",
             "company_options": [
@@ -379,7 +423,9 @@ class PopupTaxScenarioPlanner(tk.Toplevel):
                     decision = f"Manual -> {target_company}"
             elif key in auto_moves:
                 decision = f"IA -> {auto_moves[key].get('to_company')}"
-            if row.get("projection_mode") == "FIXED":
+            if row.get("projection_mode") == "MANUAL":
+                decision = f"{decision} | Monto manual" if decision else "Monto manual"
+            elif row.get("projection_mode") == "FIXED":
                 decision = f"{decision} | Monto fijo" if decision else "Monto fijo"
             tags = ("moved",) if decision else ()
             item = self.clients_tree.insert("", "end", values=(
@@ -397,7 +443,9 @@ class PopupTaxScenarioPlanner(tk.Toplevel):
         for row in data.get("expense_rows") or []:
             key = (row.get("company_code"), row.get("source_type"), row.get("account_code"), row.get("account_name"))
             decision = f"Manual -> {manual_expense_moves[key].get('to_company')}" if key in manual_expense_moves else ""
-            if row.get("projection_mode") == "FIXED":
+            if row.get("projection_mode") == "MANUAL":
+                decision = f"{decision} | Monto manual" if decision else "Monto manual"
+            elif row.get("projection_mode") == "FIXED":
                 decision = f"{decision} | Monto fijo" if decision else "Monto fijo"
             source_label = {
                 "POSTED_GL": "Contable POSTED",
@@ -412,6 +460,9 @@ class PopupTaxScenarioPlanner(tk.Toplevel):
                 row.get("account_name"),
                 row.get("status"),
                 row.get("entry_count"),
+                _money(row.get("debit_ytd_crc")),
+                _money(row.get("credit_ytd_crc")),
+                _money(row.get("net_ytd_crc")),
                 _money(row.get("ytd_amount_crc")),
                 _money(row.get("projected_annual_crc")),
                 decision,
@@ -491,6 +542,8 @@ class PopupTaxScenarioPlanner(tk.Toplevel):
                 ("1.1", "Ventas facturadas 2026", row.get("gross_ytd_crc"), False),
                 ("1.2", "Venta futura estimada", row.get("gross_future_projected_crc"), False),
                 ("2", "Costos, gastos y deducciones", row.get("deductible_expenses_projected_crc"), True),
+                ("2.1", "Gasto real 2026", row.get("deductible_expenses_ytd_crc"), False),
+                ("2.2", "Gasto futuro estimado", row.get("deductible_expenses_future_projected_crc"), False),
                 ("3", "Renta neta gravable", row.get("net_taxable_projected_crc"), True),
                 ("4", "Impuesto base", row.get("base_income_tax_crc"), False),
                 ("5", "Exoneracion PYME", self._exemption_amount(row), False),
@@ -954,6 +1007,134 @@ class PopupTaxScenarioPlanner(tk.Toplevel):
             "projected_amount_crc": 0 if to_company == from_company else future_amount,
         })
 
+    def _sync_client_move_amount(self, company, client_name, future_amount):
+        for item in self.client_moves:
+            if item.get("from_company") == company and item.get("client_name") == client_name and item.get("to_company") != company:
+                item["projected_amount_crc"] = max(float(future_amount or 0), 0)
+
+    def _sync_expense_move_amount(self, row, projected_amount):
+        for item in self.expense_moves:
+            if (
+                item.get("from_company") == row.get("company_code")
+                and item.get("account_code") == row.get("account_code")
+                and item.get("source_type") == row.get("source_type")
+                and item.get("account_name") == row.get("account_name")
+                and item.get("to_company") != row.get("company_code")
+            ):
+                item["projected_amount_crc"] = max(float(projected_amount or 0), 0)
+
+    def _open_line_editor(self, title, fields):
+        dialog = tk.Toplevel(self)
+        dialog.title(title)
+        dialog.transient(self)
+        dialog.grab_set()
+        dialog.resizable(False, False)
+        vars_by_key = {}
+        body = ttk.Frame(dialog, padding=12)
+        body.pack(fill="both", expand=True)
+        for idx, field in enumerate(fields):
+            ttk.Label(body, text=field["label"]).grid(row=idx, column=0, sticky="w", padx=(0, 8), pady=4)
+            var = tk.StringVar(value=str(field.get("value", "")))
+            vars_by_key[field["key"]] = var
+            entry = ttk.Entry(body, textvariable=var, width=44)
+            entry.grid(row=idx, column=1, sticky="ew", pady=4)
+            if field.get("readonly"):
+                entry.configure(state="readonly")
+        body.columnconfigure(1, weight=1)
+        result = {"ok": False}
+
+        def accept():
+            result["ok"] = True
+            dialog.destroy()
+
+        buttons = ttk.Frame(body)
+        buttons.grid(row=len(fields), column=0, columnspan=2, sticky="e", pady=(12, 0))
+        ttk.Button(buttons, text="Cancelar", command=dialog.destroy).pack(side="right", padx=(6, 0))
+        ttk.Button(buttons, text="Aplicar y recalcular", command=accept).pack(side="right")
+        dialog.bind("<Return>", lambda _e: accept())
+        dialog.bind("<Escape>", lambda _e: dialog.destroy())
+        self.wait_window(dialog)
+        if not result["ok"]:
+            return None
+        return {key: var.get().strip() for key, var in vars_by_key.items()}
+
+    def _upsert_manual_client_line(self, row, projected_amount, ytd_amount=None, invoice_count=None, client_name=None, company=None):
+        original_company = row.get("company_code") or self.source_company_var.get().strip() or "MSL-CR"
+        original_name = row.get("client_name") or "Venta manual"
+        if company is None:
+            company = original_company
+        if client_name is None:
+            client_name = original_name
+        company = company or original_company
+        name = client_name or original_name
+        key = (company, _manual_key(name))
+        self.manual_client_lines = [
+            item for item in self.manual_client_lines
+            if not (item.get("company_code") == key[0] and _manual_key(item.get("client_name")) == key[1])
+        ]
+        ytd = ytd_amount if ytd_amount is not None else row.get("ytd_amount_crc")
+        self.manual_client_lines.append({
+            "company_code": company,
+            "client_name": name,
+            "invoice_count": _int_value(invoice_count if invoice_count is not None else row.get("invoice_count")),
+            "ytd_amount_crc": ytd,
+            "projected_annual_crc": projected_amount,
+        })
+        self._sync_client_move_amount(original_company, original_name, max(float(projected_amount or 0) - float(ytd or 0), 0))
+
+    def _edit_selected_client_amount(self):
+        row = self._selected_client_row()
+        if not row:
+            return
+        values = self._open_line_editor("Editar venta del escenario", [
+            {"key": "company", "label": "Empresa", "value": row.get("company_code"), "readonly": True},
+            {"key": "client", "label": "Cliente", "value": row.get("client_name"), "readonly": True},
+            {"key": "invoices", "label": "Cantidad facturas", "value": row.get("invoice_count")},
+            {"key": "ytd", "label": "Venta real/YTD 2026 CRC", "value": row.get("ytd_amount_crc")},
+            {"key": "projected", "label": "Total proyectado anual CRC", "value": row.get("projected_annual_crc")},
+        ])
+        if not values:
+            return
+        projected = _float_value(values.get("projected"))
+        ytd = _float_value(values.get("ytd"))
+        if projected < ytd:
+            messagebox.showwarning("Ventas", "El total proyectado anual no puede ser menor que lo ya facturado/YTD.", parent=self)
+            return
+        self._upsert_manual_client_line(
+            row,
+            projected,
+            ytd_amount=ytd,
+            invoice_count=_int_value(values.get("invoices")),
+            client_name=values.get("client") or row.get("client_name"),
+            company=values.get("company") or row.get("company_code"),
+        )
+        self._run()
+
+    def _add_manual_client_line(self):
+        values = self._open_line_editor("Agregar venta al escenario", [
+            {"key": "company", "label": "Empresa", "value": self.source_company_var.get().strip() or "MSL-CR"},
+            {"key": "client", "label": "Cliente / linea", "value": "Venta manual"},
+            {"key": "invoices", "label": "Cantidad facturas", "value": 0},
+            {"key": "ytd", "label": "Venta real/YTD 2026 CRC", "value": 0},
+            {"key": "projected", "label": "Total proyectado anual CRC", "value": 0},
+        ])
+        if not values:
+            return
+        projected = _float_value(values.get("projected"))
+        ytd = _float_value(values.get("ytd"))
+        if projected < ytd:
+            messagebox.showwarning("Ventas", "El total proyectado anual no puede ser menor que lo ya facturado/YTD.", parent=self)
+            return
+        self._upsert_manual_client_line(
+            {"company_code": values.get("company"), "client_name": values.get("client"), "invoice_count": _int_value(values.get("invoices")), "ytd_amount_crc": ytd},
+            projected,
+            ytd_amount=ytd,
+            invoice_count=_int_value(values.get("invoices")),
+            client_name=values.get("client") or "Venta manual",
+            company=values.get("company") or self.source_company_var.get().strip() or "MSL-CR",
+        )
+        self._run()
+
     def _move_selected_expense_to_target(self):
         row = self._selected_expense_row()
         if row:
@@ -986,6 +1167,108 @@ class PopupTaxScenarioPlanner(tk.Toplevel):
                 "to_company": to_company,
                 "projected_amount_crc": row.get("projected_annual_crc"),
             })
+
+    def _upsert_manual_expense_line(
+        self,
+        row,
+        projected_amount,
+        ytd_amount=None,
+        company=None,
+        source_type=None,
+        account_code=None,
+        account_name=None,
+        status=None,
+        entry_count=None,
+    ):
+        original_row = dict(row)
+        company = company or row.get("company_code") or self.source_company_var.get().strip() or "MSL-CR"
+        account = account_code or row.get("account_code") or "MANUAL"
+        name = account_name or row.get("account_name") or row.get("name") or "Gasto manual"
+        source = source_type or row.get("source_type") or "MANUAL_SCENARIO"
+        key = (company, _manual_key(source), _manual_key(account), _manual_key(name))
+        self.manual_expense_lines = [
+            item for item in self.manual_expense_lines
+            if not (
+                item.get("company_code") == key[0]
+                and _manual_key(item.get("source_type")) == key[1]
+                and _manual_key(item.get("account_code")) == key[2]
+                and _manual_key(item.get("account_name")) == key[3]
+            )
+        ]
+        self.manual_expense_lines.append({
+            "company_code": company,
+            "source_type": source,
+            "account_code": account,
+            "account_name": name,
+            "status": status or row.get("status") or "MANUAL",
+            "entry_count": _int_value(entry_count if entry_count is not None else row.get("entry_count")),
+            "ytd_amount_crc": ytd_amount if ytd_amount is not None else row.get("ytd_amount_crc"),
+            "projected_annual_crc": projected_amount,
+        })
+        self._sync_expense_move_amount(original_row, projected_amount)
+
+    def _edit_selected_expense_amount(self):
+        row = self._selected_expense_row()
+        if not row:
+            return
+        values = self._open_line_editor("Editar gasto del escenario", [
+            {"key": "company", "label": "Empresa", "value": row.get("company_code"), "readonly": True},
+            {"key": "source", "label": "Fuente", "value": row.get("source_type"), "readonly": True},
+            {"key": "account", "label": "Cuenta", "value": row.get("account_code"), "readonly": True},
+            {"key": "name", "label": "Gasto / descripcion", "value": row.get("account_name"), "readonly": True},
+            {"key": "status", "label": "Estado", "value": row.get("status")},
+            {"key": "entries", "label": "Cantidad asientos", "value": row.get("entry_count")},
+            {"key": "ytd", "label": "Gasto real/YTD 2026 CRC", "value": row.get("ytd_amount_crc")},
+            {"key": "projected", "label": "Total proyectado anual CRC", "value": row.get("projected_annual_crc")},
+        ])
+        if not values:
+            return
+        projected = _float_value(values.get("projected"))
+        ytd = _float_value(values.get("ytd"))
+        if projected < ytd:
+            messagebox.showwarning("Gastos", "El total proyectado anual no puede ser menor que lo ya registrado/YTD.", parent=self)
+            return
+        self._upsert_manual_expense_line(
+            row,
+            projected,
+            ytd_amount=ytd,
+            company=values.get("company") or row.get("company_code"),
+            source_type=values.get("source") or row.get("source_type"),
+            account_code=values.get("account") or row.get("account_code"),
+            account_name=values.get("name") or row.get("account_name"),
+            status=values.get("status") or row.get("status"),
+            entry_count=_int_value(values.get("entries")),
+        )
+        self._run()
+
+    def _add_manual_expense_line(self):
+        values = self._open_line_editor("Agregar gasto al escenario", [
+            {"key": "company", "label": "Empresa", "value": self.source_company_var.get().strip() or "MSL-CR"},
+            {"key": "source", "label": "Fuente", "value": "MANUAL_SCENARIO"},
+            {"key": "account", "label": "Cuenta", "value": "MANUAL"},
+            {"key": "name", "label": "Gasto / descripcion", "value": "Gasto manual"},
+            {"key": "status", "label": "Estado", "value": "MANUAL"},
+            {"key": "entries", "label": "Cantidad asientos", "value": 0},
+            {"key": "ytd", "label": "Gasto real/YTD 2026 CRC", "value": 0},
+            {"key": "projected", "label": "Total proyectado anual CRC", "value": 0},
+        ])
+        if not values:
+            return
+        projected = _float_value(values.get("projected"))
+        ytd = _float_value(values.get("ytd"))
+        if projected < ytd:
+            messagebox.showwarning("Gastos", "El total proyectado anual no puede ser menor que lo ya registrado/YTD.", parent=self)
+            return
+        self._upsert_manual_expense_line({
+            "company_code": values.get("company"),
+            "source_type": values.get("source"),
+            "account_code": values.get("account"),
+            "account_name": values.get("name"),
+            "status": values.get("status"),
+            "entry_count": _int_value(values.get("entries")),
+            "ytd_amount_crc": ytd,
+        }, projected, ytd_amount=ytd)
+        self._run()
 
     def _lock_selected_expense_projection(self):
         row = self._selected_expense_row()

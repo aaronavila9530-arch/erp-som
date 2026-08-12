@@ -11,10 +11,16 @@ import zipfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from api_client import upload_tax_response_auto_api, upload_tax_xml_api
+from api_client import (
+    post_corporate_card_history_api,
+    post_corporate_card_statement_pdf_api,
+    upload_tax_response_auto_api,
+    upload_tax_xml_api,
+)
 
 
 ACCOUNT="gastos@mslogisticsgroup.com"
+CARD_ACCOUNT="contabilidad@mslogisticsgroup.com"
 SAFE_DEFAULT_FOLDER="xml gastos electronicos"
 DEFAULT_FOLDER="xml gastos electrónicos"
 MAX_ATTACHMENT_BYTES=20*1024*1024
@@ -35,7 +41,16 @@ def _state_path(): return _data_dir()/"outlook_fiscal_state.json"
 
 
 def load_config():
-    default={"enabled":True,"interval_minutes":15,"account":ACCOUNT,"folder":SAFE_DEFAULT_FOLDER,"batch_size":50}
+    default={
+        "enabled": True,
+        "interval_minutes": 15,
+        "account": ACCOUNT,
+        "folder": SAFE_DEFAULT_FOLDER,
+        "card_account": CARD_ACCOUNT,
+        "batch_size": 50,
+        "process_corporate_cards": True,
+        "corporate_card_years": [2025, 2026],
+    }
     try:
         saved=json.loads(_config_path().read_text(encoding="utf-8")); default.update(saved if isinstance(saved,dict) else {})
     except Exception: pass
@@ -155,6 +170,20 @@ def _find_folder(namespace,account,folder_name):
     raise RuntimeError(f"No se encontró la carpeta '{folder_name}'. Carpetas disponibles: {', '.join(available)}")
 
 
+def _find_inbox(namespace, account):
+    account_norm=_normalized(account)
+    for index in range(1,namespace.Stores.Count+1):
+        store=namespace.Stores.Item(index)
+        store_name=_normalized(store.DisplayName)
+        if store_name==account_norm or account_norm in store_name:
+            root=store.GetRootFolder()
+            for folder in _iter_folders(root,max_depth=2):
+                if _normalized(folder.Name) in {"inbox","bandeja de entrada","entrada"}:
+                    return store.DisplayName,folder
+            return store.DisplayName,root
+    raise RuntimeError(f"Outlook no contiene el buzÃ³n {account}")
+
+
 def inspect_outlook():
     import pythoncom
     import win32com.client
@@ -185,17 +214,128 @@ def _xml_files(filename,path,temp_dir):
     return output
 
 
+def _is_corporate_card_pdf(filename, subject=""):
+    text=_normalized(f"{filename} {subject}")
+    return filename.lower().endswith(".pdf") and (
+        "estadocta" in text
+        or "estado de cuenta" in text
+        or "tarjeta de credito" in text
+        or "baccredomatic" in text
+        or "bac" in text
+    )
+
+
+def _message_year(message):
+    try:
+        return int(getattr(message,"ReceivedTime").year)
+    except Exception:
+        return None
+
+
+def _scan_card_folder(folder,temp_dir,state,summary,years):
+    items=folder.Items; items.Sort("[ReceivedTime]",True)
+    scanned=0
+    for index in range(1,items.Count+1):
+        if scanned>=20000:
+            break
+        scanned+=1
+        message=items.Item(index)
+        msg_year=_message_year(message)
+        if years and msg_year and msg_year not in years:
+            continue
+        try:
+            attachment_count=int(message.Attachments.Count)
+        except Exception:
+            continue
+        subject=str(getattr(message,"Subject","") or "")
+        received=str(getattr(message,"ReceivedTime","") or "")
+        pending=[]
+        for attachment_index in range(1,attachment_count+1):
+            attachment=message.Attachments.Item(attachment_index); filename=str(attachment.FileName or "")
+            if not _is_corporate_card_pdf(filename,subject):
+                continue
+            key=hashlib.sha256(f"CARD|{message.EntryID}|{attachment_index}|{filename}|{getattr(attachment,'Size',0)}".encode()).hexdigest()
+            if state.get(key,{}).get("status") in {"IMPORTED","DUPLICATE"}:
+                continue
+            pending.append((attachment,key,filename))
+        if not pending:
+            continue
+        summary["messages"]+=1
+        for attachment,key,filename in pending:
+            summary["attachments"]+=1; summary["card_pdfs"]+=1
+            try:
+                safe=hashlib.sha256(key.encode()).hexdigest()[:12]+"_"+Path(filename).name
+                attachment_path=Path(temp_dir)/safe; attachment.SaveAsFile(str(attachment_path))
+                response=post_corporate_card_statement_pdf_api(str(attachment_path))
+                if response.get("status")=="exists":
+                    summary["card_duplicates"]+=1; status="DUPLICATE"; detail="Estado BAC ya importado"
+                else:
+                    summary["card_imported"]+=1; status="IMPORTED"; detail=f"Estado BAC {response.get('statement',{}).get('statement_period','')} movimientos {response.get('transactions_inserted',0)}"
+                state[key]={"status":status,"filename":filename,"updated_at":received}
+            except Exception as exc:
+                summary["card_errors"]+=1; summary["errors"]+=1; status="ERROR"; detail=str(exc)
+                state[key]={"status":"ERROR","filename":filename,"updated_at":received}
+            summary["results"].append({"received":received,"subject":subject,"filename":filename,"status":status,"detail":detail})
+        _save_state(state)
+
+
+def scan_corporate_card_history(progress=None):
+    if not _scan_lock.acquire(blocking=False): return {"status":"busy","message":"Ya existe una revisiÃ³n de Outlook en curso","results":[]}
+    import pythoncom
+    import win32com.client
+    config=load_config(); state=_load_state(); results=[]
+    years={int(y) for y in (config.get("corporate_card_years") or [2025,2026])}
+    summary={"status":"ok","messages":0,"attachments":0,"card_pdfs":0,"card_imported":0,"card_duplicates":0,"card_errors":0,"errors":0,"results":results}
+    _update_runtime_status(last_started_at=time.strftime("%Y-%m-%d %H:%M:%S"),last_error=None)
+    pythoncom.CoInitialize()
+    try:
+        namespace=win32com.client.Dispatch("Outlook.Application").GetNamespace("MAPI")
+        with tempfile.TemporaryDirectory(prefix="erp_som_cards_") as temp_dir:
+            for account, folder_name in (
+                (config.get("account") or ACCOUNT, config.get("folder") or SAFE_DEFAULT_FOLDER),
+                (config.get("card_account") or CARD_ACCOUNT, "INBOX"),
+            ):
+                try:
+                    if _normalized(folder_name)=="inbox":
+                        store,folder=_find_inbox(namespace,account)
+                    else:
+                        store,folder=_find_folder(namespace,account,folder_name)
+                    _scan_card_folder(folder,temp_dir,state,summary,years)
+                    summary["last_store"]=str(store); summary["last_folder"]=str(folder.Name)
+                    if progress: progress(dict(summary))
+                except Exception as exc:
+                    summary["card_errors"]+=1; summary["errors"]+=1
+                    results.append({"received":"","subject":"Tarjetas corporativas","filename":account,"status":"ERROR","detail":str(exc)})
+        try:
+            summary["card_history"]=post_corporate_card_history_api({"years":sorted(years),"settle_previous":True,"leave_latest_pending":True})
+        except Exception as exc:
+            summary["card_errors"]+=1; summary["errors"]+=1
+            results.append({"received":"","subject":"Tarjetas corporativas","filename":"historial","status":"ERROR","detail":str(exc)})
+        _update_runtime_status(last_finished_at=time.strftime("%Y-%m-%d %H:%M:%S"),last_summary={k:v for k,v in summary.items() if k!="results"},last_error=None)
+        return summary
+    except Exception as exc:
+        _update_runtime_status(last_finished_at=time.strftime("%Y-%m-%d %H:%M:%S"),last_error=str(exc))
+        raise
+    finally:
+        pythoncom.CoUninitialize(); _scan_lock.release()
+
+
 def _xml_kind(path):
     root=ET.parse(path).getroot().tag.rsplit("}",1)[-1]
     return "HACIENDA" if root in {"MensajeHacienda","RespuestaHacienda"} else "DOCUMENT"
 
 
-def scan_and_import(max_messages=None,progress=None):
+def scan_and_import(max_messages=None,progress=None, process_corporate_cards=None, post_corporate_card_history=False):
     if not _scan_lock.acquire(blocking=False): return {"status":"busy","message":"Ya existe una revisión de Outlook en curso","results":[]}
     import pythoncom
     import win32com.client
     config=load_config(); limit=int(max_messages or config.get("batch_size",50)); state=_load_state(); results=[]
-    summary={"status":"ok","messages":0,"attachments":0,"xml":0,"imported":0,"duplicates":0,"errors":0,"results":results}
+    if process_corporate_cards is None:
+        process_corporate_cards=bool(config.get("process_corporate_cards",True))
+    summary={
+        "status":"ok","messages":0,"attachments":0,"xml":0,"imported":0,"duplicates":0,"errors":0,
+        "card_pdfs":0,"card_imported":0,"card_duplicates":0,"card_errors":0,"results":results
+    }
     _update_runtime_status(last_started_at=time.strftime("%Y-%m-%d %H:%M:%S"),last_error=None)
     pythoncom.CoInitialize()
     try:
@@ -211,7 +351,8 @@ def scan_and_import(max_messages=None,progress=None):
                 pending=[]
                 for attachment_index in range(1,attachment_count+1):
                     attachment=message.Attachments.Item(attachment_index); filename=str(attachment.FileName or "")
-                    if not filename.lower().endswith((".xml",".zip")): continue
+                    subject=str(getattr(message,"Subject","") or "")
+                    if not filename.lower().endswith((".xml",".zip")) and not (process_corporate_cards and _is_corporate_card_pdf(filename,subject)): continue
                     key=hashlib.sha256(f"{message.EntryID}|{attachment_index}|{filename}|{getattr(attachment,'Size',0)}".encode()).hexdigest()
                     if state.get(key,{}).get("status") in {"IMPORTED","DUPLICATE"}: continue
                     pending.append((attachment,key,filename))
@@ -223,6 +364,19 @@ def scan_and_import(max_messages=None,progress=None):
                     try:
                         safe=hashlib.sha256(key.encode()).hexdigest()[:12]+"_"+Path(filename).name
                         attachment_path=Path(temp_dir)/safe; attachment.SaveAsFile(str(attachment_path))
+                        if process_corporate_cards and _is_corporate_card_pdf(filename,subject):
+                            summary["card_pdfs"]+=1
+                            try:
+                                response=post_corporate_card_statement_pdf_api(str(attachment_path))
+                                if response.get("status")=="exists":
+                                    summary["card_duplicates"]+=1; status="DUPLICATE"; detail="Estado BAC ya importado"
+                                else:
+                                    summary["card_imported"]+=1; status="IMPORTED"; detail=f"Estado BAC {response.get('statement',{}).get('statement_period','')} movimientos {response.get('transactions_inserted',0)}"
+                            except Exception as exc:
+                                summary["card_errors"]+=1; summary["errors"]+=1; status="ERROR"; detail=str(exc)
+                            results.append({"received":received,"subject":subject,"filename":filename,"status":status,"detail":detail})
+                            state[key]={"status":status,"filename":filename,"updated_at":received}
+                            continue
                         xml_paths=_xml_files(filename,attachment_path,temp_dir)
                         if not xml_paths: raise ValueError("El ZIP no contiene XML")
                         for xml_path in xml_paths:
@@ -243,6 +397,17 @@ def scan_and_import(max_messages=None,progress=None):
                         state[key]={"status":"ERROR","filename":filename,"updated_at":received}
                 _save_state(state)
                 if progress: progress(dict(summary))
+        if post_corporate_card_history and process_corporate_cards:
+            try:
+                history=post_corporate_card_history_api({
+                    "years": config.get("corporate_card_years") or [2025,2026],
+                    "settle_previous": True,
+                    "leave_latest_pending": True,
+                })
+                summary["card_history"]=history
+            except Exception as exc:
+                summary["card_errors"]+=1; summary["errors"]+=1
+                results.append({"received":"","subject":"Tarjetas corporativas","filename":"historial","status":"ERROR","detail":str(exc)})
         summary["store"]=str(store); summary["folder"]=str(folder.Name)
         _update_runtime_status(last_finished_at=time.strftime("%Y-%m-%d %H:%M:%S"),last_summary={k:v for k,v in summary.items() if k!="results"},last_error=None)
         return summary

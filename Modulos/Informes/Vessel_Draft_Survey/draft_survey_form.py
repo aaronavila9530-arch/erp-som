@@ -754,6 +754,28 @@ class DraftSurveyForm(ttk.Frame):
         ttk.Label(block, text="LPP").grid(row=r, column=2, sticky="w", padx=6)
         self._entry(block, key=f"{prefix}_lpp", row=r, col=3, width=10)
 
+        keel_var = tk.BooleanVar(value=False)
+        self.fields[f"{prefix}_keel_correction_enabled"] = keel_var
+
+        correction = ttk.Entry(block, width=10, state="disabled")
+        correction.grid(row=r + 1, column=3, sticky="w", padx=6, pady=(6, 2))
+        self._register_field(f"{prefix}_keel_correction", correction)
+
+        def toggle_keel_correction():
+            try:
+                correction.config(state="normal" if keel_var.get() else "disabled")
+                if not keel_var.get():
+                    correction.delete(0, "end")
+            except Exception:
+                pass
+
+        ttk.Checkbutton(
+            block,
+            text="Correccion de quilla",
+            variable=keel_var,
+            command=toggle_keel_correction,
+        ).grid(row=r + 1, column=0, columnspan=3, sticky="w", padx=6, pady=(6, 2))
+
     # =========================================================
     # LIQUIDS
     # =========================================================
@@ -987,6 +1009,41 @@ class DraftSurveyForm(ttk.Frame):
 
         self._register_field(key, e)
         return e
+
+    def _set_field_value(self, key: str, value):
+        widget = self.fields.get(key)
+        if not widget:
+            return
+
+        def _set_one(w):
+            try:
+                if isinstance(w, tk.StringVar):
+                    w.set("" if value is None else str(value))
+                    return
+                if isinstance(w, ttk.Entry):
+                    state = w.cget("state")
+                    w.config(state="normal")
+                    w.delete(0, "end")
+                    w.insert(0, "" if value is None else str(value))
+                    w.config(state=state)
+            except Exception:
+                pass
+
+        if isinstance(widget, list):
+            for item in widget:
+                _set_one(item)
+        else:
+            _set_one(widget)
+
+    def _bind_field_change(self, key: str, callback):
+        widget = self.fields.get(key)
+        widgets = widget if isinstance(widget, list) else [widget]
+        for item in widgets:
+            try:
+                item.bind("<KeyRelease>", callback, add="+")
+                item.bind("<FocusOut>", callback, add="+")
+            except Exception:
+                pass
 
     def _row_1col(self, parent, row: int, key: str, label: str, width: int = 40):
         frm = ttk.Frame(parent)
@@ -1577,6 +1634,7 @@ class DraftSurveyForm(ttk.Frame):
                         "density": density
                     })
 
+        data = self._apply_word_report_calculations_to_data(data)
         return self._normalize_hydrostatic_payload(data)
 
     def set_payload(self, data: dict):
@@ -1730,6 +1788,17 @@ class DraftSurveyForm(ttk.Frame):
                 continue
 
             _apply(widget, value)
+
+        for prefix in ("init", "final"):
+            enabled = self.fields.get(f"{prefix}_keel_correction_enabled")
+            correction = self.fields.get(f"{prefix}_keel_correction")
+            try:
+                if isinstance(correction, list):
+                    correction = correction[0] if correction else None
+                if isinstance(enabled, tk.BooleanVar) and isinstance(correction, ttk.Entry):
+                    correction.config(state="normal" if enabled.get() else "disabled")
+            except Exception:
+                pass
 
         # =====================================================
         # 🔥 RECONSTRUIR WORD DATETIME (DATE + TIME → UI)
@@ -2030,7 +2099,8 @@ class DraftSurveyForm(ttk.Frame):
                     # ===============================
                     try:
                         name = tank.get("tank_name") or ""
-                        tank_dict["tank_name"].set(name)
+                        tank_dict["tank_name"].delete(0, "end")
+                        tank_dict["tank_name"].insert(0, str(name))
                     except Exception:
                         pass
 
@@ -2665,12 +2735,7 @@ class DraftSurveyForm(ttk.Frame):
 
             row = start_row_ballast + len(self.dynamic_ballast[prefix])
 
-            tank_cb = ttk.Combobox(
-                ballast_inner,
-                values=available_tanks,
-                width=18,
-                state="readonly"
-            )
+            tank_cb = ttk.Entry(ballast_inner, width=20)
             tank_cb.grid(row=row, column=0, padx=6, pady=2, sticky="w")
 
             sounding = ttk.Entry(ballast_inner, width=10)
@@ -3145,8 +3210,10 @@ class DraftSurveyForm(ttk.Frame):
 
         self._row_1col(lf_cargo, 0, "word_draft_figures", "Draft Survey Figures", 20)
         self._row_1col(lf_cargo, 1, "word_bl_figures", "B/L Figures", 20)
-        self._row_1col(lf_cargo, 2, "word_difference", "Difference", 20)
-        self._row_1col(lf_cargo, 3, "word_percentage", "Percentage (%)", 20)
+        diff_entry = self._row_1col(lf_cargo, 2, "word_difference", "Difference", 20)
+        pct_entry = self._row_1col(lf_cargo, 3, "word_percentage", "Percentage (%)", 20)
+        diff_entry.config(state="readonly")
+        pct_entry.config(state="readonly")
 
         # =====================================================
         # SHORE SCALE SECTION
@@ -3156,8 +3223,13 @@ class DraftSurveyForm(ttk.Frame):
 
         self._row_1col(lf_shore, 0, "word_shore_scale", "Shore Scale Figures", 20)
         self._row_1col(lf_shore, 1, "word_shore_bl", "B/L Figures", 20)
-        self._row_1col(lf_shore, 2, "word_shore_difference", "Difference", 20)
-        self._row_1col(lf_shore, 3, "word_shore_percentage", "Percentage (%)", 20)
+        shore_diff_entry = self._row_1col(lf_shore, 2, "word_shore_difference", "Difference", 20)
+        shore_pct_entry = self._row_1col(lf_shore, 3, "word_shore_percentage", "Percentage (%)", 20)
+        shore_diff_entry.config(state="readonly")
+        shore_pct_entry.config(state="readonly")
+
+        for key in ("word_draft_figures", "word_bl_figures", "word_shore_scale", "word_shore_bl"):
+            self._bind_field_change(key, self._refresh_word_report_calculations)
 
         ttk.Label(parent, text="").pack(pady=10)
 
@@ -3225,25 +3297,75 @@ class DraftSurveyForm(ttk.Frame):
 
         return None
 
+    def _fmt_calc_number(self, value):
+        try:
+            number = float(value)
+        except Exception:
+            return ""
+        return f"{number:,.2f}"
+
+    def _fmt_calc_percent(self, value):
+        try:
+            number = float(value)
+        except Exception:
+            return ""
+        return f"{number:.4f}"
+
+    def _refresh_word_report_calculations(self, *_args):
+        def _field_text(key):
+            widget = self.fields.get(key)
+            widget = widget[0] if isinstance(widget, list) and widget else widget
+            try:
+                return widget.get()
+            except Exception:
+                return ""
+
+        payload = {
+            "word_draft_figures": _field_text("word_draft_figures"),
+            "word_bl_figures": _field_text("word_bl_figures"),
+            "word_shore_scale": _field_text("word_shore_scale"),
+            "word_shore_bl": _field_text("word_shore_bl"),
+        }
+        data = self._apply_word_report_calculations_to_data(payload)
+        for key in ("word_difference", "word_percentage", "word_shore_difference", "word_shore_percentage"):
+            if key in data:
+                self._set_field_value(key, data[key])
+
+    def _apply_word_report_calculations_to_data(self, data: dict) -> dict:
+        data = dict(data or {})
+
+        draft = self._coerce_draft_number(data.get("word_draft_figures"))
+        bl = self._coerce_draft_number(data.get("word_bl_figures"))
+        if draft is not None and bl is not None:
+            diff = bl - draft
+            pct = (diff / bl * 100) if bl else 0
+            data["word_difference"] = self._fmt_calc_number(diff)
+            data["word_percentage"] = self._fmt_calc_percent(pct)
+
+        shore = self._coerce_draft_number(data.get("word_shore_scale"))
+        shore_bl = self._coerce_draft_number(data.get("word_shore_bl"))
+        if shore is not None and shore_bl is not None:
+            diff = shore_bl - shore
+            pct = (diff / shore_bl * 100) if shore_bl else 0
+            data["word_shore_difference"] = self._fmt_calc_number(diff)
+            data["word_shore_percentage"] = self._fmt_calc_percent(pct)
+        return data
+
     def _normalize_hydrostatic_payload(self, payload: dict) -> dict:
         data = dict(payload or {})
 
         for prefix in ("init", "final"):
             for table_no in (1, 2):
                 draft_key = f"{prefix}_hydro{table_no}_draft_1"
+                draft_2_key = f"{prefix}_hydro{table_no}_draft_2"
                 mtc_key = f"{prefix}_hydro{table_no}_draft_mtc"
 
                 if data.get(mtc_key) in (None, ""):
-                    draft_value = self._coerce_draft_number(data.get(draft_key))
+                    draft_value = self._coerce_draft_number(data.get(draft_2_key))
+                    if draft_value is None:
+                        draft_value = self._coerce_draft_number(data.get(draft_key))
                     if draft_value is not None:
                         data[mtc_key] = round(draft_value + 0.5, 6)
-
-        for table_no in (1, 2):
-            for row_no in (1, 2):
-                lcf_key = f"final_hydro{table_no}_lcf_{row_no}"
-                lcf_value = self._coerce_draft_number(data.get(lcf_key))
-                if lcf_value is not None and lcf_value > 0:
-                    data[lcf_key] = -abs(lcf_value)
 
         return data
 
@@ -3377,7 +3499,10 @@ class DraftSurveyForm(ttk.Frame):
             excel = win32com.client.Dispatch("Excel.Application")
 
             # Configuración segura
-            excel.Visible = True
+            try:
+                excel.Visible = True
+            except Exception:
+                pass
             excel.DisplayAlerts = False
             excel.ScreenUpdating = True
 
