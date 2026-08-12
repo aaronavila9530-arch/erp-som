@@ -371,31 +371,60 @@ class DraftSurveyExcelGenerator:
     def _is_empty(self, value) -> bool:
         return value is None or (isinstance(value, str) and value.strip() == "")
 
+    def _is_truthy(self, value) -> bool:
+        if isinstance(value, bool):
+            return value
+        return str(value or "").strip().lower() in ("1", "true", "yes", "y", "si", "sí", "on")
+
     def _prepare_hydrostatic_payload(self, payload: dict) -> dict:
         prepared = dict(payload or {})
 
         # The template needs the MTC draft base. If the user leaves it blank,
-        # derive it from the first hydrostatic draft plus 0.50, as in the
-        # vessel spreadsheet reference.
+        # derive it from the second hydrostatic draft plus 0.50, as in the
+        # vessel spreadsheet reference. Fall back to the first row if needed.
         for prefix in ("init", "final"):
             for table_no in (1, 2):
                 draft_key = f"{prefix}_hydro{table_no}_draft_1"
+                draft_2_key = f"{prefix}_hydro{table_no}_draft_2"
                 mtc_draft_key = f"{prefix}_hydro{table_no}_draft_mtc"
                 if self._is_empty(prepared.get(mtc_draft_key)):
-                    draft_value = self._coerce_number(prepared.get(draft_key))
+                    draft_value = self._coerce_number(prepared.get(draft_2_key))
+                    if draft_value is None:
+                        draft_value = self._coerce_number(prepared.get(draft_key))
                     if draft_value is not None:
                         prepared[mtc_draft_key] = round(draft_value + 0.5, 6)
 
-        # Final Draft tables for this workflow expect LCF to carry the negative
-        # sign when the hydrostatic table is supplied as an absolute value.
-        for table_no in (1, 2):
-            for row_no in (1, 2):
-                lcf_key = f"final_hydro{table_no}_lcf_{row_no}"
-                lcf_value = self._coerce_number(prepared.get(lcf_key))
-                if lcf_value is not None and lcf_value > 0:
-                    prepared[lcf_key] = -abs(lcf_value)
-
         return prepared
+
+    def _apply_draft_excel_adjustments(self, ws: Worksheet, payload: dict):
+        """Apply corrections that intentionally override template defaults."""
+
+        # Final marks in the template may point to initial marks. Blank final
+        # marks must stay blank so initial/final remain independent.
+        for key, cell in (
+            ("final_draft_fwd_marks", "AU8"),
+            ("final_draft_mid_marks", "AU9"),
+            ("final_draft_aft_marks", "AU10"),
+        ):
+            if self._is_empty((payload or {}).get(key)):
+                try:
+                    ws[cell].value = None
+                except Exception:
+                    pass
+
+        def _excel_number(value):
+            number = self._coerce_number(value)
+            if number is None:
+                return "0"
+            return str(number).replace(",", ".")
+
+        init_correction = _excel_number((payload or {}).get("init_keel_correction"))
+        if self._is_truthy((payload or {}).get("init_keel_correction_enabled")):
+            ws["R13"] = f"=(6*R9+R8+R10)/8-{init_correction}"
+
+        final_correction = _excel_number((payload or {}).get("final_keel_correction"))
+        if self._is_truthy((payload or {}).get("final_keel_correction_enabled")):
+            ws["AQ13"] = f"=(6*AQ9+AQ8+AQ10)/8-{final_correction}"
 
     def _safe_set(self, ws: Worksheet, cell: str, value):
 
@@ -492,6 +521,12 @@ class DraftSurveyExcelGenerator:
         payload = self._prepare_hydrostatic_payload(payload or {})
 
         wb = load_workbook(TEMPLATE_PATH)
+        try:
+            wb.calculation.fullCalcOnLoad = True
+            wb.calculation.forceFullCalc = True
+            wb.calculation.calcMode = "auto"
+        except Exception:
+            pass
 
         # =====================================================
         # 1) FILL STATIC MAPPING
@@ -514,6 +549,9 @@ class DraftSurveyExcelGenerator:
                     self._safe_set_date(ws, cell, value)
                 else:
                     self._safe_set(ws, cell, value)
+
+            if sheet_name == "Draft":
+                self._apply_draft_excel_adjustments(ws, payload)
 
         # =====================================================
         # 2) DEDUCTIONS â€” DYNAMIC (ALINEADO CON FRONTEND)
@@ -768,7 +806,10 @@ class DraftSurveyExcelGenerator:
             pythoncom.CoInitialize()
 
             excel = win32com.client.DispatchEx("Excel.Application")
-            excel.Visible = True
+            try:
+                excel.Visible = True
+            except Exception:
+                pass
             excel.DisplayAlerts = False
             excel.ScreenUpdating = True
 

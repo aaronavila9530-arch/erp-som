@@ -25,8 +25,23 @@ DEFAULT_EXPENSE_CODE = "5.4"
 DEFAULT_EXPENSE_NAME = "Otros gastos"
 DEFAULT_NON_DEDUCTIBLE_CODE = "5.4.99"
 DEFAULT_NON_DEDUCTIBLE_NAME = "Gastos no deducibles"
+PENDING_CARD_CODE = "1.1.99.10"
+PENDING_CARD_NAME = "Cargos tarjeta pendientes de clasificar"
 SUPPLIER_AP_CODE = "2.1.01.01"
 SUPPLIER_AP_NAME = "Cuentas por pagar-comerciales"
+CARD_EXPENSE_ACCOUNTS = [
+    ("550-001-000-050", "Alimentación"),
+    ("500-001-001-050", "Transporte"),
+    ("500-001-001-042", "Combustible"),
+    ("500-001-001-023", "Teléfonos"),
+    ("500-001-001-043", "Hospedaje"),
+    ("500-001-001-044", "Viáticos"),
+    ("500-001-001-054", "Pasajes de avión"),
+    ("500-001-001-036", "Papeleria y Utiles de Oficina"),
+    ("500-001-001-038", "Mant. y Reparación Vehículos"),
+    ("550-001-000-059", "Gastos Médicos"),
+    ("500-001-001-006", "Servicios Profesionales"),
+]
 
 
 class ClassifyRequest(BaseModel):
@@ -36,6 +51,22 @@ class ClassifyRequest(BaseModel):
     expense_account_code: str | None = None
     expense_account_name: str | None = None
     notes: str | None = None
+    force_closed_period: bool = False
+
+
+class BulkClassifyItem(BaseModel):
+    transaction_id: int
+    fiscal_category: str | None = None
+    deductible_status: str | None = None
+    requires_invoice: bool | None = None
+    expense_account_code: str | None = None
+    expense_account_name: str | None = None
+    notes: str | None = None
+
+
+class BulkClassifyRequest(BaseModel):
+    items: list[BulkClassifyItem] = []
+    force_closed_periods: bool = False
 
 
 class MatchRequest(BaseModel):
@@ -58,6 +89,7 @@ class HistoryPostRequest(BaseModel):
     latest_pending_per_card: bool = True
     bank_account_code: str | None = None
     bank_account_name: str | None = None
+    force_closed_periods: bool = False
 
 
 def _money(value: Any) -> Decimal:
@@ -341,9 +373,24 @@ def ensure_schema(cur):
         INSERT INTO accounting_accounts(account_code, account_name, account_type, normal_balance, account_level, parent_account, accepts_posting, active)
         VALUES
           (%s, %s, 'PASIVO', 'CREDIT', 3, '2.1.02', TRUE, TRUE),
-          (%s, %s, 'GASTO', 'DEBIT', 3, '5.4', TRUE, TRUE)
+          (%s, %s, 'GASTO', 'DEBIT', 3, '5.4', TRUE, TRUE),
+          (%s, %s, 'ACTIVO', 'DEBIT', 3, '1.1.99', TRUE, TRUE)
         ON CONFLICT (account_code) DO UPDATE SET account_name=EXCLUDED.account_name, accepts_posting=TRUE, active=TRUE
-    """, (CARD_PAYABLE_CODE, CARD_PAYABLE_NAME, DEFAULT_NON_DEDUCTIBLE_CODE, DEFAULT_NON_DEDUCTIBLE_NAME))
+    """, (
+        CARD_PAYABLE_CODE,
+        CARD_PAYABLE_NAME,
+        DEFAULT_NON_DEDUCTIBLE_CODE,
+        DEFAULT_NON_DEDUCTIBLE_NAME,
+        PENDING_CARD_CODE,
+        PENDING_CARD_NAME,
+    ))
+    for code, name in CARD_EXPENSE_ACCOUNTS:
+        cur.execute("""
+            INSERT INTO accounting_accounts(account_code, account_name, account_type, normal_balance, account_level, parent_account, accepts_posting, active)
+            VALUES(%s, %s, 'GASTO', 'DEBIT', 3, '5', TRUE, TRUE)
+            ON CONFLICT (account_code) DO UPDATE
+            SET account_name=EXCLUDED.account_name, accepts_posting=TRUE, active=TRUE
+        """, (code, name))
     for holder, last4, user_key in (
         ("AARON", "3155", "aaron01"),
         ("DIANA", "3156", "diana"),
@@ -377,14 +424,18 @@ def _json_safe(value: Any) -> Any:
     return value
 
 
-def _post_entry(cur, company: str, entry_date: date, description: str, origin: str, origin_id: int, lines: list[dict[str, Any]]) -> int:
+def _post_entry(
+    cur,
+    company: str,
+    entry_date: date,
+    description: str,
+    origin: str,
+    origin_id: int,
+    lines: list[dict[str, Any]],
+    force_closed_period: bool = False,
+) -> int:
     period = entry_date.strftime("%Y-%m")
-    cur.execute("""
-        SELECT status FROM accounting_period_controls
-        WHERE company_code=%s AND period=%s
-    """, (company, period))
-    status = cur.fetchone()
-    if status and status.get("status") == "CLOSED":
+    if _period_is_closed(cur, company, period) and not force_closed_period:
         raise HTTPException(409, f"El periodo {period} esta cerrado")
     total_debit = sum(_money(line.get("debit")) for line in lines)
     total_credit = sum(_money(line.get("credit")) for line in lines)
@@ -405,11 +456,15 @@ def _post_entry(cur, company: str, entry_date: date, description: str, origin: s
         """, (entry_date, period, description, entry_id))
         cur.execute("DELETE FROM accounting_lines WHERE entry_id=%s", (entry_id,))
     else:
+        metadata = {"source": "corporate_cards"}
+        if force_closed_period:
+            metadata["force_closed_period"] = True
+            metadata["force_reason"] = "Carga historica de tarjetas corporativas solicitada para cuadrar contabilidad"
         cur.execute("""
             INSERT INTO accounting_entries(entry_date, period, description, origin, origin_id, created_by, workflow_status, company_code, posting_rule_code, posting_metadata, posted_by, posted_at)
             VALUES(%s,%s,%s,%s,%s,'SYSTEM','POSTED',%s,%s,%s,'SYSTEM',NOW())
             RETURNING id
-        """, (entry_date, period, description, origin, origin_id, company, origin, Json({"source": "corporate_cards"})))
+        """, (entry_date, period, description, origin, origin_id, company, origin, Json(metadata)))
         entry_id = cur.fetchone()["id"]
     for line in lines:
         cur.execute("""
@@ -438,6 +493,83 @@ def _exchange_rate_for(cur, tx_date: date | None) -> Decimal:
     if not row:
         return Decimal("1.00")
     return Decimal(str(row.get("rate") or 1))
+
+
+def _amount_crc_for_transaction(cur, tx: dict[str, Any]) -> Decimal:
+    tx_date = tx.get("transaction_date")
+    amount_crc = _money(tx.get("amount_crc"))
+    if amount_crc <= 0 and (tx.get("currency") or "CRC").upper() == "USD":
+        amount_crc = (_money(tx.get("amount_original")) * _exchange_rate_for(cur, tx_date)).quantize(MONEY, rounding=ROUND_HALF_UP)
+    elif amount_crc <= 0:
+        amount_crc = _money(tx.get("amount_original"))
+    return amount_crc
+
+
+def _post_card_transaction(cur, tx: dict[str, Any], force_closed_period: bool = False) -> int | None:
+    tx_date = tx.get("transaction_date")
+    if not tx_date:
+        return None
+    amount_crc = _amount_crc_for_transaction(cur, tx)
+    if amount_crc <= 0:
+        return None
+    description = f"Tarjeta corporativa BAC {tx.get('user_name') or ''}: {tx.get('description') or ''}".strip()
+    origins_to_remove = ["CORP_CARD_PENDING"]
+    if tx.get("matched_obligation_id"):
+        origins_to_remove.append("CORP_CARD_EXPENSE")
+        cur.execute("""
+            SELECT id FROM accounting_entries
+            WHERE origin = ANY(%s) AND origin_id=%s AND company_code=%s
+        """, (origins_to_remove, tx["id"], tx["company_code"]))
+        stale = [row["id"] for row in (cur.fetchall() or [])]
+        if stale:
+            cur.execute("DELETE FROM accounting_lines WHERE entry_id = ANY(%s)", (stale,))
+            cur.execute("DELETE FROM accounting_entries WHERE id = ANY(%s)", (stale,))
+        entry_id = _post_entry(cur, tx["company_code"], tx_date, description, "CORP_CARD_ITP_PAYMENT", tx["id"], [
+            {"account_code": SUPPLIER_AP_CODE, "account_name": SUPPLIER_AP_NAME, "debit": amount_crc, "credit": 0, "description": description},
+            {"account_code": CARD_PAYABLE_CODE, "account_name": CARD_PAYABLE_NAME, "debit": 0, "credit": amount_crc, "description": description},
+        ], force_closed_period=force_closed_period)
+        cur.execute("""
+            UPDATE payment_obligations
+            SET paid_with_card=TRUE, card_transaction_id=%s, card_paid_at=%s, card_holder_name=%s,
+                status='PAID', balance=0, last_payment_date=%s, updated_at=NOW()
+            WHERE id=%s
+        """, (tx["id"], tx_date, tx.get("user_name"), tx_date, tx.get("matched_obligation_id")))
+    else:
+        fiscal_status = (tx.get("deductible_status") or "PENDING_REVIEW").upper()
+        if fiscal_status == "PENDING_REVIEW":
+            cur.execute("""
+                SELECT id FROM accounting_entries
+                WHERE origin IN ('CORP_CARD_EXPENSE', 'CORP_CARD_ITP_PAYMENT')
+                  AND origin_id=%s AND company_code=%s
+            """, (tx["id"], tx["company_code"]))
+            stale = [row["id"] for row in (cur.fetchall() or [])]
+            if stale:
+                cur.execute("DELETE FROM accounting_lines WHERE entry_id = ANY(%s)", (stale,))
+                cur.execute("DELETE FROM accounting_entries WHERE id = ANY(%s)", (stale,))
+            entry_id = _post_entry(cur, tx["company_code"], tx_date, description, "CORP_CARD_PENDING", tx["id"], [
+                {"account_code": PENDING_CARD_CODE, "account_name": PENDING_CARD_NAME, "debit": amount_crc, "credit": 0, "description": description},
+                {"account_code": CARD_PAYABLE_CODE, "account_name": CARD_PAYABLE_NAME, "debit": 0, "credit": amount_crc, "description": description},
+            ], force_closed_period=force_closed_period)
+            cur.execute("UPDATE corporate_card_transactions SET accounting_entry_id=%s WHERE id=%s", (entry_id, tx["id"]))
+            return entry_id
+        origins_to_remove.append("CORP_CARD_ITP_PAYMENT")
+        cur.execute("""
+            SELECT id FROM accounting_entries
+            WHERE origin = ANY(%s) AND origin_id=%s AND company_code=%s
+        """, (origins_to_remove, tx["id"], tx["company_code"]))
+        stale = [row["id"] for row in (cur.fetchall() or [])]
+        if stale:
+            cur.execute("DELETE FROM accounting_lines WHERE entry_id = ANY(%s)", (stale,))
+            cur.execute("DELETE FROM accounting_entries WHERE id = ANY(%s)", (stale,))
+        deductible = fiscal_status != "NON_DEDUCTIBLE"
+        account_code = tx.get("expense_account_code") or (DEFAULT_EXPENSE_CODE if deductible else DEFAULT_NON_DEDUCTIBLE_CODE)
+        account_name = tx.get("expense_account_name") or (DEFAULT_EXPENSE_NAME if deductible else DEFAULT_NON_DEDUCTIBLE_NAME)
+        entry_id = _post_entry(cur, tx["company_code"], tx_date, description, "CORP_CARD_EXPENSE", tx["id"], [
+            {"account_code": account_code, "account_name": account_name, "debit": amount_crc, "credit": 0, "description": description},
+            {"account_code": CARD_PAYABLE_CODE, "account_name": CARD_PAYABLE_NAME, "debit": 0, "credit": amount_crc, "description": description},
+        ], force_closed_period=force_closed_period)
+    cur.execute("UPDATE corporate_card_transactions SET accounting_entry_id=%s WHERE id=%s", (entry_id, tx["id"]))
+    return entry_id
 
 
 def _default_card_payment_bank(cur) -> tuple[str, str]:
@@ -565,16 +697,19 @@ def _match_candidates(cur, tx_id: int) -> list[dict[str, Any]]:
                  ELSE 0
                END
                + CASE WHEN currency=%s THEN 20 ELSE 0 END
-               + CASE WHEN ABS(COALESCE(total,0)-%s) <= 2 THEN 40 ELSE 0 END AS score
+               + CASE WHEN ABS(COALESCE(total,0)-%s) <= 2 THEN 40 ELSE 0 END
+               + CASE WHEN status IN ('PENDING','PARTIAL') THEN 10 ELSE 0 END
+               + CASE WHEN COALESCE(paid_with_card, FALSE) THEN -100 ELSE 0 END AS score
         FROM payment_obligations
         WHERE active=TRUE
-          AND status IN ('PENDING','PARTIAL')
+          AND status IN ('PENDING','PARTIAL','PAID')
+          AND COALESCE(paid_with_card, FALSE)=FALSE
           AND currency=%s
           AND ABS(COALESCE(total,0)-%s) <= 2
-          AND issue_date BETWEEN (%s::date - INTERVAL '15 days') AND (%s::date + INTERVAL '15 days')
-        ORDER BY score DESC, issue_date DESC
+          AND issue_date BETWEEN (%s::date - INTERVAL '20 days') AND (%s::date + INTERVAL '20 days')
+        ORDER BY score DESC, ABS(issue_date - %s::date), issue_date DESC
         LIMIT 10
-    """, (desc, tx["currency"], amount, tx["currency"], amount, tx["transaction_date"], tx["transaction_date"]))
+    """, (desc, tx["currency"], amount, tx["currency"], amount, tx["transaction_date"], tx["transaction_date"], tx["transaction_date"]))
     return [dict(row) for row in cur.fetchall()]
 
 
@@ -603,6 +738,8 @@ def auto_match(statement_id: int, conn=Depends(get_db)):
             best = candidates[0]
             if int(best.get("score") or 0) < 60:
                 continue
+            if len(candidates) > 1 and int(best.get("score") or 0) == int(candidates[1].get("score") or 0):
+                continue
             cur.execute("""
                 UPDATE corporate_card_transactions
                 SET matched_obligation_id=%s, match_status='MATCHED_ITP', deductible_status='DEDUCTIBLE', requires_invoice=FALSE
@@ -629,8 +766,15 @@ def match_itp(transaction_id: int, payload: MatchRequest, conn=Depends(get_db)):
         row = cur.fetchone()
         if not row:
             raise HTTPException(404, "Movimiento de tarjeta no existe")
+        posted = False
+        blocked_reason = None
+        period = _period_from_date(row.get("transaction_date"))
+        if _period_is_closed(cur, row["company_code"], period):
+            blocked_reason = f"El periodo {period} esta cerrado; cruce guardado sin asiento."
+        else:
+            posted = bool(_post_card_transaction(cur, dict(row)))
         conn.commit()
-        return {"status": "ok", "transaction": dict(row)}
+        return {"status": "ok", "transaction": dict(row), "posted": posted, "blocked_reason": blocked_reason}
 
 
 @router.put("/transactions/{transaction_id}/classify")
@@ -659,8 +803,72 @@ def classify_transaction(transaction_id: int, payload: ClassifyRequest, conn=Dep
         row = cur.fetchone()
         if not row:
             raise HTTPException(404, "Movimiento de tarjeta no existe")
+        posted = False
+        blocked_reason = None
+        if (row.get("deductible_status") or "").upper() in {"DEDUCTIBLE", "NON_DEDUCTIBLE"} or row.get("matched_obligation_id"):
+            period = _period_from_date(row.get("transaction_date"))
+            if _period_is_closed(cur, row["company_code"], period) and not payload.force_closed_period:
+                blocked_reason = f"El periodo {period} esta cerrado; clasificacion guardada sin asiento."
+            else:
+                posted = bool(_post_card_transaction(cur, dict(row), force_closed_period=payload.force_closed_period))
         conn.commit()
-        return {"status": "ok", "transaction": dict(row)}
+        return {
+            "status": "ok",
+            "transaction": dict(row),
+            "posted": posted,
+            "blocked_reason": blocked_reason,
+        }
+
+
+@router.put("/statements/{statement_id}/classify")
+def classify_statement_transactions(statement_id: int, payload: BulkClassifyRequest, conn=Depends(get_db)):
+    updated = 0
+    posted = 0
+    blocked: list[dict[str, Any]] = []
+    items = payload.items or []
+    if not items:
+        return {"status": "ok", "updated": 0, "posted": 0, "blocked": []}
+
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        ensure_schema(cur)
+        for item in items:
+            cur.execute("""
+                UPDATE corporate_card_transactions
+                SET fiscal_category=COALESCE(%s, fiscal_category),
+                    deductible_status=COALESCE(%s, deductible_status),
+                    requires_invoice=COALESCE(%s, requires_invoice),
+                    expense_account_code=COALESCE(%s, expense_account_code),
+                    expense_account_name=COALESCE(%s, expense_account_name),
+                    notes=COALESCE(%s, notes)
+                WHERE id=%s AND statement_id=%s
+                RETURNING *
+            """, (
+                item.fiscal_category,
+                item.deductible_status,
+                item.requires_invoice,
+                item.expense_account_code,
+                item.expense_account_name,
+                item.notes,
+                item.transaction_id,
+                statement_id,
+            ))
+            row = cur.fetchone()
+            if not row:
+                blocked.append({"transaction_id": item.transaction_id, "reason": "Movimiento no existe en este estado"})
+                continue
+            updated += 1
+            should_post = (row.get("deductible_status") or "").upper() in {"DEDUCTIBLE", "NON_DEDUCTIBLE"} or row.get("matched_obligation_id")
+            if not should_post:
+                continue
+            period = _period_from_date(row.get("transaction_date"))
+            if _period_is_closed(cur, row["company_code"], period) and not payload.force_closed_periods:
+                blocked.append({"transaction_id": row["id"], "reason": f"Periodo {period} cerrado"})
+                continue
+            if _post_card_transaction(cur, dict(row), force_closed_period=payload.force_closed_periods):
+                posted += 1
+
+        conn.commit()
+        return {"status": "ok", "updated": updated, "posted": posted, "blocked": blocked}
 
 
 @router.post("/statements/{statement_id}/post-daily")
@@ -675,43 +883,13 @@ def post_daily(statement_id: int, conn=Depends(get_db)):
         """, (statement_id,))
         transactions = cur.fetchall() or []
         for tx in transactions:
-            tx_date = tx.get("transaction_date")
-            if not tx_date:
-                continue
-            amount_crc = _money(tx.get("amount_crc"))
-            if amount_crc <= 0 and (tx.get("currency") or "CRC").upper() == "USD":
-                amount_crc = (_money(tx.get("amount_original")) * _exchange_rate_for(cur, tx_date)).quantize(MONEY, rounding=ROUND_HALF_UP)
-            elif amount_crc <= 0:
-                amount_crc = _money(tx.get("amount_original"))
-            if amount_crc <= 0:
-                continue
-            description = f"Tarjeta corporativa BAC {tx.get('user_name') or ''}: {tx.get('description') or ''}".strip()
-            if tx.get("matched_obligation_id"):
-                entry_id = _post_entry(cur, tx["company_code"], tx_date, description, "CORP_CARD_ITP_PAYMENT", tx["id"], [
-                    {"account_code": SUPPLIER_AP_CODE, "account_name": SUPPLIER_AP_NAME, "debit": amount_crc, "credit": 0, "description": description},
-                    {"account_code": CARD_PAYABLE_CODE, "account_name": CARD_PAYABLE_NAME, "debit": 0, "credit": amount_crc, "description": description},
-                ])
-                cur.execute("""
-                    UPDATE payment_obligations
-                    SET paid_with_card=TRUE, card_transaction_id=%s, card_paid_at=%s, card_holder_name=%s,
-                        status='PAID', balance=0, last_payment_date=%s, updated_at=NOW()
-                    WHERE id=%s
-                """, (tx["id"], tx_date, tx.get("user_name"), tx_date, tx.get("matched_obligation_id")))
-            else:
-                deductible = (tx.get("deductible_status") or "").upper() != "NON_DEDUCTIBLE"
-                account_code = tx.get("expense_account_code") or (DEFAULT_EXPENSE_CODE if deductible else DEFAULT_NON_DEDUCTIBLE_CODE)
-                account_name = tx.get("expense_account_name") or (DEFAULT_EXPENSE_NAME if deductible else DEFAULT_NON_DEDUCTIBLE_NAME)
-                entry_id = _post_entry(cur, tx["company_code"], tx_date, description, "CORP_CARD_EXPENSE", tx["id"], [
-                    {"account_code": account_code, "account_name": account_name, "debit": amount_crc, "credit": 0, "description": description},
-                    {"account_code": CARD_PAYABLE_CODE, "account_name": CARD_PAYABLE_NAME, "debit": 0, "credit": amount_crc, "description": description},
-                ])
-            cur.execute("UPDATE corporate_card_transactions SET accounting_entry_id=%s WHERE id=%s", (entry_id, tx["id"]))
-            posted += 1
+            if _post_card_transaction(cur, dict(tx)):
+                posted += 1
         conn.commit()
     return {"status": "ok", "posted": posted}
 
 
-def _post_daily_for_statement(cur, statement_id: int) -> int:
+def _post_daily_for_statement(cur, statement_id: int, force_closed_period: bool = False) -> int:
     cur.execute("""
         SELECT * FROM corporate_card_transactions
         WHERE statement_id=%s AND transaction_type='PURCHASE'
@@ -720,38 +898,8 @@ def _post_daily_for_statement(cur, statement_id: int) -> int:
     transactions = cur.fetchall() or []
     posted = 0
     for tx in transactions:
-        tx_date = tx.get("transaction_date")
-        if not tx_date:
-            continue
-        amount_crc = _money(tx.get("amount_crc"))
-        if amount_crc <= 0 and (tx.get("currency") or "CRC").upper() == "USD":
-            amount_crc = (_money(tx.get("amount_original")) * _exchange_rate_for(cur, tx_date)).quantize(MONEY, rounding=ROUND_HALF_UP)
-        elif amount_crc <= 0:
-            amount_crc = _money(tx.get("amount_original"))
-        if amount_crc <= 0:
-            continue
-        description = f"Tarjeta corporativa BAC {tx.get('user_name') or ''}: {tx.get('description') or ''}".strip()
-        if tx.get("matched_obligation_id"):
-            entry_id = _post_entry(cur, tx["company_code"], tx_date, description, "CORP_CARD_ITP_PAYMENT", tx["id"], [
-                {"account_code": SUPPLIER_AP_CODE, "account_name": SUPPLIER_AP_NAME, "debit": amount_crc, "credit": 0, "description": description},
-                {"account_code": CARD_PAYABLE_CODE, "account_name": CARD_PAYABLE_NAME, "debit": 0, "credit": amount_crc, "description": description},
-            ])
-            cur.execute("""
-                UPDATE payment_obligations
-                SET paid_with_card=TRUE, card_transaction_id=%s, card_paid_at=%s, card_holder_name=%s,
-                    status='PAID', balance=0, last_payment_date=%s, updated_at=NOW()
-                WHERE id=%s
-            """, (tx["id"], tx_date, tx.get("user_name"), tx_date, tx.get("matched_obligation_id")))
-        else:
-            deductible = (tx.get("deductible_status") or "").upper() != "NON_DEDUCTIBLE"
-            account_code = tx.get("expense_account_code") or (DEFAULT_EXPENSE_CODE if deductible else DEFAULT_NON_DEDUCTIBLE_CODE)
-            account_name = tx.get("expense_account_name") or (DEFAULT_EXPENSE_NAME if deductible else DEFAULT_NON_DEDUCTIBLE_NAME)
-            entry_id = _post_entry(cur, tx["company_code"], tx_date, description, "CORP_CARD_EXPENSE", tx["id"], [
-                {"account_code": account_code, "account_name": account_name, "debit": amount_crc, "credit": 0, "description": description},
-                {"account_code": CARD_PAYABLE_CODE, "account_name": CARD_PAYABLE_NAME, "debit": 0, "credit": amount_crc, "description": description},
-            ])
-        cur.execute("UPDATE corporate_card_transactions SET accounting_entry_id=%s WHERE id=%s", (entry_id, tx["id"]))
-        posted += 1
+        if _post_card_transaction(cur, dict(tx), force_closed_period=force_closed_period):
+            posted += 1
     cur.execute("""
         UPDATE corporate_card_statements
         SET status=CASE WHEN status='SETTLED' THEN status ELSE 'POSTED_PENDING_PAYMENT' END
@@ -807,6 +955,7 @@ def _post_settlement_for_statement(
     statement: dict[str, Any],
     bank_account_code: str | None = None,
     bank_account_name: str | None = None,
+    force_closed_period: bool = False,
 ) -> int:
     code, name = (bank_account_code, bank_account_name)
     if not code:
@@ -825,7 +974,7 @@ def _post_settlement_for_statement(
     entry_id = _post_entry(cur, statement["company_code"], pay_date, description, "CORP_CARD_SETTLEMENT", statement["id"], [
         {"account_code": CARD_PAYABLE_CODE, "account_name": CARD_PAYABLE_NAME, "debit": total_crc, "credit": 0, "description": description},
         {"account_code": code, "account_name": name, "debit": 0, "credit": total_crc, "description": description},
-    ])
+    ], force_closed_period=force_closed_period)
     cur.execute("""
         INSERT INTO corporate_card_settlements(
             statement_id, company_code, payment_date, bank_account_code, bank_account_name,
@@ -886,7 +1035,7 @@ def post_history(
             statement_id = int(statement["id"])
             statement_label = f"{statement.get('statement_period') or 'sin-periodo'} / {statement.get('card_last4') or 'sin-tarjeta'}"
             closed_purchase_periods = _closed_purchase_periods_for_statement(cur, statement_id, company)
-            if closed_purchase_periods:
+            if closed_purchase_periods and not payload.force_closed_periods:
                 blocked.append({
                     "statement_id": statement_id,
                     "statement": statement_label,
@@ -900,11 +1049,11 @@ def post_history(
                     WHERE id=%s AND status<>'SETTLED'
                 """, (statement_id,))
             else:
-                posted += _post_daily_for_statement(cur, statement_id)
+                posted += _post_daily_for_statement(cur, statement_id, force_closed_period=payload.force_closed_periods)
             if payload.settle_previous and statement["id"] not in latest_ids:
                 pay_date = statement.get("payment_due_date") or _due_on_15th(statement.get("cutoff_date"), statement.get("statement_period"))
                 settlement_period = _period_from_date(pay_date)
-                if _period_is_closed(cur, company, settlement_period):
+                if _period_is_closed(cur, company, settlement_period) and not payload.force_closed_periods:
                     blocked.append({
                         "statement_id": statement_id,
                         "statement": statement_label,
@@ -922,6 +1071,7 @@ def post_history(
                         statement,
                         bank_account_code=payload.bank_account_code,
                         bank_account_name=payload.bank_account_name,
+                        force_closed_period=payload.force_closed_periods,
                     ):
                         settled += 1
             elif statement["id"] in latest_ids:

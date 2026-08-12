@@ -57,6 +57,63 @@ def _normalize_decimal_string(v):
     return v
 
 
+def _coerce_number(value):
+    if value in (None, ""):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        text = value.strip().replace("\u00a0", "").replace(" ", "")
+        if not text:
+            return None
+        if "," in text and "." in text:
+            if text.rfind(",") > text.rfind("."):
+                text = text.replace(".", "").replace(",", ".")
+            else:
+                text = text.replace(",", "")
+        elif "," in text:
+            text = text.replace(",", ".")
+        try:
+            return float(text)
+        except Exception:
+            return None
+    return None
+
+
+def _fmt_word_number(value):
+    try:
+        return f"{float(value):,.2f}"
+    except Exception:
+        return None
+
+
+def _fmt_word_percent(value):
+    try:
+        return f"{float(value):.4f}"
+    except Exception:
+        return None
+
+
+def _apply_word_report_calculations(payload: dict) -> dict:
+    data = dict(payload or {})
+
+    draft = _coerce_number(data.get("word_draft_figures"))
+    bl = _coerce_number(data.get("word_bl_figures"))
+    if draft is not None and bl is not None:
+        diff = bl - draft
+        data["word_difference"] = _fmt_word_number(diff)
+        data["word_percentage"] = _fmt_word_percent((diff / bl * 100) if bl else 0)
+
+    shore = _coerce_number(data.get("word_shore_scale"))
+    shore_bl = _coerce_number(data.get("word_shore_bl"))
+    if shore is not None and shore_bl is not None:
+        diff = shore_bl - shore
+        data["word_shore_difference"] = _fmt_word_number(diff)
+        data["word_shore_percentage"] = _fmt_word_percent((diff / shore_bl * 100) if shore_bl else 0)
+
+    return data
+
+
 def _get_table_column_types(cur, table_name: str):
     cur.execute("""
         SELECT column_name, data_type
@@ -790,7 +847,7 @@ def update_word_report(draft_survey_id: str, payload: dict, conn=Depends(get_db)
     cur = conn.cursor()
 
     try:
-        payload = payload or {}
+        payload = _apply_word_report_calculations(payload or {})
         real_id = _resolve_draft_survey_real_id(cur, str(draft_survey_id))
 
         if not real_id:
