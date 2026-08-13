@@ -656,6 +656,28 @@ def _preferred_tax_documents_sql(where_sql: str) -> str:
     """
 
 
+def _company_tax_scope_sql(company: str) -> str:
+    if company != "MSL-CR":
+        return "1=0"
+    return """
+        (
+            d.source_table IN ('hacienda_emitted_excel', 'hacienda_acceptance_excel')
+            OR (
+                d.direction = 'SALE'
+                AND COALESCE(d.receiver_identification, '') IN ('3101065618', '3101660512')
+            )
+            OR (
+                d.direction = 'PURCHASE'
+                AND (
+                    COALESCE(d.receiver_identification, '') = '3102920372'
+                    OR UPPER(COALESCE(d.receiver_name, '')) LIKE '%MSL%'
+                    OR UPPER(COALESCE(d.receiver_name, '')) LIKE '%MARINE SURVEYORS%'
+                )
+            )
+        )
+    """
+
+
 @router.get("/documents")
 def list_documents(direction:str|None=None,period:str|None=None,status:str|None=None,quality_only:bool=False,conn=Depends(get_db)):
     _ensure_schema(conn); where=["1=1"]; params=[]
@@ -692,13 +714,13 @@ def tax_book(direction:str,period:str,conn=Depends(get_db)):
         if all_periods:
             cur.execute(f"""SELECT id,document_type,document_number,electronic_key,issue_datetime,currency_code,exchange_rate,
               issuer_identification,issuer_name,receiver_identification,receiver_name,subtotal,exempt_amount,tax_amount,total,
-              hacienda_status,xml_path FROM {_preferred_tax_documents_sql("d.direction=%s AND COALESCE(d.issue_datetime::date, CURRENT_DATE) <= CURRENT_DATE")} preferred
+              hacienda_status,xml_path FROM {_preferred_tax_documents_sql(f"d.direction=%s AND {_company_tax_scope_sql('MSL-CR')} AND COALESCE(d.issue_datetime::date, CURRENT_DATE) <= CURRENT_DATE")} preferred
               ORDER BY issue_datetime DESC NULLS LAST,document_number""",(direction,))
         else:
             start,end=_period_bounds(period)
             cur.execute(f"""SELECT id,document_type,document_number,electronic_key,issue_datetime,currency_code,exchange_rate,
           issuer_identification,issuer_name,receiver_identification,receiver_name,subtotal,exempt_amount,tax_amount,total,
-          hacienda_status,xml_path FROM {_preferred_tax_documents_sql("d.direction=%s AND d.issue_datetime >= %s AND d.issue_datetime < %s AND COALESCE(d.issue_datetime::date, CURRENT_DATE) <= CURRENT_DATE")} preferred
+          hacienda_status,xml_path FROM {_preferred_tax_documents_sql(f"d.direction=%s AND {_company_tax_scope_sql('MSL-CR')} AND d.issue_datetime >= %s AND d.issue_datetime < %s AND COALESCE(d.issue_datetime::date, CURRENT_DATE) <= CURRENT_DATE")} preferred
           ORDER BY issue_datetime,document_number""",(direction,start,end))
         rows=cur.fetchall()
     totals={k:float(sum((_money(r[k]) for r in rows),Decimal("0"))) for k in ("subtotal","exempt_amount","tax_amount","total")}
@@ -730,7 +752,7 @@ def tax_iva(
               COALESCE(SUM({amount_crc % ('total', 'total')}),0) total,
               COUNT(*) documents,
               COUNT(*) FILTER(WHERE xml_path IS NULL) missing_xml,COUNT(*) FILTER(WHERE hacienda_status='PENDING') pending_hacienda
-              FROM {_preferred_tax_documents_sql("d.issue_datetime >= %s AND d.issue_datetime < %s AND COALESCE(d.issue_datetime::date, CURRENT_DATE) <= CURRENT_DATE")} preferred
+              FROM {_preferred_tax_documents_sql(f"{_company_tax_scope_sql(company)} AND d.issue_datetime >= %s AND d.issue_datetime < %s AND COALESCE(d.issue_datetime::date, CURRENT_DATE) <= CURRENT_DATE")} preferred
               GROUP BY direction""",(start,end))
             by_direction={r["direction"]:r for r in cur.fetchall()}
         else:
