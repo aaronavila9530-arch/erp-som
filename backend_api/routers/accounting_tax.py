@@ -632,7 +632,7 @@ def _period_bounds(period):
 
 
 def _preferred_tax_documents_sql(where_sql: str) -> str:
-    return f"""
+    return f"""(
         WITH tax_ranked AS (
             SELECT d.*,
                    ROW_NUMBER() OVER (
@@ -653,7 +653,7 @@ def _preferred_tax_documents_sql(where_sql: str) -> str:
             WHERE {where_sql}
         )
         SELECT * FROM tax_ranked WHERE tax_rank = 1
-    """
+    )"""
 
 
 def _company_tax_scope_sql(company: str) -> str:
@@ -670,8 +670,8 @@ def _company_tax_scope_sql(company: str) -> str:
                 d.direction = 'PURCHASE'
                 AND (
                     COALESCE(d.receiver_identification, '') = '3102920372'
-                    OR UPPER(COALESCE(d.receiver_name, '')) LIKE '%MSL%'
-                    OR UPPER(COALESCE(d.receiver_name, '')) LIKE '%MARINE SURVEYORS%'
+                    OR UPPER(COALESCE(d.receiver_name, '')) LIKE '%%MSL%%'
+                    OR UPPER(COALESCE(d.receiver_name, '')) LIKE '%%MARINE SURVEYORS%%'
                 )
             )
         )
