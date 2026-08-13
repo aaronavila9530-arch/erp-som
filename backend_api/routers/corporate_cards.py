@@ -586,7 +586,8 @@ def _post_card_transaction(cur, tx: dict[str, Any], force_closed_period: bool = 
         """, (tx["id"], tx_date, tx.get("user_name"), tx_date, tx.get("matched_obligation_id")))
     else:
         fiscal_status = (tx.get("deductible_status") or "PENDING_REVIEW").upper()
-        if fiscal_status == "PENDING_REVIEW":
+        requires_invoice = bool(tx.get("requires_invoice"))
+        if fiscal_status == "PENDING_REVIEW" or requires_invoice:
             cur.execute("""
                 SELECT id FROM accounting_entries
                 WHERE origin IN ('CORP_CARD_EXPENSE', 'CORP_CARD_ITP_PAYMENT')
@@ -927,7 +928,11 @@ def classify_statement_transactions(statement_id: int, payload: BulkClassifyRequ
                 blocked.append({"transaction_id": item.transaction_id, "reason": "Movimiento no existe en este estado"})
                 continue
             updated += 1
-            should_post = (row.get("deductible_status") or "").upper() in {"DEDUCTIBLE", "NON_DEDUCTIBLE"} or row.get("matched_obligation_id")
+            should_post = (
+                (row.get("deductible_status") or "").upper() in {"DEDUCTIBLE", "NON_DEDUCTIBLE"}
+                or row.get("matched_obligation_id")
+                or bool(row.get("requires_invoice"))
+            )
             if not should_post:
                 continue
             period = _period_from_date(row.get("transaction_date"))
