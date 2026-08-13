@@ -153,10 +153,44 @@ def bulk_upsert_medical_network(
 
 @router.get("/filters")
 def medical_network_filters(
+    q: str | None = Query(None),
+    province: str | None = Query(None),
+    canton: str | None = Query(None),
+    district: str | None = Query(None),
+    specialty: str | None = Query(None),
+    consultation_type: str | None = Query(None),
+    service_type: str | None = Query(None),
+    clinic: str | None = Query(None),
     x_company_code: str | None = Header(None, alias="X-Company-Code"),
     conn=Depends(get_db),
 ):
+    q = _param(q)
+    province = _param(province)
+    canton = _param(canton)
+    district = _param(district)
+    specialty = _param(specialty)
+    consultation_type = _param(consultation_type)
+    service_type = _param(service_type)
+    clinic = _param(clinic)
     company = company_code(header_value=x_company_code)
+    filters = ["company_code=%(company)s", "active=TRUE"]
+    params = {"company": company}
+    for key, col, value in (
+        ("province", "province", province),
+        ("canton", "canton", canton),
+        ("district", "district", district),
+        ("specialty", "specialty", specialty),
+        ("consultation_type", "consultation_type", consultation_type),
+        ("service_type", "service_type", service_type),
+        ("clinic", "clinic_name", clinic),
+    ):
+        if value:
+            filters.append(f"{col} = %({key})s")
+            params[key] = value
+    if q:
+        filters.append("search_text ILIKE %(q)s")
+        params["q"] = f"%{q.strip()}%"
+    where_sql = " AND ".join(filters)
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         ensure_schema(cur)
         result = {}
@@ -173,22 +207,22 @@ def medical_network_filters(
                 f"""
                 SELECT DISTINCT {col} AS value
                 FROM hr_medical_network
-                WHERE company_code=%s AND active=TRUE AND COALESCE(TRIM({col}), '') <> ''
+                WHERE {where_sql} AND COALESCE(TRIM({col}), '') <> ''
                 ORDER BY {col}
                 """,
-                (company,),
+                params,
             )
             result[key] = [row["value"] for row in cur.fetchall()]
         cur.execute(
-            """
+            f"""
             SELECT COUNT(*) AS total,
                    COUNT(DISTINCT specialty) AS specialties,
                    COUNT(DISTINCT province) AS provinces,
                    COUNT(DISTINCT professional_name) AS professionals
             FROM hr_medical_network
-            WHERE company_code=%s AND active=TRUE
+            WHERE {where_sql}
             """,
-            (company,),
+            params,
         )
         result["summary"] = dict(cur.fetchone() or {})
     return result
