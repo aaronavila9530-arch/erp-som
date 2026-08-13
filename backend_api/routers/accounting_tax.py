@@ -631,6 +631,31 @@ def _period_bounds(period):
     return start,end
 
 
+def _preferred_tax_documents_sql(where_sql: str) -> str:
+    return f"""
+        WITH tax_ranked AS (
+            SELECT d.*,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY d.direction,
+                                    COALESCE(NULLIF(d.document_number, ''), NULLIF(d.electronic_key, ''), d.source_table || ':' || d.source_id, d.id::text)
+                       ORDER BY
+                           CASE
+                               WHEN d.source_table IN ('hacienda_emitted_excel', 'hacienda_acceptance_excel', 'xml_upload') THEN 0
+                               WHEN d.xml_path IS NOT NULL THEN 1
+                               WHEN d.source_table IN ('invoicing', 'collections') THEN 2
+                               WHEN d.source_table = 'payment_obligations' THEN 3
+                               ELSE 4
+                           END,
+                           CASE WHEN COALESCE(d.tax_amount, 0) <> 0 THEN 0 ELSE 1 END,
+                           d.id DESC
+                   ) AS tax_rank
+            FROM tax_electronic_documents d
+            WHERE {where_sql}
+        )
+        SELECT * FROM tax_ranked WHERE tax_rank = 1
+    """
+
+
 @router.get("/documents")
 def list_documents(direction:str|None=None,period:str|None=None,status:str|None=None,quality_only:bool=False,conn=Depends(get_db)):
     _ensure_schema(conn); where=["1=1"]; params=[]
@@ -665,21 +690,15 @@ def tax_book(direction:str,period:str,conn=Depends(get_db)):
     all_periods = str(period or "").upper() in {"", "ALL", "TODOS"}
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         if all_periods:
-            cur.execute("""SELECT id,document_type,document_number,electronic_key,issue_datetime,currency_code,exchange_rate,
+            cur.execute(f"""SELECT id,document_type,document_number,electronic_key,issue_datetime,currency_code,exchange_rate,
               issuer_identification,issuer_name,receiver_identification,receiver_name,subtotal,exempt_amount,tax_amount,total,
-              hacienda_status,xml_path FROM tax_electronic_documents
-              WHERE direction=%s
-                AND COALESCE(issue_datetime::date, CURRENT_DATE) <= CURRENT_DATE
+              hacienda_status,xml_path FROM {_preferred_tax_documents_sql("d.direction=%s AND COALESCE(d.issue_datetime::date, CURRENT_DATE) <= CURRENT_DATE")} preferred
               ORDER BY issue_datetime DESC NULLS LAST,document_number""",(direction,))
         else:
             start,end=_period_bounds(period)
-            cur.execute("""SELECT id,document_type,document_number,electronic_key,issue_datetime,currency_code,exchange_rate,
+            cur.execute(f"""SELECT id,document_type,document_number,electronic_key,issue_datetime,currency_code,exchange_rate,
           issuer_identification,issuer_name,receiver_identification,receiver_name,subtotal,exempt_amount,tax_amount,total,
-          hacienda_status,xml_path FROM tax_electronic_documents
-          WHERE direction=%s
-            AND issue_datetime >= %s
-            AND issue_datetime < %s
-            AND COALESCE(issue_datetime::date, CURRENT_DATE) <= CURRENT_DATE
+          hacienda_status,xml_path FROM {_preferred_tax_documents_sql("d.direction=%s AND d.issue_datetime >= %s AND d.issue_datetime < %s AND COALESCE(d.issue_datetime::date, CURRENT_DATE) <= CURRENT_DATE")} preferred
           ORDER BY issue_datetime,document_number""",(direction,start,end))
         rows=cur.fetchall()
     totals={k:float(sum((_money(r[k]) for r in rows),Decimal("0"))) for k in ("subtotal","exempt_amount","tax_amount","total")}
@@ -711,10 +730,7 @@ def tax_iva(
               COALESCE(SUM({amount_crc % ('total', 'total')}),0) total,
               COUNT(*) documents,
               COUNT(*) FILTER(WHERE xml_path IS NULL) missing_xml,COUNT(*) FILTER(WHERE hacienda_status='PENDING') pending_hacienda
-              FROM tax_electronic_documents
-              WHERE issue_datetime >= %s
-                AND issue_datetime < %s
-                AND COALESCE(issue_datetime::date, CURRENT_DATE) <= CURRENT_DATE
+              FROM {_preferred_tax_documents_sql("d.issue_datetime >= %s AND d.issue_datetime < %s AND COALESCE(d.issue_datetime::date, CURRENT_DATE) <= CURRENT_DATE")} preferred
               GROUP BY direction""",(start,end))
             by_direction={r["direction"]:r for r in cur.fetchall()}
         else:
