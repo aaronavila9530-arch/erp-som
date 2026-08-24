@@ -57,6 +57,7 @@ from routers.exchange_rate import router as exchange_rate_router
 
 from routers.password_reset import router as password_reset_router
 from routers.mobile_auth import router as mobile_auth_router
+from routers.user_admin import router as user_admin_router
 from routers.companies import router as companies_router
 
 # HHRR
@@ -249,6 +250,7 @@ app.include_router(exchange_rate_router)
 
 app.include_router(password_reset_router)
 app.include_router(mobile_auth_router)
+app.include_router(user_admin_router)
 app.include_router(companies_router)
 
 app.include_router(hr.router)

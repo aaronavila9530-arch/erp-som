@@ -74,6 +74,7 @@ class MainApp(tk.Frame):
         self.menu_visible = True
         self._logra_alert_shown = set()
         self._global_alert_shown = {}
+        self._permission_cache = {}
 
         self._build_menu_lateral()
         self._build_content_area()
@@ -146,6 +147,7 @@ class MainApp(tk.Frame):
             ("Informes", "informes"),
             ("PORTIA", "portia"),
             ("Q&A SOM", "qa_som"),
+            ("Admin", "admin_users"),
         ]
 
         for label, module_code in modules_config:
@@ -191,6 +193,7 @@ class MainApp(tk.Frame):
             "Informes": "informes",
             "PORTIA": "portia",
             "Q&A SOM": "qa_som",
+            "Admin": "admin_users",
         }
 
         module_code = module_map.get(modulo)
@@ -279,6 +282,15 @@ class MainApp(tk.Frame):
         elif modulo == "Q&A SOM":
             from Modulos.Portia.qa_ui import QASomUI
             QASomUI(
+                parent=self.content,
+                usuario=self.usuario,
+                rol=self.rol,
+                on_back=self.mostrar_menu
+            ).pack(fill="both", expand=True)
+
+        elif modulo == "Admin":
+            from Modulos.Admin.user_admin_ui import UserAdminUI
+            UserAdminUI(
                 parent=self.content,
                 usuario=self.usuario,
                 rol=self.rol,
@@ -574,12 +586,60 @@ class MainApp(tk.Frame):
     # --------------------------------------------------------
     # RBAC LOCAL (VISUAL UI)
     # --------------------------------------------------------
+    def _db_permission_decision(self, usuario: str, module_code: str, action: str):
+        key = (usuario, module_code, action)
+        if key in self._permission_cache:
+            return self._permission_cache[key]
+        try:
+            from backend_api.database import connect
+            conn = connect()
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT COUNT(*)
+                FROM user_module_permissions
+                WHERE lower(usuario)=lower(%s)
+                  AND allowed=TRUE
+                """,
+                (usuario,),
+            )
+            has_rows = (cur.fetchone() or [0])[0] > 0
+            if not has_rows:
+                decision = None
+            else:
+                cur.execute(
+                    """
+                    SELECT 1
+                    FROM user_module_permissions
+                    WHERE lower(usuario)=lower(%s)
+                      AND lower(module_code)=lower(%s)
+                      AND lower(action_code) IN (lower(%s), 'admin')
+                      AND allowed=TRUE
+                    LIMIT 1
+                    """,
+                    (usuario, module_code, action),
+                )
+                decision = cur.fetchone() is not None
+            cur.close()
+            conn.close()
+        except Exception:
+            decision = None
+        self._permission_cache[key] = decision
+        return decision
+
     def _has_permission(self, module_code: str, action: str, include_logra_override: bool = True) -> bool:
 
         usuario = (self.usuario or "").lower()
         rol = (self.rol or "").lower()
         module_code = (module_code or "").lower()
         action = (action or "").lower()
+
+        if rol in ("master", "admin") or usuario in ("gerencia1", "captain", "aaron01", "admin"):
+            return True
+
+        db_decision = self._db_permission_decision(usuario, module_code, action)
+        if db_decision is not None:
+            return db_decision
 
         # Perfil contable restringido: únicamente Finanzas y Q&A SOM.
         # Se evalúa antes de las excepciones globales (por ejemplo, ONG en
@@ -600,16 +660,13 @@ class MainApp(tk.Frame):
         # ADMINISTRADORES → ACCESO TOTAL
         # ====================================================
 
-        if usuario in ("gerencia1", "captain", "aaron01", "admin"):
-            return True
-
         # ====================================================
         # SURVEYORS
         # SOLO PUEDEN VER:
         # Comercial / HHRR / Informes
         # ====================================================
 
-        if usuario in ("surveyor01", "surveyor02"):
+        if usuario in ("surveyor01", "surveyor02", "surveyor03"):
 
             allowed_modules = {
                 "comercial",
@@ -645,9 +702,6 @@ class MainApp(tk.Frame):
         # ====================================================
         # FALLBACK POR ROL
         # ====================================================
-
-        if rol in ("master", "admin"):
-            return True
 
         role_permissions = {
             "user": {

@@ -1464,7 +1464,10 @@ def post_invoice_to_pay_apply_payment_api(data: dict):
             params={
                 "obligation_id": data.get("obligation_id"),
                 "amount": data.get("amount"),
-                "payment_date": data.get("payment_date")
+                "payment_date": data.get("payment_date"),
+                "bank_account_code": data.get("bank_account_code"),
+                "bank_account_name": data.get("bank_account_name"),
+                "bank_name": data.get("bank_name"),
             },
             timeout=15
         )
@@ -2332,6 +2335,57 @@ def _corporate_cards_local_call(action: str, *args, **kwargs):
         if action == "post_history":
             return cards.post_history(cards.HistoryPostRequest(**(args[0] or {})), x_company_code=company, conn=conn)
         raise ValueError(f"Accion local de tarjetas no soportada: {action}")
+    finally:
+        release_conn(conn)
+
+
+def _hr_medical_network_local_call(action: str, *args, **kwargs):
+    import sys
+    from pathlib import Path
+
+    backend_dir = Path(__file__).resolve().parent / "backend_api"
+    if str(backend_dir) not in sys.path:
+        sys.path.insert(0, str(backend_dir))
+
+    from database import get_conn, release_conn
+    from routers import hr_medical_network as medical_network
+
+    company = get_company_code() or "MSL-CR"
+    conn = get_conn()
+    try:
+        if action == "filters":
+            params = dict(args[0] if args else kwargs)
+            return medical_network.medical_network_filters(
+                q=params.get("q"),
+                province=params.get("province"),
+                canton=params.get("canton"),
+                district=params.get("district"),
+                specialty=params.get("specialty"),
+                consultation_type=params.get("consultation_type"),
+                service_type=params.get("service_type"),
+                clinic=params.get("clinic"),
+                x_company_code=company,
+                conn=conn,
+            )
+        if action == "search":
+            params = dict(args[0] if args else kwargs)
+            return medical_network.search_medical_network(
+                q=params.get("q"),
+                province=params.get("province"),
+                canton=params.get("canton"),
+                district=params.get("district"),
+                specialty=params.get("specialty"),
+                consultation_type=params.get("consultation_type"),
+                service_type=params.get("service_type"),
+                clinic=params.get("clinic"),
+                page=int(params.get("page") or 1),
+                page_size=int(params.get("page_size") or 100),
+                x_company_code=company,
+                conn=conn,
+            )
+        if action == "bulk_upsert":
+            return medical_network.bulk_upsert_medical_network(args[0] or {}, x_company_code=company, conn=conn)
+        raise ValueError(f"Accion local de red medica no soportada: {action}")
     finally:
         release_conn(conn)
 
@@ -3636,6 +3690,51 @@ def raise_for_status_with_detail(response):
             raise requests.exceptions.HTTPError(detail, response=response) from exc
         raise
 
+
+# ============================================================
+# ADMIN USUARIOS / PERMISOS
+# ============================================================
+
+def get_admin_users_meta_api():
+    r = api_request("GET", "/admin/users/meta", timeout=20)
+    raise_for_status_with_detail(r)
+    return r.json()
+
+
+def get_admin_people_api():
+    r = api_request("GET", "/admin/users/people", timeout=30)
+    raise_for_status_with_detail(r)
+    return r.json().get("people", [])
+
+
+def get_admin_users_api():
+    r = api_request("GET", "/admin/users", timeout=30)
+    raise_for_status_with_detail(r)
+    return r.json().get("users", [])
+
+
+def create_admin_user_api(payload: dict):
+    r = api_request("POST", "/admin/users", json=payload, timeout=30)
+    raise_for_status_with_detail(r)
+    return r.json()
+
+
+def save_admin_user_permissions_api(usuario: str, permissions: dict):
+    r = api_request(
+        "PUT",
+        f"/admin/users/{usuario}/permissions",
+        json={"permissions": permissions},
+        timeout=30,
+    )
+    raise_for_status_with_detail(r)
+    return r.json()
+
+
+def get_admin_user_permissions_api(usuario: str):
+    r = api_request("GET", f"/admin/users/{usuario}/permissions", timeout=20)
+    raise_for_status_with_detail(r)
+    return r.json().get("permissions", {})
+
 # ============================================================
 def get_current_company_profile_api():
     response = api_request("GET", "/companies/current", timeout=TIMEOUT)
@@ -3673,8 +3772,506 @@ def hr_salary_calculator_history_api(limit: int = 50):
     return response.json()
 
 
+def hr_medical_network_filters_api(**params):
+    try:
+        response = api_request("GET", "/hr/medical-network/filters", params=params, timeout=TIMEOUT)
+        raise_for_status_with_detail(response)
+        return response.json()
+    except requests.exceptions.HTTPError as exc:
+        if _is_api_not_found(exc):
+            return _hr_medical_network_local_call("filters", params)
+        raise
+
+
+def hr_medical_network_search_api(**params):
+    try:
+        response = api_request("GET", "/hr/medical-network/search", params=params, timeout=TIMEOUT)
+        raise_for_status_with_detail(response)
+        return response.json()
+    except requests.exceptions.HTTPError as exc:
+        if _is_api_not_found(exc):
+            return _hr_medical_network_local_call("search", params)
+        raise
+
+
+def hr_medical_network_bulk_upsert_api(payload: dict):
+    try:
+        response = api_request("POST", "/hr/medical-network/bulk-upsert", json=payload, timeout=180)
+        raise_for_status_with_detail(response)
+        return response.json()
+    except requests.exceptions.HTTPError as exc:
+        if _is_api_not_found(exc):
+            return _hr_medical_network_local_call("bulk_upsert", payload)
+        raise
+
+
 # HHRR — EVENTS (API REAL)
 # ============================================================
+
+def _previous_period(period: str) -> str:
+    year, month = [int(part) for part in str(period).split("-")[:2]]
+    month -= 1
+    if month == 0:
+        year -= 1
+        month = 12
+    return f"{year:04d}-{month:02d}"
+
+
+def _fortnight_due_date(period: str, fortnight: int) -> str:
+    year, month = [int(part) for part in str(period).split("-")[:2]]
+    day = 15 if int(fortnight or 1) == 1 else 30
+    return f"{year:04d}-{month:02d}-{day:02d}"
+
+
+def _local_biweekly_obligations_preview(period: str, fortnight: int = 1) -> dict:
+    import sys
+    from pathlib import Path
+    from decimal import Decimal, ROUND_HALF_UP
+
+    backend_dir = Path(__file__).resolve().parent / "backend_api"
+    if str(backend_dir) not in sys.path:
+        sys.path.insert(0, str(backend_dir))
+
+    from database import get_conn, release_conn
+    from psycopg2.extras import RealDictCursor
+
+    money = Decimal("0.01")
+
+    def m(value):
+        return Decimal(str(value or 0)).quantize(money, rounding=ROUND_HALF_UP)
+
+    default_crc_bank = "CR87010200009640180220"
+    aaron_bank = "CR27010200009688657826"
+
+    def suggested_bank(category, name, currency, current=""):
+        if category == "Tarjetas de credito":
+            return "BAC"
+        if "aaron avila" in str(name or "").lower():
+            return aaron_bank
+        if str(currency or "CRC").upper() == "CRC":
+            return default_crc_bank
+        return current or ""
+
+    def row(
+        category,
+        name,
+        amount,
+        currency="CRC",
+        bank_account="",
+        source="MANUAL",
+        notes="",
+        due_date=None,
+        obligation_id=None,
+        reference="",
+        balance=None,
+        bank_accounting_code="1.1.02.02.01",
+        bank_accounting_name="Banco BAC San Jose CRC CR87010200009640180220",
+        bank_voucher="",
+    ):
+        amount = m(amount)
+        currency = currency or "CRC"
+        name = str(name or "").strip()
+        return {
+            "category": category,
+            "name": name,
+            "amount": float(amount),
+            "currency": currency,
+            "bank_account": suggested_bank(category, name, currency, bank_account),
+            "due_date": due_date or _fortnight_due_date(period, fortnight),
+            "source": source,
+            "notes": notes or "",
+            "obligation_id": obligation_id,
+            "reference": reference or "",
+            "balance": float(m(balance if balance is not None else amount)),
+            "bank_accounting_code": bank_accounting_code or "",
+            "bank_accounting_name": bank_accounting_name or "",
+            "bank_voucher": bank_voucher or "",
+        }
+
+    company = get_company_code() or "MSL-CR"
+    conn = get_conn()
+    rows = []
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT nombre, apellidos, salario, pago, banco, cuenta_iban, moneda
+                FROM empleados
+                WHERE COALESCE(estado, 'Activo') = 'Activo'
+                  AND company_code = %s
+                  AND COALESCE(salario, 0) > 0
+                ORDER BY nombre, apellidos
+            """, (company,))
+            for emp in cur.fetchall() or []:
+                pago = (emp.get("pago") or "").upper()
+                amount = m(emp.get("salario")) / (Decimal("2") if "QUINC" in pago else Decimal("1"))
+                rows.append(row(
+                    "Planilla",
+                    f"{emp.get('nombre') or ''} {emp.get('apellidos') or ''}".strip(),
+                    amount,
+                    emp.get("moneda") or "CRC",
+                    emp.get("cuenta_iban") or emp.get("banco") or "",
+                    "EMPLEADOS",
+                    "Salario sugerido por quincena desde Master Data Empleados.",
+                ))
+
+            if int(fortnight or 1) == 1:
+                prev_period = _previous_period(period)
+                try:
+                    year, month = [int(part) for part in prev_period.split("-")]
+                    next_year, next_month = (year + 1, 1) if month == 12 else (year, month + 1)
+                    start = f"{year:04d}-{month:02d}-01"
+                    end = f"{next_year:04d}-{next_month:02d}-01"
+                    cur.execute("""
+                        WITH tax_ranked AS (
+                            SELECT d.*,
+                                   ROW_NUMBER() OVER (
+                                       PARTITION BY d.direction,
+                                                    COALESCE(NULLIF(d.document_number, ''), NULLIF(d.electronic_key, ''), d.source_table || ':' || d.source_id, d.id::text)
+                                       ORDER BY
+                                           CASE
+                                               WHEN d.source_table IN ('hacienda_emitted_excel', 'hacienda_acceptance_excel', 'xml_upload') THEN 0
+                                               WHEN d.xml_path IS NOT NULL THEN 1
+                                               WHEN d.source_table IN ('invoicing', 'collections') THEN 2
+                                               WHEN d.source_table = 'payment_obligations' THEN 3
+                                               ELSE 4
+                                           END,
+                                           CASE WHEN COALESCE(d.tax_amount, 0) <> 0 THEN 0 ELSE 1 END,
+                                           d.id DESC
+                                   ) AS tax_rank
+                            FROM tax_electronic_documents d
+                            WHERE d.issue_datetime >= %s
+                              AND d.issue_datetime < %s
+                              AND COALESCE(d.issue_datetime::date, CURRENT_DATE) <= CURRENT_DATE
+                              AND (
+                                  d.source_table IN ('hacienda_emitted_excel', 'hacienda_acceptance_excel')
+                                  OR (
+                                      d.direction = 'SALE'
+                                      AND COALESCE(d.receiver_identification, '') IN ('3101065618', '3101660512')
+                                  )
+                                  OR (
+                                      d.direction = 'PURCHASE'
+                                      AND (
+                                          COALESCE(d.receiver_identification, '') = '3102920372'
+                                          OR UPPER(COALESCE(d.receiver_name, '')) LIKE '%%MSL%%'
+                                          OR UPPER(COALESCE(d.receiver_name, '')) LIKE '%%MARINE SURVEYORS%%'
+                                      )
+                                  )
+                              )
+                        )
+                        SELECT direction,
+                               COALESCE(SUM(
+                                   CASE
+                                       WHEN UPPER(COALESCE(currency_code,'CRC')) IN ('CRC','COLON','COLONES')
+                                       THEN tax_amount
+                                       ELSE tax_amount * COALESCE(NULLIF(exchange_rate,0),1)
+                                   END
+                               ),0) AS tax_crc
+                        FROM tax_ranked
+                        WHERE tax_rank = 1
+                        GROUP BY direction
+                    """, (start, end))
+                    taxes = {r["direction"]: m(r["tax_crc"]) for r in cur.fetchall() or []}
+                    iva_amount = m(taxes.get("SALE", Decimal("0")) - taxes.get("PURCHASE", Decimal("0")))
+                    if iva_amount > 0:
+                        rows.append(row("IVA", f"IVA por pagar {prev_period}", iva_amount, "CRC", default_crc_bank, "ACCOUNTING_TAX", "IVA venta menos IVA compra del mes anterior.", f"{period}-15"))
+                except Exception as exc:
+                    conn.rollback()
+                    rows.append(row("IVA", f"Revisar IVA mes anterior {prev_period}", 0, "CRC", default_crc_bank, "REVISION", str(exc), f"{period}-15"))
+
+                rows.append(row("CCSS", "CCSS por pagar", 0, "CRC", default_crc_bank, "MANUAL", "Completar monto confirmado por CCSS.", f"{period}-15"))
+                rows.append(row("Telefonia", "Manfred Bolanos Barrantes", 7000, "CRC", default_crc_bank, "AUTO_FIXED", "Apoyo celular primera quincena.", f"{period}-15"))
+                rows.append(row("Telefonia", "Erasmo Gomez Gomez", 7000, "CRC", default_crc_bank, "AUTO_FIXED", "Apoyo celular primera quincena.", f"{period}-15"))
+
+                try:
+                    cur.execute("""
+                        SELECT DISTINCT ON (COALESCE(card_last4,''), COALESCE(NULLIF(TRIM(card_last4),''), source_filename, id::text))
+                               card_last4, statement_period, payment_due_date, cash_payment_crc, cash_payment_usd
+                        FROM corporate_card_statements
+                        WHERE company_code=%s
+                          AND COALESCE(status,'IMPORTED') <> 'VOID'
+                        ORDER BY COALESCE(card_last4,''), COALESCE(NULLIF(TRIM(card_last4),''), source_filename, id::text),
+                                 cutoff_date DESC NULLS LAST, id DESC
+                    """, (company,))
+                    card_labels = {"3155": "Aaron", "1951": "Diana", "1936": "Diana", "1969": "Pabel", "1944": "Pabel", "3148": "ITP"}
+                    for st in cur.fetchall() or []:
+                        last4 = str(st.get("card_last4") or "").strip()
+                        label = card_labels.get(last4, f"Tarjeta {last4 or 'BAC'}")
+                        crc = m(st.get("cash_payment_crc"))
+                        usd = m(st.get("cash_payment_usd"))
+                        if crc > 0:
+                            rows.append(row("Tarjetas de credito", f"BAC {label} contado CRC {st.get('statement_period') or ''}", crc, "CRC", "BAC", "CORP_CARD", f"Tarjeta {last4}", f"{period}-15"))
+                        if usd > 0:
+                            rows.append(row("Tarjetas de credito", f"BAC {label} contado USD {st.get('statement_period') or ''}", usd, "USD", "BAC", "CORP_CARD", f"Tarjeta {last4}. Convertir/pagar segun banco.", f"{period}-15"))
+                except Exception as exc:
+                    conn.rollback()
+                    rows.append(row("Tarjetas de credito", "Revisar estados BAC", 0, "CRC", "BAC", "REVISION", str(exc), f"{period}-15"))
+
+            cur.execute("""
+                SELECT id, payee_name, obligation_type, reference, currency, balance, issue_date, due_date,
+                       payment_bank, payment_bank_account_code, payment_bank_account_name, notes
+                FROM payment_obligations
+                WHERE COALESCE(active, TRUE)=TRUE
+                  AND status IN ('PENDING','PARTIAL')
+                  AND COALESCE(balance,0) > 0
+                ORDER BY due_date NULLS LAST, payee_name
+            """)
+            for ob in cur.fetchall() or []:
+                haystack = " ".join(str(ob.get(k) or "") for k in ("payee_name", "obligation_type", "notes", "reference")).lower()
+                if int(fortnight or 1) != 1:
+                    continue
+                issue_date = ob.get("issue_date")
+                if issue_date and str(issue_date)[:7] != period:
+                    continue
+                if "alquiler" in haystack or "rent" in haystack or "prime properties" in haystack:
+                    category = "Alquiler"
+                elif "internet" in haystack or "american data" in haystack:
+                    category = "Internet"
+                elif "surveyor" in haystack or str(ob.get("obligation_type") or "").upper() == "SURVEYOR_FEE":
+                    category = "Surveyors"
+                else:
+                    continue
+                rows.append(row(
+                    category,
+                    ob.get("payee_name") or ob.get("reference") or category,
+                    ob.get("balance"),
+                    ob.get("currency") or "CRC",
+                    ob.get("payment_bank_account_name") or ob.get("payment_bank_account_code") or ob.get("payment_bank") or "",
+                    "ITP",
+                    f"Aplicar pago a ITP #{ob.get('id')} | Ref: {ob.get('reference') or ''}".strip(),
+                    str(ob.get("due_date") or _fortnight_due_date(period, fortnight)),
+                    obligation_id=ob.get("id"),
+                    reference=ob.get("reference") or "",
+                    balance=ob.get("balance"),
+                ))
+    finally:
+        release_conn(conn)
+    return {"period": period, "fortnight": int(fortnight or 1), "company_code": company, "rows": rows}
+
+
+def get_itp_biweekly_obligations_preview_api(period: str, fortnight: int = 1):
+    return _local_biweekly_obligations_preview(period, fortnight)
+
+
+def _local_biweekly_obligations_apply(payload: dict) -> dict:
+    import sys
+    from pathlib import Path
+    from decimal import Decimal, ROUND_HALF_UP
+    from datetime import datetime
+
+    backend_dir = Path(__file__).resolve().parent / "backend_api"
+    if str(backend_dir) not in sys.path:
+        sys.path.insert(0, str(backend_dir))
+
+    from database import get_conn, release_conn
+    from psycopg2.extras import Json, RealDictCursor
+
+    money = Decimal("0.01")
+
+    def m(value):
+        return Decimal(str(value or 0).replace(",", "")).quantize(money, rounding=ROUND_HALF_UP)
+
+    def require(value, label):
+        text = str(value or "").strip()
+        if not text:
+            raise ValueError(f"Falta {label}")
+        return text
+
+    def exchange_rate(cur, value_date):
+        cur.execute("""
+            SELECT venta FROM tipo_cambio
+            WHERE fecha <= %s
+            ORDER BY fecha DESC
+            LIMIT 1
+        """, (value_date,))
+        row = cur.fetchone()
+        return m(row.get("venta") if row else 1)
+
+    def account_name(cur, code, fallback=""):
+        cur.execute("SELECT account_name FROM accounting_accounts WHERE account_code=%s LIMIT 1", (code,))
+        row = cur.fetchone()
+        return (row or {}).get("account_name") or fallback or code
+
+    def debit_account_for(category):
+        mapping = {
+            "Planilla": ("2.1.02.07", "Salarios por pagar"),
+            "CCSS": ("2.1.05.01", "Obligaciones patronales por pagar-CCSS"),
+            "IVA": ("2.1.02.03", "Impuesto sobre valor agregado (IVA) por pagar"),
+            "Tarjetas de credito": ("2.1.02.10", "Tarjeta corporativa BAC por pagar"),
+            "Telefonia": ("500-001-001-023", "Telefonos"),
+            "Viaticos": ("500-001-001-044", "Viaticos"),
+            "Alquiler": ("500-001-001-045", "Alquileres"),
+            "Internet": ("500-001-001-006", "Servicios Profesionales"),
+            "Surveyors": ("2.1.01.01", "Cuentas por pagar-comerciales"),
+        }
+        return mapping.get(category, ("5.4", "Otros gastos"))
+
+    company = get_company_code() or "MSL-CR"
+    user = get_user() or "SYSTEM"
+    period = require(payload.get("period"), "periodo")
+    fortnight = int(payload.get("fortnight") or 1)
+    rows = payload.get("rows") or []
+    conn = get_conn()
+    applied = 0
+    posted = 0
+    saved = 0
+    errors = []
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS itp_biweekly_payment_batches (
+                    id BIGSERIAL PRIMARY KEY,
+                    company_code TEXT NOT NULL,
+                    period TEXT NOT NULL,
+                    fortnight INTEGER NOT NULL,
+                    created_by TEXT,
+                    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                    status TEXT NOT NULL DEFAULT 'APPLIED'
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS itp_biweekly_payment_lines (
+                    id BIGSERIAL PRIMARY KEY,
+                    batch_id BIGINT REFERENCES itp_biweekly_payment_batches(id) ON DELETE CASCADE,
+                    company_code TEXT NOT NULL,
+                    category TEXT NOT NULL,
+                    beneficiary TEXT NOT NULL,
+                    amount NUMERIC(18,2) NOT NULL,
+                    currency TEXT NOT NULL DEFAULT 'CRC',
+                    amount_crc NUMERIC(18,2) NOT NULL DEFAULT 0,
+                    destination_account TEXT,
+                    bank_accounting_code TEXT NOT NULL,
+                    bank_accounting_name TEXT,
+                    bank_voucher TEXT NOT NULL,
+                    payment_date DATE NOT NULL,
+                    obligation_id BIGINT,
+                    reference TEXT,
+                    source TEXT,
+                    notes TEXT,
+                    accounting_entry_id INTEGER,
+                    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+                )
+            """)
+            cur.execute("""
+                INSERT INTO itp_biweekly_payment_batches(company_code, period, fortnight, created_by)
+                VALUES(%s,%s,%s,%s)
+                RETURNING id
+            """, (company, period, fortnight, user))
+            batch_id = cur.fetchone()["id"]
+
+            for idx, row in enumerate(rows, start=1):
+                try:
+                    category = require(row.get("category"), f"rubro linea {idx}")
+                    beneficiary = require(row.get("name"), f"beneficiario linea {idx}")
+                    bank_code = require(row.get("bank_accounting_code"), f"cuenta contable banco linea {idx}")
+                    voucher = require(row.get("bank_voucher"), f"comprobante bancario linea {idx}")
+                    payment_date = require(row.get("due_date"), f"fecha pago linea {idx}")
+                    datetime.strptime(payment_date, "%Y-%m-%d")
+                    currency = str(row.get("currency") or "CRC").upper()
+                    amount = m(row.get("amount"))
+                    if amount <= 0:
+                        continue
+                    cur.execute("""
+                        SELECT account_code, account_name
+                        FROM accounting_accounts
+                        WHERE account_code=%s
+                          AND COALESCE(active, TRUE)=TRUE
+                          AND COALESCE(accepts_posting, FALSE)=TRUE
+                        LIMIT 1
+                    """, (bank_code,))
+                    bank_account_row = cur.fetchone()
+                    if not bank_account_row:
+                        raise ValueError(f"Cuenta contable banco invalida o inactiva: {bank_code}")
+                    rate = exchange_rate(cur, payment_date) if currency == "USD" else Decimal("1.00")
+                    amount_crc = (amount * rate).quantize(money, rounding=ROUND_HALF_UP)
+                    bank_name = bank_account_row["account_name"]
+                    description = f"Pago quincenal {category} - {beneficiary} - Comp {voucher}"
+
+                    if row.get("obligation_id"):
+                        cur.execute("""
+                            SELECT id, balance, status FROM payment_obligations
+                            WHERE id=%s FOR UPDATE
+                        """, (int(row["obligation_id"]),))
+                        ob = cur.fetchone()
+                        if not ob:
+                            raise ValueError(f"ITP {row['obligation_id']} no existe")
+                        balance = m(ob.get("balance"))
+                        if amount > balance:
+                            raise ValueError(f"Pago excede saldo ITP {row['obligation_id']}")
+                        new_balance = (balance - amount).quantize(money, rounding=ROUND_HALF_UP)
+                        cur.execute("""
+                            UPDATE payment_obligations
+                               SET balance=%s,
+                                   status=%s,
+                                   last_payment_date=%s,
+                                   payment_bank_account_code=%s,
+                                   payment_bank_account_name=%s,
+                                   updated_at=NOW()
+                             WHERE id=%s
+                        """, (new_balance, "PAID" if new_balance == 0 else "PARTIAL", payment_date, bank_code, bank_name, int(row["obligation_id"])))
+                        applied += 1
+
+                    entry_origin = "ITP_PAYMENT" if row.get("obligation_id") else "ITP_BIWEEKLY_PAYMENT"
+                    entry_origin_id = int(row["obligation_id"]) if row.get("obligation_id") else batch_id * 10000 + idx
+                    cur.execute("""
+                        SELECT id FROM accounting_entries
+                        WHERE origin=%s
+                          AND origin_id=%s
+                          AND company_code=%s
+                        LIMIT 1
+                    """, (entry_origin, entry_origin_id, company))
+                    existing = cur.fetchone()
+                    if existing:
+                        entry_id = existing["id"]
+                        cur.execute("DELETE FROM accounting_lines WHERE entry_id=%s", (entry_id,))
+                    else:
+                        cur.execute("""
+                            INSERT INTO accounting_entries(entry_date, period, description, origin, origin_id, created_by, workflow_status, company_code, currency_code, exchange_rate, posting_rule_code, posting_metadata, posted_by, posted_at)
+                            VALUES(%s,%s,%s,%s,%s,%s,'POSTED',%s,'CRC',%s,%s,%s,%s,NOW())
+                            RETURNING id
+                        """, (payment_date, period, description, entry_origin, entry_origin_id, user, company, rate, entry_origin, Json({"bank_voucher": voucher, "category": category, "source": row.get("source")}), user))
+                        entry_id = cur.fetchone()["id"]
+
+                    debit_code, debit_name = ("2.1.01.01", "Cuentas por pagar-comerciales") if row.get("obligation_id") else debit_account_for(category)
+                    cur.execute("""
+                        INSERT INTO accounting_lines(entry_id, account_code, account_name, debit, credit, line_description)
+                        VALUES(%s,%s,%s,%s,0,%s),(%s,%s,%s,0,%s,%s)
+                    """, (
+                        entry_id, debit_code, debit_name, amount_crc, description,
+                        entry_id, bank_code, bank_name, amount_crc, description,
+                    ))
+                    posted += 1
+
+                    cur.execute("""
+                        INSERT INTO itp_biweekly_payment_lines(
+                            batch_id, company_code, category, beneficiary, amount, currency, amount_crc,
+                            destination_account, bank_accounting_code, bank_accounting_name, bank_voucher,
+                            payment_date, obligation_id, reference, source, notes, accounting_entry_id
+                        )
+                        VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    """, (
+                        batch_id, company, category, beneficiary, amount, currency, amount_crc,
+                        row.get("bank_account") or "", bank_code, bank_name, voucher,
+                        payment_date, row.get("obligation_id"), row.get("reference") or "",
+                        row.get("source") or "", row.get("notes") or "", entry_id,
+                    ))
+                    saved += 1
+                except Exception as exc:
+                    errors.append(f"Linea {idx}: {exc}")
+            if errors:
+                conn.rollback()
+                return {"status": "error", "error": "\n".join(errors[:10]), "saved": 0, "posted": 0, "applied": 0}
+            conn.commit()
+            return {"status": "ok", "batch_id": batch_id, "saved": saved, "posted": posted, "applied": applied}
+    except Exception as exc:
+        conn.rollback()
+        return {"status": "error", "error": str(exc), "saved": 0, "posted": 0, "applied": 0}
+    finally:
+        release_conn(conn)
+
+
+def post_itp_biweekly_obligations_apply_api(payload: dict):
+    return _local_biweekly_obligations_apply(payload)
+
 
 def hr_create_event(data: dict):
     if not isinstance(data, dict):
