@@ -6,6 +6,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from fastapi.responses import FileResponse
 from typing import Optional
+from datetime import date, timedelta
 from psycopg2.extras import RealDictCursor
 from pydantic import BaseModel
 import os
@@ -130,6 +131,7 @@ class CotizacionCreate(BaseModel):
     precio_3: Optional[float] = None
     servicio_4: Optional[str] = None
     precio_4: Optional[float] = None
+    texto_cotizacion: Optional[str] = None
 
 
 class CotizacionUpdate(BaseModel):
@@ -151,6 +153,7 @@ class CotizacionUpdate(BaseModel):
     precio_3: Optional[float] = None
     servicio_4: Optional[str] = None
     precio_4: Optional[float] = None
+    texto_cotizacion: Optional[str] = None
 
     razon_cancelacion: Optional[str] = None
 
@@ -181,6 +184,82 @@ def _cleanup_export_cache():
     ]
     for key in expired:
         EXPORT_CACHE.pop(key, None)
+
+
+def _ensure_cotizaciones_schema(cur):
+    cur.execute("""
+        ALTER TABLE public.cotizaciones
+        ADD COLUMN IF NOT EXISTS texto_cotizacion TEXT;
+    """)
+
+
+def _long_date(value: date) -> str:
+    months = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ]
+    return f"{months[value.month - 1]} {value.day} {value.year}"
+
+
+def _build_quote_text(row: dict) -> str:
+    text = _clean_str(row.get("texto_cotizacion"))
+    if text:
+        return text
+
+    idioma = row.get("idioma") or "ES"
+    cliente = row.get("cliente") or "Client"
+    try:
+        validez = int(row.get("validez") or 15)
+    except Exception:
+        validez = 15
+    valido = _long_date(date.today() + timedelta(days=validez))
+
+    services = []
+    for index in range(1, 5):
+        servicio = _clean_str(row.get(f"servicio_{index}"))
+        precio = row.get(f"precio_{index}") or 0
+        if servicio:
+            try:
+                services.append(f"- {servicio}: $ {float(precio):,.2f} USD")
+            except Exception:
+                services.append(f"- {servicio}: $ {precio} USD")
+
+    if not services and _clean_str(row.get("servicio")):
+        try:
+            price = f"{float(row.get('precio') or 0):,.2f}"
+        except Exception:
+            price = str(row.get("precio") or 0)
+        services.append(f"- {row.get('servicio')}: $ {price} USD")
+
+    try:
+        total = float(row.get("precio") or 0)
+    except Exception:
+        total = 0.0
+    if total <= 0:
+        total = sum(float(row.get(f"precio_{index}") or 0) for index in range(1, 5))
+
+    if idioma == "EN":
+        return (
+            f"Dear {cliente},\n\n"
+            "We are pleased to submit our quotation for the following services:\n\n"
+            f"{chr(10).join(services)}\n\n"
+            f"Total amount: USD {total:,.2f}\n\n"
+            f"This quotation is valid until {valido}.\n"
+            "Payment terms: 30 days from invoice date.\n\n"
+            "Sincerely,\n"
+            "Marine Surveyors & Logistics Group SRL"
+        )
+
+    return (
+        f"Estimado {cliente},\n\n"
+        "Por medio de la presente compartimos la cotizacion para los siguientes servicios:\n\n"
+        f"{chr(10).join(services)}\n\n"
+        f"Monto total: $ {total:,.2f} USD\n\n"
+        f"Esta cotizacion tiene una validez hasta el {valido}.\n"
+        "Terminos de pago: 30 dias fecha factura.\n\n"
+        "Atentamente,\n"
+        "Marine Surveyors & Logistics Group SRL"
+    )
 
 
 # ============================================================
@@ -288,6 +367,7 @@ def listar_cotizaciones(
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     try:
+        _ensure_cotizaciones_schema(cur)
         filters, params = _build_cotizaciones_filters(
             cliente=cliente,
             servicio=servicio,
@@ -312,6 +392,7 @@ def listar_cotizaciones(
                 idioma,
                 validez,
                 TRIM(status)     AS status,
+                texto_cotizacion,
                 created_at
             FROM public.cotizaciones
             {where_clause}
@@ -341,6 +422,7 @@ def get_next_quotation_number(conn=Depends(get_db)):
     cur = conn.cursor()
 
     try:
+        _ensure_cotizaciones_schema(cur)
         cur.execute("""
             SELECT quotation_number
             FROM public.cotizaciones
@@ -393,7 +475,9 @@ def exportar_cotizacion_mobile(
     idioma: str = Query("ES"),
     texto: str = Query(""),
     request_user: str = Query(""),
-    request_role: str = Query("")
+    request_role: str = Query(""),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+    x_company_name: str | None = Header(None, alias="X-Company-Name")
 ):
     if not request_user or not has_permission((request_role or "").lower(), "comercial", "view"):
         raise HTTPException(status_code=403, detail="Usuario no autenticado")
@@ -424,7 +508,9 @@ def exportar_cotizacion_mobile(
         "cliente": cliente,
         "servicio": servicio,
         "idioma": idioma or "ES",
-        "texto": texto
+        "texto": texto,
+        "company_code": x_company_code,
+        "company_name": x_company_name
     }
 
     try:
@@ -446,6 +532,85 @@ def exportar_cotizacion_mobile(
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+@router.get(
+    "/{cotizacion_id}/detail",
+    dependencies=[Depends(require_permission("comercial", "view"))]
+)
+def obtener_cotizacion(cotizacion_id: int, conn=Depends(get_db)):
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+
+    try:
+        _ensure_cotizaciones_schema(cur)
+        cur.execute("""
+            SELECT *
+            FROM public.cotizaciones
+            WHERE id = %s;
+        """, (cotizacion_id,))
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Cotización no encontrada")
+
+        data = dict(row)
+        data["texto_exportable"] = _build_quote_text(data)
+        return data
+
+    finally:
+        cur.close()
+
+
+@router.get(
+    "/{cotizacion_id}/export/{formato}",
+    dependencies=[Depends(require_permission("comercial", "view"))]
+)
+def exportar_cotizacion_por_id(
+    cotizacion_id: int,
+    formato: str,
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+    x_company_name: str | None = Header(None, alias="X-Company-Name"),
+    conn=Depends(get_db)
+):
+    formato = (formato or "").strip().lower()
+    if formato not in {"word", "pdf"}:
+        raise HTTPException(status_code=400, detail="Formato invalido")
+
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        _ensure_cotizaciones_schema(cur)
+        cur.execute("""
+            SELECT *
+            FROM public.cotizaciones
+            WHERE id = %s;
+        """, (cotizacion_id,))
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Cotización no encontrada")
+
+        data = dict(row)
+        data["texto"] = _build_quote_text(data)
+        data["company_code"] = data.get("company_code") or x_company_code
+        data["company_name"] = data.get("company_name") or x_company_name
+
+        suffix = ".docx" if formato == "word" else ".pdf"
+        fd, path = tempfile.mkstemp(suffix=suffix)
+        os.close(fd)
+
+        if formato == "word":
+            export_cotizacion_word(data, path)
+            media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        else:
+            export_cotizacion_pdf(data, path)
+            media_type = "application/pdf"
+
+        filename = f"{_safe_export_name(data.get('quotation_number') or data.get('cliente'))}{suffix}"
+        return FileResponse(path, filename=filename, media_type=media_type)
+
+    except Exception:
+        raise
+
+    finally:
+        cur.close()
+
+
 # ============================================================
 # POST — CREAR COTIZACIÓN
 # ============================================================
@@ -458,6 +623,7 @@ def crear_cotizacion(payload: CotizacionCreate, conn=Depends(get_db)):
     cur = conn.cursor()
 
     try:
+        _ensure_cotizaciones_schema(cur)
         cur.execute("""
             SELECT quotation_number
             FROM public.cotizaciones
@@ -476,14 +642,14 @@ def crear_cotizacion(payload: CotizacionCreate, conn=Depends(get_db)):
                 precio, idioma, validez, status,
                 servicio_1, precio_1, servicio_2, precio_2,
                 servicio_3, precio_3, servicio_4, precio_4,
-                quotation_number
+                quotation_number, texto_cotizacion
             )
             VALUES (
                 %(cliente)s, %(servicio)s, %(continente)s, %(pais)s, %(puerto)s,
                 %(precio)s, %(idioma)s, %(validez)s, %(status)s,
                 %(servicio_1)s, %(precio_1)s, %(servicio_2)s, %(precio_2)s,
                 %(servicio_3)s, %(precio_3)s, %(servicio_4)s, %(precio_4)s,
-                %(quotation_number)s
+                %(quotation_number)s, %(texto_cotizacion)s
             )
             RETURNING id, quotation_number;
         """
@@ -525,6 +691,7 @@ def actualizar_cotizacion(
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     try:
+        _ensure_cotizaciones_schema(cur)
         # --------------------------------------------------------
         # Validar existencia de la cotización
         # --------------------------------------------------------
@@ -585,7 +752,7 @@ def actualizar_cotizacion(
             "precio", "idioma", "validez", "status",
             "servicio_1", "precio_1", "servicio_2", "precio_2",
             "servicio_3", "precio_3", "servicio_4", "precio_4",
-            "razon_cancelacion"
+            "razon_cancelacion", "texto_cotizacion"
         }
 
         fields = []

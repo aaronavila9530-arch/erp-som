@@ -495,13 +495,6 @@ def create_ballast(draft_survey_id: str, payload: dict, conn=Depends(get_db)):
 
         conn.commit()
 
-        print("====== POST BALLAST OK ======")
-        print("INPUT:", draft_survey_id)
-        print("REAL ID:", real_id)
-        print("BALLAST ID:", ballast_id)
-        print("FIELDS:", len(insert_fields))
-        print("=============================")
-
         return {
             "success": True,
             "action": "created",
@@ -516,7 +509,6 @@ def create_ballast(draft_survey_id: str, payload: dict, conn=Depends(get_db)):
 
     except Exception as e:
         conn.rollback()
-        print("POST BALLAST ERROR:", str(e))
         raise HTTPException(500, f"Error creando ballast: {str(e)}")
 
     finally:
@@ -656,13 +648,6 @@ def update_ballast(draft_survey_id: str, payload: dict, conn=Depends(get_db)):
 
         conn.commit()
 
-        print("====== PUT BALLAST OK ======")
-        print("INPUT:", draft_survey_id)
-        print("REAL ID:", real_id)
-        print("BALLAST ID:", updated[0])
-        print("FIELDS:", len(update_fields))
-        print("============================")
-
         return {
             "success": True,
             "action": "updated",
@@ -677,7 +662,6 @@ def update_ballast(draft_survey_id: str, payload: dict, conn=Depends(get_db)):
 
     except Exception as e:
         conn.rollback()
-        print("PUT BALLAST ERROR:", str(e))
         raise HTTPException(500, f"Error actualizando ballast: {str(e)}")
 
     finally:
@@ -796,15 +780,6 @@ def update_ballast(draft_survey_id: str, payload: dict, conn=Depends(get_db)):
                 "init_total_fresh_water": db_row.get("init_total_fresh_water"),
                 "final_total_fresh_water": db_row.get("final_total_fresh_water")
             }
-
-            # =====================================================
-            # DEBUG
-            # =====================================================
-            print("====== GET BALLAST DEBUG ======")
-            print("REAL ID:", real_id)
-            print("USANDO JSON:", bool(original_payload))
-            print("COLUMNAS DB:", len(db_row.keys()))
-            print("===============================")
 
             # =====================================================
             # 🔥 9) RESPUESTA FINAL (ULTRA BLINDADA)
@@ -1177,17 +1152,6 @@ def update_word_report(draft_survey_id: str, payload: dict, conn=Depends(get_db)
 
             conn.commit()
 
-            # =====================================================
-            # DEBUG PRO
-            # =====================================================
-            print("====== PUT BALLAST OK ======")
-            print("INPUT:", draft_survey_id)
-            print("REAL ID:", real_id)
-            print("UPDATED ID:", updated_id)
-            print("FIELDS:", len(clean_payload))
-            print("IGNORED:", len(ignored_keys))
-            print("============================")
-
             return {
                 "success": True,
                 "action": "updated",
@@ -1203,7 +1167,6 @@ def update_word_report(draft_survey_id: str, payload: dict, conn=Depends(get_db)
 
         except Exception as e:
             conn.rollback()
-            print("PUT BALLAST ERROR:", str(e))
             raise HTTPException(500, f"Error actualizando ballast: {str(e)}")
 
         finally:
@@ -1416,7 +1379,6 @@ def create_word(draft_survey_id: str, payload: dict, conn=Depends(get_db)):
 
     except Exception as e:
         conn.rollback()
-        print("WORD ERROR:", str(e))
         raise HTTPException(500, str(e))
 
     finally:
@@ -1644,14 +1606,6 @@ def create_word(draft_survey_id: str, payload: dict, conn=Depends(get_db)):
 
             values.append(real_id)
 
-            # =====================================================
-            # DEBUG PRO
-            # =====================================================
-            print("====== PUT WORD OK ======")
-            print("REAL ID:", real_id)
-            print("FIELDS:", len(clean_payload))
-            print("=========================")
-
             cur.execute(f"""
                 UPDATE draft_survey_word_report
                 SET {set_clause}
@@ -1679,7 +1633,6 @@ def create_word(draft_survey_id: str, payload: dict, conn=Depends(get_db)):
 
         except Exception as e:
             conn.rollback()
-            print("WORD PUT ERROR:", str(e))
             raise HTTPException(500, str(e))
 
         finally:
@@ -1766,15 +1719,6 @@ def create_word(draft_survey_id: str, payload: dict, conn=Depends(get_db)):
 
                     else:
                         reconstructed[k] = v
-
-            # =====================================================
-            # DEBUG
-            # =====================================================
-            print("====== GET WORD DEBUG ======")
-            print("REAL ID:", real_id)
-            print("USANDO JSON:", bool(original_payload))
-            print("COLUMNAS:", len(db_row.keys()))
-            print("============================")
 
             # =====================================================
             # 🔥 RESPUESTA FINAL

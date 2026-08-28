@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Dict, Any
 import psycopg2
 
+from database import DATABASE_URL
 from services.sealing_certificate_excel_service import SealingCertificateExcelService
 
 
@@ -24,13 +25,10 @@ excel_service = SealingCertificateExcelService()
 # DATABASE
 # =========================================================
 
-DATABASE_URL = "postgresql://postgres:IrPzbLzKJFQtUnMlBKcHLHcLIAqagHCT@tramway.proxy.rlwy.net:15258/railway"
-
-
 def get_conn():
 
     try:
-        return psycopg2.connect(DATABASE_URL)
+        return psycopg2.connect(DATABASE_URL, sslmode="require")
 
     except Exception as e:
         raise HTTPException(

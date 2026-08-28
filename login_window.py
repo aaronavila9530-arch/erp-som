@@ -357,11 +357,17 @@ class LoginWindow(tk.Toplevel):
             # ANTI-LOOP: si ya intentaste esta versión hace poco,
             # NO vuelvas a bloquear el login.
             # ===============================
+            if self._should_skip_update_due_to_loop(latest_clean):
+                return True
+
             # ===============================
             # SOLO SI REALMENTE ES MAYOR
             # ===============================
             if download_url:
-                # Registrar intento (antes de abrir installer)
+                # Registrar intento antes de abrir el instalador. Si Windows,
+                # permisos o antivirus impiden instalar, no dejamos al usuario
+                # atrapado en un ciclo de update en cada login.
+                self._write_update_state(latest_clean)
                 UpdateWindow(
                     parent=self,
                     current_version=str(current_version).strip(),

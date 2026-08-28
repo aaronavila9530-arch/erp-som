@@ -9,6 +9,12 @@ from resource_utils import resource_path
 from Modulos.Comercial.date_utils import to_long_english_date
 
 
+def _is_mci(data: dict) -> bool:
+    company_code = str(data.get("company_code") or "").upper()
+    company_name = str(data.get("company_name") or "").upper()
+    return company_code == "MCI-CR" or "MARINE CLAIMS" in company_name
+
+
 # ============================================================
 # ASSETS PATH — BLINDADO TOTAL (DEV / EXE / PROGRAM FILES)
 # ============================================================
@@ -57,7 +63,7 @@ def export_cotizacion_pdf(data: dict, output_path: str):
 
     FOOTER_Y = 0.7 * inch
 
-    SIGNATURE_BLOCK_HEIGHT = 1.35 * inch
+    SIGNATURE_BLOCK_HEIGHT = 1.55 * inch
     BODY_MIN_Y = FOOTER_Y + 0.35 * inch
 
     def _wrap_text(text: str, font_name: str, font_size: int, max_width: float) -> list[str]:
@@ -222,15 +228,23 @@ def export_cotizacion_pdf(data: dict, output_path: str):
             mask="auto"
         )
 
-    c.setFont("Helvetica-Bold", 10)
-    c.drawString(LEFT_MARGIN, name_y, "Diana Quirós Benambourg")
+    if _is_mci(data):
+        c.setFont("Helvetica", 10)
+        c.drawString(LEFT_MARGIN, name_y, "Msc. Diana Quiros Benambourg")
+        c.setFont("Helvetica-Bold", 10)
+        c.drawString(LEFT_MARGIN, title_y, "Business Manager")
+        c.drawString(LEFT_MARGIN, title_y - 12, "MSL 2.0")
+        c.drawString(LEFT_MARGIN, title_y - 24, "MARINE CLAIMS & RISK INTELLIGENCE")
+    else:
+        c.setFont("Helvetica-Bold", 10)
+        c.drawString(LEFT_MARGIN, name_y, "Diana Quirós Benambourg")
 
-    c.setFont("Helvetica", 10)
-    c.drawString(LEFT_MARGIN, title_y, "Business Manager")
-    c.drawString(
-        LEFT_MARGIN,
-        title_y - 12,
-        "MSL MARINE SURVEYORS & LOGISTICS GROUP SRL"
-    )
+        c.setFont("Helvetica", 10)
+        c.drawString(LEFT_MARGIN, title_y, "Business Manager")
+        c.drawString(
+            LEFT_MARGIN,
+            title_y - 12,
+            "MSL MARINE SURVEYORS & LOGISTICS GROUP SRL"
+        )
 
     c.save()

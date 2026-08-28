@@ -1881,11 +1881,14 @@ def get_accounting_validation_alerts(
 
 
 @router.post("/sync/collections")
-def sync_collections(conn=Depends(get_db)):
+def sync_collections(
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+    conn=Depends(get_db),
+):
     _ensure_accounting_professional_schema(conn)
     from services.accounting_auto import sync_collections_to_accounting
 
-    sync_collections_to_accounting(conn)
+    sync_collections_to_accounting(conn, company_code_filter=_company_code(header_value=x_company_code))
 
     return {
         "status": "ok",
@@ -1948,7 +1951,10 @@ def sync_payroll(conn=Depends(get_db)):
 
 
 @router.post("/sync/all")
-def sync_all_accounting(conn=Depends(get_db)):
+def sync_all_accounting(
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+    conn=Depends(get_db),
+):
     _ensure_accounting_professional_schema(conn)
     try:
         from services.accounting_auto import (
@@ -1959,8 +1965,9 @@ def sync_all_accounting(conn=Depends(get_db)):
         )
 
         before = _accounting_entry_stats(conn)
+        company = _company_code(header_value=x_company_code)
 
-        sync_collections_to_accounting(conn)
+        sync_collections_to_accounting(conn, company_code_filter=company)
         sync_cash_app_to_accounting(conn)
         sync_itp_to_accounting(conn)
         sync_payroll_to_accounting(conn)

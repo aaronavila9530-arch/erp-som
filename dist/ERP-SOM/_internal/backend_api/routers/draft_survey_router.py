@@ -1073,18 +1073,6 @@ def update_draft_survey(identifier: str, payload: dict, conn=Depends(get_db)):
 
 
         # =====================================================
-        # 🔍 DEBUG PAYLOADS
-        # =====================================================
-        print("===================================")
-        print("GENERAL PAYLOAD:")
-        print(general_payload)
-        print("DRAFT PAYLOAD:")
-        print(draft_payload)
-        print("GENERAL ID:", general_id)
-        print("DRAFT ID:", draft_id)
-        print("===================================")
-
-        # =====================================================
         # 10) UPDATE GENERAL_DRAFT_SURVEY
         # =====================================================
         general_updated = 0

@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException
 from psycopg2.extras import RealDictCursor
 import psycopg2
 
+from database import DATABASE_URL
 from services.lashing_certificate_word_service import LashingCertificateWordService
 
 
@@ -9,11 +10,8 @@ from services.lashing_certificate_word_service import LashingCertificateWordServ
 # DATABASE
 # =========================================================
 
-DB_URL = "postgresql://postgres:IrPzbLzKJFQtUnMlBKcHLHcLIAqagHCT@tramway.proxy.rlwy.net:15258/railway"
-
-
 def get_conn():
-    return psycopg2.connect(DB_URL)
+    return psycopg2.connect(DATABASE_URL, sslmode="require")
 
 
 # =========================================================
