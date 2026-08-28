@@ -25,6 +25,7 @@ from services.xml.factura_electronica_parser import (
 from services.pdf.factura_preview_pdf import (
     generar_factura_preview_pdf
 )
+from services.tenanting import company_code, ensure_company_column
 
 router = APIRouter(
     prefix="/factura",
@@ -72,7 +73,11 @@ def obtener_siguiente_numero_factura(cur):
 # CREAR FACTURA MANUAL
 # ============================================================
 @router.post("/manual")
-def crear_factura_manual(payload: dict, conn=Depends(get_db)):
+def crear_factura_manual(
+    payload: dict,
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+    conn=Depends(get_db),
+):
 
     try:
         from services.pdf.factura_manual_pdf import generar_factura_manual_pdf
@@ -99,6 +104,11 @@ def crear_factura_manual(payload: dict, conn=Depends(get_db)):
             raise HTTPException(status_code=400, detail="Total invalido")
 
         cur = conn.cursor(cursor_factory=RealDictCursor)
+        company = company_code(payload.get("company_code"), x_company_code)
+        ensure_company_column("servicios")
+        ensure_company_column("cliente")
+        ensure_company_column("cliente_credito")
+        ensure_company_column("invoicing")
 
 
         # ====================================================
@@ -108,7 +118,8 @@ def crear_factura_manual(payload: dict, conn=Depends(get_db)):
             SELECT *
             FROM servicios
             WHERE consec = %s
-        """, (servicio_id,))
+              AND company_code = %s
+        """, (servicio_id, company))
         servicio = cur.fetchone()
 
         if not servicio:
@@ -127,9 +138,13 @@ def crear_factura_manual(payload: dict, conn=Depends(get_db)):
             SELECT codigo
             FROM cliente
             WHERE
-                LOWER(TRIM(nombrecomercial)) = LOWER(TRIM(%s))
-                OR LOWER(TRIM(nombrejuridico)) = LOWER(TRIM(%s))
+                company_code = %s
+                AND (
+                    LOWER(TRIM(nombrecomercial)) = LOWER(TRIM(%s))
+                    OR LOWER(TRIM(nombrejuridico)) = LOWER(TRIM(%s))
+                )
         """, (
+            company,
             servicio["cliente"],
             servicio["cliente"]
         ))
@@ -151,7 +166,8 @@ def crear_factura_manual(payload: dict, conn=Depends(get_db)):
             SELECT termino_pago
             FROM cliente_credito
             WHERE codigo_cliente = %s
-        """, (codigo_cliente,))
+              AND COALESCE(company_code, %s) = %s
+        """, (codigo_cliente, company, company))
 
         credito = cur.fetchone()
 
@@ -253,6 +269,7 @@ def crear_factura_manual(payload: dict, conn=Depends(get_db)):
         # ====================================================
         cur.execute("""
             INSERT INTO invoicing (
+                company_code,
                 factura_id,
                 tipo_factura,
                 tipo_documento,
@@ -274,6 +291,7 @@ def crear_factura_manual(payload: dict, conn=Depends(get_db)):
             )
             VALUES (
                 %s,
+                %s,
                 'MANUAL',
                 'FACTURA',
                 %s,
@@ -293,6 +311,7 @@ def crear_factura_manual(payload: dict, conn=Depends(get_db)):
                 %s
             )
         """, (
+            company,
             factura_id,
             numero_factura,
             codigo_cliente,
@@ -322,12 +341,14 @@ def crear_factura_manual(payload: dict, conn=Depends(get_db)):
                 fecha_factura = %s,
                 terminos_pago = %s
             WHERE consec = %s
+              AND company_code = %s
         """, (
             numero_factura,
             total,
             fecha_factura.date(),
             termino_pago,
-            servicio_id
+            servicio_id,
+            company
         ))
 
         conn.commit()
@@ -354,6 +375,7 @@ def crear_factura_manual(payload: dict, conn=Depends(get_db)):
 def crear_factura_electronica(
     file: UploadFile = File(...),
     servicio_id: int = Form(...),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
     conn=Depends(get_db)
 ):
     # =========================================================
@@ -363,8 +385,12 @@ def crear_factura_electronica(
         raise HTTPException(400, "El archivo debe ser XML")
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
+    company = company_code(header_value=x_company_code)
 
     try:
+        ensure_company_column("servicios")
+        ensure_company_column("cliente")
+        ensure_company_column("invoicing")
         # =====================================================
         # 1️⃣ SERVICIO = FUENTE DE VERDAD OPERATIVA
         # =====================================================
@@ -378,14 +404,19 @@ def crear_factura_electronica(
                 s.fecha_inicio,
                 s.fecha_fin,
                 s.cliente,
+                s.company_code,
                 c.codigo AS codigo_cliente
             FROM servicios s
             JOIN cliente c
-              ON c.nombrecomercial = s.cliente
-              OR c.nombrejuridico = s.cliente
+              ON c.company_code = s.company_code
+             AND (
+                  c.nombrecomercial = s.cliente
+                  OR c.nombrejuridico = s.cliente
+             )
             WHERE s.consec = %s
+              AND s.company_code = %s
             FOR UPDATE
-        """, (servicio_id,))
+        """, (servicio_id, company))
 
         servicio = cur.fetchone()
         if not servicio:
@@ -432,8 +463,9 @@ def crear_factura_electronica(
                 numero_documento = %s
                 AND tipo_documento = 'FACTURA'
                 AND estado <> 'ANULADA'
+                AND company_code = %s
             LIMIT 1
-        """, (numero_documento,))
+        """, (numero_documento, company))
 
         if cur.fetchone():
             raise HTTPException(
@@ -491,6 +523,7 @@ def crear_factura_electronica(
         # =====================================================
         cur.execute("""
             INSERT INTO invoicing (
+                company_code,
                 factura_id,
                 tipo_factura,
                 tipo_documento,
@@ -511,6 +544,7 @@ def crear_factura_electronica(
                 descripcion_servicio
             )
             VALUES (
+                %s,
                 NULL,
                 %s,
                 'FACTURA',
@@ -532,6 +566,7 @@ def crear_factura_electronica(
             )
             RETURNING id
         """, (
+            company,
             "ELECTRONICA",
             numero_documento,             # ✅ NumeroConsecutivo
             servicio["codigo_cliente"],
@@ -562,12 +597,14 @@ def crear_factura_electronica(
                 fecha_factura = %s,
                 terminos_pago = %s
             WHERE consec = %s
+              AND company_code = %s
         """, (
             numero_documento,   # ✅ antes estabas guardando invoicing_id (mal)
             total,
             fecha_emision,
             termino_pago,
-            servicio_id
+            servicio_id,
+            company
         ))
 
         conn.commit()
@@ -598,21 +635,28 @@ def crear_factura_electronica(
 @router.get("/termino-pago")
 def get_termino_pago_cliente(
     nombre_cliente: str = Query(..., description="nombrecomercial del cliente"),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
     conn=Depends(get_db)
 ):
     cur = conn.cursor(cursor_factory=RealDictCursor)
+    company = company_code(header_value=x_company_code)
 
     try:
+        ensure_company_column("cliente")
+        ensure_company_column("cliente_credito")
         nombre = nombre_cliente.strip()
 
         # 1️⃣ Resolver código desde cliente
         cur.execute("""
             SELECT codigo
             FROM cliente
-            WHERE nombrecomercial = %s
-               OR nombrejuridico = %s
+            WHERE company_code = %s
+              AND (
+                   nombrecomercial = %s
+                   OR nombrejuridico = %s
+              )
             LIMIT 1
-        """, (nombre, nombre))
+        """, (company, nombre, nombre))
 
         cliente = cur.fetchone()
         if not cliente:
@@ -628,8 +672,9 @@ def get_termino_pago_cliente(
             SELECT termino_pago
             FROM cliente_credito
             WHERE codigo_cliente = %s
+              AND COALESCE(company_code, %s) = %s
             LIMIT 1
-        """, (codigo_cliente,))
+        """, (codigo_cliente, company, company))
 
         credito = cur.fetchone()
         if not credito or credito["termino_pago"] is None:
