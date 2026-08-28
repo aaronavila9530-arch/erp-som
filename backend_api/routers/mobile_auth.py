@@ -191,12 +191,41 @@ def _allowed_modules(usuario: str, rol: str):
     ]
 
 
+def _permissions_for(usuario: str) -> dict[str, list[str]]:
+    conn = None
+    cur = None
+    permissions: dict[str, list[str]] = {}
+    try:
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT module_code, action_code
+            FROM user_module_permissions
+            WHERE lower(usuario)=lower(%s) AND allowed=TRUE
+            ORDER BY module_code, action_code
+            """,
+            (usuario,),
+        )
+        for module_code, action_code in cur.fetchall() or []:
+            permissions.setdefault(str(module_code), []).append(str(action_code))
+    except Exception:
+        return {}
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            release_conn(conn)
+    return permissions
+
+
 def _session_payload(usuario: str, rol: str):
     return {
         "usuario": str(usuario).strip().lower(),
         "rol": str(rol).strip().lower(),
         "token": "LOCAL_SESSION",
         "modules": _allowed_modules(usuario, rol),
+        "permissions": _permissions_for(usuario),
     }
 
 

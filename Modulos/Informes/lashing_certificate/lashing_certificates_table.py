@@ -234,7 +234,7 @@ class LashingCertificatesTable(ttk.Frame):
             # ==================================================
             # 🔒 CONTROL DE USUARIOS RESTRINGIDOS
             # ==================================================
-            restricted_users = {"surveyor01", "surveyor02"}
+            restricted_users = {"surveyor01", "surveyor02", "surveyor03"}
             is_restricted = str(self.usuario or "").strip().lower() in restricted_users
 
             # ==================================================

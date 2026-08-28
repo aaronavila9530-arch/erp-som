@@ -7,7 +7,7 @@ import os
 import sys
 import ctypes
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import messagebox, ttk
 from datetime import datetime, timedelta
 
 from window_placement import install_same_monitor_policy
@@ -18,6 +18,8 @@ install_same_monitor_policy()
 from resource_utils import resource_path
 from splash_screen import SplashScreen
 import api_client
+from companies import company_by_code, company_by_label, company_label, company_labels
+from session_context import get_company_code, set_company_context
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 BACKEND_DIR = os.path.join(BASE_DIR, "backend_api")
@@ -72,6 +74,8 @@ class MainApp(tk.Frame):
         parent.protocol("WM_DELETE_WINDOW", self.on_close)
 
         self.menu_visible = True
+        self.current_modulo = None
+        self.company_var = tk.StringVar()
         self._logra_alert_shown = set()
         self._global_alert_shown = {}
         self._permission_cache = {}
@@ -175,13 +179,57 @@ class MainApp(tk.Frame):
     # Área de contenido
     # --------------------------------------------------------
     def _build_content_area(self):
-        self.content = tk.Frame(self, bg=COLOR_BG)
-        self.content.pack(side="right", fill="both", expand=True)
+        self.main_area = tk.Frame(self, bg=COLOR_BG)
+        self.main_area.pack(side="right", fill="both", expand=True)
+
+        self.company_bar = tk.Frame(self.main_area, bg=COLOR_BG)
+        self.company_bar.pack(fill="x", padx=12, pady=(8, 0))
+
+        company_controls = tk.Frame(self.company_bar, bg=COLOR_BG)
+        company_controls.pack(side="right")
+
+        tk.Label(
+            company_controls,
+            text="Empresa:",
+            bg=COLOR_BG,
+            fg="#003A75",
+            font=("Segoe UI", 9, "bold")
+        ).pack(side="left", padx=(8, 4))
+
+        current_company = company_by_code(get_company_code())
+        self.company_var.set(company_label(current_company))
+        self.company_combo = ttk.Combobox(
+            company_controls,
+            textvariable=self.company_var,
+            values=company_labels(),
+            state="readonly",
+            width=48
+        )
+        self.company_combo.pack(side="left", padx=(4, 4))
+
+        tk.Button(
+            company_controls,
+            text="Cambiar",
+            command=self._change_company
+        ).pack(side="left", padx=(4, 0))
+
+        self.company_status = tk.Label(
+            company_controls,
+            text=f"{get_company_code()}",
+            bg=COLOR_BG,
+            fg="#4B5563",
+            font=("Segoe UI", 9)
+        )
+        self.company_status.pack(side="left", padx=(10, 0))
+
+        self.content = tk.Frame(self.main_area, bg=COLOR_BG)
+        self.content.pack(fill="both", expand=True)
 
     # --------------------------------------------------------
     # Router de módulos
     # --------------------------------------------------------
     def cambiar_modulo(self, modulo):
+        self.current_modulo = modulo
 
         module_map = {
             "Dashboard": "dashboard",
@@ -296,6 +344,28 @@ class MainApp(tk.Frame):
                 rol=self.rol,
                 on_back=self.mostrar_menu
             ).pack(fill="both", expand=True)
+
+    def _change_company(self):
+        company = company_by_label(self.company_var.get())
+        previous_code = get_company_code()
+        if company["code"] == previous_code:
+            return
+        if not messagebox.askyesno(
+            "Cambiar empresa",
+            f"Vas a cambiar de {previous_code} a {company['code']}.\n\n"
+            "La pantalla actual se recargara con los datos de la nueva empresa.",
+            parent=self.parent
+        ):
+            self.company_var.set(company_label(company_by_code(previous_code)))
+            return
+        set_company_context(company["code"], company["name"])
+        self.parent.title(f"{APP_NAME} v{APP_VERSION} — MSL Tech — {company['code']}")
+        self.company_status.config(text=company["code"])
+        self._permission_cache.clear()
+        self._logra_alert_shown.clear()
+        self._global_alert_shown.clear()
+        modulo = self.current_modulo or self._initial_module()
+        self.cambiar_modulo(modulo)
 
     # --------------------------------------------------------
     # Utilidades generales

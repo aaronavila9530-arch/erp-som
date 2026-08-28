@@ -60,7 +60,7 @@ class PopupD150(tk.Toplevel):
     def __init__(self, parent, period):
         super().__init__(parent)
         self.source_period = period or date.today().strftime("%Y-%m")
-        self.period = self._previous_period(self.source_period)
+        self.period = self.source_period
         self.step = 0
         self.title(f"150 - Impuesto al valor agregado ({self.period})")
         self.geometry("1320x740")

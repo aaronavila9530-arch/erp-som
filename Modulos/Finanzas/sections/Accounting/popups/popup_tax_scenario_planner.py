@@ -87,7 +87,7 @@ class PopupTaxScenarioPlanner(tk.Toplevel):
         self.year_var = tk.IntVar(value=date.today().year)
         self.month_var = tk.IntVar(value=date.today().month)
         self.source_company_var = tk.StringVar(value="MSL-CR")
-        self.target_company_var = tk.StringVar(value="MMS-CR")
+        self.target_company_var = tk.StringVar(value="MCI-CR")
         self.msl_pyme_year_var = tk.IntVar(value=4)
         self.mms_pyme_year_var = tk.IntVar(value=1)
         self.save_var = tk.BooleanVar(value=False)
@@ -275,7 +275,7 @@ class PopupTaxScenarioPlanner(tk.Toplevel):
         for idx, (key, title) in enumerate((
             ("baseline_msl", "1. MSL sin movimientos"),
             ("scenario_msl", "2. MSL con movimientos"),
-            ("scenario_mms", "3. MMS con movimientos"),
+            ("scenario_mms", "3. Alterna con movimientos"),
         )):
             card = tk.Frame(cards, bg="#ffffff", bd=1, relief="solid")
             card.grid(row=0, column=idx, sticky="nsew", padx=(0, 8))
@@ -292,7 +292,7 @@ class PopupTaxScenarioPlanner(tk.Toplevel):
             "line": "Linea D-102",
             "msl_no_move": "MSL dic sin mover",
             "msl_scenario": "MSL dic con cambios",
-            "mms_scenario": "MMS dic con cambios",
+            "mms_scenario": "Alterna dic con cambios",
             "meaning": "Lectura",
         }
         d102_widths = {"line": 285, "msl_no_move": 170, "msl_scenario": 170, "mms_scenario": 170, "meaning": 500}
@@ -349,7 +349,7 @@ class PopupTaxScenarioPlanner(tk.Toplevel):
             "year": int(self.year_var.get() or date.today().year),
             "through_month": int(self.month_var.get() or date.today().month),
             "source_company": self.source_company_var.get().strip() or "MSL-CR",
-            "target_company": self.target_company_var.get().strip() or "MMS-CR",
+            "target_company": self.target_company_var.get().strip() or "MCI-CR",
             "client_moves": list(self.client_moves),
             "expense_moves": list(self.expense_moves),
             "fixed_clients": list(self.fixed_clients),
@@ -360,7 +360,7 @@ class PopupTaxScenarioPlanner(tk.Toplevel):
             "label": f"Escenario fiscal {self.year_var.get()}-{int(self.month_var.get() or 1):02d}",
             "company_options": [
                 {"company_code": self.source_company_var.get().strip() or "MSL-CR", "is_pyme": True, "pyme_year": int(self.msl_pyme_year_var.get() or 0)},
-                {"company_code": self.target_company_var.get().strip() or "MMS-CR", "is_pyme": True, "pyme_year": int(self.mms_pyme_year_var.get() or 0)},
+                {"company_code": self.target_company_var.get().strip() or "MCI-CR", "is_pyme": True, "pyme_year": int(self.mms_pyme_year_var.get() or 0)},
             ],
         }
 
@@ -520,7 +520,7 @@ class PopupTaxScenarioPlanner(tk.Toplevel):
 
     def _render_d102_cards(self, baseline, optimized):
         source = self.source_company_var.get().strip() or "MSL-CR"
-        target = self.target_company_var.get().strip() or "MMS-CR"
+        target = self.target_company_var.get().strip() or "MCI-CR"
         cards = (
             ("baseline_msl", f"{source} sin movimientos", self._company_row(baseline, source)),
             ("scenario_msl", f"{source} con movimientos", self._company_row(optimized, source)),
@@ -564,7 +564,7 @@ class PopupTaxScenarioPlanner(tk.Toplevel):
 
     def _render_d102_main(self, baseline, optimized):
         source = self.source_company_var.get().strip() or "MSL-CR"
-        target = self.target_company_var.get().strip() or "MMS-CR"
+        target = self.target_company_var.get().strip() or "MCI-CR"
         base_source = self._company_row(baseline, source)
         opt_source = self._company_row(optimized, source)
         opt_target = self._company_row(optimized, target)
@@ -682,7 +682,7 @@ class PopupTaxScenarioPlanner(tk.Toplevel):
 
     def _render_statement_summary(self, baseline, optimized, analysis):
         source = self.source_company_var.get().strip() or "MSL-CR"
-        target = self.target_company_var.get().strip() or "MMS-CR"
+        target = self.target_company_var.get().strip() or "MCI-CR"
         base_source = self._company_row(baseline, source)
         opt_source = self._company_row(optimized, source)
         opt_target = self._company_row(optimized, target)
@@ -957,7 +957,7 @@ class PopupTaxScenarioPlanner(tk.Toplevel):
     def _move_selected_client_to_target(self):
         row = self._selected_client_row()
         if row:
-            self._upsert_client_move(row, self.target_company_var.get().strip() or "MMS-CR")
+            self._upsert_client_move(row, self.target_company_var.get().strip() or "MCI-CR")
             self._run()
 
     def _move_selected_client_to_source(self):
@@ -1138,7 +1138,7 @@ class PopupTaxScenarioPlanner(tk.Toplevel):
     def _move_selected_expense_to_target(self):
         row = self._selected_expense_row()
         if row:
-            self._upsert_expense_move(row, self.target_company_var.get().strip() or "MMS-CR")
+            self._upsert_expense_move(row, self.target_company_var.get().strip() or "MCI-CR")
             self._run()
 
     def _move_selected_expense_to_source(self):

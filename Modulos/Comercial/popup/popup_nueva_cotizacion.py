@@ -11,6 +11,7 @@ from api_client import (
     post_comercial_cotizacion_api,
     get_comercial_next_quotation_number_api
 )
+from session_context import get_company_code, get_company_name
 
 from Modulos.Comercial.exporters.cotizacion_word_exporter import export_cotizacion_word
 from Modulos.Comercial.exporters.cotizacion_pdf_exporter import export_cotizacion_pdf
@@ -648,7 +649,9 @@ class PopupNuevaCotizacion(tk.Toplevel):
                 "cliente": self.cliente_var.get(),
                 "servicio": ", ".join(p["servicio"] for p in self.servicios_seleccionados),
                 "idioma": self.idioma_var.get(),
-                "texto": self.text.get("1.0", "end")
+                "texto": self.text.get("1.0", "end"),
+                "company_code": get_company_code(),
+                "company_name": get_company_name()
             }
 
             if self.formato_var.get() == "WORD":
@@ -666,7 +669,9 @@ class PopupNuevaCotizacion(tk.Toplevel):
                 "precio": self.total_precio,
                 "idioma": self.idioma_var.get(),
                 "validez": self.validez_var.get(),
-                "status": "PENDIENTE"
+                "status": "PENDIENTE",
+                "texto_cotizacion": self.text.get("1.0", "end").strip(),
+                "company_code": get_company_code()
             }
 
             for i, p in enumerate(self.servicios_seleccionados[:4], start=1):
@@ -760,7 +765,9 @@ class PopupNuevaCotizacion(tk.Toplevel):
             "cliente": self.cliente_var.get(),
             "servicio": ", ".join(p["servicio"] for p in self.servicios_seleccionados),
             "idioma": self.idioma_var.get(),
-            "texto": self.text.get("1.0", "end")
+            "texto": self.text.get("1.0", "end"),
+            "company_code": get_company_code(),
+            "company_name": get_company_name()
         }
 
         try:
@@ -799,7 +806,9 @@ class PopupNuevaCotizacion(tk.Toplevel):
             "precio": self.total_precio,
             "idioma": self.idioma_var.get(),
             "validez": self.validez_var.get(),
-            "status": "PENDIENTE"
+            "status": "PENDIENTE",
+            "texto_cotizacion": self.text.get("1.0", "end").strip(),
+            "company_code": get_company_code()
         }
 
         for i, p in enumerate(self.servicios_seleccionados[:4], start=1):

@@ -57,6 +57,7 @@ from routers.exchange_rate import router as exchange_rate_router
 
 from routers.password_reset import router as password_reset_router
 from routers.mobile_auth import router as mobile_auth_router
+from routers.user_admin import router as user_admin_router
 from routers.companies import router as companies_router
 
 # HHRR
@@ -68,6 +69,7 @@ from routers.hr_empleados import router as hr_empleados_router
 from routers import noticias
 from routers.hr_policies import router as hr_policies_router
 from routers.hr_salary_calculator import router as hr_salary_calculator_router
+from routers.hr_medical_network import router as hr_medical_network_router
 
 
 # Informes
@@ -248,6 +250,7 @@ app.include_router(exchange_rate_router)
 
 app.include_router(password_reset_router)
 app.include_router(mobile_auth_router)
+app.include_router(user_admin_router)
 app.include_router(companies_router)
 
 app.include_router(hr.router)
@@ -258,6 +261,7 @@ app.include_router(hr_empleados_router)
 app.include_router(noticias.router)
 app.include_router(hr_policies_router)
 app.include_router(hr_salary_calculator_router)
+app.include_router(hr_medical_network_router)
 
 app.include_router(reports_ai_router)
 app.include_router(container_reports_router)

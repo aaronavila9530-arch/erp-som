@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Optional
 import json
 import os
+from psycopg2.extras import RealDictCursor
 
 from database import get_db
 
@@ -13,6 +14,33 @@ router = APIRouter(
     prefix="/vessel-grain-sampling",
     tags=["Vessel Grain Sampling"]
 )
+
+
+def _ensure_grain_sampling_schema(conn):
+    cur = conn.cursor()
+    try:
+        columns = []
+        for i in range(1, 6):
+            columns.append((f"hold{i}_hold", "TEXT"))
+        for i in range(4, 6):
+            columns.extend([
+                (f"sample{i}_hold", "TEXT"),
+                (f"sample{i}_proa_babor", "TEXT"),
+                (f"sample{i}_proa_estribor", "TEXT"),
+                (f"sample{i}_centro", "TEXT"),
+                (f"sample{i}_popa_babor", "TEXT"),
+                (f"sample{i}_popa_estribor", "TEXT"),
+            ])
+        for name, col_type in columns:
+            cur.execute(
+                f"ALTER TABLE vessel_grain_sampling_reports ADD COLUMN IF NOT EXISTS {name} {col_type}"
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
 
 
 # ============================================================
@@ -25,6 +53,7 @@ def create_vessel_grain_sampling_report(
     conn=Depends(get_db)
 ):
 
+    _ensure_grain_sampling_schema(conn)
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     def safe(key, default=None):
@@ -63,14 +92,19 @@ def create_vessel_grain_sampling_report(
 
                 -- PRODUCTS (5)
                 hold1_product,
+                hold1_hold,
                 hold1_tonnage,
                 hold2_product,
+                hold2_hold,
                 hold2_tonnage,
                 hold3_product,
+                hold3_hold,
                 hold3_tonnage,
                 hold4_product,
+                hold4_hold,
                 hold4_tonnage,
                 hold5_product,
+                hold5_hold,
                 hold5_tonnage,
 
                 products_total,
@@ -96,6 +130,20 @@ def create_vessel_grain_sampling_report(
                 sample3_centro,
                 sample3_popa_babor,
                 sample3_popa_estribor,
+
+                sample4_hold,
+                sample4_proa_babor,
+                sample4_proa_estribor,
+                sample4_centro,
+                sample4_popa_babor,
+                sample4_popa_estribor,
+
+                sample5_hold,
+                sample5_proa_babor,
+                sample5_proa_estribor,
+                sample5_centro,
+                sample5_popa_babor,
+                sample5_popa_estribor,
 
                 supervision,
                 conclusion,
@@ -130,14 +178,19 @@ def create_vessel_grain_sampling_report(
                 %(surveyors_disembark_time)s,
 
                 %(hold1_product)s,
+                %(hold1_hold)s,
                 %(hold1_tonnage)s,
                 %(hold2_product)s,
+                %(hold2_hold)s,
                 %(hold2_tonnage)s,
                 %(hold3_product)s,
+                %(hold3_hold)s,
                 %(hold3_tonnage)s,
                 %(hold4_product)s,
+                %(hold4_hold)s,
                 %(hold4_tonnage)s,
                 %(hold5_product)s,
+                %(hold5_hold)s,
                 %(hold5_tonnage)s,
 
                 %(products_total)s,
@@ -162,6 +215,20 @@ def create_vessel_grain_sampling_report(
                 %(sample3_centro)s,
                 %(sample3_popa_babor)s,
                 %(sample3_popa_estribor)s,
+
+                %(sample4_hold)s,
+                %(sample4_proa_babor)s,
+                %(sample4_proa_estribor)s,
+                %(sample4_centro)s,
+                %(sample4_popa_babor)s,
+                %(sample4_popa_estribor)s,
+
+                %(sample5_hold)s,
+                %(sample5_proa_babor)s,
+                %(sample5_proa_estribor)s,
+                %(sample5_centro)s,
+                %(sample5_popa_babor)s,
+                %(sample5_popa_estribor)s,
 
                 %(supervision)s,
                 %(conclusion)s,
@@ -201,14 +268,19 @@ def create_vessel_grain_sampling_report(
 
             # PRODUCTS
             "hold1_product": safe("hold1_product"),
+            "hold1_hold": safe("hold1_hold", "1"),
             "hold1_tonnage": safe("hold1_tonnage"),
             "hold2_product": safe("hold2_product"),
+            "hold2_hold": safe("hold2_hold", "2"),
             "hold2_tonnage": safe("hold2_tonnage"),
             "hold3_product": safe("hold3_product"),
+            "hold3_hold": safe("hold3_hold", "3"),
             "hold3_tonnage": safe("hold3_tonnage"),
             "hold4_product": safe("hold4_product"),
+            "hold4_hold": safe("hold4_hold", "4"),
             "hold4_tonnage": safe("hold4_tonnage"),
             "hold5_product": safe("hold5_product"),
+            "hold5_hold": safe("hold5_hold", "5"),
             "hold5_tonnage": safe("hold5_tonnage"),
 
             "products_total": safe("products_total"),
@@ -236,6 +308,20 @@ def create_vessel_grain_sampling_report(
             "sample3_centro": safe("sample3_centro"),
             "sample3_popa_babor": safe("sample3_popa_babor"),
             "sample3_popa_estribor": safe("sample3_popa_estribor"),
+
+            "sample4_hold": safe("sample4_hold"),
+            "sample4_proa_babor": safe("sample4_proa_babor"),
+            "sample4_proa_estribor": safe("sample4_proa_estribor"),
+            "sample4_centro": safe("sample4_centro"),
+            "sample4_popa_babor": safe("sample4_popa_babor"),
+            "sample4_popa_estribor": safe("sample4_popa_estribor"),
+
+            "sample5_hold": safe("sample5_hold"),
+            "sample5_proa_babor": safe("sample5_proa_babor"),
+            "sample5_proa_estribor": safe("sample5_proa_estribor"),
+            "sample5_centro": safe("sample5_centro"),
+            "sample5_popa_babor": safe("sample5_popa_babor"),
+            "sample5_popa_estribor": safe("sample5_popa_estribor"),
 
             "supervision": safe("supervision"),
             "conclusion": safe("conclusion"),
@@ -283,6 +369,7 @@ def list_vessel_grain_sampling_reports(
     conn=Depends(get_db)
 ):
 
+    _ensure_grain_sampling_schema(conn)
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     try:
@@ -319,14 +406,19 @@ def list_vessel_grain_sampling_reports(
 
                 -- PRODUCTS (5)
                 hold1_product,
+                hold1_hold,
                 hold1_tonnage,
                 hold2_product,
+                hold2_hold,
                 hold2_tonnage,
                 hold3_product,
+                hold3_hold,
                 hold3_tonnage,
                 hold4_product,
+                hold4_hold,
                 hold4_tonnage,
                 hold5_product,
+                hold5_hold,
                 hold5_tonnage,
 
                 products_total,
@@ -352,6 +444,20 @@ def list_vessel_grain_sampling_reports(
                 sample3_centro,
                 sample3_popa_babor,
                 sample3_popa_estribor,
+
+                sample4_hold,
+                sample4_proa_babor,
+                sample4_proa_estribor,
+                sample4_centro,
+                sample4_popa_babor,
+                sample4_popa_estribor,
+
+                sample5_hold,
+                sample5_proa_babor,
+                sample5_proa_estribor,
+                sample5_centro,
+                sample5_popa_babor,
+                sample5_popa_estribor,
 
                 supervision,
                 conclusion,
@@ -542,6 +648,7 @@ def get_vessel_grain_sampling_report(
     conn=Depends(get_db)
 ):
 
+    _ensure_grain_sampling_schema(conn)
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     try:
@@ -580,14 +687,19 @@ def get_vessel_grain_sampling_report(
 
                 -- PRODUCTS
                 hold1_product,
+                hold1_hold,
                 hold1_tonnage,
                 hold2_product,
+                hold2_hold,
                 hold2_tonnage,
                 hold3_product,
+                hold3_hold,
                 hold3_tonnage,
                 hold4_product,
+                hold4_hold,
                 hold4_tonnage,
                 hold5_product,
+                hold5_hold,
                 hold5_tonnage,
 
                 products_total,
@@ -613,6 +725,20 @@ def get_vessel_grain_sampling_report(
                 sample3_centro,
                 sample3_popa_babor,
                 sample3_popa_estribor,
+
+                sample4_hold,
+                sample4_proa_babor,
+                sample4_proa_estribor,
+                sample4_centro,
+                sample4_popa_babor,
+                sample4_popa_estribor,
+
+                sample5_hold,
+                sample5_proa_babor,
+                sample5_proa_estribor,
+                sample5_centro,
+                sample5_popa_babor,
+                sample5_popa_estribor,
 
                 supervision,
                 conclusion,
@@ -659,6 +785,7 @@ def update_vessel_grain_sampling_report(
     conn=Depends(get_db)
 ):
 
+    _ensure_grain_sampling_schema(conn)
     cur = conn.cursor()
 
     def safe(key, default=None):
@@ -700,14 +827,19 @@ def update_vessel_grain_sampling_report(
 
                 -- HOLDS (5)
                 hold1_product = %(hold1_product)s,
+                hold1_hold = %(hold1_hold)s,
                 hold1_tonnage = %(hold1_tonnage)s,
                 hold2_product = %(hold2_product)s,
+                hold2_hold = %(hold2_hold)s,
                 hold2_tonnage = %(hold2_tonnage)s,
                 hold3_product = %(hold3_product)s,
+                hold3_hold = %(hold3_hold)s,
                 hold3_tonnage = %(hold3_tonnage)s,
                 hold4_product = %(hold4_product)s,
+                hold4_hold = %(hold4_hold)s,
                 hold4_tonnage = %(hold4_tonnage)s,
                 hold5_product = %(hold5_product)s,
+                hold5_hold = %(hold5_hold)s,
                 hold5_tonnage = %(hold5_tonnage)s,
 
                 products_total = %(products_total)s,
@@ -733,6 +865,20 @@ def update_vessel_grain_sampling_report(
                 sample3_centro = %(sample3_centro)s,
                 sample3_popa_babor = %(sample3_popa_babor)s,
                 sample3_popa_estribor = %(sample3_popa_estribor)s,
+
+                sample4_hold = %(sample4_hold)s,
+                sample4_proa_babor = %(sample4_proa_babor)s,
+                sample4_proa_estribor = %(sample4_proa_estribor)s,
+                sample4_centro = %(sample4_centro)s,
+                sample4_popa_babor = %(sample4_popa_babor)s,
+                sample4_popa_estribor = %(sample4_popa_estribor)s,
+
+                sample5_hold = %(sample5_hold)s,
+                sample5_proa_babor = %(sample5_proa_babor)s,
+                sample5_proa_estribor = %(sample5_proa_estribor)s,
+                sample5_centro = %(sample5_centro)s,
+                sample5_popa_babor = %(sample5_popa_babor)s,
+                sample5_popa_estribor = %(sample5_popa_estribor)s,
 
                 supervision = %(supervision)s,
                 conclusion = %(conclusion)s,
@@ -774,14 +920,19 @@ def update_vessel_grain_sampling_report(
 
             # HOLDS
             "hold1_product": safe("hold1_product"),
+            "hold1_hold": safe("hold1_hold", "1"),
             "hold1_tonnage": safe("hold1_tonnage"),
             "hold2_product": safe("hold2_product"),
+            "hold2_hold": safe("hold2_hold", "2"),
             "hold2_tonnage": safe("hold2_tonnage"),
             "hold3_product": safe("hold3_product"),
+            "hold3_hold": safe("hold3_hold", "3"),
             "hold3_tonnage": safe("hold3_tonnage"),
             "hold4_product": safe("hold4_product"),
+            "hold4_hold": safe("hold4_hold", "4"),
             "hold4_tonnage": safe("hold4_tonnage"),
             "hold5_product": safe("hold5_product"),
+            "hold5_hold": safe("hold5_hold", "5"),
             "hold5_tonnage": safe("hold5_tonnage"),
 
             "products_total": safe("products_total"),
@@ -807,6 +958,20 @@ def update_vessel_grain_sampling_report(
             "sample3_centro": safe("sample3_centro"),
             "sample3_popa_babor": safe("sample3_popa_babor"),
             "sample3_popa_estribor": safe("sample3_popa_estribor"),
+
+            "sample4_hold": safe("sample4_hold"),
+            "sample4_proa_babor": safe("sample4_proa_babor"),
+            "sample4_proa_estribor": safe("sample4_proa_estribor"),
+            "sample4_centro": safe("sample4_centro"),
+            "sample4_popa_babor": safe("sample4_popa_babor"),
+            "sample4_popa_estribor": safe("sample4_popa_estribor"),
+
+            "sample5_hold": safe("sample5_hold"),
+            "sample5_proa_babor": safe("sample5_proa_babor"),
+            "sample5_proa_estribor": safe("sample5_proa_estribor"),
+            "sample5_centro": safe("sample5_centro"),
+            "sample5_popa_babor": safe("sample5_popa_babor"),
+            "sample5_popa_estribor": safe("sample5_popa_estribor"),
 
             "supervision": safe("supervision"),
             "conclusion": safe("conclusion"),

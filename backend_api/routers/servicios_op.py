@@ -80,6 +80,65 @@ def _normalize_service_date(value):
     return _parse_service_date(value).strftime("%Y-%m-%d")
 
 
+REPORT_CONSECUTIVE_BASE = 2141
+REPORT_CONSECUTIVE_LOCK_KEY = 2141001
+
+
+def _assign_new_global_report_number(
+    consec: int,
+    company: str,
+    fecha_inicio: str,
+    hora_inicio: str,
+) -> str:
+    fecha_dt = _parse_service_date(fecha_inicio)
+    date_suffix = f"-{fecha_dt.strftime('%d%m')}-{fecha_dt.strftime('%Y')}"
+    rows = database.sql(
+        """
+        WITH lock_row AS (
+            SELECT pg_advisory_xact_lock(%s)
+        ),
+        next_num AS (
+            SELECT COALESCE(
+                MAX(split_part(s.num_informe, '-', 1)::int),
+                %s
+            ) + 1 AS prefix
+            FROM servicios s, lock_row
+            WHERE s.num_informe IS NOT NULL
+              AND TRIM(s.num_informe) <> ''
+              AND split_part(s.num_informe, '-', 1) ~ '^[0-9]+$'
+        ),
+        updated AS (
+            UPDATE servicios s
+            SET
+                fecha_inicio = %s,
+                hora_inicio  = %s,
+                num_informe  = next_num.prefix::text || %s,
+                estado       = 'En Operación'
+            FROM next_num
+            WHERE s.consec = %s
+              AND s.company_code = %s
+            RETURNING s.num_informe
+        )
+        SELECT num_informe FROM updated
+        """,
+        (
+            REPORT_CONSECUTIVE_LOCK_KEY,
+            REPORT_CONSECUTIVE_BASE,
+            fecha_inicio,
+            hora_inicio,
+            date_suffix,
+            consec,
+            company,
+        ),
+        fetch=True,
+    )
+
+    if not rows:
+        raise HTTPException(404, "Servicio no encontrado")
+
+    return rows[0][0]
+
+
 
 # ============================================================
 # MODELO DE INSERCIÓN DESDE POPUP
@@ -415,14 +474,6 @@ def confirmar_servicio(consec: int, data: dict, x_company_code: str | None = Hea
     try:
         _ensure_tenant_schema()
         company = company_code(None, x_company_code)
-        # --------------------------------------------------
-        # 1. Lock para evitar doble ejecución
-        # --------------------------------------------------
-        database.sql(
-            "SELECT pg_advisory_lock(%s)",
-            (consec,),
-            fetch=False
-        )
 
         fecha_inicio = _normalize_service_date(data.get("fecha_inicio"))
         hora_inicio  = data.get("hora_inicio")
@@ -478,54 +529,13 @@ def confirmar_servicio(consec: int, data: dict, x_company_code: str | None = Hea
             }
 
         # --------------------------------------------------
-        # 4. Buscar siguiente consecutivo libre
+        # 4. Asignar siguiente consecutivo global MSL/MCI
         # --------------------------------------------------
-        base = 2141
-        candidato = base + 1
-
-        while True:
-            existe = database.sql(
-                """
-                SELECT 1
-                FROM servicios
-                WHERE
-                    num_informe IS NOT NULL
-                    AND num_informe <> ''
-                    AND split_part(num_informe, '-', 1) ~ '^[0-9]+$'
-                    AND split_part(num_informe, '-', 1)::int = %s
-                    AND company_code = %s
-                """,
-                (candidato, company),
-                fetch=True
-            )
-
-            if not existe:
-                break
-
-            candidato += 1
-
-        # --------------------------------------------------
-        # 5. Construir num_informe usando fecha_inicio
-        # --------------------------------------------------
-        fecha_dt = _parse_service_date(fecha_inicio)
-
-        num_informe = f"{candidato}-{fecha_dt.strftime('%d%m')}-{fecha_dt.strftime('%Y')}"
-
-        # --------------------------------------------------
-        # 6. Guardar todo
-        # --------------------------------------------------
-        database.sql(
-            """
-            UPDATE servicios
-            SET
-                fecha_inicio = %s,
-                hora_inicio  = %s,
-                num_informe  = %s,
-                estado       = 'En Operación'
-            WHERE consec = %s
-              AND company_code = %s
-            """,
-            (fecha_inicio, hora_inicio, num_informe, consec, company)
+        num_informe = _assign_new_global_report_number(
+            consec=consec,
+            company=company,
+            fecha_inicio=fecha_inicio,
+            hora_inicio=hora_inicio,
         )
 
         return {
@@ -534,12 +544,10 @@ def confirmar_servicio(consec: int, data: dict, x_company_code: str | None = Hea
             "generated_now": True
         }
 
-    finally:
-        database.sql(
-            "SELECT pg_advisory_unlock(%s)",
-            (consec,),
-            fetch=False
-        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 

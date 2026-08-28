@@ -57,6 +57,7 @@ class PopupCorporateCards(tk.Toplevel):
         self.bank_accounts = []
         self.accounts = []
         self.pending_changes = {}
+        self.show_only_pending = tk.BooleanVar(value=True)
         self.expense_preset_map = {
             f"{label} | {code} {name}": {
                 "fiscal_category": label,
@@ -137,6 +138,12 @@ class PopupCorporateCards(tk.Toplevel):
         ttk.Button(action_frame, text="Requiere factura", command=lambda: self._classify_selected("PENDING_REVIEW", True)).pack(side="left", padx=3)
         ttk.Button(action_frame, text="Cruzar factura ITP", command=self._match_itp).pack(side="left", padx=3)
         ttk.Button(action_frame, text="Cuenta gasto", command=self._set_expense_account).pack(side="left", padx=3)
+        ttk.Checkbutton(
+            action_frame,
+            text="Solo pendientes",
+            variable=self.show_only_pending,
+            command=self._refresh_transactions_tree,
+        ).pack(side="left", padx=8)
         ttk.Button(action_frame, text="Guardar cambios", command=self._save_changes).pack(side="right", padx=3)
 
         columns = ("date", "user", "card", "merchant", "currency", "amount", "account", "match", "deductible", "entry", "notes")
@@ -198,6 +205,17 @@ class PopupCorporateCards(tk.Toplevel):
         self.pending_changes = {}
         data = get_corporate_card_transactions_api(statement_id) or {}
         self.transactions = data.get("items", [])
+        self._refresh_transactions_tree()
+
+    def _is_pending_assignment(self, row):
+        if str(row.get("match_status") or "").upper() == "MATCHED_ITP":
+            return False
+        if bool(row.get("requires_invoice")):
+            return True
+        fiscal = str(row.get("deductible_status") or "").upper()
+        return fiscal in {"", "PENDING_REVIEW"}
+
+    def _refresh_transactions_tree(self):
         self.tree_tx.delete(*self.tree_tx.get_children())
         total = 0.0
         matched = 0
@@ -206,8 +224,11 @@ class PopupCorporateCards(tk.Toplevel):
             total += float(row.get("amount_crc") or row.get("amount_original") or 0)
             if row.get("match_status") == "MATCHED_ITP":
                 matched += 1
-            if row.get("deductible_status") == "PENDING_REVIEW":
+            is_pending = self._is_pending_assignment(row)
+            if is_pending:
                 pending += 1
+            if self.show_only_pending.get() and not is_pending:
+                continue
             self.tree_tx.insert("", "end", iid=str(row.get("id")), values=(
                 row.get("transaction_date") or "",
                 row.get("user_name") or "",
@@ -222,7 +243,7 @@ class PopupCorporateCards(tk.Toplevel):
                 row.get("notes") or "",
             ))
         self.lbl_totals.config(
-            text=f"Movimientos: {len(self.transactions)} | Cruzados ITP: {matched} | Pendientes fiscal: {pending} | Total visible: {_fmt_money(total)}"
+            text=f"Movimientos: {len(self.transactions)} | Cruzados ITP: {matched} | Pendientes de asignacion: {pending} | Total estado: {_fmt_money(total)}"
         )
 
     def _account_label(self, row):
@@ -353,7 +374,8 @@ class PopupCorporateCards(tk.Toplevel):
             messagebox.showwarning("Rubro/cuenta", "Selecciona un rubro contable.")
             return
         payload = dict(preset)
-        payload["requires_invoice"] = False if payload.get("deductible_status") == "NON_DEDUCTIBLE" else True
+        payload["requires_invoice"] = False
+        payload["notes"] = "Clasificado manualmente desde tarjetas; no requiere factura ITP adicional."
         for tx_id in tx_ids:
             self._update_tx_visual(tx_id, payload)
 

@@ -5927,6 +5927,34 @@ def get_comercial_cotizaciones_api():
     return resp.json()
 
 
+def get_comercial_cotizacion_api(cotizacion_id: int):
+    resp = api_request(
+        "GET",
+        f"{BASE_URL}/comercial/cotizaciones/{cotizacion_id}/detail",
+        timeout=15
+    )
+    raise_for_status_with_detail(resp)
+    return resp.json()
+
+
+def download_comercial_cotizacion_export_api(cotizacion_id: int, formato: str, output_path: str):
+    formato = (formato or "").strip().lower()
+    if formato not in {"word", "pdf"}:
+        raise ValueError("Formato inválido")
+
+    resp = api_request(
+        "GET",
+        f"{BASE_URL}/comercial/cotizaciones/{cotizacion_id}/export/{formato}",
+        timeout=60
+    )
+    raise_for_status_with_detail(resp)
+
+    with open(output_path, "wb") as f:
+        f.write(resp.content)
+
+    return output_path
+
+
 # ------------------------------------------------------------
 # Conscutivo Cotizaciones
 # 

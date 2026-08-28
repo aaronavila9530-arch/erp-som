@@ -1,25 +1,48 @@
+"""RBAC ERP-SOM.
+
+Mantiene reglas legacy por rol y, cuando se recibe username, consulta la tabla
+user_module_permissions para permisos configurables desde el ERP.
 """
-RBAC — CLIENT SIDE (ERP-SOM)
 
-⚠️ IMPORTANTE
-Este archivo NUNCA consulta la base de datos.
 
-El control REAL de seguridad se hace en el BACKEND
-mediante:
-
-• require_permission
-• RBAC
-• autenticación
-
-Este módulo SOLO controla:
-
-• Mostrar / ocultar botones
-• UX coherente
-• Evitar crashes en cliente
-
-Si el cliente intenta ejecutar algo indebido,
-el backend devolverá 401 / 403.
-"""
+def _db_permission(username: str, module: str, action: str):
+    if not username:
+        return None
+    try:
+        from database import connect
+        conn = connect()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT COUNT(*)
+            FROM user_module_permissions
+            WHERE lower(usuario)=lower(%s)
+              AND allowed=TRUE
+            """,
+            (username,),
+        )
+        has_rows = (cur.fetchone() or [0])[0] > 0
+        if not has_rows:
+            decision = None
+        else:
+            cur.execute(
+                """
+                SELECT 1
+                FROM user_module_permissions
+                WHERE lower(usuario)=lower(%s)
+                  AND lower(module_code)=lower(%s)
+                  AND lower(action_code) IN (lower(%s), 'admin')
+                  AND allowed=TRUE
+                LIMIT 1
+                """,
+                (username, module, action),
+            )
+            decision = cur.fetchone() is not None
+        cur.close()
+        conn.close()
+        return decision
+    except Exception:
+        return None
 
 
 def has_permission(
@@ -42,6 +65,10 @@ def has_permission(
     module = (module or "").lower()
     action = (action or "").lower()
     username = (username or "").lower()
+
+    db_decision = _db_permission(username, module, action)
+    if db_decision is not None:
+        return db_decision
 
     # ======================================================
     # MASTER → TODO

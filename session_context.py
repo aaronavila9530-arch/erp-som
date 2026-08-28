@@ -19,6 +19,13 @@ def set_user_context(usuario, rol, token=None, company_code=None, company_name=N
         _session["company_name"] = company_name
 
 
+def set_company_context(company_code, company_name=None):
+    if company_code:
+        _session["company_code"] = company_code
+    if company_name:
+        _session["company_name"] = company_name
+
+
 def get_token():
     return _session.get("token")
 

@@ -42,10 +42,10 @@ const ONG_AUTOSAVE_DRAFT_KEY = "erp_som_ong_autosave_draft";
 
 const COMPANIES = [
   { code: "MSL-CR", name: "MSL MARINE SURVEYORS AND LOGISTICS GROUP SRL", label: "MSL" },
-  { code: "MMS-CR", name: "MMS MARITIME MASTER SURVEYORS SRL", label: "MMS" }
+  { code: "MCI-CR", name: "MSL MARINE CLAIMS RISK & INTELLIGENCE", label: "MCI" }
 ];
 const DEFAULT_COMPANY = COMPANIES[0];
-const MOBILE_APP_VERSION = "1.7.25";
+const MOBILE_APP_VERSION = "1.7.27";
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -547,7 +547,7 @@ function LoginScreen() {
 }
 
 function Shell() {
-  const { session, logout } = useAuth();
+  const { session, setSession, logout } = useAuth();
   const [activeModule, setActiveModule] = useState<AppModule | null>(null);
   const [activeSection, setActiveSection] = useState<AppSection | null>(null);
   const [payload, setPayload] = useState<unknown>(null);
@@ -559,6 +559,15 @@ function Shell() {
     () => getAllowedModules(session?.modules.map((module) => module.code) ?? [], session?.rol ?? ""),
     [session?.modules, session?.rol]
   );
+
+  async function changeCompany(companyCode: string) {
+    if (!session) return;
+    await setSession(withCompanySession(session, companyCode));
+    setActiveModule(null);
+    setActiveSection(null);
+    setPayload(null);
+    setError("");
+  }
 
   useEffect(() => {
     if (!activeModule && modules.length > 0) setActiveModule(modules[0]);
@@ -617,6 +626,7 @@ function Shell() {
             <Text style={styles.headerSub}>
               {session.usuario} · {session.rol}
             </Text>
+            <Text style={styles.headerSub}>{session.company_code || DEFAULT_COMPANY.code}</Text>
           </View>
           <Pressable style={styles.headerButton} onPress={logout}>
             <Text style={styles.headerButtonText}>Salir</Text>
@@ -629,6 +639,21 @@ function Shell() {
             </Text>
           </Pressable>
           {offlineSync.message ? <Text style={styles.syncMessage}>{offlineSync.message}</Text> : null}
+        </View>
+
+        <View style={styles.companySwitchRow}>
+          {COMPANIES.map((company) => {
+            const active = (session.company_code || DEFAULT_COMPANY.code) === company.code;
+            return (
+              <Pressable
+                key={company.code}
+                style={[styles.companyChip, active && styles.companyChipActive]}
+                onPress={() => changeCompany(company.code)}
+              >
+                <Text style={[styles.companyChipText, active && styles.companyChipTextActive]}>{company.label}</Text>
+              </Pressable>
+            );
+          })}
         </View>
 
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.moduleTabs}>
@@ -660,7 +685,8 @@ function Shell() {
             {activeModule.code === "master_data" && session ? (
               <MasterDataHomeActions module={activeModule} session={session} onReload={() => activeSection && openSection(activeSection)} />
             ) : null}
-            {activeModule.code !== "informes" ? (
+            {activeModule.code === "admin_users" && session ? <UserAdminMobile session={session} /> : null}
+            {activeModule.code !== "informes" && activeModule.code !== "admin_users" ? (
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sectionTabs}>
                 {activeModule.sections.map((section) => (
                   <Pressable
@@ -11417,6 +11443,329 @@ function isAdminSession(session: NonNullable<ReturnType<typeof useAuth>["session
   return role === "admin" || role === "master";
 }
 
+type AdminActionMeta = { code: string; label: string };
+type AdminModuleMeta = { code: string; label: string };
+type AdminMetaPayload = {
+  modules: AdminModuleMeta[];
+  module_actions: Record<string, AdminActionMeta[]>;
+  password_rules: string[];
+  roles: string[];
+};
+
+type AdminUserRow = {
+  usuario: string;
+  nombre?: string;
+  apellido?: string;
+  email?: string;
+  rol?: string;
+  activo?: boolean;
+  permissions?: Record<string, string[]>;
+};
+
+type AdminPersonRow = {
+  source_type: string;
+  source_id: string;
+  label: string;
+  nombre?: string;
+  apellido?: string;
+  email?: string;
+  usuario?: string;
+};
+
+function rowsFromPayloadKey(payload: unknown, key: string) {
+  const obj = asRecord(payload);
+  const value = obj?.[key];
+  if (Array.isArray(value)) return value.filter((item) => asRecord(item)) as Record<string, unknown>[];
+  return extractRows(payload);
+}
+
+function cleanPermissions(value: unknown): Record<string, string[]> {
+  const obj = asRecord(value);
+  const permissions: Record<string, string[]> = {};
+  if (!obj) return permissions;
+  for (const [moduleCode, actions] of Object.entries(obj)) {
+    if (Array.isArray(actions)) {
+      permissions[moduleCode] = actions.map((action) => String(action)).filter(Boolean);
+    }
+  }
+  return permissions;
+}
+
+function UserAdminMobile({ session }: { session: NonNullable<ReturnType<typeof useAuth>["session"]> }) {
+  const [tab, setTab] = useState<"create" | "permissions">("permissions");
+  const [meta, setMeta] = useState<AdminMetaPayload | null>(null);
+  const [users, setUsers] = useState<AdminUserRow[]>([]);
+  const [people, setPeople] = useState<AdminPersonRow[]>([]);
+  const [selectedUser, setSelectedUser] = useState("");
+  const [selectedPerson, setSelectedPerson] = useState("");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [role, setRole] = useState("user");
+  const [active, setActive] = useState(true);
+  const [permissions, setPermissions] = useState<Record<string, string[]>>({});
+  const [createPermissions, setCreatePermissions] = useState<Record<string, string[]>>({});
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+
+  const userOptions = useMemo(() => users.map((user) => user.usuario).filter(Boolean), [users]);
+  const personOptions = useMemo(
+    () => people.map((person) => `${person.source_type}: ${person.label}`).filter(Boolean),
+    [people]
+  );
+
+  async function loadAdminData(selectUsuario?: string) {
+    setBusy(true);
+    setMessage("");
+    try {
+      const [metaPayload, peoplePayload, usersPayload] = await Promise.all([
+        apiRequest<AdminMetaPayload>("/admin/users/meta", { session }),
+        apiRequest("/admin/users/people", { session }),
+        apiRequest("/admin/users", { session })
+      ]);
+      const nextUsers = rowsFromPayloadKey(usersPayload, "users") as AdminUserRow[];
+      const nextPeople = rowsFromPayloadKey(peoplePayload, "people") as AdminPersonRow[];
+      setMeta(metaPayload);
+      setUsers(nextUsers);
+      setPeople(nextPeople);
+
+      const nextSelected = selectUsuario || selectedUser || nextUsers[0]?.usuario || "";
+      if (nextSelected) {
+        setSelectedUser(nextSelected);
+        await loadUserPermissions(nextSelected, nextUsers);
+      }
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo cargar administracion de usuarios.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function loadUserPermissions(usuario: string, sourceUsers = users) {
+    setMessage("");
+    const cached = sourceUsers.find((user) => user.usuario === usuario)?.permissions;
+    if (cached && Object.keys(cached).length) {
+      setPermissions(cleanPermissions(cached));
+      setMessage(`Permisos actuales cargados para ${usuario}.`);
+      return;
+    }
+    try {
+      const payload = await apiRequest(`/admin/users/${encodeURIComponent(usuario)}/permissions`, { session });
+      setPermissions(cleanPermissions(asRecord(payload)?.permissions));
+      setMessage(`Permisos actuales cargados para ${usuario}.`);
+    } catch (err) {
+      setPermissions({});
+      setMessage(err instanceof Error ? err.message : "No se pudieron cargar permisos del usuario.");
+    }
+  }
+
+  useEffect(() => {
+    if (isAdminSession(session)) loadAdminData();
+  }, [session.usuario, session.company_code]);
+
+  function togglePermission(
+    setter: React.Dispatch<React.SetStateAction<Record<string, string[]>>>,
+    moduleCode: string,
+    actionCode: string
+  ) {
+    setter((current) => {
+      const selected = new Set(current[moduleCode] || []);
+      if (selected.has(actionCode)) selected.delete(actionCode);
+      else selected.add(actionCode);
+      return { ...current, [moduleCode]: Array.from(selected) };
+    });
+  }
+
+  function PermissionMatrix({
+    value,
+    onToggle
+  }: {
+    value: Record<string, string[]>;
+    onToggle: (moduleCode: string, actionCode: string) => void;
+  }) {
+    if (!meta) return null;
+    return (
+      <View style={styles.adminMatrix}>
+        {meta.modules.map((module) => {
+          const actions = meta.module_actions[module.code] || [];
+          return (
+            <View key={module.code} style={styles.adminModuleCard}>
+              <Text style={styles.adminModuleTitle}>{module.label}</Text>
+              <View style={styles.adminPermissionGrid}>
+                {actions.map((action) => {
+                  const checked = (value[module.code] || []).includes(action.code);
+                  return (
+                    <Pressable
+                      key={`${module.code}-${action.code}`}
+                      style={[styles.adminPermissionPill, checked && styles.adminPermissionPillActive]}
+                      onPress={() => onToggle(module.code, action.code)}
+                    >
+                      <Text style={[styles.adminPermissionText, checked && styles.adminPermissionTextActive]}>
+                        {checked ? "[x] " : "[ ] "}
+                        {action.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+          );
+        })}
+      </View>
+    );
+  }
+
+  function selectedPersonData() {
+    return people.find((person) => `${person.source_type}: ${person.label}` === selectedPerson);
+  }
+
+  function validatePassword() {
+    const errors: string[] = [];
+    if (password.length < 12) errors.push("Minimo 12 caracteres");
+    if (!/[A-Z]/.test(password)) errors.push("Al menos una mayuscula");
+    if (!/[a-z]/.test(password)) errors.push("Al menos una minuscula");
+    if (!/\d/.test(password)) errors.push("Al menos un numero");
+    if (!/[^A-Za-z0-9]/.test(password)) errors.push("Al menos un simbolo");
+    return errors;
+  }
+
+  async function createUser() {
+    const person = selectedPersonData();
+    const errors = validatePassword();
+    if (!username.trim()) {
+      setMessage("Debe escribir un usuario.");
+      return;
+    }
+    if (!person) {
+      setMessage("Debe seleccionar empleado o proveedor base.");
+      return;
+    }
+    if (errors.length) {
+      setMessage(`Contraseña incompleta: ${errors.join(", ")}.`);
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      await apiRequest("/admin/users", {
+        method: "POST",
+        session,
+        body: {
+          usuario: username.trim(),
+          password,
+          rol: role || "user",
+          activo: active,
+          source_type: person.source_type,
+          source_id: person.source_id,
+          nombre: person.nombre || person.label,
+          apellido: person.apellido || "",
+          email: person.email || "",
+          permissions: createPermissions
+        }
+      });
+      setPassword("");
+      setCreatePermissions({});
+      setMessage(`Usuario ${username.trim()} creado.`);
+      await loadAdminData(username.trim());
+      setTab("permissions");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo crear usuario.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function savePermissions() {
+    if (!selectedUser) {
+      setMessage("Seleccione un usuario.");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      await apiRequest(`/admin/users/${encodeURIComponent(selectedUser)}/permissions`, {
+        method: "PUT",
+        session,
+        body: { permissions }
+      });
+      setMessage(`Permisos guardados para ${selectedUser}.`);
+      await loadAdminData(selectedUser);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudieron guardar permisos.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!isAdminSession(session)) {
+    return <Text style={styles.empty}>Solo usuarios admin/master pueden administrar usuarios.</Text>;
+  }
+
+  return (
+    <View style={styles.adminShell}>
+      <View style={styles.segmentedControl}>
+        <Pressable style={[styles.segmentedOption, tab === "permissions" && styles.segmentedOptionActive]} onPress={() => setTab("permissions")}>
+          <Text style={[styles.segmentedText, tab === "permissions" && styles.segmentedTextActive]}>Permisos</Text>
+        </Pressable>
+        <Pressable style={[styles.segmentedOption, tab === "create" && styles.segmentedOptionActive]} onPress={() => setTab("create")}>
+          <Text style={[styles.segmentedText, tab === "create" && styles.segmentedTextActive]}>Crear usuario</Text>
+        </Pressable>
+      </View>
+
+      {busy ? <ActivityIndicator color={BLUE} style={styles.loader} /> : null}
+      {message ? <Text style={message.includes("guard") || message.includes("creado") || message.includes("cargados") ? styles.helperText : styles.error}>{message}</Text> : null}
+
+      {tab === "permissions" ? (
+        <>
+          <View style={styles.adminPanel}>
+            <SelectField
+              label="Usuario existente"
+              value={selectedUser}
+              options={userOptions}
+              onChange={(value) => {
+                setSelectedUser(value);
+                loadUserPermissions(value);
+              }}
+            />
+            <View style={styles.inlineFields}>
+              <Pressable style={styles.secondaryButtonCompact} onPress={() => loadAdminData(selectedUser)}>
+                <Text style={styles.secondaryButtonText}>Recargar</Text>
+              </Pressable>
+              <Pressable style={styles.actionButtonCompact} onPress={savePermissions}>
+                <Text style={styles.actionButtonText}>Guardar permisos</Text>
+              </Pressable>
+            </View>
+          </View>
+          <PermissionMatrix
+            value={permissions}
+            onToggle={(moduleCode, actionCode) => togglePermission(setPermissions, moduleCode, actionCode)}
+          />
+        </>
+      ) : (
+        <>
+          <View style={styles.adminPanel}>
+            <SelectField label="Persona base" value={selectedPerson} options={personOptions} onChange={setSelectedPerson} />
+            <Text style={styles.label}>Usuario</Text>
+            <TextInput autoCapitalize="none" style={styles.input} value={username} onChangeText={setUsername} placeholder="usuario" />
+            <Text style={styles.label}>Contraseña</Text>
+            <TextInput autoCapitalize="none" secureTextEntry style={styles.input} value={password} onChangeText={setPassword} placeholder="Minimo 12 caracteres" />
+            <Text style={styles.helperText}>{(meta?.password_rules || []).join(" | ")}</Text>
+            <SelectField label="Rol base" value={role} options={meta?.roles || ["user", "hr", "finance", "accounting", "admin", "master"]} onChange={setRole} />
+            <View style={styles.rememberRow}>
+              <Text style={styles.rememberText}>Usuario activo</Text>
+              <Switch value={active} onValueChange={setActive} trackColor={{ true: BLUE }} />
+            </View>
+            <PrimaryButton label="Crear usuario" loading={busy} onPress={createUser} />
+          </View>
+          <PermissionMatrix
+            value={createPermissions}
+            onToggle={(moduleCode, actionCode) => togglePermission(setCreatePermissions, moduleCode, actionCode)}
+          />
+        </>
+      )}
+    </View>
+  );
+}
+
 function previousPayrollPeriod() {
   const today = new Date();
   const closed = new Date(today.getFullYear(), today.getMonth() - 1, 1);
@@ -13420,7 +13769,7 @@ function TaxScenarioPlannerMobile({ session }: { session: NonNullable<ReturnType
   const [year, setYear] = useState(String(today.getFullYear()));
   const [month, setMonth] = useState(String(today.getMonth() + 1));
   const [sourceCompany, setSourceCompany] = useState(session.company_code || DEFAULT_COMPANY.code);
-  const [targetCompany, setTargetCompany] = useState(sourceCompany === "MMS-CR" ? "MSL-CR" : "MMS-CR");
+  const [targetCompany, setTargetCompany] = useState(sourceCompany === "MCI-CR" ? "MSL-CR" : "MCI-CR");
   const [sourcePymeYear, setSourcePymeYear] = useState("4");
   const [targetPymeYear, setTargetPymeYear] = useState("1");
   const [clientMoves, setClientMoves] = useState<Record<string, unknown>[]>([]);
@@ -15679,7 +16028,48 @@ const styles = StyleSheet.create({
   actionButton: { backgroundColor: BLUE, borderRadius: 6, paddingHorizontal: 12, paddingVertical: 10 },
   actionButtonCompact: { alignItems: "center", backgroundColor: BLUE, borderRadius: 6, paddingHorizontal: 12, paddingVertical: 8 },
   actionButtonText: { color: "white", fontSize: 12, fontWeight: "800" },
+  adminMatrix: { gap: 10, marginTop: 12 },
+  adminModuleCard: {
+    backgroundColor: "white",
+    borderColor: BORDER,
+    borderRadius: 8,
+    borderWidth: 1,
+    padding: 12
+  },
+  adminModuleTitle: { color: BLUE, fontSize: 15, fontWeight: "900", marginBottom: 10 },
+  adminPanel: {
+    backgroundColor: "#F8FAFC",
+    borderColor: BORDER,
+    borderRadius: 8,
+    borderWidth: 1,
+    marginTop: 12,
+    padding: 12
+  },
+  adminPermissionGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  adminPermissionPill: {
+    backgroundColor: "#F8FAFC",
+    borderColor: BORDER,
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 8
+  },
+  adminPermissionPillActive: { backgroundColor: BLUE, borderColor: BLUE },
+  adminPermissionText: { color: "#344054", fontSize: 12, fontWeight: "800" },
+  adminPermissionTextActive: { color: "white" },
+  adminShell: { marginTop: 4 },
   commercialStatusRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 10 },
+  companyChip: {
+    borderColor: "rgba(255,255,255,0.45)",
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 7
+  },
+  companyChipActive: { backgroundColor: "white", borderColor: "white" },
+  companyChipText: { color: "white", fontSize: 12, fontWeight: "900" },
+  companyChipTextActive: { color: BLUE },
+  companySwitchRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, paddingHorizontal: 14, paddingTop: 10 },
   statusChip: {
     backgroundColor: "white",
     borderColor: BORDER,

@@ -8,6 +8,12 @@ from resource_utils import resource_path
 from Modulos.Comercial.date_utils import to_long_english_date
 
 
+def _is_mci(data: dict) -> bool:
+    company_code = str(data.get("company_code") or "").upper()
+    company_name = str(data.get("company_name") or "").upper()
+    return company_code == "MCI-CR" or "MARINE CLAIMS" in company_name
+
+
 # ============================================================
 # ASSETS PATH — BLINDADO TOTAL (DEV / EXE / PROGRAM FILES)
 # ============================================================
@@ -125,9 +131,15 @@ def export_cotizacion_word(data: dict, output_path: str):
             width=Inches(1.8)
         )
 
-    sig.add_run("\nDiana Quirós Benambourg\n")
-    sig.add_run("Business Manager\n")
-    sig.add_run("Marine Surveyors & Logistics Group SRL")
+    if _is_mci(data):
+        sig.add_run("\nMsc. Diana Quiros Benambourg\n")
+        sig.add_run("Business Manager\n").bold = True
+        sig.add_run("MSL 2.0\n").bold = True
+        sig.add_run("MARINE CLAIMS & RISK INTELLIGENCE").bold = True
+    else:
+        sig.add_run("\nDiana Quirós Benambourg\n")
+        sig.add_run("Business Manager\n")
+        sig.add_run("Marine Surveyors & Logistics Group SRL")
 
     # ==================================================
     # FOOTER

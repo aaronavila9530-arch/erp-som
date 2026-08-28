@@ -14,6 +14,8 @@ from Modulos.Comercial.popup.popup_nueva_cotizacion import PopupNuevaCotizacion
 from Modulos.Comercial.date_utils import to_long_english_date
 from api_client import (
     get_comercial_cotizaciones_api,
+    get_comercial_cotizacion_api,
+    download_comercial_cotizacion_export_api,
     delete_comercial_cotizacion_api,
     put_comercial_cotizacion_api
 )
@@ -264,6 +266,10 @@ class ComercialCotizacionesUI(ttk.Frame):
         acciones_menu.add_command(label="Aprobar", command=self._aprobar)
         acciones_menu.add_command(label="Cancelar", command=self._cancelar)
         acciones_menu.add_separator()
+        acciones_menu.add_command(label="Editar texto", command=self._editar_texto)
+        acciones_menu.add_command(label="Exportar Word", command=lambda: self._exportar_cotizacion("word"))
+        acciones_menu.add_command(label="Exportar PDF", command=lambda: self._exportar_cotizacion("pdf"))
+        acciones_menu.add_separator()
         acciones_menu.add_command(label="Eliminar", command=self._eliminar)
 
         acciones_btn["menu"] = acciones_menu
@@ -480,6 +486,19 @@ class ComercialCotizacionesUI(ttk.Frame):
     # =========================================================
     # ACTIONS
     # =========================================================
+    def _selected_cotizacion_id(self, title="Cotizaciones"):
+        sel = self.tree.selection()
+        if not sel:
+            messagebox.showwarning(title, "Seleccione una cotización")
+            return None
+
+        values = self.tree.item(sel[0])["values"]
+        if not values:
+            messagebox.showwarning(title, "Seleccione una cotización válida")
+            return None
+
+        return values[0]
+
     def _nueva(self):
         PopupNuevaCotizacion(self)
 
@@ -585,6 +604,96 @@ class ComercialCotizacionesUI(ttk.Frame):
 
         except Exception as e:
             messagebox.showerror("Cancelar", str(e))
+
+    def _editar_texto(self):
+        cotizacion_id = self._selected_cotizacion_id("Editar texto")
+        if not cotizacion_id:
+            return
+
+        try:
+            data = get_comercial_cotizacion_api(cotizacion_id)
+        except Exception as e:
+            messagebox.showerror("Editar texto", str(e))
+            return
+
+        popup = tk.Toplevel(self)
+        popup.title(f"Editar texto cotización {data.get('quotation_number') or cotizacion_id}")
+        popup.geometry("900x620")
+        popup.transient(self)
+        popup.grab_set()
+        popup.resizable(True, True)
+
+        header = ttk.Frame(popup)
+        header.pack(fill="x", padx=12, pady=(10, 4))
+
+        ttk.Label(
+            header,
+            text=f"{data.get('quotation_number') or ''} | {data.get('cliente') or ''}",
+            font=("Segoe UI", 11, "bold")
+        ).pack(anchor="w")
+
+        ttk.Label(
+            header,
+            text="Este texto queda guardado y se usa cada vez que exportes la cotización.",
+            foreground="#555555"
+        ).pack(anchor="w", pady=(2, 0))
+
+        frame = ttk.Frame(popup)
+        frame.pack(fill="both", expand=True, padx=12, pady=8)
+
+        text = tk.Text(frame, wrap="word", font=("Segoe UI", 10), undo=True)
+        ysb = ttk.Scrollbar(frame, orient="vertical", command=text.yview)
+        text.configure(yscrollcommand=ysb.set)
+        text.grid(row=0, column=0, sticky="nsew")
+        ysb.grid(row=0, column=1, sticky="ns")
+        frame.rowconfigure(0, weight=1)
+        frame.columnconfigure(0, weight=1)
+
+        text.insert("1.0", data.get("texto_cotizacion") or data.get("texto_exportable") or "")
+
+        footer = ttk.Frame(popup)
+        footer.pack(fill="x", padx=12, pady=(0, 12))
+
+        def save_text():
+            nuevo_texto = text.get("1.0", "end").strip()
+            if not nuevo_texto:
+                messagebox.showwarning("Editar texto", "El texto no puede quedar vacío")
+                return
+
+            try:
+                put_comercial_cotizacion_api(
+                    cotizacion_id,
+                    {"texto_cotizacion": nuevo_texto}
+                )
+                popup.destroy()
+                self._buscar()
+                messagebox.showinfo("Editar texto", "Texto guardado correctamente")
+            except Exception as exc:
+                messagebox.showerror("Editar texto", str(exc))
+
+        ttk.Button(footer, text="Cancelar", command=popup.destroy).pack(side="right", padx=4)
+        ttk.Button(footer, text="Guardar texto", command=save_text).pack(side="right", padx=4)
+
+    def _exportar_cotizacion(self, formato: str):
+        cotizacion_id = self._selected_cotizacion_id("Exportar cotización")
+        if not cotizacion_id:
+            return
+
+        ext = ".docx" if formato == "word" else ".pdf"
+        label = "Word" if formato == "word" else "PDF"
+
+        path = filedialog.asksaveasfilename(
+            defaultextension=ext,
+            filetypes=[(label, f"*{ext}")]
+        )
+        if not path:
+            return
+
+        try:
+            download_comercial_cotizacion_export_api(cotizacion_id, formato, path)
+            messagebox.showinfo("Exportar cotización", f"{label} generado correctamente")
+        except Exception as e:
+            messagebox.showerror("Exportar cotización", str(e))
 
 
     def _exportar(self):

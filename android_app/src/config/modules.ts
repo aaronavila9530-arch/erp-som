@@ -602,6 +602,13 @@ export const ERP_MODULES: AppModule[] = [
     sections: [
       { key: "portia-chat", label: "Consultas", endpoint: "/portia/suggestions" }
     ]
+  },
+  {
+    code: "admin_users",
+    label: "Admin",
+    sections: [
+      { key: "user-admin", label: "Usuarios y permisos" }
+    ]
   }
 ];
 
@@ -612,7 +619,7 @@ export function getAllowedModules(allowedCodes: string[], role = "") {
 
   const modules = ERP_MODULES.filter((module) => {
     if (module.code === "qa_som") return true;
-    if (module.code === "portia") return canUsePortia;
+    if (module.code === "portia") return canUsePortia || allowed.has("portia");
     return allowed.has(module.code);
   });
 

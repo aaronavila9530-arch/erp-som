@@ -16,6 +16,8 @@ from psycopg2.extras import Json, RealDictCursor
 from pydantic import BaseModel
 
 from database import get_db
+from services.employee_payee_rules import is_employee_payee
+from services.tenanting import company_code as normalize_company_code
 
 
 router = APIRouter(prefix="/accounting/tax", tags=["Accounting Tax Costa Rica"])
@@ -39,6 +41,7 @@ def _ensure_schema(conn):
         cur.execute("""
             CREATE TABLE IF NOT EXISTS tax_electronic_documents (
                 id BIGSERIAL PRIMARY KEY,
+                company_code VARCHAR(30) NOT NULL DEFAULT 'MSL-CR',
                 direction VARCHAR(10) NOT NULL CHECK(direction IN ('SALE','PURCHASE')),
                 document_type VARCHAR(20) NOT NULL,
                 document_number TEXT,
@@ -70,12 +73,21 @@ def _ensure_schema(conn):
                 created_by TEXT,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                UNIQUE(direction, source_table, source_id)
+                UNIQUE(company_code, direction, source_table, source_id)
             )
         """)
         cur.execute("DROP INDEX IF EXISTS uq_tax_document_key")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_tax_document_key ON tax_electronic_documents(direction,electronic_key) WHERE electronic_key IS NOT NULL")
-        cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_tax_document_hash ON tax_electronic_documents(direction,xml_hash) WHERE xml_hash IS NOT NULL")
+        cur.execute("ALTER TABLE tax_electronic_documents ADD COLUMN IF NOT EXISTS company_code VARCHAR(30) NOT NULL DEFAULT 'MSL-CR'")
+        cur.execute("ALTER TABLE tax_electronic_documents DROP CONSTRAINT IF EXISTS tax_electronic_documents_direction_source_table_source_id_key")
+        cur.execute("ALTER TABLE tax_electronic_documents DROP CONSTRAINT IF EXISTS tax_electronic_documents_company_code_direction_source_table_sour_key")
+        cur.execute("""
+            ALTER TABLE tax_electronic_documents
+            ADD CONSTRAINT tax_electronic_documents_company_code_direction_source_table_sour_key
+            UNIQUE(company_code, direction, source_table, source_id)
+        """)
+        cur.execute("DROP INDEX IF EXISTS uq_tax_document_hash")
+        cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_tax_document_company_hash ON tax_electronic_documents(company_code,direction,xml_hash) WHERE xml_hash IS NOT NULL")
         cur.execute("ALTER TABLE tax_electronic_documents ADD COLUMN IF NOT EXISTS xml_content BYTEA")
         cur.execute("ALTER TABLE tax_electronic_documents ADD COLUMN IF NOT EXISTS response_xml_content BYTEA")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_tax_documents_period ON tax_electronic_documents(direction,issue_datetime)")
@@ -336,22 +348,23 @@ def _parse_xml(content: bytes) -> dict:
     }
 
 
-def _save_document(cur, direction, data, *, xml_hash=None, xml_path=None, xml_content=None, source_table=None, source_id=None, user=None):
+def _save_document(cur, direction, data, *, xml_hash=None, xml_path=None, xml_content=None, source_table=None, source_id=None, user=None, company_code="MSL-CR"):
+    company = normalize_company_code(company_code)
     cur.execute("""
         INSERT INTO tax_electronic_documents(
-          direction,document_type,document_number,electronic_key,xml_hash,schema_version,
+          company_code,direction,document_type,document_number,electronic_key,xml_hash,schema_version,
           issuer_identification,issuer_name,receiver_identification,receiver_name,economic_activity,
           issue_datetime,currency_code,exchange_rate,subtotal,discount_amount,exempt_amount,tax_amount,total,
           status,hacienda_status,xml_path,xml_content,source_table,source_id,metadata,created_by)
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'PENDING','PENDING',%s,%s,%s,%s,%s,%s)
-        ON CONFLICT(direction,source_table,source_id) DO UPDATE SET
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'PENDING','PENDING',%s,%s,%s,%s,%s,%s)
+        ON CONFLICT(company_code,direction,source_table,source_id) DO UPDATE SET
           document_number=EXCLUDED.document_number,electronic_key=COALESCE(EXCLUDED.electronic_key,tax_electronic_documents.electronic_key),
           issue_datetime=EXCLUDED.issue_datetime,currency_code=EXCLUDED.currency_code,subtotal=EXCLUDED.subtotal,
           tax_amount=EXCLUDED.tax_amount,total=EXCLUDED.total,xml_path=COALESCE(EXCLUDED.xml_path,tax_electronic_documents.xml_path),
           xml_content=COALESCE(EXCLUDED.xml_content,tax_electronic_documents.xml_content),
           updated_at=NOW()
         RETURNING id
-    """, (direction,data["document_type"],data.get("document_number"),data.get("electronic_key"),xml_hash,
+    """, (company,direction,data["document_type"],data.get("document_number"),data.get("electronic_key"),xml_hash,
            data.get("schema_version"),data.get("issuer_identification"),data.get("issuer_name"),
            data.get("receiver_identification"),data.get("receiver_name"),data.get("economic_activity"),
            data.get("issue_datetime"),data.get("currency_code") or "CRC",data.get("exchange_rate") or 1,
@@ -372,23 +385,27 @@ def _save_document(cur, direction, data, *, xml_hash=None, xml_path=None, xml_co
     return document_id
 
 
-def _ensure_purchase_obligation(cur, data, xml_path):
+def _ensure_purchase_obligation(cur, data, xml_path, company_code="MSL-CR"):
+    company = normalize_company_code(company_code)
     reference=data.get("electronic_key") or data.get("document_number")
     if not reference:
         return None
-    cur.execute("SELECT id FROM payment_obligations WHERE reference=%s AND active=TRUE ORDER BY id LIMIT 1",(reference,))
+    cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS company_code VARCHAR(30) NOT NULL DEFAULT 'MSL-CR'")
+    cur.execute("SELECT id FROM payment_obligations WHERE reference=%s AND company_code=%s AND active=TRUE ORDER BY id LIMIT 1",(reference,company))
     existing=cur.fetchone()
     if existing:
         return existing["id"]
+    if is_employee_payee(cur, data.get("issuer_name")):
+        return None
     issue_value=data.get("issue_datetime") or datetime.now()
     issue=issue_value.date() if hasattr(issue_value,"date") else issue_value
     due=issue+timedelta(days=30)
     is_credit=data.get("document_type") in {"NC","NCE"}
     total=-(abs(data.get("total") or 0)) if is_credit else data.get("total") or 0
-    cur.execute("""INSERT INTO payment_obligations(record_type,payee_type,payee_name,obligation_type,reference,
+    cur.execute("""INSERT INTO payment_obligations(company_code,record_type,payee_type,payee_name,obligation_type,reference,
       issue_date,due_date,country,currency,total,balance,status,origin,file_xml,active,notes,created_at,updated_at)
-      VALUES('OBLIGATION','SUPPLIER',%s,%s,%s,%s,%s,'Costa Rica',%s,%s,%s,'PENDING','EMAIL',%s,TRUE,%s,NOW(),NOW()) RETURNING id""",
-                (data.get("issuer_name") or "PROVEEDOR POR VALIDAR","SUPPLIER_CREDIT_NOTE" if is_credit else "SUPPLIER_INVOICE",
+      VALUES(%s,'OBLIGATION','SUPPLIER',%s,%s,%s,%s,%s,'Costa Rica',%s,%s,%s,'PENDING','EMAIL',%s,TRUE,%s,NOW(),NOW()) RETURNING id""",
+                (company,data.get("issuer_name") or "PROVEEDOR POR VALIDAR","SUPPLIER_CREDIT_NOTE" if is_credit else "SUPPLIER_INVOICE",
                  reference,issue,due,data.get("currency_code") or "CRC",total,total,xml_path,"Importado automáticamente desde correo fiscal"))
     return cur.fetchone()["id"]
 
@@ -551,8 +568,16 @@ def sync_tax_documents(conn=Depends(get_db)):
 
 
 @router.post("/documents/upload-xml")
-async def upload_tax_xml(direction: str = Form(...), user: str = Form("ERP_USER"), file: UploadFile = File(...), conn=Depends(get_db)):
+async def upload_tax_xml(
+    direction: str = Form(...),
+    user: str = Form("ERP_USER"),
+    company_code: str | None = Form(None),
+    file: UploadFile = File(...),
+    conn=Depends(get_db),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+):
     _ensure_schema(conn)
+    company = normalize_company_code(company_code, x_company_code)
     direction=direction.upper()
     if direction not in {"SALE","PURCHASE"}: raise HTTPException(400,"direction debe ser SALE o PURCHASE")
     content=await file.read()
@@ -566,19 +591,19 @@ async def upload_tax_xml(direction: str = Form(...), user: str = Form("ERP_USER"
     path.write_bytes(content)
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT id,source_table,source_id,xml_hash FROM tax_electronic_documents WHERE direction=%s AND (xml_hash=%s OR (electronic_key=%s AND %s IS NOT NULL))",(direction,digest,data.get("electronic_key"),data.get("electronic_key")))
+            cur.execute("SELECT id,source_table,source_id,xml_hash FROM tax_electronic_documents WHERE company_code=%s AND direction=%s AND (xml_hash=%s OR (electronic_key=%s AND %s IS NOT NULL))",(company,direction,digest,data.get("electronic_key"),data.get("electronic_key")))
             duplicate=cur.fetchone()
             if duplicate and duplicate.get("xml_hash"):
                 raise HTTPException(409,f"Documento duplicado; registro fiscal {duplicate['id']}")
             if duplicate:
                 doc_id=_save_document(cur,direction,data,xml_hash=digest,xml_path=str(path),xml_content=content,
-                                      source_table=duplicate["source_table"],source_id=duplicate["source_id"],user=user)
+                                      source_table=duplicate["source_table"],source_id=duplicate["source_id"],user=user,company_code=company)
                 cur.execute("UPDATE tax_electronic_documents SET xml_hash=%s,schema_version=%s,issuer_identification=%s,issuer_name=%s,receiver_identification=%s,receiver_name=%s,economic_activity=%s,discount_amount=%s,exempt_amount=%s,updated_at=NOW() WHERE id=%s",
                             (digest,data.get("schema_version"),data.get("issuer_identification"),data.get("issuer_name"),data.get("receiver_identification"),data.get("receiver_name"),data.get("economic_activity"),data.get("discount_amount",0),data.get("exempt_amount",0),doc_id))
             else:
-                doc_id=_save_document(cur,direction,data,xml_hash=digest,xml_path=str(path),xml_content=content,source_table="xml_upload",source_id=digest,user=user)
+                doc_id=_save_document(cur,direction,data,xml_hash=digest,xml_path=str(path),xml_content=content,source_table="xml_upload",source_id=digest,user=user,company_code=company)
             if direction=="PURCHASE":
-                _ensure_purchase_obligation(cur,data,str(path))
+                _ensure_purchase_obligation(cur,data,str(path),company)
         conn.commit()
     except HTTPException:
         conn.rollback(); path.unlink(missing_ok=True); raise

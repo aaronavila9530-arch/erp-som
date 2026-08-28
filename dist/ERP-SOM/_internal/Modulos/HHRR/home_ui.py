@@ -53,12 +53,13 @@ class HHRRHomeUI(ttk.Frame):
         usuario = (self.usuario or "").lower()
 
         # Surveyors → acceso limitado
-        if usuario in ("surveyor01", "surveyor02"):
+        if usuario in ("surveyor01", "surveyor02", "surveyor03"):
 
             acciones = [
                 ("Colillas", "paylips"),
                 ("Solicitudes", "solicitudes"),
                 ("Horas", "horas"),
+                ("Red medica", "red_medica"),
                 ("Políticas", "politicas"),
             ]
 
@@ -71,10 +72,13 @@ class HHRRHomeUI(ttk.Frame):
                 ("Horas", "horas"),
                 ("Empleados", "empleados"),
                 ("Calculadora salarial", "calculadora_salarial"),
+                ("Red medica", "red_medica"),
                 ("Políticas", "politicas"),
             ]
 
         for texto, key in acciones:
+            if not self.callbacks.get(key):
+                continue
             ttk.Button(
                 top_bar,
                 text=texto,
@@ -143,11 +147,13 @@ class HHRRHomeUI(ttk.Frame):
         # ---------------------------------------------------------
         usuario = (self.usuario or "").lower()
 
-        if self.rol in ("admin", "master") and usuario not in ("surveyor01", "surveyor02"):
+        if self.callbacks.get("publicar_noticia") or (
+            self.rol in ("admin", "master") and usuario not in ("surveyor01", "surveyor02", "surveyor03")
+        ):
             ttk.Button(
                 cont_news,
                 text="Publicar noticia",
-                command=self._publicar_noticia
+                command=self.callbacks.get("publicar_noticia") or self._publicar_noticia
             ).grid(row=1, column=0, pady=(6, 8))
 
     # =========================================================

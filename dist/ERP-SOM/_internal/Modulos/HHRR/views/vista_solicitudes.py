@@ -35,7 +35,7 @@ class VistaSolicitudesHHRR(ttk.Frame):
 
         self.usuario = (usuario or "").strip().lower()   # 🔥 FIX
         self.rol_usuario = (rol_usuario or "").lower().strip()
-        self.read_only = self.usuario in ("surveyor01", "surveyor02")
+        self.read_only = self.usuario in ("surveyor01", "surveyor02", "surveyor03")
         self.on_back = on_back
 
         self._raw_rows = []

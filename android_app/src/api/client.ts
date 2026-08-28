@@ -7,6 +7,7 @@ export type Session = {
   company_code?: string;
   company_name?: string;
   modules: Array<{ label: string; code: string }>;
+  permissions?: Record<string, string[]>;
 };
 
 export type LoginResponse =

@@ -255,19 +255,48 @@ class ReportRouter:
         except Exception:
             pass
 
-        # productos dinámicos 1..5
+        # productos dinamicos 1..5
         try:
             for idx, row in enumerate(getattr(form, "hold_rows", []), start=1):
-                hold_key = f"product_hold_{idx}"
-                ton_key = f"product_tonnage_{idx}"
+                product_key = f"hold{idx}_product"
+                hold_key = f"hold{idx}_hold"
+                ton_key = f"hold{idx}_tonnage"
+
+                if "product" in row:
+                    row["product"].delete(0, "end")
+                    row["product"].insert(0, str(payload.get(product_key) or ""))
 
                 if "hold" in row:
                     row["hold"].delete(0, "end")
-                    row["hold"].insert(0, str(payload.get(hold_key) or ""))
+                    row["hold"].insert(0, str(payload.get(hold_key) or idx))
 
                 if "tonnage" in row:
                     row["tonnage"].delete(0, "end")
                     row["tonnage"].insert(0, str(payload.get(ton_key) or ""))
+        except Exception:
+            pass
+
+        # puntos de muestreo dinamicos 1..5
+        try:
+            for idx, sample in enumerate(getattr(form, "sampling_points", []), start=1):
+                hold_entry = sample.get("hold")
+                if hold_entry:
+                    hold_entry.delete(0, "end")
+                    hold_entry.insert(0, str(payload.get(f"sample{idx}_hold") or ""))
+
+                points = sample.get("points") or {}
+                mapping = {
+                    "Proa Babor": "proa_babor",
+                    "Proa Estribor": "proa_estribor",
+                    "Centro": "centro",
+                    "Popa Babor": "popa_babor",
+                    "Popa Estribor": "popa_estribor",
+                }
+                for label, key in mapping.items():
+                    entry = points.get(label)
+                    if entry:
+                        entry.delete(0, "end")
+                        entry.insert(0, str(payload.get(f"sample{idx}_{key}") or ""))
         except Exception:
             pass
 

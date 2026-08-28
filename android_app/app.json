@@ -2,7 +2,7 @@
   "expo": {
     "name": "ERP SOM",
     "slug": "erp-som-android",
-    "version": "1.7.25",
+    "version": "1.7.27",
     "orientation": "portrait",
     "scheme": "erpsom",
     "userInterfaceStyle": "light",
@@ -15,7 +15,7 @@
     },
     "android": {
       "package": "com.msltech.erpsom",
-      "versionCode": 1725,
+      "versionCode": 1727,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#003A75"

@@ -22,12 +22,20 @@ from services.employee_payee_rules import (
     deactivate_employee_itp_obligations,
     is_employee_payee,
 )
+from services.tenanting import company_code as normalize_company_code
 
 
 router = APIRouter(
     prefix="/invoice-to-pay",
     tags=["Finance - Invoice to Pay"]
 )
+
+
+def _ensure_company_column(cur):
+    cur.execute("""
+        ALTER TABLE payment_obligations
+        ADD COLUMN IF NOT EXISTS company_code VARCHAR(30) NOT NULL DEFAULT 'MSL-CR'
+    """)
 
 # ============================================================
 # RBAC GUARD
@@ -244,17 +252,20 @@ def search_invoice_to_pay(
     issue_date_to: Optional[date] = Query(None),
     payment_date_from: Optional[date] = Query(None),
     payment_date_to: Optional[date] = Query(None),
-    conn=Depends(get_db)
+    conn=Depends(get_db),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
 ):
     cur = conn.cursor(cursor_factory=RealDictCursor)
+    company = normalize_company_code(header_value=x_company_code)
+    _ensure_company_column(cur)
 
     # 🔁 Sync servicios → Invoice To Pay
     _sync_servicios_to_itp(cur)
     deactivate_employee_itp_obligations(cur)
     conn.commit()
 
-    filters = ["COALESCE(active, TRUE) = TRUE"]
-    params = []
+    filters = ["COALESCE(active, TRUE) = TRUE", "company_code = %s"]
+    params = [company]
 
     # =================
     # FILTRO POR ESTADO
@@ -805,7 +816,8 @@ def create_manual_obligation(
 @router.post("/upload/xml")
 def upload_invoice_xml(
     file: UploadFile = File(...),
-    conn=Depends(get_db)
+    conn=Depends(get_db),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
 ):
     from xml.etree import ElementTree as ET
     from datetime import datetime, date, timedelta
@@ -813,6 +825,8 @@ def upload_invoice_xml(
     import shutil
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
+    company = normalize_company_code(header_value=x_company_code)
+    _ensure_company_column(cur)
 
     # ============================================================
     # GUARDAR ARCHIVO
@@ -948,6 +962,7 @@ def upload_invoice_xml(
 
         cur.execute("""
             INSERT INTO payment_obligations (
+                company_code,
                 record_type,
                 payee_type,
                 payee_id,
@@ -969,6 +984,7 @@ def upload_invoice_xml(
                 updated_at
             )
             VALUES (
+                %s,
                 'OBLIGATION',
                 'SUPPLIER',
                 NULL,
@@ -990,6 +1006,7 @@ def upload_invoice_xml(
                 NOW()
             )
         """, (
+            company,
             emisor,
             obligation_type,
             clave,

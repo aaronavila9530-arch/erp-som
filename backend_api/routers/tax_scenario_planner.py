@@ -27,7 +27,7 @@ CORPORATE_TAX_BRACKETS_ANNUAL = [
 class ClientMove(BaseModel):
     client_name: str
     from_company: str = "MSL-CR"
-    to_company: str = "MMS-CR"
+    to_company: str = "MCI-CR"
     projected_amount_crc: float | None = None
 
 
@@ -36,7 +36,7 @@ class ExpenseMove(BaseModel):
     account_name: str | None = None
     source_type: str | None = None
     from_company: str = "MSL-CR"
-    to_company: str = "MMS-CR"
+    to_company: str = "MCI-CR"
     projected_amount_crc: float | None = None
 
 
@@ -82,7 +82,7 @@ class TaxScenarioRequest(BaseModel):
     year: int = Field(default_factory=lambda: date.today().year)
     through_month: int = Field(default_factory=lambda: date.today().month, ge=1, le=12)
     source_company: str = "MSL-CR"
-    target_company: str = "MMS-CR"
+    target_company: str = "MCI-CR"
     company_options: list[CompanyOption] = Field(default_factory=list)
     client_moves: list[ClientMove] = Field(default_factory=list)
     expense_moves: list[ExpenseMove] = Field(default_factory=list)

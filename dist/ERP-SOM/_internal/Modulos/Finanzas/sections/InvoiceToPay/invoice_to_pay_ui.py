@@ -90,6 +90,7 @@ class InvoiceToPayUI(tk.Frame):
 
         ttk.Button(filter_frame, text="Buscar", command=self._on_search).grid(row=0, column=4, padx=10)
         ttk.Button(filter_frame, text="Limpiar", command=self._on_clear).grid(row=0, column=5)
+        ttk.Button(filter_frame, text="Obligaciones quincenales", command=self._on_biweekly_obligations).grid(row=0, column=6, padx=10)
 
         # ================= CONTENEDOR LAZY (OCULTO) =================
         self.lazy_container = tk.Frame(self)
@@ -136,6 +137,7 @@ class InvoiceToPayUI(tk.Frame):
 
         ttk.Button(action_frame, text="➕ Registrar obligación manual", command=self._on_manual_obligation).pack(side="left", padx=5)
         ttk.Button(action_frame, text="📄 Cargar factura PDF / XML", command=self._on_upload_invoice).pack(side="left", padx=5)
+        ttk.Button(action_frame, text="Obligaciones quincenales", command=self._on_biweekly_obligations).pack(side="left", padx=5)
         ttk.Button(action_frame, text="💰 Aplicar pago", command=self._on_apply_payment).pack(side="right", padx=5)
         ttk.Button(action_frame, text="🗑️ Eliminar", command=self._on_delete_obligation).pack(side="right", padx=5)
 
@@ -374,6 +376,13 @@ class InvoiceToPayUI(tk.Frame):
             self,
             on_success=self._on_search
         )
+
+    def _on_biweekly_obligations(self):
+        from Modulos.Finanzas.sections.InvoiceToPay.popup_obligaciones_quincenales import (
+            PopupObligacionesQuincenales
+        )
+
+        PopupObligacionesQuincenales(self)
 
     def _on_clear(self):
         self.cmb_obligation.set("")

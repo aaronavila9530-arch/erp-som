@@ -30,6 +30,12 @@ def _asset(name: str) -> str | None:
     return None
 
 
+def _is_mci(data: dict) -> bool:
+    company_code = str(data.get("company_code") or "").upper()
+    company_name = str(data.get("company_name") or "").upper()
+    return company_code == "MCI-CR" or "MARINE CLAIMS" in company_name
+
+
 def export_cotizacion_word(data: dict, output_path: str):
     doc = Document()
     section = doc.sections[0]
@@ -64,9 +70,15 @@ def export_cotizacion_word(data: dict, output_path: str):
     if signature:
         sig.add_run().add_picture(signature, width=Inches(1.8))
 
-    sig.add_run("\nDiana Quiros Benambourg\n")
-    sig.add_run("Business Manager\n")
-    sig.add_run("Marine Surveyors & Logistics Group SRL")
+    if _is_mci(data):
+        sig.add_run("\nMsc. Diana Quiros Benambourg\n")
+        sig.add_run("Business Manager\n").bold = True
+        sig.add_run("MSL 2.0\n").bold = True
+        sig.add_run("MARINE CLAIMS & RISK INTELLIGENCE").bold = True
+    else:
+        sig.add_run("\nDiana Quiros Benambourg\n")
+        sig.add_run("Business Manager\n")
+        sig.add_run("Marine Surveyors & Logistics Group SRL")
 
     footer = section.footer.paragraphs[0]
     footer.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -88,7 +100,7 @@ def export_cotizacion_pdf(data: dict, output_path: str):
     header_y = height - 1.9 * inch
     top_y = header_y - 0.5 * inch
     footer_y = 0.7 * inch
-    signature_block_height = 1.35 * inch
+    signature_block_height = 1.55 * inch
     body_min_y = footer_y + 0.35 * inch
 
     watermark = _asset("watermark.png")
@@ -195,10 +207,18 @@ def export_cotizacion_pdf(data: dict, output_path: str):
     if signature:
         c.drawImage(signature, left, signature_y, width=1.8 * inch, height=0.6 * inch, preserveAspectRatio=True, mask="auto")
 
-    c.setFont("Helvetica-Bold", 10)
-    c.drawString(left, name_y, "Diana Quiros Benambourg")
-    c.setFont("Helvetica", 10)
-    c.drawString(left, title_y, "Business Manager")
-    c.drawString(left, title_y - 12, "MSL MARINE SURVEYORS & LOGISTICS GROUP SRL")
+    if _is_mci(data):
+        c.setFont("Helvetica", 10)
+        c.drawString(left, name_y, "Msc. Diana Quiros Benambourg")
+        c.setFont("Helvetica-Bold", 10)
+        c.drawString(left, title_y, "Business Manager")
+        c.drawString(left, title_y - 12, "MSL 2.0")
+        c.drawString(left, title_y - 24, "MARINE CLAIMS & RISK INTELLIGENCE")
+    else:
+        c.setFont("Helvetica-Bold", 10)
+        c.drawString(left, name_y, "Diana Quiros Benambourg")
+        c.setFont("Helvetica", 10)
+        c.drawString(left, title_y, "Business Manager")
+        c.drawString(left, title_y - 12, "MSL MARINE SURVEYORS & LOGISTICS GROUP SRL")
 
     c.save()

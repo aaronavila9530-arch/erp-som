@@ -2273,6 +2273,71 @@ def get_accounting_iva(
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     try:
+        start = datetime.strptime(period + "-01", "%Y-%m-%d").date()
+        end = start.replace(year=start.year + 1, month=1) if start.month == 12 else start.replace(month=start.month + 1)
+        if company == "MSL-CR":
+            cur.execute("""
+                WITH tax_ranked AS (
+                    SELECT d.*,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY d.direction,
+                                            COALESCE(NULLIF(d.document_number, ''), NULLIF(d.electronic_key, ''), d.source_table || ':' || d.source_id, d.id::text)
+                               ORDER BY
+                                   CASE
+                                       WHEN d.source_table IN ('hacienda_emitted_excel', 'hacienda_acceptance_excel', 'xml_upload') THEN 0
+                                       WHEN d.xml_path IS NOT NULL THEN 1
+                                       WHEN d.source_table IN ('invoicing', 'collections') THEN 2
+                                       WHEN d.source_table = 'payment_obligations' THEN 3
+                                       ELSE 4
+                                   END,
+                                   CASE WHEN COALESCE(d.tax_amount, 0) <> 0 THEN 0 ELSE 1 END,
+                                   d.id DESC
+                           ) AS tax_rank
+                    FROM tax_electronic_documents d
+                    WHERE d.issue_datetime >= %s
+                      AND d.issue_datetime < %s
+                      AND COALESCE(d.issue_datetime::date, CURRENT_DATE) <= CURRENT_DATE
+                      AND (
+                          d.source_table IN ('hacienda_emitted_excel', 'hacienda_acceptance_excel')
+                          OR (
+                              d.direction = 'SALE'
+                              AND COALESCE(d.receiver_identification, '') IN ('3101065618', '3101660512')
+                          )
+                          OR (
+                              d.direction = 'PURCHASE'
+                              AND (
+                                  COALESCE(d.receiver_identification, '') = '3102920372'
+                                  OR UPPER(COALESCE(d.receiver_name, '')) LIKE '%%MSL%%'
+                                  OR UPPER(COALESCE(d.receiver_name, '')) LIKE '%%MARINE SURVEYORS%%'
+                              )
+                          )
+                      )
+                )
+                SELECT direction,
+                       COALESCE(SUM(
+                           CASE
+                               WHEN UPPER(COALESCE(currency_code,'CRC')) IN ('CRC','COLON','COLONES')
+                               THEN tax_amount
+                               ELSE tax_amount * COALESCE(NULLIF(exchange_rate,0),1)
+                           END
+                       ),0) AS tax_crc
+                FROM tax_ranked
+                WHERE tax_rank = 1
+                GROUP BY direction
+            """, (start, end))
+            rows = {r["direction"]: r for r in cur.fetchall()}
+            iva_por_pagar = float(rows.get("SALE", {}).get("tax_crc") or 0)
+            iva_credito = float(rows.get("PURCHASE", {}).get("tax_crc") or 0)
+            if iva_por_pagar or iva_credito:
+                return {
+                    "period": period,
+                    "iva_por_pagar": round(iva_por_pagar, 2),
+                    "iva_credito": round(iva_credito, 2),
+                    "saldo_favor_anterior": 0.0,
+                    "iva_total": round(iva_por_pagar - iva_credito, 2),
+                    "source": "tax_electronic_documents"
+                }
+
         # -------------------------------------------------
         # Helper: IVA por periodo (100% SQL SAFE)
         # -------------------------------------------------

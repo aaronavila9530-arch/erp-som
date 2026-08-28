@@ -32,7 +32,7 @@ class VistaRegistroHoras(ttk.Frame):
 
         self.usuario = usuario
         self.rol = (rol or "").lower()
-        self.read_only = (self.usuario or "").strip().lower() in ("surveyor01", "surveyor02")
+        self.read_only = (self.usuario or "").strip().lower() in ("surveyor01", "surveyor02", "surveyor03")
         self.on_back = on_back
 
         self.page = 1

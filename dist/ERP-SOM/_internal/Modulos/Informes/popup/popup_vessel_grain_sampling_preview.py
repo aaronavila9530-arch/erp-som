@@ -55,6 +55,7 @@ class PopupVesselGrainSamplingPreview(tk.Toplevel):
         canvas.create_window((0, 0), window=self.body, anchor="nw")
 
         self.body.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        self._bind_mousewheel(canvas)
 
         self._sec_header()
         self._sec_main()
@@ -148,11 +149,15 @@ class PopupVesselGrainSamplingPreview(tk.Toplevel):
             prod = ttk.Entry(frm, width=25, state="readonly")
             prod.grid(row=i, column=1, padx=6)
 
-            ttk.Label(frm, text=f"Hold {i} Tonnage").grid(row=i, column=2, sticky="w", padx=6)
-            ton = ttk.Entry(frm, width=15, state="readonly")
-            ton.grid(row=i, column=3, padx=6)
+            ttk.Label(frm, text=f"Hold {i}").grid(row=i, column=2, sticky="w", padx=6)
+            hold = ttk.Entry(frm, width=8, state="readonly")
+            hold.grid(row=i, column=3, padx=6)
 
-            self.hold_entries.append((prod, ton))
+            ttk.Label(frm, text=f"Hold {i} Tonnage").grid(row=i, column=4, sticky="w", padx=6)
+            ton = ttk.Entry(frm, width=15, state="readonly")
+            ton.grid(row=i, column=5, padx=6)
+
+            self.hold_entries.append((prod, hold, ton))
 
     # =========================================================
     # SAMPLING (3 BLOQUES)
@@ -173,7 +178,7 @@ class PopupVesselGrainSamplingPreview(tk.Toplevel):
             "popa_estribor"
         ]
 
-        for s in range(1, 4):
+        for s in range(1, 6):
 
             ttk.Label(frm, text=f"Sample {s}", font=("Segoe UI", 10, "bold")).grid(row=(s-1)*7, column=0, pady=(10,2))
 
@@ -225,8 +230,9 @@ class PopupVesselGrainSamplingPreview(tk.Toplevel):
             if attr.startswith("f_"):
                 getattr(self, attr).configure(state="normal")
 
-        for prod, ton in self.hold_entries:
+        for prod, hold, ton in self.hold_entries:
             prod.configure(state="normal")
+            hold.configure(state="normal")
             ton.configure(state="normal")
 
         for sample in self.sample_entries:
@@ -250,8 +256,9 @@ class PopupVesselGrainSamplingPreview(tk.Toplevel):
                 payload[key] = getattr(self, attr).get().strip()
 
         # holds
-        for i, (prod, ton) in enumerate(self.hold_entries, start=1):
+        for i, (prod, hold, ton) in enumerate(self.hold_entries, start=1):
             payload[f"hold{i}_product"] = prod.get().strip()
+            payload[f"hold{i}_hold"] = hold.get().strip()
             payload[f"hold{i}_tonnage"] = ton.get().strip()
 
         # sampling
@@ -284,11 +291,16 @@ class PopupVesselGrainSamplingPreview(tk.Toplevel):
                 e.configure(state="readonly")
 
         # holds
-        for i, (prod, ton) in enumerate(self.hold_entries, start=1):
+        for i, (prod, hold, ton) in enumerate(self.hold_entries, start=1):
             prod.configure(state="normal")
             prod.delete(0, "end")
             prod.insert(0, self.report.get(f"hold{i}_product") or "")
             prod.configure(state="readonly")
+
+            hold.configure(state="normal")
+            hold.delete(0, "end")
+            hold.insert(0, self.report.get(f"hold{i}_hold") or str(i))
+            hold.configure(state="readonly")
 
             ton.configure(state="normal")
             ton.delete(0, "end")
@@ -319,3 +331,17 @@ class PopupVesselGrainSamplingPreview(tk.Toplevel):
             self._fill()
         except Exception as e:
             messagebox.showerror("Error", f"Error loading report:\n{e}")
+
+    def _bind_mousewheel(self, canvas):
+
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        def _bind(_):
+            canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
+        def _unbind(_):
+            canvas.unbind_all("<MouseWheel>")
+
+        self.body.bind("<Enter>", _bind)
+        self.body.bind("<Leave>", _unbind)

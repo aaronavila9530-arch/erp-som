@@ -159,7 +159,7 @@ class InformesHomeUI(ttk.Frame):
         # -----------------------------------------------------
         calculadora_state = "normal"
 
-        if self.logra_only or (self.usuario or "").lower() in ["surveyor01", "surveyor02"]:
+        if self.logra_only or (self.usuario or "").lower() in ["surveyor01", "surveyor02", "surveyor03"]:
             calculadora_state = "disabled"
 
         self.btn_calculadora = ttk.Button(

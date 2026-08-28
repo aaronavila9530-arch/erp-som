@@ -300,16 +300,19 @@ class GrainSamplingVesselForm(ttk.Frame):
         self.hold_rows = []
 
         for r in range(5):
-            product_lbl = ttk.Label(table, text="MAIZ AMARILLO")
-            product_lbl.grid(row=r + 1, column=0, padx=5)
+            product_entry = ttk.Entry(table, width=25)
+            product_entry.grid(row=r + 1, column=0, padx=5)
+            product_entry.insert(0, "MAIZ AMARILLO")
 
             hold_entry = ttk.Entry(table, width=10)
             hold_entry.grid(row=r + 1, column=1, padx=5)
+            hold_entry.insert(0, str(r + 1))
 
             ton_entry = ttk.Entry(table, width=15)
             ton_entry.grid(row=r + 1, column=2, padx=5)
 
             self.hold_rows.append({
+                "product": product_entry,
                 "hold": hold_entry,
                 "tonnage": ton_entry
             })
@@ -363,7 +366,7 @@ class GrainSamplingVesselForm(ttk.Frame):
             "Popa Estribor"
         ]
 
-        for i in range(3):
+        for i in range(5):
             row_base = 5 + (i * 6)
 
             ttk.Label(frm, text=f"Bodega Nº").grid(row=row_base, column=0, sticky="w", padx=5)
@@ -458,12 +461,13 @@ class GrainSamplingVesselForm(ttk.Frame):
 
         for row in self.hold_rows:
             hold_values.append({
-                "product": "MAIZ AMARILLO",
+                "product": row["product"].get(),
+                "hold": row["hold"].get(),
                 "tonnage": row["tonnage"].get()
             })
 
         while len(hold_values) < 5:
-            hold_values.append({"product": None, "tonnage": None})
+            hold_values.append({"product": None, "hold": None, "tonnage": None})
 
         sample_values = []
 
@@ -477,7 +481,7 @@ class GrainSamplingVesselForm(ttk.Frame):
                 "popa_estribor": sp["points"]["Popa Estribor"].get(),
             })
 
-        while len(sample_values) < 3:
+        while len(sample_values) < 5:
             sample_values.append({
                 "hold": None,
                 "proa_babor": None,
@@ -513,14 +517,19 @@ class GrainSamplingVesselForm(ttk.Frame):
             "surveyors_disembark_time": self.times["surveyors_disembark_time"]["get"](),
 
             "hold1_product": hold_values[0]["product"],
+            "hold1_hold": hold_values[0]["hold"],
             "hold1_tonnage": hold_values[0]["tonnage"],
             "hold2_product": hold_values[1]["product"],
+            "hold2_hold": hold_values[1]["hold"],
             "hold2_tonnage": hold_values[1]["tonnage"],
             "hold3_product": hold_values[2]["product"],
+            "hold3_hold": hold_values[2]["hold"],
             "hold3_tonnage": hold_values[2]["tonnage"],
             "hold4_product": hold_values[3]["product"],
+            "hold4_hold": hold_values[3]["hold"],
             "hold4_tonnage": hold_values[3]["tonnage"],
             "hold5_product": hold_values[4]["product"],
+            "hold5_hold": hold_values[4]["hold"],
             "hold5_tonnage": hold_values[4]["tonnage"],
 
             "products_total": self.tonnage.get(),
@@ -545,6 +554,20 @@ class GrainSamplingVesselForm(ttk.Frame):
             "sample3_centro": sample_values[2]["centro"],
             "sample3_popa_babor": sample_values[2]["popa_babor"],
             "sample3_popa_estribor": sample_values[2]["popa_estribor"],
+
+            "sample4_hold": sample_values[3]["hold"],
+            "sample4_proa_babor": sample_values[3]["proa_babor"],
+            "sample4_proa_estribor": sample_values[3]["proa_estribor"],
+            "sample4_centro": sample_values[3]["centro"],
+            "sample4_popa_babor": sample_values[3]["popa_babor"],
+            "sample4_popa_estribor": sample_values[3]["popa_estribor"],
+
+            "sample5_hold": sample_values[4]["hold"],
+            "sample5_proa_babor": sample_values[4]["proa_babor"],
+            "sample5_proa_estribor": sample_values[4]["proa_estribor"],
+            "sample5_centro": sample_values[4]["centro"],
+            "sample5_popa_babor": sample_values[4]["popa_babor"],
+            "sample5_popa_estribor": sample_values[4]["popa_estribor"],
 
             "supervision": self.supervision_datetime["get"](),
             "conclusion": self.conclusion.get("1.0", "end").strip(),

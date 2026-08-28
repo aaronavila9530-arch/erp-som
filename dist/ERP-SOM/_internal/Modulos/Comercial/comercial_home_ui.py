@@ -66,7 +66,7 @@ class ComercialHomeUI(ttk.Frame):
 
         usuario = (self.usuario or "").lower()
 
-        if usuario not in ("surveyor01", "surveyor02"):
+        if usuario not in ("surveyor01", "surveyor02", "surveyor03"):
 
             nav = ttk.Frame(header)
             nav.pack(side="right")
