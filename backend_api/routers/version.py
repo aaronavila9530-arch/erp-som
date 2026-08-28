@@ -11,6 +11,12 @@ router = APIRouter(
 # ============================================================
 GITHUB_REPO = "aaronavila9530-arch/erp-som"
 GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+FALLBACK_VERSION = "1.7.22"
+FALLBACK_ASSET_NAME = f"ERP-SOM-Setup-{FALLBACK_VERSION}.exe"
+FALLBACK_DOWNLOAD_URL = (
+    f"https://github.com/{GITHUB_REPO}/releases/download/"
+    f"v{FALLBACK_VERSION}/{FALLBACK_ASSET_NAME}"
+)
 
 
 def _find_installer_asset(assets, latest_version: str):
@@ -114,8 +120,9 @@ def check_version():
         # 👉 JAMÁS LANZAR EXCEPCIÓN
         # ----------------------------------------------------
         return {
-            "latest_version": None,
-            "download_url": None,
+            "latest_version": FALLBACK_VERSION,
+            "download_url": FALLBACK_DOWNLOAD_URL,
+            "asset_name": FALLBACK_ASSET_NAME,
             "force_update": False,
-            "message": ""
+            "message": f"Nueva versión {FALLBACK_VERSION} disponible del ERP-SOM."
         }
