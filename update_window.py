@@ -77,6 +77,8 @@ class UpdateWindow(tk.Toplevel):
         threading.Thread(target=self._download_install_relaunch, daemon=True).start()
 
     def _installed_exe_path(self) -> str:
+        if getattr(sys, "frozen", False):
+            return os.path.abspath(sys.executable)
         local_appdata = os.environ.get("LOCALAPPDATA")
         if local_appdata:
             return os.path.join(local_appdata, "Programs", "ERP-SOM", "ERP-SOM.exe")
@@ -149,14 +151,18 @@ class UpdateWindow(tk.Toplevel):
         log_path = os.path.join(self._updates_dir(), "erp_som_update.log")
         inno_args = (
             "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART "
-            "/CLOSEAPPLICATIONS /RESTARTAPPLICATIONS /FORCECLOSEAPPLICATIONS"
+            "/CLOSEAPPLICATIONS /RESTARTAPPLICATIONS /FORCECLOSEAPPLICATIONS "
+            '/DIR="%APPDIR%"'
         )
         script = f"""@echo off
 setlocal
 set "INSTALLER={installer_path}"
 set "EXE={exe_path}"
+for %%A in ("%EXE%") do set "APPDIR=%%~dpA"
+if "%APPDIR:~-1%"=="\\" set "APPDIR=%APPDIR:~0,-1%"
 set "LOG={log_path}"
 echo [%date% %time%] Starting ERP-SOM update > "%LOG%"
+echo [%date% %time%] Target app dir: %APPDIR% >> "%LOG%"
 "%INSTALLER%" {inno_args} >> "%LOG%" 2>&1
 set "RC=%ERRORLEVEL%"
 echo [%date% %time%] Installer exit code %RC% >> "%LOG%"
