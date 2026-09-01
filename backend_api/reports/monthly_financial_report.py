@@ -77,6 +77,113 @@ def _fetch_all(cur, sql, params=()):
     return cur.fetchall() or []
 
 
+def _ensure_monthly_report_obligations(conn):
+    cur = conn.cursor()
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS monthly_report_obligations (
+            id BIGSERIAL PRIMARY KEY,
+            period VARCHAR(7) NOT NULL,
+            payee_name TEXT NOT NULL,
+            concept TEXT,
+            amount NUMERIC(18,2) NOT NULL DEFAULT 0,
+            currency VARCHAR(3) NOT NULL DEFAULT 'USD',
+            due_date DATE,
+            source TEXT NOT NULL DEFAULT 'PREVIEW',
+            accepted BOOLEAN NOT NULL DEFAULT TRUE,
+            created_by TEXT,
+            created_at TIMESTAMP NOT NULL DEFAULT now(),
+            updated_at TIMESTAMP NOT NULL DEFAULT now()
+        )
+        """
+    )
+    conn.commit()
+
+
+def build_monthly_obligation_preview(conn, year: int, month: int):
+    _ensure_monthly_report_obligations(conn)
+    start, end, *_ = _period_bounds(year, month)
+    period = f"{year}-{month:02d}"
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+
+    saved = _fetch_all(cur, """
+        SELECT id, payee_name, concept, amount, currency, due_date, source, accepted
+        FROM monthly_report_obligations
+        WHERE period = %s
+        ORDER BY due_date NULLS LAST, payee_name
+    """, (period,))
+    if saved:
+        return {"period": period, "source": "saved", "data": [dict(row) for row in saved]}
+
+    rows = _fetch_all(cur, """
+        SELECT
+            payee_name,
+            COALESCE(NULLIF(obligation_type, ''), NULLIF(payee_type, ''), 'GASTO MENSUAL') AS concept,
+            currency,
+            ROUND(AVG(total), 2) AS amount,
+            MIN(EXTRACT(DAY FROM COALESCE(due_date, issue_date)))::int AS due_day,
+            COUNT(*) AS samples
+        FROM payment_obligations
+        WHERE COALESCE(due_date, issue_date) >= (%s::date - INTERVAL '12 months')
+          AND COALESCE(due_date, issue_date) < %s::date
+          AND COALESCE(total, 0) > 0
+        GROUP BY payee_name, COALESCE(NULLIF(obligation_type, ''), NULLIF(payee_type, ''), 'GASTO MENSUAL'), currency
+        HAVING COUNT(*) >= 1
+        ORDER BY amount DESC, payee_name
+        LIMIT 40
+    """, (start, start))
+    preview = []
+    for row in rows:
+        due_day = min(max(int(row.get("due_day") or 1), 1), calendar.monthrange(year, month)[1])
+        preview.append({
+            "payee_name": row.get("payee_name"),
+            "concept": row.get("concept"),
+            "amount": _f(row.get("amount")),
+            "currency": row.get("currency") or "USD",
+            "due_date": date(year, month, due_day).isoformat(),
+            "source": f"HISTORICO_{int(row.get('samples') or 0)}",
+            "accepted": True,
+        })
+    return {"period": period, "source": "suggested", "data": preview}
+
+
+def save_monthly_obligations(conn, year: int, month: int, rows, user=None):
+    _ensure_monthly_report_obligations(conn)
+    period = f"{year}-{month:02d}"
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute("DELETE FROM monthly_report_obligations WHERE period = %s", (period,))
+    inserted = []
+    for row in rows or []:
+        if not row.get("accepted", True):
+            continue
+        amount = _f(row.get("amount"))
+        if amount <= 0:
+            continue
+        due_date = row.get("due_date") or None
+        cur.execute(
+            """
+            INSERT INTO monthly_report_obligations (
+                period, payee_name, concept, amount, currency, due_date, source, accepted, created_by, updated_at
+            )
+            VALUES (%s,%s,%s,%s,%s,%s,%s,TRUE,%s,now())
+            RETURNING id, payee_name, concept, amount, currency, due_date, source, accepted
+            """,
+            (
+                period,
+                row.get("payee_name") or "N/A",
+                row.get("concept") or "Obligacion mensual",
+                amount,
+                row.get("currency") or "USD",
+                due_date,
+                row.get("source") or "PREVIEW",
+                user,
+            ),
+        )
+        inserted.append(dict(cur.fetchone()))
+    conn.commit()
+    return {"period": period, "saved": len(inserted), "data": inserted}
+
+
 def _accounting_snapshot(cur, period: str):
     cur.execute("""
         SELECT
@@ -142,6 +249,7 @@ def _payments_cte():
 def build_monthly_financial_data(conn, year: int, month: int):
     start, end, prev_start, prev_end, next_start, next_end = _period_bounds(year, month)
     cur = conn.cursor(cursor_factory=RealDictCursor)
+    _ensure_monthly_report_obligations(conn)
 
     revenue = _fetch_one(cur, """
         SELECT COALESCE(SUM(total), 0) AS total, COUNT(*) AS count
@@ -379,6 +487,20 @@ def build_monthly_financial_data(conn, year: int, month: int):
 
     accounting = _accounting_snapshot(cur, f"{year}-{month:02d}")
 
+    monthly_obligations = _fetch_all(cur, """
+        SELECT
+            payee_name AS nombre_cliente,
+            concept,
+            amount AS total,
+            currency,
+            due_date,
+            source
+        FROM monthly_report_obligations
+        WHERE period = %s
+          AND accepted = TRUE
+        ORDER BY due_date NULLS LAST, payee_name
+    """, (f"{year}-{month:02d}",))
+
     cur.close()
 
     revenue_total = _f(revenue.get("total"))
@@ -442,6 +564,7 @@ def build_monthly_financial_data(conn, year: int, month: int):
             "top_next_payables": [dict(r) for r in top_next_payables],
             "prev_year_trend": [dict(r) for r in prev_year_trend],
             "current_year_trend": [dict(r) for r in current_year_trend],
+            "monthly_obligations": [dict(r) for r in monthly_obligations],
         },
     }
     data["executive"] = _build_executive_dashboard(data)
@@ -711,8 +834,11 @@ def _chart_image(rows, title, path, kind="bar"):
     draw.line((30, 64, width - 30, 64), fill="#D9E2EC", width=2)
     if not rows:
         draw.text((330, 205), "No records for this period", fill="#697386", font=label_font)
-        img.save(path)
-        return path
+        try:
+            img.save(path)
+            return path
+        except Exception:
+            return None
 
     if kind == "pie":
         total = sum(_f(r.get("total")) for r in rows) or 1
@@ -742,12 +868,17 @@ def _chart_image(rows, title, path, kind="bar"):
             draw.rounded_rectangle((chart_left, y, chart_left + bar_w, y + bar_h), radius=6, fill=color)
             draw.text((chart_left + bar_w + 10, y + 5), _short_money(row.get("total")), fill=DARK, font=small_font)
         draw.line((chart_left, chart_top - 10, chart_left, chart_top + len(rows) * 45), fill="#BCCCDC", width=1)
-    img.save(path)
-    return path
+    try:
+        img.save(path)
+        return path
+    except Exception:
+        return None
 
 
 def _build_charts(data, tmp_dir):
     tables = data["tables"]
+    metrics = data["metrics"]
+    accounting = data["accounting"]
     charts = {
         "collections": _chart_image(tables["top_collections"], "Distribución de cuentas por cobrar recuperadas", os.path.join(tmp_dir, "collections.png"), "pie"),
         "ar": _chart_image(tables["top_ar"], "Cuentas por cobrar a recuperar", os.path.join(tmp_dir, "ar.png"), "bar"),
@@ -757,6 +888,18 @@ def _build_charts(data, tmp_dir):
         "payables": _chart_image(tables["top_payables_open"], "Cuentas por pagar", os.path.join(tmp_dir, "payables.png"), "pie"),
         "next_ar": _chart_image(tables["top_next_receivables"], "Cobros esperados próximo mes", os.path.join(tmp_dir, "next_ar.png"), "bar"),
         "next_payables": _chart_image(tables["top_next_payables"], "Pagos programados próximo mes", os.path.join(tmp_dir, "next_payables.png"), "bar"),
+        "cash_bridge": _chart_image([
+            {"nombre_cliente": "Cobranza", "total": metrics["collections"]},
+            {"nombre_cliente": "Pagos ITP", "total": metrics["itp_paid"]},
+            {"nombre_cliente": "Caja neta", "total": metrics["net_cash"]},
+            {"nombre_cliente": "AR abierto", "total": metrics["ar_open"]},
+        ], "Puente de caja del periodo", os.path.join(tmp_dir, "cash_bridge.png"), "bar"),
+        "accounting_mix": _chart_image([
+            {"nombre_cliente": "Ingresos contables", "total": accounting["accounting_revenue"]},
+            {"nombre_cliente": "Gastos contables", "total": accounting["accounting_expense"]},
+            {"nombre_cliente": "Activos", "total": accounting["assets"]},
+            {"nombre_cliente": "Pasivos", "total": accounting["liabilities"]},
+        ], "Composición contable POSTED", os.path.join(tmp_dir, "accounting_mix.png"), "bar"),
     }
     return charts
 
@@ -792,8 +935,9 @@ def generate_monthly_financial_pdf(conn, year: int, month: int):
     _pdf_section(story, styles, "Tendencia de pago", data["narrative"]["payment_trend"], charts["payment_trend"], data, data["tables"]["payment_trend"])
     _pdf_section(story, styles, "Facturación", data["narrative"]["billing"], charts["billing"], data, data["tables"]["top_billing"])
     _pdf_section(story, styles, "Cuentas por pagar", data["narrative"]["payables"], charts["payables"], data, data["tables"]["top_payables_open"])
+    _pdf_section(story, styles, "Obligaciones pendientes del mes", "Obligaciones mensuales aceptadas en el preliminar antes de emitir el reporte. Esta tabla sirve como agenda operativa de pagos y seguimiento.", charts["cash_bridge"], data, data["tables"]["monthly_obligations"])
     _pdf_section(story, styles, f"Cronograma y outlook - {data['period']['next_label']}", data["narrative"]["next_month_outlook"], charts["next_ar"], data, data["tables"]["top_next_receivables"], extra_chart=charts["next_payables"])
-    _pdf_section(story, styles, f"Comparativo {year - 1} vs {year}", data["narrative"]["year_comparison"], None, data, _comparison_rows(data))
+    _pdf_section(story, styles, f"Comparativo {year - 1} vs {year}", data["narrative"]["year_comparison"], charts["accounting_mix"], data, _comparison_rows(data))
     _pdf_section(story, styles, "Análisis de riesgo financiero", data["narrative"]["risk"], None, data)
     _pdf_section(story, styles, "Conclusion reporte financiero", data["narrative"]["conclusion"], None, data)
 
@@ -912,12 +1056,26 @@ def _pdf_table(rows):
     from reportlab.lib import colors
     from reportlab.platypus import Table, TableStyle
 
-    table_data = [["Detalle", "Monto"]]
-    for row in rows or []:
-        table_data.append([str(row.get("nombre_cliente") or row.get("name") or "N/A"), _money(row.get("total") or row.get("amount"))])
-    if len(table_data) == 1:
-        table_data.append(["No records for this period", "USD 0.00"])
-    table = Table(table_data, colWidths=[330, 130])
+    has_obligation_fields = any((row or {}).get("concept") or (row or {}).get("due_date") for row in rows or [])
+    if has_obligation_fields:
+        table_data = [["Proveedor", "Concepto", "Vence", "Monto"]]
+        for row in rows or []:
+            table_data.append([
+                str(row.get("nombre_cliente") or row.get("name") or "N/A"),
+                str(row.get("concept") or "Obligacion mensual"),
+                str(row.get("due_date") or ""),
+                f"{row.get('currency') or 'USD'} {_f(row.get('total') or row.get('amount')):,.2f}",
+            ])
+        if len(table_data) == 1:
+            table_data.append(["No records for this period", "", "", "USD 0.00"])
+        table = Table(table_data, colWidths=[160, 145, 80, 95])
+    else:
+        table_data = [["Detalle", "Monto"]]
+        for row in rows or []:
+            table_data.append([str(row.get("nombre_cliente") or row.get("name") or "N/A"), _money(row.get("total") or row.get("amount"))])
+        if len(table_data) == 1:
+            table_data.append(["No records for this period", "USD 0.00"])
+        table = Table(table_data, colWidths=[330, 130])
     table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(LIGHT_BLUE)),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor(DARK)),
@@ -990,10 +1148,11 @@ def generate_monthly_financial_docx(conn, year: int, month: int):
     _docx_section(doc, "Tendencia de pago", data["narrative"]["payment_trend"], charts["payment_trend"], data["tables"]["payment_trend"])
     _docx_section(doc, "Facturación", data["narrative"]["billing"], charts["billing"], data["tables"]["top_billing"])
     _docx_section(doc, "Cuentas por pagar", data["narrative"]["payables"], charts["payables"], data["tables"]["top_payables_open"])
+    _docx_section(doc, "Obligaciones pendientes del mes", "Obligaciones mensuales aceptadas en el preliminar antes de emitir el reporte. Esta tabla sirve como agenda operativa de pagos y seguimiento.", charts["cash_bridge"], data["tables"]["monthly_obligations"])
     _docx_section(doc, f"Cronograma y outlook - {data['period']['next_label']}", data["narrative"]["next_month_outlook"], charts["next_ar"], data["tables"]["top_next_receivables"])
     if charts["next_payables"] and os.path.exists(charts["next_payables"]):
         doc.add_picture(charts["next_payables"], width=Inches(6.4))
-    _docx_section(doc, f"Comparativo {year - 1} vs {year}", data["narrative"]["year_comparison"], None, _comparison_rows(data))
+    _docx_section(doc, f"Comparativo {year - 1} vs {year}", data["narrative"]["year_comparison"], charts["accounting_mix"], _comparison_rows(data))
     _docx_section(doc, "Análisis de riesgo financiero", data["narrative"]["risk"])
     _docx_section(doc, "Conclusion reporte financiero", data["narrative"]["conclusion"])
 
@@ -1053,16 +1212,27 @@ def _docx_section(doc, title, text, chart_path=None, rows=None):
 
 
 def _docx_table(doc, rows):
-    table = doc.add_table(rows=1, cols=2)
+    has_obligation_fields = any((row or {}).get("concept") or (row or {}).get("due_date") for row in rows or [])
+    table = doc.add_table(rows=1, cols=4 if has_obligation_fields else 2)
     table.style = "Table Grid"
-    table.rows[0].cells[0].text = "Detalle"
-    table.rows[0].cells[1].text = "Monto"
+    if has_obligation_fields:
+        headers = ["Proveedor", "Concepto", "Vence", "Monto"]
+    else:
+        headers = ["Detalle", "Monto"]
+    for idx, header in enumerate(headers):
+        table.rows[0].cells[idx].text = header
     if rows:
         for row in rows:
             cells = table.add_row().cells
-            cells[0].text = str(row.get("nombre_cliente") or row.get("name") or "N/A")
-            cells[1].text = _money(row.get("total") or row.get("amount"))
+            if has_obligation_fields:
+                cells[0].text = str(row.get("nombre_cliente") or row.get("name") or "N/A")
+                cells[1].text = str(row.get("concept") or "Obligacion mensual")
+                cells[2].text = str(row.get("due_date") or "")
+                cells[3].text = f"{row.get('currency') or 'USD'} {_f(row.get('total') or row.get('amount')):,.2f}"
+            else:
+                cells[0].text = str(row.get("nombre_cliente") or row.get("name") or "N/A")
+                cells[1].text = _money(row.get("total") or row.get("amount"))
     else:
         cells = table.add_row().cells
         cells[0].text = "No records for this period"
-        cells[1].text = "USD 0.00"
+        cells[-1].text = "USD 0.00"

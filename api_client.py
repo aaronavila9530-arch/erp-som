@@ -1004,6 +1004,33 @@ def download_monthly_financial_report_api(year: int, month: int, fmt: str, save_
         return {"status": "error", "error": str(e)}
 
 
+def get_monthly_financial_obligations_preview_api(year: int, month: int):
+    r = api_request(
+        "GET",
+        f"{BASE_URL}/monthly-financial-report/obligations-preview",
+        params={"year": int(year), "month": int(month)},
+        timeout=45
+    )
+    r.raise_for_status()
+    return r.json()
+
+
+def save_monthly_financial_obligations_preview_api(year: int, month: int, rows: list[dict]):
+    r = api_request(
+        "POST",
+        f"{BASE_URL}/monthly-financial-report/obligations-preview",
+        json={
+            "year": int(year),
+            "month": int(month),
+            "rows": rows,
+            "user": get_user(),
+        },
+        timeout=45
+    )
+    r.raise_for_status()
+    return r.json()
+
+
 def _write_report_file_safely(save_path: str, content: bytes) -> str:
     """
     Escribe reportes evitando que Windows reviente si el archivo elegido esta abierto
@@ -5922,6 +5949,25 @@ def get_comercial_cotizaciones_api():
         "GET",
         f"{BASE_URL}/comercial/cotizaciones",
         timeout=15
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+def hr_get_hours_summary(year=None, month=None):
+    params = {}
+
+    if year:
+        params["year"] = year
+
+    if month:
+        params["month"] = month
+
+    resp = api_request(
+        "GET",
+        "/hr/ot-log/summary",
+        params=params,
+        timeout=20
     )
     resp.raise_for_status()
     return resp.json()
@@ -10933,9 +10979,6 @@ def get_dashboard_servicios_api(
     puerto=None,
     cliente=None
 ):
-
-    import requests
-
     url = f"{BASE_URL}/dashboard/servicios"
 
     params = {}
@@ -10952,7 +10995,8 @@ def get_dashboard_servicios_api(
     if cliente:
         params["cliente"] = cliente
 
-    response = requests.get(
+    response = api_request(
+        "GET",
         url,
         params=params,
         timeout=TIMEOUT

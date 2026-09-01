@@ -1,10 +1,47 @@
 import calendar
 import os
+import sys
 import tkinter as tk
 from datetime import date
 from tkinter import ttk, filedialog, messagebox
 
-from api_client import download_monthly_financial_report_api, get_accounting_periods_api
+from api_client import (
+    download_monthly_financial_report_api,
+    get_accounting_periods_api,
+    get_monthly_financial_obligations_preview_api,
+    save_monthly_financial_obligations_preview_api,
+)
+
+
+def _local_obligations_preview(year, month):
+    root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", ".."))
+    backend_dir = os.path.join(root_dir, "backend_api")
+    if backend_dir not in sys.path:
+        sys.path.insert(0, backend_dir)
+    from database import connect
+    from reports.monthly_financial_report import build_monthly_obligation_preview
+
+    conn = connect()
+    try:
+        return build_monthly_obligation_preview(conn, year, month)
+    finally:
+        conn.close()
+
+
+def _local_save_obligations_preview(year, month, rows):
+    root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", ".."))
+    backend_dir = os.path.join(root_dir, "backend_api")
+    if backend_dir not in sys.path:
+        sys.path.insert(0, backend_dir)
+    from database import connect
+    from reports.monthly_financial_report import save_monthly_obligations
+    from session_context import get_user
+
+    conn = connect()
+    try:
+        return save_monthly_obligations(conn, year, month, rows, get_user())
+    finally:
+        conn.close()
 
 
 class PopupMonthlyFinancialReport(tk.Toplevel):
@@ -82,6 +119,9 @@ class PopupMonthlyFinancialReport(tk.Toplevel):
             messagebox.showwarning("Reporte", "Seleccione un periodo valido.")
             return
 
+        if not self._confirm_obligations(year, month):
+            return
+
         fmt = self.format_var.get()
         extension = ".docx" if fmt == "Word" else ".pdf"
         filename = f"MSL_Financial_Report_{calendar.month_name[month]}_{year}{extension}"
@@ -117,3 +157,169 @@ class PopupMonthlyFinancialReport(tk.Toplevel):
             except Exception:
                 pass
         self.destroy()
+
+    def _confirm_obligations(self, year, month):
+        try:
+            payload = get_monthly_financial_obligations_preview_api(year, month)
+            rows = payload.get("data", []) if isinstance(payload, dict) else []
+        except Exception as exc:
+            try:
+                payload = _local_obligations_preview(year, month)
+                rows = payload.get("data", []) if isinstance(payload, dict) else []
+            except Exception as local_exc:
+                messagebox.showerror(
+                    "Obligaciones",
+                    "No se pudo cargar el preliminar por API ni por conexión local:\n"
+                    f"API: {exc}\nLocal: {local_exc}",
+                    parent=self
+                )
+                return False
+
+        win = tk.Toplevel(self)
+        win.title("Preliminar de obligaciones mensuales")
+        win.geometry("880x520")
+        win.transient(self)
+        win.grab_set()
+        result = {"accepted": False}
+
+        tk.Label(
+            win,
+            text="Revise y ajuste las obligaciones pendientes del mes antes de generar el reporte.",
+            font=("Segoe UI", 10, "bold")
+        ).pack(anchor="w", padx=12, pady=(10, 4))
+
+        cols = ("incluir", "payee_name", "concept", "due_date", "currency", "amount")
+        tree = ttk.Treeview(win, columns=cols, show="headings", height=13)
+        labels = {
+            "incluir": "Incluir",
+            "payee_name": "Proveedor",
+            "concept": "Concepto",
+            "due_date": "Vence",
+            "currency": "Moneda",
+            "amount": "Monto",
+        }
+        widths = {"incluir": 70, "payee_name": 240, "concept": 190, "due_date": 95, "currency": 80, "amount": 110}
+        for col in cols:
+            tree.heading(col, text=labels[col])
+            tree.column(col, width=widths[col], anchor="e" if col == "amount" else "w")
+        tree.pack(fill="both", expand=True, padx=12, pady=8)
+
+        editable_rows = []
+        for row in rows:
+            item = dict(row)
+            item["accepted"] = bool(item.get("accepted", True))
+            editable_rows.append(item)
+
+        def money_text(value):
+            try:
+                return f"{float(value or 0):,.2f}"
+            except Exception:
+                return "0.00"
+
+        def refresh():
+            tree.delete(*tree.get_children())
+            for idx, row in enumerate(editable_rows):
+                tree.insert(
+                    "",
+                    "end",
+                    iid=str(idx),
+                    values=(
+                        "Si" if row.get("accepted", True) else "No",
+                        row.get("payee_name") or "",
+                        row.get("concept") or "",
+                        row.get("due_date") or "",
+                        row.get("currency") or "USD",
+                        money_text(row.get("amount")),
+                    )
+                )
+
+        form = ttk.LabelFrame(win, text="Editar linea seleccionada", padding=8)
+        form.pack(fill="x", padx=12, pady=(0, 8))
+        include_var = tk.BooleanVar(value=True)
+        payee_var = tk.StringVar()
+        concept_var = tk.StringVar()
+        due_var = tk.StringVar()
+        currency_var = tk.StringVar(value="USD")
+        amount_var = tk.StringVar()
+
+        ttk.Checkbutton(form, text="Incluir", variable=include_var).grid(row=0, column=0, sticky="w", padx=4)
+        ttk.Entry(form, textvariable=payee_var, width=30).grid(row=0, column=1, padx=4)
+        ttk.Entry(form, textvariable=concept_var, width=28).grid(row=0, column=2, padx=4)
+        ttk.Entry(form, textvariable=due_var, width=12).grid(row=0, column=3, padx=4)
+        ttk.Combobox(form, textvariable=currency_var, values=["USD", "CRC"], width=8, state="readonly").grid(row=0, column=4, padx=4)
+        ttk.Entry(form, textvariable=amount_var, width=14).grid(row=0, column=5, padx=4)
+
+        def selected_index():
+            sel = tree.selection()
+            return int(sel[0]) if sel else None
+
+        def load_selected(_event=None):
+            idx = selected_index()
+            if idx is None:
+                return
+            row = editable_rows[idx]
+            include_var.set(bool(row.get("accepted", True)))
+            payee_var.set(str(row.get("payee_name") or ""))
+            concept_var.set(str(row.get("concept") or ""))
+            due_var.set(str(row.get("due_date") or ""))
+            currency_var.set(str(row.get("currency") or "USD"))
+            amount_var.set(money_text(row.get("amount")))
+
+        def apply_selected():
+            idx = selected_index()
+            if idx is None:
+                messagebox.showwarning("Obligaciones", "Seleccione una linea.", parent=win)
+                return
+            try:
+                amount = float(amount_var.get().replace(",", ""))
+            except Exception:
+                messagebox.showwarning("Obligaciones", "Monto invalido.", parent=win)
+                return
+            editable_rows[idx].update({
+                "accepted": include_var.get(),
+                "payee_name": payee_var.get().strip(),
+                "concept": concept_var.get().strip(),
+                "due_date": due_var.get().strip() or None,
+                "currency": currency_var.get().strip() or "USD",
+                "amount": amount,
+            })
+            refresh()
+
+        def add_row():
+            editable_rows.append({
+                "accepted": True,
+                "payee_name": "Nuevo proveedor",
+                "concept": "Obligacion mensual",
+                "due_date": f"{year}-{month:02d}-01",
+                "currency": "USD",
+                "amount": 0,
+                "source": "MANUAL",
+            })
+            refresh()
+
+        def accept():
+            try:
+                try:
+                    save_monthly_financial_obligations_preview_api(year, month, editable_rows)
+                except Exception:
+                    _local_save_obligations_preview(year, month, editable_rows)
+            except Exception as exc:
+                messagebox.showerror("Obligaciones", f"No se pudieron guardar obligaciones:\n{exc}", parent=win)
+                return
+            result["accepted"] = True
+            win.destroy()
+
+        tree.bind("<<TreeviewSelect>>", load_selected)
+        actions = ttk.Frame(win)
+        actions.pack(fill="x", padx=12, pady=(0, 12))
+        ttk.Button(actions, text="Agregar linea", command=add_row).pack(side="left")
+        ttk.Button(actions, text="Aplicar edición", command=apply_selected).pack(side="left", padx=6)
+        ttk.Button(actions, text="Cancelar", command=win.destroy).pack(side="right")
+        ttk.Button(actions, text="Aceptar y generar", command=accept).pack(side="right", padx=6)
+
+        refresh()
+        if editable_rows:
+            tree.selection_set("0")
+            load_selected()
+        self.wait_window(win)
+        return result["accepted"]

@@ -7,6 +7,7 @@ from fastapi.responses import FileResponse
 from database import get_db
 from security.auth import get_current_user
 from security.rbac import require_permission
+from routers.hr_ot_log import _employee_hours_policy
 
 BASE_DIR = os.path.dirname(
     os.path.dirname(
@@ -213,8 +214,8 @@ def calcular_payroll(
         FROM hr_ot_log
         WHERE usuario = %s
           AND estado = 'APROBADO'
-          AND EXTRACT(YEAR FROM created_at) = %s
-          AND EXTRACT(MONTH FROM created_at) = %s
+          AND EXTRACT(YEAR FROM fecha_inicio) = %s
+          AND EXTRACT(MONTH FROM fecha_inicio) = %s
     """, (usuario, year, month))
 
     horas_registradas = float(cur.fetchone()["total"] or 0)
@@ -223,6 +224,7 @@ def calcular_payroll(
     pago = (emp["pago"] or "").upper()
     salario_base = salario_base_mensual / 2 if "QUINC" in pago else salario_base_mensual
     jornada = (emp["jornada"] or "").upper()
+    hours_policy = _employee_hours_policy(emp)
 
     horas_ot = 0.0
     pago_horas_extra = 0.0
@@ -245,10 +247,16 @@ def calcular_payroll(
 
     elif jornada != "COMPLETA" and horas_registradas > 0:
 
-        horas_ot = horas_registradas
-        pago_horas_extra = round(horas_ot * 3000, 2)
+        tope_ordinario = float(hours_policy.get("tope_ordinario") or emp["horas_contratadas"] or 0)
+        tarifa_hora_extra = float(hours_policy.get("tarifa_hora_extra") or 0)
+        salario_base = float(hours_policy.get("salario_base_mensual") or salario_base_mensual or salario_base)
+        if "QUINC" in pago:
+            salario_base = salario_base / 2
 
-        salario_bruto += pago_horas_extra
+        horas_ot = max(horas_registradas - tope_ordinario, 0) if tope_ordinario else horas_registradas
+        pago_horas_extra = round(horas_ot * tarifa_hora_extra, 2) if tarifa_hora_extra else 0.0
+
+        salario_bruto = salario_base + pago_horas_extra
 
     # --------------------------------------------------------
     # DEDUCCIONES Y RENTA (SOBRE SALARIO BRUTO)
