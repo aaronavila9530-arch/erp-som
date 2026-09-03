@@ -1,9 +1,10 @@
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
-from datetime import datetime
+from datetime import date, datetime
 import csv
 
 from api_client import (
+    hr_get_hours_summary,
     hr_list_ot_logs,
     hr_delete_ot_log,
     hr_update_ot_status
@@ -31,6 +32,9 @@ class VistaRegistroHorasAdmin(ttk.Frame):
 
         self.page = 1
         self.total = 0
+        today = date.today()
+        self.year_var = tk.StringVar(value=str(today.year))
+        self.month_var = tk.StringVar(value=f"{today.month:02d}")
 
         self._build_ui()
         self._load_summary()
@@ -63,18 +67,33 @@ class VistaRegistroHorasAdmin(ttk.Frame):
         # -------------------------------
         # RESUMEN
         # -------------------------------
+        self.frm_summary = ttk.LabelFrame(self, text="Resumen del periodo")
+        self.frm_summary.pack(fill="x", padx=10, pady=6)
+
         self.lbl_summary = ttk.Label(
-            self,
+            self.frm_summary,
             text="Cargando resumen...",
-            font=("Segoe UI", 10)
+            font=("Segoe UI", 10, "bold")
         )
-        self.lbl_summary.pack(anchor="w", padx=10, pady=5)
+        self.lbl_summary.pack(anchor="w", padx=10, pady=8)
 
         # -------------------------------
         # FILTROS
         # -------------------------------
         filtros = ttk.Frame(self)
         filtros.pack(fill="x", padx=10, pady=5)
+
+        ttk.Label(filtros, text="Año:").pack(side="left")
+        ttk.Entry(filtros, textvariable=self.year_var, width=8).pack(side="left", padx=5)
+
+        ttk.Label(filtros, text="Mes:").pack(side="left")
+        ttk.Combobox(
+            filtros,
+            textvariable=self.month_var,
+            values=[""] + [f"{i:02d}" for i in range(1, 13)],
+            width=6,
+            state="readonly"
+        ).pack(side="left", padx=5)
 
         ttk.Label(filtros, text="Usuario:").pack(side="left")
         self.cmb_usuario = ttk.Combobox(
@@ -130,18 +149,36 @@ class VistaRegistroHorasAdmin(ttk.Frame):
             "fecha_inicio",
             "fecha_fin",
             "duracion_horas",
+            "referencia",
             "buque",
+            "contenedor",
+            "actividad_detalle",
             "comentario"
         ]
 
         self.tabla = TablaLazy(
             self,
             columnas=columnas,
+            ancho_columnas={
+                "id": 60,
+                "estado_ui": 70,
+                "usuario": 150,
+                "tipo": 95,
+                "fecha_inicio": 135,
+                "fecha_fin": 135,
+                "duracion_horas": 105,
+                "referencia": 170,
+                "buque": 160,
+                "contenedor": 150,
+                "actividad_detalle": 240,
+                "comentario": 260,
+            },
             alto=18
         )
         self.tabla.pack(fill="both", expand=True, padx=10, pady=5)
 
         self.tabla.bind("<<TreeviewSelect>>", self._on_select)
+        self.tabla.tree.bind("<Double-1>", lambda _e: self._editar())
 
         # -------------------------------
         # ACCIONES
@@ -159,6 +196,18 @@ class VistaRegistroHorasAdmin(ttk.Frame):
             acciones,
             text="Ver / Aprobar / Rechazar",
             command=self._abrir_detalle
+        ).pack(side="left", padx=5)
+
+        ttk.Button(
+            acciones,
+            text="Editar registro",
+            command=self._editar
+        ).pack(side="left", padx=5)
+
+        ttk.Button(
+            acciones,
+            text="Duplicar jornada",
+            command=self._duplicar
         ).pack(side="left", padx=5)
 
         ttk.Button(
@@ -187,12 +236,17 @@ class VistaRegistroHorasAdmin(ttk.Frame):
     # =========================================================
     def _load_summary(self):
         try:
-            resp = hr_list_ot_logs(
-                page=1,
-                page_size=1
+            resp = hr_get_hours_summary(year=self._selected_year(), month=self._selected_month())
+            summaries = resp.get("data", []) if isinstance(resp, dict) else []
+            total = len(summaries)
+            alerts = [
+                s for s in summaries
+                if str(s.get("alert_level") or "").upper() in ("WARNING", "LIMIT", "OVER_MAX")
+            ]
+            alert_text = ", ".join(
+                f"{s.get('usuario')} {s.get('horas_registradas')}/{s.get('tope_ordinario')}"
+                for s in alerts[:6]
             )
-
-            total = resp.get("total", 0)
 
         except Exception as e:
             self.lbl_summary.config(
@@ -202,8 +256,9 @@ class VistaRegistroHorasAdmin(ttk.Frame):
 
         self.lbl_summary.config(
             text=(
-                f"Total de registros en sistema: {total} | "
+                f"Empleados monitoreados: {total} | Alertas de horas: {len(alerts)} | "
                 f"Rol: {self.rol.upper()}"
+                + (f" | {alert_text}" if alert_text else "")
             )
         )
 
@@ -259,7 +314,9 @@ class VistaRegistroHorasAdmin(ttk.Frame):
                 page_size=self.PAGE_SIZE,
                 usuario=(self.cmb_usuario.get() or None),
                 tipo=(self.cmb_tipo.get() or None),
-                estado=estado_backend
+                estado=estado_backend,
+                year=self._selected_year(),
+                month=self._selected_month()
             )
 
         except Exception as e:
@@ -301,6 +358,7 @@ class VistaRegistroHorasAdmin(ttk.Frame):
     def _reload(self):
         self.page = 1
         self._load_data()
+        self._load_summary()
 
     # =========================================================
     # EVENTOS
@@ -318,6 +376,31 @@ class VistaRegistroHorasAdmin(ttk.Frame):
     def _abrir_popup_registro(self):
         PopupRegistroHoras(
             parent=self,
+            on_success=self._reload
+        )
+
+    def _editar(self):
+        row = self.tabla.obtener_seleccionado()
+        if not row:
+            messagebox.showwarning("Selección", "Seleccione un registro.")
+            return
+
+        PopupRegistroHoras(
+            parent=self,
+            data=row,
+            on_success=self._reload
+        )
+
+    def _duplicar(self):
+        row = self.tabla.obtener_seleccionado()
+        if not row:
+            messagebox.showwarning("Selección", "Seleccione un registro.")
+            return
+
+        PopupRegistroHoras(
+            parent=self,
+            data=row,
+            duplicate=True,
             on_success=self._reload
         )
 
@@ -387,3 +470,11 @@ class VistaRegistroHorasAdmin(ttk.Frame):
             writer.writerows(rows)
 
         messagebox.showinfo("Exportar", "Archivo CSV generado correctamente.")
+
+    def _selected_year(self):
+        value = (self.year_var.get() or "").strip()
+        return int(value) if value.isdigit() else None
+
+    def _selected_month(self):
+        value = (self.month_var.get() or "").strip()
+        return int(value) if value.isdigit() else None

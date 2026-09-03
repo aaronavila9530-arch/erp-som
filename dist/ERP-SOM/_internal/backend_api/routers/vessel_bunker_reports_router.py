@@ -500,6 +500,45 @@ class VesselBunkerReportRouter:
         finally:
             cur.close()
 
+    # =========================================================
+    # DELETE
+    # =========================================================
+    def delete(self, report_id: int, conn):
+
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+
+        try:
+            cur.execute(
+                """
+                DELETE FROM vessel_bunker_reports
+                WHERE id = %s
+                RETURNING id
+                """,
+                (report_id,)
+            )
+            deleted = cur.fetchone()
+
+            if not deleted:
+                raise HTTPException(status_code=404, detail="Report not found")
+
+            conn.commit()
+
+            return {
+                "success": True,
+                "deleted_id": deleted["id"]
+            }
+
+        except HTTPException:
+            conn.rollback()
+            raise
+
+        except Exception as e:
+            conn.rollback()
+            raise HTTPException(status_code=500, detail=str(e))
+
+        finally:
+            cur.close()
+
 
 _bunker_router = VesselBunkerReportRouter()
 
@@ -527,3 +566,8 @@ def get_all_vessel_bunker_reports(
     q: str = Query(None)
 ):
     return _bunker_router.get_all(conn, limit=limit, offset=offset, q=q)
+
+
+@router.delete("/{report_id}")
+def delete_vessel_bunker_report(report_id: int, conn=Depends(get_db)):
+    return _bunker_router.delete(report_id, conn)

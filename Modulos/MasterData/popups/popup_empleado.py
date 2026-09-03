@@ -2,6 +2,13 @@ import tkinter as tk
 from tkinter import ttk
 from Modulos.MasterData.prefijos_telefonicos import PREFIJOS_TELEFONICOS
 
+
+def _as_bool(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"1", "true", "t", "yes", "si", "sí", "y"}
+
+
 class PopupEmpleado(tk.Toplevel):
 
     # ----------------------------------------------
@@ -10,7 +17,7 @@ class PopupEmpleado(tk.Toplevel):
     def __init__(self, parent, codigo, on_save=None):
         super().__init__(parent)
         self.title("Agregar Empleado")
-        self.geometry("650x550")
+        self.geometry("720x620")
         self.config(bg="white")
         self.resizable(False, False)
 
@@ -32,6 +39,11 @@ class PopupEmpleado(tk.Toplevel):
         self.direccion    = tk.StringVar()
         self.jornada      = tk.StringVar()
         self.salario      = tk.StringVar()
+        self.horas_contratadas = tk.StringVar()
+        self.horas_tope_ordinario = tk.StringVar()
+        self.horas_tope_maximo = tk.StringVar()
+        self.tarifa_hora_extra = tk.StringVar()
+        self.pago_minimo_garantizado = tk.BooleanVar(value=False)
         self.frecuencia_pago = tk.StringVar()
         self.banco        = tk.StringVar()
         self.cuenta_iban  = tk.StringVar()
@@ -141,23 +153,46 @@ class PopupEmpleado(tk.Toplevel):
         self.entry_salario = ttk.Entry(tab3, textvariable=self.salario)
         self.entry_salario.grid(row=1, column=1, padx=10, pady=5)
 
+        tk.Label(tab3, text="Horas contratadas:", bg="white").grid(row=1, column=2, padx=10, pady=5, sticky="w")
+        self.entry_horas_contratadas = ttk.Entry(tab3, textvariable=self.horas_contratadas, width=14)
+        self.entry_horas_contratadas.grid(row=1, column=3, padx=10, pady=5)
+
         frecuencia = ["Mensual", "Quincenal", "Semanal"]
         tk.Label(tab3, text="Pago:", bg="white").grid(row=2, column=0, padx=10, pady=5, sticky="w")
         self.combo_pago = ttk.Combobox(tab3, textvariable=self.frecuencia_pago, values=frecuencia, state="readonly")
         self.combo_pago.grid(row=2, column=1, padx=10, pady=5)
 
+        tk.Label(tab3, text="Primer aviso / tope:", bg="white").grid(row=2, column=2, padx=10, pady=5, sticky="w")
+        self.entry_horas_tope_ordinario = ttk.Entry(tab3, textvariable=self.horas_tope_ordinario, width=14)
+        self.entry_horas_tope_ordinario.grid(row=2, column=3, padx=10, pady=5)
+
         tk.Label(tab3, text="Banco:", bg="white").grid(row=3, column=0, padx=10, pady=5, sticky="w")
         self.entry_banco = ttk.Entry(tab3, textvariable=self.banco)
         self.entry_banco.grid(row=3, column=1, padx=10, pady=5)
+
+        tk.Label(tab3, text="Segundo aviso / tope:", bg="white").grid(row=3, column=2, padx=10, pady=5, sticky="w")
+        self.entry_horas_tope_maximo = ttk.Entry(tab3, textvariable=self.horas_tope_maximo, width=14)
+        self.entry_horas_tope_maximo.grid(row=3, column=3, padx=10, pady=5)
 
         tk.Label(tab3, text="Cuenta IBAN:", bg="white").grid(row=4, column=0, padx=10, pady=5, sticky="w")
         self.entry_cuenta_iban = ttk.Entry(tab3, textvariable=self.cuenta_iban)
         self.entry_cuenta_iban.grid(row=4, column=1, padx=10, pady=5)
 
+        tk.Label(tab3, text="Tarifa hora extra:", bg="white").grid(row=4, column=2, padx=10, pady=5, sticky="w")
+        self.entry_tarifa_hora_extra = ttk.Entry(tab3, textvariable=self.tarifa_hora_extra, width=14)
+        self.entry_tarifa_hora_extra.grid(row=4, column=3, padx=10, pady=5)
+
         tk.Label(tab3, text="Moneda:", bg="white").grid(row=5, column=0, padx=10, pady=5, sticky="w")
         monedas = ["CRC", "USD", "EUR"]
         self.combo_moneda = ttk.Combobox(tab3, textvariable=self.moneda, values=monedas, state="readonly")
         self.combo_moneda.grid(row=5, column=1, padx=10, pady=5)
+
+        self.chk_pago_minimo = ttk.Checkbutton(
+            tab3,
+            text="Pago mínimo garantizado",
+            variable=self.pago_minimo_garantizado
+        )
+        self.chk_pago_minimo.grid(row=5, column=2, columnspan=2, padx=10, pady=5, sticky="w")
 
         # ===================================================
         # TAB 4: Salud y Emergencia
@@ -222,6 +257,11 @@ class PopupEmpleado(tk.Toplevel):
             "direccion": self.entry_direccion.get().strip(),
             "jornada": self.combo_jornada.get().strip(),
             "salario": self.entry_salario.get().strip(),
+            "horas_contratadas": self.entry_horas_contratadas.get().strip(),
+            "horas_tope_ordinario": self.entry_horas_tope_ordinario.get().strip(),
+            "horas_tope_maximo": self.entry_horas_tope_maximo.get().strip(),
+            "tarifa_hora_extra": self.entry_tarifa_hora_extra.get().strip(),
+            "pago_minimo_garantizado": bool(self.pago_minimo_garantizado.get()),
             "pago": self.combo_pago.get().strip(),
             "banco": self.entry_banco.get().strip(),
             "cuenta_iban": self.entry_cuenta_iban.get().strip(),

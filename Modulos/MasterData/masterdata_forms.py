@@ -59,7 +59,9 @@ FORM_SPECS: dict[str, MasterDataFormSpec] = {
         fields=(
             "codigo", "nombre", "apellidos", "estado_civil", "genero", "nacionalidad",
             "prefijo", "telefono", "provincia", "canton", "distrito", "direccion",
-            "jornada", "salario", "pago", "banco", "cuenta_iban", "moneda",
+            "jornada", "salario", "horas_contratadas", "horas_tope_ordinario",
+            "horas_tope_maximo", "tarifa_hora_extra", "pago_minimo_garantizado",
+            "pago", "banco", "cuenta_iban", "moneda",
             "enfermedades", "contacto_emergencia", "telefono_emergencia",
             "activo1", "marca1", "serial1", "activo2", "marca2", "serial2",
             "activo3", "marca3", "serial3",
@@ -135,6 +137,9 @@ def clean_record(spec: MasterDataFormSpec, data: dict[str, Any]) -> dict[str, An
             cleaned["honorario"] = _clean_number(cleaned["honorario"])
         if cleaned.get("salario"):
             cleaned["salario"] = _clean_number(cleaned["salario"])
+        for field in ("horas_contratadas", "horas_tope_ordinario", "horas_tope_maximo", "tarifa_hora_extra"):
+            if cleaned.get(field):
+                cleaned[field] = _clean_number(cleaned[field])
 
     return cleaned
 

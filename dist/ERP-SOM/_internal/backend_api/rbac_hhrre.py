@@ -36,6 +36,14 @@ PERMISSIONS = [
     ("admin", "hhrr", "ot_log_view_all", True),
     ("admin", "hhrr", "ot_log_status", True),
     ("admin", "hhrr", "ot_log_export", True),
+    ("admin", "hhrr", "hours_view", True),
+    ("admin", "hhrr", "hours_register", True),
+    ("admin", "hhrr", "hours_approve", True),
+    ("admin", "hhrre", "hours_view", True),
+    ("admin", "hhrre", "hours_register", True),
+    ("admin", "hhrre", "hours_approve", True),
+    ("admin", "hhrr", "salary_calculator", True),
+    ("admin", "hhrr", "medical_network", True),
 
     # --- approvals ---
     ("admin", "hhrr", "approve", True),
@@ -53,6 +61,14 @@ PERMISSIONS = [
     ("user", "hhrr", "ot_log_view_all", False),
     ("user", "hhrr", "ot_log_status", False),
     ("user", "hhrr", "ot_log_export", False),
+    ("user", "hhrr", "hours_view", True),
+    ("user", "hhrr", "hours_register", True),
+    ("user", "hhrr", "hours_approve", False),
+    ("user", "hhrre", "hours_view", True),
+    ("user", "hhrre", "hours_register", True),
+    ("user", "hhrre", "hours_approve", False),
+    ("user", "hhrr", "salary_calculator", False),
+    ("user", "hhrr", "medical_network", True),
 
     # 🔥 AÑADIDOS PARA EVITAR 403 FUTUROS
     ("user", "hhrr", "me", True),              # endpoints tipo /me/*
@@ -83,6 +99,14 @@ PERMISSIONS = [
     ("consultor", "hhrr", "ot_log", True),
     ("consultor", "hhrr", "ot_log_view_all", True),
     ("consultor", "hhrr", "ot_log_export", True),
+    ("consultor", "hhrr", "hours_view", True),
+    ("consultor", "hhrr", "hours_register", False),
+    ("consultor", "hhrr", "hours_approve", False),
+    ("consultor", "hhrre", "hours_view", True),
+    ("consultor", "hhrre", "hours_register", False),
+    ("consultor", "hhrre", "hours_approve", False),
+    ("consultor", "hhrr", "salary_calculator", True),
+    ("consultor", "hhrr", "medical_network", True),
 
     # --- PAYSLIPS ---
     ("consultor", "hhrr", "payslips", True),

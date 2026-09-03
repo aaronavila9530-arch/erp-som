@@ -99,6 +99,12 @@ class TablaLazy(ttk.Frame):
         index = self.tree.index(seleccionado[0])
         return self._datos_actuales[index]
 
+    def get_all_rows(self):
+        """
+        Devuelve una copia de las filas cargadas actualmente.
+        """
+        return list(self._datos_actuales or [])
+
     # =========================================================
     # UTILIDADES
     # =========================================================

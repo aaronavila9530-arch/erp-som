@@ -94,7 +94,9 @@ class VistaEmpleadosHHRR(ttk.Frame):
         self.columnas = [
             "id", "codigo", "nombre", "apellidos", "cedula_id", "usuario",
             "estado", "jornada", "salario", "pago", "banco", "moneda",
-            "fecha_ingreso", "horas_contratadas", "activo1", "activo2", "activo3"
+            "fecha_ingreso", "horas_contratadas", "horas_tope_ordinario",
+            "horas_tope_maximo", "tarifa_hora_extra", "pago_minimo_garantizado",
+            "activo1", "activo2", "activo3"
         ]
 
         self.tabla = ttk.Treeview(tabla_frame, columns=self.columnas, show="headings")

@@ -30,6 +30,11 @@ class TablaEmpleadosUI(BasePaginatedTable):
             ("direccion", "Dirección"),
             ("jornada", "Jornada"),
             ("salario", "Salario"),
+            ("horas_contratadas", "Horas Contratadas"),
+            ("horas_tope_ordinario", "Primer Aviso"),
+            ("horas_tope_maximo", "Segundo Aviso"),
+            ("tarifa_hora_extra", "Tarifa H. Extra"),
+            ("pago_minimo_garantizado", "Pago Mínimo"),
             ("pago", "Método Pago"),
             ("banco", "Banco"),
             ("cuenta_iban", "Cuenta IBAN"),
@@ -160,7 +165,10 @@ class TablaEmpleadosUI(BasePaginatedTable):
         # Cargar valores en el popup
         for col, _ in self.columns:
             if hasattr(popup, col):
-                getattr(popup, col).set(data.get(col, ""))
+                value = data.get(col, "")
+                if col == "pago_minimo_garantizado":
+                    value = str(value or "").strip().lower() in {"1", "true", "t", "yes", "si", "sí", "y"}
+                getattr(popup, col).set(value)
             else:
                 try:
                     getattr(popup, f"entry_{col}").delete(0, tk.END)

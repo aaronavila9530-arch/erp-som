@@ -36,6 +36,9 @@ def require_permission(module: str, action: str):
         module_code = (module or "").strip().lower()
         action_code = (action or "").strip().lower()
 
+        if module_code == "hhrre":
+            module_code = "hhrr"
+
         # DEBUG CLAVE
         print(f"🔐 RBAC CHECK → user={username} role={role} module={module_code} action={action_code}")
 
@@ -51,6 +54,22 @@ def require_permission(module: str, action: str):
         # Evita falsos 403 en endpoints tipo /me/summary
         if action_code in ("me", "summary", "me/summary"):
             action_code = "ot_log"
+        if action_code in ("hours_view", "hours_register"):
+            action_code = "ot_log"
+        if action_code == "hours_approve":
+            action_code = "ot_log_status"
+        if action_code in ("salary_calculator", "medical_network", "policies_view"):
+            action_code = "view"
+        if action_code == "payslips_view" or action_code == "payslips_download":
+            action_code = "payslips"
+        if action_code == "payroll_view":
+            action_code = "payroll"
+        if action_code == "payroll_generate":
+            action_code = "generate"
+        if action_code == "employees_view" or action_code == "employees_edit":
+            action_code = "employees"
+        if action_code == "requests_approve":
+            action_code = "approve"
 
         # =====================================================
         # OVERRIDES POR USUARIO

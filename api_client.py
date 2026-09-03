@@ -4376,7 +4376,9 @@ def hr_list_ot_logs(
     page_size=50,
     usuario=None,
     tipo=None,
-    estado=None
+    estado=None,
+    year=None,
+    month=None
 ):
     try:
         page = int(page) if str(page).isdigit() else 1
@@ -4398,6 +4400,12 @@ def hr_list_ot_logs(
 
         if estado:
             params["estado"] = str(estado).strip()
+
+        if year:
+            params["year"] = int(year)
+
+        if month:
+            params["month"] = int(month)
 
         resp = api_request(
             "GET",
@@ -4437,6 +4445,17 @@ def hr_update_ot_status(log_id: int, estado: str):
         "PUT",
         f"/hr/ot-log/{log_id}/estado",
         json={"estado": estado},
+        timeout=15
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+def hr_update_ot_log(log_id: int, data: dict):
+    resp = api_request(
+        "PUT",
+        f"/hr/ot-log/{log_id}",
+        json=data,
         timeout=15
     )
     resp.raise_for_status()

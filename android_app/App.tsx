@@ -12698,13 +12698,25 @@ function HRHoursView({
   const admin = isAdminSession(session);
   const [rows, setRows] = useState(rowsFromAny(initialPayload));
   const [summary, setSummary] = useState<Record<string, unknown> | null>(null);
+  const [summaryRows, setSummaryRows] = useState<Record<string, unknown>[]>([]);
   const [selected, setSelected] = useState<number | null>(null);
   const [filters, setFilters] = useState({ usuario: "", tipo: "", estado: "" });
-  const [form, setForm] = useState({ tipo: "OPERACION", fecha_inicio: "", hora_inicio: "08:00", fecha_fin: "", hora_fin: "17:00", buque: "", comentario: "" });
+  const today = new Date().toISOString().slice(0, 10);
+  const [form, setForm] = useState({
+    tipo: "OPERACION",
+    referencia_tipo: "BUQUE",
+    fecha_inicio: today,
+    hora_inicio: "08:00",
+    fecha_fin: today,
+    hora_fin: "17:00",
+    referencia: "",
+    actividad_detalle: "",
+    comentario: ""
+  });
   const [showForm, setShowForm] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
-  const columns = admin ? ["id", "estado", "usuario", "tipo", "fecha_inicio", "fecha_fin", "duracion_horas", "buque", "comentario"] : ["id", "tipo", "fecha_inicio", "fecha_fin", "duracion_horas", "buque", "comentario", "estado"];
+  const columns = admin ? ["id", "estado", "usuario", "tipo", "fecha_inicio", "fecha_fin", "duracion_horas", "referencia", "actividad_detalle"] : ["id", "tipo", "fecha_inicio", "fecha_fin", "duracion_horas", "referencia", "actividad_detalle", "estado"];
   const selectedRow = selected === null ? null : rows[selected] || null;
 
   async function load() {
@@ -12720,6 +12732,12 @@ function HRHoursView({
         apiRequest(`/hr/ot-log?${params.toString()}`, { session })
       ]);
       setSummary(summaryPayload);
+      if (admin) {
+        const allSummary = await apiRequest<Record<string, unknown>>("/hr/ot-log/summary", { session }).catch(() => null);
+        setSummaryRows(rowsFromAny(allSummary));
+      } else {
+        setSummaryRows([]);
+      }
       setRows(rowsFromAny(rowsPayload));
       setSelected(null);
     } catch (err) {
@@ -12738,22 +12756,32 @@ function HRHoursView({
       setMessage("Complete fecha y hora de inicio/fin.");
       return;
     }
+    if (!form.referencia.trim()) {
+      setMessage("Indique el buque o contenedor trabajado.");
+      return;
+    }
     setBusy(true);
     setMessage("");
     try {
-      await apiRequest("/hr/ot-log", {
+      const result = await apiRequest<Record<string, unknown>>("/hr/ot-log", {
         method: "POST",
         body: {
-          tipo: form.tipo,
-          fecha_inicio: `${form.fecha_inicio}T${form.hora_inicio}:00`,
-          fecha_fin: `${form.fecha_fin}T${form.hora_fin}:00`,
-          buque: form.buque || null,
+            tipo: form.tipo,
+            fecha_inicio: `${form.fecha_inicio}T${form.hora_inicio}:00`,
+            fecha_fin: `${form.fecha_fin}T${form.hora_fin}:00`,
+          referencia_tipo: form.referencia_tipo,
+          referencia: form.referencia || null,
+          buque: form.referencia_tipo === "BUQUE" ? form.referencia || null : null,
+          contenedor: form.referencia_tipo === "CONTENEDOR" ? form.referencia || null : null,
+          actividad_detalle: form.actividad_detalle || null,
           comentario: form.comentario || null
         },
         session
       });
       setShowForm(false);
+      const status = asRecord(result.hours_status);
       await load();
+      setMessage(formatValue(status?.mensaje || "Horas registradas."));
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "No se pudo registrar horas.");
     } finally {
@@ -12800,9 +12828,26 @@ function HRHoursView({
       <Text style={styles.cardTitle}>{admin ? "Registro de Horas - Administracion" : "Registro de Horas"}</Text>
       <View style={styles.summaryBox}>
         <Text style={styles.helperText}>
-          Horas contratadas: {formatValue(summary?.horas_contratadas)} | Registradas: {formatValue(summary?.horas_registradas)} | Pendientes: {formatValue(summary?.horas_pendientes)}
+          Tope ordinario: {formatValue(summary?.tope_ordinario ?? summary?.horas_contratadas)} | Segundo tope: {formatValue(summary?.tope_maximo)} | Registradas: {formatValue(summary?.horas_registradas)} | Disponibles: {formatValue(summary?.horas_pendientes)}
         </Text>
+        <Text style={styles.helperText}>
+          Extra: {formatValue(summary?.horas_extra)} | Tarifa extra: {moneyCrc(summary?.tarifa_hora_extra)} | Estimado extra: {moneyCrc(summary?.monto_extra_estimado)}
+        </Text>
+        <Text style={summary?.alert_level === "OK" ? styles.helperText : styles.error}>{formatValue(summary?.mensaje)}</Text>
       </View>
+      {admin && summaryRows.length ? (
+        <View style={styles.summaryBox}>
+          <Text style={styles.cardTitle}>Alertas de empleados</Text>
+          {summaryRows
+            .filter((row) => ["WARNING", "LIMIT", "OVER_MAX"].includes(formatValue(row.alert_level)))
+            .slice(0, 8)
+            .map((row) => (
+              <Text key={formatValue(row.usuario)} style={styles.helperText}>
+                {formatValue(row.usuario)}: {formatValue(row.horas_registradas)} / {formatValue(row.tope_ordinario)} h - {formatValue(row.mensaje)}
+              </Text>
+            ))}
+        </View>
+      ) : null}
       <View style={styles.financeFilterBox}>
         {admin ? <TextInput style={styles.input} value={filters.usuario} onChangeText={(usuario) => setFilters((f) => ({ ...f, usuario }))} placeholder="Usuario" /> : null}
         <SelectField label="Tipo" value={filters.tipo} options={["", "OPERACION", "INFORME"]} onChange={(tipo) => setFilters((f) => ({ ...f, tipo }))} />
@@ -12826,11 +12871,13 @@ function HRHoursView({
           <View style={styles.modalHeader}><Text style={styles.modalTitle}>Registrar horas</Text><Pressable style={styles.modalClose} onPress={() => setShowForm(false)}><Text style={styles.modalCloseText}>Cerrar</Text></Pressable></View>
           <ScrollView contentContainerStyle={styles.modalBody}>
             <SelectField label="Tipo" value={form.tipo} options={["OPERACION", "INFORME"]} onChange={(tipo) => setForm((f) => ({ ...f, tipo }))} />
+            <SelectField label="Referencia" value={form.referencia_tipo} options={["BUQUE", "CONTENEDOR"]} onChange={(referencia_tipo) => setForm((f) => ({ ...f, referencia_tipo }))} />
             <DateField label="Fecha inicio" value={form.fecha_inicio} onChange={(fecha_inicio) => setForm((f) => ({ ...f, fecha_inicio }))} />
             <TimeField label="Hora inicio" value={form.hora_inicio} onChange={(hora_inicio) => setForm((f) => ({ ...f, hora_inicio }))} />
             <DateField label="Fecha fin" value={form.fecha_fin} onChange={(fecha_fin) => setForm((f) => ({ ...f, fecha_fin }))} />
             <TimeField label="Hora fin" value={form.hora_fin} onChange={(hora_fin) => setForm((f) => ({ ...f, hora_fin }))} />
-            <Text style={styles.label}>Buque</Text><TextInput style={styles.input} value={form.buque} onChangeText={(buque) => setForm((f) => ({ ...f, buque }))} />
+            <Text style={styles.label}>Buque o contenedor</Text><TextInput style={styles.input} value={form.referencia} onChangeText={(referencia) => setForm((f) => ({ ...f, referencia }))} />
+            <Text style={styles.label}>Detalle de trabajo</Text><TextInput style={styles.input} value={form.actividad_detalle} onChangeText={(actividad_detalle) => setForm((f) => ({ ...f, actividad_detalle }))} />
             <Text style={styles.label}>Detalle</Text><TextInput multiline style={[styles.input, styles.multilineInput]} value={form.comentario} onChangeText={(comentario) => setForm((f) => ({ ...f, comentario }))} />
             <PrimaryButton label="Registrar" loading={busy} onPress={saveHours} />
           </ScrollView>

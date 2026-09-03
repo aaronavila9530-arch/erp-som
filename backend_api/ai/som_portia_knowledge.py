@@ -1285,16 +1285,18 @@ SOM_QA = [
         "category": "HHRR - Registro Horas",
         "question": "Manual HHRR Registro de Horas: Como registra horas un empleado?",
         "answer": (
-            "Registro de Horas permite al empleado reportar horas trabajadas.\n"
+            "Registro de Horas funciona como registro inteligente de horas: permite reportar, revisar y corregir horas trabajadas por periodo.\n"
             "Paso a paso:\n"
             "1. Entra a HHRR > Horas.\n"
-            "2. Revisa el resumen: empleado, horas contratadas, registradas y pendientes.\n"
-            "3. Filtra por Tipo o Estado si deseas revisar registros previos.\n"
+            "2. Selecciona Ano y Mes para trabajar solo el periodo correcto.\n"
+            "3. Revisa las tarjetas de resumen: horas registradas, disponibles, extra y monto extra estimado.\n"
             "4. Presiona Registrar horas.\n"
-            "5. Selecciona fecha con calendario; se muestra LONG en ingles y se guarda en formato backend.\n"
-            "6. Completa hora inicial, hora final, tipo de hora y detalle.\n"
-            "7. Guarda el registro.\n"
-            "8. Si te equivocaste y el estado lo permite, selecciona el registro y usa Eliminar seleccionado."
+            "5. Usa una plantilla rapida si aplica: Hoy 8 h, Hoy 10 h, Hoy 12 h o Turno noche 12 h.\n"
+            "6. Ajusta fecha inicio, hora inicio, fecha fin y hora fin; la duracion se calcula en vivo.\n"
+            "7. Selecciona si la referencia es BUQUE o CONTENEDOR y escribe la referencia.\n"
+            "8. Completa detalle de trabajo y comentario si aplica.\n"
+            "9. Guarda el registro.\n"
+            "10. Para corregir, selecciona una fila y usa Editar seleccionado; para repetir una jornada, usa Duplicar jornada."
         ),
     },
     {
@@ -1304,14 +1306,45 @@ SOM_QA = [
             "La vista admin permite controlar horas registradas por usuarios.\n"
             "Paso a paso:\n"
             "1. Entra a HHRR > Horas con rol administrativo.\n"
-            "2. Filtra por Usuario, Tipo y Estado.\n"
-            "3. Usa Buscar/Reload para actualizar resultados.\n"
-            "4. Usa Nuevo registro si necesitas crear una entrada administrativa.\n"
-            "5. Selecciona una fila y usa Ver para revisar detalle.\n"
-            "6. Usa Aprobar cuando la hora corresponde.\n"
-            "7. Usa Rechazar cuando no corresponde y registra motivo si aplica.\n"
+            "2. Filtra por Ano, Mes, Usuario, Tipo y Estado.\n"
+            "3. Revisa el resumen del periodo para ver empleados monitoreados y alertas por topes.\n"
+            "4. Usa Registrar horas para crear una entrada administrativa.\n"
+            "5. Doble click o Editar registro permite actualizar fecha, horas, referencia, detalle y comentario.\n"
+            "6. Duplicar jornada ayuda a crear registros repetitivos sin volver a escribir todo.\n"
+            "7. Selecciona una fila y usa Ver / Aprobar / Rechazar para cambiar estado.\n"
             "8. Usa Eliminar solo cuando el registro deba retirarse.\n"
-            "9. Export CSV descarga la tabla para analisis externo."
+            "9. Export CSV descarga la tabla filtrada para analisis externo."
+        ),
+    },
+    {
+        "category": "HHRR - Calculadora Salarial",
+        "question": "Manual HHRR Calculadora Salarial: Como comparar asalariado, independiente y dueno de empresa?",
+        "answer": (
+            "La calculadora salarial estima rebajos, cargas, IVA, renta y dinero neto segun reglas configuradas para Costa Rica.\n"
+            "Paso a paso:\n"
+            "1. Entra a HHRR > Calculadora salarial.\n"
+            "2. Selecciona Asalariado, Independiente o Dueno de empresa.\n"
+            "3. Ingresa salario o monto mensual a facturar sin IVA.\n"
+            "4. En Independiente agrega gastos deducibles; solo activos depreciables requieren ano de compra y vida util.\n"
+            "5. Revisa IVA 13%, CCSS cuando aplica, renta, deducciones y dinero disponible despues de rebajos.\n"
+            "6. En Dueno de empresa revisa dietas o dividendos con retencion del 15% y el tratamiento de gasto deducible.\n"
+            "7. Usa Comparar para ver donde se paga menos y donde queda mayor ingreso neto.\n"
+            "8. La recomendacion es referencial; valida decisiones fiscales finales con contador."
+        ),
+    },
+    {
+        "category": "HHRR - Red Medica",
+        "question": "Manual HHRR Red Medica: Como buscar medicos por provincia, canton, distrito o especialidad?",
+        "answer": (
+            "Red Medica permite consultar proveedores de salud cargados desde la base de datos.\n"
+            "Paso a paso:\n"
+            "1. Entra a HHRR > Red medica.\n"
+            "2. Usa Provincia como primer filtro; Canton y Distrito se actualizan en cascada segun la provincia seleccionada.\n"
+            "3. Filtra por especialidad, lugar, medico o texto libre.\n"
+            "4. Presiona Buscar para cargar resultados.\n"
+            "5. Revisa nombre, especialidad, ubicacion, contacto y observaciones disponibles.\n"
+            "6. Limpia filtros si necesitas volver a consultar toda la red.\n"
+            "7. Usa el resultado como apoyo operativo; confirma disponibilidad directamente con el centro medico."
         ),
     },
     {
@@ -1404,6 +1437,54 @@ SOM_QA = [
             "5. PORTIA no modifica datos, no aprueba informes y no ejecuta cierres.\n"
             "6. Si responde que no tiene contexto vivo, actualiza contexto o valida conexion con backend.\n"
             "7. Para informacion financiera, valida siempre contra Finanzas antes de tomar decisiones criticas."
+        ),
+    },
+    {
+        "category": "Finanzas - Tarjetas Corporativas",
+        "question": "Manual Accounting Tarjetas Corporativas: Como clasificar cargos BAC y evitar duplicar gastos?",
+        "answer": (
+            "Tarjetas Corporativas controla estados BAC por usuario y evita duplicar gastos cuando existe factura electronica ITP.\n"
+            "Paso a paso:\n"
+            "1. Entra a Finanzas > Accounting > Acciones > Tarjetas corporativas.\n"
+            "2. Importa o actualiza estados BAC.\n"
+            "3. Usa Auto cruzar ITP para comparar cargos contra facturas electronicas de gastos.\n"
+            "4. Si hay match ITP, el cargo marca la factura como pagada por tarjeta y no vuelve a reconocer el gasto.\n"
+            "5. Si no hay match, clasifica manualmente como deducible, no deducible o requiere factura.\n"
+            "6. Selecciona Rubro/cuenta antes de guardar para que el asiento use la cuenta contable correcta.\n"
+            "7. Guarda cambios y contabiliza cargos pendientes de clasificar cuando corresponda.\n"
+            "8. La tarjeta queda por pagar al BAC el dia 15 del mes siguiente por monto contado, separado por moneda."
+        ),
+    },
+    {
+        "category": "Finanzas - Obligaciones Quincenales",
+        "question": "Manual ITP Obligaciones Quincenales: Como generar y aplicar pagos de la quincena?",
+        "answer": (
+            "Obligaciones Quincenales arma una propuesta de pagos por planilla, CCSS, IVA, tarjetas, alquiler, internet, telefonia, surveyors y viaticos.\n"
+            "Paso a paso:\n"
+            "1. Entra a Finanzas > Invoice To Pay > Obligaciones quincenales.\n"
+            "2. Selecciona periodo y quincena.\n"
+            "3. Presiona Generar automatico para traer planilla, IVA del mes anterior, CCSS, tarjetas BAC y facturas pendientes aplicables.\n"
+            "4. Agrega o quita lineas manuales para surveyors, viaticos, telefonia u otros pagos.\n"
+            "5. Completa comprobante bancario y cuenta contable/bancaria de pago en cada linea.\n"
+            "6. Revisa resumen por rubro y resumen por cuenta destino.\n"
+            "7. Exporta Excel para aprobacion o banco.\n"
+            "8. Aplica pagos ITP solo cuando comprobante y cuenta esten completos; esto crea o ajusta asientos contables."
+        ),
+    },
+    {
+        "category": "Finanzas - Simulador Fiscal",
+        "question": "Manual Simulador Fiscal Multiempresa: Como mover ventas y gastos entre sociedades?",
+        "answer": (
+            "El simulador fiscal compara MSL y MCI/MMS para proyectar renta bruta, gastos, renta neta, umbral PYME e impuesto D-102.\n"
+            "Paso a paso:\n"
+            "1. Entra a Finanzas > Accounting > Acciones > Simulador fiscal multiempresa.\n"
+            "2. Ejecuta Analizar actual para cargar ventas y gastos reales del ERP.\n"
+            "3. En Ventas por cliente selecciona una linea; puedes proyectar normal, mantener monto, editar linea o mover venta a otra sociedad.\n"
+            "4. En Gastos deducibles selecciona una linea; puedes editar monto, mantener, proyectar o mover gasto cuando corresponda legalmente.\n"
+            "5. Revisa los tres cuadros D-102: sin movimientos, sociedad actual con cambios y sociedad alterna con cambios.\n"
+            "6. Verifica si cada sociedad queda por debajo o excede el umbral PYME proyectado.\n"
+            "7. Exporta Excel o copia analisis para documentar el escenario.\n"
+            "8. Es una simulacion gerencial; cualquier traslado debe tener sustancia comercial real."
         ),
     },
     {

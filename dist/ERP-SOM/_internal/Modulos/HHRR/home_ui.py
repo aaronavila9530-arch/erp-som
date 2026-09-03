@@ -71,6 +71,7 @@ class HHRRHomeUI(ttk.Frame):
                 ("Solicitudes", "solicitudes"),
                 ("Horas", "horas"),
                 ("Empleados", "empleados"),
+                ("Liquidaciones", "liquidaciones"),
                 ("Calculadora salarial", "calculadora_salarial"),
                 ("Red medica", "red_medica"),
                 ("Políticas", "politicas"),

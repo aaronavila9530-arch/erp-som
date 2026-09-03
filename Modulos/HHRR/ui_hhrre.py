@@ -145,7 +145,7 @@ class HHRRUI(ttk.Frame):
             return db_decision
         if action in {"payslips_view", "payslips_download", "requests_view", "requests_create", "hours_view", "hours_register", "medical_network", "policies_view"}:
             return self.rol in {"user", "hr", "finance", "accounting"}
-        if action in {"payroll_view", "payroll_generate", "employees_view", "employees_edit", "requests_approve", "hours_approve", "policies_edit", "news_publish", "salary_calculator"}:
+        if action in {"payroll_view", "payroll_generate", "employees_view", "employees_edit", "requests_approve", "hours_approve", "policies_edit", "news_publish", "salary_calculator", "liquidations"}:
             return self.rol in {"admin", "master", "hr"}
         return False
 
@@ -156,6 +156,7 @@ class HHRRUI(ttk.Frame):
             "solicitudes": ("requests_view", self._abrir_solicitudes),
             "horas": ("hours_view", self._abrir_horas),
             "empleados": ("employees_view", self._abrir_empleados),
+            "liquidaciones": ("liquidations", self._abrir_liquidaciones),
             "calculadora_salarial": ("salary_calculator", self._abrir_calculadora_salarial),
             "red_medica": ("medical_network", self._abrir_red_medica),
             "politicas": ("policies_view", self._abrir_politicas),
@@ -257,6 +258,16 @@ class HHRRUI(ttk.Frame):
                 rol=self.rol,
                 on_back=self._mostrar_home
             ).pack(fill="both", expand=True)
+
+    def _abrir_liquidaciones(self):
+        if not self._has_hr_permission("liquidations"):
+            messagebox.showwarning(
+                "Acceso denegado",
+                "No tienes permisos para generar liquidaciones."
+            )
+            return
+        from Modulos.HHRR.popups.popup_liquidacion import PopupLiquidacion
+        PopupLiquidacion(parent=self, usuario=self.usuario)
 
     # =========================================================
     # PAYSLIPS (FIX REAL)

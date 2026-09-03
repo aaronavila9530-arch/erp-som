@@ -11,7 +11,7 @@ router = APIRouter(
 # ============================================================
 GITHUB_REPO = "aaronavila9530-arch/erp-som"
 GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
-FALLBACK_VERSION = "1.7.22"
+FALLBACK_VERSION = "1.7.23"
 FALLBACK_ASSET_NAME = f"ERP-SOM-Setup-{FALLBACK_VERSION}.exe"
 FALLBACK_DOWNLOAD_URL = (
     f"https://github.com/{GITHUB_REPO}/releases/download/"

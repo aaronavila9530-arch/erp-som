@@ -61,9 +61,21 @@ class PopupRegistroHoras(tk.Toplevel):
         self.var_fin = tk.StringVar()
         self._date_time_entry(cont, self.var_fin).pack(fill="x", pady=5)
 
-        ttk.Label(cont, text="Buque (opcional)").pack(anchor="w")
-        self.var_buque = tk.StringVar()
-        ttk.Entry(cont, textvariable=self.var_buque).pack(fill="x", pady=5)
+        ttk.Label(cont, text="Referencia").pack(anchor="w")
+        self.var_referencia_tipo = tk.StringVar(value="BUQUE")
+        ttk.Combobox(
+            cont,
+            textvariable=self.var_referencia_tipo,
+            values=["BUQUE", "CONTENEDOR"],
+            state="readonly"
+        ).pack(fill="x", pady=5)
+
+        self.var_referencia = tk.StringVar()
+        ttk.Entry(cont, textvariable=self.var_referencia).pack(fill="x", pady=5)
+
+        ttk.Label(cont, text="Detalle de trabajo").pack(anchor="w")
+        self.var_actividad_detalle = tk.StringVar()
+        ttk.Entry(cont, textvariable=self.var_actividad_detalle).pack(fill="x", pady=5)
 
         ttk.Label(cont, text="Comentario").pack(anchor="w")
         self.txt_comentario = tk.Text(cont, height=4)
@@ -121,7 +133,8 @@ class PopupRegistroHoras(tk.Toplevel):
         tipo = (self.var_tipo.get() or "").strip().upper()
         inicio_str = (self.var_inicio.get() or "").strip()
         fin_str = (self.var_fin.get() or "").strip()
-        buque = (self.var_buque.get() or "").strip() or None
+        referencia_tipo = (self.var_referencia_tipo.get() or "BUQUE").strip().upper()
+        referencia = (self.var_referencia.get() or "").strip()
         comentario = self.txt_comentario.get("1.0", "end").strip() or None
 
         # -------------------------------
@@ -133,6 +146,10 @@ class PopupRegistroHoras(tk.Toplevel):
 
         if not inicio_str or not fin_str:
             messagebox.showerror("Error", "Debe completar fechas")
+            return
+
+        if not referencia:
+            messagebox.showerror("Error", "Debe indicar el buque o contenedor trabajado")
             return
 
         try:
@@ -161,7 +178,11 @@ class PopupRegistroHoras(tk.Toplevel):
             "tipo": tipo,
             "fecha_inicio": inicio.strftime("%Y-%m-%d %H:%M:%S"),
             "fecha_fin": fin.strftime("%Y-%m-%d %H:%M:%S"),
-            "buque": buque,
+            "referencia_tipo": referencia_tipo,
+            "referencia": referencia,
+            "buque": referencia if referencia_tipo == "BUQUE" else None,
+            "contenedor": referencia if referencia_tipo == "CONTENEDOR" else None,
+            "actividad_detalle": (self.var_actividad_detalle.get() or "").strip() or None,
             "comentario": comentario
         }
 
@@ -169,7 +190,7 @@ class PopupRegistroHoras(tk.Toplevel):
         # API CALL
         # -------------------------------
         try:
-            crear_ot_log(data)
+            result = crear_ot_log(data)
         except Exception as e:
             messagebox.showerror(
                 "Error backend",
@@ -177,10 +198,12 @@ class PopupRegistroHoras(tk.Toplevel):
             )
             return
 
-        messagebox.showinfo(
-            "Éxito",
-            "Horas registradas correctamente"
-        )
+        status = result.get("hours_status", {}) if isinstance(result, dict) else {}
+        mensaje = status.get("mensaje") or "Horas registradas correctamente"
+        if status.get("alert_level") in ("WARNING", "LIMIT", "OVER_MAX"):
+            messagebox.showwarning("Horas registradas", mensaje)
+        else:
+            messagebox.showinfo("Éxito", mensaje)
 
         if callable(self.on_success):
             self.on_success()

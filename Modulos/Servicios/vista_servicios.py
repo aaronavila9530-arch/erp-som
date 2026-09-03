@@ -9,7 +9,7 @@ from Modulos.Servicios.date_utils import to_long_english_date
 from openpyxl import Workbook
 from Modulos.Core.report_router import ReportRouter
 from Modulos.Finanzas.export_formatting import normalize_invoice_text_columns
-from api_client import BASE_URL, api_request
+from api_client import BASE_URL, api_request, get_dashboard_servicios_api
 
 
 class VistaServicios(tk.Frame):
@@ -436,16 +436,29 @@ class VistaServicios(tk.Frame):
             r.get("pais") for r in data if r.get("pais")
         }
 
-        total_facturado = sum(
-            float(r.get("valor_factura") or 0) for r in data
-        )
+        total_facturado = sum(float(r.get("valor_factura") or 0) for r in data)
+        dashboard_kpis = self._load_year_kpis()
+        if dashboard_kpis:
+            total_servicios = int(dashboard_kpis.get("total_servicios") or total_servicios)
+            total_facturado = float(dashboard_kpis.get("total_facturado") or total_facturado)
+            paises_count = int(dashboard_kpis.get("total_paises") or len(paises_unicos))
+            total_operaciones = int(dashboard_kpis.get("total_operaciones") or total_operaciones)
+        else:
+            paises_count = len(paises_unicos)
 
         self.kpi_operaciones.config(text=str(total_operaciones))
         self.kpi_confirmados.config(text=str(total_confirmados))
         self.kpi_cancelados.config(text=str(total_cancelados))
         self.kpi_servicios.config(text=str(total_servicios))
-        self.kpi_paises.config(text=str(len(paises_unicos)))
+        self.kpi_paises.config(text=str(paises_count))
         self.kpi_facturado.config(text=f"${total_facturado:,.2f}")
+
+    def _load_year_kpis(self):
+        try:
+            payload = get_dashboard_servicios_api(anio=date.today().year)
+            return (payload or {}).get("kpis") or {}
+        except Exception:
+            return {}
 
     # =====================================================================
     # PAGINACIÓN MÉTODOS

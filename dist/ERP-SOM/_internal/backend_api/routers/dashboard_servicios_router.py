@@ -6,8 +6,9 @@
 # ============================================================
 
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from database import get_db
+from services.tenanting import company_code, ensure_company_column
 
 
 router = APIRouter(
@@ -34,12 +35,16 @@ def get_dashboard_servicios(
     pais: str | None = Query(default=None),
     puerto: str | None = Query(default=None),
     cliente: str | None = Query(default=None),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
     db=Depends(get_db)
 ):
 
     try:
 
         cursor = db.cursor()
+        ensure_company_column("servicios")
+        ensure_company_column("collections")
+        company = company_code(header_value=x_company_code)
 
         # ----------------------------------------------------
         # DEFAULT YEAR = AÑO ACTUAL
@@ -94,6 +99,7 @@ def get_dashboard_servicios(
                 CAST(SUBSTRING(CAST(fecha_inicio AS TEXT), 1, 4) AS INTEGER) AS anio_servicio
             FROM servicios
             WHERE fecha_inicio IS NOT NULL
+              AND company_code = %s
         ),
 
         filtrada AS (
@@ -183,8 +189,18 @@ def get_dashboard_servicios(
             -- KPIS
             -- ================================================
             'kpis', json_build_object(
+                'total_operaciones', COALESCE((SELECT COUNT(*) FROM filtrada), 0),
                 'total_servicios', COALESCE((SELECT COUNT(*) FROM filtrada), 0),
                 'total_facturado', COALESCE((SELECT SUM(valor_factura) FROM filtrada), 0),
+                'total_ar', COALESCE((
+                    SELECT SUM(c.saldo_pendiente)
+                    FROM collections c
+                    WHERE c.tipo_documento = 'FACTURA'
+                      AND c.saldo_pendiente > 0
+                      AND c.company_code = %s
+                      AND EXTRACT(YEAR FROM c.fecha_emision) = %s
+                      AND (%s IS NULL OR c.nombre_cliente = %s OR c.codigo_cliente = %s)
+                ), 0),
                 'total_profit', COALESCE((SELECT SUM(profit) FROM filtrada), 0),
                 'total_paises', COALESCE((SELECT COUNT(DISTINCT pais) FROM filtrada WHERE pais IS NOT NULL), 0),
                 'total_puertos', COALESCE((SELECT COUNT(DISTINCT puerto) FROM filtrada WHERE puerto IS NOT NULL), 0),
@@ -308,6 +324,7 @@ def get_dashboard_servicios(
         """
 
         params = (
+            company,
             anio_final,
             pais, pais,
             puerto, puerto,
@@ -327,6 +344,10 @@ def get_dashboard_servicios(
             pais,
             puerto,
             cliente,
+
+            company,
+            anio_final,
+            cliente, cliente, cliente,
         )
 
         cursor.execute(query, params)
@@ -346,8 +367,10 @@ def get_dashboard_servicios(
                     "clientes": []
                 },
                 "kpis": {
+                    "total_operaciones": 0,
                     "total_servicios": 0,
                     "total_facturado": 0,
+                    "total_ar": 0,
                     "total_profit": 0,
                     "total_paises": 0,
                     "total_puertos": 0,

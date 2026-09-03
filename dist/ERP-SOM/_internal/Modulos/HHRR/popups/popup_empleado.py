@@ -6,6 +6,12 @@ from Modulos.HHRR.date_utils import LONG_DATE_FORMAT, parse_hhrr_date, to_db_dat
 from Modulos.Servicios.widgets.date_picker import DatePicker
 
 
+def _as_bool(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"1", "true", "t", "yes", "si", "sí", "y"}
+
+
 class PopupEmpleado(tk.Toplevel):
     """
     Popup unificado para EMPLEADOS
@@ -86,6 +92,10 @@ class PopupEmpleado(tk.Toplevel):
         self.var_moneda = tk.StringVar(value=str(self.empleado.get("moneda") or ""))
         self.var_fecha_ingreso = tk.StringVar(value=to_long_english_date(self.empleado.get("fecha_ingreso") or ""))
         self.var_horas_contratadas = tk.StringVar(value=str(self.empleado.get("horas_contratadas") or ""))
+        self.var_horas_tope_ordinario = tk.StringVar(value=str(self.empleado.get("horas_tope_ordinario") or ""))
+        self.var_horas_tope_maximo = tk.StringVar(value=str(self.empleado.get("horas_tope_maximo") or ""))
+        self.var_tarifa_hora_extra = tk.StringVar(value=str(self.empleado.get("tarifa_hora_extra") or ""))
+        self.var_pago_minimo_garantizado = tk.BooleanVar(value=_as_bool(self.empleado.get("pago_minimo_garantizado")))
         self.var_vacaciones = tk.StringVar(value=str(self.empleado.get("vacaciones") or ""))
         self.var_estado = tk.StringVar(value=str(self.empleado.get("estado") or ""))
 
@@ -309,6 +319,27 @@ class PopupEmpleado(tk.Toplevel):
         self.ent_vacaciones = ttk.Entry(tab3, textvariable=self.var_vacaciones, width=35)
         self.ent_vacaciones.grid(row=row, column=3, padx=10, pady=6, sticky="w")
 
+        row += 1
+        ttk.Label(tab3, text="Primer aviso / tope ordinario").grid(row=row, column=0, padx=10, pady=6, sticky="w")
+        self.ent_horas_tope_ordinario = ttk.Entry(tab3, textvariable=self.var_horas_tope_ordinario, width=35)
+        self.ent_horas_tope_ordinario.grid(row=row, column=1, padx=10, pady=6, sticky="w")
+
+        ttk.Label(tab3, text="Segundo aviso / tope maximo").grid(row=row, column=2, padx=10, pady=6, sticky="w")
+        self.ent_horas_tope_maximo = ttk.Entry(tab3, textvariable=self.var_horas_tope_maximo, width=35)
+        self.ent_horas_tope_maximo.grid(row=row, column=3, padx=10, pady=6, sticky="w")
+
+        row += 1
+        ttk.Label(tab3, text="Tarifa hora extra").grid(row=row, column=0, padx=10, pady=6, sticky="w")
+        self.ent_tarifa_hora_extra = ttk.Entry(tab3, textvariable=self.var_tarifa_hora_extra, width=35)
+        self.ent_tarifa_hora_extra.grid(row=row, column=1, padx=10, pady=6, sticky="w")
+
+        self.chk_pago_minimo = ttk.Checkbutton(
+            tab3,
+            text="Pago mínimo garantizado",
+            variable=self.var_pago_minimo_garantizado
+        )
+        self.chk_pago_minimo.grid(row=row, column=2, columnspan=2, padx=10, pady=6, sticky="w")
+
         # -------------------------------------------------
         # TAB 4: Emergencia y salud
         # -------------------------------------------------
@@ -401,7 +432,8 @@ class PopupEmpleado(tk.Toplevel):
             self.ent_distrito, self.ent_direccion,
             self.cbo_jornada, self.cbo_estado, self.ent_salario, self.cbo_pago,
             self.ent_banco, self.ent_iban, self.cbo_moneda, self.ent_fecha_ingreso,
-            self.ent_horas, self.ent_vacaciones,
+            self.ent_horas, self.ent_vacaciones, self.ent_horas_tope_ordinario,
+            self.ent_horas_tope_maximo, self.ent_tarifa_hora_extra, self.chk_pago_minimo,
             self.ent_enfermedades, self.ent_contacto_emerg, self.ent_tel_emerg,
         ]
 
@@ -457,6 +489,10 @@ class PopupEmpleado(tk.Toplevel):
             "moneda": self.var_moneda.get().strip() or None,
             "fecha_ingreso": to_db_date(self.var_fecha_ingreso.get().strip()) or None,
             "horas_contratadas": self.var_horas_contratadas.get().strip() or None,
+            "horas_tope_ordinario": self.var_horas_tope_ordinario.get().strip() or None,
+            "horas_tope_maximo": self.var_horas_tope_maximo.get().strip() or None,
+            "tarifa_hora_extra": self.var_tarifa_hora_extra.get().strip() or None,
+            "pago_minimo_garantizado": bool(self.var_pago_minimo_garantizado.get()),
             "vacaciones": self.var_vacaciones.get().strip() or None,
             "estado": self.var_estado.get().strip() or None,
 

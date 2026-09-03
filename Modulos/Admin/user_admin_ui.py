@@ -94,6 +94,7 @@ LOCAL_MODULE_ACTIONS = {
         {"code": "hours_view", "label": "Ver horas"},
         {"code": "hours_register", "label": "Registrar horas"},
         {"code": "hours_approve", "label": "Aprobar horas"},
+        {"code": "liquidations", "label": "Generar liquidaciones"},
         {"code": "employees_view", "label": "Ver empleados HHRR"},
         {"code": "employees_edit", "label": "Editar empleados HHRR"},
         {"code": "salary_calculator", "label": "Calculadora salarial"},

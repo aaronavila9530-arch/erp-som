@@ -2,7 +2,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 from Modulos.HHRR.ui_lazy_table import TablaLazy
-from Modulos.HHRR.popups.popup_ot_log import PopupRegistroHoras
+from Modulos.HHRR.popups.popup_registro_horas import PopupRegistroHoras
 from Modulos.HHRR.widgets.badge import Badge
 
 from api_client import (
@@ -70,7 +70,8 @@ class VistaEmployee(ttk.Frame):
             "fecha_fin",
             "duracion_horas",
             "tipo",
-            "buque"
+            "referencia",
+            "actividad_detalle"
         ]
 
         self.tabla_horas = TablaLazy(
@@ -81,7 +82,8 @@ class VistaEmployee(ttk.Frame):
                 "fecha_fin": 150,
                 "duracion_horas": 120,
                 "tipo": 120,
-                "buque": 200
+                "referencia": 220,
+                "actividad_detalle": 220
             }
         )
         self.tabla_horas.pack(fill="both", expand=True, padx=10, pady=10)
@@ -94,7 +96,8 @@ class VistaEmployee(ttk.Frame):
 
     def _cargar_mis_horas(self):
         try:
-            datos = listar_ot_logs(usuario=self.usuario)
+            resp = listar_ot_logs(usuario=self.usuario)
+            datos = resp.get("data", []) if isinstance(resp, dict) else (resp or [])
         except Exception as e:
             messagebox.showerror(
                 "Error",
@@ -127,7 +130,6 @@ class VistaEmployee(ttk.Frame):
     def _abrir_popup_registro(self):
         PopupRegistroHoras(
             self,
-            usuario=self.usuario,
             on_success=self._cargar_mis_horas
         )
 

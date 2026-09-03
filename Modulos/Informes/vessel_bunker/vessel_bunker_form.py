@@ -220,6 +220,39 @@ class VesselBunkerReportForm(ttk.Frame):
             self.vars[key] = tk.StringVar()
         return self.vars[key]
 
+    def _parse_decimal_for_formula(self, value):
+        normalized = self._normalize_numeric_for_db(value)
+        if normalized is None:
+            return None
+        try:
+            return float(normalized)
+        except Exception:
+            return None
+
+    def _refresh_tank_formula_fields(self, row_vars):
+        volume = self._parse_decimal_for_formula(row_vars["vol"].get())
+        temp_c = self._parse_decimal_for_formula(row_vars["tc"].get())
+        density = self._parse_decimal_for_formula(row_vars["den"].get())
+
+        if temp_c is None:
+            row_vars["tf"].set("")
+        else:
+            row_vars["tf"].set(f"{(temp_c * 1.8 + 32):.2f}")
+
+        if volume is None or temp_c is None or density is None:
+            row_vars["w"].set("")
+            return
+
+        weight = volume * (density - (0.00063 * (temp_c - 15)))
+        row_vars["w"].set(f"{round(weight, 2):.2f}")
+
+    def _bind_tank_formula_fields(self, row_vars):
+        def _refresh(*_):
+            self._refresh_tank_formula_fields(row_vars)
+
+        for key in ("vol", "tc", "den"):
+            row_vars[key].trace_add("write", _refresh)
+
     def _entry(self, parent, label, var_key, row, col=0, width=26):
         ttk.Label(parent, text=label).grid(row=row, column=col, sticky="w", padx=6, pady=3)
         e = ttk.Entry(parent, textvariable=self._v(var_key), width=width)
@@ -740,14 +773,16 @@ class VesselBunkerReportForm(ttk.Frame):
         e_tc = ttk.Entry(rows_frame, textvariable=row_vars["tc"], width=8)
         e_tc.grid(row=r, column=4, sticky="ew", padx=3, pady=2)
 
-        e_tf = ttk.Entry(rows_frame, textvariable=row_vars["tf"], width=8)
+        e_tf = ttk.Entry(rows_frame, textvariable=row_vars["tf"], width=8, state="readonly")
         e_tf.grid(row=r, column=5, sticky="ew", padx=3, pady=2)
 
         e_den = ttk.Entry(rows_frame, textvariable=row_vars["den"], width=10)
         e_den.grid(row=r, column=6, sticky="ew", padx=3, pady=2)
 
-        e_w = ttk.Entry(rows_frame, textvariable=row_vars["w"], width=10)
+        e_w = ttk.Entry(rows_frame, textvariable=row_vars["w"], width=10, state="readonly")
         e_w.grid(row=r, column=7, sticky="ew", padx=3, pady=2)
+
+        self._bind_tank_formula_fields(row_vars)
 
         # Store row record
         rows_store.append({
@@ -917,6 +952,12 @@ class VesselBunkerReportForm(ttk.Frame):
             pass
 
         payload = {}
+
+        for row in self.vlsfo_rows + self.mgo_rows:
+            try:
+                self._refresh_tank_formula_fields(row.get("vars", {}))
+            except Exception:
+                pass
 
         # =====================================================
         # 1) CAMPOS DIRECTOS (DB)
@@ -1497,6 +1538,13 @@ class VesselBunkerReportForm(ttk.Frame):
                     self.vars[key] = tk.StringVar()
                 try:
                     self.vars[key].set(str(data.get(key, "") or ""))
+                except Exception:
+                    pass
+
+            rows_store = self.vlsfo_rows if prefix == "vlsfo" else self.mgo_rows
+            if rows_store:
+                try:
+                    self._refresh_tank_formula_fields(rows_store[-1].get("vars", {}))
                 except Exception:
                     pass
 
