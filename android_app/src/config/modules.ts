@@ -547,6 +547,7 @@ export const ERP_MODULES: AppModule[] = [
       { key: "empleados-hr", label: "Empleados", endpoint: "/hr/employees" },
       { key: "solicitudes", label: "Solicitudes", endpoint: "/hr/events" },
       { key: "registro-horas", label: "Registro de horas", endpoint: "/hr/ot-log" },
+      { key: "red-medica", label: "Red médica", endpoint: "/hr/medical-network/search?page=1&page_size=100" },
       { key: "payroll", label: "Payroll", endpoint: "/hr/payroll/employees" },
       { key: "salary-calculator", label: "Calculadora salarial", endpoint: "/hr/salary-calculator/rules" },
       { key: "colillas", label: "Colillas", endpoint: "/hr/payroll/payslips" },

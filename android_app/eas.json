@@ -23,6 +23,28 @@
       "android": {
         "buildType": "apk"
       }
+    },
+    "kiosk-erasmo": {
+      "distribution": "internal",
+      "channel": "production",
+      "env": {
+        "EXPO_PUBLIC_ERP_SOM_KIOSK_USER": "erasmo.gomez",
+        "EXPO_PUBLIC_ERP_SOM_KIOSK_NAME": "Erasmo Gomez"
+      },
+      "android": {
+        "buildType": "apk"
+      }
+    },
+    "kiosk-patricia": {
+      "distribution": "internal",
+      "channel": "production",
+      "env": {
+        "EXPO_PUBLIC_ERP_SOM_KIOSK_USER": "patricia.omier",
+        "EXPO_PUBLIC_ERP_SOM_KIOSK_NAME": "Patricia Omier"
+      },
+      "android": {
+        "buildType": "apk"
+      }
     }
   }
 }

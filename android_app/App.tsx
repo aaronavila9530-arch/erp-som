@@ -32,6 +32,13 @@ import { AuthProvider, useAuth } from "./src/auth/AuthContext";
 import { AppModule, AppSection, TableAction, getAllowedModules } from "./src/config/modules";
 import { ONG_QUESTIONNAIRES, LograQuestion, LograQuestionnaire } from "./src/config/lograQuestionnaires";
 
+declare const process: {
+  env: {
+    EXPO_PUBLIC_ERP_SOM_KIOSK_USER?: string;
+    EXPO_PUBLIC_ERP_SOM_KIOSK_NAME?: string;
+  };
+};
+
 const BLUE = "#003A75";
 const BORDER = "#D7DEE8";
 const CREDS_KEY = "erp_som_saved_credentials";
@@ -46,6 +53,23 @@ const COMPANIES = [
 ];
 const DEFAULT_COMPANY = COMPANIES[0];
 const MOBILE_APP_VERSION = "1.7.27";
+const KIOSK_USER = (process.env.EXPO_PUBLIC_ERP_SOM_KIOSK_USER || "").trim();
+const KIOSK_NAME = (process.env.EXPO_PUBLIC_ERP_SOM_KIOSK_NAME || KIOSK_USER || "").trim();
+const IS_KIOSK_APP = Boolean(KIOSK_USER);
+const KIOSK_SESSION: Session | null = IS_KIOSK_APP
+  ? {
+      usuario: KIOSK_USER,
+      rol: "user",
+      token: `kiosk-${KIOSK_USER}`,
+      company_code: DEFAULT_COMPANY.code,
+      company_name: DEFAULT_COMPANY.name,
+      modules: [{ code: "hhrre", label: "HHRR" }],
+      permissions: {
+        hhrre: ["view"],
+        hhrr: ["view", "ot_log", "medical_network"]
+      }
+    }
+  : null;
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -11791,6 +11815,7 @@ function HHRRSectionMobile({
   if (section.key === "empleados-hr") return <HREmployeesView initialRows={rowsFromAny(initialPayload)} session={session} />;
   if (section.key === "solicitudes") return <HRRequestsView initialRows={rowsFromAny(initialPayload)} session={session} />;
   if (section.key === "registro-horas") return <HRHoursView initialPayload={initialPayload} session={session} />;
+  if (section.key === "red-medica") return <HRMedicalNetworkView session={session} />;
   if (section.key === "payroll") return <HRPayrollView initialRows={rowsFromAny(initialPayload)} session={session} />;
   if (section.key === "salary-calculator") return <HRSalaryCalculatorView initialPayload={initialPayload} session={session} />;
   if (section.key === "colillas") return <HRPayslipsView initialRows={rowsFromAny(initialPayload)} session={session} />;
@@ -12883,6 +12908,129 @@ function HRHoursView({
           </ScrollView>
         </SafeAreaView>
       </Modal>
+    </View>
+  );
+}
+
+function HRMedicalNetworkView({
+  session
+}: {
+  session: NonNullable<ReturnType<typeof useAuth>["session"]>;
+}) {
+  const [rows, setRows] = useState<Record<string, unknown>[]>([]);
+  const [filters, setFilters] = useState({
+    q: "",
+    province: "",
+    canton: "",
+    district: "",
+    specialty: "",
+    consultation_type: "",
+    service_type: "",
+    clinic: ""
+  });
+  const [options, setOptions] = useState<Record<string, string[]>>({});
+  const [summary, setSummary] = useState<Record<string, unknown>>({});
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+
+  const filterKeys = [
+    ["province", "Provincia", "provinces"],
+    ["canton", "Cantón", "cantons"],
+    ["district", "Distrito", "districts"],
+    ["specialty", "Especialidad", "specialties"],
+    ["consultation_type", "Consulta", "consultation_types"],
+    ["service_type", "Servicio", "service_types"],
+    ["clinic", "Lugar", "clinics"]
+  ] as const;
+
+  function buildParams(source: typeof filters) {
+    const params = new URLSearchParams({ page: "1", page_size: "100" });
+    Object.entries(source).forEach(([key, value]) => {
+      if (value.trim()) params.set(key, value.trim());
+    });
+    return params;
+  }
+
+  async function load(nextFilters = filters) {
+    setBusy(true);
+    setMessage("");
+    try {
+      const params = buildParams(nextFilters);
+      const [filterPayload, searchPayload] = await Promise.all([
+        apiRequest<Record<string, unknown>>(`/hr/medical-network/filters?${params.toString()}`, { session }),
+        apiRequest<Record<string, unknown>>(`/hr/medical-network/search?${params.toString()}`, { session })
+      ]);
+      setOptions(filterPayload as Record<string, string[]>);
+      setSummary(asRecord(filterPayload.summary) || {});
+      setRows(rowsFromAny(searchPayload));
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo cargar red médica.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    load();
+  }, [session.usuario, session.rol]);
+
+  function updateFilter(key: keyof typeof filters, value: string) {
+    const next = { ...filters, [key]: value };
+    if (key === "province") {
+      next.canton = "";
+      next.district = "";
+    }
+    if (key === "canton") next.district = "";
+    setFilters(next);
+    load(next);
+  }
+
+  function clearFilters() {
+    const empty = { q: "", province: "", canton: "", district: "", specialty: "", consultation_type: "", service_type: "", clinic: "" };
+    setFilters(empty);
+    load(empty);
+  }
+
+  return (
+    <View style={styles.tableShell}>
+      <Text style={styles.cardTitle}>Red médica</Text>
+      <View style={styles.summaryBox}>
+        <Text style={styles.helperText}>
+          {formatValue(summary.total || rows.length)} opciones | {formatValue(summary.professionals)} médicos | {formatValue(summary.specialties)} especialidades
+        </Text>
+      </View>
+      <View style={styles.financeFilterBox}>
+        <Text style={styles.label}>Buscar por médico, clínica o especialidad</Text>
+        <TextInput style={styles.input} value={filters.q} onChangeText={(q) => updateFilter("q", q)} placeholder="Buscar" />
+        {filterKeys.map(([key, label, optionKey]) => (
+          <SelectField
+            key={key}
+            label={label}
+            value={filters[key] || "Todos"}
+            options={["Todos", ...((options[optionKey] || []) as string[])]}
+            onChange={(value) => updateFilter(key, value === "Todos" ? "" : value)}
+          />
+        ))}
+        <View style={styles.financeFilterActions}>
+          <Pressable style={styles.actionButton} onPress={() => load()}><Text style={styles.actionButtonText}>Buscar</Text></Pressable>
+          <Pressable style={styles.modalClose} onPress={clearFilters}><Text style={styles.modalCloseText}>Limpiar</Text></Pressable>
+        </View>
+      </View>
+      {busy ? <ActivityIndicator color={BLUE} style={styles.loader} /> : null}
+      {message ? <Text style={styles.error}>{message}</Text> : null}
+      <View style={styles.list}>
+        {rows.map((row) => (
+          <View key={formatValue(row.id)} style={styles.rowCard}>
+            <Text style={styles.rowTitle}>{formatValue(row.professional_name)}</Text>
+            <Text style={styles.helperText}>{formatValue(row.specialty)} | {formatValue(row.consultation_type)}</Text>
+            <Text style={styles.fieldValue}>{formatValue(row.clinic_name)}</Text>
+            <Text style={styles.helperText}>
+              {formatValue(row.province)} / {formatValue(row.canton)} / {formatValue(row.district)}
+            </Text>
+          </View>
+        ))}
+      </View>
+      {!busy && !rows.length ? <Text style={styles.empty}>No hay resultados con esos filtros.</Text> : null}
     </View>
   );
 }
@@ -15853,6 +16001,8 @@ function PrimaryButton({ label, loading, onPress }: { label: string; loading: bo
 function AppRoot() {
   const { session, loading } = useAuth();
 
+  if (KIOSK_SESSION) return <KioskShell session={KIOSK_SESSION} />;
+
   if (loading) {
     return (
       <View style={styles.loadingScreen}>
@@ -15862,6 +16012,38 @@ function AppRoot() {
   }
 
   return session ? <Shell /> : <LoginScreen />;
+}
+
+function KioskShell({ session }: { session: Session }) {
+  const [screen, setScreen] = useState<"horas" | "red">("horas");
+
+  return (
+    <SafeAreaView style={styles.app}>
+      <StatusBar barStyle="light-content" backgroundColor={BLUE} />
+      <View style={styles.top}>
+        <View style={styles.topRow}>
+          <View>
+            <Text style={styles.headerTitle}>ERP SOM</Text>
+            <Text style={styles.headerSub}>{KIOSK_NAME || session.usuario}</Text>
+          </View>
+          <Text style={styles.headerSub}>Horas y red médica</Text>
+        </View>
+      </View>
+      <View style={styles.kioskNav}>
+        <Pressable style={[styles.kioskTab, screen === "horas" && styles.kioskTabActive]} onPress={() => setScreen("horas")}>
+          <Text style={[styles.kioskTabText, screen === "horas" && styles.kioskTabTextActive]}>Registrar horas</Text>
+        </Pressable>
+        <Pressable style={[styles.kioskTab, screen === "red" && styles.kioskTabActive]} onPress={() => setScreen("red")}>
+          <Text style={[styles.kioskTabText, screen === "red" && styles.kioskTabTextActive]}>Red médica</Text>
+        </Pressable>
+      </View>
+      <ScrollView style={styles.content} contentContainerStyle={styles.contentInner}>
+        {screen === "horas"
+          ? <HRHoursView initialPayload={{ data: [] }} session={session} />
+          : <HRMedicalNetworkView session={session} />}
+      </ScrollView>
+    </SafeAreaView>
+  );
 }
 
 export default function App() {
@@ -16159,6 +16341,11 @@ const styles = StyleSheet.create({
   accountingActionText: { color: "#475467", fontSize: 11, fontWeight: "700", lineHeight: 15 },
   formField: { marginBottom: 8 },
   helperText: { color: "#667085", fontSize: 13, fontWeight: "700", marginBottom: 12 },
+  kioskNav: { backgroundColor: "white", borderBottomColor: BORDER, borderBottomWidth: 1, flexDirection: "row", gap: 10, padding: 12 },
+  kioskTab: { alignItems: "center", backgroundColor: "#EEF3F8", borderColor: BORDER, borderRadius: 8, borderWidth: 1, flex: 1, paddingVertical: 14 },
+  kioskTabActive: { backgroundColor: BLUE, borderColor: BLUE },
+  kioskTabText: { color: BLUE, fontSize: 15, fontWeight: "900" },
+  kioskTabTextActive: { color: "white" },
   modalBody: { padding: 16, paddingBottom: 36 },
   modalClose: { borderColor: BLUE, borderRadius: 6, borderWidth: 1, paddingHorizontal: 12, paddingVertical: 8 },
   modalCloseCompact: { borderColor: "#B42318", borderRadius: 6, borderWidth: 1, paddingHorizontal: 12, paddingVertical: 8 },
