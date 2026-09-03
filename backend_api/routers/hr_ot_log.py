@@ -246,7 +246,7 @@ def _build_hours_summary(usuario: str, conn, year=None, month=None) -> dict:
 # ============================================================
 @router.get(
     "/me/summary",
-    dependencies=[Depends(require_permission("hhrre", "hours_view"))]
+    dependencies=[Depends(require_permission("hhrr", "ot_log"))]
 )
 def my_hours_summary(
     year: int | None = None,
@@ -262,7 +262,7 @@ def my_hours_summary(
 
 @router.get(
     "/summary",
-    dependencies=[Depends(require_permission("hhrre", "hours_view"))]
+    dependencies=[Depends(require_permission("hhrr", "ot_log"))]
 )
 def hours_summary(
     year: int | None = None,
@@ -296,11 +296,11 @@ def hours_summary(
 # ============================================================
 @router.post(
     "/",
-    dependencies=[Depends(require_permission("hhrre", "hours_register"))]
+    dependencies=[Depends(require_permission("hhrr", "ot_log"))]
 )
 @router.post(
     "",
-    dependencies=[Depends(require_permission("hhrre", "hours_register"))]
+    dependencies=[Depends(require_permission("hhrr", "ot_log"))]
 )
 def create_ot_log(
     data: dict,
@@ -308,9 +308,14 @@ def create_ot_log(
     conn=Depends(get_db)
 ):
     _ensure_ot_log_schema(conn)
-    _normalize_rol(user, conn)
+    rol = _normalize_rol(user, conn)
+    is_admin = rol in ("admin", "master")
 
-    _get_empleado_by_usuario(user["usuario"], conn)
+    target_usuario = user["usuario"]
+    if is_admin and data.get("usuario"):
+        target_usuario = str(data.get("usuario") or "").strip() or user["usuario"]
+
+    _get_empleado_by_usuario(target_usuario, conn)
 
     for k in ("tipo", "fecha_inicio", "fecha_fin"):
         if k not in data:
@@ -365,7 +370,7 @@ def create_ot_log(
         RETURNING *
         """,
         (
-            user["usuario"],
+            target_usuario,
             tipo,
             inicio,
             fin,
@@ -380,7 +385,7 @@ def create_ot_log(
 
     row = cur.fetchone()
     conn.commit()
-    row["hours_status"] = _build_hours_summary(user["usuario"], conn, inicio.year, inicio.month)
+    row["hours_status"] = _build_hours_summary(target_usuario, conn, inicio.year, inicio.month)
     return row
 
 
@@ -389,11 +394,11 @@ def create_ot_log(
 # ============================================================
 @router.get(
     "/",
-    dependencies=[Depends(require_permission("hhrre", "hours_view"))]
+    dependencies=[Depends(require_permission("hhrr", "ot_log"))]
 )
 @router.get(
     "",
-    dependencies=[Depends(require_permission("hhrre", "hours_view"))]
+    dependencies=[Depends(require_permission("hhrr", "ot_log"))]
 )
 def list_ot_logs(
     page: int = 1,
@@ -470,7 +475,7 @@ def list_ot_logs(
 
 @router.put(
     "/{log_id}",
-    dependencies=[Depends(require_permission("hhrre", "hours_register"))]
+    dependencies=[Depends(require_permission("hhrr", "edit"))]
 )
 def update_ot_log(
     log_id: int,
@@ -553,7 +558,7 @@ def update_ot_log(
 # ============================================================
 @router.delete(
     "/{log_id}",
-    dependencies=[Depends(require_permission("hhrre", "hours_approve"))]
+    dependencies=[Depends(require_permission("hhrr", "ot_log_status"))]
 )
 def delete_ot_log(
     log_id: int,
@@ -589,7 +594,7 @@ def delete_ot_log(
 # ============================================================
 @router.put(
     "/{log_id}/estado",
-    dependencies=[Depends(require_permission("hhrre", "hours_approve"))]
+    dependencies=[Depends(require_permission("hhrr", "ot_log_status"))]
 )
 def update_ot_log_estado(
     log_id: int,
