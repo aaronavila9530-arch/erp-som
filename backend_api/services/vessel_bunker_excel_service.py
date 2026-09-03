@@ -2,10 +2,6 @@ import os
 import tempfile
 from datetime import datetime, date
 from openpyxl import load_workbook
-try:
-    from services.template_autofit import apply_workbook_autofit
-except ModuleNotFoundError:
-    from backend_api.services.template_autofit import apply_workbook_autofit
 from openpyxl.worksheet.worksheet import Worksheet
 
 
@@ -106,23 +102,84 @@ class VesselBunkerExcelGenerator:
     # =========================================================
     # SAFE SETTER
     # =========================================================
-    def _safe_set(self, ws: Worksheet, cell: str, value):
-
+    def _coerce_excel_value(self, value):
         if value in [None, ""]:
-            return
+            return None
 
         if isinstance(value, bool):
-            value = "YES" if value else "NO"
+            return "YES" if value else "NO"
+
+        if isinstance(value, (int, float, datetime, date)):
+            return value
+
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                return None
+
+            candidate = text.replace("\u00a0", "").replace(" ", "")
+            if "," in candidate and "." in candidate:
+                if candidate.rfind(",") > candidate.rfind("."):
+                    candidate = candidate.replace(".", "").replace(",", ".")
+                else:
+                    candidate = candidate.replace(",", "")
+            elif "," in candidate:
+                candidate = candidate.replace(",", ".")
+
+            try:
+                return float(candidate)
+            except ValueError:
+                return text
+
+        return value
+
+    def _safe_set(self, ws: Worksheet, cell: str, value):
+
+        value = self._coerce_excel_value(value)
+        if value is None:
+            return
+
+        ws[cell].value = value
+
+    def _restore_calculation_formulas(self, wb):
+        if "CALCULATIONS" not in wb.sheetnames:
+            return
+
+        ws = wb["CALCULATIONS"]
+
+        for row in range(11, 22):
+            ws[f"H{row}"] = f"=G{row}*1.8+32"
+            ws[f"J{row}"] = f"=ROUND(F{row}*(I{row}-(0.00063*(G{row}-15))),2)"
+
+        for row in range(29, 32):
+            ws[f"H{row}"] = f"=G{row}*1.8+32"
+            ws[f"J{row}"] = f"=ROUND(F{row}*(I{row}-(0.00063*(G{row}-15))),2)"
+
+        ws["I6"] = "=\"TRIM=\" &  G6-E6"
+        ws["C22"] = '=+J22&" MT "'
+        ws["J22"] = "=SUM(J11:J21)"
+        ws["C32"] = '=+J32 &" MT "'
+        ws["J32"] = "=SUM(J29:J31)"
+        ws["E34"] = "=J22+J32"
 
         try:
-            if isinstance(value, str):
-                v = value.replace(",", ".")
-                if v.replace(".", "", 1).isdigit():
-                    value = float(v)
+            ws.print_area = "A1:K46"
         except Exception:
             pass
 
-        ws[cell].value = value
+    def _repair_broken_print_areas(self, wb):
+        try:
+            defined = wb.defined_names.get("Print_Area")
+            if not defined:
+                return
+
+            if "#N/A" in str(defined.value):
+                try:
+                    del wb.defined_names["Print_Area"]
+                except Exception:
+                    return
+        except Exception:
+            return
 
     # =========================================================
     # GENERATE (OFICIAL)
@@ -139,21 +196,20 @@ class VesselBunkerExcelGenerator:
 
         ws = wb["Data from DB"]
 
-        start_row = 2
+        for row in range(2, ws.max_row + 1):
+            field_name = ws[f"A{row}"].value
+            if not field_name:
+                continue
 
-        for idx, field_name in enumerate(self.COLUMN_ORDER):
-
-            row = start_row + idx
-            cell = f"B{row}"
-
+            field_name = str(field_name).strip()
             value = (payload or {}).get(field_name)
-
-            self._safe_set(ws, cell, value)
+            self._safe_set(ws, f"B{row}", value)
 
         tmp_dir = tempfile.mkdtemp(prefix="bunker_excel_")
         tmp_path = os.path.join(tmp_dir, "vessel_bunker_report.xlsx")
 
-        apply_workbook_autofit(wb)
+        self._repair_broken_print_areas(wb)
+        self._restore_calculation_formulas(wb)
         wb.save(tmp_path)
 
         return tmp_path

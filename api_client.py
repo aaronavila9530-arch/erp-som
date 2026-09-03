@@ -9118,6 +9118,31 @@ def get_all_vessel_bunker_reports_api(limit: int = 200, offset: int = 0, q: str 
         return {"success": False, "error": str(e)}
 
 
+# =========================================================
+# DELETE
+# DELETE /vessel-bunker-reports/{id}
+# =========================================================
+def delete_vessel_bunker_report_api(report_id: int):
+
+    try:
+        response = requests.delete(
+            f"{BASE_URL}/vessel-bunker-reports/{int(report_id)}",
+            timeout=60
+        )
+
+        if response.status_code != 200:
+            return {
+                "success": False,
+                "error": f"HTTP {response.status_code}",
+                "detail": response.text
+            }
+
+        return _safe_json_response(response)
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
 
 
 # =========================================================

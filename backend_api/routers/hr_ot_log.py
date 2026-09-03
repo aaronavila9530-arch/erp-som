@@ -6,6 +6,7 @@ import unicodedata
 from database import get_db
 from security.rbac import require_permission
 from security.auth import get_current_user
+from services.employee_hours_policy_schema import ensure_employee_hours_policy_columns
 
 
 router = APIRouter(
@@ -46,6 +47,7 @@ def _ensure_ot_log_schema(conn):
         "ALTER TABLE hr_ot_log ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP NOT NULL DEFAULT now()",
     ):
         cur.execute(ddl)
+    ensure_employee_hours_policy_columns(cur)
     conn.commit()
 
 
@@ -59,33 +61,39 @@ def _clean_text(value) -> str:
 def _employee_hours_policy(emp: dict) -> dict:
     full_name = _clean_text(f"{emp.get('nombre', '')} {emp.get('apellidos', '')}")
     contracted = float(emp.get("horas_contratadas") or 0)
+    ordinary_limit = float(emp.get("horas_tope_ordinario") or contracted or 0)
+    max_limit = float(emp.get("horas_tope_maximo") or 0)
+    extra_rate = float(emp.get("tarifa_hora_extra") or 0)
     salary = float(emp.get("salario") or 0)
+    guaranteed = bool(emp.get("pago_minimo_garantizado"))
 
     policy = {
-        "tope_ordinario": contracted,
-        "tope_maximo": 0,
-        "tarifa_hora_extra": 0,
+        "tope_ordinario": ordinary_limit,
+        "tope_maximo": max_limit,
+        "tarifa_hora_extra": extra_rate,
         "salario_base_mensual": salary,
-        "pago_minimo_garantizado": bool(contracted),
+        "pago_minimo_garantizado": guaranteed,
     }
 
-    if "manfred" in full_name:
+    has_custom_policy = any((ordinary_limit, max_limit, extra_rate, guaranteed))
+
+    if not has_custom_policy and "manfred" in full_name:
         policy.update({
             "tope_ordinario": 150,
             "tope_maximo": 192,
             "tarifa_hora_extra": 2800,
-            "salario_base_mensual": 600000,
+            "salario_base_mensual": salary or 600000,
             "pago_minimo_garantizado": True,
         })
-    elif "erasmo" in full_name:
+    elif not has_custom_policy and "erasmo" in full_name:
         policy.update({
             "tope_ordinario": 60,
             "tope_maximo": 120,
             "tarifa_hora_extra": 0,
-            "salario_base_mensual": 425000,
+            "salario_base_mensual": salary or 425000,
             "pago_minimo_garantizado": True,
         })
-    elif "jafeth" in full_name:
+    elif not has_custom_policy and "jafeth" in full_name:
         policy.update({
             "tarifa_hora_extra": 2800,
             "pago_minimo_garantizado": bool(contracted),
@@ -116,6 +124,7 @@ def _normalize_rol(user: dict, conn) -> str:
 # ============================================================
 def _get_empleado_by_usuario(usuario: str, conn) -> dict:
     cur = conn.cursor(cursor_factory=RealDictCursor)
+    _ensure_ot_log_schema(conn)
 
     cur.execute(
         """
@@ -127,6 +136,10 @@ def _get_empleado_by_usuario(usuario: str, conn) -> dict:
             salario,
             pago,
             horas_contratadas,
+            horas_tope_ordinario,
+            horas_tope_maximo,
+            tarifa_hora_extra,
+            pago_minimo_garantizado,
             usuario
         FROM empleados
         WHERE lower(usuario) = lower(%s)
@@ -147,6 +160,10 @@ def _get_empleado_by_usuario(usuario: str, conn) -> dict:
             "salario": 0,
             "pago": "",
             "horas_contratadas": 0,
+            "horas_tope_ordinario": 0,
+            "horas_tope_maximo": 0,
+            "tarifa_hora_extra": 0,
+            "pago_minimo_garantizado": False,
             "usuario": usuario
         }
 

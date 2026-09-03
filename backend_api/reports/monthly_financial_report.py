@@ -18,6 +18,20 @@ RED = "#C0392B"
 GREY = "#F4F6F8"
 LIGHT_BLUE = "#E8F0F8"
 CHART_COLORS = [BLUE, TEAL, GREEN, ORANGE, RED, "#7F8C8D", "#8E44AD"]
+MONTH_NAMES_ES = {
+    1: "enero",
+    2: "febrero",
+    3: "marzo",
+    4: "abril",
+    5: "mayo",
+    6: "junio",
+    7: "julio",
+    8: "agosto",
+    9: "septiembre",
+    10: "octubre",
+    11: "noviembre",
+    12: "diciembre",
+}
 
 
 def _period_bounds(year: int, month: int):
@@ -88,6 +102,7 @@ def _ensure_monthly_report_obligations(conn):
             concept TEXT,
             amount NUMERIC(18,2) NOT NULL DEFAULT 0,
             currency VARCHAR(3) NOT NULL DEFAULT 'USD',
+            issue_date DATE,
             due_date DATE,
             source TEXT NOT NULL DEFAULT 'PREVIEW',
             accepted BOOLEAN NOT NULL DEFAULT TRUE,
@@ -97,6 +112,7 @@ def _ensure_monthly_report_obligations(conn):
         )
         """
     )
+    cur.execute("ALTER TABLE monthly_report_obligations ADD COLUMN IF NOT EXISTS issue_date DATE")
     conn.commit()
 
 
@@ -107,10 +123,19 @@ def build_monthly_obligation_preview(conn, year: int, month: int):
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     saved = _fetch_all(cur, """
-        SELECT id, payee_name, concept, amount, currency, due_date, source, accepted
+        SELECT
+            id,
+            payee_name,
+            concept,
+            amount,
+            currency,
+            COALESCE(issue_date, due_date) AS issue_date,
+            due_date,
+            source,
+            accepted
         FROM monthly_report_obligations
         WHERE period = %s
-        ORDER BY due_date NULLS LAST, payee_name
+        ORDER BY COALESCE(issue_date, due_date) NULLS LAST, payee_name
     """, (period,))
     if saved:
         return {"period": period, "source": "saved", "data": [dict(row) for row in saved]}
@@ -121,11 +146,11 @@ def build_monthly_obligation_preview(conn, year: int, month: int):
             COALESCE(NULLIF(obligation_type, ''), NULLIF(payee_type, ''), 'GASTO MENSUAL') AS concept,
             currency,
             ROUND(AVG(total), 2) AS amount,
-            MIN(EXTRACT(DAY FROM COALESCE(due_date, issue_date)))::int AS due_day,
+            MIN(EXTRACT(DAY FROM COALESCE(issue_date, due_date)))::int AS issue_day,
             COUNT(*) AS samples
         FROM payment_obligations
-        WHERE COALESCE(due_date, issue_date) >= (%s::date - INTERVAL '12 months')
-          AND COALESCE(due_date, issue_date) < %s::date
+        WHERE COALESCE(issue_date, due_date) >= (%s::date - INTERVAL '12 months')
+          AND COALESCE(issue_date, due_date) < %s::date
           AND COALESCE(total, 0) > 0
         GROUP BY payee_name, COALESCE(NULLIF(obligation_type, ''), NULLIF(payee_type, ''), 'GASTO MENSUAL'), currency
         HAVING COUNT(*) >= 1
@@ -134,14 +159,61 @@ def build_monthly_obligation_preview(conn, year: int, month: int):
     """, (start, start))
     preview = []
     for row in rows:
-        due_day = min(max(int(row.get("due_day") or 1), 1), calendar.monthrange(year, month)[1])
+        issue_day = min(max(int(row.get("issue_day") or 1), 1), calendar.monthrange(year, month)[1])
         preview.append({
             "payee_name": row.get("payee_name"),
             "concept": row.get("concept"),
             "amount": _f(row.get("amount")),
             "currency": row.get("currency") or "USD",
-            "due_date": date(year, month, due_day).isoformat(),
+            "issue_date": date(year, month, issue_day).isoformat(),
+            "due_date": None,
             "source": f"HISTORICO_{int(row.get('samples') or 0)}",
+            "accepted": True,
+        })
+
+    salary_rows = _fetch_all(cur, """
+        WITH payroll AS (
+            SELECT
+                pr.usuario,
+                TRIM(CONCAT(COALESCE(e.nombre, ''), ' ', COALESCE(e.apellidos, ''))) AS employee_name,
+                COALESCE(e.moneda, 'CRC') AS currency,
+                COALESCE(pr.salario_bruto, pr.salario_neto, 0) AS amount,
+                'PAYROLL_RUN' AS source
+            FROM payroll_runs pr
+            LEFT JOIN empleados e ON e.usuario = pr.usuario
+            WHERE pr.year = %s
+              AND pr.month = %s
+              AND COALESCE(pr.salario_bruto, pr.salario_neto, 0) > 0
+        ),
+        employee_budget AS (
+            SELECT
+                e.usuario,
+                TRIM(CONCAT(COALESCE(e.nombre, ''), ' ', COALESCE(e.apellidos, ''))) AS employee_name,
+                COALESCE(e.moneda, 'CRC') AS currency,
+                COALESCE(e.salario, 0) AS amount,
+                'MASTER_DATA' AS source
+            FROM empleados e
+            WHERE COALESCE(e.estado, 'Activo') = 'Activo'
+              AND COALESCE(e.salario, 0) > 0
+              AND NOT EXISTS (
+                  SELECT 1 FROM payroll p WHERE p.usuario = e.usuario
+              )
+        )
+        SELECT * FROM payroll
+        UNION ALL
+        SELECT * FROM employee_budget
+        ORDER BY employee_name
+    """, (year, month))
+    salary_date = date(year, month, calendar.monthrange(year, month)[1]).isoformat()
+    for row in salary_rows:
+        preview.append({
+            "payee_name": row.get("employee_name") or row.get("usuario") or "Empleado",
+            "concept": "SALARIO MENSUAL",
+            "amount": _f(row.get("amount")),
+            "currency": row.get("currency") or "CRC",
+            "issue_date": salary_date,
+            "due_date": None,
+            "source": row.get("source") or "PAYROLL",
             "accepted": True,
         })
     return {"period": period, "source": "suggested", "data": preview}
@@ -159,14 +231,15 @@ def save_monthly_obligations(conn, year: int, month: int, rows, user=None):
         amount = _f(row.get("amount"))
         if amount <= 0:
             continue
+        issue_date = row.get("issue_date") or row.get("due_date") or None
         due_date = row.get("due_date") or None
         cur.execute(
             """
             INSERT INTO monthly_report_obligations (
-                period, payee_name, concept, amount, currency, due_date, source, accepted, created_by, updated_at
+                period, payee_name, concept, amount, currency, issue_date, due_date, source, accepted, created_by, updated_at
             )
-            VALUES (%s,%s,%s,%s,%s,%s,%s,TRUE,%s,now())
-            RETURNING id, payee_name, concept, amount, currency, due_date, source, accepted
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,TRUE,%s,now())
+            RETURNING id, payee_name, concept, amount, currency, issue_date, due_date, source, accepted
             """,
             (
                 period,
@@ -174,6 +247,7 @@ def save_monthly_obligations(conn, year: int, month: int, rows, user=None):
                 row.get("concept") or "Obligacion mensual",
                 amount,
                 row.get("currency") or "USD",
+                issue_date,
                 due_date,
                 row.get("source") or "PREVIEW",
                 user,
@@ -493,12 +567,13 @@ def build_monthly_financial_data(conn, year: int, month: int):
             concept,
             amount AS total,
             currency,
+            COALESCE(issue_date, due_date) AS issue_date,
             due_date,
             source
         FROM monthly_report_obligations
         WHERE period = %s
           AND accepted = TRUE
-        ORDER BY due_date NULLS LAST, payee_name
+        ORDER BY COALESCE(issue_date, due_date) NULLS LAST, payee_name
     """, (f"{year}-{month:02d}",))
 
     cur.close()
@@ -514,9 +589,9 @@ def build_monthly_financial_data(conn, year: int, month: int):
     next_payables_total = _f(next_payables.get("total"))
     net_cash = collections_total - itp_total
     next_net_outlook = next_receivables_total - next_payables_total
-    month_name = calendar.month_name[month]
-    prev_month_name = calendar.month_name[prev_start.month]
-    next_month_name = calendar.month_name[next_start.month]
+    month_name = MONTH_NAMES_ES.get(month, calendar.month_name[month])
+    prev_month_name = MONTH_NAMES_ES.get(prev_start.month, calendar.month_name[prev_start.month])
+    next_month_name = MONTH_NAMES_ES.get(next_start.month, calendar.month_name[next_start.month])
 
     data = {
         "period": {
@@ -813,6 +888,64 @@ def _safe_filename(label, extension):
     return f"MSL_Financial_Report_{label.replace(' ', '_').replace(',', '')}.{extension}"
 
 
+def _asset_path(name):
+    root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    candidates = [
+        os.path.join(root, "assets", name),
+        os.path.join(os.path.dirname(__file__), "..", "assets", name),
+    ]
+    for candidate in candidates:
+        candidate = os.path.abspath(candidate)
+        if os.path.exists(candidate):
+            return candidate
+    return None
+
+
+def _canvas_frame(canvas, doc):
+    from reportlab.lib import colors
+
+    canvas.saveState()
+    width, height = doc.pagesize
+    canvas.setFillColor(colors.HexColor("#F1F1F1"))
+    canvas.rect(0, 0, width, height, stroke=0, fill=1)
+    canvas.setStrokeColor(colors.black)
+    canvas.setLineWidth(2)
+    canvas.line(170, height - 86, width - 30, height - 86)
+    canvas.line(170, 42, width - 30, 42)
+    canvas.line(0, height - 86, 50, height - 86)
+    canvas.line(0, 42, 50, 42)
+    canvas.restoreState()
+
+
+try:
+    from reportlab.platypus import Flowable as _ReportFlowable
+except Exception:
+    _ReportFlowable = object
+
+
+class _RotatedSideLabel(_ReportFlowable):
+    def __init__(self, text):
+        try:
+            super().__init__()
+        except Exception:
+            pass
+        self.text = text
+        self.width = 42
+        self.height = 520
+
+    def wrap(self, avail_width, avail_height):
+        return self.width, min(self.height, avail_height)
+
+    def drawOn(self, canvas, x, y, _sW=0):
+        canvas.saveState()
+        canvas.translate(x + 24, y + 38)
+        canvas.rotate(90)
+        canvas.setFont("Helvetica-Bold", 17)
+        canvas.setFillColorRGB(0, 0, 0)
+        canvas.drawString(0, 0, self.text)
+        canvas.restoreState()
+
+
 def _chart_image(rows, title, path, kind="bar"):
     try:
         from PIL import Image, ImageDraw, ImageFont
@@ -858,7 +991,7 @@ def _chart_image(rows, title, path, kind="bar"):
             draw.text((legend_x + 32, y - 1), f"{label} - {pct:.1f}% - {_short_money(row.get('total'))}", fill=DARK, font=small_font)
     else:
         max_value = max(_f(r.get("total")) for r in rows) or 1
-        chart_left, chart_top, chart_right, bar_h = 260, 96, 830, 30
+        chart_left, chart_top, chart_right, bar_h = 260, 96, 720, 30
         for idx, row in enumerate(rows):
             y = chart_top + idx * 45
             label = str(row.get("nombre_cliente") or "N/A")[:24]
@@ -906,9 +1039,9 @@ def _build_charts(data, tmp_dir):
 
 def generate_monthly_financial_pdf(conn, year: int, month: int):
     from reportlab.lib import colors
-    from reportlab.lib.pagesizes import LETTER
+    from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-    from reportlab.platypus import Image, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+    from reportlab.platypus import PageBreak, SimpleDocTemplate
 
     data = build_monthly_financial_data(conn, year, month)
     label = data["period"]["label"]
@@ -917,52 +1050,67 @@ def generate_monthly_financial_pdf(conn, year: int, month: int):
     path = os.path.join(tmp_dir, _safe_filename(label, "pdf"))
 
     styles = getSampleStyleSheet()
-    styles.add(ParagraphStyle(name="CoverCompany", parent=styles["Title"], fontSize=30, textColor=colors.HexColor(BLUE), leading=36, alignment=1))
-    styles.add(ParagraphStyle(name="CoverTitle", parent=styles["Title"], fontSize=24, textColor=colors.HexColor(DARK), leading=30, alignment=1))
-    styles.add(ParagraphStyle(name="Section", parent=styles["Heading1"], textColor=colors.HexColor(BLUE), fontSize=18, spaceBefore=8, spaceAfter=10))
-    styles.add(ParagraphStyle(name="Body", parent=styles["BodyText"], fontSize=10.8, leading=16, spaceAfter=10))
-    styles.add(ParagraphStyle(name="Small", parent=styles["BodyText"], fontSize=8.5, leading=11, textColor=colors.HexColor("#52606D")))
+    styles.add(ParagraphStyle(name="CoverCompany", parent=styles["Title"], fontSize=20, textColor=colors.black, leading=22, alignment=0))
+    styles.add(ParagraphStyle(name="CoverTitle", parent=styles["Title"], fontSize=38, textColor=colors.black, leading=44, alignment=0))
+    styles.add(ParagraphStyle(name="SectionLead", parent=styles["Heading1"], textColor=colors.black, fontSize=15.5, leading=19, spaceBefore=0, spaceAfter=8))
+    styles.add(ParagraphStyle(name="Body", parent=styles["BodyText"], fontSize=14, leading=20, alignment=4, spaceAfter=12))
+    styles.add(ParagraphStyle(name="Small", parent=styles["BodyText"], fontSize=9, leading=11, textColor=colors.HexColor("#333333")))
 
     story = []
     story.extend(_pdf_cover(data, styles))
     story.append(PageBreak())
-    _pdf_executive_dashboard(story, styles, data)
-    story.append(PageBreak())
-    _pdf_section(story, styles, "Introducción ejecutiva", data["narrative"]["introduction"], None, data)
-    _pdf_section(story, styles, "Collections Recovery", data["narrative"]["collections"], charts["collections"], data, data["tables"]["top_collections"])
-    _pdf_section(story, styles, "Cuentas por cobrar a recuperar", data["narrative"]["receivables"], charts["ar"], data, data["tables"]["top_ar"])
-    _pdf_section(story, styles, "Antigüedad de cartera", "La siguiente distribución permite separar cartera vigente de saldos vencidos y priorizar gestiones según impacto y antigüedad.", charts["ar_aging"], data, data["tables"]["ar_aging"])
-    _pdf_section(story, styles, "Tendencia de pago", data["narrative"]["payment_trend"], charts["payment_trend"], data, data["tables"]["payment_trend"])
-    _pdf_section(story, styles, "Facturación", data["narrative"]["billing"], charts["billing"], data, data["tables"]["top_billing"])
-    _pdf_section(story, styles, "Cuentas por pagar", data["narrative"]["payables"], charts["payables"], data, data["tables"]["top_payables_open"])
-    _pdf_section(story, styles, "Obligaciones pendientes del mes", "Obligaciones mensuales aceptadas en el preliminar antes de emitir el reporte. Esta tabla sirve como agenda operativa de pagos y seguimiento.", charts["cash_bridge"], data, data["tables"]["monthly_obligations"])
-    _pdf_section(story, styles, f"Cronograma y outlook - {data['period']['next_label']}", data["narrative"]["next_month_outlook"], charts["next_ar"], data, data["tables"]["top_next_receivables"], extra_chart=charts["next_payables"])
-    _pdf_section(story, styles, f"Comparativo {year - 1} vs {year}", data["narrative"]["year_comparison"], charts["accounting_mix"], data, _comparison_rows(data))
-    _pdf_section(story, styles, "Análisis de riesgo financiero", data["narrative"]["risk"], None, data)
-    _pdf_section(story, styles, "Conclusion reporte financiero", data["narrative"]["conclusion"], None, data)
+    _pdf_intro_page(story, styles, data)
+    _pdf_section(story, styles, "Recupero cuentas por cobrar", f"A continuación la distribución de cuentas por cobrar recuperadas en {data['period']['month_name']}:", data["narrative"]["collections"], charts["collections"])
+    _pdf_section(story, styles, "Cuentas por cobrar", f"A continuación la distribución de cuentas por cobrar para {data['period']['label']}:", data["narrative"]["receivables"], charts["ar"])
+    _pdf_section(story, styles, "Tendencia de pago", "A continuación la tendencia de pagos por parte del cliente:", data["narrative"]["payment_trend"], charts["payment_trend"])
+    _pdf_section(story, styles, "Facturación", "A continuación el desglose mensual acumulado de facturación para el año en curso:", data["narrative"]["billing"], charts["billing"])
+    _pdf_section(story, styles, "Cuentas por pagar", "A continuación el detalle de cuentas por pagar:", data["narrative"]["payables"], charts["payables"])
+    _pdf_section(story, styles, "Obligaciones del mes", "A continuación el preliminar editable de obligaciones mensuales aceptadas para este reporte:", "Incluye las obligaciones mensuales aprobadas antes de emitir el reporte, incluyendo salarios y compromisos recurrentes. Esta sección funciona como agenda de pagos y base de seguimiento administrativo.", charts["cash_bridge"], data["tables"]["monthly_obligations"])
+    _pdf_section(story, styles, "Cronograma de pago", f"A continuación el cronograma de pago de {data['period']['next_label']}:", data["narrative"]["next_month_outlook"], charts["next_ar"], extra_chart=charts["next_payables"])
+    _pdf_section(story, styles, f"Comparativo {year - 1} vs {year}", f"A continuación el comparativo entre {year - 1} y {year}:", data["narrative"]["year_comparison"], charts["accounting_mix"])
+    _pdf_section(story, styles, "Análisis de riesgo financiero", "A continuación el análisis de riesgos financieros:", data["narrative"]["risk"], None, None)
+    _pdf_section(story, styles, "Conclusión", "Conclusión y recomendaciones ejecutivas:", data["narrative"]["conclusion"], None, None)
 
-    doc = SimpleDocTemplate(path, pagesize=LETTER, rightMargin=50, leftMargin=50, topMargin=46, bottomMargin=42)
-    doc.build(story)
+    doc = SimpleDocTemplate(path, pagesize=A4, rightMargin=36, leftMargin=36, topMargin=58, bottomMargin=52)
+    doc.build(story, onFirstPage=_canvas_frame, onLaterPages=_canvas_frame)
     return path, _safe_filename(label, "pdf")
 
 
 def _pdf_cover(data, styles):
-    from reportlab.platypus import Paragraph, Spacer, Table, TableStyle
+    from reportlab.platypus import Image, Paragraph, Spacer, Table
     from reportlab.lib import colors
 
     p = data["period"]
-    return [
-        Spacer(1, 120),
-        Paragraph("Marine Surveyors &<br/>Logistics", styles["CoverCompany"]),
-        Spacer(1, 18),
+    logo = Paragraph("● ●&nbsp;&nbsp;Marine&nbsp;&nbsp;&nbsp;&nbsp;Surveyors&nbsp;&nbsp;&nbsp;&nbsp;&amp;<br/>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Logistics", styles["CoverCompany"])
+    items = [
+        Spacer(1, 24),
+        logo,
+        Spacer(1, 22),
         Paragraph("Alajuela, Costa Rica", styles["Body"]),
-        Spacer(1, 75),
+        Spacer(1, 72),
         Paragraph(escape(p["report_label"]), styles["CoverTitle"]),
-        Spacer(1, 70),
-        _pdf_kpi_table(data),
-        Spacer(1, 70),
-        Paragraph("Aarón Ávila Vargas", styles["Body"]),
+        Spacer(1, 44),
+        Paragraph("Aarón Ávila Vargas", styles["SectionLead"]),
+        Spacer(1, 24),
     ]
+    ship = _asset_path("barco.jpg")
+    if ship:
+        items.append(Image(ship, width=455, height=250))
+    else:
+        items.append(_pdf_kpi_table(data))
+    return items
+
+
+def _pdf_intro_page(story, styles, data):
+    from reportlab.platypus import PageBreak, Paragraph, Spacer
+
+    story.append(Paragraph("Introducción ejecutiva", styles["SectionLead"]))
+    for paragraph in str(data["narrative"]["introduction"] or "").split("\n\n"):
+        if paragraph.strip():
+            story.append(Paragraph(escape(paragraph.strip()), styles["Body"]))
+    story.append(Spacer(1, 8))
+    story.append(_pdf_kpi_table(data))
+    story.append(PageBreak())
 
 
 def _pdf_kpi_table(data):
@@ -1033,22 +1181,24 @@ def _pdf_executive_dashboard(story, styles, data):
         story.append(Paragraph(f"- {escape(item)}", styles["Body"]))
 
 
-def _pdf_section(story, styles, title, text, chart_path, data, table_rows=None, extra_chart=None):
+def _pdf_section(story, styles, side_title, lead, text, chart_path, table_rows=None, extra_chart=None):
     from reportlab.platypus import Image, PageBreak, Paragraph, Spacer
 
-    story.append(Paragraph(escape(title), styles["Section"]))
+    story.append(Paragraph(escape(side_title), styles["SectionLead"]))
+    story.append(Paragraph(escape(lead), styles["SectionLead"]))
+    if chart_path and os.path.exists(chart_path):
+        story.append(Spacer(1, 4))
+        story.append(Image(chart_path, width=468, height=224))
+        story.append(Spacer(1, 8))
+    if extra_chart and os.path.exists(extra_chart):
+        story.append(Image(extra_chart, width=468, height=224))
+        story.append(Spacer(1, 8))
+    if table_rows is not None:
+        story.append(_pdf_table(table_rows))
+        story.append(Spacer(1, 8))
     for paragraph in str(text or "").split("\n\n"):
         if paragraph.strip():
             story.append(Paragraph(escape(paragraph.strip()), styles["Body"]))
-    if chart_path and os.path.exists(chart_path):
-        story.append(Spacer(1, 6))
-        story.append(Image(chart_path, width=475, height=227))
-    if extra_chart and os.path.exists(extra_chart):
-        story.append(Spacer(1, 8))
-        story.append(Image(extra_chart, width=475, height=227))
-    if table_rows is not None:
-        story.append(Spacer(1, 8))
-        story.append(_pdf_table(table_rows))
     story.append(PageBreak())
 
 
@@ -1056,14 +1206,14 @@ def _pdf_table(rows):
     from reportlab.lib import colors
     from reportlab.platypus import Table, TableStyle
 
-    has_obligation_fields = any((row or {}).get("concept") or (row or {}).get("due_date") for row in rows or [])
+    has_obligation_fields = any((row or {}).get("concept") or (row or {}).get("issue_date") or (row or {}).get("due_date") for row in rows or [])
     if has_obligation_fields:
-        table_data = [["Proveedor", "Concepto", "Vence", "Monto"]]
+        table_data = [["Proveedor", "Concepto", "Fecha factura", "Monto"]]
         for row in rows or []:
             table_data.append([
                 str(row.get("nombre_cliente") or row.get("name") or "N/A"),
                 str(row.get("concept") or "Obligacion mensual"),
-                str(row.get("due_date") or ""),
+                str(row.get("issue_date") or row.get("due_date") or ""),
                 f"{row.get('currency') or 'USD'} {_f(row.get('total') or row.get('amount')):,.2f}",
             ])
         if len(table_data) == 1:
@@ -1212,11 +1362,11 @@ def _docx_section(doc, title, text, chart_path=None, rows=None):
 
 
 def _docx_table(doc, rows):
-    has_obligation_fields = any((row or {}).get("concept") or (row or {}).get("due_date") for row in rows or [])
+    has_obligation_fields = any((row or {}).get("concept") or (row or {}).get("issue_date") or (row or {}).get("due_date") for row in rows or [])
     table = doc.add_table(rows=1, cols=4 if has_obligation_fields else 2)
     table.style = "Table Grid"
     if has_obligation_fields:
-        headers = ["Proveedor", "Concepto", "Vence", "Monto"]
+        headers = ["Proveedor", "Concepto", "Fecha factura", "Monto"]
     else:
         headers = ["Detalle", "Monto"]
     for idx, header in enumerate(headers):
@@ -1227,7 +1377,7 @@ def _docx_table(doc, rows):
             if has_obligation_fields:
                 cells[0].text = str(row.get("nombre_cliente") or row.get("name") or "N/A")
                 cells[1].text = str(row.get("concept") or "Obligacion mensual")
-                cells[2].text = str(row.get("due_date") or "")
+                cells[2].text = str(row.get("issue_date") or row.get("due_date") or "")
                 cells[3].text = f"{row.get('currency') or 'USD'} {_f(row.get('total') or row.get('amount')):,.2f}"
             else:
                 cells[0].text = str(row.get("nombre_cliente") or row.get("name") or "N/A")

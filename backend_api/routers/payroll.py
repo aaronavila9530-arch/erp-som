@@ -8,6 +8,7 @@ from database import get_db
 from security.auth import get_current_user
 from security.rbac import require_permission
 from routers.hr_ot_log import _employee_hours_policy
+from services.employee_hours_policy_schema import ensure_employee_hours_policy_columns
 
 BASE_DIR = os.path.dirname(
     os.path.dirname(
@@ -109,6 +110,8 @@ def _payroll_rates_for_stored_run(salario_bruto: float, salario_mensual: float, 
 def listar_empleados_payroll(conn=Depends(get_db)):
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
+    ensure_employee_hours_policy_columns(cur)
+    conn.commit()
 
     cur.execute("""
         SELECT
@@ -119,6 +122,11 @@ def listar_empleados_payroll(conn=Depends(get_db)):
             pago,
             estado,
             usuario,
+            horas_contratadas,
+            horas_tope_ordinario,
+            horas_tope_maximo,
+            tarifa_hora_extra,
+            pago_minimo_garantizado,
             cedula_id
         FROM empleados
         WHERE estado = 'Activo'
@@ -146,6 +154,8 @@ def calcular_payroll(
     conn=Depends(get_db)
 ):
     cur = conn.cursor(cursor_factory=RealDictCursor)
+    ensure_employee_hours_policy_columns(cur)
+    conn.commit()
 
     # --------------------------------------------------------
     # VALIDAR PERÍODO (SOLO MES CERRADO / MES ANTERIOR)
@@ -194,6 +204,10 @@ def calcular_payroll(
             salario,
             pago,
             horas_contratadas,
+            horas_tope_ordinario,
+            horas_tope_maximo,
+            tarifa_hora_extra,
+            pago_minimo_garantizado,
             cedula_id
         FROM empleados
         WHERE usuario = %s

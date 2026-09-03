@@ -177,7 +177,7 @@ class PopupMonthlyFinancialReport(tk.Toplevel):
 
         win = tk.Toplevel(self)
         win.title("Preliminar de obligaciones mensuales")
-        win.geometry("880x520")
+        win.geometry("960x620")
         win.transient(self)
         win.grab_set()
         result = {"accepted": False}
@@ -188,21 +188,36 @@ class PopupMonthlyFinancialReport(tk.Toplevel):
             font=("Segoe UI", 10, "bold")
         ).pack(anchor="w", padx=12, pady=(10, 4))
 
-        cols = ("incluir", "payee_name", "concept", "due_date", "currency", "amount")
-        tree = ttk.Treeview(win, columns=cols, show="headings", height=13)
+        cols = ("incluir", "payee_name", "concept", "issue_date", "currency", "amount")
+        tree_frame = ttk.Frame(win)
+        tree_frame.pack(fill="both", expand=True, padx=12, pady=8)
+        tree = ttk.Treeview(tree_frame, columns=cols, show="headings", height=15)
+        yscroll = ttk.Scrollbar(tree_frame, orient="vertical", command=tree.yview)
+        xscroll = ttk.Scrollbar(tree_frame, orient="horizontal", command=tree.xview)
+        tree.configure(yscrollcommand=yscroll.set, xscrollcommand=xscroll.set)
         labels = {
             "incluir": "Incluir",
             "payee_name": "Proveedor",
             "concept": "Concepto",
-            "due_date": "Vence",
+            "issue_date": "Fecha factura",
             "currency": "Moneda",
             "amount": "Monto",
         }
-        widths = {"incluir": 70, "payee_name": 240, "concept": 190, "due_date": 95, "currency": 80, "amount": 110}
+        widths = {"incluir": 70, "payee_name": 260, "concept": 210, "issue_date": 110, "currency": 80, "amount": 120}
         for col in cols:
             tree.heading(col, text=labels[col])
             tree.column(col, width=widths[col], anchor="e" if col == "amount" else "w")
-        tree.pack(fill="both", expand=True, padx=12, pady=8)
+        tree.grid(row=0, column=0, sticky="nsew")
+        yscroll.grid(row=0, column=1, sticky="ns")
+        xscroll.grid(row=1, column=0, sticky="ew")
+        tree_frame.rowconfigure(0, weight=1)
+        tree_frame.columnconfigure(0, weight=1)
+
+        def _on_tree_wheel(event):
+            tree.yview_scroll(int(-1 * (event.delta / 120)), "units")
+            return "break"
+
+        tree.bind("<MouseWheel>", _on_tree_wheel)
 
         editable_rows = []
         for row in rows:
@@ -227,7 +242,7 @@ class PopupMonthlyFinancialReport(tk.Toplevel):
                         "Si" if row.get("accepted", True) else "No",
                         row.get("payee_name") or "",
                         row.get("concept") or "",
-                        row.get("due_date") or "",
+                        row.get("issue_date") or row.get("due_date") or "",
                         row.get("currency") or "USD",
                         money_text(row.get("amount")),
                     )
@@ -238,14 +253,14 @@ class PopupMonthlyFinancialReport(tk.Toplevel):
         include_var = tk.BooleanVar(value=True)
         payee_var = tk.StringVar()
         concept_var = tk.StringVar()
-        due_var = tk.StringVar()
+        issue_var = tk.StringVar()
         currency_var = tk.StringVar(value="USD")
         amount_var = tk.StringVar()
 
         ttk.Checkbutton(form, text="Incluir", variable=include_var).grid(row=0, column=0, sticky="w", padx=4)
         ttk.Entry(form, textvariable=payee_var, width=30).grid(row=0, column=1, padx=4)
         ttk.Entry(form, textvariable=concept_var, width=28).grid(row=0, column=2, padx=4)
-        ttk.Entry(form, textvariable=due_var, width=12).grid(row=0, column=3, padx=4)
+        ttk.Entry(form, textvariable=issue_var, width=12).grid(row=0, column=3, padx=4)
         ttk.Combobox(form, textvariable=currency_var, values=["USD", "CRC"], width=8, state="readonly").grid(row=0, column=4, padx=4)
         ttk.Entry(form, textvariable=amount_var, width=14).grid(row=0, column=5, padx=4)
 
@@ -261,7 +276,7 @@ class PopupMonthlyFinancialReport(tk.Toplevel):
             include_var.set(bool(row.get("accepted", True)))
             payee_var.set(str(row.get("payee_name") or ""))
             concept_var.set(str(row.get("concept") or ""))
-            due_var.set(str(row.get("due_date") or ""))
+            issue_var.set(str(row.get("issue_date") or row.get("due_date") or ""))
             currency_var.set(str(row.get("currency") or "USD"))
             amount_var.set(money_text(row.get("amount")))
 
@@ -279,23 +294,30 @@ class PopupMonthlyFinancialReport(tk.Toplevel):
                 "accepted": include_var.get(),
                 "payee_name": payee_var.get().strip(),
                 "concept": concept_var.get().strip(),
-                "due_date": due_var.get().strip() or None,
+                "issue_date": issue_var.get().strip() or None,
+                "due_date": None,
                 "currency": currency_var.get().strip() or "USD",
                 "amount": amount,
             })
             refresh()
 
         def add_row():
+            new_index = len(editable_rows)
             editable_rows.append({
                 "accepted": True,
                 "payee_name": "Nuevo proveedor",
                 "concept": "Obligacion mensual",
-                "due_date": f"{year}-{month:02d}-01",
+                "issue_date": f"{year}-{month:02d}-01",
+                "due_date": None,
                 "currency": "USD",
                 "amount": 0,
                 "source": "MANUAL",
             })
             refresh()
+            tree.selection_set(str(new_index))
+            tree.focus(str(new_index))
+            tree.see(str(new_index))
+            load_selected()
 
         def accept():
             try:

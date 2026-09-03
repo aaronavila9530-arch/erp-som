@@ -3,6 +3,7 @@ from psycopg2.extras import RealDictCursor
 
 from database import get_db
 from security.auth import get_current_user   # ✅ MISMO IMPORT QUE hr_events.py
+from services.employee_hours_policy_schema import ensure_employee_hours_policy_columns
 
 
 router = APIRouter(
@@ -20,6 +21,15 @@ def _check_admin_role(current_user):
         raise HTTPException(403, "Acceso denegado")
 
 
+def _ensure_employee_policy_schema(conn):
+    cur = conn.cursor()
+    try:
+        ensure_employee_hours_policy_columns(cur)
+        conn.commit()
+    finally:
+        cur.close()
+
+
 # =========================================================
 # GET — LISTAR EMPLEADOS (LAZY + FILTROS | ALINEADO AL POPUP)
 # =========================================================
@@ -35,6 +45,7 @@ def listar_empleados(
     conn=Depends(get_db)
 ):
     _check_admin_role(current_user)
+    _ensure_employee_policy_schema(conn)
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
@@ -111,6 +122,10 @@ def listar_empleados(
             moneda,
             fecha_ingreso,
             horas_contratadas,
+            horas_tope_ordinario,
+            horas_tope_maximo,
+            tarifa_hora_extra,
+            pago_minimo_garantizado,
             vacaciones,
             estado,
 
@@ -154,6 +169,7 @@ def crear_empleado(
     conn=Depends(get_db)
 ):
     _check_admin_role(current_user)
+    _ensure_employee_policy_schema(conn)
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
@@ -301,6 +317,10 @@ def crear_empleado(
         "estado": _text(payload.get("estado"), "Activo"),
 
         "horas_contratadas": _num(payload.get("horas_contratadas"), 0),
+        "horas_tope_ordinario": _num(payload.get("horas_tope_ordinario"), _num(payload.get("horas_contratadas"), 0)),
+        "horas_tope_maximo": _num(payload.get("horas_tope_maximo"), 0),
+        "tarifa_hora_extra": _num(payload.get("tarifa_hora_extra"), 0),
+        "pago_minimo_garantizado": bool(payload.get("pago_minimo_garantizado")),
         "usuario": _text(payload.get("usuario")),
         "cedula_id": _int(payload.get("cedula_id")),
 
@@ -328,7 +348,8 @@ def crear_empleado(
         activo2, marca2, serial2,
         activo3, marca3, serial3,
         fecharegistro, fecha_ingreso, vacaciones, estado,
-        horas_contratadas, usuario, cedula_id,
+        horas_contratadas, horas_tope_ordinario, horas_tope_maximo,
+        tarifa_hora_extra, pago_minimo_garantizado, usuario, cedula_id,
         fecha_nacimiento, edad
     )
     VALUES (
@@ -341,7 +362,8 @@ def crear_empleado(
         %(activo2)s, %(marca2)s, %(serial2)s,
         %(activo3)s, %(marca3)s, %(serial3)s,
         NOW(), %(fecha_ingreso)s, %(vacaciones)s, %(estado)s,
-        %(horas_contratadas)s, %(usuario)s, %(cedula_id)s,
+        %(horas_contratadas)s, %(horas_tope_ordinario)s, %(horas_tope_maximo)s,
+        %(tarifa_hora_extra)s, %(pago_minimo_garantizado)s, %(usuario)s, %(cedula_id)s,
         %(fecha_nacimiento)s, %(edad)s
     )
     RETURNING id, codigo
@@ -394,6 +416,7 @@ def actualizar_empleado(
     conn=Depends(get_db)
 ):
     _check_admin_role(current_user)
+    _ensure_employee_policy_schema(conn)
 
     if not payload:
         raise HTTPException(400, "No hay datos para actualizar")
@@ -407,9 +430,34 @@ def actualizar_empleado(
         "activo2", "marca2", "serial2",
         "activo3", "marca3", "serial3",
         "fecha_ingreso", "vacaciones", "estado",
-        "horas_contratadas", "usuario", "cedula_id",
+        "horas_contratadas", "horas_tope_ordinario", "horas_tope_maximo",
+        "tarifa_hora_extra", "pago_minimo_garantizado", "usuario", "cedula_id",
         "fecha_nacimiento", "edad"
     }
+
+    def _num(v, default=None):
+        if v in ("", None, "None"):
+            return default
+        try:
+            s = str(v).strip()
+            if "," in s and "." in s:
+                if s.rfind(",") > s.rfind("."):
+                    s = s.replace(".", "").replace(",", ".")
+                else:
+                    s = s.replace(",", "")
+            elif "," in s:
+                s = s.replace(",", ".")
+            return float(s)
+        except Exception:
+            return default
+
+    for numeric_key in ("salario", "horas_contratadas", "horas_tope_ordinario", "horas_tope_maximo", "tarifa_hora_extra", "vacaciones"):
+        if numeric_key in payload:
+            payload[numeric_key] = _num(payload.get(numeric_key), 0)
+    if "horas_tope_ordinario" in payload and not payload.get("horas_tope_ordinario"):
+        payload["horas_tope_ordinario"] = payload.get("horas_contratadas") or 0
+    if "pago_minimo_garantizado" in payload:
+        payload["pago_minimo_garantizado"] = bool(payload.get("pago_minimo_garantizado"))
 
     sets = []
     params = {"id": empleado_id}

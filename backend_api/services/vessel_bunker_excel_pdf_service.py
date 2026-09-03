@@ -4,10 +4,6 @@ import subprocess
 from pathlib import Path
 
 from openpyxl import load_workbook
-try:
-    from services.template_autofit import apply_workbook_autofit
-except ModuleNotFoundError:
-    from backend_api.services.template_autofit import apply_workbook_autofit
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.page import PageMargins
 
@@ -24,9 +20,13 @@ class VesselBunkerExcelPdfService:
     ]
 
     SCALE_MAP = {
-        "CERTIFICATE": 70,
+        "CERTIFICATE": 77,
         "CALCULATIONS": 80,
         "LOG BOOK FIGURES": 80
+    }
+
+    PRINT_AREA_MAP = {
+        "CALCULATIONS": "A1:K46",
     }
 
     # =========================================================
@@ -91,6 +91,9 @@ class VesselBunkerExcelPdfService:
             for ws in visible:
                 self._fix_invalid_print_area_defined_name(wb, ws)
 
+                if ws.title in self.PRINT_AREA_MAP:
+                    self._safe_set_print_area(wb, ws, self.PRINT_AREA_MAP[ws.title])
+
                 # If template already has a print_area and it's valid -> keep it
                 # Otherwise, set a sane print_area (A1:last_cell)
                 current_pa = None
@@ -133,7 +136,6 @@ class VesselBunkerExcelPdfService:
                 ws.page_setup.horizontalCentered = False
                 ws.page_setup.verticalCentered = False
 
-            apply_workbook_autofit(wb)
             wb.save(excel_path)
 
         finally:
