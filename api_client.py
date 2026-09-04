@@ -3701,6 +3701,63 @@ def api_request(method: str, url: str, **kwargs):
     )
 
 
+def unlock_masterdata_bank_accounts_api(totp_code: str):
+    response = api_request(
+        "POST",
+        f"{BASE_URL}/master-data/bank-accounts/unlock",
+        json={"totp_code": totp_code},
+        timeout=20,
+    )
+    raise_for_status_with_detail(response)
+    return response.json()
+
+
+def get_masterdata_bank_accounts_api(access_token: str):
+    response = api_request(
+        "GET",
+        f"{BASE_URL}/master-data/bank-accounts",
+        headers={"X-Bank-Access-Token": access_token},
+        timeout=20,
+    )
+    raise_for_status_with_detail(response)
+    return response.json().get("data", [])
+
+
+def create_masterdata_bank_account_api(payload: dict, access_token: str):
+    response = api_request(
+        "POST",
+        f"{BASE_URL}/master-data/bank-accounts",
+        json=payload,
+        headers={"X-Bank-Access-Token": access_token},
+        timeout=20,
+    )
+    raise_for_status_with_detail(response)
+    return response.json()
+
+
+def update_masterdata_bank_account_api(bank_account_id: int, payload: dict, access_token: str):
+    response = api_request(
+        "PUT",
+        f"{BASE_URL}/master-data/bank-accounts/{bank_account_id}",
+        json=payload,
+        headers={"X-Bank-Access-Token": access_token},
+        timeout=20,
+    )
+    raise_for_status_with_detail(response)
+    return response.json()
+
+
+def delete_masterdata_bank_account_api(bank_account_id: int, access_token: str):
+    response = api_request(
+        "DELETE",
+        f"{BASE_URL}/master-data/bank-accounts/{bank_account_id}",
+        headers={"X-Bank-Access-Token": access_token},
+        timeout=20,
+    )
+    raise_for_status_with_detail(response)
+    return response.json()
+
+
 def raise_for_status_with_detail(response):
     try:
         response.raise_for_status()

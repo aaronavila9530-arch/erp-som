@@ -45,6 +45,7 @@ MODULE_ACTIONS_BY_MODULE = {
     "master_data": [
         {"code": "view", "label": "Ver Master Data"},
         {"code": "company_profile", "label": "Ver/editar datos de empresa"},
+        {"code": "bank_accounts", "label": "Datos bancarios sensibles"},
         {"code": "clients_view", "label": "Ver clientes"},
         {"code": "clients_edit", "label": "Crear/editar clientes"},
         {"code": "providers_view", "label": "Ver proveedores"},
