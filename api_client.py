@@ -3747,6 +3747,19 @@ def update_masterdata_bank_account_api(bank_account_id: int, payload: dict, acce
     return response.json()
 
 
+def export_masterdata_bank_letter_pdf_api(bank_account_id: int, access_token: str, output_path: str):
+    response = api_request(
+        "GET",
+        f"{BASE_URL}/master-data/bank-accounts/{bank_account_id}/letter.pdf",
+        headers={"X-Bank-Access-Token": access_token},
+        timeout=60,
+    )
+    raise_for_status_with_detail(response)
+    with open(output_path, "wb") as fh:
+        fh.write(response.content)
+    return output_path
+
+
 def delete_masterdata_bank_account_api(bank_account_id: int, access_token: str):
     response = api_request(
         "DELETE",

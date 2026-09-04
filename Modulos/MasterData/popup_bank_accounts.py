@@ -1,9 +1,11 @@
+import os
 import tkinter as tk
-from tkinter import messagebox, simpledialog, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from api_client import (
     create_masterdata_bank_account_api,
     delete_masterdata_bank_account_api,
+    export_masterdata_bank_letter_pdf_api,
     get_masterdata_bank_accounts_api,
     unlock_masterdata_bank_accounts_api,
     update_masterdata_bank_account_api,
@@ -29,6 +31,7 @@ class PopupBankAccounts(tk.Toplevel):
         self.vars = {
             "bank_name": tk.StringVar(),
             "currency": tk.StringVar(value="CRC"),
+            "iban": tk.StringVar(),
             "swift_code": tk.StringVar(),
             "bank_address": tk.StringVar(),
             "uid": tk.StringVar(),
@@ -52,10 +55,11 @@ class PopupBankAccounts(tk.Toplevel):
 
         tk.Button(top, text="Revalidar", command=self._unlock, bg=COLOR_MENU, fg="white", width=12).pack(side="right")
 
-        columns = ("bank_name", "currency", "swift_code", "bank_address", "uid", "beneficiary_name", "updated_by")
+        columns = ("bank_name", "currency", "iban", "swift_code", "bank_address", "uid", "beneficiary_name", "updated_by")
         labels = {
             "bank_name": "Banco",
             "currency": "Moneda",
+            "iban": "Cuenta IBAN",
             "swift_code": "Swift Code",
             "bank_address": "Dirección",
             "uid": "UID",
@@ -65,6 +69,7 @@ class PopupBankAccounts(tk.Toplevel):
         widths = {
             "bank_name": 180,
             "currency": 80,
+            "iban": 230,
             "swift_code": 120,
             "bank_address": 260,
             "uid": 130,
@@ -94,9 +99,10 @@ class PopupBankAccounts(tk.Toplevel):
         fields = [
             ("Nombre del banco", "bank_name", 0, 0),
             ("Moneda", "currency", 0, 2),
-            ("Swift Code", "swift_code", 1, 0),
-            ("UID", "uid", 1, 2),
-            ("Nombre del beneficiario", "beneficiary_name", 2, 0),
+            ("Cuenta IBAN", "iban", 1, 0),
+            ("Swift Code", "swift_code", 1, 2),
+            ("UID", "uid", 2, 0),
+            ("Nombre del beneficiario", "beneficiary_name", 2, 2),
             ("Dirección", "bank_address", 3, 0),
         ]
         for label, key, row, col in fields:
@@ -104,16 +110,18 @@ class PopupBankAccounts(tk.Toplevel):
             if key == "currency":
                 widget = ttk.Combobox(form, textvariable=self.vars[key], values=["CRC", "USD", "EUR"], state="readonly", width=16)
             else:
-                width = 80 if key in {"bank_address", "beneficiary_name"} else 32
+                width = 80 if key in {"bank_address", "beneficiary_name", "iban"} else 32
                 widget = tk.Entry(form, textvariable=self.vars[key], width=width)
             widget.grid(row=row, column=col + 1, sticky="ew", padx=5, pady=4)
         form.grid_columnconfigure(1, weight=1)
+        form.grid_columnconfigure(3, weight=1)
 
         actions = tk.Frame(self, bg=COLOR_BG, padx=12, pady=8)
         actions.pack(fill="x")
         tk.Button(actions, text="Nuevo", width=12, command=self._clear).pack(side="left", padx=(0, 6))
         tk.Button(actions, text="Guardar", width=12, bg=COLOR_MENU, fg="white", command=self._save).pack(side="left", padx=6)
         tk.Button(actions, text="Eliminar", width=12, command=self._delete).pack(side="left", padx=6)
+        tk.Button(actions, text="Exportar carta PDF", width=18, command=self._export_pdf).pack(side="left", padx=6)
         tk.Button(actions, text="Cerrar", width=12, command=self.destroy).pack(side="right")
 
     def _unlock(self):
@@ -151,6 +159,7 @@ class PopupBankAccounts(tk.Toplevel):
                     values=(
                         row.get("bank_name") or "",
                         row.get("currency") or "",
+                        row.get("iban") or "",
                         row.get("swift_code") or "",
                         row.get("bank_address") or "",
                         row.get("uid") or "",
@@ -180,6 +189,7 @@ class PopupBankAccounts(tk.Toplevel):
         return {
             "bank_name": self.vars["bank_name"].get().strip(),
             "currency": self.vars["currency"].get().strip(),
+            "iban": self.vars["iban"].get().strip(),
             "swift_code": self.vars["swift_code"].get().strip(),
             "bank_address": self.vars["bank_address"].get().strip(),
             "uid": self.vars["uid"].get().strip(),
@@ -202,6 +212,38 @@ class PopupBankAccounts(tk.Toplevel):
             messagebox.showinfo("Datos bancarios", "Guardado correctamente.", parent=self)
         except Exception as exc:
             messagebox.showerror("Datos bancarios", f"No se pudo guardar:\n{exc}", parent=self)
+
+    def _export_pdf(self):
+        if not self.selected_id:
+            messagebox.showwarning("Datos bancarios", "Seleccione un registro para exportar.", parent=self)
+            return
+        if not self.access_token:
+            self._unlock()
+            if not self.access_token:
+                return
+        row = next((item for item in self.rows if int(item.get("id")) == self.selected_id), {})
+        beneficiary = "".join(ch if ch.isalnum() or ch in {" ", "-", "_"} else "_" for ch in (row.get("beneficiary_name") or "Datos bancarios"))
+        default_name = f"Carta_Bancaria_{'_'.join(beneficiary.split())}.pdf"
+        output_path = filedialog.asksaveasfilename(
+            parent=self,
+            title="Guardar carta bancaria",
+            initialfile=default_name,
+            defaultextension=".pdf",
+            filetypes=[("PDF", "*.pdf")],
+        )
+        if not output_path:
+            return
+        try:
+            export_masterdata_bank_letter_pdf_api(self.selected_id, self.access_token, output_path)
+            messagebox.showinfo("Datos bancarios", f"Carta exportada:\n{output_path}", parent=self)
+            try:
+                os.startfile(output_path)
+            except Exception:
+                pass
+        except Exception as exc:
+            if "Revalidación" in str(exc) or "401" in str(exc):
+                self.access_token = ""
+            messagebox.showerror("Datos bancarios", f"No se pudo exportar la carta:\n{exc}", parent=self)
 
     def _delete(self):
         if not self.selected_id:
