@@ -1,0 +1,5716 @@
+{
+  "paths": {
+    "/container-reports": {
+      "POST": {
+        "operationId": "create_container_report_container_reports_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Payload"
+              }
+            }
+          },
+          "required": true
+        },
+        "parameters": null
+      }
+    },
+    "/container-reports/filters": {
+      "GET": {
+        "operationId": "get_container_report_filters_container_reports_filters_get",
+        "requestBody": null,
+        "parameters": null
+      }
+    },
+    "/container-reports/filters/months": {
+      "GET": {
+        "operationId": "get_container_report_months_container_reports_filters_months_get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "cliente",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cliente"
+            }
+          },
+          {
+            "name": "anio",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Anio"
+            }
+          }
+        ]
+      }
+    },
+    "/container-reports/filters/vessels": {
+      "GET": {
+        "operationId": "get_container_report_vessels_container_reports_filters_vessels_get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "cliente",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cliente"
+            }
+          },
+          {
+            "name": "anio",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Anio"
+            }
+          },
+          {
+            "name": "mes",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Mes"
+            }
+          }
+        ]
+      }
+    },
+    "/container-reports/informes": {
+      "GET": {
+        "operationId": "get_container_reports_by_servicio_container_reports_informes_get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "cliente",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cliente"
+            }
+          },
+          {
+            "name": "buque_contenedor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Buque Contenedor"
+            }
+          },
+          {
+            "name": "anio",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Anio"
+            }
+          },
+          {
+            "name": "mes",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Mes"
+            }
+          }
+        ]
+      }
+    },
+    "/container-reports/{report_id}": {
+      "PUT": {
+        "operationId": "update_container_report_container_reports__report_id__put",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      },
+      "DELETE": {
+        "operationId": "delete_container_report_container_reports__report_id__delete",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      },
+      "GET": {
+        "operationId": "get_container_report_by_id_container_reports__report_id__get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      }
+    },
+    "/container-reports/statuses": {
+      "GET": {
+        "operationId": "get_container_report_statuses_container_reports_statuses_get",
+        "requestBody": null,
+        "parameters": null
+      }
+    },
+    "/container-reports/list": {
+      "GET": {
+        "operationId": "get_container_reports_container_reports_list_get",
+        "requestBody": null,
+        "parameters": null
+      }
+    },
+    "/container-reports/{report_id}/excel": {
+      "GET": {
+        "operationId": "download_container_report_excel_container_reports__report_id__excel_get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      }
+    },
+    "/container-reports/{report_id}/generate-pdf": {
+      "POST": {
+        "operationId": "generate_container_report_pdf_router_container_reports__report_id__generate_pdf_post",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      }
+    },
+    "/container-reports/{report_id}/download-pdf": {
+      "GET": {
+        "operationId": "download_container_report_pdf_container_reports__report_id__download_pdf_get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      }
+    },
+    "/vessel-grain-sampling": {
+      "GET": {
+        "operationId": "list_vessel_grain_sampling_reports_vessel_grain_sampling_get",
+        "requestBody": null,
+        "parameters": null
+      },
+      "POST": {
+        "operationId": "create_vessel_grain_sampling_report_vessel_grain_sampling_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Payload"
+              }
+            }
+          },
+          "required": true
+        },
+        "parameters": null
+      }
+    },
+    "/vessel-grain-sampling/services-selector": {
+      "GET": {
+        "operationId": "get_services_for_grain_sampling_vessel_grain_sampling_services_selector_get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "continente",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Continente"
+            }
+          },
+          {
+            "name": "pais",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Pais"
+            }
+          },
+          {
+            "name": "puerto",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Puerto"
+            }
+          },
+          {
+            "name": "cliente",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cliente"
+            }
+          },
+          {
+            "name": "buque",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Buque"
+            }
+          },
+          {
+            "name": "operacion",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Operacion"
+            }
+          },
+          {
+            "name": "year",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Year"
+            }
+          },
+          {
+            "name": "month",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Month"
+            }
+          }
+        ]
+      }
+    },
+    "/vessel-grain-sampling/{report_id}": {
+      "GET": {
+        "operationId": "get_vessel_grain_sampling_report_vessel_grain_sampling__report_id__get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      },
+      "PUT": {
+        "operationId": "update_vessel_grain_sampling_report_vessel_grain_sampling__report_id__put",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      }
+    },
+    "/vessel-grain-sampling/{report_id}/reject": {
+      "PUT": {
+        "operationId": "reject_vessel_grain_sampling_report_vessel_grain_sampling__report_id__reject_put",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      }
+    },
+    "/vessel-grain-sampling/{report_id}/approve": {
+      "PUT": {
+        "operationId": "approve_vessel_grain_sampling_report_vessel_grain_sampling__report_id__approve_put",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      }
+    },
+    "/vessel-grain-sampling/{report_id}/generate-word": {
+      "POST": {
+        "operationId": "generate_word_vessel_grain_sampling_vessel_grain_sampling__report_id__generate_word_post",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      }
+    },
+    "/vessel-grain-sampling/{report_id}/presentation-pdf": {
+      "POST": {
+        "operationId": "generate_vessel_presentation_pdf_vessel_grain_sampling__report_id__presentation_pdf_post",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      }
+    },
+    "/vessel-grain-sampling/{report_id}/presentation-data": {
+      "GET": {
+        "operationId": "get_vessel_presentation_data_vessel_grain_sampling__report_id__presentation_data_get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      }
+    },
+    "/vessel-grain-sampling/{report_id}/unified-pdf": {
+      "POST": {
+        "operationId": "generate_vessel_unified_pdf_vessel_grain_sampling__report_id__unified_pdf_post",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      }
+    },
+    "/vessel-truck-supervision/servicios-filter": {
+      "GET": {
+        "operationId": "filter_servicios_vessel_truck_supervision_servicios_filter_get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "continente",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Continente"
+            }
+          },
+          {
+            "name": "pais",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Pais"
+            }
+          },
+          {
+            "name": "puerto",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Puerto"
+            }
+          },
+          {
+            "name": "cliente",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cliente"
+            }
+          },
+          {
+            "name": "buque_contenedor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Buque Contenedor"
+            }
+          },
+          {
+            "name": "operacion",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Operacion"
+            }
+          },
+          {
+            "name": "anio",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 2100,
+                  "minimum": 1900
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Anio"
+            }
+          },
+          {
+            "name": "mes",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 12,
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Mes"
+            }
+          }
+        ]
+      }
+    },
+    "/vessel-truck-supervision/": {
+      "POST": {
+        "operationId": "create_vessel_truck_supervision_vessel_truck_supervision__post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "parameters": null
+      },
+      "GET": {
+        "operationId": "list_vessel_truck_supervision_vessel_truck_supervision__get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          }
+        ]
+      }
+    },
+    "/vessel-truck-supervision/{report_id}": {
+      "GET": {
+        "operationId": "get_vessel_truck_supervision_vessel_truck_supervision__report_id__get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      },
+      "PUT": {
+        "operationId": "update_vessel_truck_supervision_vessel_truck_supervision__report_id__put",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      }
+    },
+    "/vessel-truck-supervision/{report_id}/reject": {
+      "PUT": {
+        "operationId": "reject_vessel_truck_supervision_vessel_truck_supervision__report_id__reject_put",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      }
+    },
+    "/vessel-truck-supervision/{report_id}/approve": {
+      "POST": {
+        "operationId": "approve_vessel_truck_supervision_vessel_truck_supervision__report_id__approve_post",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      }
+    },
+    "/vessel-truck-supervision/{report_id}/presentation": {
+      "GET": {
+        "operationId": "generate_truck_presentation_vessel_truck_supervision__report_id__presentation_get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      }
+    },
+    "/vessel-truck-supervision/{report_id}/unified": {
+      "GET": {
+        "operationId": "generate_truck_unified_vessel_truck_supervision__report_id__unified_get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      }
+    },
+    "/draft-survey/servicios/filter": {
+      "GET": {
+        "operationId": "filter_servicios_draft_survey_servicios_filter_get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "year",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Year"
+            }
+          },
+          {
+            "name": "month",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Month"
+            }
+          },
+          {
+            "name": "continente",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Continente"
+            }
+          },
+          {
+            "name": "pais",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Pais"
+            }
+          },
+          {
+            "name": "puerto",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Puerto"
+            }
+          },
+          {
+            "name": "cliente",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cliente"
+            }
+          },
+          {
+            "name": "operacion",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Operacion"
+            }
+          }
+        ]
+      }
+    },
+    "/draft-survey/": {
+      "GET": {
+        "operationId": "list_draft_surveys_draft_survey__get",
+        "requestBody": null,
+        "parameters": null
+      },
+      "POST": {
+        "operationId": "create_draft_survey_draft_survey__post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Payload"
+              }
+            }
+          },
+          "required": true
+        },
+        "parameters": null
+      }
+    },
+    "/draft-survey/{identifier}/approve": {
+      "PUT": {
+        "operationId": "approve_draft_survey_draft_survey__identifier__approve_put",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "identifier",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Identifier"
+            }
+          }
+        ]
+      }
+    },
+    "/draft-survey/{identifier}/reject": {
+      "PUT": {
+        "operationId": "reject_draft_survey_draft_survey__identifier__reject_put",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "identifier",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Identifier"
+            }
+          }
+        ]
+      }
+    },
+    "/draft-survey/{general_id}": {
+      "GET": {
+        "operationId": "get_draft_survey_draft_survey__general_id__get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "general_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "General Id"
+            }
+          }
+        ]
+      }
+    },
+    "/draft-survey/{identifier}": {
+      "PUT": {
+        "operationId": "update_draft_survey_draft_survey__identifier__put",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "identifier",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Identifier"
+            }
+          }
+        ]
+      }
+    },
+    "/draft-survey/preview/excel": {
+      "POST": {
+        "operationId": "preview_draft_survey_excel_draft_survey_preview_excel_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Payload"
+              }
+            }
+          },
+          "required": true
+        },
+        "parameters": null
+      }
+    },
+    "/draft-survey-extra/ballast/{draft_survey_id}": {
+      "POST": {
+        "operationId": "create_ballast_draft_survey_extra_ballast__draft_survey_id__post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "draft_survey_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Draft Survey Id"
+            }
+          }
+        ]
+      },
+      "PUT": {
+        "operationId": "update_ballast_draft_survey_extra_ballast__draft_survey_id__put",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "draft_survey_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Draft Survey Id"
+            }
+          }
+        ]
+      }
+    },
+    "/draft-survey-extra/word/{draft_survey_id}": {
+      "PUT": {
+        "operationId": "update_word_report_draft_survey_extra_word__draft_survey_id__put",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "draft_survey_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Draft Survey Id"
+            }
+          }
+        ]
+      },
+      "POST": {
+        "operationId": "create_word_draft_survey_extra_word__draft_survey_id__post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "draft_survey_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Draft Survey Id"
+            }
+          }
+        ]
+      }
+    },
+    "/draft-survey-filters/": {
+      "GET": {
+        "operationId": "get_draft_filters_draft_survey_filters__get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "continent",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Continent"
+            }
+          },
+          {
+            "name": "country",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Country"
+            }
+          },
+          {
+            "name": "year",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Year"
+            }
+          },
+          {
+            "name": "month",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Month"
+            }
+          },
+          {
+            "name": "port",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Port"
+            }
+          },
+          {
+            "name": "client",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Client"
+            }
+          }
+        ]
+      }
+    },
+    "/draft-survey/unified/{draft_report_number}": {
+      "GET": {
+        "operationId": "get_draft_survey_unified_draft_survey_unified__draft_report_number__get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "draft_report_number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Draft Report Number"
+            }
+          }
+        ]
+      },
+      "PUT": {
+        "operationId": "update_draft_survey_unified_draft_survey_unified__draft_report_number__put",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "draft_report_number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Draft Report Number"
+            }
+          }
+        ]
+      }
+    },
+    "/draft-survey/headers": {
+      "GET": {
+        "operationId": "get_draft_survey_headers_draft_survey_headers_get",
+        "requestBody": null,
+        "parameters": null
+      }
+    },
+    "/draft-survey-headers/": {
+      "GET": {
+        "operationId": "get_draft_survey_headers_list_draft_survey_headers__get",
+        "requestBody": null,
+        "parameters": null
+      }
+    },
+    "/draft-survey-word/generate/{draft_report_number}": {
+      "GET": {
+        "operationId": "generate_word_pdf_draft_survey_word_generate__draft_report_number__get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "draft_report_number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Draft Report Number"
+            }
+          }
+        ]
+      }
+    },
+    "/draft-survey-word/presentation/{draft_report_number}": {
+      "GET": {
+        "operationId": "generate_draft_survey_presentation_draft_survey_word_presentation__draft_report_number__get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "draft_report_number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Draft Report Number"
+            }
+          }
+        ]
+      }
+    },
+    "/draft-survey-excel/__ping": {
+      "GET": {
+        "operationId": "_ping_excel_router_draft_survey_excel___ping_get",
+        "requestBody": null,
+        "parameters": null
+      }
+    },
+    "/draft-survey-excel/__routes": {
+      "GET": {
+        "operationId": "_excel_routes_draft_survey_excel___routes_get",
+        "requestBody": null,
+        "parameters": null
+      }
+    },
+    "/draft-survey-excel/generate-pdf/{draft_report_number}": {
+      "GET": {
+        "operationId": "generate_draft_survey_excel_pdf_draft_survey_excel_generate_pdf__draft_report_number__get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "draft_report_number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Draft Report Number"
+            }
+          }
+        ]
+      }
+    },
+    "/draft-survey-final/generate/{draft_report_number}": {
+      "GET": {
+        "operationId": "generate_final_pdf_draft_survey_final_generate__draft_report_number__get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "draft_report_number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Draft Report Number"
+            }
+          }
+        ]
+      }
+    },
+    "/draft-survey-final/unified/{draft_report_number}": {
+      "GET": {
+        "operationId": "generate_unified_final_pdf_draft_survey_final_unified__draft_report_number__get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "draft_report_number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Draft Report Number"
+            }
+          }
+        ]
+      }
+    },
+    "/vessel-bunker-reports/": {
+      "POST": {
+        "operationId": "create_vessel_bunker_report_vessel_bunker_reports__post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "parameters": null
+      },
+      "GET": {
+        "operationId": "get_all_vessel_bunker_reports_vessel_bunker_reports__get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 1000,
+              "minimum": 1,
+              "default": 200,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Q"
+            }
+          }
+        ]
+      }
+    },
+    "/vessel-bunker-reports/{report_id}": {
+      "PUT": {
+        "operationId": "update_vessel_bunker_report_vessel_bunker_reports__report_id__put",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      },
+      "GET": {
+        "operationId": "get_vessel_bunker_report_vessel_bunker_reports__report_id__get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      }
+    },
+    "/vessel-bunker-reports/presentation/{report_id}": {
+      "GET": {
+        "operationId": "generate_bunker_presentation_vessel_bunker_reports_presentation__report_id__get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      }
+    },
+    "/vessel-cargo-condition-surveys/": {
+      "GET": {
+        "operationId": "get_all_vessel_cargo_condition_vessel_cargo_condition_surveys__get",
+        "requestBody": null,
+        "parameters": null
+      },
+      "POST": {
+        "operationId": "create_vessel_cargo_condition_vessel_cargo_condition_surveys__post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Payload"
+              }
+            }
+          },
+          "required": true
+        },
+        "parameters": null
+      }
+    },
+    "/vessel-cargo-condition-surveys/word/{record_id}": {
+      "GET": {
+        "operationId": "generate_cargo_condition_word_vessel_cargo_condition_surveys_word__record_id__get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      }
+    },
+    "/vessel-cargo-condition-surveys/presentation/{record_id}": {
+      "GET": {
+        "operationId": "generate_cargo_condition_presentation_pdf_vessel_cargo_condition_surveys_presentation__record_id__get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      }
+    },
+    "/vessel-cargo-condition-surveys/{record_id}": {
+      "GET": {
+        "operationId": "get_vessel_cargo_condition_vessel_cargo_condition_surveys__record_id__get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      },
+      "PUT": {
+        "operationId": "update_vessel_cargo_condition_vessel_cargo_condition_surveys__record_id__put",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      }
+    },
+    "/vessel-crane-inspection": {
+      "GET": {
+        "operationId": "get_crane_inspections_vessel_crane_inspection_get",
+        "requestBody": null,
+        "parameters": null
+      },
+      "POST": {
+        "operationId": "create_crane_inspection_vessel_crane_inspection_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Payload"
+              }
+            }
+          },
+          "required": true
+        },
+        "parameters": null
+      }
+    },
+    "/vessel-crane-inspection/{report_id}": {
+      "PUT": {
+        "operationId": "update_crane_inspection_vessel_crane_inspection__report_id__put",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      },
+      "GET": {
+        "operationId": "get_crane_inspection_vessel_crane_inspection__report_id__get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      }
+    },
+    "/vessel-crane-inspection-reports": {
+      "POST": {
+        "operationId": "create_crane_inspection_vessel_crane_inspection_reports_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Payload"
+              }
+            }
+          },
+          "required": true
+        },
+        "parameters": null
+      }
+    },
+    "/vessel-crane-inspection-reports/{record_id}": {
+      "PUT": {
+        "operationId": "update_crane_inspection_vessel_crane_inspection_reports__record_id__put",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      },
+      "GET": {
+        "operationId": "get_full_crane_inspection_vessel_crane_inspection_reports__record_id__get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      }
+    },
+    "/vessel-crane-inspection-reports/{record_id}/generate-word": {
+      "GET": {
+        "operationId": "generate_crane_inspection_word_vessel_crane_inspection_reports__record_id__generate_word_get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      }
+    },
+    "/vessel-crane-inspection-reports/{record_id}/presentation": {
+      "GET": {
+        "operationId": "generate_crane_inspection_presentation_vessel_crane_inspection_reports__record_id__presentation_get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      }
+    },
+    "/vessel-condition-surveys": {
+      "GET": {
+        "operationId": "get_all_vessel_condition_surveys_vessel_condition_surveys_get",
+        "requestBody": null,
+        "parameters": null
+      },
+      "POST": {
+        "operationId": "create_vessel_condition_survey_vessel_condition_surveys_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Payload"
+              }
+            }
+          },
+          "required": true
+        },
+        "parameters": null
+      }
+    },
+    "/vessel-condition-surveys/{report_number}": {
+      "PUT": {
+        "operationId": "update_vessel_condition_survey_vessel_condition_surveys__report_number__put",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "report_number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Report Number"
+            }
+          }
+        ]
+      },
+      "GET": {
+        "operationId": "get_vessel_condition_survey_vessel_condition_surveys__report_number__get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "report_number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Report Number"
+            }
+          }
+        ]
+      }
+    },
+    "/vessel-condition-surveys/id/{record_id}": {
+      "PUT": {
+        "operationId": "update_vessel_condition_survey_by_id_vessel_condition_surveys_id__record_id__put",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      },
+      "GET": {
+        "operationId": "get_vessel_condition_survey_by_id_vessel_condition_surveys_id__record_id__get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      }
+    },
+    "/vessel-condition-surveys/word/{record_id}": {
+      "GET": {
+        "operationId": "generate_vessel_condition_word_vessel_condition_surveys_word__record_id__get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      }
+    },
+    "/vessel-condition-surveys/by-id/{report_id}": {
+      "GET": {
+        "operationId": "get_vessel_condition_by_id_vessel_condition_surveys_by_id__report_id__get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      }
+    },
+    "/vessel-condition-surveys/presentation/{record_id}": {
+      "GET": {
+        "operationId": "generate_vessel_condition_presentation_vessel_condition_surveys_presentation__record_id__get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      }
+    },
+    "/port-captancy-reports": {
+      "GET": {
+        "operationId": "get_all_port_captancy_reports_port_captancy_reports_get",
+        "requestBody": null,
+        "parameters": null
+      },
+      "POST": {
+        "operationId": "create_port_captancy_report_port_captancy_reports_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Payload"
+              }
+            }
+          },
+          "required": true
+        },
+        "parameters": null
+      }
+    },
+    "/port-captancy-reports/{report_number}": {
+      "PUT": {
+        "operationId": "update_port_captancy_report_port_captancy_reports__report_number__put",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "report_number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Report Number"
+            }
+          }
+        ]
+      },
+      "GET": {
+        "operationId": "get_port_captancy_report_port_captancy_reports__report_number__get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "report_number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Report Number"
+            }
+          }
+        ]
+      }
+    },
+    "/port-captancy-reports/id/{record_id}": {
+      "GET": {
+        "operationId": "get_port_captancy_report_by_id_port_captancy_reports_id__record_id__get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      }
+    },
+    "/port-captancy-reports/{record_id}/word": {
+      "GET": {
+        "operationId": "generate_port_captancy_word_port_captancy_reports__record_id__word_get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      }
+    },
+    "/port-captancy-reports/presentation/{record_id}": {
+      "GET": {
+        "operationId": "generate_port_captancy_presentation_port_captancy_reports_presentation__record_id__get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      }
+    },
+    "/weight-certificates": {
+      "GET": {
+        "operationId": "get_weight_certificates_weight_certificates_get",
+        "requestBody": null,
+        "parameters": null
+      },
+      "POST": {
+        "operationId": "create_weight_certificate_weight_certificates_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Payload"
+              }
+            }
+          },
+          "required": true
+        },
+        "parameters": null
+      }
+    },
+    "/weight-certificates/{record_id}": {
+      "PUT": {
+        "operationId": "update_weight_certificate_weight_certificates__record_id__put",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      },
+      "GET": {
+        "operationId": "get_weight_certificate_weight_certificates__record_id__get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      }
+    },
+    "/weight-certificates/{record_id}/word": {
+      "GET": {
+        "operationId": "generate_weight_certificate_word_weight_certificates__record_id__word_get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      }
+    },
+    "/weight-certificates/{record_id}/pdf": {
+      "GET": {
+        "operationId": "generate_weight_certificate_pdf_weight_certificates__record_id__pdf_get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      }
+    },
+    "/vessel-holds-inspection-certificates": {
+      "GET": {
+        "operationId": "get_all_vessel_holds_certificates_vessel_holds_inspection_certificates_get",
+        "requestBody": null,
+        "parameters": null
+      },
+      "POST": {
+        "operationId": "create_vessel_holds_certificate_vessel_holds_inspection_certificates_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Payload"
+              }
+            }
+          },
+          "required": true
+        },
+        "parameters": null
+      }
+    },
+    "/vessel-holds-inspection-certificates/{record_id}": {
+      "PUT": {
+        "operationId": "update_vessel_holds_certificate_vessel_holds_inspection_certificates__record_id__put",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      },
+      "GET": {
+        "operationId": "get_vessel_holds_certificate_vessel_holds_inspection_certificates__record_id__get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      }
+    },
+    "/vessel-holds-inspection-certificates/{record_id}/excel": {
+      "GET": {
+        "operationId": "generate_vessel_holds_excel_vessel_holds_inspection_certificates__record_id__excel_get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      }
+    },
+    "/vessel-holds-inspection-certificates/{record_id}/pdf": {
+      "GET": {
+        "operationId": "generate_vessel_holds_pdf_vessel_holds_inspection_certificates__record_id__pdf_get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      }
+    },
+    "/sampling-certificates": {
+      "GET": {
+        "operationId": "get_sampling_certificates_sampling_certificates_get",
+        "requestBody": null,
+        "parameters": null
+      },
+      "POST": {
+        "operationId": "create_sampling_certificate_sampling_certificates_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Payload"
+              }
+            }
+          },
+          "required": true
+        },
+        "parameters": null
+      }
+    },
+    "/sampling-certificates/{record_id}": {
+      "PUT": {
+        "operationId": "update_sampling_certificate_sampling_certificates__record_id__put",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      },
+      "GET": {
+        "operationId": "get_sampling_certificate_sampling_certificates__record_id__get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      }
+    },
+    "/sampling-certificates/{record_id}/excel": {
+      "GET": {
+        "operationId": "generate_sampling_excel_sampling_certificates__record_id__excel_get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      }
+    },
+    "/sampling-certificates/{record_id}/pdf": {
+      "GET": {
+        "operationId": "generate_sampling_pdf_sampling_certificates__record_id__pdf_get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      }
+    },
+    "/sealing-certificates": {
+      "GET": {
+        "operationId": "get_all_sealing_certificates_sealing_certificates_get",
+        "requestBody": null,
+        "parameters": null
+      },
+      "POST": {
+        "operationId": "create_sealing_certificate_sealing_certificates_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Payload"
+              }
+            }
+          },
+          "required": true
+        },
+        "parameters": null
+      }
+    },
+    "/sealing-certificates/{record_id}": {
+      "GET": {
+        "operationId": "get_sealing_certificate_sealing_certificates__record_id__get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      },
+      "PUT": {
+        "operationId": "update_sealing_certificate_sealing_certificates__record_id__put",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      }
+    },
+    "/sealing-certificates/{record_id}/excel": {
+      "GET": {
+        "operationId": "generate_sealing_excel_sealing_certificates__record_id__excel_get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      }
+    },
+    "/sealing-certificates/{record_id}/pdf": {
+      "GET": {
+        "operationId": "generate_sealing_pdf_sealing_certificates__record_id__pdf_get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      }
+    },
+    "/lashing-certificates/": {
+      "GET": {
+        "operationId": "get_all_lashing_certificates_lashing_certificates__get",
+        "requestBody": null,
+        "parameters": null
+      },
+      "POST": {
+        "operationId": "create_lashing_certificate_lashing_certificates__post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Payload"
+              }
+            }
+          },
+          "required": true
+        },
+        "parameters": null
+      }
+    },
+    "/lashing-certificates/{record_id}": {
+      "GET": {
+        "operationId": "get_lashing_certificate_lashing_certificates__record_id__get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      },
+      "PUT": {
+        "operationId": "update_lashing_certificate_lashing_certificates__record_id__put",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      }
+    },
+    "/lashing-certificates/{record_id}/word": {
+      "GET": {
+        "operationId": "generate_lashing_certificate_word_lashing_certificates__record_id__word_get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      }
+    },
+    "/lashing-certificates/{record_id}/pdf": {
+      "GET": {
+        "operationId": "generate_lashing_certificate_pdf_lashing_certificates__record_id__pdf_get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      }
+    },
+    "/logra-reports": {
+      "GET": {
+        "operationId": "list_logra_reports_logra_reports_get",
+        "requestBody": null,
+        "parameters": null
+      },
+      "POST": {
+        "operationId": "save_logra_report_logra_reports_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Payload"
+              }
+            }
+          },
+          "required": true
+        },
+        "parameters": null
+      }
+    },
+    "/logra-reports/agenda-only": {
+      "POST": {
+        "operationId": "save_logra_agenda_only_logra_reports_agenda_only_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Payload"
+              }
+            }
+          },
+          "required": true
+        },
+        "parameters": null
+      }
+    },
+    "/logra-reports/ai-report/all/word": {
+      "GET": {
+        "operationId": "download_logra_ai_report_all_word_logra_reports_ai_report_all_word_get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "language",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "ES",
+              "title": "Language"
+            }
+          }
+        ]
+      }
+    },
+    "/logra-reports/ai-report/all/pdf": {
+      "GET": {
+        "operationId": "download_logra_ai_report_all_pdf_logra_reports_ai_report_all_pdf_get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "language",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "ES",
+              "title": "Language"
+            }
+          }
+        ]
+      }
+    },
+    "/logra-reports/{report_id}/ai-report/word": {
+      "GET": {
+        "operationId": "download_logra_ai_report_word_logra_reports__report_id__ai_report_word_get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      }
+    },
+    "/logra-reports/{report_id}/ai-report/pdf": {
+      "GET": {
+        "operationId": "download_logra_ai_report_pdf_logra_reports__report_id__ai_report_pdf_get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      }
+    },
+    "/logra-reports/{report_id}": {
+      "GET": {
+        "operationId": "get_logra_report_logra_reports__report_id__get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      },
+      "PUT": {
+        "operationId": "update_logra_report_logra_reports__report_id__put",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      },
+      "DELETE": {
+        "operationId": "delete_logra_report_logra_reports__report_id__delete",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      }
+    },
+    "/logra-reports/{report_id}/answers": {
+      "PUT": {
+        "operationId": "update_logra_answer_logra_reports__report_id__answers_put",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      }
+    },
+    "/logra-reports/{report_id}/agenda-items/{agenda_index}": {
+      "PUT": {
+        "operationId": "update_logra_agenda_item_logra_reports__report_id__agenda_items__agenda_index__put",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          },
+          {
+            "name": "agenda_index",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Agenda Index"
+            }
+          }
+        ]
+      },
+      "DELETE": {
+        "operationId": "delete_logra_agenda_item_logra_reports__report_id__agenda_items__agenda_index__delete",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          },
+          {
+            "name": "agenda_index",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Agenda Index"
+            }
+          }
+        ]
+      }
+    },
+    "/logra-reports/{report_id}/attachments": {
+      "POST": {
+        "operationId": "upload_logra_attachment_logra_reports__report_id__attachments_post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_logra_attachment_logra_reports__report_id__attachments_post"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      },
+      "GET": {
+        "operationId": "list_logra_attachments_logra_reports__report_id__attachments_get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          },
+          {
+            "name": "form_slug",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Form Slug"
+            }
+          },
+          {
+            "name": "section",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Section"
+            }
+          },
+          {
+            "name": "item_key",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Item Key"
+            }
+          }
+        ]
+      }
+    },
+    "/logra-reports/attachments/{attachment_id}": {
+      "DELETE": {
+        "operationId": "delete_logra_attachment_logra_reports_attachments__attachment_id__delete",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "attachment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Attachment Id"
+            }
+          }
+        ]
+      }
+    },
+    "/logra-reports/attachments/{attachment_id}/download": {
+      "GET": {
+        "operationId": "download_logra_attachment_logra_reports_attachments__attachment_id__download_get",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "attachment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Attachment Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "AccountingAIRequest": {
+      "properties": {
+        "period": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Period"
+        },
+        "period_from": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Period From"
+        },
+        "period_to": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Period To"
+        },
+        "origin": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Origin"
+        },
+        "question": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Question"
+        },
+        "language": {
+          "type": "string",
+          "title": "Language",
+          "default": "ES"
+        }
+      },
+      "type": "object",
+      "title": "AccountingAIRequest"
+    },
+    "AutomationUpdate": {
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "title": "Enabled"
+        },
+        "interval_minutes": {
+          "type": "integer",
+          "maximum": 1440.0,
+          "minimum": 5.0,
+          "title": "Interval Minutes",
+          "default": 10
+        },
+        "search_query": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Search Query"
+        },
+        "user": {
+          "type": "string",
+          "title": "User",
+          "default": "ERP_USER"
+        }
+      },
+      "type": "object",
+      "required": [
+        "enabled"
+      ],
+      "title": "AutomationUpdate"
+    },
+    "Body_crear_factura_electronica_factura_electronica_post": {
+      "properties": {
+        "file": {
+          "type": "string",
+          "contentMediaType": "application/octet-stream",
+          "title": "File"
+        },
+        "servicio_id": {
+          "type": "integer",
+          "title": "Servicio Id"
+        }
+      },
+      "type": "object",
+      "required": [
+        "file",
+        "servicio_id"
+      ],
+      "title": "Body_crear_factura_electronica_factura_electronica_post"
+    },
+    "Body_emitir_factura_anticipada_xml_invoicing_anticipada_xml_post": {
+      "properties": {
+        "codigo_cliente": {
+          "type": "string",
+          "title": "Codigo Cliente"
+        },
+        "nombre_cliente": {
+          "type": "string",
+          "title": "Nombre Cliente"
+        },
+        "file": {
+          "type": "string",
+          "contentMediaType": "application/octet-stream",
+          "title": "File"
+        }
+      },
+      "type": "object",
+      "required": [
+        "codigo_cliente",
+        "nombre_cliente",
+        "file"
+      ],
+      "title": "Body_emitir_factura_anticipada_xml_invoicing_anticipada_xml_post"
+    },
+    "Body_import_hacienda_response_accounting_tax_documents_import_hacienda_response_post": {
+      "properties": {
+        "file": {
+          "type": "string",
+          "contentMediaType": "application/octet-stream",
+          "title": "File"
+        }
+      },
+      "type": "object",
+      "required": [
+        "file"
+      ],
+      "title": "Body_import_hacienda_response_accounting_tax_documents_import_hacienda_response_post"
+    },
+    "Body_import_statement_pdf_accounting_corporate_cards_statements_import_pdf_post": {
+      "properties": {
+        "file": {
+          "type": "string",
+          "contentMediaType": "application/octet-stream",
+          "title": "File"
+        }
+      },
+      "type": "object",
+      "required": [
+        "file"
+      ],
+      "title": "Body_import_statement_pdf_accounting_corporate_cards_statements_import_pdf_post"
+    },
+    "Body_upload_accounting_support_accounting_advanced_documents_upload_post": {
+      "properties": {
+        "file": {
+          "type": "string",
+          "contentMediaType": "application/octet-stream",
+          "title": "File"
+        }
+      },
+      "type": "object",
+      "required": [
+        "file"
+      ],
+      "title": "Body_upload_accounting_support_accounting_advanced_documents_upload_post"
+    },
+    "Body_upload_hacienda_response_accounting_tax_documents__document_id__hacienda_response_post": {
+      "properties": {
+        "file": {
+          "type": "string",
+          "contentMediaType": "application/octet-stream",
+          "title": "File"
+        }
+      },
+      "type": "object",
+      "required": [
+        "file"
+      ],
+      "title": "Body_upload_hacienda_response_accounting_tax_documents__document_id__hacienda_response_post"
+    },
+    "Body_upload_invoice_pdf_invoice_to_pay_upload_pdf_post": {
+      "properties": {
+        "file": {
+          "type": "string",
+          "contentMediaType": "application/octet-stream",
+          "title": "File"
+        },
+        "reference": {
+          "type": "string",
+          "title": "Reference"
+        },
+        "issue_date": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Issue Date"
+        },
+        "due_date": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Due Date"
+        }
+      },
+      "type": "object",
+      "required": [
+        "file",
+        "reference"
+      ],
+      "title": "Body_upload_invoice_pdf_invoice_to_pay_upload_pdf_post"
+    },
+    "Body_upload_invoice_xml_invoice_to_pay_upload_xml_post": {
+      "properties": {
+        "file": {
+          "type": "string",
+          "contentMediaType": "application/octet-stream",
+          "title": "File"
+        }
+      },
+      "type": "object",
+      "required": [
+        "file"
+      ],
+      "title": "Body_upload_invoice_xml_invoice_to_pay_upload_xml_post"
+    },
+    "Body_upload_logra_attachment_logra_reports__report_id__attachments_post": {
+      "properties": {
+        "form_slug": {
+          "type": "string",
+          "title": "Form Slug"
+        },
+        "section": {
+          "type": "string",
+          "title": "Section"
+        },
+        "item_key": {
+          "type": "string",
+          "title": "Item Key"
+        },
+        "bullet_index": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Bullet Index"
+        },
+        "file": {
+          "type": "string",
+          "contentMediaType": "application/octet-stream",
+          "title": "File"
+        }
+      },
+      "type": "object",
+      "required": [
+        "form_slug",
+        "section",
+        "item_key",
+        "file"
+      ],
+      "title": "Body_upload_logra_attachment_logra_reports__report_id__attachments_post"
+    },
+    "Body_upload_tax_xml_accounting_tax_documents_upload_xml_post": {
+      "properties": {
+        "direction": {
+          "type": "string",
+          "title": "Direction"
+        },
+        "user": {
+          "type": "string",
+          "title": "User",
+          "default": "ERP_USER"
+        },
+        "company_code": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Company Code"
+        },
+        "file": {
+          "type": "string",
+          "contentMediaType": "application/octet-stream",
+          "title": "File"
+        }
+      },
+      "type": "object",
+      "required": [
+        "direction",
+        "file"
+      ],
+      "title": "Body_upload_tax_xml_accounting_tax_documents_upload_xml_post"
+    },
+    "BulkClassifyItem": {
+      "properties": {
+        "transaction_id": {
+          "type": "integer",
+          "title": "Transaction Id"
+        },
+        "fiscal_category": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Fiscal Category"
+        },
+        "deductible_status": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Deductible Status"
+        },
+        "requires_invoice": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Requires Invoice"
+        },
+        "expense_account_code": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Expense Account Code"
+        },
+        "expense_account_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Expense Account Name"
+        },
+        "notes": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Notes"
+        }
+      },
+      "type": "object",
+      "required": [
+        "transaction_id"
+      ],
+      "title": "BulkClassifyItem"
+    },
+    "BulkClassifyRequest": {
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/components/schemas/BulkClassifyItem"
+          },
+          "type": "array",
+          "title": "Items",
+          "default": []
+        },
+        "force_closed_periods": {
+          "type": "boolean",
+          "title": "Force Closed Periods",
+          "default": false
+        }
+      },
+      "type": "object",
+      "title": "BulkClassifyRequest"
+    },
+    "CabysItem": {
+      "properties": {
+        "code": {
+          "type": "string",
+          "title": "Code"
+        },
+        "description": {
+          "type": "string",
+          "title": "Description"
+        },
+        "suggested_tax_rate": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Suggested Tax Rate"
+        },
+        "active": {
+          "type": "boolean",
+          "title": "Active",
+          "default": true
+        },
+        "source": {
+          "type": "string",
+          "title": "Source",
+          "default": "MANUAL"
+        }
+      },
+      "type": "object",
+      "required": [
+        "code",
+        "description"
+      ],
+      "title": "CabysItem"
+    },
+    "ChecklistUpdate": {
+      "properties": {
+        "status": {
+          "type": "string",
+          "title": "Status"
+        },
+        "user": {
+          "type": "string",
+          "title": "User"
+        },
+        "notes": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Notes"
+        },
+        "evidence": {
+          "additionalProperties": true,
+          "type": "object",
+          "title": "Evidence"
+        }
+      },
+      "type": "object",
+      "required": [
+        "status",
+        "user"
+      ],
+      "title": "ChecklistUpdate"
+    },
+    "ClassifyRequest": {
+      "properties": {
+        "fiscal_category": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Fiscal Category"
+        },
+        "deductible_status": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Deductible Status"
+        },
+        "requires_invoice": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Requires Invoice"
+        },
+        "expense_account_code": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Expense Account Code"
+        },
+        "expense_account_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Expense Account Name"
+        },
+        "notes": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Notes"
+        },
+        "force_closed_period": {
+          "type": "boolean",
+          "title": "Force Closed Period",
+          "default": false
+        }
+      },
+      "type": "object",
+      "title": "ClassifyRequest"
+    },
+    "ClientMove": {
+      "properties": {
+        "client_name": {
+          "type": "string",
+          "title": "Client Name"
+        },
+        "from_company": {
+          "type": "string",
+          "title": "From Company",
+          "default": "MSL-CR"
+        },
+        "to_company": {
+          "type": "string",
+          "title": "To Company",
+          "default": "MCI-CR"
+        },
+        "projected_amount_crc": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Projected Amount Crc"
+        }
+      },
+      "type": "object",
+      "required": [
+        "client_name"
+      ],
+      "title": "ClientMove"
+    },
+    "ClientProjectionLock": {
+      "properties": {
+        "client_name": {
+          "type": "string",
+          "title": "Client Name"
+        },
+        "company_code": {
+          "type": "string",
+          "title": "Company Code",
+          "default": "MSL-CR"
+        }
+      },
+      "type": "object",
+      "required": [
+        "client_name"
+      ],
+      "title": "ClientProjectionLock"
+    },
+    "CompanyOption": {
+      "properties": {
+        "company_code": {
+          "type": "string",
+          "title": "Company Code"
+        },
+        "is_pyme": {
+          "type": "boolean",
+          "title": "Is Pyme",
+          "default": true
+        },
+        "pyme_year": {
+          "type": "integer",
+          "title": "Pyme Year",
+          "default": 1
+        },
+        "manual_expenses_crc": {
+          "type": "number",
+          "title": "Manual Expenses Crc",
+          "default": 0
+        }
+      },
+      "type": "object",
+      "required": [
+        "company_code"
+      ],
+      "title": "CompanyOption"
+    },
+    "CotizacionCreate": {
+      "properties": {
+        "cliente": {
+          "type": "string",
+          "title": "Cliente"
+        },
+        "servicio": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Servicio"
+        },
+        "continente": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Continente"
+        },
+        "pais": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Pais"
+        },
+        "puerto": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Puerto"
+        },
+        "precio": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Precio"
+        },
+        "idioma": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Idioma",
+          "default": "ES"
+        },
+        "validez": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Validez",
+          "default": 15
+        },
+        "status": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Status",
+          "default": "PENDIENTE"
+        },
+        "servicio_1": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Servicio 1"
+        },
+        "precio_1": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Precio 1"
+        },
+        "servicio_2": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Servicio 2"
+        },
+        "precio_2": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Precio 2"
+        },
+        "servicio_3": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Servicio 3"
+        },
+        "precio_3": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Precio 3"
+        },
+        "servicio_4": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Servicio 4"
+        },
+        "precio_4": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Precio 4"
+        },
+        "texto_cotizacion": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Texto Cotizacion"
+        }
+      },
+      "type": "object",
+      "required": [
+        "cliente"
+      ],
+      "title": "CotizacionCreate"
+    },
+    "CotizacionExportCreate": {
+      "properties": {
+        "quotation_number": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Quotation Number",
+          "default": ""
+        },
+        "cliente": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Cliente",
+          "default": ""
+        },
+        "servicio": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Servicio",
+          "default": ""
+        },
+        "idioma": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Idioma",
+          "default": "ES"
+        },
+        "texto": {
+          "type": "string",
+          "title": "Texto"
+        }
+      },
+      "type": "object",
+      "required": [
+        "texto"
+      ],
+      "title": "CotizacionExportCreate"
+    },
+    "CotizacionUpdate": {
+      "properties": {
+        "cliente": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Cliente"
+        },
+        "servicio": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Servicio"
+        },
+        "continente": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Continente"
+        },
+        "pais": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Pais"
+        },
+        "puerto": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Puerto"
+        },
+        "precio": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Precio"
+        },
+        "idioma": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Idioma"
+        },
+        "validez": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Validez"
+        },
+        "status": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Status"
+        },
+        "servicio_1": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Servicio 1"
+        },
+        "precio_1": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Precio 1"
+        },
+        "servicio_2": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Servicio 2"
+        },
+        "precio_2": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Precio 2"
+        },
+        "servicio_3": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Servicio 3"
+        },
+        "precio_3": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Precio 3"
+        },
+        "servicio_4": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Servicio 4"
+        },
+        "precio_4": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Precio 4"
+        },
+        "texto_cotizacion": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Texto Cotizacion"
+        },
+        "razon_cancelacion": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Razon Cancelacion"
+        }
+      },
+      "type": "object",
+      "title": "CotizacionUpdate"
+    },
+    "DemoraUpdate": {
+      "properties": {
+        "total": {
+          "type": "string",
+          "title": "Total"
+        }
+      },
+      "type": "object",
+      "required": [
+        "total"
+      ],
+      "title": "DemoraUpdate"
+    },
+    "Empleado": {
+      "properties": {
+        "codigo": {
+          "type": "string",
+          "title": "Codigo"
+        },
+        "nombre": {
+          "type": "string",
+          "title": "Nombre"
+        },
+        "apellidos": {
+          "type": "string",
+          "title": "Apellidos"
+        },
+        "estado_civil": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Estado Civil"
+        },
+        "genero": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Genero"
+        },
+        "nacionalidad": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Nacionalidad"
+        },
+        "prefijo": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Prefijo"
+        },
+        "telefono": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Telefono"
+        },
+        "provincia": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Provincia"
+        },
+        "canton": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Canton"
+        },
+        "distrito": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Distrito"
+        },
+        "direccion": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Direccion"
+        },
+        "jornada": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Jornada"
+        },
+        "salario": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Salario"
+        },
+        "pago": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Pago"
+        },
+        "banco": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Banco"
+        },
+        "cuenta_iban": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Cuenta Iban"
+        },
+        "moneda": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Moneda"
+        },
+        "enfermedades": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Enfermedades"
+        },
+        "contacto_emergencia": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Contacto Emergencia"
+        },
+        "telefono_emergencia": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Telefono Emergencia"
+        },
+        "activo1": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Activo1"
+        },
+        "marca1": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Marca1"
+        },
+        "serial1": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Serial1"
+        },
+        "activo2": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Activo2"
+        },
+        "marca2": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Marca2"
+        },
+        "serial2": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Serial2"
+        },
+        "activo3": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Activo3"
+        },
+        "marca3": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Marca3"
+        },
+        "serial3": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Serial3"
+        },
+        "company_code": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Company Code"
+        }
+      },
+      "type": "object",
+      "required": [
+        "codigo",
+        "nombre",
+        "apellidos"
+      ],
+      "title": "Empleado"
+    },
+    "ExpenseItem": {
+      "properties": {
+        "category": {
+          "type": "string",
+          "title": "Category"
+        },
+        "amount": {
+          "type": "number",
+          "title": "Amount",
+          "default": 0
+        },
+        "note": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Note"
+        },
+        "purchase_year": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Purchase Year"
+        },
+        "useful_life_years": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Useful Life Years"
+        }
+      },
+      "type": "object",
+      "required": [
+        "category"
+      ],
+      "title": "ExpenseItem"
+    },
+    "ExpenseMove": {
+      "properties": {
+        "account_code": {
+          "type": "string",
+          "title": "Account Code"
+        },
+        "account_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Account Name"
+        },
+        "source_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Source Type"
+        },
+        "from_company": {
+          "type": "string",
+          "title": "From Company",
+          "default": "MSL-CR"
+        },
+        "to_company": {
+          "type": "string",
+          "title": "To Company",
+          "default": "MCI-CR"
+        },
+        "projected_amount_crc": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Projected Amount Crc"
+        }
+      },
+      "type": "object",
+      "required": [
+        "account_code"
+      ],
+      "title": "ExpenseMove"
+    },
+    "ExpenseProjectionLock": {
+      "properties": {
+        "account_code": {
+          "type": "string",
+          "title": "Account Code"
+        },
+        "account_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Account Name"
+        },
+        "source_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Source Type"
+        },
+        "company_code": {
+          "type": "string",
+          "title": "Company Code",
+          "default": "MSL-CR"
+        }
+      },
+      "type": "object",
+      "required": [
+        "account_code"
+      ],
+      "title": "ExpenseProjectionLock"
+    },
+    "GuidedClosePayload": {
+      "properties": {
+        "user": {
+          "type": "string",
+          "title": "User"
+        },
+        "notes": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Notes"
+        }
+      },
+      "type": "object",
+      "required": [
+        "user"
+      ],
+      "title": "GuidedClosePayload"
+    },
+    "HTTPValidationError": {
+      "properties": {
+        "detail": {
+          "items": {
+            "$ref": "#/components/schemas/ValidationError"
+          },
+          "type": "array",
+          "title": "Detail"
+        }
+      },
+      "type": "object",
+      "title": "HTTPValidationError"
+    },
+    "HistoryPostRequest": {
+      "properties": {
+        "years": {
+          "items": {
+            "type": "integer"
+          },
+          "type": "array",
+          "title": "Years",
+          "default": [
+            2025,
+            2026
+          ]
+        },
+        "settle_previous": {
+          "type": "boolean",
+          "title": "Settle Previous",
+          "default": true
+        },
+        "leave_latest_pending": {
+          "type": "boolean",
+          "title": "Leave Latest Pending",
+          "default": true
+        },
+        "latest_pending_per_card": {
+          "type": "boolean",
+          "title": "Latest Pending Per Card",
+          "default": true
+        },
+        "bank_account_code": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Bank Account Code"
+        },
+        "bank_account_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Bank Account Name"
+        },
+        "force_closed_periods": {
+          "type": "boolean",
+          "title": "Force Closed Periods",
+          "default": false
+        }
+      },
+      "type": "object",
+      "title": "HistoryPostRequest"
+    },
+    "LoginRequest": {
+      "properties": {
+        "usuario": {
+          "type": "string",
+          "title": "Usuario"
+        },
+        "password": {
+          "type": "string",
+          "title": "Password"
+        }
+      },
+      "type": "object",
+      "required": [
+        "usuario",
+        "password"
+      ],
+      "title": "LoginRequest"
+    },
+    "ManualClientLine": {
+      "properties": {
+        "client_name": {
+          "type": "string",
+          "title": "Client Name"
+        },
+        "company_code": {
+          "type": "string",
+          "title": "Company Code",
+          "default": "MSL-CR"
+        },
+        "invoice_count": {
+          "type": "integer",
+          "title": "Invoice Count",
+          "default": 0
+        },
+        "ytd_amount_crc": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Ytd Amount Crc"
+        },
+        "projected_annual_crc": {
+          "type": "number",
+          "title": "Projected Annual Crc"
+        }
+      },
+      "type": "object",
+      "required": [
+        "client_name",
+        "projected_annual_crc"
+      ],
+      "title": "ManualClientLine"
+    },
+    "ManualExpenseLine": {
+      "properties": {
+        "account_code": {
+          "type": "string",
+          "title": "Account Code"
+        },
+        "account_name": {
+          "type": "string",
+          "title": "Account Name"
+        },
+        "company_code": {
+          "type": "string",
+          "title": "Company Code",
+          "default": "MSL-CR"
+        },
+        "source_type": {
+          "type": "string",
+          "title": "Source Type",
+          "default": "MANUAL_SCENARIO"
+        },
+        "status": {
+          "type": "string",
+          "title": "Status",
+          "default": "MANUAL"
+        },
+        "entry_count": {
+          "type": "integer",
+          "title": "Entry Count",
+          "default": 0
+        },
+        "ytd_amount_crc": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Ytd Amount Crc"
+        },
+        "projected_annual_crc": {
+          "type": "number",
+          "title": "Projected Annual Crc"
+        }
+      },
+      "type": "object",
+      "required": [
+        "account_code",
+        "account_name",
+        "projected_annual_crc"
+      ],
+      "title": "ManualExpenseLine"
+    },
+    "MatchRequest": {
+      "properties": {
+        "obligation_id": {
+          "type": "integer",
+          "title": "Obligation Id"
+        }
+      },
+      "type": "object",
+      "required": [
+        "obligation_id"
+      ],
+      "title": "MatchRequest"
+    },
+    "OAuthStart": {
+      "properties": {
+        "user": {
+          "type": "string",
+          "title": "User",
+          "default": "ERP_USER"
+        }
+      },
+      "type": "object",
+      "title": "OAuthStart"
+    },
+    "PermissionPayload": {
+      "properties": {
+        "permissions": {
+          "additionalProperties": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "type": "object",
+          "title": "Permissions"
+        }
+      },
+      "type": "object",
+      "required": [
+        "permissions"
+      ],
+      "title": "PermissionPayload"
+    },
+    "PortiaQuestion": {
+      "properties": {
+        "question": {
+          "type": "string",
+          "title": "Question"
+        },
+        "scope": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Scope",
+          "default": "erp"
+        }
+      },
+      "type": "object",
+      "required": [
+        "question"
+      ],
+      "title": "PortiaQuestion"
+    },
+    "PrecioCreate": {
+      "properties": {
+        "servicio": {
+          "type": "string",
+          "title": "Servicio"
+        },
+        "cliente": {
+          "type": "string",
+          "title": "Cliente"
+        },
+        "continente": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Continente"
+        },
+        "pais": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Pais"
+        },
+        "puerto": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Puerto"
+        },
+        "precio": {
+          "type": "number",
+          "title": "Precio"
+        }
+      },
+      "type": "object",
+      "required": [
+        "servicio",
+        "cliente",
+        "precio"
+      ],
+      "title": "PrecioCreate"
+    },
+    "PrecioUpdate": {
+      "properties": {
+        "servicio": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Servicio"
+        },
+        "cliente": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Cliente"
+        },
+        "continente": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Continente"
+        },
+        "pais": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Pais"
+        },
+        "puerto": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Puerto"
+        },
+        "precio": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Precio"
+        },
+        "activo": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Activo"
+        }
+      },
+      "type": "object",
+      "title": "PrecioUpdate"
+    },
+    "PreferenceUpdate": {
+      "properties": {
+        "default_period_mode": {
+          "type": "string",
+          "title": "Default Period Mode",
+          "default": "CURRENT"
+        },
+        "compact_view": {
+          "type": "boolean",
+          "title": "Compact View",
+          "default": false
+        },
+        "favorite_actions": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "title": "Favorite Actions"
+        }
+      },
+      "type": "object",
+      "title": "PreferenceUpdate"
+    },
+    "SalaryCalculatorRequest": {
+      "properties": {
+        "scenario": {
+          "type": "string",
+          "enum": [
+            "EMPLOYEE",
+            "INDEPENDENT",
+            "OWNER"
+          ],
+          "title": "Scenario"
+        },
+        "amount": {
+          "type": "number",
+          "title": "Amount",
+          "description": "Salario mensual, monto mensual a facturar o ingreso bruto mensual.",
+          "default": 0
+        },
+        "expenses": {
+          "items": {
+            "$ref": "#/components/schemas/ExpenseItem"
+          },
+          "type": "array",
+          "title": "Expenses",
+          "default": []
+        },
+        "vehicle_debt_amount": {
+          "type": "number",
+          "title": "Vehicle Debt Amount",
+          "default": 0
+        },
+        "vehicle_monthly_payment": {
+          "type": "number",
+          "title": "Vehicle Monthly Payment",
+          "default": 0
+        },
+        "vehicle_purchase_year": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Vehicle Purchase Year"
+        },
+        "vehicle_useful_life_years": {
+          "type": "integer",
+          "title": "Vehicle Useful Life Years",
+          "default": 10
+        },
+        "distribution_type": {
+          "type": "string",
+          "enum": [
+            "NONE",
+            "DIETAS",
+            "DIVIDENDS"
+          ],
+          "title": "Distribution Type",
+          "default": "NONE"
+        },
+        "distribution_amount": {
+          "type": "number",
+          "title": "Distribution Amount",
+          "default": 0
+        },
+        "is_pyme": {
+          "type": "boolean",
+          "title": "Is Pyme",
+          "default": false
+        },
+        "pyme_year": {
+          "type": "integer",
+          "title": "Pyme Year",
+          "default": 0
+        },
+        "save": {
+          "type": "boolean",
+          "title": "Save",
+          "default": false
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Label"
+        }
+      },
+      "type": "object",
+      "required": [
+        "scenario"
+      ],
+      "title": "SalaryCalculatorRequest"
+    },
+    "ServicioCreate": {
+      "properties": {
+        "tipo": {
+          "type": "string",
+          "title": "Tipo"
+        },
+        "buque_contenedor": {
+          "type": "string",
+          "title": "Buque Contenedor"
+        },
+        "cliente": {
+          "type": "string",
+          "title": "Cliente"
+        },
+        "contacto": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Contacto"
+        },
+        "detalle": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Detalle"
+        },
+        "continente": {
+          "type": "string",
+          "title": "Continente"
+        },
+        "pais": {
+          "type": "string",
+          "title": "Pais"
+        },
+        "puerto": {
+          "type": "string",
+          "title": "Puerto"
+        },
+        "operacion": {
+          "type": "string",
+          "title": "Operacion"
+        },
+        "surveyor": {
+          "type": "string",
+          "title": "Surveyor"
+        },
+        "honorarios": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Honorarios"
+        },
+        "costo_operativo": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Costo Operativo"
+        },
+        "costo_tarjetas": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Costo Tarjetas"
+        },
+        "fecha_inicio": {
+          "type": "string",
+          "title": "Fecha Inicio"
+        },
+        "hora_inicio": {
+          "type": "string",
+          "title": "Hora Inicio"
+        }
+      },
+      "type": "object",
+      "required": [
+        "tipo",
+        "buque_contenedor",
+        "cliente",
+        "continente",
+        "pais",
+        "puerto",
+        "operacion",
+        "surveyor",
+        "fecha_inicio",
+        "hora_inicio"
+      ],
+      "title": "ServicioCreate"
+    },
+    "Setting": {
+      "properties": {
+        "value": {
+          "type": "string",
+          "title": "Value"
+        },
+        "user": {
+          "type": "string",
+          "title": "User",
+          "default": "ERP_USER"
+        }
+      },
+      "type": "object",
+      "required": [
+        "value"
+      ],
+      "title": "Setting"
+    },
+    "SettlementRequest": {
+      "properties": {
+        "payment_date": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Payment Date"
+        },
+        "bank_account_code": {
+          "type": "string",
+          "title": "Bank Account Code"
+        },
+        "bank_account_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Bank Account Name"
+        },
+        "amount_crc": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Amount Crc"
+        },
+        "amount_usd": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Amount Usd"
+        },
+        "exchange_rate": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Exchange Rate"
+        }
+      },
+      "type": "object",
+      "required": [
+        "bank_account_code"
+      ],
+      "title": "SettlementRequest"
+    },
+    "SurveyorItem": {
+      "properties": {
+        "surveyor_nombre": {
+          "type": "string",
+          "minLength": 1,
+          "title": "Surveyor Nombre"
+        },
+        "honorario": {
+          "type": "number",
+          "minimum": 0.0,
+          "title": "Honorario"
+        }
+      },
+      "type": "object",
+      "required": [
+        "surveyor_nombre",
+        "honorario"
+      ],
+      "title": "SurveyorItem"
+    },
+    "SurveyorsPayload": {
+      "properties": {
+        "surveyors": {
+          "items": {
+            "$ref": "#/components/schemas/SurveyorItem"
+          },
+          "type": "array",
+          "title": "Surveyors"
+        }
+      },
+      "type": "object",
+      "required": [
+        "surveyors"
+      ],
+      "title": "SurveyorsPayload"
+    },
+    "TaxScenarioRequest": {
+      "properties": {
+        "year": {
+          "type": "integer",
+          "title": "Year"
+        },
+        "through_month": {
+          "type": "integer",
+          "maximum": 12.0,
+          "minimum": 1.0,
+          "title": "Through Month"
+        },
+        "source_company": {
+          "type": "string",
+          "title": "Source Company",
+          "default": "MSL-CR"
+        },
+        "target_company": {
+          "type": "string",
+          "title": "Target Company",
+          "default": "MCI-CR"
+        },
+        "company_options": {
+          "items": {
+            "$ref": "#/components/schemas/CompanyOption"
+          },
+          "type": "array",
+          "title": "Company Options"
+        },
+        "client_moves": {
+          "items": {
+            "$ref": "#/components/schemas/ClientMove"
+          },
+          "type": "array",
+          "title": "Client Moves"
+        },
+        "expense_moves": {
+          "items": {
+            "$ref": "#/components/schemas/ExpenseMove"
+          },
+          "type": "array",
+          "title": "Expense Moves"
+        },
+        "fixed_clients": {
+          "items": {
+            "$ref": "#/components/schemas/ClientProjectionLock"
+          },
+          "type": "array",
+          "title": "Fixed Clients"
+        },
+        "fixed_expenses": {
+          "items": {
+            "$ref": "#/components/schemas/ExpenseProjectionLock"
+          },
+          "type": "array",
+          "title": "Fixed Expenses"
+        },
+        "manual_client_lines": {
+          "items": {
+            "$ref": "#/components/schemas/ManualClientLine"
+          },
+          "type": "array",
+          "title": "Manual Client Lines"
+        },
+        "manual_expense_lines": {
+          "items": {
+            "$ref": "#/components/schemas/ManualExpenseLine"
+          },
+          "type": "array",
+          "title": "Manual Expense Lines"
+        },
+        "save": {
+          "type": "boolean",
+          "title": "Save",
+          "default": false
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Label"
+        }
+      },
+      "type": "object",
+      "title": "TaxScenarioRequest"
+    },
+    "TotpRequest": {
+      "properties": {
+        "usuario": {
+          "type": "string",
+          "title": "Usuario"
+        },
+        "codigo": {
+          "type": "string",
+          "title": "Codigo"
+        }
+      },
+      "type": "object",
+      "required": [
+        "usuario",
+        "codigo"
+      ],
+      "title": "TotpRequest"
+    },
+    "UserCreatePayload": {
+      "properties": {
+        "usuario": {
+          "type": "string",
+          "title": "Usuario"
+        },
+        "password": {
+          "type": "string",
+          "title": "Password"
+        },
+        "rol": {
+          "type": "string",
+          "title": "Rol",
+          "default": "user"
+        },
+        "source_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Source Type"
+        },
+        "source_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Source Id"
+        },
+        "nombre": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Nombre"
+        },
+        "apellido": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Apellido"
+        },
+        "email": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Email"
+        },
+        "activo": {
+          "type": "boolean",
+          "title": "Activo",
+          "default": true
+        },
+        "permissions": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Permissions"
+        }
+      },
+      "type": "object",
+      "required": [
+        "usuario",
+        "password"
+      ],
+      "title": "UserCreatePayload"
+    },
+    "ValidationError": {
+      "properties": {
+        "loc": {
+          "items": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ]
+          },
+          "type": "array",
+          "title": "Location"
+        },
+        "msg": {
+          "type": "string",
+          "title": "Message"
+        },
+        "type": {
+          "type": "string",
+          "title": "Error Type"
+        },
+        "input": {
+          "title": "Input"
+        },
+        "ctx": {
+          "type": "object",
+          "title": "Context"
+        }
+      },
+      "type": "object",
+      "required": [
+        "loc",
+        "msg",
+        "type"
+      ],
+      "title": "ValidationError"
+    }
+  }
+}

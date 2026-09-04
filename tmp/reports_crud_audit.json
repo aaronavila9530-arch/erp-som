@@ -1,0 +1,793 @@
+{
+  "marker": "CODEX_AUDIT_REPORTS_d5625c14fb",
+  "results": [
+    {
+      "name": "Container Report",
+      "table": "container_reports",
+      "status": "WARN",
+      "post": 200,
+      "get": 200,
+      "put": 200,
+      "delete": 200,
+      "missing_after_post": [],
+      "mismatch_after_post": [
+        {
+          "field": "qty_1",
+          "expected": "CODEX_AUDIT_REPORTS_d5625c14fb_POST_Container_Report_qty_1",
+          "actual": null
+        },
+        {
+          "field": "qty_2",
+          "expected": "CODEX_AUDIT_REPORTS_d5625c14fb_POST_Container_Report_qty_2",
+          "actual": null
+        },
+        {
+          "field": "qty_3",
+          "expected": "CODEX_AUDIT_REPORTS_d5625c14fb_POST_Container_Report_qty_3",
+          "actual": null
+        },
+        {
+          "field": "person_1",
+          "expected": "CODEX_AUDIT_REPORTS_d5625c14fb_POST_Container_Report_person_1",
+          "actual": null
+        },
+        {
+          "field": "person_2",
+          "expected": "CODEX_AUDIT_REPORTS_d5625c14fb_POST_Container_Report_person_2",
+          "actual": null
+        },
+        {
+          "field": "person_3",
+          "expected": "CODEX_AUDIT_REPORTS_d5625c14fb_POST_Container_Report_person_3",
+          "actual": null
+        }
+      ],
+      "missing_after_put": [],
+      "mismatch_after_put": [
+        {
+          "field": "qty_1",
+          "expected": "CODEX_AUDIT_REPORTS_d5625c14fb_PUT_Container_Report_qty_1",
+          "actual": null
+        },
+        {
+          "field": "qty_2",
+          "expected": "CODEX_AUDIT_REPORTS_d5625c14fb_PUT_Container_Report_qty_2",
+          "actual": null
+        },
+        {
+          "field": "qty_3",
+          "expected": "CODEX_AUDIT_REPORTS_d5625c14fb_PUT_Container_Report_qty_3",
+          "actual": null
+        },
+        {
+          "field": "person_1",
+          "expected": "CODEX_AUDIT_REPORTS_d5625c14fb_PUT_Container_Report_person_1",
+          "actual": null
+        },
+        {
+          "field": "person_2",
+          "expected": "CODEX_AUDIT_REPORTS_d5625c14fb_PUT_Container_Report_person_2",
+          "actual": null
+        },
+        {
+          "field": "person_3",
+          "expected": "CODEX_AUDIT_REPORTS_d5625c14fb_PUT_Container_Report_person_3",
+          "actual": null
+        }
+      ],
+      "notes": [],
+      "db_columns": 108
+    },
+    {
+      "name": "Vessel Grain Sampling",
+      "table": "vessel_grain_sampling_reports",
+      "status": "WARN",
+      "post": 200,
+      "get": 200,
+      "put": 200,
+      "delete": "DB_CLEANUP_NO_API_DELETE",
+      "missing_after_post": [
+        "purpose",
+        "arrival_info",
+        "inspection_info",
+        "flag_port",
+        "grt",
+        "nrt",
+        "imo",
+        "build_year",
+        "times",
+        "products_summary",
+        "products_table",
+        "sampling",
+        "procedure"
+      ],
+      "mismatch_after_post": [],
+      "missing_after_put": [
+        "purpose",
+        "arrival_info",
+        "inspection_info",
+        "flag_port",
+        "grt",
+        "nrt",
+        "imo",
+        "build_year",
+        "times",
+        "products_summary",
+        "products_table",
+        "sampling",
+        "procedure"
+      ],
+      "mismatch_after_put": [],
+      "notes": [],
+      "db_columns": 84
+    },
+    {
+      "name": "Vessel Truck Supervision",
+      "table": "vessel_truck_supervision_reports",
+      "status": "WARN",
+      "post": 200,
+      "get": 200,
+      "put": 200,
+      "delete": "DB_CLEANUP_NO_API_DELETE",
+      "missing_after_post": [],
+      "mismatch_after_post": [
+        {
+          "field": "report_date",
+          "expected": "2026-08-28",
+          "actual": null
+        },
+        {
+          "field": "arrival_date",
+          "expected": "2026-08-28",
+          "actual": null
+        },
+        {
+          "field": "inspection_date",
+          "expected": "2026-08-28",
+          "actual": null
+        },
+        {
+          "field": "supervision_completed_date",
+          "expected": "2026-08-28",
+          "actual": null
+        }
+      ],
+      "missing_after_put": [],
+      "mismatch_after_put": [],
+      "notes": [],
+      "db_columns": 25
+    },
+    {
+      "name": "Draft Survey General",
+      "table": "general_draft_survey",
+      "status": "WARN",
+      "post": 200,
+      "get": 200,
+      "put": 200,
+      "delete": "DEFERRED_DB_CLEANUP",
+      "missing_after_post": [
+        "report_number"
+      ],
+      "mismatch_after_post": [],
+      "missing_after_put": [
+        "report_number"
+      ],
+      "mismatch_after_put": [],
+      "notes": [],
+      "db_columns": 50
+    },
+    {
+      "name": "Draft Survey Ballast",
+      "table": "draft_survey_ballast",
+      "status": "WARN",
+      "post": 200,
+      "get": "DB",
+      "put": 200,
+      "delete": "DB_CLEANUP_NO_API_DELETE",
+      "missing_after_post": [
+        "draft_report_number",
+        "status",
+        "year",
+        "month",
+        "continent",
+        "country",
+        "port",
+        "client",
+        "ballast_json"
+      ],
+      "mismatch_after_post": [],
+      "missing_after_put": [
+        "draft_report_number",
+        "status",
+        "year",
+        "month",
+        "continent",
+        "country",
+        "port",
+        "client",
+        "ballast_json"
+      ],
+      "mismatch_after_put": [],
+      "notes": [],
+      "db_columns": 13
+    },
+    {
+      "name": "Draft Survey Word Report",
+      "table": "draft_survey_word_report",
+      "status": "WARN",
+      "post": 200,
+      "get": "DB",
+      "put": 200,
+      "delete": "DB_CLEANUP_NO_API_DELETE",
+      "missing_after_post": [],
+      "mismatch_after_post": [
+        {
+          "field": "word_arrived_buoy_time",
+          "expected": "09:15:00",
+          "actual": null
+        },
+        {
+          "field": "word_nor_tendered_time",
+          "expected": "09:15:00",
+          "actual": null
+        },
+        {
+          "field": "word_all_fast_time",
+          "expected": "09:15:00",
+          "actual": null
+        },
+        {
+          "field": "word_initial_draft_time",
+          "expected": "09:15:00",
+          "actual": null
+        },
+        {
+          "field": "word_commenced_time",
+          "expected": "09:15:00",
+          "actual": null
+        },
+        {
+          "field": "word_completed_time",
+          "expected": "09:15:00",
+          "actual": null
+        },
+        {
+          "field": "word_final_draft_time",
+          "expected": "09:15:00",
+          "actual": null
+        },
+        {
+          "field": "purpose",
+          "expected": "CODEX_AUDIT_REPORTS_d5625c14fb_POST_Draft_Survey_Word_Report_purpose",
+          "actual": null
+        },
+        {
+          "field": "goods",
+          "expected": "CODEX_AUDIT_REPORTS_d5625c14fb_POST_Draft_Survey_Word_Report_goods",
+          "actual": null
+        },
+        {
+          "field": "remarks",
+          "expected": "CODEX_AUDIT_REPORTS_d5625c14fb_POST_Draft_Survey_Word_Report_remarks",
+          "actual": null
+        }
+      ],
+      "missing_after_put": [],
+      "mismatch_after_put": [
+        {
+          "field": "word_difference",
+          "expected": "CODEX_AUDIT_REPORTS_d5625c14fb_PUT_Draft_Survey_Word_Report_word_difference",
+          "actual": "0.00"
+        },
+        {
+          "field": "word_percentage",
+          "expected": "CODEX_AUDIT_REPORTS_d5625c14fb_PUT_Draft_Survey_Word_Report_word_percentage",
+          "actual": "0.0000"
+        },
+        {
+          "field": "word_arrived_buoy_time",
+          "expected": "10:30:00",
+          "actual": "10:30:00"
+        },
+        {
+          "field": "word_nor_tendered_time",
+          "expected": "10:30:00",
+          "actual": "10:30:00"
+        },
+        {
+          "field": "word_all_fast_time",
+          "expected": "10:30:00",
+          "actual": "10:30:00"
+        },
+        {
+          "field": "word_initial_draft_time",
+          "expected": "10:30:00",
+          "actual": "10:30:00"
+        },
+        {
+          "field": "word_commenced_time",
+          "expected": "10:30:00",
+          "actual": "10:30:00"
+        },
+        {
+          "field": "word_completed_time",
+          "expected": "10:30:00",
+          "actual": "10:30:00"
+        },
+        {
+          "field": "word_final_draft_time",
+          "expected": "10:30:00",
+          "actual": "10:30:00"
+        }
+      ],
+      "notes": [],
+      "db_columns": 55
+    },
+    {
+      "name": "Vessel Bunker",
+      "table": "vessel_bunker_reports",
+      "status": "WARN",
+      "post": 200,
+      "get": 200,
+      "put": 200,
+      "delete": "DB_CLEANUP_NO_API_DELETE",
+      "missing_after_post": [],
+      "mismatch_after_post": [
+        {
+          "field": "rob_diff",
+          "expected": "CODEX_AUDIT_REPORTS_d5625c14fb_POST_Vessel_Bunker_rob_diff",
+          "actual": null
+        },
+        {
+          "field": "generator_until_aps",
+          "expected": "CODEX_AUDIT_REPORTS_d5625c14fb_POST_Vessel_Bunker_generator_until_aps",
+          "actual": null
+        },
+        {
+          "field": "me_to_sea_buoy",
+          "expected": "CODEX_AUDIT_REPORTS_d5625c14fb_POST_Vessel_Bunker_me_to_sea_buoy",
+          "actual": null
+        },
+        {
+          "field": "list",
+          "expected": "CODEX_AUDIT_REPORTS_d5625c14fb_POST_Vessel_Bunker_list",
+          "actual": null
+        }
+      ],
+      "missing_after_put": [],
+      "mismatch_after_put": [
+        {
+          "field": "rob_diff",
+          "expected": "CODEX_AUDIT_REPORTS_d5625c14fb_PUT_Vessel_Bunker_rob_diff",
+          "actual": null
+        },
+        {
+          "field": "generator_until_aps",
+          "expected": "CODEX_AUDIT_REPORTS_d5625c14fb_PUT_Vessel_Bunker_generator_until_aps",
+          "actual": null
+        },
+        {
+          "field": "me_to_sea_buoy",
+          "expected": "CODEX_AUDIT_REPORTS_d5625c14fb_PUT_Vessel_Bunker_me_to_sea_buoy",
+          "actual": null
+        },
+        {
+          "field": "list",
+          "expected": "CODEX_AUDIT_REPORTS_d5625c14fb_PUT_Vessel_Bunker_list",
+          "actual": null
+        }
+      ],
+      "notes": [],
+      "db_columns": 408
+    },
+    {
+      "name": "Vessel Cargo Condition",
+      "table": "vessel_cargo_condition_surveys",
+      "status": "PASS",
+      "post": 200,
+      "get": 200,
+      "put": 200,
+      "delete": "DB_CLEANUP_NO_API_DELETE",
+      "missing_after_post": [],
+      "mismatch_after_post": [],
+      "missing_after_put": [],
+      "mismatch_after_put": [],
+      "notes": [],
+      "db_columns": 92
+    },
+    {
+      "name": "Vessel Crane Inspection",
+      "table": "vessel_crane_inspection_reports",
+      "status": "PASS",
+      "post": 200,
+      "get": 200,
+      "put": 200,
+      "delete": "DB_CLEANUP_NO_API_DELETE",
+      "missing_after_post": [],
+      "mismatch_after_post": [],
+      "missing_after_put": [],
+      "mismatch_after_put": [],
+      "notes": [],
+      "db_columns": 201
+    },
+    {
+      "name": "Vessel Condition Survey",
+      "table": "vessel_condition_surveys",
+      "status": "PASS",
+      "post": 200,
+      "get": 200,
+      "put": 200,
+      "delete": "DB_CLEANUP_NO_API_DELETE",
+      "missing_after_post": [],
+      "mismatch_after_post": [],
+      "missing_after_put": [],
+      "mismatch_after_put": [],
+      "notes": [],
+      "db_columns": 135
+    },
+    {
+      "name": "Port Captancy",
+      "table": "port_captancy_reports",
+      "status": "WARN",
+      "post": 200,
+      "get": 200,
+      "put": 200,
+      "delete": "DB_CLEANUP_NO_API_DELETE",
+      "missing_after_post": [],
+      "mismatch_after_post": [],
+      "missing_after_put": [],
+      "mismatch_after_put": [
+        {
+          "field": "report_number",
+          "expected": "CODEX_AUDIT_REPORTS_d5625c14fb_put_port_captancy_reports",
+          "actual": "CODEX_AUDIT_REPORTS_d5625c14fb_post_port_captancy_reports"
+        }
+      ],
+      "notes": [],
+      "db_columns": 86
+    },
+    {
+      "name": "Weight Certificate",
+      "table": "weight_certificates",
+      "status": "WARN",
+      "post": 200,
+      "get": 200,
+      "put": 200,
+      "delete": "DB_CLEANUP_NO_API_DELETE",
+      "missing_after_post": [],
+      "mismatch_after_post": [
+        {
+          "field": "certificate_no",
+          "expected": "CODEX_AUDIT_REPORTS_d5625c14fb_post_weight_certificates",
+          "actual": null
+        }
+      ],
+      "missing_after_put": [],
+      "mismatch_after_put": [],
+      "notes": [],
+      "db_columns": 23
+    },
+    {
+      "name": "Holds Inspection Certificate",
+      "table": "vessel_holds_inspection_certificates",
+      "status": "WARN",
+      "post": 200,
+      "get": 200,
+      "put": 200,
+      "delete": "DB_CLEANUP_NO_API_DELETE",
+      "missing_after_post": [
+        "report_no",
+        "certificate_no",
+        "continent",
+        "operation",
+        "customer",
+        "client",
+        "requested_by",
+        "vessel_name",
+        "location",
+        "cargo",
+        "commodity",
+        "conclusion",
+        "link_picture",
+        "hold_1_condition",
+        "hold_1_remarks",
+        "hold_2_condition",
+        "hold_2_remarks",
+        "hold_3_condition",
+        "hold_3_remarks",
+        "hold_4_condition",
+        "hold_4_remarks",
+        "hold_5_condition",
+        "hold_5_remarks",
+        "hold_6_condition",
+        "hold_6_remarks",
+        "hold_7_condition",
+        "hold_7_remarks",
+        "hold_8_condition",
+        "hold_8_remarks",
+        "hold_9_condition",
+        "hold_9_remarks",
+        "hold_10_condition",
+        "hold_10_remarks",
+        "bl_number",
+        "holds_number",
+        "surveyor",
+        "inspection_date",
+        "completion_date"
+      ],
+      "mismatch_after_post": [],
+      "missing_after_put": [
+        "report_no",
+        "certificate_no",
+        "continent",
+        "operation",
+        "customer",
+        "client",
+        "requested_by",
+        "vessel_name",
+        "location",
+        "cargo",
+        "commodity",
+        "conclusion",
+        "link_picture",
+        "hold_1_condition",
+        "hold_1_remarks",
+        "hold_2_condition",
+        "hold_2_remarks",
+        "hold_3_condition",
+        "hold_3_remarks",
+        "hold_4_condition",
+        "hold_4_remarks",
+        "hold_5_condition",
+        "hold_5_remarks",
+        "hold_6_condition",
+        "hold_6_remarks",
+        "hold_7_condition",
+        "hold_7_remarks",
+        "hold_8_condition",
+        "hold_8_remarks",
+        "hold_9_condition",
+        "hold_9_remarks",
+        "hold_10_condition",
+        "hold_10_remarks",
+        "bl_number",
+        "holds_number",
+        "surveyor",
+        "inspection_date",
+        "completion_date"
+      ],
+      "mismatch_after_put": [],
+      "notes": [],
+      "db_columns": 63
+    },
+    {
+      "name": "Sampling Certificate",
+      "table": "sampling_certificates",
+      "status": "PASS",
+      "post": 200,
+      "get": 200,
+      "put": 200,
+      "delete": "DB_CLEANUP_NO_API_DELETE",
+      "missing_after_post": [],
+      "mismatch_after_post": [],
+      "missing_after_put": [],
+      "mismatch_after_put": [],
+      "notes": [],
+      "db_columns": 54
+    },
+    {
+      "name": "Sealing Certificate",
+      "table": "sealing_certificates",
+      "status": "WARN",
+      "post": 200,
+      "get": 200,
+      "put": 200,
+      "delete": "DB_CLEANUP_NO_API_DELETE",
+      "missing_after_post": [],
+      "mismatch_after_post": [],
+      "missing_after_put": [],
+      "mismatch_after_put": [
+        {
+          "field": "report_number",
+          "expected": "CODEX_AUDIT_REPORTS_d5625c14fb_PUT_Sealing_Certificate_report_number",
+          "actual": "CODEX_AUDIT_REPORTS_d5625c14fb_POST_Sealing_Certificate_report_number"
+        },
+        {
+          "field": "continent",
+          "expected": "CODEX_AUDIT_REPORTS_d5625c14fb_PUT_Sealing_Certificate_continent",
+          "actual": "CODEX_AUDIT_REPORTS_d5625c14fb_POST_Sealing_Certificate_continent"
+        },
+        {
+          "field": "operation",
+          "expected": "CODEX_AUDIT_REPORTS_d5625c14fb_PUT_Sealing_Certificate_operation",
+          "actual": "CODEX_AUDIT_REPORTS_d5625c14fb_POST_Sealing_Certificate_operation"
+        },
+        {
+          "field": "client",
+          "expected": "CODEX_AUDIT_REPORTS_d5625c14fb_PUT_Sealing_Certificate_client",
+          "actual": "CODEX_AUDIT_REPORTS_d5625c14fb_POST_Sealing_Certificate_client"
+        },
+        {
+          "field": "requested_by",
+          "expected": "CODEX_AUDIT_REPORTS_d5625c14fb_PUT_Sealing_Certificate_requested_by",
+          "actual": "CODEX_AUDIT_REPORTS_d5625c14fb_POST_Sealing_Certificate_requested_by"
+        },
+        {
+          "field": "vessel_name",
+          "expected": "CODEX_AUDIT_REPORTS_d5625c14fb_PUT_Sealing_Certificate_vessel_name",
+          "actual": "CODEX_AUDIT_REPORTS_d5625c14fb_POST_Sealing_Certificate_vessel_name"
+        },
+        {
+          "field": "place",
+          "expected": "CODEX_AUDIT_REPORTS_d5625c14fb_PUT_Sealing_Certificate_place",
+          "actual": "CODEX_AUDIT_REPORTS_d5625c14fb_POST_Sealing_Certificate_place"
+        },
+        {
+          "field": "commodity",
+          "expected": "CODEX_AUDIT_REPORTS_d5625c14fb_PUT_Sealing_Certificate_commodity",
+          "actual": "CODEX_AUDIT_REPORTS_d5625c14fb_POST_Sealing_Certificate_commodity"
+        },
+        {
+          "field": "conclusion",
+          "expected": "CODEX_AUDIT_REPORTS_d5625c14fb_PUT_Sealing_Certificate_conclusion",
+          "actual": "CODEX_AUDIT_REPORTS_d5625c14fb_POST_Sealing_Certificate_conclusion"
+        },
+        {
+          "field": "link_picture",
+          "expected": "CODEX_AUDIT_REPORTS_d5625c14fb_PUT_Sealing_Certificate_link_picture",
+          "actual": "CODEX_AUDIT_REPORTS_d5625c14fb_POST_Sealing_Certificate_link_picture"
+        },
+        {
+          "field": "hold_7_fwd_escape",
+          "expected": "CODEX_AUDIT_REPORTS_d5625c14fb_PUT_Sealing_Certificate_hold_7_fwd_escape",
+          "actual": "CODEX_AUDIT_REPORTS_d5625c14fb_POST_Sealing_Certificate_hold_7_fwd_escape"
+        },
+        {
+          "field": "hold_7_fwd_aft_hatch",
+          "expected": "CODEX_AUDIT_REPORTS_d5625c14fb_PUT_Sealing_Certificate_hold_7_fwd_aft_hatch",
+          "actual": "CODEX_AUDIT_REPORTS_d5625c14fb_POST_Sealing_Certificate_hold_7_fwd_aft_hatch"
+        },
+        {
+          "field": "hold_7_aft_escape",
+          "expected": "CODEX_AUDIT_REPORTS_d5625c14fb_PUT_Sealing_Certificate_hold_7_aft_escape",
+          "actual": "CODEX_AUDIT_REPORTS_d5625c14fb_POST_Sealing_Certificate_hold_7_aft_escape"
+        },
+        {
+          "field": "hold_8_fwd_escape",
+          "expected": "CODEX_AUDIT_REPORTS_d5625c14fb_PUT_Sealing_Certificate_hold_8_fwd_escape",
+          "actual": "CODEX_AUDIT_REPORTS_d5625c14fb_POST_Sealing_Certificate_hold_8_fwd_escape"
+        },
+        {
+          "field": "hold_8_fwd_aft_hatch",
+          "expected": "CODEX_AUDIT_REPORTS_d5625c14fb_PUT_Sealing_Certificate_hold_8_fwd_aft_hatch",
+          "actual": "CODEX_AUDIT_REPORTS_d5625c14fb_POST_Sealing_Certificate_hold_8_fwd_aft_hatch"
+        },
+        {
+          "field": "hold_8_aft_escape",
+          "expected": "CODEX_AUDIT_REPORTS_d5625c14fb_PUT_Sealing_Certificate_hold_8_aft_escape",
+          "actual": "CODEX_AUDIT_REPORTS_d5625c14fb_POST_Sealing_Certificate_hold_8_aft_escape"
+        },
+        {
+          "field": "hold_9_fwd_escape",
+          "expected": "CODEX_AUDIT_REPORTS_d5625c14fb_PUT_Sealing_Certificate_hold_9_fwd_escape",
+          "actual": "CODEX_AUDIT_REPORTS_d5625c14fb_POST_Sealing_Certificate_hold_9_fwd_escape"
+        },
+        {
+          "field": "hold_9_fwd_aft_hatch",
+          "expected": "CODEX_AUDIT_REPORTS_d5625c14fb_PUT_Sealing_Certificate_hold_9_fwd_aft_hatch",
+          "actual": "CODEX_AUDIT_REPORTS_d5625c14fb_POST_Sealing_Certificate_hold_9_fwd_aft_hatch"
+        },
+        {
+          "field": "hold_9_aft_escape",
+          "expected": "CODEX_AUDIT_REPORTS_d5625c14fb_PUT_Sealing_Certificate_hold_9_aft_escape",
+          "actual": "CODEX_AUDIT_REPORTS_d5625c14fb_POST_Sealing_Certificate_hold_9_aft_escape"
+        },
+        {
+          "field": "hold_10_fwd_escape",
+          "expected": "CODEX_AUDIT_REPORTS_d5625c14fb_PUT_Sealing_Certificate_hold_10_fwd_escape",
+          "actual": "CODEX_AUDIT_REPORTS_d5625c14fb_POST_Sealing_Certificate_hold_10_fwd_escape"
+        },
+        {
+          "field": "hold_10_fwd_aft_hatch",
+          "expected": "CODEX_AUDIT_REPORTS_d5625c14fb_PUT_Sealing_Certificate_hold_10_fwd_aft_hatch",
+          "actual": "CODEX_AUDIT_REPORTS_d5625c14fb_POST_Sealing_Certificate_hold_10_fwd_aft_hatch"
+        },
+        {
+          "field": "hold_10_aft_escape",
+          "expected": "CODEX_AUDIT_REPORTS_d5625c14fb_PUT_Sealing_Certificate_hold_10_aft_escape",
+          "actual": "CODEX_AUDIT_REPORTS_d5625c14fb_POST_Sealing_Certificate_hold_10_aft_escape"
+        },
+        {
+          "field": "master",
+          "expected": "CODEX_AUDIT_REPORTS_d5625c14fb_PUT_Sealing_Certificate_master",
+          "actual": "CODEX_AUDIT_REPORTS_d5625c14fb_POST_Sealing_Certificate_master"
+        },
+        {
+          "field": "surveyor",
+          "expected": "CODEX_AUDIT_REPORTS_d5625c14fb_PUT_Sealing_Certificate_surveyor",
+          "actual": "CODEX_AUDIT_REPORTS_d5625c14fb_POST_Sealing_Certificate_surveyor"
+        }
+      ],
+      "notes": [],
+      "db_columns": 59
+    },
+    {
+      "name": "Lashing Certificate",
+      "table": "lashing_certificates",
+      "status": "WARN",
+      "post": 200,
+      "get": 200,
+      "put": 200,
+      "delete": "DB_CLEANUP_NO_API_DELETE",
+      "missing_after_post": [
+        "certificate_no"
+      ],
+      "mismatch_after_post": [],
+      "missing_after_put": [
+        "certificate_no"
+      ],
+      "mismatch_after_put": [],
+      "notes": [],
+      "db_columns": 16
+    },
+    {
+      "name": "LOGRA Report",
+      "table": "logra_reports",
+      "status": "WARN",
+      "post": 200,
+      "get": 200,
+      "put": 200,
+      "delete": 200,
+      "missing_after_post": [
+        "summary",
+        "answers"
+      ],
+      "mismatch_after_post": [
+        {
+          "field": "title",
+          "expected": "CODEX_AUDIT_REPORTS_d5625c14fb_post_LOGRA",
+          "actual": "CODEX_AUDIT_REPORTS_d5625c14fb_post_ONG"
+        },
+        {
+          "field": "agenda_items",
+          "expected": [
+            {
+              "topic": "CODEX_AUDIT_REPORTS_d5625c14fb_post_agenda",
+              "owner": "codex"
+            }
+          ],
+          "actual": []
+        }
+      ],
+      "missing_after_put": [
+        "summary",
+        "answers"
+      ],
+      "mismatch_after_put": [
+        {
+          "field": "title",
+          "expected": "CODEX_AUDIT_REPORTS_d5625c14fb_put_LOGRA",
+          "actual": "CODEX_AUDIT_REPORTS_d5625c14fb_put_ONG"
+        },
+        {
+          "field": "agenda_items",
+          "expected": [
+            {
+              "topic": "CODEX_AUDIT_REPORTS_d5625c14fb_put_agenda",
+              "owner": "codex"
+            }
+          ],
+          "actual": []
+        }
+      ],
+      "notes": [],
+      "db_columns": 21
+    }
+  ],
+  "summary": {
+    "pass": 4,
+    "warn": 13,
+    "fail": 0,
+    "skip": 0
+  }
+}

@@ -1,0 +1,5208 @@
+[
+  {
+    "path": "/servicios/generar_informe/{consec}",
+    "methods": {
+      "PUT": {
+        "operationId": "generar_informe_servicios_generar_informe__consec__put",
+        "tags": [
+          "Servicios"
+        ],
+        "summary": "Generar Informe",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "consec",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Consec"
+            }
+          },
+          {
+            "name": "X-Company-Code",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Company-Code"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/bank-reconciliation/paid-invoices-report",
+    "methods": {
+      "GET": {
+        "operationId": "get_paid_invoices_report_bank_reconciliation_paid_invoices_report_get",
+        "tags": [
+          "Bank Reconciliation"
+        ],
+        "summary": "Get Paid Invoices Report",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "year",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 2100,
+                  "minimum": 2000
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Year"
+            }
+          },
+          {
+            "name": "month",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 12,
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Month"
+            }
+          },
+          {
+            "name": "date_from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Date From"
+            }
+          },
+          {
+            "name": "date_to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Date To"
+            }
+          },
+          {
+            "name": "cliente",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cliente"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1,
+              "title": "Page"
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 1000,
+              "minimum": 1,
+              "default": 500,
+              "title": "Page Size"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/accounting/reports/excel",
+    "methods": {
+      "GET": {
+        "operationId": "download_accounting_report_excel_accounting_reports_excel_get",
+        "tags": [
+          "Accounting"
+        ],
+        "summary": "Download Accounting Report Excel",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "report",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": "ASIENTOS",
+              "title": "Report"
+            }
+          },
+          {
+            "name": "period",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Period"
+            }
+          },
+          {
+            "name": "period_from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Period From"
+            }
+          },
+          {
+            "name": "period_to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Period To"
+            }
+          },
+          {
+            "name": "origin",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Origin"
+            }
+          },
+          {
+            "name": "account_code",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Account Code"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/accounting/reports/pdf",
+    "methods": {
+      "GET": {
+        "operationId": "download_accounting_report_pdf_accounting_reports_pdf_get",
+        "tags": [
+          "Accounting"
+        ],
+        "summary": "Download Accounting Report Pdf",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "report",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": "ASIENTOS",
+              "title": "Report"
+            }
+          },
+          {
+            "name": "period",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Period"
+            }
+          },
+          {
+            "name": "period_from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Period From"
+            }
+          },
+          {
+            "name": "period_to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Period To"
+            }
+          },
+          {
+            "name": "origin",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Origin"
+            }
+          },
+          {
+            "name": "account_code",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Account Code"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/closing/reports/batch/{batch_id}/pdf",
+    "methods": {
+      "GET": {
+        "operationId": "download_closing_batch_pdf_closing_reports_batch__batch_id__pdf_get",
+        "tags": [
+          "Closing \u2013 Reports"
+        ],
+        "summary": "Download Closing Batch Pdf",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "batch_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Batch Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/monthly-financial-report/summary",
+    "methods": {
+      "GET": {
+        "operationId": "monthly_financial_report_summary_monthly_financial_report_summary_get",
+        "tags": [
+          "Monthly Financial Report"
+        ],
+        "summary": "Monthly Financial Report Summary",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "year",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "maximum": 2100,
+              "minimum": 2000,
+              "title": "Year"
+            }
+          },
+          {
+            "name": "month",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "maximum": 12,
+              "minimum": 1,
+              "title": "Month"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/monthly-financial-report/pdf",
+    "methods": {
+      "GET": {
+        "operationId": "monthly_financial_report_pdf_monthly_financial_report_pdf_get",
+        "tags": [
+          "Monthly Financial Report"
+        ],
+        "summary": "Monthly Financial Report Pdf",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "year",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "maximum": 2100,
+              "minimum": 2000,
+              "title": "Year"
+            }
+          },
+          {
+            "name": "month",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "maximum": 12,
+              "minimum": 1,
+              "title": "Month"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/monthly-financial-report/word",
+    "methods": {
+      "GET": {
+        "operationId": "monthly_financial_report_word_monthly_financial_report_word_get",
+        "tags": [
+          "Monthly Financial Report"
+        ],
+        "summary": "Monthly Financial Report Word",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "year",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "maximum": 2100,
+              "minimum": 2000,
+              "title": "Year"
+            }
+          },
+          {
+            "name": "month",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "maximum": 12,
+              "minimum": 1,
+              "title": "Month"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/reports/ai/improve/container",
+    "methods": {
+      "POST": {
+        "operationId": "improve_container_reports_ai_improve_container_post",
+        "tags": [
+          "Reports PORTIA"
+        ],
+        "summary": "Improve Container",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Payload"
+              }
+            }
+          },
+          "required": true
+        },
+        "parameters": null
+      }
+    }
+  },
+  {
+    "path": "/reports/ai/improve/grain",
+    "methods": {
+      "POST": {
+        "operationId": "improve_grain_reports_ai_improve_grain_post",
+        "tags": [
+          "Reports PORTIA"
+        ],
+        "summary": "Improve Grain",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Payload"
+              }
+            }
+          },
+          "required": true
+        },
+        "parameters": null
+      }
+    }
+  },
+  {
+    "path": "/reports/ai/improve/truck",
+    "methods": {
+      "POST": {
+        "operationId": "improve_truck_reports_ai_improve_truck_post",
+        "tags": [
+          "Reports PORTIA"
+        ],
+        "summary": "Improve Truck",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Payload"
+              }
+            }
+          },
+          "required": true
+        },
+        "parameters": null
+      }
+    }
+  },
+  {
+    "path": "/reports/ai/improve/cargo-condition",
+    "methods": {
+      "POST": {
+        "operationId": "improve_cargo_condition_reports_ai_improve_cargo_condition_post",
+        "tags": [
+          "Reports PORTIA"
+        ],
+        "summary": "Improve Cargo Condition",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Payload"
+              }
+            }
+          },
+          "required": true
+        },
+        "parameters": null
+      }
+    }
+  },
+  {
+    "path": "/reports/ai/improve/crane-inspection",
+    "methods": {
+      "POST": {
+        "operationId": "improve_crane_inspection_reports_ai_improve_crane_inspection_post",
+        "tags": [
+          "Reports PORTIA"
+        ],
+        "summary": "Improve Crane Inspection",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Payload"
+              }
+            }
+          },
+          "required": true
+        },
+        "parameters": null
+      }
+    }
+  },
+  {
+    "path": "/reports/ai/improve/vessel-condition",
+    "methods": {
+      "POST": {
+        "operationId": "improve_vessel_condition_reports_ai_improve_vessel_condition_post",
+        "tags": [
+          "Reports PORTIA"
+        ],
+        "summary": "Improve Vessel Condition",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Payload"
+              }
+            }
+          },
+          "required": true
+        },
+        "parameters": null
+      }
+    }
+  },
+  {
+    "path": "/reports/ai/improve/port-captancy",
+    "methods": {
+      "POST": {
+        "operationId": "improve_port_captancy_reports_ai_improve_port_captancy_post",
+        "tags": [
+          "Reports PORTIA"
+        ],
+        "summary": "Improve Port Captancy",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Payload"
+              }
+            }
+          },
+          "required": true
+        },
+        "parameters": null
+      }
+    }
+  },
+  {
+    "path": "/reports/ai/improve/logra",
+    "methods": {
+      "POST": {
+        "operationId": "improve_logra_reports_ai_improve_logra_post",
+        "tags": [
+          "Reports PORTIA"
+        ],
+        "summary": "Improve Logra",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Payload"
+              }
+            }
+          },
+          "required": true
+        },
+        "parameters": null
+      }
+    }
+  },
+  {
+    "path": "/container-reports",
+    "methods": {
+      "POST": {
+        "operationId": "create_container_report_container_reports_post",
+        "tags": [
+          "Informes \u2014 Container Reports"
+        ],
+        "summary": "Create Container Report",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Payload"
+              }
+            }
+          },
+          "required": true
+        },
+        "parameters": null
+      }
+    }
+  },
+  {
+    "path": "/container-reports/filters",
+    "methods": {
+      "GET": {
+        "operationId": "get_container_report_filters_container_reports_filters_get",
+        "tags": [
+          "Informes \u2014 Container Reports"
+        ],
+        "summary": "Get Container Report Filters",
+        "requestBody": null,
+        "parameters": null
+      }
+    }
+  },
+  {
+    "path": "/container-reports/filters/months",
+    "methods": {
+      "GET": {
+        "operationId": "get_container_report_months_container_reports_filters_months_get",
+        "tags": [
+          "Informes \u2014 Container Reports"
+        ],
+        "summary": "Get Container Report Months",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "cliente",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cliente"
+            }
+          },
+          {
+            "name": "anio",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Anio"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/container-reports/filters/vessels",
+    "methods": {
+      "GET": {
+        "operationId": "get_container_report_vessels_container_reports_filters_vessels_get",
+        "tags": [
+          "Informes \u2014 Container Reports"
+        ],
+        "summary": "Get Container Report Vessels",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "cliente",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cliente"
+            }
+          },
+          {
+            "name": "anio",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Anio"
+            }
+          },
+          {
+            "name": "mes",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Mes"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/container-reports/informes",
+    "methods": {
+      "GET": {
+        "operationId": "get_container_reports_by_servicio_container_reports_informes_get",
+        "tags": [
+          "Informes \u2014 Container Reports"
+        ],
+        "summary": "Get Container Reports By Servicio",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "cliente",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cliente"
+            }
+          },
+          {
+            "name": "buque_contenedor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Buque Contenedor"
+            }
+          },
+          {
+            "name": "anio",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Anio"
+            }
+          },
+          {
+            "name": "mes",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Mes"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/container-reports/{report_id}",
+    "methods": {
+      "PUT": {
+        "operationId": "update_container_report_container_reports__report_id__put",
+        "tags": [
+          "Informes \u2014 Container Reports"
+        ],
+        "summary": "Update Container Report",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      },
+      "DELETE": {
+        "operationId": "delete_container_report_container_reports__report_id__delete",
+        "tags": [
+          "Informes \u2014 Container Reports"
+        ],
+        "summary": "Delete Container Report",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      },
+      "GET": {
+        "operationId": "get_container_report_by_id_container_reports__report_id__get",
+        "tags": [
+          "Informes \u2014 Container Reports"
+        ],
+        "summary": "Get Container Report By Id",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/container-reports/statuses",
+    "methods": {
+      "GET": {
+        "operationId": "get_container_report_statuses_container_reports_statuses_get",
+        "tags": [
+          "Informes \u2014 Container Reports"
+        ],
+        "summary": "Get Container Report Statuses",
+        "requestBody": null,
+        "parameters": null
+      }
+    }
+  },
+  {
+    "path": "/container-reports/list",
+    "methods": {
+      "GET": {
+        "operationId": "get_container_reports_container_reports_list_get",
+        "tags": [
+          "Informes \u2014 Container Reports"
+        ],
+        "summary": "Get Container Reports",
+        "requestBody": null,
+        "parameters": null
+      }
+    }
+  },
+  {
+    "path": "/container-reports/{report_id}/excel",
+    "methods": {
+      "GET": {
+        "operationId": "download_container_report_excel_container_reports__report_id__excel_get",
+        "tags": [
+          "Informes \u2014 Container Reports"
+        ],
+        "summary": "Download Container Report Excel",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/container-reports/{report_id}/generate-pdf",
+    "methods": {
+      "POST": {
+        "operationId": "generate_container_report_pdf_router_container_reports__report_id__generate_pdf_post",
+        "tags": [
+          "Informes \u2014 Container Reports"
+        ],
+        "summary": "Generate Container Report Pdf Router",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/container-reports/{report_id}/download-pdf",
+    "methods": {
+      "GET": {
+        "operationId": "download_container_report_pdf_container_reports__report_id__download_pdf_get",
+        "tags": [
+          "Informes \u2014 Container Reports"
+        ],
+        "summary": "Download Container Report Pdf",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/container-presentation/{container_report_id}",
+    "methods": {
+      "GET": {
+        "operationId": "get_container_presentation_data_container_presentation__container_report_id__get",
+        "tags": [
+          "Container Presentation"
+        ],
+        "summary": "Get Container Presentation Data",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "container_report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Container Report Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/container-presentation-pdf/{container_report_id}/presentation",
+    "methods": {
+      "GET": {
+        "operationId": "generate_presentation_only_container_presentation_pdf__container_report_id__presentation_get",
+        "tags": [
+          "Container Presentation PDF"
+        ],
+        "summary": "Generate Presentation Only",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "container_report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Container Report Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/container-presentation-pdf/{container_report_id}/unified",
+    "methods": {
+      "GET": {
+        "operationId": "generate_unified_pdf_container_presentation_pdf__container_report_id__unified_get",
+        "tags": [
+          "Container Presentation PDF"
+        ],
+        "summary": "Generate Unified Pdf",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "container_report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Container Report Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/vessel-grain-sampling",
+    "methods": {
+      "GET": {
+        "operationId": "list_vessel_grain_sampling_reports_vessel_grain_sampling_get",
+        "tags": [
+          "Vessel Grain Sampling"
+        ],
+        "summary": "List Vessel Grain Sampling Reports",
+        "requestBody": null,
+        "parameters": null
+      },
+      "POST": {
+        "operationId": "create_vessel_grain_sampling_report_vessel_grain_sampling_post",
+        "tags": [
+          "Vessel Grain Sampling"
+        ],
+        "summary": "Create Vessel Grain Sampling Report",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Payload"
+              }
+            }
+          },
+          "required": true
+        },
+        "parameters": null
+      }
+    }
+  },
+  {
+    "path": "/vessel-grain-sampling/services-selector",
+    "methods": {
+      "GET": {
+        "operationId": "get_services_for_grain_sampling_vessel_grain_sampling_services_selector_get",
+        "tags": [
+          "Vessel Grain Sampling"
+        ],
+        "summary": "Get Services For Grain Sampling",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "continente",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Continente"
+            }
+          },
+          {
+            "name": "pais",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Pais"
+            }
+          },
+          {
+            "name": "puerto",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Puerto"
+            }
+          },
+          {
+            "name": "cliente",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cliente"
+            }
+          },
+          {
+            "name": "buque",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Buque"
+            }
+          },
+          {
+            "name": "operacion",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Operacion"
+            }
+          },
+          {
+            "name": "year",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Year"
+            }
+          },
+          {
+            "name": "month",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Month"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/vessel-grain-sampling/{report_id}",
+    "methods": {
+      "GET": {
+        "operationId": "get_vessel_grain_sampling_report_vessel_grain_sampling__report_id__get",
+        "tags": [
+          "Vessel Grain Sampling"
+        ],
+        "summary": "Get Vessel Grain Sampling Report",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      },
+      "PUT": {
+        "operationId": "update_vessel_grain_sampling_report_vessel_grain_sampling__report_id__put",
+        "tags": [
+          "Vessel Grain Sampling"
+        ],
+        "summary": "Update Vessel Grain Sampling Report",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/vessel-grain-sampling/{report_id}/reject",
+    "methods": {
+      "PUT": {
+        "operationId": "reject_vessel_grain_sampling_report_vessel_grain_sampling__report_id__reject_put",
+        "tags": [
+          "Vessel Grain Sampling"
+        ],
+        "summary": "Reject Vessel Grain Sampling Report",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/vessel-grain-sampling/{report_id}/approve",
+    "methods": {
+      "PUT": {
+        "operationId": "approve_vessel_grain_sampling_report_vessel_grain_sampling__report_id__approve_put",
+        "tags": [
+          "Vessel Grain Sampling"
+        ],
+        "summary": "Approve Vessel Grain Sampling Report",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/vessel-grain-sampling/{report_id}/generate-word",
+    "methods": {
+      "POST": {
+        "operationId": "generate_word_vessel_grain_sampling_vessel_grain_sampling__report_id__generate_word_post",
+        "tags": [
+          "Vessel Grain Sampling"
+        ],
+        "summary": "Generate Word Vessel Grain Sampling",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/vessel-grain-sampling/{report_id}/presentation-pdf",
+    "methods": {
+      "POST": {
+        "operationId": "generate_vessel_presentation_pdf_vessel_grain_sampling__report_id__presentation_pdf_post",
+        "tags": [
+          "Vessel Grain Sampling"
+        ],
+        "summary": "Generate Vessel Presentation Pdf",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/vessel-grain-sampling/{report_id}/presentation-data",
+    "methods": {
+      "GET": {
+        "operationId": "get_vessel_presentation_data_vessel_grain_sampling__report_id__presentation_data_get",
+        "tags": [
+          "Vessel Grain Sampling"
+        ],
+        "summary": "Get Vessel Presentation Data",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/vessel-grain-sampling/{report_id}/unified-pdf",
+    "methods": {
+      "POST": {
+        "operationId": "generate_vessel_unified_pdf_vessel_grain_sampling__report_id__unified_pdf_post",
+        "tags": [
+          "Vessel Grain Sampling"
+        ],
+        "summary": "Generate Vessel Unified Pdf",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/status-informes",
+    "methods": {
+      "GET": {
+        "operationId": "list_status_informes_status_informes_get",
+        "tags": [
+          "Status Informes"
+        ],
+        "summary": "List Status Informes",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "name": "continente",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Continente"
+            }
+          },
+          {
+            "name": "pais",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Pais"
+            }
+          },
+          {
+            "name": "puerto",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Puerto"
+            }
+          },
+          {
+            "name": "operacion",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Operacion"
+            }
+          },
+          {
+            "name": "year",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Year"
+            }
+          },
+          {
+            "name": "month",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Month"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/status-informes/record/{consec}",
+    "methods": {
+      "GET": {
+        "operationId": "get_status_informe_status_informes_record__consec__get",
+        "tags": [
+          "Status Informes"
+        ],
+        "summary": "Get Status Informe",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "consec",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Consec"
+            }
+          }
+        ]
+      },
+      "PUT": {
+        "operationId": "update_status_informe_status_informes_record__consec__put",
+        "tags": [
+          "Status Informes"
+        ],
+        "summary": "Update Status Informe",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "consec",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Consec"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/status-informes/statuses",
+    "methods": {
+      "GET": {
+        "operationId": "get_available_statuses_status_informes_statuses_get",
+        "tags": [
+          "Status Informes"
+        ],
+        "summary": "Get Available Statuses",
+        "requestBody": null,
+        "parameters": null
+      }
+    }
+  },
+  {
+    "path": "/vessel-truck-supervision/servicios-filter",
+    "methods": {
+      "GET": {
+        "operationId": "filter_servicios_vessel_truck_supervision_servicios_filter_get",
+        "tags": [
+          "Vessel Truck Supervision"
+        ],
+        "summary": "Filter Servicios",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "continente",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Continente"
+            }
+          },
+          {
+            "name": "pais",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Pais"
+            }
+          },
+          {
+            "name": "puerto",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Puerto"
+            }
+          },
+          {
+            "name": "cliente",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cliente"
+            }
+          },
+          {
+            "name": "buque_contenedor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Buque Contenedor"
+            }
+          },
+          {
+            "name": "operacion",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Operacion"
+            }
+          },
+          {
+            "name": "anio",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 2100,
+                  "minimum": 1900
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Anio"
+            }
+          },
+          {
+            "name": "mes",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 12,
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Mes"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/vessel-truck-supervision/",
+    "methods": {
+      "POST": {
+        "operationId": "create_vessel_truck_supervision_vessel_truck_supervision__post",
+        "tags": [
+          "Vessel Truck Supervision"
+        ],
+        "summary": "Create Vessel Truck Supervision",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "parameters": null
+      },
+      "GET": {
+        "operationId": "list_vessel_truck_supervision_vessel_truck_supervision__get",
+        "tags": [
+          "Vessel Truck Supervision"
+        ],
+        "summary": "List Vessel Truck Supervision",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/vessel-truck-supervision/{report_id}",
+    "methods": {
+      "GET": {
+        "operationId": "get_vessel_truck_supervision_vessel_truck_supervision__report_id__get",
+        "tags": [
+          "Vessel Truck Supervision"
+        ],
+        "summary": "Get Vessel Truck Supervision",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      },
+      "PUT": {
+        "operationId": "update_vessel_truck_supervision_vessel_truck_supervision__report_id__put",
+        "tags": [
+          "Vessel Truck Supervision"
+        ],
+        "summary": "Update Vessel Truck Supervision",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/vessel-truck-supervision/{report_id}/reject",
+    "methods": {
+      "PUT": {
+        "operationId": "reject_vessel_truck_supervision_vessel_truck_supervision__report_id__reject_put",
+        "tags": [
+          "Vessel Truck Supervision"
+        ],
+        "summary": "Reject Vessel Truck Supervision",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/vessel-truck-supervision/{report_id}/approve",
+    "methods": {
+      "POST": {
+        "operationId": "approve_vessel_truck_supervision_vessel_truck_supervision__report_id__approve_post",
+        "tags": [
+          "Vessel Truck Supervision"
+        ],
+        "summary": "Approve Vessel Truck Supervision",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/vessel-truck-supervision/{report_id}/presentation",
+    "methods": {
+      "GET": {
+        "operationId": "generate_truck_presentation_vessel_truck_supervision__report_id__presentation_get",
+        "tags": [
+          "Vessel Truck Supervision"
+        ],
+        "summary": "Generate Truck Presentation",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/vessel-truck-supervision/{report_id}/unified",
+    "methods": {
+      "GET": {
+        "operationId": "generate_truck_unified_vessel_truck_supervision__report_id__unified_get",
+        "tags": [
+          "Vessel Truck Supervision"
+        ],
+        "summary": "Generate Truck Unified",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/draft-survey/servicios/filter",
+    "methods": {
+      "GET": {
+        "operationId": "filter_servicios_draft_survey_servicios_filter_get",
+        "tags": [
+          "Draft Survey"
+        ],
+        "summary": "Filter Servicios",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "year",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Year"
+            }
+          },
+          {
+            "name": "month",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Month"
+            }
+          },
+          {
+            "name": "continente",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Continente"
+            }
+          },
+          {
+            "name": "pais",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Pais"
+            }
+          },
+          {
+            "name": "puerto",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Puerto"
+            }
+          },
+          {
+            "name": "cliente",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cliente"
+            }
+          },
+          {
+            "name": "operacion",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Operacion"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/draft-survey/",
+    "methods": {
+      "GET": {
+        "operationId": "list_draft_surveys_draft_survey__get",
+        "tags": [
+          "Draft Survey"
+        ],
+        "summary": "List Draft Surveys",
+        "requestBody": null,
+        "parameters": null
+      },
+      "POST": {
+        "operationId": "create_draft_survey_draft_survey__post",
+        "tags": [
+          "Draft Survey"
+        ],
+        "summary": "Create Draft Survey",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Payload"
+              }
+            }
+          },
+          "required": true
+        },
+        "parameters": null
+      }
+    }
+  },
+  {
+    "path": "/draft-survey/{identifier}/approve",
+    "methods": {
+      "PUT": {
+        "operationId": "approve_draft_survey_draft_survey__identifier__approve_put",
+        "tags": [
+          "Draft Survey"
+        ],
+        "summary": "Approve Draft Survey",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "identifier",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Identifier"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/draft-survey/{identifier}/reject",
+    "methods": {
+      "PUT": {
+        "operationId": "reject_draft_survey_draft_survey__identifier__reject_put",
+        "tags": [
+          "Draft Survey"
+        ],
+        "summary": "Reject Draft Survey",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "identifier",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Identifier"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/draft-survey/{general_id}",
+    "methods": {
+      "GET": {
+        "operationId": "get_draft_survey_draft_survey__general_id__get",
+        "tags": [
+          "Draft Survey"
+        ],
+        "summary": "Get Draft Survey",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "general_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "General Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/draft-survey/{identifier}",
+    "methods": {
+      "PUT": {
+        "operationId": "update_draft_survey_draft_survey__identifier__put",
+        "tags": [
+          "Draft Survey"
+        ],
+        "summary": "Update Draft Survey",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "identifier",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Identifier"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/draft-survey/preview/excel",
+    "methods": {
+      "POST": {
+        "operationId": "preview_draft_survey_excel_draft_survey_preview_excel_post",
+        "tags": [
+          "Draft Survey"
+        ],
+        "summary": "Preview Draft Survey Excel",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Payload"
+              }
+            }
+          },
+          "required": true
+        },
+        "parameters": null
+      }
+    }
+  },
+  {
+    "path": "/draft-survey-extra/ballast/{draft_survey_id}",
+    "methods": {
+      "POST": {
+        "operationId": "create_ballast_draft_survey_extra_ballast__draft_survey_id__post",
+        "tags": [
+          "Draft Survey Extra"
+        ],
+        "summary": "Create Ballast",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "draft_survey_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Draft Survey Id"
+            }
+          }
+        ]
+      },
+      "PUT": {
+        "operationId": "update_ballast_draft_survey_extra_ballast__draft_survey_id__put",
+        "tags": [
+          "Draft Survey Extra"
+        ],
+        "summary": "Update Ballast",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "draft_survey_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Draft Survey Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/draft-survey-extra/word/{draft_survey_id}",
+    "methods": {
+      "PUT": {
+        "operationId": "update_word_report_draft_survey_extra_word__draft_survey_id__put",
+        "tags": [
+          "Draft Survey Extra"
+        ],
+        "summary": "Update Word Report",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "draft_survey_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Draft Survey Id"
+            }
+          }
+        ]
+      },
+      "POST": {
+        "operationId": "create_word_draft_survey_extra_word__draft_survey_id__post",
+        "tags": [
+          "Draft Survey Extra"
+        ],
+        "summary": "Create Word",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "draft_survey_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Draft Survey Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/draft-survey-filters/",
+    "methods": {
+      "GET": {
+        "operationId": "get_draft_filters_draft_survey_filters__get",
+        "tags": [
+          "Draft Survey Filters"
+        ],
+        "summary": "Get Draft Filters",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "continent",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Continent"
+            }
+          },
+          {
+            "name": "country",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Country"
+            }
+          },
+          {
+            "name": "year",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Year"
+            }
+          },
+          {
+            "name": "month",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Month"
+            }
+          },
+          {
+            "name": "port",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Port"
+            }
+          },
+          {
+            "name": "client",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Client"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/draft-survey/unified/{draft_report_number}",
+    "methods": {
+      "GET": {
+        "operationId": "get_draft_survey_unified_draft_survey_unified__draft_report_number__get",
+        "tags": [
+          "Draft Survey (Unified)"
+        ],
+        "summary": "Get Draft Survey Unified",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "draft_report_number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Draft Report Number"
+            }
+          }
+        ]
+      },
+      "PUT": {
+        "operationId": "update_draft_survey_unified_draft_survey_unified__draft_report_number__put",
+        "tags": [
+          "Draft Survey (Unified)"
+        ],
+        "summary": "Update Draft Survey Unified",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "draft_report_number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Draft Report Number"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/draft-survey/headers",
+    "methods": {
+      "GET": {
+        "operationId": "get_draft_survey_headers_draft_survey_headers_get",
+        "tags": [
+          "Draft Survey (Unified)"
+        ],
+        "summary": "Get Draft Survey Headers",
+        "requestBody": null,
+        "parameters": null
+      }
+    }
+  },
+  {
+    "path": "/draft-survey-headers/",
+    "methods": {
+      "GET": {
+        "operationId": "get_draft_survey_headers_list_draft_survey_headers__get",
+        "tags": [
+          "Draft Survey Headers"
+        ],
+        "summary": "Get Draft Survey Headers List",
+        "requestBody": null,
+        "parameters": null
+      }
+    }
+  },
+  {
+    "path": "/draft-survey-word/generate/{draft_report_number}",
+    "methods": {
+      "GET": {
+        "operationId": "generate_word_pdf_draft_survey_word_generate__draft_report_number__get",
+        "tags": [
+          "Draft Survey Word PDF"
+        ],
+        "summary": "Generate Word Pdf",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "draft_report_number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Draft Report Number"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/draft-survey-word/presentation/{draft_report_number}",
+    "methods": {
+      "GET": {
+        "operationId": "generate_draft_survey_presentation_draft_survey_word_presentation__draft_report_number__get",
+        "tags": [
+          "Draft Survey Word PDF"
+        ],
+        "summary": "Generate Draft Survey Presentation",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "draft_report_number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Draft Report Number"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/draft-survey-excel/__ping",
+    "methods": {
+      "GET": {
+        "operationId": "_ping_excel_router_draft_survey_excel___ping_get",
+        "tags": [
+          "Draft Survey Excel/PDF"
+        ],
+        "summary": " Ping Excel Router",
+        "requestBody": null,
+        "parameters": null
+      }
+    }
+  },
+  {
+    "path": "/draft-survey-excel/__routes",
+    "methods": {
+      "GET": {
+        "operationId": "_excel_routes_draft_survey_excel___routes_get",
+        "tags": [
+          "Draft Survey Excel/PDF"
+        ],
+        "summary": " Excel Routes",
+        "requestBody": null,
+        "parameters": null
+      }
+    }
+  },
+  {
+    "path": "/draft-survey-excel/generate-pdf/{draft_report_number}",
+    "methods": {
+      "GET": {
+        "operationId": "generate_draft_survey_excel_pdf_draft_survey_excel_generate_pdf__draft_report_number__get",
+        "tags": [
+          "Draft Survey Excel/PDF"
+        ],
+        "summary": "Generate Draft Survey Excel Pdf",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "draft_report_number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Draft Report Number"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/draft-survey-final/generate/{draft_report_number}",
+    "methods": {
+      "GET": {
+        "operationId": "generate_final_pdf_draft_survey_final_generate__draft_report_number__get",
+        "tags": [
+          "Draft Survey Final PDF"
+        ],
+        "summary": "Generate Final Pdf",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "draft_report_number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Draft Report Number"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/draft-survey-final/unified/{draft_report_number}",
+    "methods": {
+      "GET": {
+        "operationId": "generate_unified_final_pdf_draft_survey_final_unified__draft_report_number__get",
+        "tags": [
+          "Draft Survey Final PDF"
+        ],
+        "summary": "Generate Unified Final Pdf",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "draft_report_number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Draft Report Number"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/vessel-bunker-reports/",
+    "methods": {
+      "POST": {
+        "operationId": "create_vessel_bunker_report_vessel_bunker_reports__post",
+        "tags": [
+          "Vessel Bunker Reports"
+        ],
+        "summary": "Create Vessel Bunker Report",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "parameters": null
+      },
+      "GET": {
+        "operationId": "get_all_vessel_bunker_reports_vessel_bunker_reports__get",
+        "tags": [
+          "Vessel Bunker Reports"
+        ],
+        "summary": "Get All Vessel Bunker Reports",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 1000,
+              "minimum": 1,
+              "default": 200,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Q"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/vessel-bunker-reports/{report_id}",
+    "methods": {
+      "PUT": {
+        "operationId": "update_vessel_bunker_report_vessel_bunker_reports__report_id__put",
+        "tags": [
+          "Vessel Bunker Reports"
+        ],
+        "summary": "Update Vessel Bunker Report",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      },
+      "GET": {
+        "operationId": "get_vessel_bunker_report_vessel_bunker_reports__report_id__get",
+        "tags": [
+          "Vessel Bunker Reports"
+        ],
+        "summary": "Get Vessel Bunker Report",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/vessel-bunker-excel/generate/{report_id}",
+    "methods": {
+      "GET": {
+        "operationId": "generate_vessel_bunker_excel_vessel_bunker_excel_generate__report_id__get",
+        "tags": [
+          "Vessel Bunker Excel"
+        ],
+        "summary": "Generate Vessel Bunker Excel",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/vessel-bunker-excel/generate-pdf/{report_id}",
+    "methods": {
+      "GET": {
+        "operationId": "generate_vessel_bunker_pdf_vessel_bunker_excel_generate_pdf__report_id__get",
+        "tags": [
+          "Vessel Bunker Excel"
+        ],
+        "summary": "Generate Vessel Bunker Pdf",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/vessel-bunker-reports/presentation/{report_id}",
+    "methods": {
+      "GET": {
+        "operationId": "generate_bunker_presentation_vessel_bunker_reports_presentation__report_id__get",
+        "tags": [
+          "Vessel Bunker Presentation"
+        ],
+        "summary": "Generate Bunker Presentation",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/vessel-bunker-preview/excel",
+    "methods": {
+      "POST": {
+        "operationId": "preview_vessel_bunker_excel_vessel_bunker_preview_excel_post",
+        "tags": [
+          "Vessel Bunker Preview"
+        ],
+        "summary": "Preview Vessel Bunker Excel",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Payload"
+              }
+            }
+          },
+          "required": true
+        },
+        "parameters": null
+      }
+    }
+  },
+  {
+    "path": "/vessel-cargo-condition-surveys/",
+    "methods": {
+      "GET": {
+        "operationId": "get_all_vessel_cargo_condition_vessel_cargo_condition_surveys__get",
+        "tags": [
+          "Vessel Cargo Condition Surveys"
+        ],
+        "summary": "Get All Vessel Cargo Condition",
+        "requestBody": null,
+        "parameters": null
+      },
+      "POST": {
+        "operationId": "create_vessel_cargo_condition_vessel_cargo_condition_surveys__post",
+        "tags": [
+          "Vessel Cargo Condition Surveys"
+        ],
+        "summary": "Create Vessel Cargo Condition",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Payload"
+              }
+            }
+          },
+          "required": true
+        },
+        "parameters": null
+      }
+    }
+  },
+  {
+    "path": "/vessel-cargo-condition-surveys/word/{record_id}",
+    "methods": {
+      "GET": {
+        "operationId": "generate_cargo_condition_word_vessel_cargo_condition_surveys_word__record_id__get",
+        "tags": [
+          "Vessel Cargo Condition Surveys"
+        ],
+        "summary": "Generate Cargo Condition Word",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/vessel-cargo-condition-surveys/presentation/{record_id}",
+    "methods": {
+      "GET": {
+        "operationId": "generate_cargo_condition_presentation_pdf_vessel_cargo_condition_surveys_presentation__record_id__get",
+        "tags": [
+          "Vessel Cargo Condition Surveys"
+        ],
+        "summary": "Generate Cargo Condition Presentation Pdf",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/vessel-cargo-condition-surveys/{record_id}",
+    "methods": {
+      "GET": {
+        "operationId": "get_vessel_cargo_condition_vessel_cargo_condition_surveys__record_id__get",
+        "tags": [
+          "Vessel Cargo Condition Surveys"
+        ],
+        "summary": "Get Vessel Cargo Condition",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      },
+      "PUT": {
+        "operationId": "update_vessel_cargo_condition_vessel_cargo_condition_surveys__record_id__put",
+        "tags": [
+          "Vessel Cargo Condition Surveys"
+        ],
+        "summary": "Update Vessel Cargo Condition",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/vessel-crane-inspection",
+    "methods": {
+      "GET": {
+        "operationId": "get_crane_inspections_vessel_crane_inspection_get",
+        "tags": [
+          "Vessel Crane Inspection"
+        ],
+        "summary": "Get Crane Inspections",
+        "requestBody": null,
+        "parameters": null
+      },
+      "POST": {
+        "operationId": "create_crane_inspection_vessel_crane_inspection_post",
+        "tags": [
+          "Vessel Crane Inspection"
+        ],
+        "summary": "Create Crane Inspection",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Payload"
+              }
+            }
+          },
+          "required": true
+        },
+        "parameters": null
+      }
+    }
+  },
+  {
+    "path": "/vessel-crane-inspection/{report_id}",
+    "methods": {
+      "PUT": {
+        "operationId": "update_crane_inspection_vessel_crane_inspection__report_id__put",
+        "tags": [
+          "Vessel Crane Inspection"
+        ],
+        "summary": "Update Crane Inspection",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      },
+      "GET": {
+        "operationId": "get_crane_inspection_vessel_crane_inspection__report_id__get",
+        "tags": [
+          "Vessel Crane Inspection"
+        ],
+        "summary": "Get Crane Inspection",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/vessel-crane-inspection-reports",
+    "methods": {
+      "POST": {
+        "operationId": "create_crane_inspection_vessel_crane_inspection_reports_post",
+        "tags": [
+          "Vessel Crane Inspection Reports"
+        ],
+        "summary": "Create Crane Inspection",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Payload"
+              }
+            }
+          },
+          "required": true
+        },
+        "parameters": null
+      }
+    }
+  },
+  {
+    "path": "/vessel-crane-inspection-reports/{record_id}",
+    "methods": {
+      "PUT": {
+        "operationId": "update_crane_inspection_vessel_crane_inspection_reports__record_id__put",
+        "tags": [
+          "Vessel Crane Inspection Reports"
+        ],
+        "summary": "Update Crane Inspection",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      },
+      "GET": {
+        "operationId": "get_full_crane_inspection_vessel_crane_inspection_reports__record_id__get",
+        "tags": [
+          "Vessel Crane Inspection Reports"
+        ],
+        "summary": "Get Full Crane Inspection",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/vessel-crane-inspection-reports/{record_id}/generate-word",
+    "methods": {
+      "GET": {
+        "operationId": "generate_crane_inspection_word_vessel_crane_inspection_reports__record_id__generate_word_get",
+        "tags": [
+          "Vessel Crane Inspection Reports"
+        ],
+        "summary": "Generate Crane Inspection Word",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/vessel-crane-inspection-reports/{record_id}/presentation",
+    "methods": {
+      "GET": {
+        "operationId": "generate_crane_inspection_presentation_vessel_crane_inspection_reports__record_id__presentation_get",
+        "tags": [
+          "Vessel Crane Inspection Reports"
+        ],
+        "summary": "Generate Crane Inspection Presentation",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/vessel-condition-surveys",
+    "methods": {
+      "GET": {
+        "operationId": "get_all_vessel_condition_surveys_vessel_condition_surveys_get",
+        "tags": [
+          "Vessel Condition Surveys"
+        ],
+        "summary": "Get All Vessel Condition Surveys",
+        "requestBody": null,
+        "parameters": null
+      },
+      "POST": {
+        "operationId": "create_vessel_condition_survey_vessel_condition_surveys_post",
+        "tags": [
+          "Vessel Condition Surveys"
+        ],
+        "summary": "Create Vessel Condition Survey",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Payload"
+              }
+            }
+          },
+          "required": true
+        },
+        "parameters": null
+      }
+    }
+  },
+  {
+    "path": "/vessel-condition-surveys/{report_number}",
+    "methods": {
+      "PUT": {
+        "operationId": "update_vessel_condition_survey_vessel_condition_surveys__report_number__put",
+        "tags": [
+          "Vessel Condition Surveys"
+        ],
+        "summary": "Update Vessel Condition Survey",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "report_number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Report Number"
+            }
+          }
+        ]
+      },
+      "GET": {
+        "operationId": "get_vessel_condition_survey_vessel_condition_surveys__report_number__get",
+        "tags": [
+          "Vessel Condition Surveys"
+        ],
+        "summary": "Get Vessel Condition Survey",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "report_number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Report Number"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/vessel-condition-surveys/id/{record_id}",
+    "methods": {
+      "PUT": {
+        "operationId": "update_vessel_condition_survey_by_id_vessel_condition_surveys_id__record_id__put",
+        "tags": [
+          "Vessel Condition Surveys"
+        ],
+        "summary": "Update Vessel Condition Survey By Id",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      },
+      "GET": {
+        "operationId": "get_vessel_condition_survey_by_id_vessel_condition_surveys_id__record_id__get",
+        "tags": [
+          "Vessel Condition Surveys"
+        ],
+        "summary": "Get Vessel Condition Survey By Id",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/vessel-condition-surveys/word/{record_id}",
+    "methods": {
+      "GET": {
+        "operationId": "generate_vessel_condition_word_vessel_condition_surveys_word__record_id__get",
+        "tags": [
+          "Vessel Condition Surveys"
+        ],
+        "summary": "Generate Vessel Condition Word",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/vessel-condition-surveys/by-id/{report_id}",
+    "methods": {
+      "GET": {
+        "operationId": "get_vessel_condition_by_id_vessel_condition_surveys_by_id__report_id__get",
+        "tags": [
+          "Vessel Condition Surveys"
+        ],
+        "summary": "Get Vessel Condition By Id",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/vessel-condition-surveys/presentation/{record_id}",
+    "methods": {
+      "GET": {
+        "operationId": "generate_vessel_condition_presentation_vessel_condition_surveys_presentation__record_id__get",
+        "tags": [
+          "Vessel Condition Surveys"
+        ],
+        "summary": "Generate Vessel Condition Presentation",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/port-captancy-reports",
+    "methods": {
+      "GET": {
+        "operationId": "get_all_port_captancy_reports_port_captancy_reports_get",
+        "tags": [
+          "Port Captancy Reports"
+        ],
+        "summary": "Get All Port Captancy Reports",
+        "requestBody": null,
+        "parameters": null
+      },
+      "POST": {
+        "operationId": "create_port_captancy_report_port_captancy_reports_post",
+        "tags": [
+          "Port Captancy Reports"
+        ],
+        "summary": "Create Port Captancy Report",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Payload"
+              }
+            }
+          },
+          "required": true
+        },
+        "parameters": null
+      }
+    }
+  },
+  {
+    "path": "/port-captancy-reports/{report_number}",
+    "methods": {
+      "PUT": {
+        "operationId": "update_port_captancy_report_port_captancy_reports__report_number__put",
+        "tags": [
+          "Port Captancy Reports"
+        ],
+        "summary": "Update Port Captancy Report",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "report_number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Report Number"
+            }
+          }
+        ]
+      },
+      "GET": {
+        "operationId": "get_port_captancy_report_port_captancy_reports__report_number__get",
+        "tags": [
+          "Port Captancy Reports"
+        ],
+        "summary": "Get Port Captancy Report",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "report_number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Report Number"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/port-captancy-reports/id/{record_id}",
+    "methods": {
+      "GET": {
+        "operationId": "get_port_captancy_report_by_id_port_captancy_reports_id__record_id__get",
+        "tags": [
+          "Port Captancy Reports"
+        ],
+        "summary": "Get Port Captancy Report By Id",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/port-captancy-reports/{record_id}/word",
+    "methods": {
+      "GET": {
+        "operationId": "generate_port_captancy_word_port_captancy_reports__record_id__word_get",
+        "tags": [
+          "Port Captancy Reports"
+        ],
+        "summary": "Generate Port Captancy Word",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/port-captancy-reports/presentation/{record_id}",
+    "methods": {
+      "GET": {
+        "operationId": "generate_port_captancy_presentation_port_captancy_reports_presentation__record_id__get",
+        "tags": [
+          "Port Captancy Reports"
+        ],
+        "summary": "Generate Port Captancy Presentation",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/weight-certificates",
+    "methods": {
+      "GET": {
+        "operationId": "get_weight_certificates_weight_certificates_get",
+        "tags": [
+          "Weight Certificates"
+        ],
+        "summary": "Get Weight Certificates",
+        "requestBody": null,
+        "parameters": null
+      },
+      "POST": {
+        "operationId": "create_weight_certificate_weight_certificates_post",
+        "tags": [
+          "Weight Certificates"
+        ],
+        "summary": "Create Weight Certificate",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Payload"
+              }
+            }
+          },
+          "required": true
+        },
+        "parameters": null
+      }
+    }
+  },
+  {
+    "path": "/weight-certificates/{record_id}",
+    "methods": {
+      "PUT": {
+        "operationId": "update_weight_certificate_weight_certificates__record_id__put",
+        "tags": [
+          "Weight Certificates"
+        ],
+        "summary": "Update Weight Certificate",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      },
+      "GET": {
+        "operationId": "get_weight_certificate_weight_certificates__record_id__get",
+        "tags": [
+          "Weight Certificates"
+        ],
+        "summary": "Get Weight Certificate",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/weight-certificates/{record_id}/word",
+    "methods": {
+      "GET": {
+        "operationId": "generate_weight_certificate_word_weight_certificates__record_id__word_get",
+        "tags": [
+          "Weight Certificates"
+        ],
+        "summary": "Generate Weight Certificate Word",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/weight-certificates/{record_id}/pdf",
+    "methods": {
+      "GET": {
+        "operationId": "generate_weight_certificate_pdf_weight_certificates__record_id__pdf_get",
+        "tags": [
+          "Weight Certificates"
+        ],
+        "summary": "Generate Weight Certificate Pdf",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/vessel-holds-inspection-certificates",
+    "methods": {
+      "GET": {
+        "operationId": "get_all_vessel_holds_certificates_vessel_holds_inspection_certificates_get",
+        "tags": [
+          "Vessel Holds Inspection Certificates"
+        ],
+        "summary": "Get All Vessel Holds Certificates",
+        "requestBody": null,
+        "parameters": null
+      },
+      "POST": {
+        "operationId": "create_vessel_holds_certificate_vessel_holds_inspection_certificates_post",
+        "tags": [
+          "Vessel Holds Inspection Certificates"
+        ],
+        "summary": "Create Vessel Holds Certificate",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Payload"
+              }
+            }
+          },
+          "required": true
+        },
+        "parameters": null
+      }
+    }
+  },
+  {
+    "path": "/vessel-holds-inspection-certificates/{record_id}",
+    "methods": {
+      "PUT": {
+        "operationId": "update_vessel_holds_certificate_vessel_holds_inspection_certificates__record_id__put",
+        "tags": [
+          "Vessel Holds Inspection Certificates"
+        ],
+        "summary": "Update Vessel Holds Certificate",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      },
+      "GET": {
+        "operationId": "get_vessel_holds_certificate_vessel_holds_inspection_certificates__record_id__get",
+        "tags": [
+          "Vessel Holds Inspection Certificates"
+        ],
+        "summary": "Get Vessel Holds Certificate",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/vessel-holds-inspection-certificates/{record_id}/excel",
+    "methods": {
+      "GET": {
+        "operationId": "generate_vessel_holds_excel_vessel_holds_inspection_certificates__record_id__excel_get",
+        "tags": [
+          "Vessel Holds Inspection Certificates"
+        ],
+        "summary": "Generate Vessel Holds Excel",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/vessel-holds-inspection-certificates/{record_id}/pdf",
+    "methods": {
+      "GET": {
+        "operationId": "generate_vessel_holds_pdf_vessel_holds_inspection_certificates__record_id__pdf_get",
+        "tags": [
+          "Vessel Holds Inspection Certificates"
+        ],
+        "summary": "Generate Vessel Holds Pdf",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/sampling-certificates",
+    "methods": {
+      "GET": {
+        "operationId": "get_sampling_certificates_sampling_certificates_get",
+        "tags": [
+          "Sampling Certificates"
+        ],
+        "summary": "Get Sampling Certificates",
+        "requestBody": null,
+        "parameters": null
+      },
+      "POST": {
+        "operationId": "create_sampling_certificate_sampling_certificates_post",
+        "tags": [
+          "Sampling Certificates"
+        ],
+        "summary": "Create Sampling Certificate",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Payload"
+              }
+            }
+          },
+          "required": true
+        },
+        "parameters": null
+      }
+    }
+  },
+  {
+    "path": "/sampling-certificates/{record_id}",
+    "methods": {
+      "PUT": {
+        "operationId": "update_sampling_certificate_sampling_certificates__record_id__put",
+        "tags": [
+          "Sampling Certificates"
+        ],
+        "summary": "Update Sampling Certificate",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      },
+      "GET": {
+        "operationId": "get_sampling_certificate_sampling_certificates__record_id__get",
+        "tags": [
+          "Sampling Certificates"
+        ],
+        "summary": "Get Sampling Certificate",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/sampling-certificates/{record_id}/excel",
+    "methods": {
+      "GET": {
+        "operationId": "generate_sampling_excel_sampling_certificates__record_id__excel_get",
+        "tags": [
+          "Sampling Certificates"
+        ],
+        "summary": "Generate Sampling Excel",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/sampling-certificates/{record_id}/pdf",
+    "methods": {
+      "GET": {
+        "operationId": "generate_sampling_pdf_sampling_certificates__record_id__pdf_get",
+        "tags": [
+          "Sampling Certificates"
+        ],
+        "summary": "Generate Sampling Pdf",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/sealing-certificates",
+    "methods": {
+      "GET": {
+        "operationId": "get_all_sealing_certificates_sealing_certificates_get",
+        "tags": [
+          "Sealing Certificates"
+        ],
+        "summary": "Get All Sealing Certificates",
+        "requestBody": null,
+        "parameters": null
+      },
+      "POST": {
+        "operationId": "create_sealing_certificate_sealing_certificates_post",
+        "tags": [
+          "Sealing Certificates"
+        ],
+        "summary": "Create Sealing Certificate",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Payload"
+              }
+            }
+          },
+          "required": true
+        },
+        "parameters": null
+      }
+    }
+  },
+  {
+    "path": "/sealing-certificates/{record_id}",
+    "methods": {
+      "GET": {
+        "operationId": "get_sealing_certificate_sealing_certificates__record_id__get",
+        "tags": [
+          "Sealing Certificates"
+        ],
+        "summary": "Get Sealing Certificate",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      },
+      "PUT": {
+        "operationId": "update_sealing_certificate_sealing_certificates__record_id__put",
+        "tags": [
+          "Sealing Certificates"
+        ],
+        "summary": "Update Sealing Certificate",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/sealing-certificates/{record_id}/excel",
+    "methods": {
+      "GET": {
+        "operationId": "generate_sealing_excel_sealing_certificates__record_id__excel_get",
+        "tags": [
+          "Sealing Certificates"
+        ],
+        "summary": "Generate Sealing Excel",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/sealing-certificates/{record_id}/pdf",
+    "methods": {
+      "GET": {
+        "operationId": "generate_sealing_pdf_sealing_certificates__record_id__pdf_get",
+        "tags": [
+          "Sealing Certificates"
+        ],
+        "summary": "Generate Sealing Pdf",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/lashing-certificates/",
+    "methods": {
+      "GET": {
+        "operationId": "get_all_lashing_certificates_lashing_certificates__get",
+        "tags": [
+          "Lashing Certificates"
+        ],
+        "summary": "Get All Lashing Certificates",
+        "requestBody": null,
+        "parameters": null
+      },
+      "POST": {
+        "operationId": "create_lashing_certificate_lashing_certificates__post",
+        "tags": [
+          "Lashing Certificates"
+        ],
+        "summary": "Create Lashing Certificate",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Payload"
+              }
+            }
+          },
+          "required": true
+        },
+        "parameters": null
+      }
+    }
+  },
+  {
+    "path": "/lashing-certificates/{record_id}",
+    "methods": {
+      "GET": {
+        "operationId": "get_lashing_certificate_lashing_certificates__record_id__get",
+        "tags": [
+          "Lashing Certificates"
+        ],
+        "summary": "Get Lashing Certificate",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      },
+      "PUT": {
+        "operationId": "update_lashing_certificate_lashing_certificates__record_id__put",
+        "tags": [
+          "Lashing Certificates"
+        ],
+        "summary": "Update Lashing Certificate",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/lashing-certificates/{record_id}/word",
+    "methods": {
+      "GET": {
+        "operationId": "generate_lashing_certificate_word_lashing_certificates__record_id__word_get",
+        "tags": [
+          "Lashing Certificates"
+        ],
+        "summary": "Generate Lashing Certificate Word",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/lashing-certificates/{record_id}/pdf",
+    "methods": {
+      "GET": {
+        "operationId": "generate_lashing_certificate_pdf_lashing_certificates__record_id__pdf_get",
+        "tags": [
+          "Lashing Certificates"
+        ],
+        "summary": "Generate Lashing Certificate Pdf",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Record Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/logra-reports",
+    "methods": {
+      "GET": {
+        "operationId": "list_logra_reports_logra_reports_get",
+        "tags": [
+          "LOGRA Reports"
+        ],
+        "summary": "List Logra Reports",
+        "requestBody": null,
+        "parameters": null
+      },
+      "POST": {
+        "operationId": "save_logra_report_logra_reports_post",
+        "tags": [
+          "LOGRA Reports"
+        ],
+        "summary": "Save Logra Report",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Payload"
+              }
+            }
+          },
+          "required": true
+        },
+        "parameters": null
+      }
+    }
+  },
+  {
+    "path": "/logra-reports/agenda-only",
+    "methods": {
+      "POST": {
+        "operationId": "save_logra_agenda_only_logra_reports_agenda_only_post",
+        "tags": [
+          "LOGRA Reports"
+        ],
+        "summary": "Save Logra Agenda Only",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Payload"
+              }
+            }
+          },
+          "required": true
+        },
+        "parameters": null
+      }
+    }
+  },
+  {
+    "path": "/logra-reports/ai-report/all/word",
+    "methods": {
+      "GET": {
+        "operationId": "download_logra_ai_report_all_word_logra_reports_ai_report_all_word_get",
+        "tags": [
+          "LOGRA Reports"
+        ],
+        "summary": "Download Logra Ai Report All Word",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "language",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "ES",
+              "title": "Language"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/logra-reports/ai-report/all/pdf",
+    "methods": {
+      "GET": {
+        "operationId": "download_logra_ai_report_all_pdf_logra_reports_ai_report_all_pdf_get",
+        "tags": [
+          "LOGRA Reports"
+        ],
+        "summary": "Download Logra Ai Report All Pdf",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "language",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "ES",
+              "title": "Language"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/logra-reports/{report_id}/ai-report/word",
+    "methods": {
+      "GET": {
+        "operationId": "download_logra_ai_report_word_logra_reports__report_id__ai_report_word_get",
+        "tags": [
+          "LOGRA Reports"
+        ],
+        "summary": "Download Logra Ai Report Word",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/logra-reports/{report_id}/ai-report/pdf",
+    "methods": {
+      "GET": {
+        "operationId": "download_logra_ai_report_pdf_logra_reports__report_id__ai_report_pdf_get",
+        "tags": [
+          "LOGRA Reports"
+        ],
+        "summary": "Download Logra Ai Report Pdf",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/logra-reports/{report_id}",
+    "methods": {
+      "GET": {
+        "operationId": "get_logra_report_logra_reports__report_id__get",
+        "tags": [
+          "LOGRA Reports"
+        ],
+        "summary": "Get Logra Report",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      },
+      "PUT": {
+        "operationId": "update_logra_report_logra_reports__report_id__put",
+        "tags": [
+          "LOGRA Reports"
+        ],
+        "summary": "Update Logra Report",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      },
+      "DELETE": {
+        "operationId": "delete_logra_report_logra_reports__report_id__delete",
+        "tags": [
+          "LOGRA Reports"
+        ],
+        "summary": "Delete Logra Report",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/logra-reports/{report_id}/answers",
+    "methods": {
+      "PUT": {
+        "operationId": "update_logra_answer_logra_reports__report_id__answers_put",
+        "tags": [
+          "LOGRA Reports"
+        ],
+        "summary": "Update Logra Answer",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/logra-reports/{report_id}/agenda-items/{agenda_index}",
+    "methods": {
+      "PUT": {
+        "operationId": "update_logra_agenda_item_logra_reports__report_id__agenda_items__agenda_index__put",
+        "tags": [
+          "LOGRA Reports"
+        ],
+        "summary": "Update Logra Agenda Item",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          },
+          {
+            "name": "agenda_index",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Agenda Index"
+            }
+          }
+        ]
+      },
+      "DELETE": {
+        "operationId": "delete_logra_agenda_item_logra_reports__report_id__agenda_items__agenda_index__delete",
+        "tags": [
+          "LOGRA Reports"
+        ],
+        "summary": "Delete Logra Agenda Item",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          },
+          {
+            "name": "agenda_index",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Agenda Index"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/logra-reports/{report_id}/attachments",
+    "methods": {
+      "POST": {
+        "operationId": "upload_logra_attachment_logra_reports__report_id__attachments_post",
+        "tags": [
+          "LOGRA Reports"
+        ],
+        "summary": "Upload Logra Attachment",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_logra_attachment_logra_reports__report_id__attachments_post"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          }
+        ]
+      },
+      "GET": {
+        "operationId": "list_logra_attachments_logra_reports__report_id__attachments_get",
+        "tags": [
+          "LOGRA Reports"
+        ],
+        "summary": "List Logra Attachments",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Report Id"
+            }
+          },
+          {
+            "name": "form_slug",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Form Slug"
+            }
+          },
+          {
+            "name": "section",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Section"
+            }
+          },
+          {
+            "name": "item_key",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Item Key"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/logra-reports/attachments/{attachment_id}",
+    "methods": {
+      "DELETE": {
+        "operationId": "delete_logra_attachment_logra_reports_attachments__attachment_id__delete",
+        "tags": [
+          "LOGRA Reports"
+        ],
+        "summary": "Delete Logra Attachment",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "attachment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Attachment Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/logra-reports/attachments/{attachment_id}/download",
+    "methods": {
+      "GET": {
+        "operationId": "download_logra_attachment_logra_reports_attachments__attachment_id__download_get",
+        "tags": [
+          "LOGRA Reports"
+        ],
+        "summary": "Download Logra Attachment",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "attachment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Attachment Id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/dashboard-informes/filtros",
+    "methods": {
+      "GET": {
+        "operationId": "dashboard_informes_filtros_dashboard_informes_filtros_get",
+        "tags": [
+          "Dashboard Informes"
+        ],
+        "summary": "Dashboard Informes Filtros",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "anio",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Anio"
+            }
+          },
+          {
+            "name": "pais",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Pais"
+            }
+          },
+          {
+            "name": "puerto",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Puerto"
+            }
+          },
+          {
+            "name": "cliente",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cliente"
+            }
+          },
+          {
+            "name": "operacion",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Operacion"
+            }
+          },
+          {
+            "name": "tipo_informe",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tipo Informe"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "path": "/dashboard-informes/resumen",
+    "methods": {
+      "GET": {
+        "operationId": "dashboard_informes_resumen_dashboard_informes_resumen_get",
+        "tags": [
+          "Dashboard Informes"
+        ],
+        "summary": "Dashboard Informes Resumen",
+        "requestBody": null,
+        "parameters": [
+          {
+            "name": "anio",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Anio"
+            }
+          },
+          {
+            "name": "pais",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Pais"
+            }
+          },
+          {
+            "name": "puerto",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Puerto"
+            }
+          },
+          {
+            "name": "cliente",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cliente"
+            }
+          },
+          {
+            "name": "operacion",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Operacion"
+            }
+          },
+          {
+            "name": "tipo_informe",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tipo Informe"
+            }
+          }
+        ]
+      }
+    }
+  }
+]

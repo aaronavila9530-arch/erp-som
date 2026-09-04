@@ -1,0 +1,48 @@
+{
+  "source_company": "MSL-CR",
+  "target_company": "MCI-CR",
+  "service_numbers": [
+    489
+  ],
+  "created_at": "2026-08-28T09:25:41.208512",
+  "servicios": [
+    {
+      "consec": 489,
+      "tipo": "Buque",
+      "estado": "Finalizado",
+      "num_informe": "2221-2008-2026",
+      "buque_contenedor": "MV Kimolos",
+      "cliente": "Pandi Costa Rica, S,A",
+      "contacto": "Yolezka Jimenez",
+      "detalle": ".",
+      "continente": "Asia",
+      "pais": "",
+      "puerto": "",
+      "operacion": "Wheather monitoring",
+      "surveyor": "Manfred Bolaños Barrantes",
+      "honorarios": 1.0,
+      "costo_operativo": 0.0,
+      "fecha_inicio": "2026-08-20",
+      "hora_inicio": "07:00:00",
+      "fecha_fin": "2026-08-23",
+      "hora_fin": "00:00:00",
+      "demoras": null,
+      "duracion": 3900,
+      "factura": null,
+      "valor_factura": null,
+      "fecha_factura": null,
+      "terminos_pago": null,
+      "fecha_vencimiento": null,
+      "dias_vencido": null,
+      "razon_cancelacion": null,
+      "comentario_cancelacion": null,
+      "status_informe": "Pending",
+      "costo_tarjetas": null,
+      "company_code": "MSL-CR"
+    }
+  ],
+  "payment_obligations": [],
+  "collections": [],
+  "invoicing": [],
+  "accounting_entries": []
+}

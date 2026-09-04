@@ -1,0 +1,45 @@
+﻿table,pk_column,pk,status_column,report_date,old_status,new_status
+container_reports,id,4,status,2026-06-02,submitted,Approved
+draft_survey,id,2,status,2026-04-01,Created,Approved
+draft_survey,id,3,status,2026-04-01,Created,Approved
+draft_survey,id,4,status,2026-04-01,Created,Approved
+draft_survey,id,1,status,2026-05-01,Created,Approved
+draft_survey,id,5,status,2026-07-01,,Pending for review
+draft_survey_ballast,id,2,status,2026-04-01,Created,Approved
+draft_survey_ballast,id,3,status,2026-04-01,Created,Approved
+draft_survey_ballast,id,4,status,2026-04-01,Created,Approved
+draft_survey_ballast,id,1,status,2026-05-01,Created,Approved
+draft_survey_word_report,id,2,status,2026-04-01,Created,Approved
+draft_survey_word_report,id,3,status,2026-04-01,Created,Approved
+draft_survey_word_report,id,4,status,2026-04-01,Created,Approved
+draft_survey_word_report,id,1,status,2026-05-01,Created,Approved
+draft_survey_word_report,id,6,status,2026-06-01,Pending for review,Approved
+general_draft_survey,id,2,status,2026-04-01,Created,Approved
+general_draft_survey,id,3,status,2026-04-01,Created,Approved
+general_draft_survey,id,4,status,2026-04-01,Created,Approved
+general_draft_survey,id,1,status,2026-05-01,Created,Approved
+general_draft_survey,id,6,status,2026-06-01,Pending for review,Approved
+vessel_bunker_reports,id,1,status,2026-03-28,Created,Approved
+vessel_bunker_reports,id,3,status,2026-04-10,Created,Approved
+vessel_bunker_reports,id,2,status,2026-04-23,Created,Approved
+vessel_bunker_reports,id,4,status,2026-05-20,Created,Approved
+vessel_bunker_reports,id,6,status,2026-07-04,Approved,Pending for review
+vessel_bunker_reports,id,1,workflow_status,2026-03-28,,Approved
+vessel_bunker_reports,id,3,workflow_status,2026-04-10,,Approved
+vessel_bunker_reports,id,2,workflow_status,2026-04-23,,Approved
+vessel_bunker_reports,id,4,workflow_status,2026-05-20,,Approved
+vessel_bunker_reports,id,5,workflow_status,2026-06-14,Pending Review,Approved
+vessel_bunker_reports,id,6,workflow_status,2026-07-04,Pending Review,Pending for review
+vessel_crane_inspection_reports,id,1,status,2026-02-26,Created,Approved
+vessel_crane_inspection_reports,id,4,status,2026-06-03,Pending for review,Approved
+vessel_grain_sampling_reports,id,1,status,2026-06-02,Created,Approved
+vessel_grain_sampling_reports,id,2,status,2026-06-02,Created,Approved
+vessel_grain_sampling_reports,id,3,status,2026-06-02,Created,Approved
+vessel_grain_sampling_reports,id,4,status,2026-07-28,Created,Pending for review
+vessel_grain_sampling_reports,id,5,status,2026-08-13,Created,Pending for review
+vessel_truck_supervision_reports,id,3,status,2026-04-22,Created,Approved
+vessel_truck_supervision_reports,id,2,status,2026-04-30,Created,Approved
+vessel_truck_supervision_reports,id,1,status,2026-05-23,Created,Approved
+vessel_truck_supervision_reports,id,4,status,2026-07-03,Approved,Pending for review
+vessel_truck_supervision_reports,id,7,status,2026-07-07,Approved,Pending for review
+vessel_truck_supervision_reports,id,8,status,2026-07-20,Approved,Pending for review
