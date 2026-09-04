@@ -233,17 +233,29 @@ class PopupBankAccounts(tk.Toplevel):
         )
         if not output_path:
             return
-        try:
-            export_masterdata_bank_letter_pdf_api(self.selected_id, self.access_token, output_path)
-            messagebox.showinfo("Datos bancarios", f"Carta exportada:\n{output_path}", parent=self)
+        last_error = None
+        for attempt in range(2):
             try:
-                os.startfile(output_path)
-            except Exception:
-                pass
-        except Exception as exc:
-            if "Revalidación" in str(exc) or "401" in str(exc):
+                export_masterdata_bank_letter_pdf_api(self.selected_id, self.access_token, output_path)
+                messagebox.showinfo("Datos bancarios", f"Carta exportada:\n{output_path}", parent=self)
+                try:
+                    os.startfile(output_path)
+                except Exception:
+                    pass
+                return
+            except Exception as exc:
+                last_error = exc
+                auth_error = "Revalidación" in str(exc) or "Authenticator" in str(exc) or "401" in str(exc)
+                if auth_error and attempt == 0:
+                    self.access_token = ""
+                    self._unlock()
+                    if self.access_token:
+                        continue
+                break
+        if last_error:
+            if "Revalidación" in str(last_error) or "Authenticator" in str(last_error) or "401" in str(last_error):
                 self.access_token = ""
-            messagebox.showerror("Datos bancarios", f"No se pudo exportar la carta:\n{exc}", parent=self)
+            messagebox.showerror("Datos bancarios", f"No se pudo exportar la carta:\n{last_error}", parent=self)
 
     def _delete(self):
         if not self.selected_id:

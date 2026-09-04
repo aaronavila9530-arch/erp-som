@@ -3755,6 +3755,8 @@ def export_masterdata_bank_letter_pdf_api(bank_account_id: int, access_token: st
         timeout=60,
     )
     raise_for_status_with_detail(response)
+    if not response.content.startswith(b"%PDF"):
+        raise ValueError("El servidor no devolvió un PDF válido.")
     with open(output_path, "wb") as fh:
         fh.write(response.content)
     return output_path
