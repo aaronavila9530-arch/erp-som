@@ -50,7 +50,10 @@ class TablaProveedoresUI(BasePaginatedTable):
 
         self.btn_ver.config(command=self.ver_registro)
         self.btn_editar.config(command=self.editar_registro)
+        self.btn_eliminar.config(text="Inhabilitar")
         self.btn_eliminar.config(command=self.eliminar_registro)
+        self.btn_reactivar = tk.Button(self.toolbar, text="Reactivar", width=12, command=self.reactivar_registro)
+        self.btn_reactivar.pack(side="left", padx=4)
 
     # ======================================================
     # Configurar columnas en tabla SAP
@@ -234,6 +237,25 @@ class TablaProveedoresUI(BasePaginatedTable):
             r = api_request("DELETE", url, timeout=15)
             if r.status_code == 200:
                 messagebox.showinfo("OK", "Proveedor inhabilitado")
+                self.refresh()
+            else:
+                messagebox.showerror("Error API", r.text)
+        except Exception as e:
+            messagebox.showerror("Error API", str(e))
+
+    def reactivar_registro(self):
+        codigo = self._get_codigo_seleccionado()
+        if not codigo:
+            return
+
+        try:
+            r = api_request("GET", f"{BASE_URL}/proveedores/{codigo}", timeout=15)
+            r.raise_for_status()
+            data = r.json()
+            data["Activo"] = True
+            r = api_request("PUT", f"{BASE_URL}/proveedores/update", json=data, timeout=15)
+            if r.status_code == 200:
+                messagebox.showinfo("OK", "Proveedor reactivado")
                 self.refresh()
             else:
                 messagebox.showerror("Error API", r.text)
