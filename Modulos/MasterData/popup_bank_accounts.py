@@ -59,7 +59,7 @@ class PopupBankAccounts(tk.Toplevel):
         }
 
         self._build()
-        self.after(100, self._unlock)
+        self.after(100, self._focus_ready)
 
     def _build(self):
         top = tk.Frame(self, bg=COLOR_BG, padx=12, pady=10)
@@ -75,8 +75,8 @@ class PopupBankAccounts(tk.Toplevel):
 
         tk.Button(top, text="Revalidar", command=self._unlock, bg=COLOR_MENU, fg="white", width=12).pack(side="right")
 
-        company_bar = tk.Frame(self, bg=COLOR_BG, padx=12, pady=(0, 8))
-        company_bar.pack(fill="x")
+        company_bar = tk.Frame(self, bg=COLOR_BG, padx=12)
+        company_bar.pack(fill="x", pady=(0, 8))
         tk.Label(company_bar, text="Empresa de la cuenta:", bg=COLOR_BG, fg=COLOR_MENU, font=("Arial", 9, "bold")).pack(side="left")
         self.company_combo = ttk.Combobox(
             company_bar,
@@ -87,6 +87,15 @@ class PopupBankAccounts(tk.Toplevel):
         )
         self.company_combo.pack(side="left", padx=8)
         self.company_combo.bind("<<ComboboxSelected>>", self._on_company_change)
+
+        self.status_var = tk.StringVar(value="Seleccione empresa y presione Revalidar para cargar datos bancarios.")
+        tk.Label(
+            company_bar,
+            textvariable=self.status_var,
+            bg=COLOR_BG,
+            fg="#4B5563",
+            font=("Arial", 9),
+        ).pack(side="left", padx=10)
 
         columns = ("bank_name", "currency", "iban", "swift_code", "bank_address", "uid", "beneficiary_name", "updated_by")
         labels = {
@@ -157,6 +166,11 @@ class PopupBankAccounts(tk.Toplevel):
         tk.Button(actions, text="Exportar carta PDF", width=18, command=self._export_pdf).pack(side="left", padx=6)
         tk.Button(actions, text="Cerrar", width=12, command=self.destroy).pack(side="right")
 
+    def _focus_ready(self):
+        self.update_idletasks()
+        self.lift()
+        self.focus_force()
+
     def _unlock(self):
         code = simpledialog.askstring(
             "Microsoft Authenticator",
@@ -165,10 +179,10 @@ class PopupBankAccounts(tk.Toplevel):
             show="*",
         )
         if not code:
-            if not self.access_token:
-                self.destroy()
+            self.status_var.set("Revalidación cancelada. Presione Revalidar para intentar de nuevo.")
             return
         try:
+            self.status_var.set("Revalidando y cargando datos...")
             company_code, company_name = self._company_context()
             payload = unlock_masterdata_bank_accounts_api(code, company_code=company_code, company_name=company_name)
             self.access_token = payload.get("access_token") or ""
@@ -176,9 +190,8 @@ class PopupBankAccounts(tk.Toplevel):
                 raise ValueError("No se recibió token de acceso.")
             self._load()
         except Exception as exc:
+            self.status_var.set("No se pudo revalidar.")
             messagebox.showerror("Datos bancarios", f"No se pudo revalidar:\n{exc}", parent=self)
-            if not self.access_token:
-                self.destroy()
 
     def _load(self):
         try:
@@ -202,7 +215,9 @@ class PopupBankAccounts(tk.Toplevel):
                         row.get("updated_by") or "",
                     ),
                 )
+            self.status_var.set(f"{len(self.rows)} cuenta(s) cargada(s) para {company_code}.")
         except Exception as exc:
+            self.status_var.set("No se pudieron cargar datos.")
             messagebox.showerror("Datos bancarios", f"No se pudieron cargar datos:\n{exc}", parent=self)
 
     def _company_context(self):
@@ -215,7 +230,8 @@ class PopupBankAccounts(tk.Toplevel):
         self.selected_id = None
         self.tree.delete(*self.tree.get_children())
         self._clear()
-        self._unlock()
+        company_code, _company_name = self._company_context()
+        self.status_var.set(f"Empresa cambiada a {company_code}. Presione Revalidar para cargar datos.")
 
     def _on_select(self, _event=None):
         selected = self.tree.selection()
