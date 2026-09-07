@@ -22,10 +22,13 @@ def normalize_person_tokens(value) -> tuple[str, ...]:
 
 
 def load_employee_name_keys(cur) -> set[tuple[str, ...]]:
+    cur.execute("ALTER TABLE empleados ADD COLUMN IF NOT EXISTS activo BOOLEAN NOT NULL DEFAULT TRUE")
+    cur.execute("UPDATE empleados SET activo = TRUE WHERE activo IS NULL")
     cur.execute("""
         SELECT nombre, apellidos
         FROM empleados
         WHERE COALESCE(nombre, '') <> ''
+          AND COALESCE(activo, TRUE) = TRUE
     """)
     keys = set()
     for row in cur.fetchall() or []:

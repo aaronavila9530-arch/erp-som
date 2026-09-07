@@ -35,6 +35,7 @@ class PopupProveedor(tk.Toplevel):
         self.DireccionBanco = tk.StringVar()
         self.TipoProveeduria = tk.StringVar()
         self.Comentarios = tk.StringVar()
+        self.Activo = tk.BooleanVar(value=True)
 
         self._build()
 
@@ -75,6 +76,13 @@ class PopupProveedor(tk.Toplevel):
             .grid(row=4, column=0, padx=10, pady=5, sticky="w")
         self.entry_cedula = ttk.Entry(tab1, textvariable=self.Cedula)
         self.entry_cedula.grid(row=4, column=1, padx=10, pady=5)
+
+        self.chk_activo = ttk.Checkbutton(
+            tab1,
+            text="Proveedor activo para ITP y Accounting",
+            variable=self.Activo
+        )
+        self.chk_activo.grid(row=5, column=0, columnspan=2, padx=10, pady=8, sticky="w")
 
 
         # ================= TAB 2 ==================
@@ -201,6 +209,7 @@ class PopupProveedor(tk.Toplevel):
             "DireccionBanco": self.entry_dirbanco.get().strip(),
             "TipoProveeduria": self.combo_tipopro.get().strip(),
             "Comentarios": self.entry_comentarios.get().strip(),
+            "Activo": bool(self.Activo.get()),
         }
 
         print("💾 Guardar Proveedor →", data)

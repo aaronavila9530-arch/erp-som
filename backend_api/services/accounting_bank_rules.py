@@ -230,12 +230,15 @@ def should_apply_bcr_collection_fee(cur, code=None, name=None, raw_bank=None, nu
 
 def surveyor_country(cur, payee_name=None, fallback_country=None):
     name = str(payee_name or "").strip()
-    if name and _table_has_columns(cur, "surveyor", ("codigo", "nombre", "apellidos", "nacionalidad", "provincia", "canton", "distrito")):
+    if name and _table_has_columns(cur, "surveyor", ("codigo", "nombre", "apellidos", "nacionalidad", "provincia", "canton", "distrito", "activo")):
         cur.execute("""
             SELECT nacionalidad, provincia, canton, distrito
             FROM surveyor
-            WHERE LOWER(BTRIM(CONCAT_WS(' ', nombre, apellidos))) = LOWER(BTRIM(%s))
-               OR LOWER(BTRIM(nombre)) = LOWER(BTRIM(%s))
+            WHERE (
+                LOWER(BTRIM(CONCAT_WS(' ', nombre, apellidos))) = LOWER(BTRIM(%s))
+                OR LOWER(BTRIM(nombre)) = LOWER(BTRIM(%s))
+            )
+              AND COALESCE(activo, TRUE) = TRUE
             ORDER BY codigo ASC
             LIMIT 1
         """, (name, name))

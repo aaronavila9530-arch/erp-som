@@ -10,6 +10,8 @@ _tarifas_table_checked = False
 
 def _ensure_tenant_schema():
     ensure_company_column("surveyor")
+    database.sql("ALTER TABLE surveyor ADD COLUMN IF NOT EXISTS activo BOOLEAN NOT NULL DEFAULT TRUE")
+    database.sql("UPDATE surveyor SET activo = TRUE WHERE activo IS NULL")
 
 
 def _ensure_tarifas_table():
@@ -140,6 +142,19 @@ def require_permission(module: str, action: str):
     return checker
 
 
+def _as_bool(value, default=True) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in {"1", "true", "t", "yes", "y", "si", "sí", "activo"}:
+        return True
+    if text in {"0", "false", "f", "no", "n", "inactivo", "suspendido", "inhabilitado"}:
+        return False
+    return default
+
+
 
 @router.post("/add")
 def add_surveyor(data: dict, x_company_code: str | None = Header(None, alias="X-Company-Code")):
@@ -175,7 +190,8 @@ def add_surveyor(data: dict, x_company_code: str | None = Header(None, alias="X-
             enfermedades,
             contacto_emergencia,
             telefono_emergencia,
-            puerto
+            puerto,
+            activo
         )
         VALUES (
             %(company_code)s,
@@ -205,10 +221,12 @@ def add_surveyor(data: dict, x_company_code: str | None = Header(None, alias="X-
             %(enfermedades)s,
             %(contacto_emergencia)s,
             %(telefono_emergencia)s,
-            %(puerto)s
+            %(puerto)s,
+            COALESCE(%(activo)s, TRUE)
         );
         """
         data = _sync_legacy_fields(data)
+        data["activo"] = _as_bool(data.get("activo"), True)
         database.sql(sql, data)
         _save_tarifas(data["codigo"], data.get("_tarifas_clean", []))
         return {"status": "OK", "msg": "Surveyor registrado 💾✔"}
@@ -243,6 +261,7 @@ def get_ultimo_surveyor(company_code_param: str | None = Query(None, alias="comp
 def get_surveyores(
     page: int = 1,
     page_size: int = 50,
+    include_inactive: bool = False,
     company_code_param: str | None = Query(None, alias="company_code"),
     x_company_code: str | None = Header(None, alias="X-Company-Code"),
 ):
@@ -256,14 +275,19 @@ def get_surveyores(
             prefijo,telefono,provincia,canton,distrito,direccion,
             jornada,operacion,honorario,pago,banco,cuenta_iban,
             moneda,swift,uid,enfermedades,contacto_emergencia,
-            telefono_emergencia,puerto,email,direccion_banco
+            telefono_emergencia,puerto,email,direccion_banco,activo
         FROM surveyor
         WHERE company_code = %(company_code)s
+          AND (%(include_inactive)s OR COALESCE(activo, TRUE) = TRUE)
         ORDER BY codigo ASC
         LIMIT {page_size} OFFSET {offset}
-    """, {"company_code": company}, fetch=True)
+    """, {"company_code": company, "include_inactive": include_inactive}, fetch=True)
 
-    total = database.sql("SELECT COUNT(*) FROM surveyor WHERE company_code = %s", (company,), fetch=True)[0][0]
+    total = database.sql(
+        "SELECT COUNT(*) FROM surveyor WHERE company_code = %s AND (%s OR COALESCE(activo, TRUE) = TRUE)",
+        (company, include_inactive),
+        fetch=True,
+    )[0][0]
 
     data = [
         {
@@ -294,6 +318,7 @@ def get_surveyores(
             "puerto": r[24],
             "email": r[25],
             "direccion_banco": r[26],
+            "activo": bool(r[27]),
             "tarifas": _get_tarifas(r[0]),
         }
         for r in rows
@@ -315,7 +340,7 @@ def get_surveyor(codigo: str, x_company_code: str | None = Header(None, alias="X
             prefijo,telefono,provincia,canton,distrito,direccion,
             jornada,operacion,honorario,pago,banco,cuenta_iban,
             moneda,swift,uid,enfermedades,contacto_emergencia,
-            telefono_emergencia,puerto,email,direccion_banco
+            telefono_emergencia,puerto,email,direccion_banco,activo
         FROM surveyor
         WHERE codigo = %s
           AND company_code = %s
@@ -353,6 +378,7 @@ def get_surveyor(codigo: str, x_company_code: str | None = Header(None, alias="X
         "puerto": r[24],
         "email": r[25],
         "direccion_banco": r[26],
+        "activo": bool(r[27]),
         "tarifas": _get_tarifas(codigo),
     }
 
@@ -376,6 +402,7 @@ def update_surveyor_tarifas(codigo: str, data: dict):
 def update_surveyor(data: dict, x_company_code: str | None = Header(None, alias="X-Company-Code")):
     _ensure_tenant_schema()
     data = set_payload_company(data, company_code(data.get("company_code"), x_company_code))
+    data["activo"] = _as_bool(data.get("activo"), True)
     sql = """
         UPDATE surveyor SET
             nombre = %(nombre)s,
@@ -403,7 +430,8 @@ def update_surveyor(data: dict, x_company_code: str | None = Header(None, alias=
             enfermedades = %(enfermedades)s,
             contacto_emergencia = %(contacto_emergencia)s,
             telefono_emergencia = %(telefono_emergencia)s,
-            puerto = %(puerto)s
+            puerto = %(puerto)s,
+            activo = %(activo)s
         WHERE codigo = %(codigo)s
           AND company_code = %(company_code)s
     """
@@ -423,8 +451,10 @@ def update_surveyor(data: dict, x_company_code: str | None = Header(None, alias=
 def delete_surveyor(codigo: str, x_company_code: str | None = Header(None, alias="X-Company-Code")):
     try:
         _ensure_tenant_schema()
+        _ensure_tarifas_table()
         company = company_code(None, x_company_code)
-        database.sql("DELETE FROM surveyor WHERE codigo = %s AND company_code = %s", (codigo, company))
-        return {"status": "OK", "msg": "Surveyor eliminado 🗑️"}
+        database.sql("UPDATE surveyor SET activo = FALSE WHERE codigo = %s AND company_code = %s", (codigo, company))
+        database.sql("UPDATE surveyor_tarifas SET activo = FALSE WHERE surveyor_codigo = %s", (codigo,))
+        return {"status": "OK", "msg": "Surveyor inhabilitado"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

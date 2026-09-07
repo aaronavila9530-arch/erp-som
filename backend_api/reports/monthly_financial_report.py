@@ -194,6 +194,7 @@ def build_monthly_obligation_preview(conn, year: int, month: int):
                 'MASTER_DATA' AS source
             FROM empleados e
             WHERE COALESCE(e.estado, 'Activo') = 'Activo'
+              AND COALESCE(e.activo, TRUE) = TRUE
               AND COALESCE(e.salario, 0) > 0
               AND NOT EXISTS (
                   SELECT 1 FROM payroll p WHERE p.usuario = e.usuario

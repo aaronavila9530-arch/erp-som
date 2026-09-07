@@ -49,6 +49,7 @@ class PopupSurveyor(tk.Toplevel):
         self.contacto_emergencia = tk.StringVar()
         self.telefono_emergencia = tk.StringVar()
         self.puerto = tk.StringVar()
+        self.activo = tk.BooleanVar(value=True)
         self.tarifa_rows = []
 
         self._build()
@@ -150,6 +151,13 @@ class PopupSurveyor(tk.Toplevel):
 
         self.entry_nacionalidad = ttk.Entry(tab1, textvariable=self.nacionalidad)
         self.entry_nacionalidad.grid(row=5, column=1, padx=10, pady=5, sticky="ew")
+
+        self.chk_activo = ttk.Checkbutton(
+            tab1,
+            text="Surveyor activo para Servicios, ITP y Accounting",
+            variable=self.activo
+        )
+        self.chk_activo.grid(row=6, column=0, columnspan=2, padx=10, pady=8, sticky="w")
 
         # ==========================
         # TAB 2 — Contacto
@@ -545,6 +553,7 @@ class PopupSurveyor(tk.Toplevel):
             "contacto_emergencia": self.entry_contacto_emergencia.get().strip(),
             "telefono_emergencia": self.entry_telefono_emergencia.get().strip(),
             "puerto": self.combo_puerto.get().strip(),
+            "activo": bool(self.activo.get()),
             "tarifas": tarifas,
         }
 

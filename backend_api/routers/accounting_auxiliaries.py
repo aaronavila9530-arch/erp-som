@@ -211,6 +211,11 @@ def sync_auxiliaries(conn=Depends(get_db)):
     counts = {key: 0 for key in ENTITY_TYPES}
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("ALTER TABLE proveedor ADD COLUMN IF NOT EXISTS activo BOOLEAN NOT NULL DEFAULT TRUE")
+            cur.execute("UPDATE proveedor SET activo = TRUE WHERE activo IS NULL")
+            cur.execute("ALTER TABLE empleados ADD COLUMN IF NOT EXISTS activo BOOLEAN NOT NULL DEFAULT TRUE")
+            cur.execute("UPDATE empleados SET activo = TRUE WHERE activo IS NULL")
+
             cur.execute("SELECT * FROM cliente")
             for row in cur.fetchall():
                 _upsert_entity(cur, "CUSTOMER", row["codigo"], row.get("nombrejuridico") or row.get("nombrecomercial"),
@@ -218,14 +223,14 @@ def sync_auxiliaries(conn=Depends(get_db)):
                                metadata={"email": row.get("correo"), "phone": row.get("telefono")})
                 counts["CUSTOMER"] += 1
 
-            cur.execute("SELECT * FROM proveedor")
+            cur.execute("SELECT * FROM proveedor WHERE COALESCE(activo, TRUE) = TRUE")
             for row in cur.fetchall():
                 _upsert_entity(cur, "SUPPLIER", row["codigo"], row.get("nombre") or row.get("nombrecomercial"),
                                row.get("cedula_vat"), source_table="proveedor", source_id=row["id"],
                                metadata={"iban": row.get("cuenta_iban"), "bank": row.get("banco")})
                 counts["SUPPLIER"] += 1
 
-            cur.execute("SELECT * FROM empleados")
+            cur.execute("SELECT * FROM empleados WHERE COALESCE(activo, TRUE) = TRUE")
             for row in cur.fetchall():
                 name = " ".join(filter(None, [row.get("nombre"), row.get("apellidos")]))
                 _upsert_entity(cur, "EMPLOYEE", row["codigo"], name, row.get("cedula_id"), row.get("moneda") or "CRC",
@@ -330,8 +335,8 @@ def sync_auxiliaries(conn=Depends(get_db)):
             cur.execute("""
                 SELECT DISTINCT banco FROM (
                     SELECT banco FROM cash_app WHERE banco IS NOT NULL AND BTRIM(banco)<>''
-                    UNION SELECT banco FROM proveedor WHERE banco IS NOT NULL AND BTRIM(banco)<>''
-                    UNION SELECT banco FROM empleados WHERE banco IS NOT NULL AND BTRIM(banco)<>''
+                    UNION SELECT banco FROM proveedor WHERE banco IS NOT NULL AND BTRIM(banco)<>'' AND COALESCE(activo, TRUE) = TRUE
+                    UNION SELECT banco FROM empleados WHERE banco IS NOT NULL AND BTRIM(banco)<>'' AND COALESCE(activo, TRUE) = TRUE
                 ) banks
             """)
             for row in cur.fetchall():

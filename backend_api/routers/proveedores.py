@@ -11,6 +11,8 @@ router = APIRouter(prefix="/proveedores", tags=["Proveedores"])
 
 def _ensure_tenant_schema():
     ensure_company_column("proveedor")
+    database.sql("ALTER TABLE proveedor ADD COLUMN IF NOT EXISTS activo BOOLEAN NOT NULL DEFAULT TRUE")
+    database.sql("UPDATE proveedor SET activo = TRUE WHERE activo IS NULL")
 
 
 def require_permission(module: str, action: str):
@@ -23,6 +25,19 @@ def require_permission(module: str, action: str):
                 detail="No autorizado"
             )
     return checker
+
+
+def _as_bool(value, default=True) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in {"1", "true", "t", "yes", "y", "si", "sí", "activo"}:
+        return True
+    if text in {"0", "false", "f", "no", "n", "inactivo", "suspendido", "inhabilitado"}:
+        return False
+    return default
 
 # ============================================================
 # INSERTAR NUEVO PROVEEDOR EN BD
@@ -55,7 +70,8 @@ def add_proveedor(data: dict, x_company_code: str | None = Header(None, alias="X
             uid,
             direccionbanco,
             tipoproveeduria,
-            comentarios
+            comentarios,
+            activo
         )
         VALUES (
             %(company_code)s,
@@ -79,9 +95,11 @@ def add_proveedor(data: dict, x_company_code: str | None = Header(None, alias="X
             %(UID)s,
             %(DireccionBanco)s,
             %(TipoProveeduria)s,
-            %(Comentarios)s
+            %(Comentarios)s,
+            COALESCE(%(Activo)s, TRUE)
         )
         """
+        data["Activo"] = _as_bool(data.get("Activo"), True)
         database.sql(sql, data)
         return {"status": "OK", "msg": "Proveedor registrado 💾✔"}
 
@@ -115,6 +133,7 @@ def get_ultimo_proveedor(company_code_param: str | None = Query(None, alias="com
 def get_proveedores(
     page: int = 1,
     page_size: int = 50,
+    include_inactive: bool = False,
     company_code_param: str | None = Query(None, alias="company_code"),
     x_company_code: str | None = Header(None, alias="X-Company-Code"),
 ):
@@ -127,14 +146,19 @@ def get_proveedores(
                cedula_vat, pais, provincia, canton, distrito,
                direccionexacta, prefijo, telefono, correo,
                terminospago, banco, cuenta_iban, swiftcode,
-               uid, direccionbanco, tipoproveeduria, comentarios
+               uid, direccionbanco, tipoproveeduria, comentarios, activo
         FROM proveedor
         WHERE company_code = %(company_code)s
+          AND (%(include_inactive)s OR COALESCE(activo, TRUE) = TRUE)
         ORDER BY codigo ASC
         LIMIT {page_size} OFFSET {offset}
-    """, {"company_code": company}, fetch=True)
+    """, {"company_code": company, "include_inactive": include_inactive}, fetch=True)
 
-    total = database.sql("SELECT COUNT(*) FROM proveedor WHERE company_code = %s", (company,), fetch=True)[0][0]
+    total = database.sql(
+        "SELECT COUNT(*) FROM proveedor WHERE company_code = %s AND (%s OR COALESCE(activo, TRUE) = TRUE)",
+        (company, include_inactive),
+        fetch=True,
+    )[0][0]
 
     data = [
         {
@@ -158,7 +182,8 @@ def get_proveedores(
             "UID": r[17],
             "DireccionBanco": r[18],
             "TipoProveeduria": r[19],
-            "Comentarios": r[20]
+            "Comentarios": r[20],
+            "Activo": bool(r[21])
         }
         for r in rows
     ]
@@ -177,7 +202,7 @@ def get_proveedor(codigo: str, x_company_code: str | None = Header(None, alias="
                cedula_vat, pais, provincia, canton, distrito,
                direccionexacta, prefijo, telefono, correo,
                terminospago, banco, cuenta_iban, swiftcode,
-               uid, direccionbanco, tipoproveeduria, comentarios
+               uid, direccionbanco, tipoproveeduria, comentarios, activo
         FROM proveedor
         WHERE codigo = %s
           AND company_code = %s
@@ -208,7 +233,8 @@ def get_proveedor(codigo: str, x_company_code: str | None = Header(None, alias="
         "UID": r[17],
         "DireccionBanco": r[18],
         "TipoProveeduria": r[19],
-        "Comentarios": r[20]
+        "Comentarios": r[20],
+        "Activo": bool(r[21])
     }
 
 
@@ -219,6 +245,7 @@ def get_proveedor(codigo: str, x_company_code: str | None = Header(None, alias="
 def update_proveedor(data: dict, x_company_code: str | None = Header(None, alias="X-Company-Code")):
     _ensure_tenant_schema()
     data = set_payload_company(data, company_code(data.get("company_code"), x_company_code))
+    data["Activo"] = _as_bool(data.get("Activo"), True)
     sql = """
         UPDATE proveedor SET
             nombre = %(Nombre)s,
@@ -240,7 +267,8 @@ def update_proveedor(data: dict, x_company_code: str | None = Header(None, alias
             uid = %(UID)s,
             direccionbanco = %(DireccionBanco)s,
             tipoproveeduria = %(TipoProveeduria)s,
-            comentarios = %(Comentarios)s
+            comentarios = %(Comentarios)s,
+            activo = %(Activo)s
         WHERE codigo = %(Codigo)s
           AND company_code = %(company_code)s
     """
@@ -255,6 +283,6 @@ def update_proveedor(data: dict, x_company_code: str | None = Header(None, alias
 def delete_proveedor(codigo: str, x_company_code: str | None = Header(None, alias="X-Company-Code")):
     _ensure_tenant_schema()
     company = company_code(None, x_company_code)
-    database.sql("DELETE FROM proveedor WHERE codigo = %s AND company_code = %s", (codigo, company))
-    return {"status": "OK", "msg": "Proveedor eliminado 🗑️"}
+    database.sql("UPDATE proveedor SET activo = FALSE WHERE codigo = %s AND company_code = %s", (codigo, company))
+    return {"status": "OK", "msg": "Proveedor inhabilitado"}
 

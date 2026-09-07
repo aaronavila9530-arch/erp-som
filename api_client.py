@@ -3682,8 +3682,8 @@ def _headers():
 def api_request(method: str, url: str, **kwargs):
     headers = kwargs.pop("headers", {})
     headers.update(_headers())
-    headers["X-Company-Code"] = get_company_code()
-    headers["X-Company-Name"] = get_company_name()
+    headers["X-Company-Code"] = headers.get("X-Company-Code") or get_company_code()
+    headers["X-Company-Name"] = headers.get("X-Company-Name") or get_company_name()
 
     # ======================================================
     # NORMALIZAR URL (BLINDAJE TOTAL)
@@ -3701,57 +3701,83 @@ def api_request(method: str, url: str, **kwargs):
     )
 
 
-def unlock_masterdata_bank_accounts_api(totp_code: str):
+def unlock_masterdata_bank_accounts_api(totp_code: str, company_code: str | None = None, company_name: str | None = None):
+    headers = {}
+    if company_code:
+        headers["X-Company-Code"] = company_code
+    if company_name:
+        headers["X-Company-Name"] = company_name
     response = api_request(
         "POST",
         f"{BASE_URL}/master-data/bank-accounts/unlock",
         json={"totp_code": totp_code},
+        headers=headers,
         timeout=20,
     )
     raise_for_status_with_detail(response)
     return response.json()
 
 
-def get_masterdata_bank_accounts_api(access_token: str):
+def get_masterdata_bank_accounts_api(access_token: str, company_code: str | None = None, company_name: str | None = None):
+    headers = {"X-Bank-Access-Token": access_token}
+    if company_code:
+        headers["X-Company-Code"] = company_code
+    if company_name:
+        headers["X-Company-Name"] = company_name
     response = api_request(
         "GET",
         f"{BASE_URL}/master-data/bank-accounts",
-        headers={"X-Bank-Access-Token": access_token},
+        headers=headers,
         timeout=20,
     )
     raise_for_status_with_detail(response)
     return response.json().get("data", [])
 
 
-def create_masterdata_bank_account_api(payload: dict, access_token: str):
+def create_masterdata_bank_account_api(payload: dict, access_token: str, company_code: str | None = None, company_name: str | None = None):
+    headers = {"X-Bank-Access-Token": access_token}
+    if company_code:
+        headers["X-Company-Code"] = company_code
+    if company_name:
+        headers["X-Company-Name"] = company_name
     response = api_request(
         "POST",
         f"{BASE_URL}/master-data/bank-accounts",
         json=payload,
-        headers={"X-Bank-Access-Token": access_token},
+        headers=headers,
         timeout=20,
     )
     raise_for_status_with_detail(response)
     return response.json()
 
 
-def update_masterdata_bank_account_api(bank_account_id: int, payload: dict, access_token: str):
+def update_masterdata_bank_account_api(bank_account_id: int, payload: dict, access_token: str, company_code: str | None = None, company_name: str | None = None):
+    headers = {"X-Bank-Access-Token": access_token}
+    if company_code:
+        headers["X-Company-Code"] = company_code
+    if company_name:
+        headers["X-Company-Name"] = company_name
     response = api_request(
         "PUT",
         f"{BASE_URL}/master-data/bank-accounts/{bank_account_id}",
         json=payload,
-        headers={"X-Bank-Access-Token": access_token},
+        headers=headers,
         timeout=20,
     )
     raise_for_status_with_detail(response)
     return response.json()
 
 
-def export_masterdata_bank_letter_pdf_api(bank_account_id: int, access_token: str, output_path: str):
+def export_masterdata_bank_letter_pdf_api(bank_account_id: int, access_token: str, output_path: str, company_code: str | None = None, company_name: str | None = None):
+    headers = {"X-Bank-Access-Token": access_token}
+    if company_code:
+        headers["X-Company-Code"] = company_code
+    if company_name:
+        headers["X-Company-Name"] = company_name
     response = api_request(
         "GET",
         f"{BASE_URL}/master-data/bank-accounts/{bank_account_id}/letter.pdf",
-        headers={"X-Bank-Access-Token": access_token},
+        headers=headers,
         timeout=60,
     )
     raise_for_status_with_detail(response)
@@ -3762,11 +3788,16 @@ def export_masterdata_bank_letter_pdf_api(bank_account_id: int, access_token: st
     return output_path
 
 
-def delete_masterdata_bank_account_api(bank_account_id: int, access_token: str):
+def delete_masterdata_bank_account_api(bank_account_id: int, access_token: str, company_code: str | None = None, company_name: str | None = None):
+    headers = {"X-Bank-Access-Token": access_token}
+    if company_code:
+        headers["X-Company-Code"] = company_code
+    if company_name:
+        headers["X-Company-Name"] = company_name
     response = api_request(
         "DELETE",
         f"{BASE_URL}/master-data/bank-accounts/{bank_account_id}",
-        headers={"X-Bank-Access-Token": access_token},
+        headers=headers,
         timeout=20,
     )
     raise_for_status_with_detail(response)
@@ -3996,6 +4027,7 @@ def _local_biweekly_obligations_preview(period: str, fortnight: int = 1) -> dict
                 SELECT nombre, apellidos, salario, pago, banco, cuenta_iban, moneda
                 FROM empleados
                 WHERE COALESCE(estado, 'Activo') = 'Activo'
+                  AND COALESCE(activo, TRUE) = TRUE
                   AND company_code = %s
                   AND COALESCE(salario, 0) > 0
                 ORDER BY nombre, apellidos

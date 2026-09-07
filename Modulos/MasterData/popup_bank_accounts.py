@@ -10,10 +10,29 @@ from api_client import (
     unlock_masterdata_bank_accounts_api,
     update_masterdata_bank_account_api,
 )
+from session_context import get_company_code
 
 
 COLOR_MENU = "#003A75"
 COLOR_BG = "white"
+COMPANY_OPTIONS = {
+    "MSL SRL - MSL Marine Surveyors and Logistics Group": (
+        "MSL-CR",
+        "MSL MARINE SURVEYORS AND LOGISTICS GROUP SRL",
+    ),
+    "MCI - MSL Marine Claims, Risk & Intelligence": (
+        "MCI-CR",
+        "MSL Marine Claims, Risk & Intelligence",
+    ),
+}
+
+
+def _default_company_label():
+    current_code = (get_company_code() or "").strip().upper()
+    for label, (company_code, _company_name) in COMPANY_OPTIONS.items():
+        if company_code.upper() == current_code:
+            return label
+    return "MSL SRL - MSL Marine Surveyors and Logistics Group"
 
 
 class PopupBankAccounts(tk.Toplevel):
@@ -28,6 +47,7 @@ class PopupBankAccounts(tk.Toplevel):
         self.access_token = ""
         self.rows = []
         self.selected_id = None
+        self.company_var = tk.StringVar(value=_default_company_label())
         self.vars = {
             "bank_name": tk.StringVar(),
             "currency": tk.StringVar(value="CRC"),
@@ -54,6 +74,19 @@ class PopupBankAccounts(tk.Toplevel):
         ).pack(side="left")
 
         tk.Button(top, text="Revalidar", command=self._unlock, bg=COLOR_MENU, fg="white", width=12).pack(side="right")
+
+        company_bar = tk.Frame(self, bg=COLOR_BG, padx=12, pady=(0, 8))
+        company_bar.pack(fill="x")
+        tk.Label(company_bar, text="Empresa de la cuenta:", bg=COLOR_BG, fg=COLOR_MENU, font=("Arial", 9, "bold")).pack(side="left")
+        self.company_combo = ttk.Combobox(
+            company_bar,
+            textvariable=self.company_var,
+            values=list(COMPANY_OPTIONS.keys()),
+            state="readonly",
+            width=48,
+        )
+        self.company_combo.pack(side="left", padx=8)
+        self.company_combo.bind("<<ComboboxSelected>>", self._on_company_change)
 
         columns = ("bank_name", "currency", "iban", "swift_code", "bank_address", "uid", "beneficiary_name", "updated_by")
         labels = {
@@ -136,7 +169,8 @@ class PopupBankAccounts(tk.Toplevel):
                 self.destroy()
             return
         try:
-            payload = unlock_masterdata_bank_accounts_api(code)
+            company_code, company_name = self._company_context()
+            payload = unlock_masterdata_bank_accounts_api(code, company_code=company_code, company_name=company_name)
             self.access_token = payload.get("access_token") or ""
             if not self.access_token:
                 raise ValueError("No se recibió token de acceso.")
@@ -148,7 +182,8 @@ class PopupBankAccounts(tk.Toplevel):
 
     def _load(self):
         try:
-            self.rows = get_masterdata_bank_accounts_api(self.access_token)
+            company_code, company_name = self._company_context()
+            self.rows = get_masterdata_bank_accounts_api(self.access_token, company_code=company_code, company_name=company_name)
             self.tree.delete(*self.tree.get_children())
             for row in self.rows:
                 iid = str(row.get("id"))
@@ -169,6 +204,18 @@ class PopupBankAccounts(tk.Toplevel):
                 )
         except Exception as exc:
             messagebox.showerror("Datos bancarios", f"No se pudieron cargar datos:\n{exc}", parent=self)
+
+    def _company_context(self):
+        label = self.company_var.get() or "MCI - MSL Marine Claims, Risk & Intelligence"
+        return COMPANY_OPTIONS.get(label, COMPANY_OPTIONS["MCI - MSL Marine Claims, Risk & Intelligence"])
+
+    def _on_company_change(self, _event=None):
+        self.access_token = ""
+        self.rows = []
+        self.selected_id = None
+        self.tree.delete(*self.tree.get_children())
+        self._clear()
+        self._unlock()
 
     def _on_select(self, _event=None):
         selected = self.tree.selection()
@@ -203,10 +250,11 @@ class PopupBankAccounts(tk.Toplevel):
                 return
         try:
             payload = self._payload()
+            company_code, company_name = self._company_context()
             if self.selected_id:
-                update_masterdata_bank_account_api(self.selected_id, payload, self.access_token)
+                update_masterdata_bank_account_api(self.selected_id, payload, self.access_token, company_code=company_code, company_name=company_name)
             else:
-                create_masterdata_bank_account_api(payload, self.access_token)
+                create_masterdata_bank_account_api(payload, self.access_token, company_code=company_code, company_name=company_name)
             self._clear()
             self._load()
             messagebox.showinfo("Datos bancarios", "Guardado correctamente.", parent=self)
@@ -236,7 +284,14 @@ class PopupBankAccounts(tk.Toplevel):
         last_error = None
         for attempt in range(2):
             try:
-                export_masterdata_bank_letter_pdf_api(self.selected_id, self.access_token, output_path)
+                company_code, company_name = self._company_context()
+                export_masterdata_bank_letter_pdf_api(
+                    self.selected_id,
+                    self.access_token,
+                    output_path,
+                    company_code=company_code,
+                    company_name=company_name,
+                )
                 messagebox.showinfo("Datos bancarios", f"Carta exportada:\n{output_path}", parent=self)
                 try:
                     os.startfile(output_path)
@@ -264,7 +319,8 @@ class PopupBankAccounts(tk.Toplevel):
         if not messagebox.askyesno("Datos bancarios", "¿Eliminar este dato bancario?", parent=self):
             return
         try:
-            delete_masterdata_bank_account_api(self.selected_id, self.access_token)
+            company_code, company_name = self._company_context()
+            delete_masterdata_bank_account_api(self.selected_id, self.access_token, company_code=company_code, company_name=company_name)
             self._clear()
             self._load()
         except Exception as exc:

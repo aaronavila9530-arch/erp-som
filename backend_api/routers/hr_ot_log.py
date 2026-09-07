@@ -143,6 +143,7 @@ def _get_empleado_by_usuario(usuario: str, conn) -> dict:
             usuario
         FROM empleados
         WHERE lower(usuario) = lower(%s)
+          AND COALESCE(activo, TRUE) = TRUE
         LIMIT 1
         """,
         (usuario,)
@@ -284,6 +285,7 @@ def hours_summary(
         WHERE usuario IS NOT NULL
           AND TRIM(usuario) <> ''
           AND COALESCE(estado, 'Activo') = 'Activo'
+          AND COALESCE(activo, TRUE) = TRUE
         ORDER BY usuario
         """
     )

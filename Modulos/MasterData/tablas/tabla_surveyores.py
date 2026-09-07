@@ -17,6 +17,7 @@ class TablaSurveyoresUI(BasePaginatedTable):
         # Columnas alineadas con API-SQL
         self.columns = [
             ("codigo", "Código"),
+            ("activo", "Activo"),
             ("nombre", "Nombre"),
             ("apellidos", "Apellidos"),
             ("email", "Email"),
@@ -68,7 +69,7 @@ class TablaSurveyoresUI(BasePaginatedTable):
     # ==========================================================
     def load_data(self):
         try:
-            url = f"{BASE_URL}/surveyores?page={self.page}&page_size={self.page_size}"
+            url = f"{BASE_URL}/surveyores?page={self.page}&page_size={self.page_size}&include_inactive=true"
             r = api_request("GET", url, timeout=15)
             data = r.json()
 
@@ -81,7 +82,7 @@ class TablaSurveyoresUI(BasePaginatedTable):
             self.table.delete(*self.table.get_children())
 
             for row in filas:
-                vals = [row.get(col, "") for col, _ in self.columns]
+                vals = [self._display_value(col, row.get(col, "")) for col, _ in self.columns]
                 self.table.insert("", "end", values=vals)
 
         except Exception as e:
@@ -97,6 +98,11 @@ class TablaSurveyoresUI(BasePaginatedTable):
             return None
         vals = self.table.item(sel)["values"]
         return vals[0]
+
+    def _display_value(self, col, value):
+        if col == "activo":
+            return "Activo" if str(value).strip().lower() in {"1", "true", "t", "yes", "si", "sí", "activo"} else "Inactivo"
+        return value
 
     # ==========================================================
     # VER
@@ -126,6 +132,7 @@ class TablaSurveyoresUI(BasePaginatedTable):
         popup.title(f"Ver Surveyor — {codigo}")
 
         # 🔹 Cargar datos
+        popup.activo.set(str(data.get("activo", True)).strip().lower() in {"1", "true", "t", "yes", "si", "sí", "activo"})
         popup.nombre.set(data.get("nombre", ""))
         popup.apellidos.set(data.get("apellidos", ""))
         popup.email.set(data.get("email", ""))
@@ -184,7 +191,10 @@ class TablaSurveyoresUI(BasePaginatedTable):
         for col, _ in self.columns:
             if hasattr(popup, col):
                 # Si existiera StringVar:
-                getattr(popup, col).set(data.get(col, ""))
+                value = data.get(col, "")
+                if col == "activo":
+                    value = str(value or "").strip().lower() in {"1", "true", "t", "yes", "si", "sí", "activo"}
+                getattr(popup, col).set(value)
             else:
                 # Si existiera Entry:
                 try:
@@ -225,13 +235,13 @@ class TablaSurveyoresUI(BasePaginatedTable):
         if not codigo:
             return
 
-        if not messagebox.askyesno("Confirmar", f"¿Eliminar el surveyor {codigo}?"):
+        if not messagebox.askyesno("Confirmar", f"¿Inhabilitar el surveyor {codigo}?"):
             return
         try:
             url = f"{BASE_URL}/surveyores/{codigo}"
             r = api_request("DELETE", url, timeout=15)
             if r.status_code == 200:
-                messagebox.showinfo("OK", "Surveyor eliminado")
+                messagebox.showinfo("OK", "Surveyor inhabilitado")
                 self.refresh()
             else:
                 messagebox.showerror("Error API", r.text)

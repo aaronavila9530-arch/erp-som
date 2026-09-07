@@ -21,6 +21,8 @@ def _ensure_tenant_schema():
         conn = psycopg2.connect(DB_URL)
         cursor = conn.cursor()
         ensure_employee_hours_policy_columns(cursor)
+        cursor.execute("ALTER TABLE empleados ADD COLUMN IF NOT EXISTS activo BOOLEAN NOT NULL DEFAULT TRUE")
+        cursor.execute("UPDATE empleados SET activo = TRUE WHERE activo IS NULL")
         conn.commit()
     finally:
         if cursor:
@@ -42,6 +44,19 @@ def require_permission(module: str, action: str):
                 detail="No autorizado"
             )
     return checker
+
+
+def _as_bool(value, default=True) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in {"1", "true", "t", "yes", "y", "si", "sí", "activo"}:
+        return True
+    if text in {"0", "false", "f", "no", "n", "inactivo", "suspendido", "inhabilitado"}:
+        return False
+    return default
 
 
 
@@ -81,6 +96,7 @@ class Empleado(BaseModel):
     activo3: str | None = None
     marca3: str | None = None
     serial3: str | None = None
+    activo: bool | None = True
     company_code: str | None = None
 
 
@@ -164,7 +180,8 @@ def agregar_empleado(emp: Empleado, x_company_code: str | None = Header(None, al
                 enfermedades, contacto_emergencia, telefono_emergencia,
                 activo1, marca1, serial1,
                 activo2, marca2, serial2,
-                activo3, marca3, serial3
+                activo3, marca3, serial3,
+                activo
             )
             VALUES (
                 %(company_code)s, %(codigo)s, %(nombre)s, %(apellidos)s, %(estado_civil)s, %(genero)s, %(nacionalidad)s,
@@ -174,7 +191,8 @@ def agregar_empleado(emp: Empleado, x_company_code: str | None = Header(None, al
                 %(enfermedades)s, %(contacto_emergencia)s, %(telefono_emergencia)s,
                 %(activo1)s, %(marca1)s, %(serial1)s,
                 %(activo2)s, %(marca2)s, %(serial2)s,
-                %(activo3)s, %(marca3)s, %(serial3)s
+                %(activo3)s, %(marca3)s, %(serial3)s,
+                COALESCE(%(activo)s, TRUE)
             );
         """, data)
 
@@ -204,6 +222,7 @@ def agregar_empleado(emp: Empleado, x_company_code: str | None = Header(None, al
 def get_empleados(
     page: int = 1,
     page_size: int = 50,
+    include_inactive: bool = False,
     company_code_param: str | None = Query(None, alias="company_code"),
     x_company_code: str | None = Header(None, alias="X-Company-Code"),
 ):
@@ -221,14 +240,20 @@ def get_empleados(
             activo1, marca1, serial1,
             activo2, marca2, serial2,
             activo3, marca3, serial3,
-            fecharegistro
+            fecharegistro,
+            activo
         FROM empleados
         WHERE company_code = %s
+          AND (%s OR COALESCE(activo, TRUE) = TRUE)
         ORDER BY codigo ASC
         LIMIT %s OFFSET %s
-    """, (company, page_size, offset), fetch=True)
+    """, (company, include_inactive, page_size, offset), fetch=True)
 
-    total = database.sql("SELECT COUNT(*) FROM empleados WHERE company_code = %s", (company,), fetch=True)[0][0]
+    total = database.sql(
+        "SELECT COUNT(*) FROM empleados WHERE company_code = %s AND (%s OR COALESCE(activo, TRUE) = TRUE)",
+        (company, include_inactive),
+        fetch=True,
+    )[0][0]
 
     columnas = [
         "codigo", "nombre", "apellidos", "estado_civil", "genero", "nacionalidad",
@@ -239,7 +264,7 @@ def get_empleados(
         "activo1", "marca1", "serial1",
         "activo2", "marca2", "serial2",
         "activo3", "marca3", "serial3",
-        "fecharegistro"
+        "fecharegistro", "activo"
     ]
 
     data = []
@@ -270,7 +295,8 @@ def get_empleado(codigo: str, x_company_code: str | None = Header(None, alias="X
             activo1, marca1, serial1,
             activo2, marca2, serial2,
             activo3, marca3, serial3,
-            fecharegistro
+            fecharegistro,
+            activo
         FROM empleados
         WHERE codigo = %s
           AND company_code = %s
@@ -289,7 +315,7 @@ def get_empleado(codigo: str, x_company_code: str | None = Header(None, alias="X
         "activo1", "marca1", "serial1",
         "activo2", "marca2", "serial2",
         "activo3", "marca3", "serial3",
-        "fecharegistro"
+        "fecharegistro", "activo"
     ]
 
     return {c: ("" if r[i] is None else str(r[i])) for i, c in enumerate(columnas)}
@@ -310,7 +336,7 @@ def update_empleado(data: dict, x_company_code: str | None = Header(None, alias=
         "tarifa_hora_extra", "pago_minimo_garantizado", "pago", "banco",
         "cuenta_iban", "moneda", "enfermedades", "contacto_emergencia",
         "telefono_emergencia", "activo1", "marca1", "serial1", "activo2",
-        "marca2", "serial2", "activo3", "marca3", "serial3",
+        "marca2", "serial2", "activo3", "marca3", "serial3", "activo",
     ):
         data.setdefault(key, None)
     for key in ("salario", "horas_contratadas", "horas_tope_ordinario", "horas_tope_maximo", "tarifa_hora_extra"):
@@ -324,7 +350,8 @@ def update_empleado(data: dict, x_company_code: str | None = Header(None, alias=
             data[key] = None
     if not data.get("horas_tope_ordinario"):
         data["horas_tope_ordinario"] = data.get("horas_contratadas")
-    data["pago_minimo_garantizado"] = bool(data.get("pago_minimo_garantizado"))
+    data["pago_minimo_garantizado"] = _as_bool(data.get("pago_minimo_garantizado"), False)
+    data["activo"] = _as_bool(data.get("activo"), True)
     sql = """
         UPDATE empleados SET
             nombre = %(nombre)s,
@@ -359,7 +386,9 @@ def update_empleado(data: dict, x_company_code: str | None = Header(None, alias=
             serial2 = %(serial2)s,
             activo3 = %(activo3)s,
             marca3 = %(marca3)s,
-            serial3 = %(serial3)s
+            serial3 = %(serial3)s,
+            activo = %(activo)s,
+            estado = CASE WHEN %(activo)s THEN COALESCE(NULLIF(estado, 'Inactivo'), 'Activo') ELSE 'Inactivo' END
         WHERE codigo = %(codigo)s
           AND company_code = %(company_code)s
     """
@@ -374,5 +403,8 @@ def update_empleado(data: dict, x_company_code: str | None = Header(None, alias=
 def delete_empleado(codigo: str, x_company_code: str | None = Header(None, alias="X-Company-Code")):
     _ensure_tenant_schema()
     company = company_code(None, x_company_code)
-    database.sql("DELETE FROM empleados WHERE codigo = %s AND company_code = %s", (codigo, company))
-    return {"status": "OK", "msg": "Empleado eliminado 🗑️"}
+    database.sql(
+        "UPDATE empleados SET activo = FALSE, estado = 'Inactivo' WHERE codigo = %s AND company_code = %s",
+        (codigo, company),
+    )
+    return {"status": "OK", "msg": "Empleado inhabilitado"}
