@@ -52,6 +52,7 @@ const clientColumns = [
 
 const supplierColumns = [
   "Codigo",
+  "Activo",
   "Nombre",
   "Apellidos",
   "NombreComercial",
@@ -76,6 +77,7 @@ const supplierColumns = [
 
 const employeeColumns = [
   "codigo",
+  "activo",
   "nombre",
   "apellidos",
   "estado_civil",
@@ -110,6 +112,7 @@ const employeeColumns = [
 
 const surveyorColumns = [
   "codigo",
+  "activo",
   "nombre",
   "apellidos",
   "estado_civil",

@@ -25,6 +25,9 @@ class PopupServicio(tk.Toplevel):
         self.configure(bg="white")
         self.resizable(False, False)
         self.on_success = on_success
+        self._valid_continentes = set()
+        self._valid_paises = set()
+        self._valid_puertos = set()
 
         self._build_ui()
         self.load_initial_data()
@@ -205,6 +208,7 @@ class PopupServicio(tk.Toplevel):
         # -----------------------------
         try:
             continentes = get_continentes_cpp_api()
+            self._valid_continentes = {str(item).strip() for item in continentes or [] if str(item).strip()}
             self.cmb_continente.config(values=continentes)
         except Exception as e:
             print("❌ Error cargando continentes:", e)
@@ -291,8 +295,11 @@ class PopupServicio(tk.Toplevel):
             else:
                 values = []
 
+            self._valid_paises = {str(item).strip() for item in values if str(item).strip()}
+            self._valid_puertos = set()
             self.cmb_pais.config(values=values)
             self.cmb_pais.set("")
+            self.cmb_puerto.config(values=[])
             self.cmb_puerto.set("")
 
         except Exception as e:
@@ -307,7 +314,7 @@ class PopupServicio(tk.Toplevel):
             return
 
         try:
-            raw = get_puertos_cpp_api(pais)
+            raw = get_puertos_cpp_api(pais, continente=self.cmb_continente.get().strip())
 
             # Normalizar formatos posibles
             if isinstance(raw, dict) and "data" in raw:
@@ -333,6 +340,7 @@ class PopupServicio(tk.Toplevel):
             else:
                 values = []
 
+            self._valid_puertos = {str(item).strip() for item in values if str(item).strip()}
             self.cmb_puerto.config(values=values)
             self.cmb_puerto.set("")
 
@@ -422,6 +430,17 @@ class PopupServicio(tk.Toplevel):
         ]
         missing = [label for label, value in required if not str(value or "").strip()]
 
+        continente = self.cmb_continente.get().strip()
+        pais = self.cmb_pais.get().strip()
+        puerto = self.cmb_puerto.get().strip()
+        invalid = []
+        if continente and self._valid_continentes and continente not in self._valid_continentes:
+            invalid.append("Continente no pertenece al catálogo cargado")
+        if pais and self._valid_paises and pais not in self._valid_paises:
+            invalid.append("País no pertenece al continente seleccionado")
+        if puerto and self._valid_puertos and puerto not in self._valid_puertos:
+            invalid.append("Puerto no pertenece al país/continente seleccionado")
+
         fecha_db = to_db_date(self.fecha_inicio.get())
         if not fecha_db:
             missing.append("Fecha inicio")
@@ -439,6 +458,15 @@ class PopupServicio(tk.Toplevel):
                 "Campos obligatorios",
                 "Complete o corrija estos campos antes de guardar:\n\n"
                 + "\n".join(f"- {field}" for field in missing),
+                parent=self,
+            )
+            return None, None
+
+        if invalid:
+            messagebox.showerror(
+                "Ubicación inválida",
+                "La ubicación seleccionada no calza con la cascada:\n\n"
+                + "\n".join(f"- {item}" for item in invalid),
                 parent=self,
             )
             return None, None

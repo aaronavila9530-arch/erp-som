@@ -27,6 +27,7 @@ type RequestOptions = {
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   body?: unknown;
   session?: Session | null;
+  headers?: Record<string, string>;
 };
 
 export async function apiRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
@@ -46,7 +47,8 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
               "X-Company-Code": options.session.company_code || "MSL-CR",
               "X-Company-Name": options.session.company_name || "MSL MARINE SURVEYORS AND LOGISTICS GROUP SRL"
             }
-          : {})
+          : {}),
+        ...(options.headers || {})
       },
       body: options.body ? JSON.stringify(options.body) : undefined
     });

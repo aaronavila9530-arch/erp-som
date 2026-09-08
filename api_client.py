@@ -381,9 +381,9 @@ def get_continentes_cpp_api():
 # Paises (CPP) — NUEVO ENDPOINT
 # ============================================================
 def get_paises_cpp_api(continente):
-    url = f"{BASE_URL}/cpp/paises?continente={continente}"
+    url = f"{BASE_URL}/cpp/paises"
     try:
-        resp = api_request("GET", url).json()
+        resp = api_request("GET", url, params={"continente": continente}).json()
         return resp
     except Exception as e:
         print("❌ Error API países CPP:", e)
@@ -529,10 +529,13 @@ def get_surveyores_display_api():
 # ============================================================
 # puertos (CPP) — NUEVO ENDPOINT
 # ============================================================
-def get_puertos_cpp_api(pais):
-    url = f"{BASE_URL}/cpp/puertos?pais={pais}"
+def get_puertos_cpp_api(pais, continente=None):
+    url = f"{BASE_URL}/cpp/puertos"
     try:
-        resp = api_request("GET", url).json()
+        params = {"pais": pais}
+        if continente:
+            params["continente"] = continente
+        resp = api_request("GET", url, params=params).json()
         return resp
     except Exception as e:
         print("❌ Error API puertos CPP:", e)

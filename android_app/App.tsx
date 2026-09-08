@@ -52,7 +52,7 @@ const COMPANIES = [
   { code: "MCI-CR", name: "MSL MARINE CLAIMS RISK & INTELLIGENCE", label: "MCI" }
 ];
 const DEFAULT_COMPANY = COMPANIES[0];
-const MOBILE_APP_VERSION = "1.7.27";
+const MOBILE_APP_VERSION = "1.7.29";
 const KIOSK_USER = (process.env.EXPO_PUBLIC_ERP_SOM_KIOSK_USER || "").trim();
 const KIOSK_NAME = (process.env.EXPO_PUBLIC_ERP_SOM_KIOSK_NAME || KIOSK_USER || "").trim();
 const IS_KIOSK_APP = Boolean(KIOSK_USER);
@@ -10959,6 +10959,7 @@ function MasterDataHomeActions({
   const sections = module.sections.filter((section) => section.table && MASTER_FORMS[section.key]);
   const [entityKey, setEntityKey] = useState(sections[0]?.key || "clientes");
   const [companyFiscalOpen, setCompanyFiscalOpen] = useState(false);
+  const [bankAccountsOpen, setBankAccountsOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
 
@@ -11018,10 +11019,14 @@ function MasterDataHomeActions({
         <Pressable style={styles.actionButton} onPress={() => setCompanyFiscalOpen(true)} disabled={busy}>
           <Text style={styles.actionButtonText}>Tarjeta fiscal</Text>
         </Pressable>
+        <Pressable style={styles.actionButton} onPress={() => setBankAccountsOpen(true)} disabled={busy}>
+          <Text style={styles.actionButtonText}>Datos bancarios</Text>
+        </Pressable>
       </View>
       {busy ? <ActivityIndicator color={BLUE} style={styles.loader} /> : null}
       {message ? <Text style={message.includes("Errores") ? styles.error : styles.helperText}>{message}</Text> : null}
       <CompanyFiscalModal visible={companyFiscalOpen} session={session} onClose={() => setCompanyFiscalOpen(false)} />
+      <BankAccountsModal visible={bankAccountsOpen} session={session} onClose={() => setBankAccountsOpen(false)} />
     </View>
   );
 }
@@ -11048,6 +11053,7 @@ function DesktopTable({
   const [serviceAction, setServiceAction] = useState<string | null>(null);
   const [serviceDetail, setServiceDetail] = useState<Record<string, unknown> | null>(null);
   const [companyFiscalOpen, setCompanyFiscalOpen] = useState(false);
+  const [bankAccountsOpen, setBankAccountsOpen] = useState(false);
   const [tableRows, setTableRows] = useState(rows);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -11252,6 +11258,9 @@ function DesktopTable({
             <Pressable style={styles.actionButton} onPress={() => setCompanyFiscalOpen(true)}>
               <Text style={styles.actionButtonText}>Datos fiscales</Text>
             </Pressable>
+            <Pressable style={styles.actionButton} onPress={() => setBankAccountsOpen(true)}>
+              <Text style={styles.actionButtonText}>Datos bancarios</Text>
+            </Pressable>
           </View>
         </View>
       ) : null}
@@ -11377,6 +11386,11 @@ function DesktopTable({
         session={session}
         onClose={() => setCompanyFiscalOpen(false)}
       />
+      <BankAccountsModal
+        visible={bankAccountsOpen}
+        session={session}
+        onClose={() => setBankAccountsOpen(false)}
+      />
     </View>
   );
 }
@@ -11456,6 +11470,267 @@ function CompanyFiscalModal({
           ))}
           <PrimaryButton label="Guardar datos fiscales" loading={busy} onPress={save} />
           {message ? <Text style={message.includes("guardados") ? styles.helperText : styles.error}>{message}</Text> : null}
+        </ScrollView>
+      </SafeAreaView>
+    </Modal>
+  );
+}
+
+const BANK_ACCOUNT_FIELDS = [
+  { key: "bank_name", label: "Banco" },
+  { key: "currency", label: "Moneda" },
+  { key: "iban", label: "Cuenta IBAN" },
+  { key: "swift_code", label: "Swift Code" },
+  { key: "bank_address", label: "Direccion" },
+  { key: "uid", label: "UID" },
+  { key: "beneficiary_name", label: "Beneficiario" }
+];
+
+function BankAccountsModal({
+  visible,
+  session,
+  onClose
+}: {
+  visible: boolean;
+  session: NonNullable<ReturnType<typeof useAuth>["session"]>;
+  onClose: () => void;
+}) {
+  const blankForm = Object.fromEntries(BANK_ACCOUNT_FIELDS.map((field) => [field.key, field.key === "currency" ? "CRC" : ""]));
+  const [totp, setTotp] = useState("");
+  const [accessToken, setAccessToken] = useState("");
+  const [rows, setRows] = useState<Record<string, unknown>[]>([]);
+  const [selectedId, setSelectedId] = useState("");
+  const [form, setForm] = useState<Record<string, string>>(blankForm);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+
+  const bankHeaders: Record<string, string> = accessToken ? { "X-Bank-Access-Token": accessToken } : {};
+
+  useEffect(() => {
+    if (!visible) return;
+    setTotp("");
+    setAccessToken("");
+    setRows([]);
+    setSelectedId("");
+    setForm(blankForm);
+    setMessage("Revalide con Microsoft Authenticator para ver o modificar datos bancarios.");
+  }, [visible]);
+
+  function update(key: string, value: string) {
+    setForm((current) => ({ ...current, [key]: value }));
+  }
+
+  function selectRow(row: Record<string, unknown>) {
+    setSelectedId(formatValue(row.id));
+    setForm(Object.fromEntries(BANK_ACCOUNT_FIELDS.map((field) => [field.key, formatValue(row[field.key]) === "-" ? "" : formatValue(row[field.key])])));
+  }
+
+  async function unlock() {
+    if (!totp.trim()) {
+      setMessage("Ingrese el codigo de Authenticator.");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      const payload = await apiRequest<Record<string, unknown>>("/master-data/bank-accounts/unlock", {
+        method: "POST",
+        session,
+        body: { totp_code: totp.trim() }
+      });
+      const token = formatValue(payload.access_token);
+      setAccessToken(token);
+      setTotp("");
+      await load(token);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo revalidar.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function load(token = accessToken) {
+    if (!token) return;
+    setBusy(true);
+    setMessage("");
+    try {
+      const payload = await apiRequest<Record<string, unknown>>("/master-data/bank-accounts", {
+        session,
+        headers: { "X-Bank-Access-Token": token }
+      });
+      setRows(pickList(payload) as Record<string, unknown>[]);
+      setMessage("Datos bancarios cargados.");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudieron cargar datos bancarios.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function save() {
+    if (!accessToken) {
+      setMessage("Debe revalidar primero.");
+      return;
+    }
+    const required = ["bank_name", "currency", "iban", "beneficiary_name"];
+    const missing = required.filter((key) => !String(form[key] || "").trim());
+    if (missing.length) {
+      setMessage(`Complete campos obligatorios: ${missing.join(", ")}.`);
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      const endpoint = selectedId ? `/master-data/bank-accounts/${encodeURIComponent(selectedId)}` : "/master-data/bank-accounts";
+      await apiRequest(endpoint, {
+        method: selectedId ? "PUT" : "POST",
+        session,
+        headers: bankHeaders,
+        body: form
+      });
+      setSelectedId("");
+      setForm(blankForm);
+      await load();
+      setMessage("Datos bancarios guardados.");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo guardar.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remove() {
+    if (!selectedId) {
+      setMessage("Seleccione una cuenta primero.");
+      return;
+    }
+    Alert.alert("Eliminar dato bancario", "Se inhabilitara esta cuenta bancaria.", [
+      { text: "Cancelar", style: "cancel" },
+      {
+        text: "Eliminar",
+        style: "destructive",
+        onPress: async () => {
+          setBusy(true);
+          try {
+            await apiRequest(`/master-data/bank-accounts/${encodeURIComponent(selectedId)}`, {
+              method: "DELETE",
+              session,
+              headers: bankHeaders
+            });
+            setSelectedId("");
+            setForm(blankForm);
+            await load();
+            setMessage("Dato bancario eliminado.");
+          } catch (err) {
+            setMessage(err instanceof Error ? err.message : "No se pudo eliminar.");
+          } finally {
+            setBusy(false);
+          }
+        }
+      }
+    ]);
+  }
+
+  async function exportPdf() {
+    if (!selectedId || !accessToken) {
+      setMessage("Seleccione una cuenta y revalide primero.");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      const filename = `Carta_Bancaria_${selectedId}.pdf`;
+      const fileUri = `${FileSystem.cacheDirectory}${filename}`;
+      const result = await FileSystem.downloadAsync(
+        `${API_BASE_URL}/master-data/bank-accounts/${encodeURIComponent(selectedId)}/letter.pdf`,
+        fileUri,
+        {
+          headers: {
+            "X-User": session.usuario,
+            "X-Role": session.rol,
+            "X-User-Role": session.rol,
+            "X-Company-Code": session.company_code || DEFAULT_COMPANY.code,
+            "X-Company-Name": session.company_name || DEFAULT_COMPANY.name,
+            "X-Bank-Access-Token": accessToken
+          }
+        }
+      );
+      await Sharing.shareAsync(result.uri, { mimeType: "application/pdf", dialogTitle: "Carta bancaria" });
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo exportar PDF.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+      <SafeAreaView style={styles.modalScreen}>
+        <View style={styles.modalHeader}>
+          <Text style={styles.modalTitle}>Datos bancarios protegidos</Text>
+          <Pressable style={styles.modalClose} onPress={onClose}>
+            <Text style={styles.modalCloseText}>Cerrar</Text>
+          </Pressable>
+        </View>
+        <ScrollView contentContainerStyle={styles.modalBody} keyboardShouldPersistTaps="handled">
+          {!accessToken ? (
+            <>
+              <Text style={styles.helperText}>Revalidacion requerida antes de consultar o editar.</Text>
+              <Text style={styles.label}>Codigo Microsoft Authenticator</Text>
+              <TextInput keyboardType="number-pad" style={styles.input} value={totp} onChangeText={setTotp} />
+              <PrimaryButton label="Revalidar" loading={busy} onPress={unlock} />
+            </>
+          ) : (
+            <>
+              <View style={styles.financeFilterActions}>
+                <Pressable style={styles.actionButton} onPress={() => load()} disabled={busy}>
+                  <Text style={styles.actionButtonText}>Actualizar</Text>
+                </Pressable>
+                <Pressable style={styles.actionButton} onPress={() => { setSelectedId(""); setForm(blankForm); }} disabled={busy}>
+                  <Text style={styles.actionButtonText}>Nuevo</Text>
+                </Pressable>
+                <Pressable style={styles.actionButton} onPress={exportPdf} disabled={busy}>
+                  <Text style={styles.actionButtonText}>Carta PDF</Text>
+                </Pressable>
+              </View>
+              {rows.map((row) => (
+                <Pressable
+                  key={formatValue(row.id)}
+                  style={[styles.rowCard, selectedId === formatValue(row.id) && styles.tableRowSelected]}
+                  onPress={() => selectRow(row)}
+                >
+                  <Text style={styles.rowTitle}>{formatValue(row.bank_name)} {formatValue(row.currency)}</Text>
+                  <Text style={styles.detailValue}>{formatValue(row.beneficiary_name)}</Text>
+                  <Text style={styles.detailValue}>{formatValue(row.iban)}</Text>
+                </Pressable>
+              ))}
+              {BANK_ACCOUNT_FIELDS.map((field) => (
+                <View key={field.key} style={styles.formField}>
+                  <Text style={styles.label}>{field.label}</Text>
+                  {field.key === "currency" ? (
+                    <SelectField label="" value={form.currency || "CRC"} options={["CRC", "USD", "EUR"]} onChange={(value) => update("currency", value)} />
+                  ) : (
+                    <TextInput
+                      value={form[field.key] || ""}
+                      onChangeText={(value) => update(field.key, value)}
+                      style={[styles.input, field.key === "bank_address" && styles.longTextInput]}
+                      multiline={field.key === "bank_address"}
+                    />
+                  )}
+                </View>
+              ))}
+              <View style={styles.financeFilterActions}>
+                <Pressable style={styles.actionButton} onPress={save} disabled={busy}>
+                  <Text style={styles.actionButtonText}>Guardar</Text>
+                </Pressable>
+                <Pressable style={styles.modalClose} onPress={remove} disabled={busy}>
+                  <Text style={styles.modalCloseText}>Eliminar</Text>
+                </Pressable>
+              </View>
+            </>
+          )}
+          {busy ? <ActivityIndicator color={BLUE} style={styles.loader} /> : null}
+          {message ? <Text style={message.includes("guard") || message.includes("carg") ? styles.helperText : styles.error}>{message}</Text> : null}
         </ScrollView>
       </SafeAreaView>
     </Modal>
@@ -15502,10 +15777,13 @@ function ServiceCreateModal({
 
   useEffect(() => {
     if (!form.pais) return;
-    apiRequest(`/cpp/puertos?pais=${encodeURIComponent(form.pais)}`, { session })
+    apiRequest(
+      `/cpp/puertos?pais=${encodeURIComponent(form.pais)}&continente=${encodeURIComponent(form.continente)}`,
+      { session }
+    )
       .then((payload) => setPuertos(toOptions(payload, ["nombre", "puerto", "name"])))
       .catch((err) => setMessage(err instanceof Error ? err.message : "No se pudieron cargar puertos."));
-  }, [form.pais, session]);
+  }, [form.continente, form.pais, session]);
 
   useEffect(() => {
     if (!form.surveyor || !form.operacion) return;
@@ -15615,6 +15893,11 @@ function ServiceActionModal({
   onSaved: () => void;
 }) {
   const [form, setForm] = useState<Record<string, string>>({});
+  const [clientes, setClientes] = useState<string[]>([]);
+  const [continentes, setContinentes] = useState<string[]>([]);
+  const [paises, setPaises] = useState<string[]>([]);
+  const [puertos, setPuertos] = useState<string[]>([]);
+  const [operaciones, setOperaciones] = useState<string[]>([]);
   const [delayRows, setDelayRows] = useState([{ f1: "", h1: "", f2: "", h2: "" }]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -15630,6 +15913,13 @@ function ServiceActionModal({
     };
     setForm({
       buque_contenedor: cleanField(service.buque_contenedor),
+      cliente: cleanField(service.cliente),
+      contacto: cleanField(service.contacto),
+      detalle: cleanField(service.detalle),
+      continente: cleanField(service.continente),
+      pais: cleanField(service.pais),
+      puerto: cleanField(service.puerto),
+      operacion: cleanField(service.operacion),
       surveyor: cleanField(service.surveyor),
       honorarios: cleanField(service.honorarios),
       costo_operativo: cleanField(service.costo_operativo),
@@ -15644,6 +15934,38 @@ function ServiceActionModal({
     });
     setDelayRows([{ f1: "", h1: "", f2: "", h2: "" }]);
   }, [service, visible]);
+
+  useEffect(() => {
+    if (!visible || mode !== "edit") return;
+    Promise.all([
+      apiRequest("/clientes?page=1&page_size=500", { session }),
+      apiRequest("/cpp/continentes", { session }),
+      apiRequest("/servicios_md/?page=1&page_size=500", { session })
+    ])
+      .then(([clientesPayload, continentesPayload, serviciosPayload]) => {
+        setClientes(toOptions(clientesPayload, ["nombrecomercial", "nombrejuridico", "NombreComercial", "codigo"]));
+        setContinentes(toOptions(continentesPayload, ["nombre", "continente"]));
+        setOperaciones(toOptions(serviciosPayload, ["nombre", "Nombre"]));
+      })
+      .catch((err) => setMessage(err instanceof Error ? err.message : "No se pudieron cargar catalogos."));
+  }, [mode, session, visible]);
+
+  useEffect(() => {
+    if (!visible || mode !== "edit" || !form.continente) return;
+    apiRequest(`/cpp/paises?continente=${encodeURIComponent(form.continente)}`, { session })
+      .then((payload) => setPaises(toOptions(payload, ["nombre", "pais", "name"])))
+      .catch((err) => setMessage(err instanceof Error ? err.message : "No se pudieron cargar paises."));
+  }, [form.continente, mode, session, visible]);
+
+  useEffect(() => {
+    if (!visible || mode !== "edit" || !form.pais) return;
+    apiRequest(
+      `/cpp/puertos?pais=${encodeURIComponent(form.pais)}&continente=${encodeURIComponent(form.continente || "")}`,
+      { session }
+    )
+      .then((payload) => setPuertos(toOptions(payload, ["nombre", "puerto", "name"])))
+      .catch((err) => setMessage(err instanceof Error ? err.message : "No se pudieron cargar puertos."));
+  }, [form.continente, form.pais, mode, session, visible]);
 
   function setValue(key: string, value: string) {
     setForm((current) => ({ ...current, [key]: value }));
@@ -15750,6 +16072,13 @@ function ServiceActionModal({
           offlineLabel: `Editar Servicio ${consec}`,
           body: {
             buque_contenedor: form.buque_contenedor,
+            cliente: form.cliente,
+            contacto: form.contacto,
+            detalle: form.detalle,
+            continente: form.continente,
+            pais: form.pais,
+            puerto: form.puerto,
+            operacion: form.operacion,
             surveyor: form.surveyor,
             honorarios: toNumber(form.honorarios),
             costo_operativo: toNumber(form.costo_operativo),
@@ -15853,6 +16182,25 @@ function ServiceActionModal({
             <>
               <Text style={styles.label}>Buque / Contenedor</Text>
               <TextInput style={styles.input} value={form.buque_contenedor} onChangeText={(value) => setValue("buque_contenedor", value)} />
+              <SelectField label="Cliente" value={form.cliente} options={clientes} onChange={(value) => setValue("cliente", value)} />
+              <Text style={styles.label}>Contacto</Text>
+              <TextInput style={styles.input} value={form.contacto} onChangeText={(value) => setValue("contacto", value)} />
+              <Text style={styles.label}>Detalle</Text>
+              <TextInput style={styles.input} value={form.detalle} onChangeText={(value) => setValue("detalle", value)} />
+              <SelectField
+                label="Continente"
+                value={form.continente}
+                options={continentes}
+                onChange={(value) => setForm((current) => ({ ...current, continente: value, pais: "", puerto: "" }))}
+              />
+              <SelectField
+                label="Pais"
+                value={form.pais}
+                options={paises}
+                onChange={(value) => setForm((current) => ({ ...current, pais: value, puerto: "" }))}
+              />
+              <SelectField label="Puerto" value={form.puerto} options={puertos} onChange={(value) => setValue("puerto", value)} />
+              <SelectField label="Operacion" value={form.operacion} options={operaciones} onChange={(value) => setValue("operacion", value)} />
               <Text style={styles.label}>Surveyor</Text>
               <TextInput style={styles.input} value={form.surveyor} onChangeText={(value) => setValue("surveyor", value)} />
               <Text style={styles.label}>Honorarios</Text>

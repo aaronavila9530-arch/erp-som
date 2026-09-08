@@ -3,10 +3,18 @@
 # Tabla: continentes_paises_puertos
 # ============================================================
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from database import sql
 
 router = APIRouter(prefix="/cpp", tags=["Continentes / Países / Puertos"])
+
+
+def _norm_sql(column: str) -> str:
+    return f"LOWER(translate(TRIM({column}), 'ÁÉÍÓÚáéíóú', 'AEIOUaeiou'))"
+
+
+def _norm_text(value: str) -> str:
+    return str(value or "").strip()
 
 # ============================================================
 # GET → Lista de continentes (únicos)
@@ -28,13 +36,13 @@ def get_continentes_cpp():
 # ============================================================
 @router.get("/paises")
 def get_paises_cpp(continente: str):
-    rows = sql("""
+    rows = sql(f"""
         SELECT DISTINCT pais
         FROM continentes_paises_puertos
-        WHERE continente = %s
+        WHERE {_norm_sql("continente")} = {_norm_sql("%s")}
           AND pais IS NOT NULL AND pais <> ''
         ORDER BY pais;
-    """, (continente,), fetch=True)
+    """, (_norm_text(continente),), fetch=True)
 
     return [row[0] for row in rows]
 
@@ -43,14 +51,28 @@ def get_paises_cpp(continente: str):
 # GET → Lista de puertos según país
 # ============================================================
 @router.get("/puertos")
-def get_puertos_cpp(pais: str):
-    rows = sql("""
+def get_puertos_cpp(
+    pais: str,
+    continente: str | None = Query(None),
+):
+    params = []
+    filters = [
+        "pais = %s",
+        "puerto IS NOT NULL",
+        "puerto <> ''",
+    ]
+    params.append(pais)
+    if continente and continente.strip():
+        filters.append(f"{_norm_sql('continente')} = {_norm_sql('%s')}")
+        params.append(_norm_text(continente))
+
+    rows = sql(f"""
         SELECT DISTINCT puerto
         FROM continentes_paises_puertos
-        WHERE pais = %s
-          AND puerto IS NOT NULL AND puerto <> ''
+        WHERE {_norm_sql("pais")} = {_norm_sql("%s")}
+          AND {" AND ".join(filters[1:])}
         ORDER BY puerto;
-    """, (pais,), fetch=True)
+    """, tuple(params), fetch=True)
 
     return [row[0] for row in rows]
 
