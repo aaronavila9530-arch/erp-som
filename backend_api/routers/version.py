@@ -1,5 +1,6 @@
 from fastapi import APIRouter
 import requests
+import re
 
 router = APIRouter(
     prefix="/version",
@@ -14,8 +15,8 @@ GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 FALLBACK_VERSION = "1.7.24"
 FALLBACK_ASSET_NAME = f"ERP-SOM-Setup-{FALLBACK_VERSION}.exe"
 FALLBACK_DOWNLOAD_URL = (
-    f"https://github.com/{GITHUB_REPO}/releases/download/"
-    f"v{FALLBACK_VERSION}/{FALLBACK_ASSET_NAME}"
+    f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/"
+    f"installer/{FALLBACK_ASSET_NAME}"
 )
 
 
@@ -45,6 +46,24 @@ def _find_installer_asset(assets, latest_version: str):
             return asset
 
     return None
+
+
+def _version_tuple(value: str):
+    parts = re.findall(r"\d+", str(value or ""))
+    nums = [int(p) for p in parts[:3]]
+    while len(nums) < 3:
+        nums.append(0)
+    return tuple(nums)
+
+
+def _fallback_response():
+    return {
+        "latest_version": FALLBACK_VERSION,
+        "download_url": FALLBACK_DOWNLOAD_URL,
+        "asset_name": FALLBACK_ASSET_NAME,
+        "force_update": False,
+        "message": f"Nueva versión {FALLBACK_VERSION} disponible del ERP-SOM."
+    }
 
 # ============================================================
 # VERSION CHECK (BACKEND NEUTRO, BLINDADO, AISLADO)
@@ -85,6 +104,9 @@ def check_version():
         if not latest_version:
             raise ValueError("versión vacía")
 
+        if _version_tuple(latest_version) < _version_tuple(FALLBACK_VERSION):
+            return _fallback_response()
+
         # ------------------------------
         # Buscar instalador .exe
         # ------------------------------
@@ -96,6 +118,9 @@ def check_version():
         if installer_asset:
             asset_name = installer_asset.get("name")
             download_url = installer_asset.get("browser_download_url")
+
+        if not download_url and _version_tuple(latest_version) <= _version_tuple(FALLBACK_VERSION):
+            return _fallback_response()
 
         return {
             "latest_version": latest_version,
@@ -119,10 +144,4 @@ def check_version():
         # 👉 JAMÁS BLOQUEAR EL BACKEND
         # 👉 JAMÁS LANZAR EXCEPCIÓN
         # ----------------------------------------------------
-        return {
-            "latest_version": FALLBACK_VERSION,
-            "download_url": FALLBACK_DOWNLOAD_URL,
-            "asset_name": FALLBACK_ASSET_NAME,
-            "force_update": False,
-            "message": f"Nueva versión {FALLBACK_VERSION} disponible del ERP-SOM."
-        }
+        return _fallback_response()
