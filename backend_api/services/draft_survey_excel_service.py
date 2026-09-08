@@ -1,6 +1,7 @@
 import os
+import re
 import tempfile
-from datetime import datetime, date
+from datetime import datetime, date, time
 from openpyxl import load_workbook
 from openpyxl.worksheet.worksheet import Worksheet
 
@@ -319,6 +320,9 @@ class DraftSurveyExcelGenerator:
         if value in [None, ""]:
             return value
 
+        if isinstance(value, time):
+            return value
+
         if isinstance(value, bool):
             return "YES" if value else "NO"
 
@@ -333,6 +337,12 @@ class DraftSurveyExcelGenerator:
             return value
         if text.startswith("="):
             return text
+
+        if re.fullmatch(r"\d{1,2}:\d{2}(:\d{2})?", text):
+            try:
+                return datetime.strptime(text, "%H:%M:%S" if text.count(":") == 2 else "%H:%M").time()
+            except Exception:
+                return value
 
         number_text = text.replace("\u00a0", "").replace(" ", "")
         allowed = set("0123456789+-.,")
@@ -399,6 +409,12 @@ class DraftSurveyExcelGenerator:
     def _apply_draft_excel_adjustments(self, ws: Worksheet, payload: dict):
         """Apply corrections that intentionally override template defaults."""
 
+        # Keep signature cells linked to the General sheet, matching the
+        # reference workbook and avoiding stale copied names in exported Excel.
+        ws["AN29"] = "=General!H11"
+        ws["AN32"] = "=General!H10"
+        ws["AN35"] = "=General!AB10"
+
         # Final marks in the template may point to initial marks. Blank final
         # marks must stay blank so initial/final remain independent.
         for key, cell in (
@@ -439,6 +455,16 @@ class DraftSurveyExcelGenerator:
                 return
 
         ws[cell].value = value
+
+    def _safe_clear(self, ws: Worksheet, cell: str):
+        try:
+            for merged in ws.merged_cells.ranges:
+                if cell in merged:
+                    ws.cell(row=merged.min_row, column=merged.min_col).value = None
+                    return
+            ws[cell].value = None
+        except Exception:
+            return
 
     def _safe_set_date(self, ws: Worksheet, cell: str, value):
 
@@ -544,6 +570,9 @@ class DraftSurveyExcelGenerator:
             for key, cell in fields.items():
 
                 value = (payload or {}).get(key)
+                if value in [None, ""]:
+                    self._safe_clear(ws, cell)
+                    continue
 
                 if key in date_fields:
                     self._safe_set_date(ws, cell, value)
@@ -581,27 +610,11 @@ class DraftSurveyExcelGenerator:
                 def _value_present(value) -> bool:
                     return value is not None and str(value).strip() != ""
 
-                def _with_defaults(items, section_key, phase_key, initial_items=None):
+                def _with_defaults(items, section_key, phase_key):
                     normalized = []
-                    initial_items = initial_items or []
 
-                    for i, item in enumerate((items or [])[:20]):
+                    for item in (items or [])[:20]:
                         item = dict(item or {})
-                        initial_item = (
-                            initial_items[i]
-                            if i < len(initial_items) and isinstance(initial_items[i], dict)
-                            else {}
-                        )
-
-                        if phase_key == "final":
-                            if not _value_present(item.get("tank_name")) and _value_present(initial_item.get("tank_name")):
-                                item["tank_name"] = initial_item.get("tank_name")
-                            if not _value_present(item.get("height")) and _value_present(initial_item.get("height")):
-                                item["height"] = initial_item.get("height")
-
-                        if section_key == "ballast":
-                            if not _value_present(item.get("height")):
-                                item["height"] = 0
 
                         if section_key == "fresh_water":
                             if _value_present(item.get("volume")) and not _value_present(item.get("density")):
@@ -622,8 +635,12 @@ class DraftSurveyExcelGenerator:
 
                 def _fill_block(items, start_row, col_name, col_height, col_sounding, col_volume, col_density):
                     for i, item in enumerate((items or [])[:20]):
-                        row = start_row + i
                         item = item or {}
+                        source_row = self._coerce_number(item.get("_excel_row"))
+                        if source_row is not None and start_row <= int(source_row) < start_row + 20:
+                            row = int(source_row)
+                        else:
+                            row = start_row + i
 
                         self._safe_set(ws_ded, f"{col_name}{row}", item.get("tank_name"))
                         self._safe_set(ws_ded, f"{col_height}{row}", item.get("height"))
@@ -656,8 +673,7 @@ class DraftSurveyExcelGenerator:
                 ballast_final = _with_defaults(
                     _get_nested_list("ballast", "final"),
                     "ballast",
-                    "final",
-                    ballast_initial
+                    "final"
                 )
 
                 _clear_block(11, ["T", "W", "Z", "AC", "AF"])
@@ -693,8 +709,7 @@ class DraftSurveyExcelGenerator:
                 fw_final = _with_defaults(
                     _get_nested_list("fresh_water", "final"),
                     "fresh_water",
-                    "final",
-                    fw_initial
+                    "final"
                 )
 
                 _clear_block(47, ["T", "W", "Z", "AC", "AF"])

@@ -2,13 +2,11 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 import threading
 
-from matplotlib.figure import Figure
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-
 from api_client import (
     get_dashboard_comercial_resumen_api,
     get_dashboard_comercial_filtros_api
 )
+from Modulos.Dashboards.chart_helpers import render_bar_chart
 
 
 class DashboardsComercialUI(ttk.Frame):
@@ -331,24 +329,4 @@ class DashboardsComercialUI(ttk.Frame):
 
     def _bar_chart(self, title, dataset, label_key, value_key, rotate=False):
 
-        frame = ttk.Frame(self.graph_container)
-        frame.pack(fill="x", pady=10)
-
-        labels = [x[label_key] for x in dataset]
-        values = [x[value_key] for x in dataset]
-
-        fig = Figure(figsize=(10,4), dpi=100)
-        ax = fig.add_subplot(111)
-
-        ax.bar(labels, values)
-
-        ax.set_title(title)
-
-        if rotate:
-            ax.set_xticklabels(labels, rotation=45, ha="right")
-
-        fig.tight_layout()
-
-        canvas = FigureCanvasTkAgg(fig, frame)
-        canvas.draw()
-        canvas.get_tk_widget().pack(fill="both", expand=True)
+        render_bar_chart(self.graph_container, title, dataset, label_key, value_key, rotate)

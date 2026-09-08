@@ -1,7 +1,10 @@
 import os
+import json
+import re
+import shutil
 import tempfile
 import subprocess
-from datetime import datetime, date
+from datetime import datetime, date, time
 from pathlib import Path
 
 from openpyxl import load_workbook
@@ -28,21 +31,36 @@ class DraftSurveyExcelPdfService:
     )
 
     # =========================================================
-    # SOLO HOJAS A INCLUIR (EN ORDEN)
-    # (Según tu template real: 'Draught survey report' y 'ECE ... D2' son separadas)
+    # Hojas del template correcto de Draft Survey, en el mismo orden del Excel
+    # oficial usado como referencia.
     # =========================================================
     KEEP_SHEETS = [
+        "A",
+        "B",
+        "C",
         "General",
         "Draft",
-        "ECE DRAUGHT SURVEY CODE",
-        "Draught survey report",
-        "ECE DRAUGHT SURVEY CODE D2",
+        "E",
+        "D1",
+        "D2",
+        "Hoja1",
+        "D3",
+        "Deductions",
+        "Note of Protest SHORE SCALE ",
+        "Note of Protest DRAFT",
     ]
 
     # =========================================================
     # MASTER MAPPING (LAZY LOAD PARA NO CRASHEAR STARTUP)
     # =========================================================
     EXCEL_MAPPING = None
+
+    def _merge_preserving_values(self, target: dict, source: dict) -> None:
+        for key, value in (source or {}).items():
+            current = target.get(key)
+            if key in target and current not in (None, "") and value in (None, ""):
+                continue
+            target[key] = value
 
     def _get_excel_mapping(self) -> dict:
 
@@ -101,6 +119,14 @@ class DraftSurveyExcelPdfService:
             """, (draft_report_number,))
             general_row = cur.fetchone() or {}
 
+            cur.execute("""
+                SELECT *
+                FROM draft_survey_word_report
+                WHERE draft_report_number = %s
+                LIMIT 1
+            """, (draft_report_number,))
+            word_row = cur.fetchone() or {}
+
         finally:
             try:
                 cur.close()
@@ -111,11 +137,22 @@ class DraftSurveyExcelPdfService:
             return {}
 
         payload = {}
-        payload.update(general_row or {})
-        payload.update(draft_row or {})
-        payload.update(ballast_row or {})
+        self._merge_preserving_values(payload, general_row or {})
+        self._merge_preserving_values(payload, draft_row or {})
+        self._merge_preserving_values(payload, ballast_row or {})
+        self._merge_preserving_values(payload, word_row or {})
 
         payload["draft_report_number"] = draft_report_number
+
+        ballast_json = payload.get("ballast_json")
+        if isinstance(ballast_json, str):
+            try:
+                ballast_json = json.loads(ballast_json)
+            except Exception:
+                ballast_json = None
+        if isinstance(ballast_json, dict):
+            payload["ballast"] = ballast_json.get("ballast") or {}
+            payload["fresh_water"] = ballast_json.get("fresh_water") or {}
 
         if "cargo" not in payload:
             payload["cargo"] = payload.get("init_cargo") or payload.get("final_cargo")
@@ -207,6 +244,9 @@ class DraftSurveyExcelPdfService:
         if value in (None, ""):
             return value
 
+        if isinstance(value, time):
+            return value
+
         if isinstance(value, bool):
             return "YES" if value else "NO"
 
@@ -221,6 +261,12 @@ class DraftSurveyExcelPdfService:
             return value
         if text.startswith("="):
             return text
+
+        if re.fullmatch(r"\d{1,2}:\d{2}(:\d{2})?", text):
+            try:
+                return datetime.strptime(text, "%H:%M:%S" if text.count(":") == 2 else "%H:%M").time()
+            except Exception:
+                return value
 
         number_text = text.replace("\u00a0", "").replace(" ", "")
         allowed = set("0123456789+-.,")
@@ -359,49 +405,13 @@ class DraftSurveyExcelPdfService:
                 "Draft Survey record not found for that report number"
             )
 
-        wb = load_workbook(self.TEMPLATE_PATH)
-        self._validate_template(wb)
-
-        mapping = self._get_excel_mapping()
-
-        for sheet_name, config in (mapping or {}).items():
-
-            if sheet_name not in wb.sheetnames:
-                continue
-
-            ws = wb[sheet_name]
-
-            fields = (config or {}).get("fields", {}) or {}
-            date_fields = set((config or {}).get("date_fields", []) or [])
-
-            for key, cell in fields.items():
-                value = (payload or {}).get(key)
-
-                if key in date_fields:
-                    self._safe_set_date(ws, cell, value)
-                else:
-                    self._safe_set(ws, cell, value)
-
-        # Mantener solo hojas requeridas
-        for s in list(wb.sheetnames):
-            if s not in self.KEEP_SHEETS:
-                try:
-                    wb.remove(wb[s])
-                except Exception:
-                    pass
-
-        # Reordenar
-        for i, name in enumerate(self.KEEP_SHEETS):
-            if name in wb.sheetnames:
-                try:
-                    wb._sheets.insert(i, wb._sheets.pop(wb.sheetnames.index(name)))
-                except Exception:
-                    pass
-
         tmp_dir = tempfile.mkdtemp(prefix="draft_excel_")
         out_xlsx = os.path.join(tmp_dir, f"draft_survey_{draft_report_number}.xlsx")
 
-        wb.save(out_xlsx)
+        from services.draft_survey_excel_service import DraftSurveyExcelGenerator
+
+        generated_path = DraftSurveyExcelGenerator().generate(payload)
+        shutil.copy2(generated_path, out_xlsx)
 
         if not os.path.exists(out_xlsx) or os.path.getsize(out_xlsx) == 0:
             raise RuntimeError("Excel was not generated")
