@@ -350,7 +350,18 @@ def get_serviciosmd_api():
 def post_servicio(data):
     url = f"{BASE_URL}/servicios/add"
     r = api_request("POST", url, json=data, timeout=15)
-    r.raise_for_status()
+    if r.status_code >= 400:
+        detail = None
+        try:
+            payload = r.json()
+            detail = payload.get("detail") or payload.get("message") or payload.get("error")
+        except Exception:
+            detail = r.text
+        detail = str(detail or r.reason or "Error desconocido").strip()
+        raise requests.exceptions.HTTPError(
+            f"{r.status_code} {detail}",
+            response=r,
+        )
     return r.json()
 
 

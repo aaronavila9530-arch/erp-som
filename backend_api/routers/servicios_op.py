@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends, Header, Query
 from pydantic import BaseModel
 from datetime import datetime
+import re
 import database
 
 from rbac_service import has_permission
@@ -78,6 +79,60 @@ def _normalize_service_date(value):
     if value in (None, ""):
         return value
     return _parse_service_date(value).strftime("%Y-%m-%d")
+
+
+def _normalize_service_time(value):
+    text = str(value or "").strip()
+    if not text:
+        return ""
+
+    normalized = text.upper().replace(".", "").replace(" ", "")
+    suffix = None
+    if normalized.endswith("AM") or normalized.endswith("PM"):
+        suffix = normalized[-2:]
+        normalized = normalized[:-2]
+
+    match = re.match(r"^(\d{1,2})(?::(\d{1,2}))?$", normalized)
+    if not match:
+        raise ValueError("Hora inicio invalida")
+
+    hour = int(match.group(1))
+    minute = int(match.group(2) or 0)
+
+    if suffix == "PM" and hour < 12:
+        hour += 12
+    elif suffix == "AM" and hour == 12:
+        hour = 0
+
+    if hour > 23 or minute > 59:
+        raise ValueError("Hora inicio invalida")
+
+    return f"{hour:02d}:{minute:02d}"
+
+
+def _validate_required_service_payload(payload: dict) -> None:
+    required = {
+        "tipo": "Tipo",
+        "buque_contenedor": "Buque / Contenedor",
+        "cliente": "Cliente",
+        "continente": "Continente",
+        "pais": "Pais",
+        "puerto": "Puerto",
+        "operacion": "Operacion",
+        "surveyor": "Surveyor",
+        "fecha_inicio": "Fecha inicio",
+        "hora_inicio": "Hora inicio",
+    }
+    missing = [
+        label
+        for key, label in required.items()
+        if not str(payload.get(key) or "").strip()
+    ]
+    if missing:
+        raise HTTPException(
+            status_code=400,
+            detail="Campos obligatorios faltantes: " + ", ".join(missing),
+        )
 
 
 REPORT_CONSECUTIVE_BASE = 2141
@@ -166,34 +221,44 @@ class ServicioCreate(BaseModel):
 # ============================================================
 @router.post("/add")
 def add_servicio(data: ServicioCreate, x_company_code: str | None = Header(None, alias="X-Company-Code")):
-    _ensure_tenant_schema()
-    payload = set_payload_company(data.dict(), company_code(None, x_company_code))
-    payload["fecha_inicio"] = _normalize_service_date(payload.get("fecha_inicio"))
-
-    sql = """
-        INSERT INTO servicios (
-            company_code,
-            tipo, estado, num_informe,
-            buque_contenedor, cliente, contacto, detalle,
-            continente, pais, puerto,
-            operacion, surveyor, honorarios, costo_operativo, costo_tarjetas,
-            fecha_inicio, hora_inicio
-        )
-        VALUES (
-            %(company_code)s,
-            %(tipo)s, 'Confirmado', '',
-            %(buque_contenedor)s, %(cliente)s, %(contacto)s, %(detalle)s,
-            %(continente)s, %(pais)s, %(puerto)s,
-            %(operacion)s, %(surveyor)s, %(honorarios)s, %(costo_operativo)s, %(costo_tarjetas)s,
-            %(fecha_inicio)s, %(hora_inicio)s
-        )
-        RETURNING consec;
-    """
-
     try:
+        _ensure_tenant_schema()
+        payload = set_payload_company(data.dict(), company_code(None, x_company_code))
+        for key, value in list(payload.items()):
+            if isinstance(value, str):
+                payload[key] = value.strip()
+        _validate_required_service_payload(payload)
+        try:
+            payload["fecha_inicio"] = _normalize_service_date(payload.get("fecha_inicio"))
+            payload["hora_inicio"] = _normalize_service_time(payload.get("hora_inicio"))
+        except Exception:
+            raise HTTPException(status_code=400, detail="Fecha u hora de inicio invalida")
+        _validate_required_service_payload(payload)
+
+        sql = """
+            INSERT INTO servicios (
+                company_code,
+                tipo, estado, num_informe,
+                buque_contenedor, cliente, contacto, detalle,
+                continente, pais, puerto,
+                operacion, surveyor, honorarios, costo_operativo, costo_tarjetas,
+                fecha_inicio, hora_inicio
+            )
+            VALUES (
+                %(company_code)s,
+                %(tipo)s, 'Confirmado', '',
+                %(buque_contenedor)s, %(cliente)s, %(contacto)s, %(detalle)s,
+                %(continente)s, %(pais)s, %(puerto)s,
+                %(operacion)s, %(surveyor)s, %(honorarios)s, %(costo_operativo)s, %(costo_tarjetas)s,
+                %(fecha_inicio)s, %(hora_inicio)s
+            )
+            RETURNING consec;
+        """
         result = database.sql(sql, payload, fetch=True)
         new_id = result[0][0]
         return {"status": "OK", "msg": "Servicio creado", "consec": new_id}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
