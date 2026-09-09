@@ -1,6 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Header
 from typing import Any, Dict, Optional
 from database import get_db
+from services.tenanting import company_code
 
 import json
 import psycopg2
@@ -9,6 +10,21 @@ from psycopg2 import sql
 
 
 router = APIRouter(prefix="/draft-survey", tags=["Draft Survey (Unified)"])
+
+
+def _ensure_draft_company_schema(cur) -> None:
+    for table_name in (
+        "draft_survey_word_report",
+        "draft_survey_ballast",
+        "draft_survey",
+        "general_draft_survey",
+    ):
+        cur.execute(
+            sql.SQL("""
+                ALTER TABLE {table}
+                ADD COLUMN IF NOT EXISTS company_code VARCHAR(30) NOT NULL DEFAULT 'MSL-CR'
+            """).format(table=sql.Identifier(table_name))
+        )
 
 
 # =========================================================
@@ -752,11 +768,16 @@ def update_draft_survey_unified(
 # GET /draft-survey/headers
 # =========================================================
 @router.get("/headers")
-def get_draft_survey_headers(conn=Depends(get_db)):
+def get_draft_survey_headers(
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+    conn=Depends(get_db),
+):
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     try:
+        _ensure_draft_company_schema(cur)
+        selected_company = company_code(x_company_code)
         cur.execute("""
             SELECT
               draft_report_number,
@@ -770,25 +791,29 @@ def get_draft_survey_headers(conn=Depends(get_db)):
             FROM (
               SELECT status, year, month, continent, country, port, client, draft_report_number
               FROM draft_survey_word_report
+              WHERE COALESCE(NULLIF(TRIM(company_code::text), ''), 'MSL-CR') = %(company_code)s
 
               UNION ALL
 
               SELECT status, year, month, continent, country, port, client, draft_report_number
               FROM draft_survey_ballast
+              WHERE COALESCE(NULLIF(TRIM(company_code::text), ''), 'MSL-CR') = %(company_code)s
 
               UNION ALL
 
               SELECT status, year, month, continent, country, port, client, draft_report_number
               FROM draft_survey
+              WHERE COALESCE(NULLIF(TRIM(company_code::text), ''), 'MSL-CR') = %(company_code)s
 
               UNION ALL
 
               SELECT status, year, month, continent, country, port, client, draft_report_number
               FROM general_draft_survey
+              WHERE COALESCE(NULLIF(TRIM(company_code::text), ''), 'MSL-CR') = %(company_code)s
             ) t
             GROUP BY draft_report_number
             ORDER BY draft_report_number DESC
-        """)
+        """, {"company_code": selected_company})
 
         rows = cur.fetchall() or []
 

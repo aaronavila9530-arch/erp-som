@@ -3,12 +3,13 @@
 # Archivo: status_informes.py
 # ============================================================
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from psycopg2.extras import RealDictCursor
 from typing import Optional
 from datetime import datetime
 
 from database import get_db
+from services.tenanting import DEFAULT_COMPANY_CODE, company_code
 
 
 router = APIRouter(
@@ -62,7 +63,26 @@ REPORT_COLUMN_CANDIDATES = (
 )
 
 
-def _existing_reports_sql(cur):
+def _has_company_code(cur, table_name: str) -> bool:
+    cur.execute(
+        """
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = %s
+          AND column_name = 'company_code'
+        LIMIT 1
+        """,
+        (table_name,)
+    )
+    return bool(cur.fetchone())
+
+
+def _safe_sql_literal(value: str) -> str:
+    return "'" + str(value or "").replace("'", "''") + "'"
+
+
+def _existing_reports_sql(cur, selected_company: str):
     pairs = set(REPORT_NUMBER_CANDIDATES)
 
     cur.execute(
@@ -97,6 +117,17 @@ def _existing_reports_sql(cur):
         )
 
         if cur.fetchone():
+            has_company = _has_company_code(cur, table_name)
+            if not has_company and selected_company != DEFAULT_COMPANY_CODE:
+                continue
+
+            company_filter = ""
+            if has_company:
+                company_filter = (
+                    " AND COALESCE(NULLIF(TRIM(company_code::text), ''), "
+                    f"{_safe_sql_literal(DEFAULT_COMPANY_CODE)}) = {_safe_sql_literal(selected_company)}"
+                )
+
             selects.append(
                 f"""
                 SELECT UPPER(REGEXP_REPLACE(NULLIF(TRIM({column_name}::text), ''), '\\s+', '', 'g')) AS num_informe
@@ -104,6 +135,7 @@ def _existing_reports_sql(cur):
                 WHERE {column_name} IS NOT NULL
                   AND TRIM({column_name}::text) <> ''
                   AND LOWER(TRIM({column_name}::text)) <> 'none'
+                  {company_filter}
                 """
             )
 
@@ -125,6 +157,7 @@ def list_status_informes(
     operacion: Optional[str] = Query(None),
     year: Optional[int] = Query(None),
     month: Optional[int] = Query(None),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
     conn=Depends(get_db)
 ):
     """
@@ -140,8 +173,9 @@ def list_status_informes(
     try:
         year = year or datetime.now().year
         status = status or "Pending"
+        selected_company = company_code(x_company_code)
 
-        existing_reports = _existing_reports_sql(cur)
+        existing_reports = _existing_reports_sql(cur, selected_company)
 
         # ====================================================
         # BASE QUERY
@@ -166,6 +200,7 @@ def list_status_informes(
                 COALESCE(NULLIF(TRIM(s.status_informe), ''), 'Pending') AS status_informe
             FROM servicios s
             WHERE LOWER(TRIM(COALESCE(s.estado, ''))) = 'finalizado'
+              AND COALESCE(NULLIF(TRIM(s.company_code::text), ''), 'MSL-CR') = %s
               AND s.num_informe IS NOT NULL
               AND TRIM(s.num_informe) <> ''
               AND LOWER(TRIM(s.num_informe)) <> 'none'
@@ -177,7 +212,7 @@ def list_status_informes(
         """
 
         conditions = []
-        params = []
+        params = [selected_company]
 
         # ====================================================
         # STATUS
@@ -250,7 +285,11 @@ def list_status_informes(
 # GET — STATUS DISPONIBLES (COMBOBOX)
 # ============================================================
 @router.get("/record/{consec}")
-def get_status_informe(consec: int, conn=Depends(get_db)):
+def get_status_informe(
+    consec: int,
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+    conn=Depends(get_db),
+):
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     try:
@@ -274,7 +313,8 @@ def get_status_informe(consec: int, conn=Depends(get_db)):
                 status_informe
             FROM servicios
             WHERE consec = %s
-        """, (consec,))
+              AND COALESCE(NULLIF(TRIM(company_code::text), ''), 'MSL-CR') = %s
+        """, (consec, company_code(x_company_code)))
 
         row = cur.fetchone()
         if not row:
@@ -295,7 +335,12 @@ def get_status_informe(consec: int, conn=Depends(get_db)):
 
 
 @router.put("/record/{consec}")
-def update_status_informe(consec: int, payload: dict, conn=Depends(get_db)):
+def update_status_informe(
+    consec: int,
+    payload: dict,
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+    conn=Depends(get_db),
+):
     allowed = {
         "num_informe",
         "buque_contenedor",
@@ -323,7 +368,8 @@ def update_status_informe(consec: int, payload: dict, conn=Depends(get_db)):
     if not updates:
         raise HTTPException(status_code=400, detail="No valid fields to update")
 
-    params.append(consec)
+    selected_company = company_code(x_company_code)
+    params.extend([consec, selected_company])
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     try:
@@ -332,6 +378,7 @@ def update_status_informe(consec: int, payload: dict, conn=Depends(get_db)):
             UPDATE servicios
             SET {", ".join(updates)}
             WHERE consec = %s
+              AND COALESCE(NULLIF(TRIM(company_code::text), ''), 'MSL-CR') = %s
             RETURNING
                 consec,
                 num_informe,
@@ -376,7 +423,10 @@ def update_status_informe(consec: int, payload: dict, conn=Depends(get_db)):
 
 
 @router.get("/statuses")
-def get_available_statuses(conn=Depends(get_db)):
+def get_available_statuses(
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+    conn=Depends(get_db),
+):
 
     cur = conn.cursor()
 
@@ -386,8 +436,9 @@ def get_available_statuses(conn=Depends(get_db)):
             FROM servicios
             WHERE status_informe IS NOT NULL
               AND TRIM(status_informe) <> ''
+              AND COALESCE(NULLIF(TRIM(company_code::text), ''), 'MSL-CR') = %s
             ORDER BY status_informe
-        """)
+        """, (company_code(x_company_code),))
 
         rows = cur.fetchall() or []
 

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from datetime import datetime
@@ -8,6 +8,7 @@ import os
 from psycopg2.extras import RealDictCursor
 
 from database import get_db
+from services.tenanting import company_code
 
 
 router = APIRouter(
@@ -35,6 +36,10 @@ def _ensure_grain_sampling_schema(conn):
             cur.execute(
                 f"ALTER TABLE vessel_grain_sampling_reports ADD COLUMN IF NOT EXISTS {name} {col_type}"
             )
+        cur.execute("""
+            ALTER TABLE vessel_grain_sampling_reports
+            ADD COLUMN IF NOT EXISTS company_code VARCHAR(30) NOT NULL DEFAULT 'MSL-CR'
+        """)
         conn.commit()
     except Exception:
         conn.rollback()
@@ -366,6 +371,7 @@ def create_vessel_grain_sampling_report(
 
 @router.get("")
 def list_vessel_grain_sampling_reports(
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
     conn=Depends(get_db)
 ):
 
@@ -374,6 +380,7 @@ def list_vessel_grain_sampling_reports(
 
     try:
 
+        selected_company = company_code(x_company_code)
         cur.execute("""
             SELECT
 
@@ -463,14 +470,18 @@ def list_vessel_grain_sampling_reports(
                 conclusion,
 
                 status,
+                COALESCE(NULLIF(TRIM(s.company_code::text), ''), NULLIF(TRIM(r.company_code::text), ''), 'MSL-CR') AS company_code,
 
-                created_at,
-                updated_at
+                r.created_at,
+                r.updated_at
 
-            FROM vessel_grain_sampling_reports
+            FROM vessel_grain_sampling_reports r
+            LEFT JOIN servicios s
+              ON s.num_informe = r.cert_no
+            WHERE COALESCE(NULLIF(TRIM(s.company_code::text), ''), NULLIF(TRIM(r.company_code::text), ''), 'MSL-CR') = %s
 
-            ORDER BY created_at DESC NULLS LAST, id DESC
-        """)
+            ORDER BY r.created_at DESC NULLS LAST, r.id DESC
+        """, (selected_company,))
 
         rows = cur.fetchall() or []
 
@@ -645,6 +656,7 @@ def get_services_for_grain_sampling(
 @router.get("/{report_id}")
 def get_vessel_grain_sampling_report(
     report_id: int,
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
     conn=Depends(get_db)
 ):
 
@@ -742,11 +754,15 @@ def get_vessel_grain_sampling_report(
 
                 supervision,
                 conclusion,
-                status
+                status,
+                COALESCE(NULLIF(TRIM(s.company_code::text), ''), NULLIF(TRIM(r.company_code::text), ''), 'MSL-CR') AS company_code
 
-            FROM vessel_grain_sampling_reports
-            WHERE id = %s
-        """, (report_id,))
+            FROM vessel_grain_sampling_reports r
+            LEFT JOIN servicios s
+              ON s.num_informe = r.cert_no
+            WHERE r.id = %s
+              AND COALESCE(NULLIF(TRIM(s.company_code::text), ''), NULLIF(TRIM(r.company_code::text), ''), 'MSL-CR') = %s
+        """, (report_id, company_code(x_company_code)))
 
         report = cur.fetchone()
 

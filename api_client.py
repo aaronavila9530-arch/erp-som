@@ -7477,7 +7477,7 @@ def update_status_informe_api(consec: int, new_status: str):
 
     resp = api_request(
         "PUT",
-        f"/status-informes/{consec}",
+        f"/status-informes/record/{consec}",
         json={"status_informe": new_status},
         timeout=15
     )
