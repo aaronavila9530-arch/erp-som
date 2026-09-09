@@ -95,6 +95,14 @@ const employeeColumns = [
   "banco",
   "cuenta_iban",
   "moneda",
+  "fecha_ingreso",
+  "horas_contratadas",
+  "horas_tope_ordinario",
+  "horas_tope_maximo",
+  "tarifa_hora_extra",
+  "pago_minimo_garantizado",
+  "vacaciones",
+  "estado",
   "enfermedades",
   "contacto_emergencia",
   "telefono_emergencia",
@@ -298,7 +306,7 @@ const masterActions: TableAction[] = [
   { key: "view", label: "Ver" },
   { key: "add", label: "Agregar" },
   { key: "edit", label: "Editar" },
-  { key: "delete", label: "Eliminar" }
+  { key: "delete", label: "Inhabilitar" }
 ];
 
 const readOnlyActions: TableAction[] = [{ key: "view", label: "Ver" }];
@@ -351,7 +359,7 @@ export const ERP_MODULES: AppModule[] = [
       {
         key: "empleados",
         label: "Empleados",
-        endpoint: "/empleados/?page=1&page_size=100",
+        endpoint: "/empleados/?page=1&page_size=100&include_inactive=true",
         table: {
           idField: "codigo",
           columns: employeeColumns,

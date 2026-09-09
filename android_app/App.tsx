@@ -52,7 +52,7 @@ const COMPANIES = [
   { code: "MCI-CR", name: "MSL MARINE CLAIMS RISK & INTELLIGENCE", label: "MCI" }
 ];
 const DEFAULT_COMPANY = COMPANIES[0];
-const MOBILE_APP_VERSION = "1.7.29";
+const MOBILE_APP_VERSION = "1.7.31";
 const KIOSK_USER = (process.env.EXPO_PUBLIC_ERP_SOM_KIOSK_USER || "").trim();
 const KIOSK_NAME = (process.env.EXPO_PUBLIC_ERP_SOM_KIOSK_NAME || KIOSK_USER || "").trim();
 const IS_KIOSK_APP = Boolean(KIOSK_USER);
@@ -2434,6 +2434,33 @@ async function downloadSessionFile(
   });
 
   await openDownloadedFile(fileUri, filename);
+}
+
+async function downloadFileWithHeaders(url: string, fileUri: string, headers: Record<string, string>, filename: string, mimeType?: string) {
+  const response = await fetch(url, { method: "GET", headers });
+  const bytes = new Uint8Array(await response.arrayBuffer());
+
+  if (!response.ok) {
+    let detail = `Error descargando archivo (${response.status}).`;
+    try {
+      const text = new TextDecoder().decode(bytes);
+      const parsed = JSON.parse(text) as Record<string, unknown>;
+      detail = formatValue(parsed.detail || parsed.error || parsed.message || text);
+    } catch {
+      // Keep generic download error for binary or malformed error responses.
+    }
+    throw new Error(detail);
+  }
+
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
+  }
+  await FileSystem.writeAsStringAsync(fileUri, btoa(binary), {
+    encoding: FileSystem.EncodingType.Base64
+  });
+  await openDownloadedFile(fileUri, filename, mimeType);
 }
 
 function unwrapRecordPayload(payload: unknown) {
@@ -11156,10 +11183,11 @@ function DesktopTable({
     }
 
     if (action.key === "delete") {
-      Alert.alert("Confirmar", `Eliminar ${selectedId}?`, [
+      const deleteLabel = action.label || "Eliminar";
+      Alert.alert("Confirmar", `${deleteLabel} ${selectedId}?`, [
         { text: "Cancelar", style: "cancel" },
         {
-          text: "Eliminar",
+          text: deleteLabel,
           style: "destructive",
           onPress: async () => {
             if (!table.deleteEndpoint) return;
@@ -11643,22 +11671,21 @@ function BankAccountsModal({
     try {
       const filename = `Carta_Bancaria_${selectedId}.pdf`;
       const fileUri = `${FileSystem.cacheDirectory}${filename}`;
-      const result = await FileSystem.downloadAsync(
+      await downloadFileWithHeaders(
         `${API_BASE_URL}/master-data/bank-accounts/${encodeURIComponent(selectedId)}/letter.pdf`,
         fileUri,
         {
-          headers: {
-            "X-User": session.usuario,
-            "X-Role": session.rol,
-            "X-User-Role": session.rol,
-            "X-Company-Code": session.company_code || DEFAULT_COMPANY.code,
-            "X-Company-Name": session.company_name || DEFAULT_COMPANY.name,
-            "X-Bank-Access-Token": accessToken,
-            "X-Document-Language": letterLanguage
-          }
-        }
+          "X-User": session.usuario,
+          "X-Role": session.rol,
+          "X-User-Role": session.rol,
+          "X-Company-Code": session.company_code || DEFAULT_COMPANY.code,
+          "X-Company-Name": session.company_name || DEFAULT_COMPANY.name,
+          "X-Bank-Access-Token": accessToken,
+          "X-Document-Language": letterLanguage
+        },
+        filename,
+        "application/pdf"
       );
-      await Sharing.shareAsync(result.uri, { mimeType: "application/pdf", dialogTitle: "Carta bancaria" });
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "No se pudo exportar PDF.");
     } finally {
@@ -12760,6 +12787,43 @@ function HREmployeesView({
     }
   }
 
+  async function setEmployeeActive(active: boolean) {
+    if (!selectedRow) {
+      setMessage("Seleccione un empleado.");
+      return;
+    }
+    const id = formatValue(selectedRow.id);
+    const label = active ? "reactivar" : "inhabilitar";
+    Alert.alert("Confirmar", `Desea ${label} este empleado?`, [
+      { text: "Cancelar", style: "cancel" },
+      {
+        text: active ? "Reactivar" : "Inhabilitar",
+        style: active ? "default" : "destructive",
+        onPress: async () => {
+          setBusy(true);
+          setMessage("");
+          try {
+            await apiRequest(`/hr/employees/${encodeURIComponent(id)}`, {
+              method: "PUT",
+              body: {
+                ...selectedRow,
+                activo: active,
+                estado: active ? "Activo" : "Inactivo"
+              },
+              session
+            });
+            await load();
+            setMessage(active ? "Empleado reactivado." : "Empleado inhabilitado.");
+          } catch (err) {
+            setMessage(err instanceof Error ? err.message : `No se pudo ${label}.`);
+          } finally {
+            setBusy(false);
+          }
+        }
+      }
+    ]);
+  }
+
   if (!admin) return <Text style={styles.empty}>No tienes permisos para administrar empleados.</Text>;
 
   return (
@@ -12780,6 +12844,8 @@ function HREmployeesView({
         <Pressable style={styles.actionButton} onPress={() => openForm("view")}><Text style={styles.actionButtonText}>Ver</Text></Pressable>
         <Pressable style={styles.actionButton} onPress={() => openForm("add")}><Text style={styles.actionButtonText}>Agregar</Text></Pressable>
         <Pressable style={styles.actionButton} onPress={() => openForm("edit")}><Text style={styles.actionButtonText}>Editar</Text></Pressable>
+        <Pressable style={styles.modalClose} onPress={() => setEmployeeActive(false)}><Text style={styles.modalCloseText}>Inhabilitar</Text></Pressable>
+        <Pressable style={styles.actionButton} onPress={() => setEmployeeActive(true)}><Text style={styles.actionButtonText}>Reactivar</Text></Pressable>
       </ScrollView>
       {busy ? <ActivityIndicator color={BLUE} style={styles.loader} /> : null}
       {message ? <Text style={styles.error}>{message}</Text> : null}
@@ -12792,13 +12858,29 @@ function HREmployeesView({
           <ScrollView contentContainerStyle={styles.modalBody}>
             {HR_EMPLOYEE_FIELDS.map((field) => (
               <View key={field} style={styles.formField}>
-                <Text style={styles.label}>{field.replaceAll("_", " ")}</Text>
-                <TextInput
-                  editable={modalMode !== "view" && field !== "codigo" && field !== "id"}
-                  value={form[field] || ""}
-                  onChangeText={(value) => setForm((current) => ({ ...current, [field]: value }))}
-                  style={[styles.input, (modalMode === "view" || field === "codigo" || field === "id") && styles.readonlyInput]}
-                />
+                <Text style={styles.label}>{HR_EMPLOYEE_LABELS[field] || field.replaceAll("_", " ")}</Text>
+                {field === "activo" ? (
+                  <SelectField
+                    label=""
+                    value={String(form.activo || "true")}
+                    options={["true", "false"]}
+                    onChange={(value) => setForm((current) => ({ ...current, activo: value, estado: value === "true" ? "Activo" : "Inactivo" }))}
+                  />
+                ) : field === "pago_minimo_garantizado" ? (
+                  <SelectField
+                    label=""
+                    value={String(form.pago_minimo_garantizado || "false")}
+                    options={["true", "false"]}
+                    onChange={(value) => setForm((current) => ({ ...current, pago_minimo_garantizado: value }))}
+                  />
+                ) : (
+                  <TextInput
+                    editable={modalMode !== "view" && field !== "codigo" && field !== "id"}
+                    value={form[field] || ""}
+                    onChangeText={(value) => setForm((current) => ({ ...current, [field]: value }))}
+                    style={[styles.input, (modalMode === "view" || field === "codigo" || field === "id") && styles.readonlyInput]}
+                  />
+                )}
               </View>
             ))}
             {modalMode !== "view" ? <PrimaryButton label="Guardar" loading={busy} onPress={saveEmployee} /> : null}
@@ -12813,9 +12895,19 @@ const HR_EMPLOYEE_FIELDS = [
   "id", "codigo", "cedula_id", "usuario", "nombre", "apellidos", "estado_civil", "genero", "nacionalidad",
   "fecha_nacimiento", "edad", "prefijo", "telefono", "provincia", "canton", "distrito", "direccion",
   "jornada", "salario", "pago", "banco", "cuenta_iban", "moneda", "fecha_ingreso", "horas_contratadas",
-  "vacaciones", "estado", "enfermedades", "contacto_emergencia", "telefono_emergencia",
+  "horas_tope_ordinario", "horas_tope_maximo", "tarifa_hora_extra", "pago_minimo_garantizado",
+  "vacaciones", "estado", "activo", "enfermedades", "contacto_emergencia", "telefono_emergencia",
   "activo1", "marca1", "serial1", "activo2", "marca2", "serial2", "activo3", "marca3", "serial3"
 ];
+
+const HR_EMPLOYEE_LABELS: Record<string, string> = {
+  horas_contratadas: "Horas pactadas",
+  horas_tope_ordinario: "Primer aviso / tope ordinario",
+  horas_tope_maximo: "Segundo aviso / tope maximo",
+  tarifa_hora_extra: "Tarifa hora extra",
+  pago_minimo_garantizado: "Pago minimo garantizado",
+  activo: "Empleado activo"
+};
 
 function HRRequestsView({
   initialRows,
