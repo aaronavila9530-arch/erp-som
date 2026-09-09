@@ -11501,6 +11501,7 @@ function BankAccountsModal({
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [form, setForm] = useState<Record<string, string>>(blankForm);
+  const [letterLanguage, setLetterLanguage] = useState<"ES" | "EN">("ES");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
 
@@ -11513,6 +11514,7 @@ function BankAccountsModal({
     setRows([]);
     setSelectedId("");
     setForm(blankForm);
+    setLetterLanguage("ES");
     setMessage("Revalide con Microsoft Authenticator para ver o modificar datos bancarios.");
   }, [visible]);
 
@@ -11651,7 +11653,8 @@ function BankAccountsModal({
             "X-User-Role": session.rol,
             "X-Company-Code": session.company_code || DEFAULT_COMPANY.code,
             "X-Company-Name": session.company_name || DEFAULT_COMPANY.name,
-            "X-Bank-Access-Token": accessToken
+            "X-Bank-Access-Token": accessToken,
+            "X-Document-Language": letterLanguage
           }
         }
       );
@@ -11692,6 +11695,17 @@ function BankAccountsModal({
                 <Pressable style={styles.actionButton} onPress={exportPdf} disabled={busy}>
                   <Text style={styles.actionButtonText}>Carta PDF</Text>
                 </Pressable>
+              </View>
+              <View style={styles.formField}>
+                <Text style={styles.label}>Idioma carta bancaria</Text>
+                <View style={styles.segmentedControl}>
+                  <Pressable style={[styles.segmentedOption, letterLanguage === "ES" && styles.segmentedOptionActive]} onPress={() => setLetterLanguage("ES")}>
+                    <Text style={[styles.segmentedText, letterLanguage === "ES" && styles.segmentedTextActive]}>Español</Text>
+                  </Pressable>
+                  <Pressable style={[styles.segmentedOption, letterLanguage === "EN" && styles.segmentedOptionActive]} onPress={() => setLetterLanguage("EN")}>
+                    <Text style={[styles.segmentedText, letterLanguage === "EN" && styles.segmentedTextActive]}>English</Text>
+                  </Pressable>
+                </View>
               </View>
               {rows.map((row) => (
                 <Pressable

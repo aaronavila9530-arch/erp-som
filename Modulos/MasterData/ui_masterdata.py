@@ -314,7 +314,7 @@ class MasterDataUI(tk.Frame):
 
     def _assign_masterdata_code_if_needed(self, spec, data):
         code = str(data.get(spec.code_field) or "").strip()
-        if code or spec.key == "empleado":
+        if code:
             return
 
         from api_client import api_request
@@ -322,6 +322,7 @@ class MasterDataUI(tk.Frame):
 
         suffix_by_entity = {
             "cliente": "C",
+            "empleado": "E",
             "proveedor": "P",
             "surveyor": "S",
         }

@@ -4,14 +4,13 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from datetime import date
 import os
 
+from branding import footer_text, is_mci_context, logo_asset
 from resource_utils import resource_path
 from Modulos.Comercial.date_utils import to_long_english_date
 
 
 def _is_mci(data: dict) -> bool:
-    company_code = str(data.get("company_code") or "").upper()
-    company_name = str(data.get("company_name") or "").upper()
-    return company_code == "MCI-CR" or "MARINE CLAIMS" in company_name
+    return is_mci_context(data)
 
 
 # ============================================================
@@ -67,7 +66,7 @@ def export_cotizacion_word(data: dict, output_path: str):
     hp.alignment = WD_ALIGN_PARAGRAPH.LEFT
     hr = hp.add_run()
 
-    header_img_path = os.path.join(ASSETS_PATH, "header.png")
+    header_img_path = logo_asset(data) or os.path.join(ASSETS_PATH, "header.png")
     if os.path.isfile(header_img_path):
         hr.add_picture(
             header_img_path,
@@ -146,10 +145,7 @@ def export_cotizacion_word(data: dict, output_path: str):
     # ==================================================
     footer = section.footer.paragraphs[0]
     footer.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    footer.text = (
-        "Head Office – Costa Rica, Alajuela, Plaza Aeropuerto G-14\n"
-        "Phone (506) 8814-07-84 – (506) 4052-8382"
-    )
+    footer.text = footer_text(data)
 
     # ==================================================
     # SAVE

@@ -3782,12 +3782,13 @@ def update_masterdata_bank_account_api(bank_account_id: int, payload: dict, acce
     return response.json()
 
 
-def export_masterdata_bank_letter_pdf_api(bank_account_id: int, access_token: str, output_path: str, company_code: str | None = None, company_name: str | None = None):
+def export_masterdata_bank_letter_pdf_api(bank_account_id: int, access_token: str, output_path: str, company_code: str | None = None, company_name: str | None = None, language: str = "ES"):
     headers = {"X-Bank-Access-Token": access_token}
     if company_code:
         headers["X-Company-Code"] = company_code
     if company_name:
         headers["X-Company-Name"] = company_name
+    headers["X-Document-Language"] = (language or "ES").upper()
     response = api_request(
         "GET",
         f"{BASE_URL}/master-data/bank-accounts/{bank_account_id}/letter.pdf",

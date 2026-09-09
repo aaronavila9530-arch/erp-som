@@ -17,6 +17,7 @@ from routers.totp_service import validate_totp
 from security.auth import get_current_user
 from security.rbac import require_permission
 from services.tenanting import company_code
+from branding import company_display_name, footer_text, is_mci_context, logo_asset, watermark_asset
 
 
 router = APIRouter(prefix="/master-data/bank-accounts", tags=["Master Data - Bank Accounts"])
@@ -173,7 +174,7 @@ def _asset(name: str) -> str | None:
 
 
 def _is_mci(company: str, company_name: str | None) -> bool:
-    return company.upper() == "MCI-CR" or "MARINE CLAIMS" in str(company_name or "").upper()
+    return is_mci_context(company_code=company, company_name=company_name)
 
 
 def _spanish_date(value: datetime) -> str:
@@ -199,7 +200,7 @@ def _safe_filename(value: str) -> str:
     return "_".join(clean.split()) or "datos_bancarios"
 
 
-def _build_bank_letter_pdf(row: dict, company: str, company_name: str | None) -> bytes:
+def _build_bank_letter_pdf(row: dict, company: str, company_name: str | None, language: str = "ES") -> bytes:
     from reportlab.lib.pagesizes import LETTER
     from reportlab.lib.units import inch
     from reportlab.pdfbase.pdfmetrics import stringWidth
@@ -215,14 +216,16 @@ def _build_bank_letter_pdf(row: dict, company: str, company_name: str | None) ->
     top_y = header_y - 0.55 * inch
     footer_y = 0.7 * inch
 
-    header = _asset("header.png")
-    watermark = _asset("watermark.png")
+    branding_data = {"company_code": company, "company_name": company_name}
+    language = str(language or "ES").strip().upper()
+    if language not in {"ES", "EN"}:
+        language = "ES"
+
+    header = logo_asset(branding_data) or _asset("header.png")
+    watermark = watermark_asset(branding_data) or _asset("watermark.png")
     signature = _asset("FIRMA DIANA.png")
 
-    display_company = (company_name or "").strip() or (
-        "MSL MARINE CLAIMS & RISK INTELLIGENCE" if _is_mci(company, company_name)
-        else "MSL MARINE SURVEYORS & LOGISTICS GROUP SRL"
-    )
+    display_company = company_display_name(branding_data)
 
     def wrap_text(text: str, font_name: str, font_size: int, max_width: float) -> list[str]:
         wrapped = []
@@ -253,8 +256,7 @@ def _build_bank_letter_pdf(row: dict, company: str, company_name: str | None) ->
         c.drawCentredString(
             width / 2,
             footer_y,
-            "Head Office - Costa Rica, Alajuela, Plaza Aeropuerto G-14 - "
-            "Phone (506) 8814-07-84 - (506) 4052-8382",
+            " - ".join(footer_text(branding_data).splitlines()),
         )
 
     def draw_static():
@@ -279,30 +281,48 @@ def _build_bank_letter_pdf(row: dict, company: str, company_name: str | None) ->
     today = datetime.now(ZoneInfo("America/Costa_Rica"))
 
     y = draw_wrapped("Alajuela, Costa Rica", "Helvetica", 10, y)
-    y = draw_wrapped(_spanish_date(today), "Helvetica", 10, y)
+    y = draw_wrapped(_spanish_date(today) if language == "ES" else today.strftime("%B %d, %Y"), "Helvetica", 10, y)
     y -= 24
 
-    y = draw_wrapped("CERTIFICACION DE DATOS BANCARIOS", "Helvetica-Bold", 13, y, 18)
+    title = "CERTIFICACION DE DATOS BANCARIOS" if language == "ES" else "BANK DETAILS CERTIFICATION"
+    y = draw_wrapped(title, "Helvetica-Bold", 13, y, 18)
     y -= 12
 
     c.setFont("Helvetica", 10)
-    body = (
-        f"Por este medio, {display_company} brinda informacion fidedigna y confiable, "
-        "certificando que los datos bancarios registrados para el beneficiario indicado "
-        "son los siguientes:"
-    )
+    if language == "ES":
+        body = (
+            f"Por este medio, {display_company} brinda informacion fidedigna y confiable, "
+            "certificando que los datos bancarios registrados para el beneficiario indicado "
+            "son los siguientes:"
+        )
+    else:
+        body = (
+            f"By means of this letter, {display_company} provides true and reliable information, "
+            "certifying that the bank details registered for the indicated beneficiary are as follows:"
+        )
     y = draw_wrapped(body, "Helvetica", 10, y)
     y -= 18
 
-    details = [
-        ("Beneficiario", row.get("beneficiary_name")),
-        ("Banco", row.get("bank_name")),
-        ("Moneda", row.get("currency")),
-        ("Cuenta IBAN", row.get("iban")),
-        ("Swift Code", row.get("swift_code")),
-        ("UID", row.get("uid")),
-        ("Direccion del banco", row.get("bank_address")),
-    ]
+    if language == "ES":
+        details = [
+            ("Beneficiario", row.get("beneficiary_name")),
+            ("Banco", row.get("bank_name")),
+            ("Moneda", row.get("currency")),
+            ("Cuenta IBAN", row.get("iban")),
+            ("Swift Code", row.get("swift_code")),
+            ("UID", row.get("uid")),
+            ("Direccion del banco", row.get("bank_address")),
+        ]
+    else:
+        details = [
+            ("Beneficiary", row.get("beneficiary_name")),
+            ("Bank", row.get("bank_name")),
+            ("Currency", row.get("currency")),
+            ("IBAN Account", row.get("iban")),
+            ("Swift Code", row.get("swift_code")),
+            ("UID", row.get("uid")),
+            ("Bank address", row.get("bank_address")),
+        ]
     label_w = 1.75 * inch
     value_x = left + label_w + 0.15 * inch
     for label, value in details:
@@ -321,12 +341,12 @@ def _build_bank_letter_pdf(row: dict, company: str, company_name: str | None) ->
         y -= 24
 
     y -= 12
-    y = draw_wrapped(
-        "Se extiende la presente para los fines que el interesado estime convenientes.",
-        "Helvetica",
-        10,
-        y,
+    closing = (
+        "Se extiende la presente para los fines que el interesado estime convenientes."
+        if language == "ES"
+        else "This certification is issued for any purpose the interested party may deem appropriate."
     )
+    y = draw_wrapped(closing, "Helvetica", 10, y)
 
     if y < footer_y + 1.65 * inch:
         c.showPage()
@@ -489,6 +509,7 @@ def export_bank_account_letter_pdf(
     x_bank_access_token: str | None = Header(None, alias="X-Bank-Access-Token"),
     x_company_code: str | None = Header(None, alias="X-Company-Code"),
     x_company_name: str | None = Header(None, alias="X-Company-Name"),
+    x_document_language: str | None = Header(None, alias="X-Document-Language"),
     user=Depends(get_current_user),
     conn=Depends(get_db),
 ):
@@ -511,7 +532,7 @@ def export_bank_account_letter_pdf(
         if not row:
             raise HTTPException(status_code=404, detail="Dato bancario no encontrado")
 
-    pdf_bytes = _build_bank_letter_pdf(dict(row), company, x_company_name)
+    pdf_bytes = _build_bank_letter_pdf(dict(row), company, x_company_name, x_document_language or "ES")
     filename = f"Carta_Bancaria_{_safe_filename(row.get('beneficiary_name'))}.pdf"
     return StreamingResponse(
         io.BytesIO(pdf_bytes),

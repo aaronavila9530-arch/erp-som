@@ -48,6 +48,7 @@ class PopupBankAccounts(tk.Toplevel):
         self.rows = []
         self.selected_id = None
         self.company_var = tk.StringVar(value=_default_company_label())
+        self.language_var = tk.StringVar(value="Español")
         self.vars = {
             "bank_name": tk.StringVar(),
             "currency": tk.StringVar(value="CRC"),
@@ -87,6 +88,15 @@ class PopupBankAccounts(tk.Toplevel):
         )
         self.company_combo.pack(side="left", padx=8)
         self.company_combo.bind("<<ComboboxSelected>>", self._on_company_change)
+
+        tk.Label(company_bar, text="Idioma carta:", bg=COLOR_BG, fg=COLOR_MENU, font=("Arial", 9, "bold")).pack(side="left", padx=(14, 0))
+        ttk.Combobox(
+            company_bar,
+            textvariable=self.language_var,
+            values=["Español", "English"],
+            state="readonly",
+            width=10,
+        ).pack(side="left", padx=6)
 
         self.status_var = tk.StringVar(value="Seleccione empresa y presione Revalidar para cargar datos bancarios.")
         tk.Label(
@@ -307,6 +317,7 @@ class PopupBankAccounts(tk.Toplevel):
                     output_path,
                     company_code=company_code,
                     company_name=company_name,
+                    language="EN" if self.language_var.get() == "English" else "ES",
                 )
                 messagebox.showinfo("Datos bancarios", f"Carta exportada:\n{output_path}", parent=self)
                 try:
