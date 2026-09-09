@@ -1,6 +1,5 @@
 import * as LocalAuthentication from "expo-local-authentication";
-import * as FileSystem from "expo-file-system/legacy";
-import { File as ExpoFile } from "expo-file-system";
+import { File as ExpoFile, Paths } from "expo-file-system";
 import * as DocumentPicker from "expo-document-picker";
 import * as IntentLauncher from "expo-intent-launcher";
 import * as Notifications from "expo-notifications";
@@ -53,7 +52,7 @@ const COMPANIES = [
   { code: "MCI-CR", name: "MSL MARINE CLAIMS RISK & INTELLIGENCE", label: "MCI" }
 ];
 const DEFAULT_COMPANY = COMPANIES[0];
-const MOBILE_APP_VERSION = "1.7.35";
+const MOBILE_APP_VERSION = "1.7.36";
 const KIOSK_USER = (process.env.EXPO_PUBLIC_ERP_SOM_KIOSK_USER || "").trim();
 const KIOSK_NAME = (process.env.EXPO_PUBLIC_ERP_SOM_KIOSK_NAME || KIOSK_USER || "").trim();
 const IS_KIOSK_APP = Boolean(KIOSK_USER);
@@ -1512,9 +1511,7 @@ function ComercialCotizacionesView({
         request_role: session.rol,
         ticket
       });
-      const extension = format === "word" ? "docx" : "pdf";
-      const filename = cleanFilePart(`Cotizacion_${quotationNumber || "export"}`) + `.${extension}`;
-      await downloadSessionFile(`/comercial/cotizaciones/export/${format}?${params.toString()}`, session, filename);
+      await openRemoteDownloadUrl(`${API_BASE_URL}/comercial/cotizaciones/export/${format}?${params.toString()}`);
       setMessage(`Cotizacion ${format.toUpperCase()} generada correctamente.`);
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "No se pudo abrir la descarga.");
@@ -2358,7 +2355,7 @@ async function openDownloadedFile(uri: string, filename: string, mimeType?: stri
   const type = mimeType || mimeFromFilename(filename);
   if (Platform.OS === "android") {
     try {
-      const contentUri = await FileSystem.getContentUriAsync(uri);
+      const contentUri = new ExpoFile(uri).contentUri;
       await IntentLauncher.startActivityAsync("android.intent.action.VIEW", {
         data: contentUri,
         type,
@@ -2381,6 +2378,15 @@ async function openDownloadedFile(uri: string, filename: string, mimeType?: stri
   await Linking.openURL(uri);
 }
 
+async function openRemoteDownloadUrl(url: string) {
+  const supported = await Linking.canOpenURL(url);
+  if (!supported) {
+    await Share.share({ message: url });
+    return;
+  }
+  await Linking.openURL(url);
+}
+
 async function downloadSessionFile(
   endpoint: string,
   session: LoginResponse | null | { usuario: string; rol: string },
@@ -2388,7 +2394,8 @@ async function downloadSessionFile(
   method: "GET" | "POST" | "PUT" = "GET",
   body?: Record<string, unknown>
 ) {
-  const fileUri = `${FileSystem.cacheDirectory || ""}${cleanFilePart(filename)}`;
+  const targetFile = cacheFileFor(filename);
+  const fileUri = targetFile.uri;
   const companySession = session as (Session | null);
   const headers: Record<string, string> = session
     ? {
@@ -2403,10 +2410,7 @@ async function downloadSessionFile(
   if (body) headers["Content-Type"] = "application/json";
 
   if (method === "GET" && !body) {
-    const result = await FileSystem.downloadAsync(`${API_BASE_URL}${endpoint}`, fileUri, { headers });
-    if (result.status < 200 || result.status >= 300) {
-      throw new Error(`Error descargando archivo (${result.status}).`);
-    }
+    const result = await ExpoFile.downloadFileAsync(`${API_BASE_URL}${endpoint}`, targetFile, { headers, idempotent: true });
     await openDownloadedFile(result.uri, filename);
     return;
   }
@@ -2435,30 +2439,8 @@ async function downloadSessionFile(
   await openDownloadedFile(fileUri, filename);
 }
 
-async function downloadFileWithHeaders(url: string, fileUri: string, headers: Record<string, string>, filename: string, mimeType?: string) {
-  const result = await FileSystem.downloadAsync(url, fileUri, { headers });
-  if (result.status >= 200 && result.status < 300) {
-    await openDownloadedFile(result.uri, filename, mimeType);
-    return;
-  }
-
-  const response = await fetch(url, { method: "GET", headers });
-  const bytes = new Uint8Array(await response.arrayBuffer());
-
-  if (!response.ok) {
-    let detail = `Error descargando archivo (${response.status}).`;
-    try {
-      const text = new TextDecoder().decode(bytes);
-      const parsed = JSON.parse(text) as Record<string, unknown>;
-      detail = formatValue(parsed.detail || parsed.error || parsed.message || text);
-    } catch {
-      // Keep generic download error for binary or malformed error responses.
-    }
-    throw new Error(detail);
-  }
-
-  writeBytesToCacheFile(fileUri, bytes);
-  await openDownloadedFile(fileUri, filename, mimeType);
+function cacheFileFor(filename: string) {
+  return new ExpoFile(Paths.cache, cleanFilePart(filename));
 }
 
 function writeBytesToCacheFile(fileUri: string, bytes: Uint8Array) {
@@ -3178,7 +3160,7 @@ function InformesSectionMobile({
       const title = cleanFilePart(formatValue(report.title || `ONG_${id}`));
       const extension = kind === "word" ? "doc" : "html";
       const filename = `${title}_${kind === "word" ? "WORD" : "PDF"}.${extension}`;
-      const uri = `${FileSystem.cacheDirectory || ""}${filename}`;
+      const uri = cacheFileFor(filename).uri;
       writeTextToCacheFile(uri, html);
       await openDownloadedFile(uri, filename, kind === "word" ? "application/msword" : "text/html");
       setMessage(kind === "word" ? "Word ONG generado correctamente." : "Reporte ONG abierto. Use imprimir/guardar como PDF desde el telefono.");
@@ -4915,21 +4897,18 @@ function LograMobileModal({
         await Linking.openURL(downloadUrl);
         return;
       }
-      const fileUri = `${FileSystem.cacheDirectory || ""}${Date.now()}_${filename}`;
+      const fileUri = cacheFileFor(`${Date.now()}_${filename}`).uri;
       const headers = {
         Accept: "application/octet-stream, application/pdf, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, */*",
         "X-User": session.usuario,
         "X-Role": session.rol,
         "X-User-Role": session.rol
       };
-      const result = await FileSystem.downloadAsync(
+      const result = await ExpoFile.downloadFileAsync(
         downloadUrl,
-        fileUri,
-        { headers }
+        new ExpoFile(fileUri),
+        { headers, idempotent: true }
       );
-      if (result.status < 200 || result.status >= 300) {
-        throw new Error(`No se pudo descargar el adjunto (${result.status}).`);
-      }
       await openDownloadedFile(result.uri, filename, attachment.content_type);
     } catch (err) {
       Alert.alert("ONG", err instanceof Error ? err.message : "No se pudo abrir el adjunto.");
@@ -10957,7 +10936,7 @@ async function importMasterRecordsFromCsv({
   });
   if (picked.canceled || !picked.assets?.length) return null;
 
-  const content = await FileSystem.readAsStringAsync(picked.assets[0].uri);
+  const content = await new ExpoFile(picked.assets[0].uri).text();
   const records = parseMasterCsv(content, config).filter((row) => Object.values(row).some((value) => String(value || "").trim()));
   if (!records.length) {
     throw new Error("El archivo no contiene lineas para cargar.");
@@ -10987,7 +10966,8 @@ async function importMasterRecordsFromCsv({
 async function downloadMasterFormTemplate(sectionKey: string, config: MasterFormConfig, session: Session, format: "word" | "excel") {
   const extension = format === "word" ? "docx" : "xlsx";
   const filename = `Formulario_MasterData_${config.title}_${session.company_code || DEFAULT_COMPANY.code}.${extension}`;
-  await downloadSessionFile(`/master-data/forms/${encodeURIComponent(sectionKey)}/${format}`, session, cleanFilePart(filename));
+  const params = new URLSearchParams({ filename: cleanFilePart(filename) });
+  await openRemoteDownloadUrl(`${API_BASE_URL}/master-data/forms/${encodeURIComponent(sectionKey)}/${format}?${params.toString()}`);
 }
 
 function MasterDataHomeActions({
@@ -11705,23 +11685,16 @@ function BankAccountsModal({
     setBusy(true);
     setMessage("");
     try {
-      const filename = `Carta_Bancaria_${selectedId}.pdf`;
-      const fileUri = `${FileSystem.cacheDirectory}${filename}`;
-      await downloadFileWithHeaders(
-        `${API_BASE_URL}/master-data/bank-accounts/${encodeURIComponent(selectedId)}/letter.pdf`,
-        fileUri,
-        {
-          "X-User": session.usuario,
-          "X-Role": session.rol,
-          "X-User-Role": session.rol,
-          "X-Company-Code": session.company_code || DEFAULT_COMPANY.code,
-          "X-Company-Name": session.company_name || DEFAULT_COMPANY.name,
-          "X-Bank-Access-Token": accessToken,
-          "X-Document-Language": letterLanguage
-        },
-        filename,
-        "application/pdf"
-      );
+      const params = new URLSearchParams({
+        request_user: session.usuario,
+        request_role: session.rol,
+        bank_access_token: accessToken,
+        company: session.company_code || DEFAULT_COMPANY.code,
+        company_name: session.company_name || DEFAULT_COMPANY.name,
+        language: letterLanguage
+      });
+      await openRemoteDownloadUrl(`${API_BASE_URL}/master-data/bank-accounts/${encodeURIComponent(selectedId)}/letter-download.pdf?${params.toString()}`);
+      setMessage("Abriendo carta bancaria PDF...");
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "No se pudo exportar PDF.");
     } finally {

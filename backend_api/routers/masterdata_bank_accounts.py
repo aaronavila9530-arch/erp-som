@@ -7,7 +7,7 @@ import secrets
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from psycopg2.extras import RealDictCursor
@@ -565,6 +565,48 @@ def export_bank_account_letter_pdf(
             raise HTTPException(status_code=404, detail="Dato bancario no encontrado")
 
     pdf_bytes = _build_bank_letter_pdf(dict(row), company, x_company_name, x_document_language or "ES")
+    filename = f"Carta_Bancaria_{_safe_filename(row.get('beneficiary_name'))}.pdf"
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/{bank_account_id}/letter-download.pdf")
+def export_bank_account_letter_pdf_by_token(
+    bank_account_id: int,
+    request_user: str = Query(""),
+    request_role: str = Query(""),
+    bank_access_token: str = Query(""),
+    company: str = Query("MSL-CR"),
+    company_name: str | None = Query(None),
+    language: str = Query("ES"),
+    conn=Depends(get_db),
+):
+    user = {"usuario": str(request_user or "").strip(), "rol": str(request_role or "").strip()}
+    if not user["usuario"] or not user["rol"]:
+        raise HTTPException(status_code=401, detail="Usuario no autenticado")
+    selected_company = company_code(header_value=company)
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        _ensure_schema(cur)
+        _require_sensitive_permission(cur, user)
+        _require_bank_token(cur, bank_access_token, user, selected_company)
+        cur.execute(
+            """
+            SELECT id, company_code, bank_name, currency, iban, swift_code,
+                   bank_address, uid, beneficiary_name
+            FROM masterdata_bank_accounts
+            WHERE id=%s AND company_code=%s AND active=TRUE
+            LIMIT 1
+            """,
+            (bank_account_id, selected_company),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Dato bancario no encontrado")
+
+    pdf_bytes = _build_bank_letter_pdf(dict(row), selected_company, company_name, language or "ES")
     filename = f"Carta_Bancaria_{_safe_filename(row.get('beneficiary_name'))}.pdf"
     return StreamingResponse(
         io.BytesIO(pdf_bytes),
