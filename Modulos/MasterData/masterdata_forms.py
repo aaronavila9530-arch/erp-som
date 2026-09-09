@@ -85,6 +85,14 @@ FORM_SPECS: dict[str, MasterDataFormSpec] = {
         ),
         required_fields=("nombre", "apellidos", "pais_o_nacionalidad"),
     ),
+    "servicio": MasterDataFormSpec(
+        key="servicio",
+        label="Servicio",
+        endpoint="/servicios_md",
+        code_field="codigo",
+        fields=("codigo_prod", "nombre", "costo"),
+        required_fields=("nombre",),
+    ),
 }
 
 
@@ -159,6 +167,8 @@ FIELD_LABELS = {
     "swift": "Swift Code / Swift code",
     "uid": "UID / UID",
     "puerto": "Puerto / Port",
+    "codigo_prod": "Codigo producto / Product code",
+    "costo": "Costo / Cost",
 }
 
 LABEL_TO_FIELD = {label.strip().lower(): field for field, label in FIELD_LABELS.items()}

@@ -60,6 +60,7 @@ from routers.mobile_auth import router as mobile_auth_router
 from routers.user_admin import router as user_admin_router
 from routers.companies import router as companies_router
 from routers.masterdata_bank_accounts import router as masterdata_bank_accounts_router
+from routers.masterdata_forms import router as masterdata_forms_router
 
 # HHRR
 from routers import hr
@@ -254,6 +255,7 @@ app.include_router(mobile_auth_router)
 app.include_router(user_admin_router)
 app.include_router(companies_router)
 app.include_router(masterdata_bank_accounts_router)
+app.include_router(masterdata_forms_router)
 
 app.include_router(hr.router)
 app.include_router(hr_ot_log_router)

@@ -52,7 +52,7 @@ const COMPANIES = [
   { code: "MCI-CR", name: "MSL MARINE CLAIMS RISK & INTELLIGENCE", label: "MCI" }
 ];
 const DEFAULT_COMPANY = COMPANIES[0];
-const MOBILE_APP_VERSION = "1.7.33";
+const MOBILE_APP_VERSION = "1.7.34";
 const KIOSK_USER = (process.env.EXPO_PUBLIC_ERP_SOM_KIOSK_USER || "").trim();
 const KIOSK_NAME = (process.env.EXPO_PUBLIC_ERP_SOM_KIOSK_NAME || KIOSK_USER || "").trim();
 const IS_KIOSK_APP = Boolean(KIOSK_USER);
@@ -2405,6 +2405,15 @@ async function downloadSessionFile(
     : { Accept: "application/octet-stream, application/pdf, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, */*" };
   if (body) headers["Content-Type"] = "application/json";
 
+  if (method === "GET" && !body) {
+    const result = await FileSystem.downloadAsync(`${API_BASE_URL}${endpoint}`, fileUri, { headers });
+    if (result.status < 200 || result.status >= 300) {
+      throw new Error(`Error descargando archivo (${result.status}).`);
+    }
+    await openDownloadedFile(result.uri, filename);
+    return;
+  }
+
   const response = await fetch(`${API_BASE_URL}${endpoint}`, {
     method,
     headers,
@@ -2437,6 +2446,12 @@ async function downloadSessionFile(
 }
 
 async function downloadFileWithHeaders(url: string, fileUri: string, headers: Record<string, string>, filename: string, mimeType?: string) {
+  const result = await FileSystem.downloadAsync(url, fileUri, { headers });
+  if (result.status >= 200 && result.status < 300) {
+    await openDownloadedFile(result.uri, filename, mimeType);
+    return;
+  }
+
   const response = await fetch(url, { method: "GET", headers });
   const bytes = new Uint8Array(await response.arrayBuffer());
 
@@ -10787,6 +10802,12 @@ const MASTER_FORMS: Record<string, MasterFormConfig> = {
       { key: "jornada", label: "Jornada", options: WORKDAYS },
       { key: "salario", label: "Salario" },
       { key: "pago", label: "Pago", options: PAYMENT_FREQUENCY },
+      { key: "fecha_ingreso", label: "Fecha ingreso" },
+      { key: "horas_contratadas", label: "Horas pactadas" },
+      { key: "horas_tope_ordinario", label: "Primer aviso / tope ordinario" },
+      { key: "horas_tope_maximo", label: "Segundo aviso / tope maximo" },
+      { key: "tarifa_hora_extra", label: "Tarifa hora extra" },
+      { key: "pago_minimo_garantizado", label: "Pago minimo garantizado" },
       { key: "banco", label: "Banco" },
       { key: "cuenta_iban", label: "Cuenta IBAN" },
       { key: "moneda", label: "Moneda", options: CURRENCIES },
@@ -10968,10 +10989,10 @@ async function importMasterRecordsFromCsv({
   return { created, updated, errors };
 }
 
-async function shareMasterCsvTemplate(config: MasterFormConfig, session: Session) {
-  const filename = `Formulario_MasterData_${config.title}_${session.company_code || DEFAULT_COMPANY.code}.csv`;
-  const csv = buildMasterCsvTemplate(config);
-  await Share.share({ title: filename, message: `${filename}\n\n${csv}` });
+async function downloadMasterFormTemplate(sectionKey: string, config: MasterFormConfig, session: Session, format: "word" | "excel") {
+  const extension = format === "word" ? "docx" : "xlsx";
+  const filename = `Formulario_MasterData_${config.title}_${session.company_code || DEFAULT_COMPANY.code}.${extension}`;
+  await downloadSessionFile(`/master-data/forms/${encodeURIComponent(sectionKey)}/${format}`, session, cleanFilePart(filename));
 }
 
 function MasterDataHomeActions({
@@ -10987,6 +11008,7 @@ function MasterDataHomeActions({
   const [entityKey, setEntityKey] = useState(sections[0]?.key || "clientes");
   const [companyFiscalOpen, setCompanyFiscalOpen] = useState(false);
   const [bankAccountsOpen, setBankAccountsOpen] = useState(false);
+  const [exportFormat, setExportFormat] = useState<"word" | "excel">("excel");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
 
@@ -10998,7 +11020,7 @@ function MasterDataHomeActions({
     setBusy(true);
     setMessage("");
     try {
-      await shareMasterCsvTemplate(selectedConfig, session);
+      await downloadMasterFormTemplate(entityKey, selectedConfig, session, exportFormat);
       setMessage("Plantilla exportada.");
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "No se pudo exportar.");
@@ -11036,6 +11058,7 @@ function MasterDataHomeActions({
           if (next) setEntityKey(next.key);
         }}
       />
+      <SelectField label="Formato exportable" value={exportFormat === "word" ? "Word" : "Excel"} options={["Excel", "Word"]} onChange={(value) => setExportFormat(value === "Word" ? "word" : "excel")} />
       <View style={styles.masterMobileActions}>
         <Pressable style={styles.actionButton} onPress={exportForm} disabled={busy}>
           <Text style={styles.actionButtonText}>Exportar formulario</Text>
@@ -11081,6 +11104,8 @@ function DesktopTable({
   const [serviceDetail, setServiceDetail] = useState<Record<string, unknown> | null>(null);
   const [companyFiscalOpen, setCompanyFiscalOpen] = useState(false);
   const [bankAccountsOpen, setBankAccountsOpen] = useState(false);
+  const [masterExportFormat, setMasterExportFormat] = useState<"word" | "excel">("excel");
+  const [itpPaymentOpen, setItpPaymentOpen] = useState(false);
   const [tableRows, setTableRows] = useState(rows);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -11235,7 +11260,7 @@ function DesktopTable({
     if (!masterForm) return;
     setMessage("");
     try {
-      await shareMasterCsvTemplate(masterForm, session);
+      await downloadMasterFormTemplate(section.key, masterForm, session, masterExportFormat);
       setMessage("Plantilla generada para llenar y cargar de nuevo.");
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "No se pudo exportar la plantilla.");
@@ -11276,6 +11301,7 @@ function DesktopTable({
         <View style={styles.masterMobilePanel}>
           <Text style={styles.cardTitle}>Acciones Master Data</Text>
           <Text style={styles.helperText}>Plantillas, carga masiva y datos fiscales de {session.company_name || DEFAULT_COMPANY.name}.</Text>
+          <SelectField label="Formato exportable" value={masterExportFormat === "word" ? "Word" : "Excel"} options={["Excel", "Word"]} onChange={(value) => setMasterExportFormat(value === "Word" ? "word" : "excel")} />
           <View style={styles.masterMobileActions}>
             <Pressable style={styles.actionButton} onPress={exportMasterForm}>
               <Text style={styles.actionButtonText}>Exportar form</Text>
@@ -11337,6 +11363,11 @@ function DesktopTable({
             <Text style={styles.actionButtonText}>{action.label}</Text>
           </Pressable>
         ))}
+        {section.key === "invoice-to-pay" ? (
+          <Pressable style={styles.actionButton} onPress={() => selectedRow ? setItpPaymentOpen(true) : setMessage("Seleccione una obligacion primero.")}>
+            <Text style={styles.actionButtonText}>Aplicar pago</Text>
+          </Pressable>
+        ) : null}
       </ScrollView>
 
       {busy ? <ActivityIndicator color={BLUE} style={styles.loader} /> : null}
@@ -11418,6 +11449,16 @@ function DesktopTable({
         visible={bankAccountsOpen}
         session={session}
         onClose={() => setBankAccountsOpen(false)}
+      />
+      <ItpApplyPaymentModal
+        visible={itpPaymentOpen}
+        row={selectedRow}
+        session={session}
+        onClose={() => setItpPaymentOpen(false)}
+        onSaved={() => {
+          setItpPaymentOpen(false);
+          onReload();
+        }}
       />
     </View>
   );
@@ -14235,6 +14276,105 @@ function MasterDataModal({
   );
 }
 
+function ItpApplyPaymentModal({
+  visible,
+  row,
+  session,
+  onClose,
+  onSaved
+}: {
+  visible: boolean;
+  row: Record<string, unknown> | null;
+  session: NonNullable<ReturnType<typeof useAuth>["session"]>;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [amount, setAmount] = useState("");
+  const [paymentDate, setPaymentDate] = useState(today);
+  const [bankCode, setBankCode] = useState("1.1.02.02.01");
+  const [bankName, setBankName] = useState("Banco BAC San Jose");
+  const [depositNumber, setDepositNumber] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    if (!visible) return;
+    setAmount(formatValue(row?.balance || row?.saldo || row?.total || ""));
+    setPaymentDate(today);
+    setBankCode("1.1.02.02.01");
+    setBankName("Banco BAC San Jose");
+    setDepositNumber("");
+    setMessage("");
+  }, [row, visible]);
+
+  async function apply() {
+    const obligationId = formatValue(row?.id);
+    const amountValue = String(amount || "").trim().replace(/,/g, "");
+    if (!obligationId || obligationId === "-") {
+      setMessage("Seleccione una obligacion valida.");
+      return;
+    }
+    if (!amountValue || Number(amountValue) <= 0 || !Number.isFinite(Number(amountValue))) {
+      setMessage("Ingrese un monto valido.");
+      return;
+    }
+    if (!paymentDate.trim() || !bankCode.trim() || !depositNumber.trim()) {
+      setMessage("Fecha, cuenta contable banco y numero de deposito/pago son obligatorios.");
+      return;
+    }
+    const params = new URLSearchParams();
+    params.set("obligation_id", obligationId);
+    params.set("amount", amountValue);
+    params.set("payment_date", paymentDate.trim());
+    params.set("bank_account_code", bankCode.trim());
+    params.set("bank_account_name", bankName.trim());
+    params.set("bank_name", bankName.trim());
+    params.set("payment_reference", depositNumber.trim());
+    setBusy(true);
+    setMessage("");
+    try {
+      const payload = await apiRequest<Record<string, unknown>>(`/invoice-to-pay/apply-payment?${params.toString()}`, {
+        method: "POST",
+        session
+      });
+      setMessage(`Pago aplicado. Saldo nuevo: ${formatValue(payload.new_balance)} | Estado: ${formatValue(payload.status)}.`);
+      onSaved();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo aplicar el pago.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+      <SafeAreaView style={styles.modalScreen}>
+        <View style={styles.modalHeader}>
+          <Text style={styles.modalTitle}>Aplicar pago ITP</Text>
+          <Pressable style={styles.modalClose} onPress={onClose}>
+            <Text style={styles.modalCloseText}>Cerrar</Text>
+          </Pressable>
+        </View>
+        <ScrollView contentContainerStyle={styles.modalBody} keyboardShouldPersistTaps="handled">
+          {row ? <MiniRecordCard row={row} titleKeys={["payee_name", "beneficiario", "referencia"]} /> : null}
+          <Text style={styles.label}>Monto a pagar</Text>
+          <TextInput style={styles.input} value={amount} keyboardType="decimal-pad" onChangeText={setAmount} />
+          <DateField label="Fecha de pago" value={paymentDate} onChange={setPaymentDate} />
+          <Text style={styles.label}>Cuenta contable banco</Text>
+          <TextInput style={styles.input} value={bankCode} onChangeText={setBankCode} placeholder="Ej. 1.1.02.02.01" />
+          <Text style={styles.label}>Banco / nombre cuenta</Text>
+          <TextInput style={styles.input} value={bankName} onChangeText={setBankName} />
+          <Text style={styles.label}>Numero deposito / comprobante</Text>
+          <TextInput style={styles.input} value={depositNumber} onChangeText={setDepositNumber} />
+          <PrimaryButton label="Aplicar pago y postear" loading={busy} onPress={apply} />
+          {message ? <Text style={message.includes("aplicado") ? styles.helperText : styles.error}>{message}</Text> : null}
+        </ScrollView>
+      </SafeAreaView>
+    </Modal>
+  );
+}
+
 function readMasterValue(data: Record<string, unknown>, field: MasterField) {
   const keys = [field.key, ...(field.source || [])];
   for (const key of keys) {
@@ -14248,7 +14388,11 @@ function normalizeMasterPayload(sectionKey: string, form: Record<string, string>
   if (sectionKey === "empleados") {
     return {
       ...form,
-      salario: form.salario ? form.salario.replace(",", ".") : null
+      salario: form.salario ? form.salario.replace(",", ".") : null,
+      horas_contratadas: form.horas_contratadas ? form.horas_contratadas.replace(",", ".") : null,
+      horas_tope_ordinario: form.horas_tope_ordinario ? form.horas_tope_ordinario.replace(",", ".") : null,
+      horas_tope_maximo: form.horas_tope_maximo ? form.horas_tope_maximo.replace(",", ".") : null,
+      tarifa_hora_extra: form.tarifa_hora_extra ? form.tarifa_hora_extra.replace(",", ".") : null
     };
   }
 
@@ -15089,17 +15233,22 @@ function ItpBiweeklyObligationsMobile({
     }
   }
 
-  async function shareCsv() {
+  async function exportExcel() {
     if (!rows.length) {
       setMessage("Primero genere el preview.");
       return;
     }
-    const columns = ["category", "name", "amount", "currency", "bank_account", "bank_accounting_code", "bank_voucher", "due_date", "obligation_id", "reference", "source", "notes"];
     try {
-      await Share.share({ title: `Obligaciones_${period}_Q${fortnight}`, message: buildCsv(rows, columns) });
-      setMessage("Resumen enviado al menu de compartir.");
+      await downloadSessionFile(
+        "/invoice-to-pay/biweekly-obligations/export.xlsx",
+        session,
+        cleanFilePart(`Obligaciones_Quincenales_${period}_Q${fortnight}.xlsx`),
+        "POST",
+        { period, fortnight: Number(fortnight), rows }
+      );
+      setMessage("Excel generado.");
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : "No se pudo compartir el resumen.");
+      setMessage(err instanceof Error ? err.message : "No se pudo exportar Excel.");
     }
   }
 
@@ -15115,7 +15264,7 @@ function ItpBiweeklyObligationsMobile({
       <SelectField label="Quincena" value={fortnight} options={["1", "2"]} onChange={setFortnight} />
       <View style={styles.financeFilterActions}>
         <Pressable style={styles.actionButton} onPress={loadPreview} disabled={busy}><Text style={styles.actionButtonText}>{busy ? "Procesando..." : "Generar automatico"}</Text></Pressable>
-        <Pressable style={styles.modalClose} onPress={shareCsv}><Text style={styles.modalCloseText}>Exportar CSV</Text></Pressable>
+        <Pressable style={styles.modalClose} onPress={exportExcel}><Text style={styles.modalCloseText}>Exportar Excel</Text></Pressable>
       </View>
       <View style={styles.financeFilterActions}>
         <Pressable style={styles.secondaryButtonCompact} onPress={() => addRow("Surveyors")}><Text style={styles.secondaryButtonText}>+ Surveyor</Text></Pressable>

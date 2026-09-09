@@ -8,11 +8,13 @@ from fastapi import (
     File,
     Form
 )
+from fastapi.responses import StreamingResponse
 from psycopg2.extras import RealDictCursor
 from psycopg2.extras import Json
 from datetime import date, datetime
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Optional
+import io
 import os
 import shutil
 
@@ -909,6 +911,65 @@ def biweekly_obligations_apply(
         conn.rollback()
         raise HTTPException(status_code=500, detail=f"No se pudo aplicar obligaciones quincenales: {exc}")
 
+
+@router.post("/biweekly-obligations/export.xlsx")
+def biweekly_obligations_export(payload: dict):
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"No se pudo cargar motor Excel: {exc}")
+
+    rows = payload.get("rows") or []
+    if not isinstance(rows, list):
+        raise HTTPException(status_code=400, detail="Lineas invalidas")
+
+    columns = [
+        ("category", "Rubro"),
+        ("name", "Nombre / beneficiario"),
+        ("amount", "Monto"),
+        ("currency", "Moneda"),
+        ("bank_account", "Cuenta bancaria destino"),
+        ("bank_accounting_code", "Cuenta contable banco"),
+        ("bank_voucher", "Comprobante"),
+        ("due_date", "Fecha pago"),
+        ("obligation_id", "ITP ID"),
+        ("reference", "Referencia"),
+        ("source", "Fuente"),
+        ("notes", "Notas"),
+    ]
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Obligaciones"
+    period = str(payload.get("period") or "")
+    fortnight = str(payload.get("fortnight") or "")
+    ws["A1"] = f"Obligaciones quincenales {period} Q{fortnight}"
+    ws["A1"].font = Font(bold=True, size=14)
+    ws.append([])
+    ws.append([label for _, label in columns])
+    for cell in ws[3]:
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill("solid", fgColor="003A75")
+
+    for item in rows:
+        if not isinstance(item, dict):
+            continue
+        ws.append([item.get(key) for key, _ in columns])
+
+    for column_cells in ws.columns:
+        width = min(max(len(str(cell.value or "")) for cell in column_cells) + 2, 46)
+        ws.column_dimensions[column_cells[0].column_letter].width = width
+
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+    filename = f"Obligaciones_Quincenales_{period or 'periodo'}_Q{fortnight or '1'}.xlsx"
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
 # ============================================================
 # 3️⃣ APPLY PAYMENT — BLINDADO FINANCIERO
 # ============================================================
@@ -922,6 +983,7 @@ def apply_payment(
     bank_account_code: Optional[str] = Query(None),
     bank_account_name: Optional[str] = Query(None),
     bank_name: Optional[str] = Query(None),
+    payment_reference: Optional[str] = Query(None),
     conn=Depends(get_db),
     x_user: str | None = Header(None, alias="X-User"),
     x_role: str | None = Header(None, alias="X-Role"),
@@ -948,6 +1010,11 @@ def apply_payment(
             ALTER TABLE payment_obligations
             ADD COLUMN IF NOT EXISTS payment_bank_account_name TEXT
         """)
+        cur.execute("""
+            ALTER TABLE payment_obligations
+            ADD COLUMN IF NOT EXISTS payment_reference TEXT
+        """)
+        payment_reference = str(payment_reference or "").strip()
 
         # =====================================================
         # 1️⃣ BLOQUEAR FILA (ANTI CONCURRENCIA)
@@ -1075,6 +1142,7 @@ def apply_payment(
                 payment_bank = %s,
                 payment_bank_account_code = %s,
                 payment_bank_account_name = %s,
+                payment_reference = %s,
                 updated_at = NOW()
             WHERE id = %s
         """, (
@@ -1084,6 +1152,7 @@ def apply_payment(
             bank_name or None,
             bank_account_code or None,
             bank_account_name or None,
+            payment_reference or None,
             obligation_id
         ))
 
@@ -1107,6 +1176,7 @@ def apply_payment(
                 "withholding_usd": str(settlement["withholding"]),
                 "net_payment_usd": str(settlement["net_payment"]),
                 "payment_date": payment_date,
+                "payment_reference": payment_reference or None,
                 "bank_account_code": bank_account_code or None,
                 "bank_account_name": bank_account_name or None,
                 "new_balance": str(new_balance),
