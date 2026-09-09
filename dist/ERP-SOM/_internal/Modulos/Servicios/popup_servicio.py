@@ -1,5 +1,6 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
+import re
 from Modulos.Servicios.widgets.date_picker import DatePicker
 from Modulos.Servicios.widgets.time_picker import TimePicker
 from Modulos.Servicios.date_utils import LONG_DATE_FORMAT, to_db_date
@@ -24,6 +25,9 @@ class PopupServicio(tk.Toplevel):
         self.configure(bg="white")
         self.resizable(False, False)
         self.on_success = on_success
+        self._valid_continentes = set()
+        self._valid_paises = set()
+        self._valid_puertos = set()
 
         self._build_ui()
         self.load_initial_data()
@@ -111,38 +115,38 @@ class PopupServicio(tk.Toplevel):
 
         # FECHA INICIO
         ttk.Label(self, text="Fecha inicio:", background="white").grid(
-            row=11, column=0, padx=pad, pady=pad, sticky="w"
+            row=12, column=0, padx=pad, pady=pad, sticky="w"
         )
         self.fecha_inicio = ttk.Entry(self, width=18)
-        self.fecha_inicio.grid(row=11, column=1, padx=pad, pady=pad)
+        self.fecha_inicio.grid(row=12, column=1, padx=pad, pady=pad)
 
         ttk.Button(
             self,
             text="📅",
             width=3,
             command=lambda: DatePicker(self, self.fecha_inicio, output_format=LONG_DATE_FORMAT)
-        ).grid(row=11, column=2, padx=pad)
+        ).grid(row=12, column=2, padx=pad)
 
         # HORA INICIO
         ttk.Label(self, text="Hora inicio:", background="white").grid(
-            row=12, column=0, padx=pad, pady=pad, sticky="w"
+            row=13, column=0, padx=pad, pady=pad, sticky="w"
         )
         self.hora_inicio = ttk.Entry(self, width=18)
-        self.hora_inicio.grid(row=12, column=1, padx=pad, pady=pad)
+        self.hora_inicio.grid(row=13, column=1, padx=pad, pady=pad)
 
         ttk.Button(
             self,
             text="⏱",
             width=3,
             command=lambda: TimePicker(self, self.hora_inicio)
-        ).grid(row=12, column=2, padx=pad)
+        ).grid(row=13, column=2, padx=pad)
 
         # Botones
         ttk.Button(self, text="Guardar", command=self.save).grid(
-            row=14, column=0, padx=pad, pady=pad
+            row=15, column=0, padx=pad, pady=pad
         )
         ttk.Button(self, text="Cancelar", command=self.destroy).grid(
-            row=14, column=1, padx=pad, pady=pad
+            row=15, column=1, padx=pad, pady=pad
         )
 
 
@@ -204,6 +208,7 @@ class PopupServicio(tk.Toplevel):
         # -----------------------------
         try:
             continentes = get_continentes_cpp_api()
+            self._valid_continentes = {str(item).strip() for item in continentes or [] if str(item).strip()}
             self.cmb_continente.config(values=continentes)
         except Exception as e:
             print("❌ Error cargando continentes:", e)
@@ -290,8 +295,11 @@ class PopupServicio(tk.Toplevel):
             else:
                 values = []
 
+            self._valid_paises = {str(item).strip() for item in values if str(item).strip()}
+            self._valid_puertos = set()
             self.cmb_pais.config(values=values)
             self.cmb_pais.set("")
+            self.cmb_puerto.config(values=[])
             self.cmb_puerto.set("")
 
         except Exception as e:
@@ -306,7 +314,7 @@ class PopupServicio(tk.Toplevel):
             return
 
         try:
-            raw = get_puertos_cpp_api(pais)
+            raw = get_puertos_cpp_api(pais, continente=self.cmb_continente.get().strip())
 
             # Normalizar formatos posibles
             if isinstance(raw, dict) and "data" in raw:
@@ -332,6 +340,7 @@ class PopupServicio(tk.Toplevel):
             else:
                 values = []
 
+            self._valid_puertos = {str(item).strip() for item in values if str(item).strip()}
             self.cmb_puerto.config(values=values)
             self.cmb_puerto.set("")
 
@@ -408,16 +417,68 @@ class PopupServicio(tk.Toplevel):
 
         return float(s)
 
+    def _validate_required_fields(self):
+        required = [
+            ("Tipo", self.tipo.get()),
+            ("Buque / Contenedor", self.bc.get()),
+            ("Cliente", self.cmb_cliente.get()),
+            ("Continente", self.cmb_continente.get()),
+            ("País", self.cmb_pais.get()),
+            ("Puerto", self.cmb_puerto.get()),
+            ("Operación", self.cmb_operacion.get()),
+            ("Surveyor", self.cmb_surveyor.get()),
+        ]
+        missing = [label for label, value in required if not str(value or "").strip()]
+
+        continente = self.cmb_continente.get().strip()
+        pais = self.cmb_pais.get().strip()
+        puerto = self.cmb_puerto.get().strip()
+        invalid = []
+        if continente and self._valid_continentes and continente not in self._valid_continentes:
+            invalid.append("Continente no pertenece al catálogo cargado")
+        if pais and self._valid_paises and pais not in self._valid_paises:
+            invalid.append("País no pertenece al continente seleccionado")
+        if puerto and self._valid_puertos and puerto not in self._valid_puertos:
+            invalid.append("Puerto no pertenece al país/continente seleccionado")
+
+        fecha_db = to_db_date(self.fecha_inicio.get())
+        if not fecha_db:
+            missing.append("Fecha inicio")
+
+        hora = self.hora_inicio.get().strip()
+        if not re.match(r"^\d{1,2}:\d{2}$", hora):
+            missing.append("Hora inicio")
+        else:
+            hh, mm = [int(part) for part in hora.split(":", 1)]
+            if hh > 23 or mm > 59:
+                missing.append("Hora inicio")
+
+        if missing:
+            messagebox.showerror(
+                "Campos obligatorios",
+                "Complete o corrija estos campos antes de guardar:\n\n"
+                + "\n".join(f"- {field}" for field in missing),
+                parent=self,
+            )
+            return None, None
+
+        if invalid:
+            messagebox.showerror(
+                "Ubicación inválida",
+                "La ubicación seleccionada no calza con la cascada:\n\n"
+                + "\n".join(f"- {item}" for item in invalid),
+                parent=self,
+            )
+            return None, None
+
+        return fecha_db, hora
 
     # =======================================================
     # Guardar → API
     # =======================================================
     def save(self):
-        if not self.tipo.get() or not self.bc.get():
-            messagebox.showerror(
-                "Error",
-                "Complete los campos obligatorios"
-            )
+        fecha_db, hora = self._validate_required_fields()
+        if not fecha_db:
             return
 
         # Validar y convertir montos
@@ -445,20 +506,24 @@ class PopupServicio(tk.Toplevel):
             "surveyor": self.cmb_surveyor.get(),
             "honorarios": honorarios_val,
             "costo_operativo": costo_op_val,
-            "fecha_inicio": to_db_date(self.fecha_inicio.get()),
-            "hora_inicio": self.hora_inicio.get(),
+            "fecha_inicio": fecha_db,
+            "hora_inicio": hora,
         }
 
-        resp = post_servicio(data)
-        if resp.get("status") == "OK":
-            messagebox.showinfo(
-                "Éxito",
-                "Servicio registrado correctamente"
-            )
-            self.on_success()
-            self.destroy()
-        else:
-            messagebox.showerror("Error API", resp)
+        try:
+            resp = post_servicio(data)
+            if resp.get("status") == "OK":
+                messagebox.showinfo(
+                    "Éxito",
+                    "Servicio registrado correctamente",
+                    parent=self,
+                )
+                self.on_success()
+                self.destroy()
+            else:
+                messagebox.showerror("Error API", str(resp), parent=self)
+        except Exception as exc:
+            messagebox.showerror("Error API", f"No se pudo guardar el servicio:\n{exc}", parent=self)
 
 
 

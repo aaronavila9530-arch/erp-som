@@ -51,6 +51,7 @@ class PopupEmpleado(tk.Toplevel):
         self.enfermedades = tk.StringVar()
         self.contacto_emergencia  = tk.StringVar()
         self.telefono_emergencia  = tk.StringVar()
+        self.activo = tk.BooleanVar(value=True)
 
         # Activos
         self.activo1  = tk.StringVar()
@@ -194,6 +195,13 @@ class PopupEmpleado(tk.Toplevel):
         )
         self.chk_pago_minimo.grid(row=5, column=2, columnspan=2, padx=10, pady=5, sticky="w")
 
+        self.chk_activo = ttk.Checkbutton(
+            tab3,
+            text="Empleado activo para HHRR, ITP y Accounting",
+            variable=self.activo
+        )
+        self.chk_activo.grid(row=6, column=0, columnspan=4, padx=10, pady=8, sticky="w")
+
         # ===================================================
         # TAB 4: Salud y Emergencia
         # ===================================================
@@ -269,6 +277,7 @@ class PopupEmpleado(tk.Toplevel):
             "enfermedades": self.entry_enfermedades.get().strip(),
             "contacto_emergencia": self.entry_contacto_emergencia.get().strip(),
             "telefono_emergencia": self.entry_telefono_emergencia.get().strip(),
+            "activo": bool(self.activo.get()),
             "activo1": self.entry_activo1.get().strip(),
             "marca1": self.entry_marca1.get().strip(),
             "serial1": self.entry_serial1.get().strip(),

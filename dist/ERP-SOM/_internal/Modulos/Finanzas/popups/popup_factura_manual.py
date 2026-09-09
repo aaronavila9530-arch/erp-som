@@ -162,6 +162,7 @@ class PopupFacturaManual(tk.Toplevel):
         payload = {
             "servicio_id": int(self.servicio["consec"]),
             "descripcion": self.txt_desc.get("1.0", "end").strip(),
+            "fecha_factura": self.fecha.get().strip(),
             "moneda": self.moneda.get(),
             "termino_pago": int(self.termino_pago.get() or 0),
             "total": float(self.total.get())

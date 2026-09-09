@@ -111,6 +111,8 @@ def listar_empleados_payroll(conn=Depends(get_db)):
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
     ensure_employee_hours_policy_columns(cur)
+    cur.execute("ALTER TABLE empleados ADD COLUMN IF NOT EXISTS activo BOOLEAN NOT NULL DEFAULT TRUE")
+    cur.execute("UPDATE empleados SET activo = TRUE WHERE activo IS NULL")
     conn.commit()
 
     cur.execute("""
@@ -130,6 +132,7 @@ def listar_empleados_payroll(conn=Depends(get_db)):
             cedula_id
         FROM empleados
         WHERE estado = 'Activo'
+          AND COALESCE(activo, TRUE) = TRUE
           AND usuario IS NOT NULL
         ORDER BY nombre, apellidos
     """)
@@ -155,6 +158,8 @@ def calcular_payroll(
 ):
     cur = conn.cursor(cursor_factory=RealDictCursor)
     ensure_employee_hours_policy_columns(cur)
+    cur.execute("ALTER TABLE empleados ADD COLUMN IF NOT EXISTS activo BOOLEAN NOT NULL DEFAULT TRUE")
+    cur.execute("UPDATE empleados SET activo = TRUE WHERE activo IS NULL")
     conn.commit()
 
     # --------------------------------------------------------
@@ -212,6 +217,7 @@ def calcular_payroll(
         FROM empleados
         WHERE usuario = %s
           AND estado = 'Activo'
+          AND COALESCE(activo, TRUE) = TRUE
         LIMIT 1
     """, (usuario,))
 

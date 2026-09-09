@@ -13,6 +13,11 @@ from reportlab.lib.units import inch
 from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.pdfgen import canvas
 
+try:
+    from branding import footer_text, is_mci_context, logo_asset, watermark_asset
+except ModuleNotFoundError:
+    from backend_api.branding import footer_text, is_mci_context, logo_asset, watermark_asset
+
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 REPO_DIR = BACKEND_DIR.parent
@@ -31,9 +36,7 @@ def _asset(name: str) -> str | None:
 
 
 def _is_mci(data: dict) -> bool:
-    company_code = str(data.get("company_code") or "").upper()
-    company_name = str(data.get("company_name") or "").upper()
-    return company_code == "MCI-CR" or "MARINE CLAIMS" in company_name
+    return is_mci_context(data)
 
 
 def export_cotizacion_word(data: dict, output_path: str):
@@ -42,7 +45,7 @@ def export_cotizacion_word(data: dict, output_path: str):
 
     header = section.header.paragraphs[0]
     header.alignment = WD_ALIGN_PARAGRAPH.LEFT
-    header_img = _asset("header.png")
+    header_img = logo_asset(data) or _asset("header.png")
     if header_img:
         header.add_run().add_picture(header_img, width=Inches(2.5))
 
@@ -82,10 +85,7 @@ def export_cotizacion_word(data: dict, output_path: str):
 
     footer = section.footer.paragraphs[0]
     footer.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    footer.text = (
-        "Head Office - Costa Rica, Alajuela, Plaza Aeropuerto G-14\n"
-        "Phone (506) 8814-07-84 - (506) 4052-8382"
-    )
+    footer.text = footer_text(data)
 
     apply_docx_autofit(doc)
     doc.save(output_path)
@@ -103,8 +103,8 @@ def export_cotizacion_pdf(data: dict, output_path: str):
     signature_block_height = 1.55 * inch
     body_min_y = footer_y + 0.35 * inch
 
-    watermark = _asset("watermark.png")
-    header = _asset("header.png")
+    watermark = watermark_asset(data) or _asset("watermark.png")
+    header = logo_asset(data) or _asset("header.png")
     signature = _asset("FIRMA DIANA.png")
 
     def wrap_text(text: str, font_name: str, font_size: int, max_width: float) -> list[str]:
@@ -146,8 +146,7 @@ def export_cotizacion_pdf(data: dict, output_path: str):
         c.drawCentredString(
             width / 2,
             footer_y,
-            "Head Office - Costa Rica, Alajuela, Plaza Aeropuerto G-14 - "
-            "Phone (506) 8814-07-84 - (506) 4052-8382",
+            " - ".join(footer_text(data).splitlines()),
         )
 
     def draw_static():

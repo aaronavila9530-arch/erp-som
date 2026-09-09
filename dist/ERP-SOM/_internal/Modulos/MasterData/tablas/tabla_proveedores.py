@@ -22,6 +22,7 @@ class TablaProveedoresUI(BasePaginatedTable):
         # Definir columnas
         self.columns = [
             ("Codigo", "Código"),
+            ("Activo", "Activo"),
             ("Nombre", "Nombre"),
             ("Apellidos", "Apellidos"),
             ("NombreComercial", "Nombre Comercial"),
@@ -49,7 +50,10 @@ class TablaProveedoresUI(BasePaginatedTable):
 
         self.btn_ver.config(command=self.ver_registro)
         self.btn_editar.config(command=self.editar_registro)
+        self.btn_eliminar.config(text="Inhabilitar")
         self.btn_eliminar.config(command=self.eliminar_registro)
+        self.btn_reactivar = tk.Button(self.toolbar, text="Reactivar", width=12, command=self.reactivar_registro)
+        self.btn_reactivar.pack(side="left", padx=4)
 
     # ======================================================
     # Configurar columnas en tabla SAP
@@ -65,7 +69,7 @@ class TablaProveedoresUI(BasePaginatedTable):
     # ======================================================
     def load_data(self):
         try:
-            url = f"{BASE_URL}/proveedores?page={self.page}&page_size={self.page_size}"
+            url = f"{BASE_URL}/proveedores?page={self.page}&page_size={self.page_size}&include_inactive=true"
             r = api_request("GET", url, timeout=15)
             data = r.json()
 
@@ -82,7 +86,7 @@ class TablaProveedoresUI(BasePaginatedTable):
 
             # Insertar filas
             for row in filas:
-                vals = [row.get(col, "") for col, _ in self.columns]
+                vals = [self._display_value(col, row.get(col, "")) for col, _ in self.columns]
                 self.table.insert("", "end", values=vals)
 
         except Exception as e:
@@ -97,6 +101,11 @@ class TablaProveedoresUI(BasePaginatedTable):
             messagebox.showwarning("Aviso", "Seleccione un registro primero")
             return None
         return self.table.item(sel)["values"][0]
+
+    def _display_value(self, col, value):
+        if col == "Activo":
+            return "Activo" if str(value).strip().lower() in {"1", "true", "t", "yes", "si", "sí", "activo"} else "Inactivo"
+        return value
 
 
     # ======================================================
@@ -175,6 +184,7 @@ class TablaProveedoresUI(BasePaginatedTable):
         popup.title(f"Editar Proveedor — {codigo}")
 
         # Rellenar campos
+        popup.Activo.set(str(data.get("Activo", True)).strip().lower() in {"1", "true", "t", "yes", "si", "sí", "activo"})
         popup.Nombre.set(data.get("Nombre", ""))
         popup.Apellidos.set(data.get("Apellidos", ""))
         popup.NombreComercial.set(data.get("NombreComercial", ""))
@@ -219,14 +229,33 @@ class TablaProveedoresUI(BasePaginatedTable):
     def eliminar_registro(self):
         codigo = self._get_codigo_seleccionado()
         if not codigo: return
-        if not messagebox.askyesno("Confirmar", f"¿Eliminar proveedor {codigo}?"):
+        if not messagebox.askyesno("Confirmar", f"¿Inhabilitar proveedor {codigo}?"):
             return
 
         try:
             url = f"{BASE_URL}/proveedores/{codigo}"
             r = api_request("DELETE", url, timeout=15)
             if r.status_code == 200:
-                messagebox.showinfo("OK", "Proveedor eliminado")
+                messagebox.showinfo("OK", "Proveedor inhabilitado")
+                self.refresh()
+            else:
+                messagebox.showerror("Error API", r.text)
+        except Exception as e:
+            messagebox.showerror("Error API", str(e))
+
+    def reactivar_registro(self):
+        codigo = self._get_codigo_seleccionado()
+        if not codigo:
+            return
+
+        try:
+            r = api_request("GET", f"{BASE_URL}/proveedores/{codigo}", timeout=15)
+            r.raise_for_status()
+            data = r.json()
+            data["Activo"] = True
+            r = api_request("PUT", f"{BASE_URL}/proveedores/update", json=data, timeout=15)
+            if r.status_code == 200:
+                messagebox.showinfo("OK", "Proveedor reactivado")
                 self.refresh()
             else:
                 messagebox.showerror("Error API", r.text)

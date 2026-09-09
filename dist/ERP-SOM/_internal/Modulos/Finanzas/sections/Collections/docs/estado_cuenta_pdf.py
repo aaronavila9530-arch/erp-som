@@ -9,26 +9,22 @@ from tkinter import filedialog, messagebox
 import tempfile
 import shutil
 import os
+from branding import company_display_name, footer_text, logo_asset, watermark_asset
 from Modulos.Finanzas.date_utils import to_long_english_date
-
-HEADER_PATH = r"C:\Users\Aaron Avila\Documents\ERP-SOM\assets\header.png"
-WATERMARK_PATH = r"C:\Users\Aaron Avila\Documents\ERP-SOM\assets\watermark.png"
-
-FOOTER_TEXT = (
-    "Head Office – Costa Rica, Alajuela, Plaza Aeropuerto G-14\n"
-    "Phone (506) 8814-07-84 – (506) 4052-8382"
-)
 
 
 # ============================================================
 # HEADER / FOOTER
 # ============================================================
-def _draw_header_footer(canvas, doc):
+def _draw_header_footer(canvas, doc, branding_data=None):
     width, height = landscape(LETTER)
+    branding_data = branding_data or {}
+    header_path = logo_asset(branding_data)
+    watermark_path = watermark_asset(branding_data)
 
-    if os.path.exists(HEADER_PATH):
+    if header_path and os.path.exists(header_path):
         canvas.drawImage(
-            HEADER_PATH,
+            header_path,
             x=40,
             y=height - 120,
             width=160,
@@ -36,11 +32,11 @@ def _draw_header_footer(canvas, doc):
             mask="auto"
         )
 
-    if os.path.exists(WATERMARK_PATH):
+    if watermark_path and os.path.exists(watermark_path):
         canvas.saveState()
         canvas.setFillAlpha(0.1)
         canvas.drawImage(
-            WATERMARK_PATH,
+            watermark_path,
             x=width / 2 - 200,
             y=height / 2 - 200,
             width=400,
@@ -50,7 +46,7 @@ def _draw_header_footer(canvas, doc):
         canvas.restoreState()
 
     canvas.setFont("Helvetica", 8)
-    canvas.drawCentredString(width / 2, 40, FOOTER_TEXT)
+    canvas.drawCentredString(width / 2, 40, " - ".join(footer_text(branding_data).splitlines()))
 
 
 # ============================================================
@@ -61,10 +57,14 @@ def generar_estado_cuenta_pdf(
     cliente,
     resumen_kpis,
     facturas,
-    datos_bancarios
+    datos_bancarios,
+    company_code=None,
+    company_name=None,
 ):
 
     hoy = to_long_english_date(date.today())
+    branding_data = {"company_code": company_code, "company_name": company_name}
+    display_company = company_display_name(branding_data)
 
     filename = f"Estado_Cuenta_{cliente}_{hoy}.pdf"
     path = filedialog.asksaveasfilename(
@@ -102,7 +102,7 @@ def generar_estado_cuenta_pdf(
         if idioma == "ES":
             body = (
                 f"Estimado/a {cliente},<br/><br/>"
-                f"<b>Asunto:</b> Estado de cuenta MSL SRL – Cliente {cliente} – {hoy}<br/><br/>"
+                f"<b>Asunto:</b> Estado de cuenta {display_company} – Cliente {cliente} – {hoy}<br/><br/>"
                 f"Por medio del presente le compartimos el estado de cuenta al día de hoy, "
                 f"el cual refleja un balance adeudado total de {total_ar:,.2f}, "
                 f"de los cuales {overdue:,.2f} se encuentran vencidos.<br/><br/>"
@@ -111,7 +111,7 @@ def generar_estado_cuenta_pdf(
         else:
             body = (
                 f"Dear {cliente},<br/><br/>"
-                f"<b>Subject:</b> Statement of Account MSL SRL – Client {cliente} – {hoy}<br/><br/>"
+                f"<b>Subject:</b> Statement of Account {display_company} – Client {cliente} – {hoy}<br/><br/>"
                 f"Please find below the statement of account as of today, reflecting a total "
                 f"outstanding balance of {total_ar:,.2f}, of which {overdue:,.2f} are overdue.<br/><br/>"
                 f"Breakdown of outstanding balance:"
@@ -189,8 +189,8 @@ def generar_estado_cuenta_pdf(
 
         doc.build(
             elements,
-            onFirstPage=_draw_header_footer,
-            onLaterPages=_draw_header_footer
+            onFirstPage=lambda canvas, doc: _draw_header_footer(canvas, doc, branding_data),
+            onLaterPages=lambda canvas, doc: _draw_header_footer(canvas, doc, branding_data),
         )
 
         shutil.move(temp_path, path)

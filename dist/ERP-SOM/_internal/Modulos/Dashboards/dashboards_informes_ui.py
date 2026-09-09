@@ -3,8 +3,7 @@ from tkinter import ttk, messagebox
 import threading
 from datetime import datetime
 
-from matplotlib.figure import Figure
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from Modulos.Dashboards.chart_helpers import MATPLOTLIB_AVAILABLE, Figure, FigureCanvasTkAgg
 
 from api_client import (
     get_dashboard_informes_filtros_api,
@@ -505,6 +504,30 @@ class DashboardsInformesUI(ttk.Frame):
 
         labels = [c[0] for c in combined]
         values = [c[1] for c in combined]
+
+        if not MATPLOTLIB_AVAILABLE:
+            ttk.Label(
+                frame,
+                text=f"{title} (tabla)",
+                font=("Segoe UI", 11, "bold")
+            ).pack(anchor="w", pady=(0, 4))
+
+            tree = ttk.Treeview(
+                frame,
+                columns=("concepto", "valor"),
+                show="headings",
+                height=min(max(len(labels), 3), 10)
+            )
+            tree.heading("concepto", text="Concepto")
+            tree.heading("valor", text="Valor")
+            tree.column("concepto", width=320, anchor="w")
+            tree.column("valor", width=140, anchor="e")
+
+            for label, value in zip(labels, values):
+                tree.insert("", "end", values=(label, f"{self._safe_number(value):,.2f}"))
+
+            tree.pack(fill="x", expand=False)
+            return
 
         # -------------------------------------------------
         # SI HAY MUCHOS ELEMENTOS → USAR HORIZONTAL

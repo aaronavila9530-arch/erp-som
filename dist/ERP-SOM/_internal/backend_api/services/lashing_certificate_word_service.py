@@ -2,8 +2,10 @@ from pathlib import Path
 from docx import Document
 try:
     from services.template_autofit import apply_docx_autofit
+    from services.document_branding import apply_mci_docx_branding
 except ModuleNotFoundError:
     from backend_api.services.template_autofit import apply_docx_autofit
+    from backend_api.services.document_branding import apply_mci_docx_branding
 from io import BytesIO
 from fastapi.responses import StreamingResponse
 import subprocess
@@ -72,6 +74,7 @@ class LashingCertificateWordService:
 
         buffer = BytesIO()
 
+        apply_mci_docx_branding(doc, data)
         apply_docx_autofit(doc)
         doc.save(buffer)
 
@@ -102,6 +105,7 @@ class LashingCertificateWordService:
 
             self._replace_placeholders(doc, data)
 
+            apply_mci_docx_branding(doc, data)
             apply_docx_autofit(doc)
             doc.save(word_path)
 

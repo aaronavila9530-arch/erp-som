@@ -5,8 +5,10 @@ from datetime import datetime, date
 from docx import Document
 try:
     from services.template_autofit import apply_docx_autofit
+    from services.document_branding import apply_mci_docx_branding
 except ModuleNotFoundError:
     from backend_api.services.template_autofit import apply_docx_autofit
+    from backend_api.services.document_branding import apply_mci_docx_branding
 
 
 class VesselConditionSurveyPresentationService:
@@ -48,6 +50,7 @@ class VesselConditionSurveyPresentationService:
             f"condition_survey_presentation_{record_id}.pdf"
         )
 
+        apply_mci_docx_branding(doc, data)
         apply_docx_autofit(doc)
         doc.save(docx_path)
 

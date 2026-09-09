@@ -5,14 +5,13 @@ from reportlab.pdfbase.pdfmetrics import stringWidth
 from datetime import date
 import os
 
+from branding import footer_text, is_mci_context, logo_asset, watermark_asset
 from resource_utils import resource_path
 from Modulos.Comercial.date_utils import to_long_english_date
 
 
 def _is_mci(data: dict) -> bool:
-    company_code = str(data.get("company_code") or "").upper()
-    company_name = str(data.get("company_name") or "").upper()
-    return company_code == "MCI-CR" or "MARINE CLAIMS" in company_name
+    return is_mci_context(data)
 
 
 # ============================================================
@@ -107,17 +106,14 @@ def export_cotizacion_pdf(data: dict, output_path: str):
 
     def _draw_footer():
         c.setFont("Helvetica", 8)
-        footer = (
-            "Head Office - Costa Rica, Alajuela, Plaza Aeropuerto G-14 - "
-            "Phone (506) 8814-07-84 - (506) 4052-8382"
-        )
+        footer = " - ".join(footer_text(data).splitlines())
         c.drawCentredString(width / 2, FOOTER_Y, footer)
 
     def _draw_static():
         # =========================================================
         # WATERMARK
         # =========================================================
-        watermark_path = os.path.join(ASSETS_PATH, "watermark.png")
+        watermark_path = watermark_asset(data) or os.path.join(ASSETS_PATH, "watermark.png")
         if os.path.isfile(watermark_path):
             c.saveState()
             c.setFillAlpha(0.08)
@@ -134,7 +130,7 @@ def export_cotizacion_pdf(data: dict, output_path: str):
         # =========================================================
         # HEADER
         # =========================================================
-        header_path = os.path.join(ASSETS_PATH, "header.png")
+        header_path = logo_asset(data) or os.path.join(ASSETS_PATH, "header.png")
         if os.path.isfile(header_path):
             c.drawImage(
                 header_path,

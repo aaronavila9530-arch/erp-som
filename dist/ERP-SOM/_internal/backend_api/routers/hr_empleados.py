@@ -25,6 +25,8 @@ def _ensure_employee_policy_schema(conn):
     cur = conn.cursor()
     try:
         ensure_employee_hours_policy_columns(cur)
+        cur.execute("ALTER TABLE empleados ADD COLUMN IF NOT EXISTS activo BOOLEAN NOT NULL DEFAULT TRUE")
+        cur.execute("UPDATE empleados SET activo = TRUE WHERE activo IS NULL")
         conn.commit()
     finally:
         cur.close()
@@ -52,7 +54,7 @@ def listar_empleados(
     # -----------------------------------------------------
     # FILTROS
     # -----------------------------------------------------
-    where = []
+    where = ["COALESCE(activo, TRUE) = TRUE"]
     params = {}
 
     if nombre:

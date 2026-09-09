@@ -50,16 +50,34 @@ def require_permission(module: str, action: str):
 # ============================================================
 # OBTENER SIGUIENTE NÚMERO DE FACTURA (SEGURO CON RealDictCursor)
 # ============================================================
-def obtener_siguiente_numero_factura(cur):
+def obtener_siguiente_numero_factura(cur, company: str):
 
     cur.execute("""
-        SELECT COALESCE(
-            MAX(numero_factura::int),
-            2199
-        ) AS ultimo
-        FROM factura
-        WHERE tipo_factura = 'MANUAL'
-    """)
+        SELECT COALESCE(MAX(numero::int), 2199) AS ultimo
+        FROM (
+            SELECT numero_factura::text AS numero
+            FROM factura
+            WHERE tipo_factura = 'MANUAL'
+              AND numero_factura::text ~ '^[0-9]+$'
+              AND COALESCE(company_code, %s) = %s
+
+            UNION ALL
+
+            SELECT numero_documento::text AS numero
+            FROM invoicing
+            WHERE tipo_factura = 'MANUAL'
+              AND numero_documento::text ~ '^[0-9]+$'
+              AND COALESCE(company_code, %s) = %s
+
+            UNION ALL
+
+            SELECT numero_documento::text AS numero
+            FROM collections
+            WHERE tipo_factura = 'MANUAL'
+              AND numero_documento::text ~ '^[0-9]+$'
+              AND COALESCE(company_code, %s) = %s
+        ) nums
+    """, (company, company, company, company, company, company))
 
     row = cur.fetchone()
 
@@ -108,7 +126,9 @@ def crear_factura_manual(
         ensure_company_column("servicios")
         ensure_company_column("cliente")
         ensure_company_column("cliente_credito")
+        ensure_company_column("factura")
         ensure_company_column("invoicing")
+        ensure_company_column("collections")
 
 
         # ====================================================
@@ -185,14 +205,26 @@ def crear_factura_manual(
         # ====================================================
         # NÚMERO Y FECHA FACTURA
         # ====================================================
-        numero_factura = obtener_siguiente_numero_factura(cur)
-        fecha_factura = datetime.now()
+        numero_factura = obtener_siguiente_numero_factura(cur, company)
+        fecha_raw = payload.get("fecha_factura") or payload.get("fecha_emision")
+        fecha_factura = None
+        if fecha_raw:
+            text = str(fecha_raw).replace(",", " ").strip()
+            for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%b %d %Y", "%B %d %Y"):
+                try:
+                    fecha_factura = datetime.strptime(" ".join(text.split()), fmt)
+                    break
+                except Exception:
+                    continue
+        if fecha_factura is None:
+            fecha_factura = datetime.now()
 
         # ====================================================
         # INSERT FACTURA
         # ====================================================
         cur.execute("""
             INSERT INTO factura (
+                company_code,
                 tipo_factura,
                 numero_factura,
                 codigo_cliente,
@@ -202,11 +234,13 @@ def crear_factura_manual(
                 total
             )
             VALUES (
+                %s,
                 'MANUAL',
                 %s, %s, %s, %s, %s, %s
             )
             RETURNING id
         """, (
+            company,
             numero_factura,
             codigo_cliente,
             fecha_factura,

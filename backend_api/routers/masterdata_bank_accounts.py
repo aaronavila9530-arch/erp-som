@@ -203,6 +203,7 @@ def _safe_filename(value: str) -> str:
 def _build_bank_letter_pdf(row: dict, company: str, company_name: str | None, language: str = "ES") -> bytes:
     from reportlab.lib.pagesizes import LETTER
     from reportlab.lib.units import inch
+    from reportlab.lib.utils import ImageReader
     from reportlab.pdfbase.pdfmetrics import stringWidth
     from reportlab.pdfgen import canvas
 
@@ -212,8 +213,9 @@ def _build_bank_letter_pdf(row: dict, company: str, company_name: str | None, la
     left = 0.75 * inch
     right = 0.75 * inch
     body_width = width - left - right
-    header_y = height - 1.9 * inch
-    top_y = header_y - 0.55 * inch
+    mci_branding = _is_mci(company, company_name)
+    header_y = height - (1.28 * inch if mci_branding else 1.9 * inch)
+    top_y = height - (1.85 * inch if mci_branding else 2.45 * inch)
     footer_y = 0.7 * inch
 
     branding_data = {"company_code": company, "company_name": company_name}
@@ -259,14 +261,44 @@ def _build_bank_letter_pdf(row: dict, company: str, company_name: str | None, la
             " - ".join(footer_text(branding_data).splitlines()),
         )
 
+    def draw_image_aspect(path: str, x: float, y: float, target_width: float, alpha: float | None = None):
+        image = ImageReader(path)
+        image_width, image_height = image.getSize()
+        target_height = target_width * (image_height / image_width)
+        if alpha is not None:
+            c.saveState()
+            c.setFillAlpha(alpha)
+            c.drawImage(image, x, y, width=target_width, height=target_height, mask="auto")
+            c.restoreState()
+            return target_height
+        c.drawImage(image, x, y, width=target_width, height=target_height, mask="auto")
+        return target_height
+
     def draw_static():
         if watermark:
-            c.saveState()
-            c.setFillAlpha(0.08)
-            c.drawImage(watermark, 1.2 * inch, 2.45 * inch, width=4.5 * inch, preserveAspectRatio=True, mask="auto")
-            c.restoreState()
+            wm_width = 2.6 * inch if mci_branding else 4.5 * inch
+            wm_x = (width - wm_width) / 2
+            image = ImageReader(watermark)
+            image_width, image_height = image.getSize()
+            wm_height = wm_width * (image_height / image_width)
+            wm_y = (height - wm_height) / 2
+            draw_image_aspect(watermark, wm_x, wm_y, wm_width, alpha=0.11 if mci_branding else 0.08)
         if header:
-            c.drawImage(header, left, header_y, width=3.6 * inch, preserveAspectRatio=True, mask="auto")
+            if mci_branding:
+                header_width = 0.72 * inch
+                image = ImageReader(header)
+                image_width, image_height = image.getSize()
+                header_height = header_width * (image_height / image_width)
+                c.drawImage(
+                    image,
+                    left,
+                    height - 0.35 * inch - header_height,
+                    width=header_width,
+                    height=header_height,
+                    mask="auto",
+                )
+            else:
+                draw_image_aspect(header, left, header_y, 3.6 * inch)
         draw_footer()
 
     def draw_wrapped(text: str, font_name: str, font_size: int, y: float, leading: int = 15) -> float:

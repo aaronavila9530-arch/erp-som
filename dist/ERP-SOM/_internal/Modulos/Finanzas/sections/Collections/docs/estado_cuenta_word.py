@@ -7,7 +7,9 @@ import os
 import sys
 import tempfile
 import shutil
+from branding import company_display_name, footer_text, logo_asset, watermark_asset
 from Modulos.Finanzas.date_utils import to_long_english_date
+from resource_utils import resource_path
 
 
 # ============================================================
@@ -21,12 +23,7 @@ def get_assets_path() -> str:
     - EXE PyInstaller (sys._MEIPASS)
     """
 
-    if getattr(sys, "frozen", False):
-        base_path = getattr(sys, "_MEIPASS", os.path.dirname(sys.executable))
-    else:
-        base_path = os.path.dirname(os.path.abspath(__file__))
-
-    assets_path = os.path.join(base_path, "assets")
+    assets_path = resource_path("assets")
 
     if not os.path.isdir(assets_path):
         raise FileNotFoundError(
@@ -55,7 +52,9 @@ def generar_estado_cuenta_word(
     cliente,
     resumen_kpis,
     facturas,
-    datos_bancarios
+    datos_bancarios,
+    company_code=None,
+    company_name=None,
 ):
 
     # ========================================================
@@ -74,8 +73,10 @@ def generar_estado_cuenta_word(
 
     try:
         ASSETS_PATH = get_assets_path()
-        HEADER_PATH = os.path.join(ASSETS_PATH, "header.png")
-        WATERMARK_PATH = os.path.join(ASSETS_PATH, "watermark.png")
+        branding_data = {"company_code": company_code, "company_name": company_name}
+        display_company = company_display_name(branding_data)
+        HEADER_PATH = logo_asset(branding_data) or os.path.join(ASSETS_PATH, "header.png")
+        WATERMARK_PATH = watermark_asset(branding_data) or os.path.join(ASSETS_PATH, "watermark.png")
 
         if not os.path.isfile(HEADER_PATH):
             raise FileNotFoundError(f"Header not found: {HEADER_PATH}")
@@ -143,7 +144,7 @@ def generar_estado_cuenta_word(
         if idioma == "ES":
             body = (
                 f"Estimado/a {cliente},\n\n"
-                f"Asunto: Estado de cuenta MSL SRL – Cliente {cliente} – {hoy}\n\n"
+                f"Asunto: Estado de cuenta {display_company} – Cliente {cliente} – {hoy}\n\n"
                 f"Por medio del presente le compartimos el estado de cuenta al día de hoy, "
                 f"el cual refleja un balance adeudado total de {total_ar:,.2f}, "
                 f"de los cuales {overdue:,.2f} se encuentran vencidos.\n\n"
@@ -152,7 +153,7 @@ def generar_estado_cuenta_word(
         else:
             body = (
                 f"Dear {cliente},\n\n"
-                f"Subject: Statement of Account MSL SRL – Client {cliente} – {hoy}\n\n"
+                f"Subject: Statement of Account {display_company} – Client {cliente} – {hoy}\n\n"
                 f"Please find below the statement of account as of today, reflecting a total "
                 f"outstanding balance of {total_ar:,.2f}, of which {overdue:,.2f} are overdue.\n\n"
                 f"Breakdown of outstanding balance:\n"
@@ -224,7 +225,7 @@ def generar_estado_cuenta_word(
         # FOOTER
         # ====================================================
         fp = section.footer.paragraphs[0]
-        fp.text = FOOTER_TEXT
+        fp.text = footer_text(branding_data)
         fp.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
         # ====================================================

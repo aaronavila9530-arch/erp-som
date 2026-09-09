@@ -2,10 +2,8 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 import threading
 
-from matplotlib.figure import Figure
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-
 from api_client import get_dashboard_servicios_api
+from Modulos.Dashboards.chart_helpers import render_bar_chart, render_pie_chart
 
 
 class DashboardsServiciosUI(ttk.Frame):
@@ -246,23 +244,13 @@ class DashboardsServiciosUI(ttk.Frame):
         # FACTURACION POR TIPO
         # =====================================================
 
-        frame = ttk.Frame(self.graph_container)
-        frame.pack(fill="x", pady=10)
-
-        labels = [x["tipo"] for x in data["facturacion_por_tipo"]]
-        values = [x["total_facturado"] for x in data["facturacion_por_tipo"]]
-
-        fig = Figure(figsize=(9,4), dpi=100)
-        ax = fig.add_subplot(111)
-
-        ax.pie(values, labels=labels, autopct="%1.1f%%")
-        ax.set_title("Facturación por Tipo")
-
-        fig.tight_layout()
-
-        canvas = FigureCanvasTkAgg(fig, frame)
-        canvas.draw()
-        canvas.get_tk_widget().pack(fill="both", expand=True)
+        render_pie_chart(
+            self.graph_container,
+            "Facturación por Tipo",
+            data["facturacion_por_tipo"],
+            "tipo",
+            "total_facturado"
+        )
 
     # =========================================================
     # UTILIDAD GRAFICOS
@@ -270,24 +258,4 @@ class DashboardsServiciosUI(ttk.Frame):
 
     def _crear_bar_chart(self, title, dataset, label_key, value_key, rotate_labels=False):
 
-        frame = ttk.Frame(self.graph_container)
-        frame.pack(fill="x", pady=10)
-
-        labels = [x[label_key] for x in dataset]
-        values = [x[value_key] for x in dataset]
-
-        fig = Figure(figsize=(10,4), dpi=100)
-        ax = fig.add_subplot(111)
-
-        ax.bar(labels, values)
-
-        if rotate_labels:
-            ax.set_xticklabels(labels, rotation=45, ha="right")
-
-        ax.set_title(title)
-
-        fig.tight_layout()
-
-        canvas = FigureCanvasTkAgg(fig, frame)
-        canvas.draw()
-        canvas.get_tk_widget().pack(fill="both", expand=True)
+        render_bar_chart(self.graph_container, title, dataset, label_key, value_key, rotate_labels)

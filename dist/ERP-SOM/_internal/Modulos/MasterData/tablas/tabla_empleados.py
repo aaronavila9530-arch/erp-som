@@ -17,6 +17,7 @@ class TablaEmpleadosUI(BasePaginatedTable):
         # Columnas alineadas 1:1 con SQL y con el JSON del router
         self.columns = [
             ("codigo", "Código"),
+            ("activo", "Activo"),
             ("nombre", "Nombre"),
             ("apellidos", "Apellidos"),
             ("estado_civil", "Estado Civil"),
@@ -59,7 +60,10 @@ class TablaEmpleadosUI(BasePaginatedTable):
         # Eventos botones
         self.btn_ver.config(command=self.ver_registro)
         self.btn_editar.config(command=self.editar_registro)
+        self.btn_eliminar.config(text="Inhabilitar")
         self.btn_eliminar.config(command=self.eliminar_registro)
+        self.btn_reactivar = tk.Button(self.toolbar, text="Reactivar", width=12, command=self.reactivar_registro)
+        self.btn_reactivar.pack(side="left", padx=4)
 
     # ==========================================================
     # Configurar columnas de la tabla
@@ -77,7 +81,7 @@ class TablaEmpleadosUI(BasePaginatedTable):
     # ==========================================================
     def load_data(self):
         try:
-            url = f"{BASE_URL}/empleados?page={self.page}&page_size={self.page_size}"
+            url = f"{BASE_URL}/empleados?page={self.page}&page_size={self.page_size}&include_inactive=true"
             r = api_request("GET", url, timeout=15)
             r.raise_for_status()  # ← si hay 500/404, lanza excepción clara
             data = r.json()
@@ -93,7 +97,7 @@ class TablaEmpleadosUI(BasePaginatedTable):
 
             # Insertar filas
             for row in filas:
-                vals = [row.get(col, "") for col, _ in self.columns]
+                vals = [self._display_value(col, row.get(col, "")) for col, _ in self.columns]
                 self.table.insert("", "end", values=vals)
 
         except Exception as e:
@@ -108,8 +112,12 @@ class TablaEmpleadosUI(BasePaginatedTable):
             messagebox.showwarning("Aviso", "Seleccione un registro")
             return None
         vals = self.table.item(sel)["values"]
-        # Primer valor = código
         return vals[0] if vals else None
+
+    def _display_value(self, col, value):
+        if col == "activo":
+            return "Activo" if str(value).strip().lower() in {"1", "true", "t", "yes", "si", "sí", "activo"} else "Inactivo"
+        return value
 
     # ==========================================================
     # VER
@@ -168,6 +176,8 @@ class TablaEmpleadosUI(BasePaginatedTable):
                 value = data.get(col, "")
                 if col == "pago_minimo_garantizado":
                     value = str(value or "").strip().lower() in {"1", "true", "t", "yes", "si", "sí", "y"}
+                if col == "activo":
+                    value = str(value or "").strip().lower() in {"1", "true", "t", "yes", "si", "sí", "activo"}
                 getattr(popup, col).set(value)
             else:
                 try:
@@ -199,14 +209,33 @@ class TablaEmpleadosUI(BasePaginatedTable):
         if not codigo:
             return
 
-        if not messagebox.askyesno("Confirmar", f"¿Eliminar al empleado {codigo}?"):
+        if not messagebox.askyesno("Confirmar", f"¿Inhabilitar al empleado {codigo}?"):
             return
 
         try:
             url = f"{BASE_URL}/empleados/{codigo}"
             r = api_request("DELETE", url, timeout=15)
             if r.status_code == 200:
-                messagebox.showinfo("OK", "Empleado eliminado")
+                messagebox.showinfo("OK", "Empleado inhabilitado")
+                self.refresh()
+            else:
+                messagebox.showerror("Error API", r.text)
+        except Exception as e:
+            messagebox.showerror("Error API", str(e))
+
+    def reactivar_registro(self):
+        codigo = self._get_codigo()
+        if not codigo:
+            return
+
+        try:
+            r = api_request("GET", f"{BASE_URL}/empleados/{codigo}", timeout=15)
+            r.raise_for_status()
+            data = r.json()
+            data["activo"] = True
+            r = api_request("PUT", f"{BASE_URL}/empleados/update", json=data, timeout=15)
+            if r.status_code == 200:
+                messagebox.showinfo("OK", "Empleado reactivado")
                 self.refresh()
             else:
                 messagebox.showerror("Error API", r.text)

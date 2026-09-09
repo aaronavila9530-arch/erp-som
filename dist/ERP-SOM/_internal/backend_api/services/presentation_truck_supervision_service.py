@@ -5,8 +5,10 @@ from typing import Dict
 from docx import Document
 try:
     from services.template_autofit import apply_docx_autofit
+    from services.document_branding import apply_mci_docx_branding
 except ModuleNotFoundError:
     from backend_api.services.template_autofit import apply_docx_autofit
+    from backend_api.services.document_branding import apply_mci_docx_branding
 
 
 # ============================================================
@@ -138,6 +140,7 @@ def generate_truck_supervision_presentation_pdf(data: dict) -> str:
     # --------------------------------------------------------
     fd, temp_docx = tempfile.mkstemp(suffix=".docx")
     os.close(fd)
+    apply_mci_docx_branding(doc, data)
     apply_docx_autofit(doc)
     doc.save(temp_docx)
 
@@ -191,4 +194,3 @@ def generate_truck_supervision_presentation_pdf(data: dict) -> str:
         raise RuntimeError("PDF generation failed — output file not found.")
 
     return pdf_path
-

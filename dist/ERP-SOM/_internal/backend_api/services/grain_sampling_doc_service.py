@@ -6,8 +6,10 @@ from docx.text.paragraph import Paragraph
 from docx.oxml import OxmlElement
 try:
     from services.template_autofit import apply_docx_autofit
+    from services.document_branding import apply_mci_docx_branding
 except ModuleNotFoundError:
     from backend_api.services.template_autofit import apply_docx_autofit
+    from backend_api.services.document_branding import apply_mci_docx_branding
 from datetime import datetime
 
 
@@ -346,6 +348,7 @@ def generate_grain_sampling_doc(data: dict) -> str:
         f"{data.get('cert_no', 'grain_sampling')}.docx"
     )
 
+    apply_mci_docx_branding(doc, data)
     apply_docx_autofit(doc)
     doc.save(output_path)
 

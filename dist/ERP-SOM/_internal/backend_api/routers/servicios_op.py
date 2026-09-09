@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends, Header, Query
 from pydantic import BaseModel
 from datetime import datetime
+import re
 import database
 
 from rbac_service import has_permission
@@ -78,6 +79,95 @@ def _normalize_service_date(value):
     if value in (None, ""):
         return value
     return _parse_service_date(value).strftime("%Y-%m-%d")
+
+
+def _normalize_service_time(value):
+    text = str(value or "").strip()
+    if not text:
+        return ""
+
+    normalized = text.upper().replace(".", "").replace(" ", "")
+    suffix = None
+    if normalized.endswith("AM") or normalized.endswith("PM"):
+        suffix = normalized[-2:]
+        normalized = normalized[:-2]
+
+    match = re.match(r"^(\d{1,2})(?::(\d{1,2}))?$", normalized)
+    if not match:
+        raise ValueError("Hora inicio invalida")
+
+    hour = int(match.group(1))
+    minute = int(match.group(2) or 0)
+
+    if suffix == "PM" and hour < 12:
+        hour += 12
+    elif suffix == "AM" and hour == 12:
+        hour = 0
+
+    if hour > 23 or minute > 59:
+        raise ValueError("Hora inicio invalida")
+
+    return f"{hour:02d}:{minute:02d}"
+
+
+def _validate_required_service_payload(payload: dict) -> None:
+    required = {
+        "tipo": "Tipo",
+        "buque_contenedor": "Buque / Contenedor",
+        "cliente": "Cliente",
+        "continente": "Continente",
+        "pais": "Pais",
+        "puerto": "Puerto",
+        "operacion": "Operacion",
+        "surveyor": "Surveyor",
+        "fecha_inicio": "Fecha inicio",
+        "hora_inicio": "Hora inicio",
+    }
+    missing = [
+        label
+        for key, label in required.items()
+        if not str(payload.get(key) or "").strip()
+    ]
+    if missing:
+        raise HTTPException(
+            status_code=400,
+            detail="Campos obligatorios faltantes: " + ", ".join(missing),
+        )
+
+
+def _validate_location_combo(payload: dict) -> None:
+    continente = str(payload.get("continente") or "").strip()
+    pais = str(payload.get("pais") or "").strip()
+    puerto = str(payload.get("puerto") or "").strip()
+    if not continente or not pais or not puerto:
+        return
+
+    rows = database.sql(
+        """
+        SELECT continente, pais, puerto
+        FROM continentes_paises_puertos
+        WHERE LOWER(translate(TRIM(continente), 'ÁÉÍÓÚáéíóú', 'AEIOUaeiou')) =
+              LOWER(translate(TRIM(%s), 'ÁÉÍÓÚáéíóú', 'AEIOUaeiou'))
+          AND LOWER(translate(TRIM(pais), 'ÁÉÍÓÚáéíóú', 'AEIOUaeiou')) =
+              LOWER(translate(TRIM(%s), 'ÁÉÍÓÚáéíóú', 'AEIOUaeiou'))
+          AND LOWER(translate(TRIM(puerto), 'ÁÉÍÓÚáéíóú', 'AEIOUaeiou')) =
+              LOWER(translate(TRIM(%s), 'ÁÉÍÓÚáéíóú', 'AEIOUaeiou'))
+        LIMIT 1
+        """,
+        (continente, pais, puerto),
+        fetch=True,
+    )
+    if not rows:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Ubicacion invalida: el puerto no pertenece al pais y "
+                "continente seleccionados."
+            ),
+        )
+    payload["continente"] = rows[0][0]
+    payload["pais"] = rows[0][1]
+    payload["puerto"] = rows[0][2]
 
 
 REPORT_CONSECUTIVE_BASE = 2141
@@ -166,34 +256,45 @@ class ServicioCreate(BaseModel):
 # ============================================================
 @router.post("/add")
 def add_servicio(data: ServicioCreate, x_company_code: str | None = Header(None, alias="X-Company-Code")):
-    _ensure_tenant_schema()
-    payload = set_payload_company(data.dict(), company_code(None, x_company_code))
-    payload["fecha_inicio"] = _normalize_service_date(payload.get("fecha_inicio"))
-
-    sql = """
-        INSERT INTO servicios (
-            company_code,
-            tipo, estado, num_informe,
-            buque_contenedor, cliente, contacto, detalle,
-            continente, pais, puerto,
-            operacion, surveyor, honorarios, costo_operativo, costo_tarjetas,
-            fecha_inicio, hora_inicio
-        )
-        VALUES (
-            %(company_code)s,
-            %(tipo)s, 'Confirmado', '',
-            %(buque_contenedor)s, %(cliente)s, %(contacto)s, %(detalle)s,
-            %(continente)s, %(pais)s, %(puerto)s,
-            %(operacion)s, %(surveyor)s, %(honorarios)s, %(costo_operativo)s, %(costo_tarjetas)s,
-            %(fecha_inicio)s, %(hora_inicio)s
-        )
-        RETURNING consec;
-    """
-
     try:
+        _ensure_tenant_schema()
+        payload = set_payload_company(data.dict(), company_code(None, x_company_code))
+        for key, value in list(payload.items()):
+            if isinstance(value, str):
+                payload[key] = value.strip()
+        _validate_required_service_payload(payload)
+        try:
+            payload["fecha_inicio"] = _normalize_service_date(payload.get("fecha_inicio"))
+            payload["hora_inicio"] = _normalize_service_time(payload.get("hora_inicio"))
+        except Exception:
+            raise HTTPException(status_code=400, detail="Fecha u hora de inicio invalida")
+        _validate_required_service_payload(payload)
+        _validate_location_combo(payload)
+
+        sql = """
+            INSERT INTO servicios (
+                company_code,
+                tipo, estado, num_informe,
+                buque_contenedor, cliente, contacto, detalle,
+                continente, pais, puerto,
+                operacion, surveyor, honorarios, costo_operativo, costo_tarjetas,
+                fecha_inicio, hora_inicio
+            )
+            VALUES (
+                %(company_code)s,
+                %(tipo)s, 'Confirmado', '',
+                %(buque_contenedor)s, %(cliente)s, %(contacto)s, %(detalle)s,
+                %(continente)s, %(pais)s, %(puerto)s,
+                %(operacion)s, %(surveyor)s, %(honorarios)s, %(costo_operativo)s, %(costo_tarjetas)s,
+                %(fecha_inicio)s, %(hora_inicio)s
+            )
+            RETURNING consec;
+        """
         result = database.sql(sql, payload, fetch=True)
         new_id = result[0][0]
         return {"status": "OK", "msg": "Servicio creado", "consec": new_id}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -601,7 +702,10 @@ def editar_servicio(consec: int, data: dict, x_company_code: str | None = Header
         _ensure_tenant_schema()
         company = company_code(None, x_company_code)
         data = dict(data)
-        data["fecha_inicio"] = _normalize_service_date(data.get("fecha_inicio"))
+        if "fecha_inicio" in data:
+            data["fecha_inicio"] = _normalize_service_date(data.get("fecha_inicio"))
+        if "hora_inicio" in data:
+            data["hora_inicio"] = _normalize_service_time(data.get("hora_inicio"))
 
         row = database.sql(
             """
@@ -614,7 +718,13 @@ def editar_servicio(consec: int, data: dict, x_company_code: str | None = Header
                 continente,
                 pais,
                 puerto,
-                operacion
+                operacion,
+                surveyor,
+                honorarios,
+                costo_operativo,
+                costo_tarjetas,
+                fecha_inicio,
+                hora_inicio
             FROM servicios
             WHERE consec = %s
               AND company_code = %s
@@ -626,7 +736,6 @@ def editar_servicio(consec: int, data: dict, x_company_code: str | None = Header
         if not row:
             raise HTTPException(404, "Servicio no encontrado")
 
-        num_actualizado = _num_informe_con_fecha(row[0][0], data.get("fecha_inicio"))
         current = {
             "buque_contenedor": row[0][1],
             "cliente": row[0][2],
@@ -636,7 +745,15 @@ def editar_servicio(consec: int, data: dict, x_company_code: str | None = Header
             "pais": row[0][6],
             "puerto": row[0][7],
             "operacion": row[0][8],
+            "surveyor": row[0][9],
+            "honorarios": row[0][10],
+            "costo_operativo": row[0][11],
+            "costo_tarjetas": row[0][12],
+            "fecha_inicio": row[0][13],
+            "hora_inicio": row[0][14],
         }
+        effective_fecha_inicio = data["fecha_inicio"] if "fecha_inicio" in data else current["fecha_inicio"]
+        num_actualizado = _num_informe_con_fecha(row[0][0], effective_fecha_inicio)
 
         sql = """
             UPDATE servicios SET
@@ -668,16 +785,18 @@ def editar_servicio(consec: int, data: dict, x_company_code: str | None = Header
             "pais": data["pais"] if "pais" in data else current["pais"],
             "puerto": data["puerto"] if "puerto" in data else current["puerto"],
             "operacion": data["operacion"] if "operacion" in data else current["operacion"],
-            "surveyor": data.get("surveyor"),
-            "honorarios": data.get("honorarios"),
-            "costo_operativo": data.get("costo_operativo"),
-            "costo_tarjetas": data.get("costo_tarjetas"),
-            "fecha_inicio": data.get("fecha_inicio"),
-            "hora_inicio": data.get("hora_inicio"),
+            "surveyor": data["surveyor"] if "surveyor" in data else current["surveyor"],
+            "honorarios": data["honorarios"] if "honorarios" in data else current["honorarios"],
+            "costo_operativo": data["costo_operativo"] if "costo_operativo" in data else current["costo_operativo"],
+            "costo_tarjetas": data["costo_tarjetas"] if "costo_tarjetas" in data else current["costo_tarjetas"],
+            "fecha_inicio": data["fecha_inicio"] if "fecha_inicio" in data else current["fecha_inicio"],
+            "hora_inicio": data["hora_inicio"] if "hora_inicio" in data else current["hora_inicio"],
             "num_informe": num_actualizado,
             "consec": consec,
             "company_code": company
         }
+        _validate_required_service_payload(params)
+        _validate_location_combo(params)
 
         database.sql(sql, params)
         return {"status": "ok", "msg": "Servicio actualizado"}

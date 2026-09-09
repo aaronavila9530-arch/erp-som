@@ -88,11 +88,14 @@ class SurveyorsPayload(BaseModel):
 @router.get("/catalogo/lista")
 def get_catalogo():
     try:
+        database.sql("ALTER TABLE surveyor ADD COLUMN IF NOT EXISTS activo BOOLEAN NOT NULL DEFAULT TRUE")
+        database.sql("UPDATE surveyor SET activo = TRUE WHERE activo IS NULL")
         rows = database.sql(
             """
             SELECT codigo, nombre, apellidos
             FROM surveyor
             WHERE COALESCE(TRIM(nombre), '') <> ''
+              AND COALESCE(activo, TRUE) = TRUE
             ORDER BY nombre, apellidos, codigo
             """,
             fetch=True,

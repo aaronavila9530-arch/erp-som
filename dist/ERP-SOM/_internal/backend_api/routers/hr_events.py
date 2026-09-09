@@ -234,10 +234,13 @@ async def crear_evento(
     # --------------------------------------------------------
     # OBTENER EMPLEADO (FIX SIN ROMPER VALIDACIONES)
     # --------------------------------------------------------
+    cur.execute("ALTER TABLE empleados ADD COLUMN IF NOT EXISTS activo BOOLEAN NOT NULL DEFAULT TRUE")
+    cur.execute("UPDATE empleados SET activo = TRUE WHERE activo IS NULL")
     cur.execute("""
         SELECT nombre, apellidos
         FROM empleados
         WHERE LOWER(usuario) = LOWER(%s)
+          AND COALESCE(activo, TRUE) = TRUE
     """, (usuario,))
 
     emp = cur.fetchone()
@@ -409,6 +412,8 @@ def vacaciones_disponibles(
     # ---------------------------------------------------------
     # DATOS DEL EMPLEADO
     # ---------------------------------------------------------
+    cur.execute("ALTER TABLE empleados ADD COLUMN IF NOT EXISTS activo BOOLEAN NOT NULL DEFAULT TRUE")
+    cur.execute("UPDATE empleados SET activo = TRUE WHERE activo IS NULL")
     cur.execute("""
         SELECT
             id,
@@ -416,6 +421,7 @@ def vacaciones_disponibles(
             vacaciones
         FROM empleados
         WHERE usuario = %s
+          AND COALESCE(activo, TRUE) = TRUE
     """, (usuario,))
 
     emp = cur.fetchone()

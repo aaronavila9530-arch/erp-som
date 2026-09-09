@@ -4,8 +4,10 @@ from datetime import datetime, date
 from docx import Document
 try:
     from services.template_autofit import apply_docx_autofit
+    from services.document_branding import apply_mci_docx_branding
 except ModuleNotFoundError:
     from backend_api.services.template_autofit import apply_docx_autofit
+    from backend_api.services.document_branding import apply_mci_docx_branding
 
 
 class VesselCargoConditionWordService:
@@ -36,6 +38,7 @@ class VesselCargoConditionWordService:
 
         output_path = self._build_output_path(data)
 
+        apply_mci_docx_branding(doc, data)
         apply_docx_autofit(doc)
         doc.save(output_path)
 

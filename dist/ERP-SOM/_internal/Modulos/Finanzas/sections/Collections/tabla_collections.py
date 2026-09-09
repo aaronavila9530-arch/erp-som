@@ -6,6 +6,7 @@ from openpyxl import Workbook
 from api_client import BASE_URL, api_request
 from Modulos.Finanzas.date_utils import to_long_english_date
 from Modulos.Finanzas.export_formatting import normalize_invoice_text_columns
+from session_context import get_company_code, get_company_name
 from Modulos.Finanzas.sections.Collections.popups.popup_disputa import PopupDisputa
 from Modulos.Finanzas.sections.Collections.popups.popup_pago import PopupPago
 from Modulos.Finanzas.sections.Collections.docs.estado_cuenta_word import generar_estado_cuenta_word
@@ -328,7 +329,9 @@ class TablaCollections(tk.Frame):
                     cliente=nombre_cliente,
                     resumen_kpis=resumen_kpis,
                     facturas=facturas,
-                    datos_bancarios=datos_bancarios
+                    datos_bancarios=datos_bancarios,
+                    company_code=get_company_code(),
+                    company_name=get_company_name(),
                 )
             else:
                 generar_estado_cuenta_word(
@@ -336,7 +339,9 @@ class TablaCollections(tk.Frame):
                     cliente=nombre_cliente,
                     resumen_kpis=resumen_kpis,
                     facturas=facturas,
-                    datos_bancarios=datos_bancarios
+                    datos_bancarios=datos_bancarios,
+                    company_code=get_company_code(),
+                    company_name=get_company_name(),
                 )
 
             return True  # 🔑 permite que el popup se cierre

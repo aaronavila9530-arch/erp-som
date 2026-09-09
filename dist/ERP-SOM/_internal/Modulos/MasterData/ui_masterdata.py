@@ -150,11 +150,20 @@ class MasterDataUI(tk.Frame):
                                 width=16, command=self._open_company_fiscal)
         btn_company.grid(row=1, column=2, padx=5, pady=(10, 0))
 
+        btn_bank = tk.Button(frame, text="Datos bancarios", bg="#111827", fg="white",
+                             width=16, command=self._open_bank_accounts)
+        btn_bank.grid(row=1, column=3, padx=5, pady=(10, 0))
+
 
     def _open_company_fiscal(self):
         from Modulos.MasterData.popup_company_fiscal import PopupCompanyFiscal
 
         PopupCompanyFiscal(self)
+
+    def _open_bank_accounts(self):
+        from Modulos.MasterData.popup_bank_accounts import PopupBankAccounts
+
+        PopupBankAccounts(self)
 
     def _ask_masterdata_form_options(self):
         win = tk.Toplevel(self)
@@ -305,7 +314,7 @@ class MasterDataUI(tk.Frame):
 
     def _assign_masterdata_code_if_needed(self, spec, data):
         code = str(data.get(spec.code_field) or "").strip()
-        if code or spec.key == "empleado":
+        if code:
             return
 
         from api_client import api_request
@@ -313,6 +322,7 @@ class MasterDataUI(tk.Frame):
 
         suffix_by_entity = {
             "cliente": "C",
+            "empleado": "E",
             "proveedor": "P",
             "surveyor": "S",
         }

@@ -1,5 +1,6 @@
 from datetime import date
 from pathlib import Path
+import tempfile
 
 from docx import Document
 try:
@@ -7,9 +8,12 @@ try:
 except ModuleNotFoundError:
     from backend_api.services.template_autofit import apply_docx_autofit
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml import parse_xml
+from docx.oxml.ns import nsdecls
 from docx.shared import Inches
 from reportlab.lib.pagesizes import LETTER
 from reportlab.lib.units import inch
+from reportlab.lib.utils import ImageReader
 from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.pdfgen import canvas
 
@@ -39,15 +43,72 @@ def _is_mci(data: dict) -> bool:
     return is_mci_context(data)
 
 
+def _logo_width_inches(data: dict) -> float:
+    return 0.78 if _is_mci(data) else 2.5
+
+
+def _pdf_logo_width(data: dict, inch_unit: float) -> float:
+    return (0.72 if _is_mci(data) else 3.6) * inch_unit
+
+
+def _make_faded_watermark(image_path: str) -> str | None:
+    try:
+        from PIL import Image
+    except Exception:
+        return None
+
+    try:
+        image = Image.open(image_path).convert("RGBA")
+        alpha = image.getchannel("A").point(lambda value: int(value * 0.13))
+        image.putalpha(alpha)
+        temp = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+        temp.close()
+        image.save(temp.name)
+        return temp.name
+    except Exception:
+        return None
+
+
+def _add_docx_watermark(header, image_path: str) -> str | None:
+    faded_path = _make_faded_watermark(image_path)
+    source_path = faded_path or image_path
+    rel_id, _image = header.part.get_or_add_image(source_path)
+    paragraph = header.add_paragraph()
+    paragraph._p.append(parse_xml(
+        f"""
+        <w:r {nsdecls('w', 'r')} xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
+          <w:pict>
+            <v:shape id="MCIWatermark"
+              o:spid="_x0000_s1025"
+              type="#_x0000_t75"
+              style="position:absolute;margin-left:205pt;margin-top:185pt;width:185pt;height:231pt;z-index:-251654144;mso-position-horizontal:absolute;mso-position-vertical:absolute"
+              o:allowincell="f">
+              <v:imagedata r:id="{rel_id}" o:title="MCI watermark"/>
+            </v:shape>
+          </w:pict>
+        </w:r>
+        """
+    ))
+    return faded_path
+
+
 def export_cotizacion_word(data: dict, output_path: str):
     doc = Document()
     section = doc.sections[0]
+    if _is_mci(data):
+        section.top_margin = Inches(1.2)
+        section.header_distance = Inches(0.2)
 
     header = section.header.paragraphs[0]
     header.alignment = WD_ALIGN_PARAGRAPH.LEFT
     header_img = logo_asset(data) or _asset("header.png")
     if header_img:
-        header.add_run().add_picture(header_img, width=Inches(2.5))
+        header.add_run().add_picture(header_img, width=Inches(_logo_width_inches(data)))
+    temp_watermark = None
+    if _is_mci(data):
+        watermark_img = watermark_asset(data) or header_img
+        if watermark_img:
+            temp_watermark = _add_docx_watermark(section.header, watermark_img)
 
     body = doc.add_paragraph()
     body.alignment = WD_ALIGN_PARAGRAPH.LEFT
@@ -89,6 +150,11 @@ def export_cotizacion_word(data: dict, output_path: str):
 
     apply_docx_autofit(doc)
     doc.save(output_path)
+    if temp_watermark:
+        try:
+            Path(temp_watermark).unlink(missing_ok=True)
+        except Exception:
+            pass
 
 
 def export_cotizacion_pdf(data: dict, output_path: str):
@@ -97,8 +163,9 @@ def export_cotizacion_pdf(data: dict, output_path: str):
     left = 0.75 * inch
     right = 0.75 * inch
     body_width = width - left - right
-    header_y = height - 1.9 * inch
-    top_y = header_y - 0.5 * inch
+    mci_branding = _is_mci(data)
+    header_y = height - (1.28 * inch if mci_branding else 1.9 * inch)
+    top_y = height - (1.85 * inch if mci_branding else 2.4 * inch)
     footer_y = 0.7 * inch
     signature_block_height = 1.55 * inch
     body_min_y = footer_y + 0.35 * inch
@@ -149,14 +216,44 @@ def export_cotizacion_pdf(data: dict, output_path: str):
             " - ".join(footer_text(data).splitlines()),
         )
 
+    def draw_image_aspect(path: str, x: float, y: float, target_width: float, alpha: float | None = None):
+        image = ImageReader(path)
+        image_width, image_height = image.getSize()
+        target_height = target_width * (image_height / image_width)
+        if alpha is not None:
+            c.saveState()
+            c.setFillAlpha(alpha)
+            c.drawImage(image, x, y, width=target_width, height=target_height, mask="auto")
+            c.restoreState()
+            return target_height
+        c.drawImage(image, x, y, width=target_width, height=target_height, mask="auto")
+        return target_height
+
     def draw_static():
         if watermark:
-            c.saveState()
-            c.setFillAlpha(0.08)
-            c.drawImage(watermark, 1.2 * inch, 2.5 * inch, width=4.5 * inch, preserveAspectRatio=True, mask="auto")
-            c.restoreState()
+            wm_width = (2.6 if mci_branding else 4.5) * inch
+            wm_x = (width - wm_width) / 2
+            image = ImageReader(watermark)
+            image_width, image_height = image.getSize()
+            wm_height = wm_width * (image_height / image_width)
+            wm_y = (height - wm_height) / 2
+            draw_image_aspect(watermark, wm_x, wm_y, wm_width, alpha=0.11 if mci_branding else 0.08)
         if header:
-            c.drawImage(header, left, header_y, width=3.6 * inch, preserveAspectRatio=True, mask="auto")
+            header_width = _pdf_logo_width(data, inch)
+            if mci_branding:
+                image = ImageReader(header)
+                image_width, image_height = image.getSize()
+                header_height = header_width * (image_height / image_width)
+                c.drawImage(
+                    image,
+                    left,
+                    height - 0.35 * inch - header_height,
+                    width=header_width,
+                    height=header_height,
+                    mask="auto",
+                )
+            else:
+                draw_image_aspect(header, left, header_y, header_width)
         draw_footer()
 
     def new_page():

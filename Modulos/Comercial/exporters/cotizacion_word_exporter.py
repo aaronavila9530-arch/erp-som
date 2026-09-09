@@ -1,8 +1,11 @@
 from docx import Document
 from docx.shared import Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml import parse_xml
+from docx.oxml.ns import nsdecls
 from datetime import date
 import os
+import tempfile
 
 from branding import footer_text, is_mci_context, logo_asset
 from resource_utils import resource_path
@@ -11,6 +14,51 @@ from Modulos.Comercial.date_utils import to_long_english_date
 
 def _is_mci(data: dict) -> bool:
     return is_mci_context(data)
+
+
+def _logo_width_inches(data: dict) -> float:
+    return 0.78 if _is_mci(data) else 2.5
+
+
+def _make_faded_watermark(image_path: str) -> str | None:
+    try:
+        from PIL import Image
+    except Exception:
+        return None
+
+    try:
+        image = Image.open(image_path).convert("RGBA")
+        alpha = image.getchannel("A").point(lambda value: int(value * 0.13))
+        image.putalpha(alpha)
+        temp = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+        temp.close()
+        image.save(temp.name)
+        return temp.name
+    except Exception:
+        return None
+
+
+def _add_docx_watermark(header, image_path: str) -> str | None:
+    faded_path = _make_faded_watermark(image_path)
+    source_path = faded_path or image_path
+    rel_id, _image = header.part.get_or_add_image(source_path)
+    paragraph = header.add_paragraph()
+    paragraph._p.append(parse_xml(
+        f"""
+        <w:r {nsdecls('w', 'r')} xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
+          <w:pict>
+            <v:shape id="MCIWatermark"
+              o:spid="_x0000_s1025"
+              type="#_x0000_t75"
+              style="position:absolute;margin-left:205pt;margin-top:185pt;width:185pt;height:231pt;z-index:-251654144;mso-position-horizontal:absolute;mso-position-vertical:absolute"
+              o:allowincell="f">
+              <v:imagedata r:id="{rel_id}" o:title="MCI watermark"/>
+            </v:shape>
+          </w:pict>
+        </w:r>
+        """
+    ))
+    return faded_path
 
 
 # ============================================================
@@ -60,6 +108,10 @@ def export_cotizacion_word(data: dict, output_path: str):
     # HEADER (LOGO)
     # ==================================================
     section = doc.sections[0]
+    if _is_mci(data):
+        section.top_margin = Inches(1.15)
+        section.header_distance = Inches(0.2)
+
     header = section.header
 
     hp = header.paragraphs[0]
@@ -70,8 +122,13 @@ def export_cotizacion_word(data: dict, output_path: str):
     if os.path.isfile(header_img_path):
         hr.add_picture(
             header_img_path,
-            width=Inches(2.5)
+            width=Inches(_logo_width_inches(data))
         )
+    temp_watermark = None
+    if _is_mci(data):
+        watermark_img = logo_asset(data) or header_img_path
+        if watermark_img and os.path.isfile(watermark_img):
+            temp_watermark = _add_docx_watermark(header, watermark_img)
 
     # ==================================================
     # BODY
@@ -151,3 +208,8 @@ def export_cotizacion_word(data: dict, output_path: str):
     # SAVE
     # ==================================================
     doc.save(output_path)
+    if temp_watermark:
+        try:
+            os.unlink(temp_watermark)
+        except Exception:
+            pass
