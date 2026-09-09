@@ -9,7 +9,9 @@ from fastapi import (
     Form
 )
 from psycopg2.extras import RealDictCursor
+from psycopg2.extras import Json
 from datetime import date, datetime
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Optional
 import os
 import shutil
@@ -36,6 +38,93 @@ def _ensure_company_column(cur):
         ALTER TABLE payment_obligations
         ADD COLUMN IF NOT EXISTS company_code VARCHAR(30) NOT NULL DEFAULT 'MSL-CR'
     """)
+
+
+def _money(value) -> Decimal:
+    return Decimal(str(value or 0).replace(",", "")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def _previous_period(period: str) -> str:
+    year, month = [int(part) for part in str(period).split("-")[:2]]
+    month -= 1
+    if month == 0:
+        year -= 1
+        month = 12
+    return f"{year:04d}-{month:02d}"
+
+
+def _fortnight_due_date(period: str, fortnight: int) -> str:
+    year, month = [int(part) for part in str(period).split("-")[:2]]
+    return f"{year:04d}-{month:02d}-{'15' if int(fortnight or 1) == 1 else '30'}"
+
+
+def _ensure_biweekly_schema(cur):
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS itp_biweekly_payment_batches (
+            id BIGSERIAL PRIMARY KEY,
+            company_code TEXT NOT NULL,
+            period TEXT NOT NULL,
+            fortnight INTEGER NOT NULL,
+            created_by TEXT,
+            created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+            status TEXT NOT NULL DEFAULT 'APPLIED'
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS itp_biweekly_payment_lines (
+            id BIGSERIAL PRIMARY KEY,
+            batch_id BIGINT REFERENCES itp_biweekly_payment_batches(id) ON DELETE CASCADE,
+            company_code TEXT NOT NULL,
+            category TEXT NOT NULL,
+            beneficiary TEXT NOT NULL,
+            amount NUMERIC(18,2) NOT NULL,
+            currency TEXT NOT NULL DEFAULT 'CRC',
+            amount_crc NUMERIC(18,2) NOT NULL DEFAULT 0,
+            destination_account TEXT,
+            bank_accounting_code TEXT NOT NULL,
+            bank_accounting_name TEXT,
+            bank_voucher TEXT NOT NULL,
+            payment_date DATE NOT NULL,
+            obligation_id BIGINT,
+            reference TEXT,
+            source TEXT,
+            notes TEXT,
+            accounting_entry_id INTEGER,
+            created_at TIMESTAMP NOT NULL DEFAULT NOW()
+        )
+    """)
+    cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS last_payment_date DATE")
+    cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS payment_bank_account_code TEXT")
+    cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS payment_bank_account_name TEXT")
+
+
+def _exchange_rate(cur, value_date: str) -> Decimal:
+    cur.execute(
+        """
+        SELECT venta FROM tipo_cambio
+        WHERE fecha <= %s
+        ORDER BY fecha DESC
+        LIMIT 1
+        """,
+        (value_date,),
+    )
+    row = cur.fetchone()
+    return _money((row or {}).get("venta") if isinstance(row, dict) else (row[0] if row else 1))
+
+
+def _debit_account_for(category: str):
+    mapping = {
+        "Planilla": ("2.1.02.07", "Salarios por pagar"),
+        "CCSS": ("2.1.05.01", "Obligaciones patronales por pagar-CCSS"),
+        "IVA": ("2.1.02.03", "Impuesto sobre valor agregado (IVA) por pagar"),
+        "Tarjetas de credito": ("2.1.02.10", "Tarjeta corporativa BAC por pagar"),
+        "Telefonia": ("500-001-001-023", "Telefonos"),
+        "Viaticos": ("500-001-001-044", "Viaticos"),
+        "Alquiler": ("500-001-001-045", "Alquileres"),
+        "Internet": ("500-001-001-006", "Servicios Profesionales"),
+        "Surveyors": ("2.1.01.01", "Cuentas por pagar-comerciales"),
+    }
+    return mapping.get(category, ("5.4", "Otros gastos"))
 
 # ============================================================
 # RBAC GUARD
@@ -474,6 +563,351 @@ def invoice_to_pay_kpis(conn=Depends(get_db)):
         "exchange_rate": 500,
         "scope": "CURRENT_MONTH"
     }
+
+
+@router.get("/biweekly-obligations/preview")
+def biweekly_obligations_preview(
+    period: str = Query(...),
+    fortnight: int = Query(1),
+    conn=Depends(get_db),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+):
+    company = normalize_company_code(header_value=x_company_code)
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    _ensure_company_column(cur)
+    rows = []
+    default_crc_bank = "CR87010200009640180220"
+    aaron_bank = "CR27010200009688657826"
+
+    def suggested_bank(category, name, currency, current=""):
+        if category == "Tarjetas de credito":
+            return "BAC"
+        if "aaron avila" in str(name or "").lower():
+            return aaron_bank
+        if str(currency or "CRC").upper() == "CRC":
+            return default_crc_bank
+        return current or ""
+
+    def row(category, name, amount, currency="CRC", bank_account="", source="MANUAL", notes="", due_date=None, obligation_id=None, reference="", balance=None):
+        amount = _money(amount)
+        currency = currency or "CRC"
+        return {
+            "category": category,
+            "name": str(name or "").strip(),
+            "amount": float(amount),
+            "currency": currency,
+            "bank_account": suggested_bank(category, name, currency, bank_account),
+            "due_date": due_date or _fortnight_due_date(period, fortnight),
+            "source": source,
+            "notes": notes or "",
+            "obligation_id": obligation_id,
+            "reference": reference or "",
+            "balance": float(_money(balance if balance is not None else amount)),
+            "bank_accounting_code": "1.1.02.02.01",
+            "bank_accounting_name": "Banco BAC San Jose CRC CR87010200009640180220",
+            "bank_voucher": "",
+        }
+
+    try:
+        cur.execute(
+            """
+            SELECT nombre, apellidos, salario, pago, banco, cuenta_iban, moneda
+            FROM empleados
+            WHERE COALESCE(estado, 'Activo') = 'Activo'
+              AND COALESCE(activo, TRUE) = TRUE
+              AND company_code = %s
+              AND COALESCE(salario, 0) > 0
+            ORDER BY nombre, apellidos
+            """,
+            (company,),
+        )
+        for emp in cur.fetchall() or []:
+            pago = str(emp.get("pago") or "").upper()
+            amount = _money(emp.get("salario")) / (Decimal("2") if "QUINC" in pago else Decimal("1"))
+            rows.append(row(
+                "Planilla",
+                f"{emp.get('nombre') or ''} {emp.get('apellidos') or ''}".strip(),
+                amount,
+                emp.get("moneda") or "CRC",
+                emp.get("cuenta_iban") or emp.get("banco") or "",
+                "EMPLEADOS",
+                "Salario sugerido por quincena desde Master Data Empleados.",
+            ))
+
+        if int(fortnight or 1) == 1:
+            prev_period = _previous_period(period)
+            try:
+                year, month = [int(part) for part in prev_period.split("-")]
+                next_year, next_month = (year + 1, 1) if month == 12 else (year, month + 1)
+                cur.execute(
+                    """
+                    WITH tax_ranked AS (
+                        SELECT d.*,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY d.direction,
+                                                COALESCE(NULLIF(d.document_number, ''), NULLIF(d.electronic_key, ''), d.source_table || ':' || d.source_id, d.id::text)
+                                   ORDER BY
+                                       CASE
+                                           WHEN d.source_table IN ('hacienda_emitted_excel', 'hacienda_acceptance_excel', 'xml_upload') THEN 0
+                                           WHEN d.xml_path IS NOT NULL THEN 1
+                                           WHEN d.source_table IN ('invoicing', 'collections') THEN 2
+                                           WHEN d.source_table = 'payment_obligations' THEN 3
+                                           ELSE 4
+                                       END,
+                                       CASE WHEN COALESCE(d.tax_amount, 0) <> 0 THEN 0 ELSE 1 END,
+                                       d.id DESC
+                               ) AS tax_rank
+                        FROM tax_electronic_documents d
+                        WHERE d.issue_datetime >= %s
+                          AND d.issue_datetime < %s
+                          AND COALESCE(d.issue_datetime::date, CURRENT_DATE) <= CURRENT_DATE
+                          AND company_code = %s
+                    )
+                    SELECT direction,
+                           COALESCE(SUM(
+                               CASE
+                                   WHEN UPPER(COALESCE(currency_code,'CRC')) IN ('CRC','COLON','COLONES')
+                                   THEN tax_amount
+                                   ELSE tax_amount * COALESCE(NULLIF(exchange_rate,0),1)
+                               END
+                           ),0) AS tax_crc
+                    FROM tax_ranked
+                    WHERE tax_rank = 1
+                    GROUP BY direction
+                    """,
+                    (f"{year:04d}-{month:02d}-01", f"{next_year:04d}-{next_month:02d}-01", company),
+                )
+                taxes = {r["direction"]: _money(r["tax_crc"]) for r in cur.fetchall() or []}
+                iva_amount = _money(taxes.get("SALE", Decimal("0")) - taxes.get("PURCHASE", Decimal("0")))
+                if iva_amount > 0:
+                    rows.append(row("IVA", f"IVA por pagar {prev_period}", iva_amount, "CRC", default_crc_bank, "ACCOUNTING_TAX", "IVA venta menos IVA compra del mes anterior.", f"{period}-15"))
+            except Exception as exc:
+                conn.rollback()
+                rows.append(row("IVA", f"Revisar IVA mes anterior {prev_period}", 0, "CRC", default_crc_bank, "REVISION", str(exc), f"{period}-15"))
+
+            rows.append(row("CCSS", "CCSS por pagar", 0, "CRC", default_crc_bank, "MANUAL", "Completar monto confirmado por CCSS.", f"{period}-15"))
+            rows.append(row("Telefonia", "Manfred Bolanos Barrantes", 7000, "CRC", default_crc_bank, "AUTO_FIXED", "Apoyo celular primera quincena.", f"{period}-15"))
+            rows.append(row("Telefonia", "Erasmo Gomez Gomez", 7000, "CRC", default_crc_bank, "AUTO_FIXED", "Apoyo celular primera quincena.", f"{period}-15"))
+
+            cur.execute(
+                """
+                SELECT DISTINCT ON (COALESCE(card_last4,''), COALESCE(NULLIF(TRIM(card_last4),''), source_filename, id::text))
+                       card_last4, statement_period, payment_due_date, cash_payment_crc, cash_payment_usd
+                FROM corporate_card_statements
+                WHERE company_code=%s
+                  AND COALESCE(status,'IMPORTED') <> 'VOID'
+                ORDER BY COALESCE(card_last4,''), COALESCE(NULLIF(TRIM(card_last4),''), source_filename, id::text),
+                         cutoff_date DESC NULLS LAST, id DESC
+                """,
+                (company,),
+            )
+            card_labels = {"3155": "Aaron", "1951": "Diana", "1936": "Diana", "1969": "Pabel", "1944": "Pabel", "3148": "ITP"}
+            for st in cur.fetchall() or []:
+                last4 = str(st.get("card_last4") or "").strip()
+                label = card_labels.get(last4, f"Tarjeta {last4 or 'BAC'}")
+                crc = _money(st.get("cash_payment_crc"))
+                usd = _money(st.get("cash_payment_usd"))
+                if crc > 0:
+                    rows.append(row("Tarjetas de credito", f"BAC {label} contado CRC {st.get('statement_period') or ''}", crc, "CRC", "BAC", "CORP_CARD", f"Tarjeta {last4}", f"{period}-15"))
+                if usd > 0:
+                    rows.append(row("Tarjetas de credito", f"BAC {label} contado USD {st.get('statement_period') or ''}", usd, "USD", "BAC", "CORP_CARD", f"Tarjeta {last4}. Convertir/pagar segun banco.", f"{period}-15"))
+
+        cur.execute(
+            """
+            SELECT id, payee_name, obligation_type, reference, currency, balance, issue_date, due_date,
+                   payment_bank, payment_bank_account_code, payment_bank_account_name, notes
+            FROM payment_obligations
+            WHERE COALESCE(active, TRUE)=TRUE
+              AND company_code=%s
+              AND status IN ('PENDING','PARTIAL')
+              AND COALESCE(balance,0) > 0
+            ORDER BY due_date NULLS LAST, payee_name
+            """,
+            (company,),
+        )
+        for ob in cur.fetchall() or []:
+            if int(fortnight or 1) != 1:
+                continue
+            issue_date = ob.get("issue_date")
+            if issue_date and str(issue_date)[:7] != period:
+                continue
+            haystack = " ".join(str(ob.get(k) or "") for k in ("payee_name", "obligation_type", "notes", "reference")).lower()
+            if "alquiler" in haystack or "rent" in haystack or "prime properties" in haystack:
+                category = "Alquiler"
+            elif "internet" in haystack or "american data" in haystack:
+                category = "Internet"
+            elif "surveyor" in haystack or str(ob.get("obligation_type") or "").upper() == "SURVEYOR_FEE":
+                category = "Surveyors"
+            else:
+                continue
+            rows.append(row(
+                category,
+                ob.get("payee_name") or ob.get("reference") or category,
+                ob.get("balance"),
+                ob.get("currency") or "CRC",
+                ob.get("payment_bank_account_name") or ob.get("payment_bank_account_code") or ob.get("payment_bank") or "",
+                "ITP",
+                f"Aplicar pago a ITP #{ob.get('id')} | Ref: {ob.get('reference') or ''}".strip(),
+                str(ob.get("due_date") or _fortnight_due_date(period, fortnight)),
+                obligation_id=ob.get("id"),
+                reference=ob.get("reference") or "",
+                balance=ob.get("balance"),
+            ))
+        return {"period": period, "fortnight": int(fortnight or 1), "company_code": company, "rows": rows}
+    except Exception as exc:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"No se pudo generar obligaciones quincenales: {exc}")
+
+
+@router.post("/biweekly-obligations/apply")
+def biweekly_obligations_apply(
+    payload: dict,
+    conn=Depends(get_db),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+    x_user: str | None = Header(None, alias="X-User"),
+):
+    company = normalize_company_code(header_value=x_company_code)
+    user = x_user or "SYSTEM"
+    period = str(payload.get("period") or "").strip()
+    rows = payload.get("rows") or []
+    if not period or not isinstance(rows, list):
+        raise HTTPException(status_code=400, detail="Periodo y lineas son obligatorios")
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    _ensure_company_column(cur)
+    _ensure_biweekly_schema(cur)
+    errors = []
+    saved = posted = applied = 0
+    try:
+        cur.execute(
+            """
+            INSERT INTO itp_biweekly_payment_batches(company_code, period, fortnight, created_by)
+            VALUES(%s,%s,%s,%s)
+            RETURNING id
+            """,
+            (company, period, int(payload.get("fortnight") or 1), user),
+        )
+        batch_id = cur.fetchone()["id"]
+        for idx, item in enumerate(rows, start=1):
+            try:
+                category = str(item.get("category") or "").strip()
+                beneficiary = str(item.get("name") or "").strip()
+                bank_code = str(item.get("bank_accounting_code") or "").strip()
+                voucher = str(item.get("bank_voucher") or "").strip()
+                payment_date = str(item.get("due_date") or "").strip()
+                currency = str(item.get("currency") or "CRC").upper()
+                amount = _money(item.get("amount"))
+                if amount <= 0:
+                    continue
+                missing = []
+                if not category:
+                    missing.append("rubro")
+                if not beneficiary:
+                    missing.append("beneficiario")
+                if not bank_code:
+                    missing.append("cuenta contable banco")
+                if not voucher:
+                    missing.append("comprobante bancario")
+                if not payment_date:
+                    missing.append("fecha pago")
+                if missing:
+                    raise ValueError("Faltan campos obligatorios: " + ", ".join(missing))
+                datetime.strptime(payment_date, "%Y-%m-%d")
+                cur.execute(
+                    """
+                    SELECT account_code, account_name
+                    FROM accounting_accounts
+                    WHERE account_code=%s
+                      AND COALESCE(active, TRUE)=TRUE
+                      AND COALESCE(accepts_posting, FALSE)=TRUE
+                    LIMIT 1
+                    """,
+                    (bank_code,),
+                )
+                bank_row = cur.fetchone()
+                if not bank_row:
+                    raise ValueError(f"Cuenta contable banco invalida o inactiva: {bank_code}")
+                rate = _exchange_rate(cur, payment_date) if currency == "USD" else Decimal("1.00")
+                amount_crc = (amount * rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                bank_name = bank_row["account_name"]
+                description = f"Pago quincenal {category} - {beneficiary} - Comp {voucher}"
+                obligation_id = item.get("obligation_id")
+                if obligation_id:
+                    cur.execute("SELECT id, balance FROM payment_obligations WHERE id=%s AND company_code=%s FOR UPDATE", (int(obligation_id), company))
+                    ob = cur.fetchone()
+                    if not ob:
+                        raise ValueError(f"ITP {obligation_id} no existe")
+                    balance = _money(ob.get("balance"))
+                    if amount > balance:
+                        raise ValueError(f"Pago excede saldo ITP {obligation_id}")
+                    new_balance = (balance - amount).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                    cur.execute(
+                        """
+                        UPDATE payment_obligations
+                           SET balance=%s,
+                               status=%s,
+                               last_payment_date=%s,
+                               payment_bank_account_code=%s,
+                               payment_bank_account_name=%s,
+                               updated_at=NOW()
+                         WHERE id=%s AND company_code=%s
+                        """,
+                        (new_balance, "PAID" if new_balance == 0 else "PARTIAL", payment_date, bank_code, bank_name, int(obligation_id), company),
+                    )
+                    applied += 1
+                entry_origin = "ITP_PAYMENT" if obligation_id else "ITP_BIWEEKLY_PAYMENT"
+                entry_origin_id = int(obligation_id) if obligation_id else batch_id * 10000 + idx
+                cur.execute("SELECT id FROM accounting_entries WHERE origin=%s AND origin_id=%s AND company_code=%s LIMIT 1", (entry_origin, entry_origin_id, company))
+                existing = cur.fetchone()
+                if existing:
+                    entry_id = existing["id"]
+                    cur.execute("DELETE FROM accounting_lines WHERE entry_id=%s", (entry_id,))
+                else:
+                    cur.execute(
+                        """
+                        INSERT INTO accounting_entries(entry_date, period, description, origin, origin_id, created_by, workflow_status, company_code, currency_code, exchange_rate, posting_rule_code, posting_metadata, posted_by, posted_at)
+                        VALUES(%s,%s,%s,%s,%s,%s,'POSTED',%s,'CRC',%s,%s,%s,%s,NOW())
+                        RETURNING id
+                        """,
+                        (payment_date, period, description, entry_origin, entry_origin_id, user, company, rate, entry_origin, Json({"bank_voucher": voucher, "category": category, "source": item.get("source")}), user),
+                    )
+                    entry_id = cur.fetchone()["id"]
+                debit_code, debit_name = ("2.1.01.01", "Cuentas por pagar-comerciales") if obligation_id else _debit_account_for(category)
+                cur.execute(
+                    """
+                    INSERT INTO accounting_lines(entry_id, account_code, account_name, debit, credit, line_description)
+                    VALUES(%s,%s,%s,%s,0,%s),(%s,%s,%s,0,%s,%s)
+                    """,
+                    (entry_id, debit_code, debit_name, amount_crc, description, entry_id, bank_code, bank_name, amount_crc, description),
+                )
+                posted += 1
+                cur.execute(
+                    """
+                    INSERT INTO itp_biweekly_payment_lines(
+                        batch_id, company_code, category, beneficiary, amount, currency, amount_crc,
+                        destination_account, bank_accounting_code, bank_accounting_name, bank_voucher,
+                        payment_date, obligation_id, reference, source, notes, accounting_entry_id
+                    )
+                    VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    """,
+                    (
+                        batch_id, company, category, beneficiary, amount, currency, amount_crc,
+                        item.get("bank_account") or "", bank_code, bank_name, voucher, payment_date,
+                        obligation_id, item.get("reference") or "", item.get("source") or "", item.get("notes") or "", entry_id,
+                    ),
+                )
+                saved += 1
+            except Exception as exc:
+                errors.append(f"Linea {idx}: {exc}")
+        if errors:
+            conn.rollback()
+            raise HTTPException(status_code=400, detail="\n".join(errors[:10]))
+        conn.commit()
+        return {"status": "ok", "batch_id": batch_id, "saved": saved, "posted": posted, "applied": applied}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"No se pudo aplicar obligaciones quincenales: {exc}")
 
 # ============================================================
 # 3️⃣ APPLY PAYMENT — BLINDADO FINANCIERO

@@ -52,7 +52,7 @@ const COMPANIES = [
   { code: "MCI-CR", name: "MSL MARINE CLAIMS RISK & INTELLIGENCE", label: "MCI" }
 ];
 const DEFAULT_COMPANY = COMPANIES[0];
-const MOBILE_APP_VERSION = "1.7.32";
+const MOBILE_APP_VERSION = "1.7.33";
 const KIOSK_USER = (process.env.EXPO_PUBLIC_ERP_SOM_KIOSK_USER || "").trim();
 const KIOSK_NAME = (process.env.EXPO_PUBLIC_ERP_SOM_KIOSK_NAME || KIOSK_USER || "").trim();
 const IS_KIOSK_APP = Boolean(KIOSK_USER);
@@ -14592,6 +14592,7 @@ const ACCOUNTING_MOBILE_ACTIONS = [
   { key: "auxiliaries", label: "Auxiliares contables", description: "Cuentas por cobrar, pagar y conciliacion contra mayor." },
   { key: "fixed-assets", label: "Activos fijos", description: "Inventario, depreciacion y control de activos." },
   { key: "corporate-cards", label: "Tarjetas corporativas", description: "BAC por usuario, cruces ITP, clasificacion y posteos." },
+  { key: "itp-biweekly", label: "Obligaciones quincenales", description: "Planilla, IVA, CCSS, tarjetas, alquiler, internet y pagos ITP." },
   { key: "inventory", label: "Inventarios", description: "Items inventariables y activos menores." },
   { key: "tax-center", label: "Centro fiscal Costa Rica", description: "IVA, XML, libros, CAByS y obligaciones." },
   { key: "legal-library", label: "Biblioteca legal Costa Rica", description: "Reglas tributarias y contables de referencia." },
@@ -14721,6 +14722,7 @@ function AccountingActionScreen({
       <ScrollView style={styles.content} contentContainerStyle={styles.modalBody}>
         {actionKey === "tax-simulator" ? <TaxScenarioPlannerMobile session={session} /> : null}
         {actionKey === "corporate-cards" ? <CorporateCardsMobile session={session} /> : null}
+        {actionKey === "itp-biweekly" ? <ItpBiweeklyObligationsMobile session={session} initialPeriod={period} /> : null}
         {actionKey === "manual-entry" ? <ManualEntryMobile session={session} /> : null}
         {actionKey === "sync" ? <AccountingSyncMobile session={session} period={period} /> : null}
         {actionKey === "alerts" ? <AccountingListActionMobile session={session} title="Alertas y validaciones" endpoint={`/accounting/validation-alerts?period=${encodeURIComponent(period)}&company_code=${encodeURIComponent(session.company_code || DEFAULT_COMPANY.code)}`} /> : null}
@@ -14985,6 +14987,173 @@ function DeclarationsMobile({ session, period }: { session: NonNullable<ReturnTy
       <AccountingListActionMobile session={session} title="TRIBU-CR D-150 IVA" endpoint={`/accounting/tax/iva?period=${encodeURIComponent(period)}`} />
       <Text style={styles.helperText}>D-102 se consulta desde el Simulador fiscal multiempresa porque requiere parametros de escenario y anos PYME.</Text>
       <Text style={styles.helperText}>D-101 y D-270 siguen marcados como pendientes en escritorio; Android los muestra como referencia cuando el backend los exponga.</Text>
+    </View>
+  );
+}
+
+function ItpBiweeklyObligationsMobile({
+  session,
+  initialPeriod = currentAccountingPeriod()
+}: {
+  session: NonNullable<ReturnType<typeof useAuth>["session"]>;
+  initialPeriod?: string;
+}) {
+  const [period, setPeriod] = useState(initialPeriod || currentAccountingPeriod());
+  const [fortnight, setFortnight] = useState("1");
+  const [rows, setRows] = useState<Record<string, unknown>[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+
+  const totals = useMemo(() => {
+    return rows.reduce<Record<string, number>>((acc, row) => {
+      const currency = formatValue(row.currency || "CRC");
+      acc[currency] = (acc[currency] || 0) + Number(row.amount || 0);
+      return acc;
+    }, {});
+  }, [rows]);
+
+  function updateRow(index: number, key: string, value: string) {
+    setRows((current) => current.map((row, rowIndex) => (rowIndex === index ? { ...row, [key]: value } : row)));
+  }
+
+  function addRow(category = "Otros") {
+    setRows((current) => [
+      ...current,
+      {
+        category,
+        name: "",
+        amount: 0,
+        currency: "CRC",
+        bank_account: "CR87010200009640180220",
+        due_date: `${period}-${fortnight === "1" ? "15" : "30"}`,
+        source: "MANUAL",
+        notes: "",
+        obligation_id: null,
+        reference: "",
+        balance: 0,
+        bank_accounting_code: "1.1.02.02.01",
+        bank_accounting_name: "Banco BAC San Jose CRC CR87010200009640180220",
+        bank_voucher: ""
+      }
+    ]);
+  }
+
+  function removeRow(index: number) {
+    setRows((current) => current.filter((_, rowIndex) => rowIndex !== index));
+  }
+
+  async function loadPreview() {
+    setBusy(true);
+    setMessage("");
+    try {
+      const payload = await apiRequest<Record<string, unknown>>(
+        `/invoice-to-pay/biweekly-obligations/preview?period=${encodeURIComponent(period)}&fortnight=${encodeURIComponent(fortnight)}`,
+        { session }
+      );
+      const nextRows = payloadItems(asRecord(payload)?.rows || payload);
+      setRows(nextRows);
+      setMessage(`Preview generado: ${nextRows.length} linea(s).`);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo generar obligaciones quincenales.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function applyPayments() {
+    const missing = rows
+      .map((row, index) => ({
+        index: index + 1,
+        voucher: String(row.bank_voucher || "").trim(),
+        bank: String(row.bank_accounting_code || "").trim()
+      }))
+      .filter((row) => !row.voucher || !row.bank);
+    if (missing.length) {
+      setMessage(`Falta comprobante o cuenta banco en linea(s): ${missing.map((row) => row.index).join(", ")}.`);
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      const payload = await apiRequest<Record<string, unknown>>("/invoice-to-pay/biweekly-obligations/apply", {
+        method: "POST",
+        session,
+        body: { period, fortnight: Number(fortnight), rows }
+      });
+      setMessage(`Aplicado. Lineas ${formatValue(payload.saved)} | Asientos ${formatValue(payload.posted)} | ITP ${formatValue(payload.applied)}.`);
+      await loadPreview();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo aplicar pagos ITP.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function shareCsv() {
+    if (!rows.length) {
+      setMessage("Primero genere el preview.");
+      return;
+    }
+    const columns = ["category", "name", "amount", "currency", "bank_account", "bank_accounting_code", "bank_voucher", "due_date", "obligation_id", "reference", "source", "notes"];
+    try {
+      await Share.share({ title: `Obligaciones_${period}_Q${fortnight}`, message: buildCsv(rows, columns) });
+      setMessage("Resumen enviado al menu de compartir.");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo compartir el resumen.");
+    }
+  }
+
+  useEffect(() => {
+    loadPreview();
+  }, []);
+
+  return (
+    <View>
+      <Text style={styles.helperText}>Genera obligaciones quincenales y permite aplicar pagos con asiento contable. Para aplicar, cada linea requiere comprobante y cuenta contable de banco.</Text>
+      <Text style={styles.label}>Periodo</Text>
+      <TextInput style={styles.input} value={period} onChangeText={setPeriod} placeholder="YYYY-MM" />
+      <SelectField label="Quincena" value={fortnight} options={["1", "2"]} onChange={setFortnight} />
+      <View style={styles.financeFilterActions}>
+        <Pressable style={styles.actionButton} onPress={loadPreview} disabled={busy}><Text style={styles.actionButtonText}>{busy ? "Procesando..." : "Generar automatico"}</Text></Pressable>
+        <Pressable style={styles.modalClose} onPress={shareCsv}><Text style={styles.modalCloseText}>Exportar CSV</Text></Pressable>
+      </View>
+      <View style={styles.financeFilterActions}>
+        <Pressable style={styles.secondaryButtonCompact} onPress={() => addRow("Surveyors")}><Text style={styles.secondaryButtonText}>+ Surveyor</Text></Pressable>
+        <Pressable style={styles.secondaryButtonCompact} onPress={() => addRow("Viaticos")}><Text style={styles.secondaryButtonText}>+ Viaticos</Text></Pressable>
+        <Pressable style={styles.secondaryButtonCompact} onPress={() => addRow("Otros")}><Text style={styles.secondaryButtonText}>+ Otros</Text></Pressable>
+      </View>
+      <View style={styles.kpiGrid}>
+        {Object.entries(totals).map(([currency, total]) => (
+          <View key={currency} style={styles.kpiCard}>
+            <Text style={styles.kpiLabel}>{currency}</Text>
+            <Text style={styles.kpiValue}>{currency === "CRC" ? moneyCrc(total) : formatValue(total.toFixed(2))}</Text>
+          </View>
+        ))}
+      </View>
+      {message ? <Text style={message.includes("No se") || message.includes("Falta") || message.includes("Error") ? styles.error : styles.helperText}>{message}</Text> : null}
+      {rows.map((row, index) => (
+        <View key={`biweekly-${index}`} style={styles.rowCard}>
+          <View style={styles.salaryHeader}>
+            <Text style={styles.rowTitle}>{formatValue(row.category)} · {formatValue(row.name || `Linea ${index + 1}`)}</Text>
+            <Pressable style={styles.smallDangerButton} onPress={() => removeRow(index)}><Text style={styles.smallDangerButtonText}>X</Text></Pressable>
+          </View>
+          <SelectField label="Rubro" value={formatValue(row.category || "Otros")} options={["Planilla", "IVA", "CCSS", "Tarjetas de credito", "Telefonia", "Alquiler", "Internet", "Surveyors", "Viaticos", "Otros"]} onChange={(value) => updateRow(index, "category", value)} />
+          <Text style={styles.label}>Nombre / beneficiario</Text>
+          <TextInput style={styles.input} value={formatValue(row.name)} onChangeText={(value) => updateRow(index, "name", value)} />
+          <Text style={styles.label}>Monto</Text>
+          <TextInput style={styles.input} keyboardType="decimal-pad" value={formatValue(row.amount)} onChangeText={(value) => updateRow(index, "amount", value)} />
+          <SelectField label="Moneda" value={formatValue(row.currency || "CRC")} options={["CRC", "USD"]} onChange={(value) => updateRow(index, "currency", value)} />
+          <Text style={styles.label}>Cuenta bancaria destino</Text>
+          <TextInput style={styles.input} value={formatValue(row.bank_account)} onChangeText={(value) => updateRow(index, "bank_account", value)} />
+          <Text style={styles.label}>Cuenta contable banco pago</Text>
+          <TextInput style={styles.input} value={formatValue(row.bank_accounting_code)} onChangeText={(value) => updateRow(index, "bank_accounting_code", value)} placeholder="Ej. 1.1.02.02.01" />
+          <Text style={styles.label}>Comprobante bancario</Text>
+          <TextInput style={styles.input} value={formatValue(row.bank_voucher)} onChangeText={(value) => updateRow(index, "bank_voucher", value)} />
+          <DateField label="Fecha pago" value={formatValue(row.due_date)} onChange={(value) => updateRow(index, "due_date", value)} />
+          <MiniRecordCard row={{ ITP: row.obligation_id || "-", referencia: row.reference || "-", fuente: row.source || "-", notas: row.notes || "-" }} />
+        </View>
+      ))}
+      <PrimaryButton label="Aplicar pagos ITP y crear asientos" loading={busy} onPress={applyPayments} />
     </View>
   );
 }
@@ -15271,6 +15440,7 @@ function FinanceFilters({
   const [clientCodes, setClientCodes] = useState<Record<string, string>>({});
   const [accounts, setAccounts] = useState<string[]>(["TODOS"]);
   const [accountingActionsOpen, setAccountingActionsOpen] = useState(false);
+  const [biweeklyOpen, setBiweeklyOpen] = useState(false);
   const accountingPeriods = useMemo(() => buildAccountingPeriods(), []);
   const [form, setForm] = useState<Record<string, string>>({
     cliente: sectionKey === "billing" ? "" : "ALL",
@@ -15652,6 +15822,28 @@ function FinanceFilters({
 
       {sectionKey === "invoice-to-pay" ? (
         <>
+          <View style={styles.reportBox}>
+            <View style={styles.salaryHeader}>
+              <Text style={styles.cardTitle}>Obligaciones quincenales</Text>
+              <Pressable style={styles.actionButton} onPress={() => setBiweeklyOpen(true)}>
+                <Text style={styles.actionButtonText}>Abrir</Text>
+              </Pressable>
+            </View>
+            <Text style={styles.helperText}>Planilla, IVA, CCSS, tarjetas, alquiler, internet, surveyors y viaticos con asiento contable al aplicar.</Text>
+          </View>
+          <Modal visible={biweeklyOpen} animationType="slide" onRequestClose={() => setBiweeklyOpen(false)}>
+            <SafeAreaView style={styles.modalScreen}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>Obligaciones quincenales ITP</Text>
+                <Pressable style={styles.modalClose} onPress={() => setBiweeklyOpen(false)}>
+                  <Text style={styles.modalCloseText}>Cerrar</Text>
+                </Pressable>
+              </View>
+              <ScrollView style={styles.content} contentContainerStyle={styles.modalBody}>
+                <ItpBiweeklyObligationsMobile session={session} initialPeriod={form.period || currentAccountingPeriod()} />
+              </ScrollView>
+            </SafeAreaView>
+          </Modal>
           <SelectField label="Obligacion" value={form.obligation_type || "Todos"} options={["Todos", "SURVEYOR", "SUPPLIER", "MANUAL"]} onChange={(value) => setValue("obligation_type", value === "Todos" ? "" : value)} />
           <Text style={styles.label}>Beneficiario</Text>
           <TextInput style={styles.input} value={form.payee} onChangeText={(value) => setValue("payee", value)} placeholder="Nombre del beneficiario" />
@@ -16004,11 +16196,27 @@ function ServiceActionModal({
   const [paises, setPaises] = useState<string[]>([]);
   const [puertos, setPuertos] = useState<string[]>([]);
   const [operaciones, setOperaciones] = useState<string[]>([]);
+  const [surveyores, setSurveyores] = useState<string[]>([]);
+  const [surveyorList, setSurveyorList] = useState<string[]>([]);
+  const [surveyorToAdd, setSurveyorToAdd] = useState("");
   const [delayRows, setDelayRows] = useState([{ f1: "", h1: "", f2: "", h2: "" }]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const consec = service ? formatValue(service.consec) : "";
   const mode = action || "";
+
+  function splitSurveyors(value: unknown) {
+    return String(value || "")
+      .split(/[;,]/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  function setSurveyors(next: string[]) {
+    const unique = Array.from(new Set(next.map((item) => item.trim()).filter(Boolean)));
+    setSurveyorList(unique);
+    setForm((current) => ({ ...current, surveyor: unique.join(", ") }));
+  }
 
   useEffect(() => {
     if (!visible || !service) return;
@@ -16018,6 +16226,7 @@ function ServiceActionModal({
       return formatted === "-" ? "" : formatted;
     };
     setForm({
+      tipo: cleanField(service.tipo) || "Buque",
       buque_contenedor: cleanField(service.buque_contenedor),
       cliente: cleanField(service.cliente),
       contacto: cleanField(service.contacto),
@@ -16038,6 +16247,8 @@ function ServiceActionModal({
       razon_cancelacion: "",
       comentario_cancelacion: ""
     });
+    setSurveyors(splitSurveyors(service.surveyor));
+    setSurveyorToAdd("");
     setDelayRows([{ f1: "", h1: "", f2: "", h2: "" }]);
   }, [service, visible]);
 
@@ -16046,12 +16257,23 @@ function ServiceActionModal({
     Promise.all([
       apiRequest("/clientes?page=1&page_size=500", { session }),
       apiRequest("/cpp/continentes", { session }),
-      apiRequest("/servicios_md/?page=1&page_size=500", { session })
+      apiRequest("/servicios_md/?page=1&page_size=500", { session }),
+      apiRequest("/surveyores/?page=1&page_size=500", { session })
     ])
-      .then(([clientesPayload, continentesPayload, serviciosPayload]) => {
+      .then(([clientesPayload, continentesPayload, serviciosPayload, surveyoresPayload]) => {
         setClientes(toOptions(clientesPayload, ["nombrecomercial", "nombrejuridico", "NombreComercial", "codigo"]));
         setContinentes(toOptions(continentesPayload, ["nombre", "continente"]));
         setOperaciones(toOptions(serviciosPayload, ["nombre", "Nombre"]));
+        const rows = pickList(surveyoresPayload) as Record<string, unknown>[];
+        setSurveyores(
+          Array.from(
+            new Set(
+              rows
+                .map((row) => `${formatValue(row.nombre)} ${formatValue(row.apellidos)}`.trim())
+                .filter((name) => name && name !== "- -")
+            )
+          ).sort()
+        );
       })
       .catch((err) => setMessage(err instanceof Error ? err.message : "No se pudieron cargar catalogos."));
   }, [mode, session, visible]);
@@ -16075,6 +16297,17 @@ function ServiceActionModal({
 
   function setValue(key: string, value: string) {
     setForm((current) => ({ ...current, [key]: value }));
+  }
+
+  function addSurveyor() {
+    const value = surveyorToAdd.trim();
+    if (!value || value === "Seleccionar") return;
+    setSurveyors([...surveyorList, value]);
+    setSurveyorToAdd("");
+  }
+
+  function removeSurveyor(name: string) {
+    setSurveyors(surveyorList.filter((item) => item !== name));
   }
 
   function toNumber(value: unknown) {
@@ -16177,6 +16410,7 @@ function ServiceActionModal({
           session,
           offlineLabel: `Editar Servicio ${consec}`,
           body: {
+            tipo: form.tipo || formatValue(service?.tipo) || "Buque",
             buque_contenedor: form.buque_contenedor,
             cliente: form.cliente,
             contacto: form.contacto,
@@ -16185,7 +16419,7 @@ function ServiceActionModal({
             pais: form.pais,
             puerto: form.puerto,
             operacion: form.operacion,
-            surveyor: form.surveyor,
+            surveyor: surveyorList.length ? surveyorList.join(", ") : form.surveyor,
             honorarios: toNumber(form.honorarios),
             costo_operativo: toNumber(form.costo_operativo),
             costo_tarjetas: cardCostAllowed ? toNumber(form.costo_tarjetas) : null,
@@ -16286,6 +16520,7 @@ function ServiceActionModal({
 
           {mode === "edit" ? (
             <>
+              <SelectField label="Tipo" value={form.tipo || "Buque"} options={["Buque", "Contenedor"]} onChange={(value) => setValue("tipo", value)} />
               <Text style={styles.label}>Buque / Contenedor</Text>
               <TextInput style={styles.input} value={form.buque_contenedor} onChangeText={(value) => setValue("buque_contenedor", value)} />
               <SelectField label="Cliente" value={form.cliente} options={clientes} onChange={(value) => setValue("cliente", value)} />
@@ -16307,8 +16542,23 @@ function ServiceActionModal({
               />
               <SelectField label="Puerto" value={form.puerto} options={puertos} onChange={(value) => setValue("puerto", value)} />
               <SelectField label="Operacion" value={form.operacion} options={operaciones} onChange={(value) => setValue("operacion", value)} />
-              <Text style={styles.label}>Surveyor</Text>
-              <TextInput style={styles.input} value={form.surveyor} onChangeText={(value) => setValue("surveyor", value)} />
+              <SelectField label="Agregar surveyor" value={surveyorToAdd || "Seleccionar"} options={["Seleccionar", ...surveyores]} onChange={setSurveyorToAdd} />
+              <Pressable style={styles.secondaryButton} onPress={addSurveyor}>
+                <Text style={styles.secondaryButtonText}>+ Agregar surveyor</Text>
+              </Pressable>
+              <Text style={styles.label}>Surveyors asignados</Text>
+              {surveyorList.length ? (
+                surveyorList.map((name) => (
+                  <View key={name} style={styles.detailRow}>
+                    <Text style={styles.detailValue}>{name}</Text>
+                    <Pressable style={styles.smallDangerButton} onPress={() => removeSurveyor(name)}>
+                      <Text style={styles.smallDangerButtonText}>X</Text>
+                    </Pressable>
+                  </View>
+                ))
+              ) : (
+                <Text style={styles.helperText}>Agregue al menos un surveyor.</Text>
+              )}
               <Text style={styles.label}>Honorarios</Text>
               <TextInput keyboardType="decimal-pad" style={styles.input} value={form.honorarios} onChangeText={(value) => setValue("honorarios", value)} />
               <Text style={styles.label}>Costo operativo</Text>
