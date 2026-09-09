@@ -16,6 +16,7 @@ import uuid
 
 from database import get_db
 from rbac_service import has_permission
+from services.tenanting import company_code
 from services.cotizacion_export_service import export_cotizacion_pdf, export_cotizacion_word
 
 # ============================================================
@@ -59,6 +60,7 @@ def _normalize_payload_dict(data: dict) -> dict:
 
 
 def _build_cotizaciones_filters(
+    company: str,
     cliente: str | None = None,
     servicio: str | None = None,
     continente: str | None = None,
@@ -67,8 +69,8 @@ def _build_cotizaciones_filters(
     status: str | None = None,
     year: int | None = None,
 ):
-    filters = []
-    params = {}
+    filters = ["COALESCE(NULLIF(TRIM(company_code::text), ''), 'MSL-CR') = %(company_code)s"]
+    params = {"company_code": company_code(company)}
 
     cliente = _clean_str(cliente)
     servicio = _clean_str(servicio)
@@ -189,6 +191,7 @@ def _cleanup_export_cache():
 def _ensure_cotizaciones_schema(cur):
     cur.execute("""
         ALTER TABLE public.cotizaciones
+        ADD COLUMN IF NOT EXISTS company_code VARCHAR(30) NOT NULL DEFAULT 'MSL-CR',
         ADD COLUMN IF NOT EXISTS texto_cotizacion TEXT;
     """)
 
@@ -362,13 +365,16 @@ def listar_cotizaciones(
     pais: str | None = Query(None),
     puerto: str | None = Query(None),
     status: str | None = Query(None),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
     conn=Depends(get_db)
 ):
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     try:
         _ensure_cotizaciones_schema(cur)
+        selected_company = company_code(x_company_code)
         filters, params = _build_cotizaciones_filters(
+            company=selected_company,
             cliente=cliente,
             servicio=servicio,
             continente=continente,
@@ -393,6 +399,7 @@ def listar_cotizaciones(
                 validez,
                 TRIM(status)     AS status,
                 texto_cotizacion,
+                company_code,
                 created_at
             FROM public.cotizaciones
             {where_clause}
@@ -418,18 +425,23 @@ def listar_cotizaciones(
     "/next-quotation-number",
     dependencies=[Depends(require_permission("comercial", "edit"))]
 )
-def get_next_quotation_number(conn=Depends(get_db)):
+def get_next_quotation_number(
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+    conn=Depends(get_db),
+):
     cur = conn.cursor()
 
     try:
         _ensure_cotizaciones_schema(cur)
+        selected_company = company_code(x_company_code)
         cur.execute("""
             SELECT quotation_number
             FROM public.cotizaciones
+            WHERE COALESCE(NULLIF(TRIM(company_code::text), ''), 'MSL-CR') = %s
             ORDER BY id DESC
             LIMIT 1
             FOR UPDATE;
-        """)
+        """, (selected_company,))
 
         row = cur.fetchone()
 
@@ -455,12 +467,19 @@ def get_next_quotation_number(conn=Depends(get_db)):
     "/export-ticket",
     dependencies=[Depends(require_permission("comercial", "view"))]
 )
-def crear_export_ticket(payload: CotizacionExportCreate):
+def crear_export_ticket(
+    payload: CotizacionExportCreate,
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+    x_company_name: str | None = Header(None, alias="X-Company-Name"),
+):
     _cleanup_export_cache()
     ticket = uuid.uuid4().hex
+    data = payload.dict()
+    data["company_code"] = company_code(x_company_code)
+    data["company_name"] = x_company_name
     EXPORT_CACHE[ticket] = {
         "created_at": time.time(),
-        "data": payload.dict()
+        "data": data
     }
     return {"ticket": ticket}
 
@@ -494,6 +513,8 @@ def exportar_cotizacion_mobile(
         servicio = data_cached.get("servicio") or servicio
         idioma = data_cached.get("idioma") or idioma
         texto = data_cached.get("texto") or texto
+        x_company_code = data_cached.get("company_code") or x_company_code
+        x_company_name = data_cached.get("company_name") or x_company_name
 
     formato = (formato or "").strip().lower()
     if formato not in {"word", "pdf"}:
@@ -509,7 +530,7 @@ def exportar_cotizacion_mobile(
         "servicio": servicio,
         "idioma": idioma or "ES",
         "texto": texto,
-        "company_code": x_company_code,
+        "company_code": company_code(x_company_code),
         "company_name": x_company_name
     }
 
@@ -536,7 +557,11 @@ def exportar_cotizacion_mobile(
     "/{cotizacion_id}/detail",
     dependencies=[Depends(require_permission("comercial", "view"))]
 )
-def obtener_cotizacion(cotizacion_id: int, conn=Depends(get_db)):
+def obtener_cotizacion(
+    cotizacion_id: int,
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+    conn=Depends(get_db),
+):
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     try:
@@ -544,8 +569,9 @@ def obtener_cotizacion(cotizacion_id: int, conn=Depends(get_db)):
         cur.execute("""
             SELECT *
             FROM public.cotizaciones
-            WHERE id = %s;
-        """, (cotizacion_id,))
+            WHERE id = %s
+              AND COALESCE(NULLIF(TRIM(company_code::text), ''), 'MSL-CR') = %s;
+        """, (cotizacion_id, company_code(x_company_code)))
         row = cur.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Cotización no encontrada")
@@ -579,8 +605,9 @@ def exportar_cotizacion_por_id(
         cur.execute("""
             SELECT *
             FROM public.cotizaciones
-            WHERE id = %s;
-        """, (cotizacion_id,))
+            WHERE id = %s
+              AND COALESCE(NULLIF(TRIM(company_code::text), ''), 'MSL-CR') = %s;
+        """, (cotizacion_id, company_code(x_company_code)))
         row = cur.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Cotización no encontrada")
@@ -619,18 +646,24 @@ def exportar_cotizacion_por_id(
     "",
     dependencies=[Depends(require_permission("comercial", "edit"))]
 )
-def crear_cotizacion(payload: CotizacionCreate, conn=Depends(get_db)):
+def crear_cotizacion(
+    payload: CotizacionCreate,
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+    conn=Depends(get_db),
+):
     cur = conn.cursor()
 
     try:
         _ensure_cotizaciones_schema(cur)
+        selected_company = company_code(x_company_code)
         cur.execute("""
             SELECT quotation_number
             FROM public.cotizaciones
+            WHERE COALESCE(NULLIF(TRIM(company_code::text), ''), 'MSL-CR') = %s
             ORDER BY id DESC
             LIMIT 1
             FOR UPDATE;
-        """)
+        """, (selected_company,))
 
         row = cur.fetchone()
         next_num = int(str(row[0]).replace("Quotation", "").strip()) + 1 if row and row[0] else 1
@@ -642,20 +675,21 @@ def crear_cotizacion(payload: CotizacionCreate, conn=Depends(get_db)):
                 precio, idioma, validez, status,
                 servicio_1, precio_1, servicio_2, precio_2,
                 servicio_3, precio_3, servicio_4, precio_4,
-                quotation_number, texto_cotizacion
+                quotation_number, texto_cotizacion, company_code
             )
             VALUES (
                 %(cliente)s, %(servicio)s, %(continente)s, %(pais)s, %(puerto)s,
                 %(precio)s, %(idioma)s, %(validez)s, %(status)s,
                 %(servicio_1)s, %(precio_1)s, %(servicio_2)s, %(precio_2)s,
                 %(servicio_3)s, %(precio_3)s, %(servicio_4)s, %(precio_4)s,
-                %(quotation_number)s, %(texto_cotizacion)s
+                %(quotation_number)s, %(texto_cotizacion)s, %(company_code)s
             )
             RETURNING id, quotation_number;
         """
 
         params = _normalize_payload_dict(payload.dict())
         params["quotation_number"] = quotation_number
+        params["company_code"] = selected_company
 
         cur.execute(sql, params)
         row = cur.fetchone()
@@ -686,20 +720,23 @@ def crear_cotizacion(payload: CotizacionCreate, conn=Depends(get_db)):
 def actualizar_cotizacion(
     cotizacion_id: int,
     payload: CotizacionUpdate,
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
     conn=Depends(get_db)
 ):
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     try:
         _ensure_cotizaciones_schema(cur)
+        selected_company = company_code(x_company_code)
         # --------------------------------------------------------
         # Validar existencia de la cotización
         # --------------------------------------------------------
         cur.execute("""
             SELECT id, status
             FROM public.cotizaciones
-            WHERE id = %s;
-        """, (cotizacion_id,))
+            WHERE id = %s
+              AND COALESCE(NULLIF(TRIM(company_code::text), ''), 'MSL-CR') = %s;
+        """, (cotizacion_id, selected_company))
 
         current = cur.fetchone()
         if not current:
@@ -756,7 +793,7 @@ def actualizar_cotizacion(
         }
 
         fields = []
-        params = {"id": cotizacion_id}
+        params = {"id": cotizacion_id, "company_code": selected_company}
 
         for k, v in data.items():
             if k not in allowed_fields:
@@ -775,7 +812,8 @@ def actualizar_cotizacion(
         sql = f"""
             UPDATE public.cotizaciones
             SET {", ".join(fields)}
-            WHERE id = %(id)s;
+            WHERE id = %(id)s
+              AND COALESCE(NULLIF(TRIM(company_code::text), ''), 'MSL-CR') = %(company_code)s;
         """
 
         cur.execute(sql, params)
@@ -806,14 +844,19 @@ def actualizar_cotizacion(
     "/{cotizacion_id}",
     dependencies=[Depends(require_permission("comercial", "edit"))]
 )
-def eliminar_cotizacion(cotizacion_id: int, conn=Depends(get_db)):
+def eliminar_cotizacion(
+    cotizacion_id: int,
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+    conn=Depends(get_db),
+):
     cur = conn.cursor()
 
     try:
         cur.execute("""
             DELETE FROM public.cotizaciones
-            WHERE id = %s;
-        """, (cotizacion_id,))
+            WHERE id = %s
+              AND COALESCE(NULLIF(TRIM(company_code::text), ''), 'MSL-CR') = %s;
+        """, (cotizacion_id, company_code(x_company_code)))
 
         conn.commit()
 
@@ -843,12 +886,15 @@ def get_cotizaciones_kpis(
     pais: str | None = None,
     puerto: str | None = None,
     status: str | None = None,
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
     conn=Depends(get_db)
 ):
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     try:
+        _ensure_cotizaciones_schema(cur)
         filters, params = _build_cotizaciones_filters(
+            company=company_code(x_company_code),
             year=year,
             cliente=cliente,
             servicio=servicio,

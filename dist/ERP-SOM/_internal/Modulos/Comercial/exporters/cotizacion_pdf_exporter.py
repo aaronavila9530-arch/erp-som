@@ -1,6 +1,7 @@
 from reportlab.lib.pagesizes import LETTER
 from reportlab.pdfgen import canvas
 from reportlab.lib.units import inch
+from reportlab.lib.utils import ImageReader
 from reportlab.pdfbase.pdfmetrics import stringWidth
 from datetime import date
 import os
@@ -12,6 +13,10 @@ from Modulos.Comercial.date_utils import to_long_english_date
 
 def _is_mci(data: dict) -> bool:
     return is_mci_context(data)
+
+
+def _pdf_logo_width(data: dict) -> float:
+    return (0.72 if _is_mci(data) else 3.6) * inch
 
 
 # ============================================================
@@ -57,8 +62,9 @@ def export_cotizacion_pdf(data: dict, output_path: str):
     RIGHT_MARGIN = 0.75 * inch
     BODY_WIDTH = width - LEFT_MARGIN - RIGHT_MARGIN
 
-    HEADER_Y = height - 1.9 * inch
-    TOP_MARGIN = HEADER_Y - 0.5 * inch
+    mci_branding = _is_mci(data)
+    HEADER_Y = height - (1.28 * inch if mci_branding else 1.9 * inch)
+    TOP_MARGIN = height - (1.85 * inch if mci_branding else 2.4 * inch)
 
     FOOTER_Y = 0.7 * inch
 
@@ -109,37 +115,53 @@ def export_cotizacion_pdf(data: dict, output_path: str):
         footer = " - ".join(footer_text(data).splitlines())
         c.drawCentredString(width / 2, FOOTER_Y, footer)
 
+    def _draw_image_aspect(path: str, x: float, y: float, target_width: float, alpha: float | None = None):
+        image = ImageReader(path)
+        image_width, image_height = image.getSize()
+        target_height = target_width * (image_height / image_width)
+        if alpha is not None:
+            c.saveState()
+            c.setFillAlpha(alpha)
+            c.drawImage(image, x, y, width=target_width, height=target_height, mask="auto")
+            c.restoreState()
+            return target_height
+        c.drawImage(image, x, y, width=target_width, height=target_height, mask="auto")
+        return target_height
+
     def _draw_static():
         # =========================================================
         # WATERMARK
         # =========================================================
         watermark_path = watermark_asset(data) or os.path.join(ASSETS_PATH, "watermark.png")
         if os.path.isfile(watermark_path):
-            c.saveState()
-            c.setFillAlpha(0.08)
-            c.drawImage(
-                watermark_path,
-                1.2 * inch,
-                2.5 * inch,
-                width=4.5 * inch,
-                preserveAspectRatio=True,
-                mask="auto"
-            )
-            c.restoreState()
+            wm_width = (2.6 if mci_branding else 4.5) * inch
+            image = ImageReader(watermark_path)
+            image_width, image_height = image.getSize()
+            wm_height = wm_width * (image_height / image_width)
+            wm_x = (width - wm_width) / 2
+            wm_y = (height - wm_height) / 2
+            _draw_image_aspect(watermark_path, wm_x, wm_y, wm_width, alpha=0.11 if mci_branding else 0.08)
 
         # =========================================================
         # HEADER
         # =========================================================
         header_path = logo_asset(data) or os.path.join(ASSETS_PATH, "header.png")
         if os.path.isfile(header_path):
-            c.drawImage(
-                header_path,
-                LEFT_MARGIN,
-                HEADER_Y,
-                width=3.6 * inch,
-                preserveAspectRatio=True,
-                mask="auto"
-            )
+            header_width = _pdf_logo_width(data)
+            if mci_branding:
+                image = ImageReader(header_path)
+                image_width, image_height = image.getSize()
+                header_height = header_width * (image_height / image_width)
+                c.drawImage(
+                    image,
+                    LEFT_MARGIN,
+                    height - 0.35 * inch - header_height,
+                    width=header_width,
+                    height=header_height,
+                    mask="auto",
+                )
+            else:
+                _draw_image_aspect(header_path, LEFT_MARGIN, HEADER_Y, header_width)
 
         _draw_footer()
 

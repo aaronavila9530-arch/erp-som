@@ -54,7 +54,13 @@ def listar_empleados(
     # -----------------------------------------------------
     # FILTROS
     # -----------------------------------------------------
-    where = ["COALESCE(activo, TRUE) = TRUE"]
+    estado_normalizado = (estado or "").strip().lower()
+    if estado_normalizado in {"inactivo", "inactive", "suspendido", "inhabilitado"}:
+        where = ["COALESCE(activo, TRUE) = FALSE"]
+    elif estado_normalizado in {"todos", "all"}:
+        where = []
+    else:
+        where = ["COALESCE(activo, TRUE) = TRUE"]
     params = {}
 
     if nombre:
@@ -65,7 +71,7 @@ def listar_empleados(
         where.append("codigo ILIKE %(codigo)s")
         params["codigo"] = f"%{codigo}%"
 
-    if estado:
+    if estado and estado_normalizado not in {"activo", "active", "inactivo", "inactive", "suspendido", "inhabilitado", "todos", "all"}:
         where.append("estado = %(estado)s")
         params["estado"] = estado
 
@@ -139,7 +145,8 @@ def listar_empleados(
             activo2, marca2, serial2,
             activo3, marca3, serial3,
 
-            fecharegistro
+            fecharegistro,
+            activo
         FROM empleados
         {where_sql}
         ORDER BY id
@@ -226,6 +233,13 @@ def crear_empleado(
             return s if s else default
         except Exception:
             return default
+
+    def _bool(v, default=False):
+        if v in ("", None, "None"):
+            return default
+        if isinstance(v, bool):
+            return v
+        return str(v).strip().lower() in {"1", "true", "t", "yes", "y", "si", "sí", "activo"}
 
     def _date(v):
         """
@@ -322,7 +336,7 @@ def crear_empleado(
         "horas_tope_ordinario": _num(payload.get("horas_tope_ordinario"), _num(payload.get("horas_contratadas"), 0)),
         "horas_tope_maximo": _num(payload.get("horas_tope_maximo"), 0),
         "tarifa_hora_extra": _num(payload.get("tarifa_hora_extra"), 0),
-        "pago_minimo_garantizado": bool(payload.get("pago_minimo_garantizado")),
+        "pago_minimo_garantizado": _bool(payload.get("pago_minimo_garantizado")),
         "usuario": _text(payload.get("usuario")),
         "cedula_id": _int(payload.get("cedula_id")),
 
@@ -434,7 +448,7 @@ def actualizar_empleado(
         "fecha_ingreso", "vacaciones", "estado",
         "horas_contratadas", "horas_tope_ordinario", "horas_tope_maximo",
         "tarifa_hora_extra", "pago_minimo_garantizado", "usuario", "cedula_id",
-        "fecha_nacimiento", "edad"
+        "fecha_nacimiento", "edad", "activo"
     }
 
     def _num(v, default=None):
@@ -453,13 +467,23 @@ def actualizar_empleado(
         except Exception:
             return default
 
+    def _bool(v, default=False):
+        if v in ("", None, "None"):
+            return default
+        if isinstance(v, bool):
+            return v
+        return str(v).strip().lower() in {"1", "true", "t", "yes", "y", "si", "sí", "activo"}
+
     for numeric_key in ("salario", "horas_contratadas", "horas_tope_ordinario", "horas_tope_maximo", "tarifa_hora_extra", "vacaciones"):
         if numeric_key in payload:
             payload[numeric_key] = _num(payload.get(numeric_key), 0)
     if "horas_tope_ordinario" in payload and not payload.get("horas_tope_ordinario"):
         payload["horas_tope_ordinario"] = payload.get("horas_contratadas") or 0
     if "pago_minimo_garantizado" in payload:
-        payload["pago_minimo_garantizado"] = bool(payload.get("pago_minimo_garantizado"))
+        payload["pago_minimo_garantizado"] = _bool(payload.get("pago_minimo_garantizado"))
+    if "activo" in payload:
+        payload["activo"] = _bool(payload.get("activo"), True)
+        payload["estado"] = "Activo" if payload["activo"] else "Inactivo"
 
     sets = []
     params = {"id": empleado_id}

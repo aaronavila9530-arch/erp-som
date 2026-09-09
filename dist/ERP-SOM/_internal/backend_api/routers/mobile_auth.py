@@ -114,6 +114,9 @@ def _has_visual_permission(usuario: str, rol: str, module_code: str, action: str
     if usuario in ("gerencia1", "captain", "aaron01", "admin"):
         return True
 
+    if usuario in ("surveyor01", "surveyor02", "surveyor03"):
+        return module_code in {"comercial", "hhrre", "informes", "qa_som"} and action == "view"
+
     conn = None
     cur = None
     try:
@@ -150,9 +153,6 @@ def _has_visual_permission(usuario: str, rol: str, module_code: str, action: str
             cur.close()
         if conn:
             release_conn(conn)
-
-    if usuario in ("surveyor01", "surveyor02", "surveyor03"):
-        return module_code in {"comercial", "hhrre", "informes", "qa_som"} and action == "view"
 
     if usuario == "contador01":
         return module_code in {"finanzas", "hhrre"} and action == "view"
@@ -216,6 +216,20 @@ def _permissions_for(usuario: str) -> dict[str, list[str]]:
             cur.close()
         if conn:
             release_conn(conn)
+    if (usuario or "").strip().lower() in ("surveyor01", "surveyor02", "surveyor03"):
+        hhrre_actions = {
+            "view",
+            "payslips_view",
+            "payslips_download",
+            "requests_view",
+            "requests_create",
+            "hours_view",
+            "hours_register",
+            "medical_network",
+            "policies_view",
+        }
+        permissions.setdefault("hhrre", [])
+        permissions["hhrre"] = sorted(set(permissions["hhrre"]) | hhrre_actions)
     return permissions
 
 

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Header
 from psycopg2.extras import RealDictCursor
 from typing import Optional
 from datetime import datetime
@@ -14,6 +14,7 @@ from services.pdf_merge_service import merge_pdfs
 
 
 from database import get_db
+from services.tenanting import company_code
 
 
 # =========================================================
@@ -24,6 +25,13 @@ router = APIRouter(
     prefix="/vessel-truck-supervision",
     tags=["Vessel Truck Supervision"]
 )
+
+
+def _ensure_truck_company_schema(cur):
+    cur.execute("""
+        ALTER TABLE vessel_truck_supervision_reports
+        ADD COLUMN IF NOT EXISTS company_code VARCHAR(30) NOT NULL DEFAULT 'MSL-CR'
+    """)
 
 
 # =========================================================
@@ -357,12 +365,15 @@ def create_vessel_truck_supervision(
 @router.get("/")
 def list_vessel_truck_supervision(
     status: str | None = None,
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
     conn=Depends(get_db)
 ):
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     try:
+        selected_company = company_code(x_company_code)
+        _ensure_truck_company_schema(cur)
 
         base_query = """
             SELECT
@@ -397,15 +408,21 @@ def list_vessel_truck_supervision(
                 conclusion_text,
 
                 status
-            FROM vessel_truck_supervision_reports
+            FROM vessel_truck_supervision_reports r
+            LEFT JOIN servicios s
+              ON s.num_informe = r.cert_no
         """
 
-        params = []
+        conditions = [
+            "COALESCE(NULLIF(TRIM(s.company_code::text), ''), NULLIF(TRIM(r.company_code::text), ''), 'MSL-CR') = %s"
+        ]
+        params = [selected_company]
 
         if status:
-            base_query += " WHERE status = %s"
+            conditions.append("status = %s")
             params.append(status)
 
+        base_query += " WHERE " + " AND ".join(conditions)
         base_query += " ORDER BY id DESC"
 
         cur.execute(base_query, params)
@@ -435,18 +452,20 @@ def list_vessel_truck_supervision(
 @router.get("/{report_id}")
 def get_vessel_truck_supervision(
     report_id: int,
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
     conn=Depends(get_db)
 ):
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     try:
+        _ensure_truck_company_schema(cur)
 
         cur.execute("""
             SELECT
-                id,
-                created_at,
-                updated_at,
+                r.id,
+                r.created_at,
+                r.updated_at,
 
                 cert_no,
                 customer,
@@ -474,11 +493,15 @@ def get_vessel_truck_supervision(
                 incidents_text,
                 conclusion_text,
 
-                status
+                status,
+                COALESCE(NULLIF(TRIM(s.company_code::text), ''), NULLIF(TRIM(r.company_code::text), ''), 'MSL-CR') AS company_code
 
-            FROM vessel_truck_supervision_reports
-            WHERE id = %s
-        """, (report_id,))
+            FROM vessel_truck_supervision_reports r
+            LEFT JOIN servicios s
+              ON s.num_informe = r.cert_no
+            WHERE r.id = %s
+              AND COALESCE(NULLIF(TRIM(s.company_code::text), ''), NULLIF(TRIM(r.company_code::text), ''), 'MSL-CR') = %s
+        """, (report_id, company_code(x_company_code)))
 
         report = cur.fetchone()
 

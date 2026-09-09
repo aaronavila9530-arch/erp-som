@@ -140,6 +140,13 @@ class HHRRUI(ttk.Frame):
     def _has_hr_permission(self, action: str) -> bool:
         if self.rol in ("admin", "master") or (self.usuario or "").lower() in {"admin", "aaron01", "gerencia1"}:
             return True
+        if (self.usuario or "").lower() in {"surveyor01", "surveyor02", "surveyor03"}:
+            return action in {
+                "payslips_view", "payslips_download",
+                "requests_view", "requests_create",
+                "hours_view", "hours_register",
+                "medical_network", "policies_view",
+            }
         db_decision = self._db_hr_permission_decision(action)
         if db_decision is not None:
             return db_decision

@@ -3,7 +3,7 @@
 # Archivo: backend_api/routers/container_reports.py
 # ============================================================
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Header
 from fastapi.responses import FileResponse
 from psycopg2.extras import RealDictCursor
 from datetime import datetime
@@ -12,11 +12,19 @@ import os
 import tempfile
 
 from database import get_db
+from services.tenanting import company_code
 
 router = APIRouter(
     prefix="/container-reports",
     tags=["Informes — Container Reports"]
 )
+
+
+def _ensure_container_company_schema(cur):
+    cur.execute("""
+        ALTER TABLE public.container_reports
+        ADD COLUMN IF NOT EXISTS company_code VARCHAR(30) NOT NULL DEFAULT 'MSL-CR';
+    """)
 
 from datetime import datetime
 from fastapi import Depends
@@ -616,16 +624,22 @@ def get_container_report_statuses(conn=Depends(get_db)):
 # ============================================================
 
 @router.get("/list")
-def get_container_reports(conn=Depends(get_db)):
+def get_container_reports(
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+    conn=Depends(get_db),
+):
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     try:
+        selected_company = company_code(x_company_code)
+        _ensure_container_company_schema(cur)
         cur.execute("""
             SELECT
                 cr.id,
                 cr.linked_report_number            AS report_no,
                 cr."user"                          AS "user",
                 cr.status,
+                COALESCE(NULLIF(TRIM(s.company_code::text), ''), NULLIF(TRIM(cr.company_code::text), ''), 'MSL-CR') AS company_code,
                 cr.vessel,
 
                 -- Customer desde servicios usando num_informe
@@ -639,8 +653,9 @@ def get_container_reports(conn=Depends(get_db)):
             FROM public.container_reports cr
             LEFT JOIN public.servicios s
                 ON s.num_informe = cr.linked_report_number
+            WHERE COALESCE(NULLIF(TRIM(s.company_code::text), ''), NULLIF(TRIM(cr.company_code::text), ''), 'MSL-CR') = %s
             ORDER BY cr.created_at DESC;
-        """)
+        """, (selected_company,))
 
         rows = cur.fetchall() or []
 
@@ -657,12 +672,24 @@ def get_container_reports(conn=Depends(get_db)):
 # ============================================================
 
 @router.get("/{report_id}")
-def get_container_report_by_id(report_id: int, conn=Depends(get_db)):
+def get_container_report_by_id(
+    report_id: int,
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+    conn=Depends(get_db),
+):
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
+    _ensure_container_company_schema(cur)
     cur.execute(
-        "SELECT * FROM public.container_reports WHERE id = %s;",
-        (report_id,)
+        """
+        SELECT cr.*
+        FROM public.container_reports cr
+        LEFT JOIN public.servicios s
+          ON s.num_informe = cr.linked_report_number
+        WHERE cr.id = %s
+          AND COALESCE(NULLIF(TRIM(s.company_code::text), ''), NULLIF(TRIM(cr.company_code::text), ''), 'MSL-CR') = %s;
+        """,
+        (report_id, company_code(x_company_code))
     )
 
     row = cur.fetchone()
