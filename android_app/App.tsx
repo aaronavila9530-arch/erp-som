@@ -1,5 +1,6 @@
 import * as LocalAuthentication from "expo-local-authentication";
 import * as FileSystem from "expo-file-system/legacy";
+import { File as ExpoFile } from "expo-file-system";
 import * as DocumentPicker from "expo-document-picker";
 import * as IntentLauncher from "expo-intent-launcher";
 import * as Notifications from "expo-notifications";
@@ -52,7 +53,7 @@ const COMPANIES = [
   { code: "MCI-CR", name: "MSL MARINE CLAIMS RISK & INTELLIGENCE", label: "MCI" }
 ];
 const DEFAULT_COMPANY = COMPANIES[0];
-const MOBILE_APP_VERSION = "1.7.34";
+const MOBILE_APP_VERSION = "1.7.35";
 const KIOSK_USER = (process.env.EXPO_PUBLIC_ERP_SOM_KIOSK_USER || "").trim();
 const KIOSK_NAME = (process.env.EXPO_PUBLIC_ERP_SOM_KIOSK_NAME || KIOSK_USER || "").trim();
 const IS_KIOSK_APP = Boolean(KIOSK_USER);
@@ -1511,14 +1512,10 @@ function ComercialCotizacionesView({
         request_role: session.rol,
         ticket
       });
-      const url = `${API_BASE_URL}/comercial/cotizaciones/export/${format}?${params.toString()}`;
-      const supported = await Linking.canOpenURL(url);
-      if (!supported) {
-        await Share.share({ message: url });
-      } else {
-        await Linking.openURL(url);
-      }
-      setMessage(`Abriendo descarga ${format.toUpperCase()}...`);
+      const extension = format === "word" ? "docx" : "pdf";
+      const filename = cleanFilePart(`Cotizacion_${quotationNumber || "export"}`) + `.${extension}`;
+      await downloadSessionFile(`/comercial/cotizaciones/export/${format}?${params.toString()}`, session, filename);
+      setMessage(`Cotizacion ${format.toUpperCase()} generada correctamente.`);
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "No se pudo abrir la descarga.");
     } finally {
@@ -2433,14 +2430,7 @@ async function downloadSessionFile(
     throw new Error(detail);
   }
 
-  let binary = "";
-  const chunkSize = 0x8000;
-  for (let index = 0; index < bytes.length; index += chunkSize) {
-    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
-  }
-  await FileSystem.writeAsStringAsync(fileUri, btoa(binary), {
-    encoding: FileSystem.EncodingType.Base64
-  });
+  writeBytesToCacheFile(fileUri, bytes);
 
   await openDownloadedFile(fileUri, filename);
 }
@@ -2467,15 +2457,20 @@ async function downloadFileWithHeaders(url: string, fileUri: string, headers: Re
     throw new Error(detail);
   }
 
-  let binary = "";
-  const chunkSize = 0x8000;
-  for (let index = 0; index < bytes.length; index += chunkSize) {
-    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
-  }
-  await FileSystem.writeAsStringAsync(fileUri, btoa(binary), {
-    encoding: FileSystem.EncodingType.Base64
-  });
+  writeBytesToCacheFile(fileUri, bytes);
   await openDownloadedFile(fileUri, filename, mimeType);
+}
+
+function writeBytesToCacheFile(fileUri: string, bytes: Uint8Array) {
+  const file = new ExpoFile(fileUri);
+  file.create({ overwrite: true, intermediates: true });
+  file.write(bytes);
+}
+
+function writeTextToCacheFile(fileUri: string, text: string) {
+  const file = new ExpoFile(fileUri);
+  file.create({ overwrite: true, intermediates: true });
+  file.write(text);
 }
 
 function unwrapRecordPayload(payload: unknown) {
@@ -3184,7 +3179,7 @@ function InformesSectionMobile({
       const extension = kind === "word" ? "doc" : "html";
       const filename = `${title}_${kind === "word" ? "WORD" : "PDF"}.${extension}`;
       const uri = `${FileSystem.cacheDirectory || ""}${filename}`;
-      await FileSystem.writeAsStringAsync(uri, html);
+      writeTextToCacheFile(uri, html);
       await openDownloadedFile(uri, filename, kind === "word" ? "application/msword" : "text/html");
       setMessage(kind === "word" ? "Word ONG generado correctamente." : "Reporte ONG abierto. Use imprimir/guardar como PDF desde el telefono.");
     } catch (err) {
