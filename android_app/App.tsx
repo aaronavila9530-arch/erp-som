@@ -2443,6 +2443,27 @@ function cacheFileFor(filename: string) {
   return new ExpoFile(Paths.cache, cleanFilePart(filename));
 }
 
+async function downloadAuthenticatedFile(url: string, filename: string, headers: Record<string, string>, mimeType?: string) {
+  const file = cacheFileFor(filename);
+  const response = await fetch(url, { method: "GET", headers });
+  const bytes = new Uint8Array(await response.arrayBuffer());
+
+  if (!response.ok) {
+    let detail = `Error descargando archivo (${response.status}).`;
+    try {
+      const text = new TextDecoder().decode(bytes);
+      const parsed = JSON.parse(text) as Record<string, unknown>;
+      detail = formatValue(parsed.detail || parsed.error || parsed.message || text);
+    } catch {
+      // Keep generic download error for binary or malformed error responses.
+    }
+    throw new Error(detail);
+  }
+
+  writeBytesToCacheFile(file.uri, bytes);
+  await openDownloadedFile(file.uri, filename, mimeType);
+}
+
 function writeBytesToCacheFile(fileUri: string, bytes: Uint8Array) {
   const file = new ExpoFile(fileUri);
   file.create({ overwrite: true, intermediates: true });
@@ -11685,16 +11706,22 @@ function BankAccountsModal({
     setBusy(true);
     setMessage("");
     try {
-      const params = new URLSearchParams({
-        request_user: session.usuario,
-        request_role: session.rol,
-        bank_access_token: accessToken,
-        company: session.company_code || DEFAULT_COMPANY.code,
-        company_name: session.company_name || DEFAULT_COMPANY.name,
-        language: letterLanguage
-      });
-      await openRemoteDownloadUrl(`${API_BASE_URL}/master-data/bank-accounts/${encodeURIComponent(selectedId)}/letter-download.pdf?${params.toString()}`);
-      setMessage("Abriendo carta bancaria PDF...");
+      const filename = `Carta_Bancaria_${selectedId}.pdf`;
+      await downloadAuthenticatedFile(
+        `${API_BASE_URL}/master-data/bank-accounts/${encodeURIComponent(selectedId)}/letter.pdf`,
+        filename,
+        {
+          "X-User": session.usuario,
+          "X-Role": session.rol,
+          "X-User-Role": session.rol,
+          "X-Company-Code": session.company_code || DEFAULT_COMPANY.code,
+          "X-Company-Name": session.company_name || DEFAULT_COMPANY.name,
+          "X-Bank-Access-Token": accessToken,
+          "X-Document-Language": letterLanguage
+        },
+        "application/pdf"
+      );
+      setMessage("Carta bancaria PDF generada correctamente.");
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "No se pudo exportar PDF.");
     } finally {
