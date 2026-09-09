@@ -1330,6 +1330,9 @@ function ComercialCotizacionesView({
   const [selected, setSelected] = useState<number | null>(null);
   const [filters, setFilters] = useState({ cliente: "", servicio: "", continente: "", pais: "", puerto: "", status: "" });
   const [showNew, setShowNew] = useState(false);
+  const [showTextEditor, setShowTextEditor] = useState(false);
+  const [textEditorValue, setTextEditorValue] = useState("");
+  const [textEditorQuote, setTextEditorQuote] = useState<Record<string, unknown> | null>(null);
   const [quote, setQuote] = useState({ cliente: "", servicio: "", continente: "", pais: "", puerto: "", idioma: "ES", validez: "15" });
   const [quotationNumber, setQuotationNumber] = useState("");
   const [selectedServices, setSelectedServices] = useState<Record<string, unknown>[]>([]);
@@ -1520,6 +1523,91 @@ function ComercialCotizacionesView({
     }
   }
 
+  async function exportSelectedQuote(format: "word" | "pdf") {
+    if (!selectedRow) {
+      setMessage("Seleccione una cotizacion.");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      const detail = await apiRequest<Record<string, unknown>>(`/comercial/cotizaciones/${selectedRow.id}/detail`, { session });
+      const textToExport = formatValue(detail.texto_cotizacion || detail.texto_exportable || "");
+      const payload = await apiRequest<Record<string, unknown>>("/comercial/cotizaciones/export-ticket", {
+        method: "POST",
+        body: {
+          quotation_number: detail.quotation_number || selectedRow.quotation_number,
+          cliente: detail.cliente || selectedRow.cliente,
+          servicio: detail.servicio || selectedRow.servicio,
+          idioma: detail.idioma || selectedRow.idioma || "ES",
+          texto: textToExport
+        },
+        session
+      });
+      const ticket = formatValue(payload.ticket);
+      if (!ticket || ticket === "-") throw new Error("No se pudo crear ticket de exportacion.");
+      const params = new URLSearchParams({
+        request_user: session.usuario,
+        request_role: session.rol,
+        ticket
+      });
+      await openRemoteDownloadUrl(`${API_BASE_URL}/comercial/cotizaciones/export/${format}?${params.toString()}`);
+      setMessage(`Cotizacion ${format.toUpperCase()} generada correctamente.`);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo exportar cotizacion.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function openTextEditor() {
+    if (!selectedRow) {
+      setMessage("Seleccione una cotizacion.");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      const detail = await apiRequest<Record<string, unknown>>(`/comercial/cotizaciones/${selectedRow.id}/detail`, { session });
+      setTextEditorQuote(detail);
+      setTextEditorValue(formatValue(detail.texto_cotizacion || detail.texto_exportable || ""));
+      setShowTextEditor(true);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo cargar el texto de la cotizacion.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveTextEditor() {
+    const id = textEditorQuote?.id || selectedRow?.id;
+    const nextText = textEditorValue.trim();
+    if (!id) {
+      setMessage("Seleccione una cotizacion.");
+      return;
+    }
+    if (!nextText) {
+      setMessage("El texto no puede quedar vacio.");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      await apiRequest(`/comercial/cotizaciones/${id}`, {
+        method: "PUT",
+        body: { texto_cotizacion: nextText },
+        session
+      });
+      setShowTextEditor(false);
+      await load();
+      setMessage("Texto guardado correctamente.");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo guardar el texto.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function saveQuote() {
     const pendingMatch = currentQuoteMatch();
     const servicesToSave = selectedServices.length ? selectedServices : pendingMatch ? [pendingMatch] : [];
@@ -1601,6 +1689,9 @@ function ComercialCotizacionesView({
         <Pressable style={styles.actionButton} onPress={openNewQuote}><Text style={styles.actionButtonText}>Nueva Cotizacion</Text></Pressable>
         <Pressable style={styles.actionButton} onPress={() => updateQuote("APROBADO")}><Text style={styles.actionButtonText}>Aprobar</Text></Pressable>
         <Pressable style={styles.modalClose} onPress={() => updateQuote("CANCELADO")}><Text style={styles.modalCloseText}>Cancelar</Text></Pressable>
+        <Pressable style={styles.secondaryButtonCompact} onPress={openTextEditor}><Text style={styles.secondaryButtonText}>Ajustar texto</Text></Pressable>
+        <Pressable style={styles.secondaryButtonCompact} onPress={() => exportSelectedQuote("word")}><Text style={styles.secondaryButtonText}>Exportar Word</Text></Pressable>
+        <Pressable style={styles.secondaryButtonCompact} onPress={() => exportSelectedQuote("pdf")}><Text style={styles.secondaryButtonText}>Exportar PDF</Text></Pressable>
       </ScrollView>
       {busy ? <ActivityIndicator color={BLUE} style={styles.loader} /> : null}
       {message ? <Text style={styles.error}>{message}</Text> : null}
@@ -1626,6 +1717,24 @@ function ComercialCotizacionesView({
               <Pressable style={styles.actionButton} onPress={() => exportQuote("pdf")}><Text style={styles.actionButtonText}>Exportar PDF</Text></Pressable>
             </ScrollView>
             <PrimaryButton label="Confirmar y Guardar" loading={busy} onPress={saveQuote} />
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+      <Modal visible={showTextEditor} animationType="slide" onRequestClose={() => setShowTextEditor(false)}>
+        <SafeAreaView style={styles.modalScreen}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Ajustar texto cotizacion</Text>
+            <Pressable style={styles.modalClose} onPress={() => setShowTextEditor(false)}><Text style={styles.modalCloseText}>Cerrar</Text></Pressable>
+          </View>
+          <ScrollView contentContainerStyle={styles.modalBody} keyboardShouldPersistTaps="handled">
+            <Text style={styles.helperText}>{formatValue(textEditorQuote?.quotation_number || selectedRow?.quotation_number)} | {formatValue(textEditorQuote?.cliente || selectedRow?.cliente)}</Text>
+            <Text style={styles.helperText}>Este texto queda guardado y se usa cada vez que exportes la cotizacion.</Text>
+            <Text style={styles.label}>Texto de la Cotizacion</Text>
+            <TextInput multiline style={[styles.input, styles.quotationPreviewInput]} value={textEditorValue} onChangeText={setTextEditorValue} />
+            <View style={styles.financeFilterActions}>
+              <Pressable style={styles.modalClose} onPress={() => setShowTextEditor(false)}><Text style={styles.modalCloseText}>Cancelar</Text></Pressable>
+              <Pressable style={styles.actionButton} onPress={saveTextEditor} disabled={busy}><Text style={styles.actionButtonText}>{busy ? "Guardando..." : "Guardar texto"}</Text></Pressable>
+            </View>
           </ScrollView>
         </SafeAreaView>
       </Modal>
