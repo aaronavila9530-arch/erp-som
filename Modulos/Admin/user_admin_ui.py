@@ -90,7 +90,7 @@ LOCAL_MODULE_ACTIONS = {
         {"code": "payroll_view", "label": "Ver Payroll"},
         {"code": "payroll_generate", "label": "Generar Payroll"},
         {"code": "requests_view", "label": "Ver solicitudes"},
-        {"code": "requests_create", "label": "Crear solicitudes"},
+        {"code": "requests_create", "label": "Crear solicitudes / vacaciones"},
         {"code": "requests_approve", "label": "Aprobar/rechazar solicitudes"},
         {"code": "hours_view", "label": "Ver horas"},
         {"code": "hours_register", "label": "Registrar horas"},
@@ -382,7 +382,23 @@ class UserAdminUI(tk.Frame):
         }
         modules = role_modules.get(rol, set())
         if usuario_norm in {"surveyor01", "surveyor02", "surveyor03"}:
-            modules = {"comercial", "hhrre", "informes", "qa_som"}
+            permissions = {
+                "comercial": ["view"],
+                "hhrre": [
+                    "view",
+                    "payslips_view",
+                    "payslips_download",
+                    "requests_view",
+                    "requests_create",
+                    "hours_view",
+                    "hours_register",
+                    "medical_network",
+                    "policies_view",
+                ],
+                "informes": ["view"],
+                "qa_som": ["view"],
+            }
+            return permissions, "Permisos operativos heredados para usuario surveyor."
         permissions = {module_code: ["view"] for module_code in modules}
         if permissions:
             return permissions, f"Permisos heredados por rol '{rol or 'user'}'."

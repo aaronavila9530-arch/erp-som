@@ -702,6 +702,12 @@ def editar_servicio(consec: int, data: dict, x_company_code: str | None = Header
         _ensure_tenant_schema()
         company = company_code(None, x_company_code)
         data = dict(data)
+        for date_key in ("fecha_inicio", "fecha_fin", "fecha_factura", "fecha_vencimiento"):
+            if date_key in data:
+                data[date_key] = _normalize_service_date(data.get(date_key))
+        for time_key in ("hora_inicio", "hora_fin"):
+            if time_key in data:
+                data[time_key] = _normalize_service_time(data.get(time_key))
         if "fecha_inicio" in data:
             data["fecha_inicio"] = _normalize_service_date(data.get("fecha_inicio"))
         if "hora_inicio" in data:
@@ -724,7 +730,11 @@ def editar_servicio(consec: int, data: dict, x_company_code: str | None = Header
                 costo_operativo,
                 costo_tarjetas,
                 fecha_inicio,
-                hora_inicio
+                hora_inicio,
+                fecha_fin,
+                hora_fin,
+                fecha_factura,
+                fecha_vencimiento
             FROM servicios
             WHERE consec = %s
               AND company_code = %s
@@ -751,6 +761,10 @@ def editar_servicio(consec: int, data: dict, x_company_code: str | None = Header
             "costo_tarjetas": row[0][12],
             "fecha_inicio": row[0][13],
             "hora_inicio": row[0][14],
+            "fecha_fin": row[0][15],
+            "hora_fin": row[0][16],
+            "fecha_factura": row[0][17],
+            "fecha_vencimiento": row[0][18],
         }
         effective_fecha_inicio = data["fecha_inicio"] if "fecha_inicio" in data else current["fecha_inicio"]
         num_actualizado = _num_informe_con_fecha(row[0][0], effective_fecha_inicio)
@@ -771,6 +785,25 @@ def editar_servicio(consec: int, data: dict, x_company_code: str | None = Header
                 costo_tarjetas = %(costo_tarjetas)s,
                 fecha_inicio = %(fecha_inicio)s,
                 hora_inicio = %(hora_inicio)s,
+                fecha_fin = %(fecha_fin)s,
+                hora_fin = %(hora_fin)s,
+                fecha_factura = %(fecha_factura)s,
+                fecha_vencimiento = %(fecha_vencimiento)s,
+                duracion = CASE
+                    WHEN %(fecha_fin)s IS NOT NULL
+                     AND NULLIF(%(hora_fin)s, '') IS NOT NULL
+                     AND %(fecha_inicio)s IS NOT NULL
+                     AND NULLIF(%(hora_inicio)s, '') IS NOT NULL
+                    THEN (
+                        EXTRACT(EPOCH FROM (
+                            (%(fecha_fin)s::date + %(hora_fin)s::time)
+                            -
+                            (%(fecha_inicio)s::date + %(hora_inicio)s::time)
+                        )) / 60
+                        - COALESCE(demoras, 0)
+                    )
+                    ELSE duracion
+                END,
                 num_informe = %(num_informe)s
             WHERE consec = %(consec)s
               AND company_code = %(company_code)s
@@ -791,6 +824,10 @@ def editar_servicio(consec: int, data: dict, x_company_code: str | None = Header
             "costo_tarjetas": data["costo_tarjetas"] if "costo_tarjetas" in data else current["costo_tarjetas"],
             "fecha_inicio": data["fecha_inicio"] if "fecha_inicio" in data else current["fecha_inicio"],
             "hora_inicio": data["hora_inicio"] if "hora_inicio" in data else current["hora_inicio"],
+            "fecha_fin": data["fecha_fin"] if "fecha_fin" in data else current["fecha_fin"],
+            "hora_fin": data["hora_fin"] if "hora_fin" in data else current["hora_fin"],
+            "fecha_factura": data["fecha_factura"] if "fecha_factura" in data else current["fecha_factura"],
+            "fecha_vencimiento": data["fecha_vencimiento"] if "fecha_vencimiento" in data else current["fecha_vencimiento"],
             "num_informe": num_actualizado,
             "consec": consec,
             "company_code": company

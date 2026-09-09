@@ -184,6 +184,60 @@ class PopupEditarServicio(tk.Toplevel):
             command=lambda: TimePicker(self, self.hora_ini),
         ).pack(side="left", padx=(6, 0))
 
+        label(ejecucion, "Fecha Finalizacion:", 4, column=0)
+        fecha_fin_row = tk.Frame(ejecucion)
+        fecha_fin_row.grid(row=4, column=1, sticky="w", padx=(0, 12), pady=6)
+        self.fecha_fin = ttk.Entry(fecha_fin_row, width=18)
+        self.fecha_fin.insert(0, to_long_english_date(data.get("fecha_fin", "")))
+        self.fecha_fin.pack(side="left")
+
+        ttk.Button(
+            fecha_fin_row,
+            text="Fecha",
+            command=lambda: DatePicker(self, self.fecha_fin, output_format=LONG_DATE_FORMAT),
+        ).pack(side="left", padx=(6, 0))
+
+        label(ejecucion, "Hora Finalizacion:", 4, column=2)
+        hora_fin_row = tk.Frame(ejecucion)
+        hora_fin_row.grid(row=4, column=3, sticky="w", padx=(0, 12), pady=6)
+        self.hora_fin = ttk.Entry(hora_fin_row, width=10)
+        self.hora_fin.insert(0, data.get("hora_fin", ""))
+        self.hora_fin.pack(side="left")
+
+        ttk.Button(
+            hora_fin_row,
+            text="Hora",
+            command=lambda: TimePicker(self, self.hora_fin),
+        ).pack(side="left", padx=(6, 0))
+
+        facturacion = section("Facturacion", 3)
+        facturacion.grid_columnconfigure(1, weight=1)
+        facturacion.grid_columnconfigure(3, weight=1)
+
+        label(facturacion, "Fecha Factura:", 0, column=0)
+        fecha_factura_row = tk.Frame(facturacion)
+        fecha_factura_row.grid(row=0, column=1, sticky="w", padx=(0, 12), pady=6)
+        self.fecha_factura = ttk.Entry(fecha_factura_row, width=18)
+        self.fecha_factura.insert(0, to_long_english_date(data.get("fecha_factura", "")))
+        self.fecha_factura.pack(side="left")
+        ttk.Button(
+            fecha_factura_row,
+            text="Fecha",
+            command=lambda: DatePicker(self, self.fecha_factura, output_format=LONG_DATE_FORMAT),
+        ).pack(side="left", padx=(6, 0))
+
+        label(facturacion, "Fecha Vencimiento:", 0, column=2)
+        fecha_venc_row = tk.Frame(facturacion)
+        fecha_venc_row.grid(row=0, column=3, sticky="w", padx=(0, 12), pady=6)
+        self.fecha_vencimiento = ttk.Entry(fecha_venc_row, width=18)
+        self.fecha_vencimiento.insert(0, to_long_english_date(data.get("fecha_vencimiento", "")))
+        self.fecha_vencimiento.pack(side="left")
+        ttk.Button(
+            fecha_venc_row,
+            text="Fecha",
+            command=lambda: DatePicker(self, self.fecha_vencimiento, output_format=LONG_DATE_FORMAT),
+        ).pack(side="left", padx=(6, 0))
+
         self._toggle_costo_tarjetas()
         self.after(200, self._refresh_servicio_completo)
 
@@ -380,6 +434,14 @@ class PopupEditarServicio(tk.Toplevel):
                 _to_float_or_none(self.costo_tarjetas.get()) if permitir_tarjeta else None
             ),
         }
+        if self.fecha_fin.get().strip():
+            payload["fecha_fin"] = to_db_date(self.fecha_fin.get().strip())
+        if self.hora_fin.get().strip():
+            payload["hora_fin"] = self.hora_fin.get().strip()
+        if self.fecha_factura.get().strip():
+            payload["fecha_factura"] = to_db_date(self.fecha_factura.get().strip())
+        if self.fecha_vencimiento.get().strip():
+            payload["fecha_vencimiento"] = to_db_date(self.fecha_vencimiento.get().strip())
 
         resp = editar_servicio_api(self.consec, payload)
 

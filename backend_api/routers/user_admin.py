@@ -126,7 +126,7 @@ MODULE_ACTIONS_BY_MODULE = {
         {"code": "payroll_view", "label": "Ver Payroll"},
         {"code": "payroll_generate", "label": "Generar Payroll"},
         {"code": "requests_view", "label": "Ver solicitudes"},
-        {"code": "requests_create", "label": "Crear solicitudes"},
+        {"code": "requests_create", "label": "Crear solicitudes / vacaciones"},
         {"code": "requests_approve", "label": "Aprobar/rechazar solicitudes"},
         {"code": "hours_view", "label": "Ver horas"},
         {"code": "hours_register", "label": "Registrar horas"},
