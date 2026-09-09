@@ -17,6 +17,8 @@ from typing import Optional
 import io
 import os
 import shutil
+import time
+import uuid
 
 from database import get_db
 from rbac_service import has_permission
@@ -33,6 +35,15 @@ router = APIRouter(
     prefix="/invoice-to-pay",
     tags=["Finance - Invoice to Pay"]
 )
+
+BIWEEKLY_EXPORT_CACHE: dict[str, dict] = {}
+
+
+def _cleanup_biweekly_export_cache():
+    now = time.time()
+    expired = [ticket for ticket, item in BIWEEKLY_EXPORT_CACHE.items() if now - float(item.get("created_at") or 0) > 600]
+    for ticket in expired:
+        BIWEEKLY_EXPORT_CACHE.pop(ticket, None)
 
 
 def _ensure_company_column(cur):
@@ -914,6 +925,30 @@ def biweekly_obligations_apply(
 
 @router.post("/biweekly-obligations/export.xlsx")
 def biweekly_obligations_export(payload: dict):
+    return _build_biweekly_obligations_excel(payload)
+
+
+@router.post("/biweekly-obligations/export-ticket")
+def biweekly_obligations_export_ticket(payload: dict):
+    rows = payload.get("rows") or []
+    if not isinstance(rows, list):
+        raise HTTPException(status_code=400, detail="Lineas invalidas")
+    _cleanup_biweekly_export_cache()
+    ticket = uuid.uuid4().hex
+    BIWEEKLY_EXPORT_CACHE[ticket] = {"created_at": time.time(), "payload": payload}
+    return {"ticket": ticket}
+
+
+@router.get("/biweekly-obligations/export/{ticket}.xlsx")
+def biweekly_obligations_export_by_ticket(ticket: str):
+    _cleanup_biweekly_export_cache()
+    item = BIWEEKLY_EXPORT_CACHE.get(str(ticket or "").strip())
+    if not item:
+        raise HTTPException(status_code=404, detail="Exportacion expirada")
+    return _build_biweekly_obligations_excel(item.get("payload") or {})
+
+
+def _build_biweekly_obligations_excel(payload: dict):
     try:
         from openpyxl import Workbook
         from openpyxl.styles import Font, PatternFill

@@ -52,7 +52,7 @@ const COMPANIES = [
   { code: "MCI-CR", name: "MSL MARINE CLAIMS RISK & INTELLIGENCE", label: "MCI" }
 ];
 const DEFAULT_COMPANY = COMPANIES[0];
-const MOBILE_APP_VERSION = "1.7.36";
+const MOBILE_APP_VERSION = "1.7.37";
 const KIOSK_USER = (process.env.EXPO_PUBLIC_ERP_SOM_KIOSK_USER || "").trim();
 const KIOSK_NAME = (process.env.EXPO_PUBLIC_ERP_SOM_KIOSK_NAME || KIOSK_USER || "").trim();
 const IS_KIOSK_APP = Boolean(KIOSK_USER);
@@ -2441,27 +2441,6 @@ async function downloadSessionFile(
 
 function cacheFileFor(filename: string) {
   return new ExpoFile(Paths.cache, cleanFilePart(filename));
-}
-
-async function downloadAuthenticatedFile(url: string, filename: string, headers: Record<string, string>, mimeType?: string) {
-  const file = cacheFileFor(filename);
-  const response = await fetch(url, { method: "GET", headers });
-  const bytes = new Uint8Array(await response.arrayBuffer());
-
-  if (!response.ok) {
-    let detail = `Error descargando archivo (${response.status}).`;
-    try {
-      const text = new TextDecoder().decode(bytes);
-      const parsed = JSON.parse(text) as Record<string, unknown>;
-      detail = formatValue(parsed.detail || parsed.error || parsed.message || text);
-    } catch {
-      // Keep generic download error for binary or malformed error responses.
-    }
-    throw new Error(detail);
-  }
-
-  writeBytesToCacheFile(file.uri, bytes);
-  await openDownloadedFile(file.uri, filename, mimeType);
 }
 
 function writeBytesToCacheFile(fileUri: string, bytes: Uint8Array) {
@@ -11706,22 +11685,16 @@ function BankAccountsModal({
     setBusy(true);
     setMessage("");
     try {
-      const filename = `Carta_Bancaria_${selectedId}.pdf`;
-      await downloadAuthenticatedFile(
-        `${API_BASE_URL}/master-data/bank-accounts/${encodeURIComponent(selectedId)}/letter.pdf`,
-        filename,
-        {
-          "X-User": session.usuario,
-          "X-Role": session.rol,
-          "X-User-Role": session.rol,
-          "X-Company-Code": session.company_code || DEFAULT_COMPANY.code,
-          "X-Company-Name": session.company_name || DEFAULT_COMPANY.name,
-          "X-Bank-Access-Token": accessToken,
-          "X-Document-Language": letterLanguage
-        },
-        "application/pdf"
-      );
-      setMessage("Carta bancaria PDF generada correctamente.");
+      const params = new URLSearchParams({
+        request_user: session.usuario,
+        request_role: session.rol,
+        bank_access_token: accessToken,
+        company: session.company_code || DEFAULT_COMPANY.code,
+        company_name: session.company_name || DEFAULT_COMPANY.name,
+        language: letterLanguage
+      });
+      await openRemoteDownloadUrl(`${API_BASE_URL}/master-data/bank-accounts/${encodeURIComponent(selectedId)}/letter-download.pdf?${params.toString()}`);
+      setMessage("Abriendo carta bancaria PDF...");
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "No se pudo exportar PDF.");
     } finally {
@@ -15234,14 +15207,15 @@ function ItpBiweeklyObligationsMobile({
       return;
     }
     try {
-      await downloadSessionFile(
-        "/invoice-to-pay/biweekly-obligations/export.xlsx",
-        session,
-        cleanFilePart(`Obligaciones_Quincenales_${period}_Q${fortnight}.xlsx`),
-        "POST",
-        { period, fortnight: Number(fortnight), rows }
-      );
-      setMessage("Excel generado.");
+      const payload = await apiRequest<Record<string, unknown>>("/invoice-to-pay/biweekly-obligations/export-ticket", {
+        method: "POST",
+        body: { period, fortnight: Number(fortnight), rows },
+        session
+      });
+      const ticket = formatValue(payload.ticket);
+      if (!ticket || ticket === "-") throw new Error("No se pudo crear ticket de exportacion.");
+      await openRemoteDownloadUrl(`${API_BASE_URL}/invoice-to-pay/biweekly-obligations/export/${encodeURIComponent(ticket)}.xlsx`);
+      setMessage("Abriendo Excel generado.");
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "No se pudo exportar Excel.");
     }
