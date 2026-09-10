@@ -236,7 +236,7 @@ class DashboardsFinanzasUI(ttk.Frame):
         # =====================================================
 
         self._crear_bar_chart(
-            "Revenue Monthly",
+            "Revenue Monthly (August onward)",
             data["revenue_mensual"],
             "mes",
             "revenue"

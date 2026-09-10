@@ -269,6 +269,13 @@ class DashboardsComercialUI(ttk.Frame):
         # =====================================================
 
         self._bar_chart(
+            "Revenue mensual (agosto en adelante)",
+            data.get("revenue_mensual", []),
+            "mes",
+            "revenue"
+        )
+
+        self._bar_chart(
             "Revenue por Puerto",
             data["revenue_por_puerto"],
             "puerto",

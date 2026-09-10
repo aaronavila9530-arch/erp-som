@@ -205,6 +205,13 @@ class DashboardsServiciosUI(ttk.Frame):
         # =====================================================
 
         self._crear_bar_chart(
+            "Revenue mensual (agosto en adelante)",
+            data.get("revenue_mensual", []),
+            "mes",
+            "revenue"
+        )
+
+        self._crear_bar_chart(
             "Servicios por País",
             data["servicios_por_pais"],
             "pais",

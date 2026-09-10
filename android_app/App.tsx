@@ -10492,7 +10492,7 @@ function dashboardConfig(key: string): DashboardConfig {
         { label: "Accounts Payable", path: "kpis.ap_total" }
       ],
       charts: [
-        { title: "Revenue Monthly", path: "revenue_mensual", labelKey: "mes", valueKey: "revenue" },
+        { title: "Revenue Monthly (August onward)", path: "revenue_mensual", labelKey: "mes", valueKey: "revenue" },
         { title: "Accounts Receivable Aging", path: "aging_ar", labelKey: "bucket_aging", valueKey: "total" },
         { title: "Top Clientes con Deuda", path: "top_clientes_deuda", labelKey: "nombre_cliente", valueKey: "deuda" }
       ]
@@ -10511,6 +10511,7 @@ function dashboardConfig(key: string): DashboardConfig {
         { label: "Margen Neto %", path: "kpis.margen_neto_pct" }
       ],
       charts: [
+        { title: "Revenue mensual (agosto en adelante)", path: "revenue_mensual", labelKey: "mes", valueKey: "revenue" },
         { title: "Revenue por Puerto", path: "revenue_por_puerto", labelKey: "puerto", valueKey: "total_revenue" },
         { title: "Servicios por Puerto", path: "servicios_por_puerto", labelKey: "puerto", valueKey: "total_servicios" },
         { title: "Servicios por Operacion", path: "servicios_por_operacion", labelKey: "operacion", valueKey: "total_servicios" },
@@ -10557,6 +10558,7 @@ function dashboardConfig(key: string): DashboardConfig {
       { label: "Clientes", path: "kpis.total_clientes" }
     ],
     charts: [
+      { title: "Revenue mensual (agosto en adelante)", path: "revenue_mensual", labelKey: "mes", valueKey: "revenue" },
       { title: "Servicios por Pais", path: "servicios_por_pais", labelKey: "pais", valueKey: "total" },
       { title: "Servicios por Operacion (Top 10)", path: "servicios_por_operacion", labelKey: "operacion", valueKey: "total" },
       { title: "Facturacion por Pais", path: "facturacion_por_pais", labelKey: "pais", valueKey: "total_facturado" },

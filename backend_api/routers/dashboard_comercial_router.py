@@ -522,6 +522,7 @@ def get_dashboard_comercial_resumen(
                         mes,
                         SUM(valor_factura) AS revenue
                     FROM filtrada
+                    WHERE EXTRACT(MONTH FROM fecha_inicio::date) >= 8
                     GROUP BY mes
                     ORDER BY mes
                 ) t

@@ -287,6 +287,7 @@ def get_dashboard_servicios(
                         SUM(valor_factura) AS revenue
                     FROM filtrada
                     WHERE fecha_inicio IS NOT NULL
+                      AND EXTRACT(MONTH FROM fecha_inicio::date) >= 8
                     GROUP BY SUBSTRING(CAST(fecha_inicio AS TEXT), 1, 7)
                     ORDER BY mes
                 ) t
