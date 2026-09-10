@@ -387,24 +387,18 @@ class DraftSurveyExcelGenerator:
         return str(value or "").strip().lower() in ("1", "true", "yes", "y", "si", "sí", "on")
 
     def _prepare_hydrostatic_payload(self, payload: dict) -> dict:
-        prepared = dict(payload or {})
+        # Hydrostatic MTC draft values are surveyor-entered values. Do not
+        # infer them from draft rows; if the field is blank, Excel must stay blank.
+        return dict(payload or {})
 
-        # The template needs the MTC draft base. If the user leaves it blank,
-        # derive it from the second hydrostatic draft plus 0.50, as in the
-        # vessel spreadsheet reference. Fall back to the first row if needed.
-        for prefix in ("init", "final"):
-            for table_no in (1, 2):
-                draft_key = f"{prefix}_hydro{table_no}_draft_1"
-                draft_2_key = f"{prefix}_hydro{table_no}_draft_2"
-                mtc_draft_key = f"{prefix}_hydro{table_no}_draft_mtc"
-                if self._is_empty(prepared.get(mtc_draft_key)):
-                    draft_value = self._coerce_number(prepared.get(draft_2_key))
-                    if draft_value is None:
-                        draft_value = self._coerce_number(prepared.get(draft_key))
-                    if draft_value is not None:
-                        prepared[mtc_draft_key] = round(draft_value + 0.5, 6)
-
-        return prepared
+    def _skip_empty_hydrostatic_overwrite(self, key: str, value) -> bool:
+        # Initial and final hydrostatic keys point to the same template cells.
+        # A blank final field must not clear a populated initial field.
+        return (
+            self._is_empty(value)
+            and isinstance(key, str)
+            and key.startswith("final_hydro")
+        )
 
     def _apply_draft_excel_adjustments(self, ws: Worksheet, payload: dict):
         """Apply corrections that intentionally override template defaults."""
@@ -570,6 +564,8 @@ class DraftSurveyExcelGenerator:
             for key, cell in fields.items():
 
                 value = (payload or {}).get(key)
+                if sheet_name == "Draft" and self._skip_empty_hydrostatic_overwrite(key, value):
+                    continue
                 if value in [None, ""]:
                     self._safe_clear(ws, cell)
                     continue

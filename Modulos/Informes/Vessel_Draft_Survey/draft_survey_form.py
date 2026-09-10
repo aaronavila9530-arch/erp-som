@@ -1293,7 +1293,7 @@ class DraftSurveyForm(ttk.Frame):
         self.update_idletasks()
         self.update()
 
-        full_payload = self._normalize_hydrostatic_payload(self.get_payload())
+        full_payload = self.get_payload()
         draft_report_number = str(
             full_payload.get("draft_report_number") or self.draft_report_number or ""
         ).strip()
@@ -1635,7 +1635,7 @@ class DraftSurveyForm(ttk.Frame):
                     })
 
         data = self._apply_word_report_calculations_to_data(data)
-        return self._normalize_hydrostatic_payload(data)
+        return data
 
     def set_payload(self, data: dict):
         """
@@ -3352,22 +3352,7 @@ class DraftSurveyForm(ttk.Frame):
         return data
 
     def _normalize_hydrostatic_payload(self, payload: dict) -> dict:
-        data = dict(payload or {})
-
-        for prefix in ("init", "final"):
-            for table_no in (1, 2):
-                draft_key = f"{prefix}_hydro{table_no}_draft_1"
-                draft_2_key = f"{prefix}_hydro{table_no}_draft_2"
-                mtc_key = f"{prefix}_hydro{table_no}_draft_mtc"
-
-                if data.get(mtc_key) in (None, ""):
-                    draft_value = self._coerce_draft_number(data.get(draft_2_key))
-                    if draft_value is None:
-                        draft_value = self._coerce_draft_number(data.get(draft_key))
-                    if draft_value is not None:
-                        data[mtc_key] = round(draft_value + 0.5, 6)
-
-        return data
+        return dict(payload or {})
 
 
     # =========================================================
