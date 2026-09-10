@@ -47,7 +47,13 @@ hidden_imports += [
 # MODULOS ERP DINAMICOS
 # --------------------------
 hidden_imports += collect_submodules("Modulos")
-hidden_imports += collect_submodules("backend_api")
+hidden_imports += collect_submodules(
+    "backend_api",
+    filter=lambda name: not (
+        name == "backend_api.reports.container_reports_router"
+        or name == "backend_api.routers.vessel_grain_sampling"
+    ),
+)
 
 # --------------------------
 # PILLOW (QR)
@@ -95,7 +101,8 @@ a = Analysis(
     runtime_hooks=["pyi_rth_tkinter_fix.py"],
     excludes=[
         "fastapi",
-        "uvicorn"
+        "uvicorn",
+        "sqlalchemy",
     ],
     noarchive=False,
     optimize=0,
