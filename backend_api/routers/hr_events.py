@@ -24,9 +24,37 @@ def calcular_vacaciones(fecha_ingreso: date) -> float:
 
     delta = relativedelta(hoy, fecha_ingreso)
     meses = delta.years * 12 + delta.months
-    dias_acumulados = meses * (14 / 12)
+    dias_acumulados = meses * 1
 
     return round(dias_acumulados, 2)
+
+
+def _parse_positive_days(value, field_name: str) -> float:
+    try:
+        days = float(value)
+        if days <= 0:
+            raise ValueError
+        return days
+    except Exception:
+        raise HTTPException(400, f"{field_name} inválido")
+
+
+def _vacation_balance_for_user(cur, usuario: str, fecha_ingreso: date) -> dict:
+    dias_generados = calcular_vacaciones(fecha_ingreso)
+    cur.execute("""
+        SELECT COALESCE(SUM(vacaciones), 0) AS dias_solicitados
+        FROM hr_events
+        WHERE created_by = %s
+          AND event_type = 'VACACIONES'
+          AND status IN ('PENDING', 'APPROVED')
+    """, (usuario,))
+    row = cur.fetchone() or {}
+    dias_solicitados = float(row.get("dias_solicitados") or 0)
+    return {
+        "dias_generados": dias_generados,
+        "dias_solicitados": dias_solicitados,
+        "dias_disponibles": round(dias_generados - dias_solicitados, 2),
+    }
 
 
 # ============================================================
@@ -185,59 +213,12 @@ async def crear_evento(
         raise HTTPException(400, "event_date inválida (YYYY-MM-DD)")
 
     # --------------------------------------------------------
-    # LÓGICA ESPECÍFICA VACACIONES (BLINDADA)
-    # --------------------------------------------------------
-    dias_vacaciones = None
-
-    if event_type.upper() == "VACACIONES":
-
-        dias_vacaciones = payload.get("dias")
-
-        # Si no viene "dias", calcular por fechas
-        if dias_vacaciones is None:
-
-            fecha_inicio = payload.get("fecha_inicio")
-            fecha_fin = payload.get("fecha_fin")
-
-            if not fecha_inicio or not fecha_fin:
-                raise HTTPException(
-                    400,
-                    "VACACIONES requiere payload.dias o payload.fecha_inicio y payload.fecha_fin"
-                )
-
-            try:
-                fi = datetime.strptime(fecha_inicio, "%Y-%m-%d").date()
-                ff = datetime.strptime(fecha_fin, "%Y-%m-%d").date()
-
-                if ff < fi:
-                    raise ValueError
-
-                dias_vacaciones = (ff - fi).days + 1
-
-            except Exception:
-                raise HTTPException(
-                    400,
-                    "Fechas de vacaciones inválidas (YYYY-MM-DD)"
-                )
-
-        # Validación final
-        try:
-            dias_vacaciones = float(dias_vacaciones)
-            if dias_vacaciones <= 0:
-                raise ValueError
-        except Exception:
-            raise HTTPException(
-                400,
-                "Días de vacaciones inválidos"
-            )
-
-    # --------------------------------------------------------
     # OBTENER EMPLEADO (FIX SIN ROMPER VALIDACIONES)
     # --------------------------------------------------------
     cur.execute("ALTER TABLE empleados ADD COLUMN IF NOT EXISTS activo BOOLEAN NOT NULL DEFAULT TRUE")
     cur.execute("UPDATE empleados SET activo = TRUE WHERE activo IS NULL")
     cur.execute("""
-        SELECT nombre, apellidos
+        SELECT nombre, apellidos, fecha_ingreso
         FROM empleados
         WHERE LOWER(usuario) = LOWER(%s)
           AND COALESCE(activo, TRUE) = TRUE
@@ -253,6 +234,72 @@ async def crear_evento(
 
         if not empleado_nombre:
             empleado_nombre = usuario  # fallback adicional seguro
+
+    # --------------------------------------------------------
+    # LÓGICA ESPECÍFICA VACACIONES (BLINDADA)
+    # --------------------------------------------------------
+    dias_vacaciones = None
+
+    if event_type.upper() == "VACACIONES":
+        dias_solicitados = payload.get("dias_solicitados", payload.get("dias"))
+
+        if dias_solicitados is None:
+            fecha_inicio = payload.get("fecha_inicio")
+            fecha_fin = payload.get("fecha_fin")
+
+            if not fecha_inicio or not fecha_fin:
+                raise HTTPException(
+                    400,
+                    "VACACIONES requiere payload.dias_solicitados, payload.dias o payload.fecha_inicio y payload.fecha_fin"
+                )
+
+            try:
+                fi = datetime.strptime(fecha_inicio, "%Y-%m-%d").date()
+                ff = datetime.strptime(fecha_fin, "%Y-%m-%d").date()
+
+                if ff < fi:
+                    raise ValueError
+
+                dias_solicitados = (ff - fi).days + 1
+
+            except Exception:
+                raise HTTPException(
+                    400,
+                    "Fechas de vacaciones inválidas (YYYY-MM-DD)"
+                )
+
+        dias_solicitados = _parse_positive_days(dias_solicitados, "Días de vacaciones")
+        tratamiento = str(payload.get("tratamiento_excedente") or "ADELANTO").strip().upper()
+        if tratamiento not in {"ADELANTO", "SIN_GOCE"}:
+            tratamiento = "ADELANTO"
+
+        disponibles = 0.0
+        if emp and emp.get("fecha_ingreso"):
+            disponibles = float(_vacation_balance_for_user(cur, usuario, emp["fecha_ingreso"])["dias_disponibles"])
+
+        saldo_usable = max(disponibles, 0)
+        if dias_solicitados <= saldo_usable:
+            dias_vacaciones = dias_solicitados
+            dias_sin_goce = 0.0
+            dias_adelanto = 0.0
+        elif tratamiento == "SIN_GOCE":
+            dias_vacaciones = saldo_usable
+            dias_sin_goce = dias_solicitados - saldo_usable
+            dias_adelanto = 0.0
+        else:
+            dias_vacaciones = dias_solicitados
+            dias_sin_goce = 0.0
+            dias_adelanto = dias_solicitados - saldo_usable
+
+        payload.update({
+            "dias_solicitados": dias_solicitados,
+            "tratamiento_excedente": tratamiento,
+            "dias_vacaciones_aplicadas": round(dias_vacaciones, 2),
+            "dias_sin_goce": round(dias_sin_goce, 2),
+            "dias_adelanto": round(dias_adelanto, 2),
+            "saldo_vacaciones_antes": round(disponibles, 2),
+            "saldo_vacaciones_despues": round(disponibles - dias_vacaciones, 2),
+        })
 
     # --------------------------------------------------------
     # INSERT EN hr_events
@@ -454,9 +501,7 @@ def vacaciones_disponibles(
     # ---------------------------------------------------------
     # VACACIONES DISPONIBLES REALES
     # ---------------------------------------------------------
-    dias_disponibles = dias_generados - dias_solicitados
-    if dias_disponibles < 0:
-        dias_disponibles = 0.0
+    dias_disponibles = round(dias_generados - dias_solicitados, 2)
 
     # ---------------------------------------------------------
     # SINCRONIZAR EMPLEADOS (OPCIONAL, COMO YA LO TENÍAS)

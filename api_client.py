@@ -4806,10 +4806,17 @@ def rechazar_evento_hr(event_id, comentario):
     return resp.json()
 
 
-def obtener_vacaciones_disponibles():
+def obtener_vacaciones_disponibles(usuario=None, rol=None):
+    headers = None
+    if usuario and rol:
+        headers = {
+            "X-User": str(usuario).strip().lower(),
+            "X-Role": str(rol).strip().lower()
+        }
     resp = api_request(
         "GET",
         "/hr/events/vacaciones/disponibles",
+        headers=headers,
         timeout=15
     )
     resp.raise_for_status()

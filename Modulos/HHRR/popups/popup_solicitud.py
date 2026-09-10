@@ -15,6 +15,8 @@ class PopupSolicitud(tk.Toplevel):
         self.usuario = (usuario or "").strip().lower()   # 🔥 FIX
         self.rol = (rol or "").strip().lower()           # 🔥 FIX
         self.on_success = on_success
+        self.dias_disponibles = 0.0
+        self.var_tratamiento_excedente = tk.StringVar(value="ADELANTO")
 
         self.title("Nueva Solicitud HHRR")
         self.geometry("480x520")
@@ -84,6 +86,8 @@ class PopupSolicitud(tk.Toplevel):
             )
             entry = ttk.Entry(self.frm_dynamic, width=15)
             entry.grid(row=row, column=1)
+            entry.bind("<KeyRelease>", lambda _e: self._calcular_dias())
+            entry.bind("<FocusOut>", lambda _e: self._calcular_dias())
 
             ttk.Button(
                 self.frm_dynamic,
@@ -137,12 +141,50 @@ class PopupSolicitud(tk.Toplevel):
             )
             self.lbl_saldo = ttk.Label(self.frm_dynamic, text="—")
             self.lbl_saldo.grid(row=row, column=1, sticky="w")
+            row += 1
 
             if tipo == "VACACIONES":
+                ttk.Label(self.frm_dynamic, text="Si excede saldo").grid(
+                    row=row, column=0, padx=pad, pady=pad, sticky="w"
+                )
+                self.cmb_tratamiento_excedente = ttk.Combobox(
+                    self.frm_dynamic,
+                    textvariable=self.var_tratamiento_excedente,
+                    state="readonly",
+                    values=[
+                        "ADELANTO",
+                        "SIN_GOCE"
+                    ],
+                    width=18
+                )
+                self.cmb_tratamiento_excedente.grid(row=row, column=1, sticky="w")
+                self.cmb_tratamiento_excedente.bind("<<ComboboxSelected>>", lambda _e: self._calcular_dias())
+                row += 1
+
+                ttk.Label(self.frm_dynamic, text="Vacaciones aplicadas").grid(
+                    row=row, column=0, padx=pad, pady=pad, sticky="w"
+                )
+                self.lbl_aplicadas = ttk.Label(self.frm_dynamic, text="0")
+                self.lbl_aplicadas.grid(row=row, column=1, sticky="w")
+                row += 1
+
+                ttk.Label(self.frm_dynamic, text="Sin goce salarial").grid(
+                    row=row, column=0, padx=pad, pady=pad, sticky="w"
+                )
+                self.lbl_sin_goce = ttk.Label(self.frm_dynamic, text="0")
+                self.lbl_sin_goce.grid(row=row, column=1, sticky="w")
+                row += 1
+
+                ttk.Label(self.frm_dynamic, text="Adelanto/deuda").grid(
+                    row=row, column=0, padx=pad, pady=pad, sticky="w"
+                )
+                self.lbl_adelanto = ttk.Label(self.frm_dynamic, text="0")
+                self.lbl_adelanto.grid(row=row, column=1, sticky="w")
+
                 try:
-                    data = obtener_vacaciones_disponibles()
+                    data = obtener_vacaciones_disponibles(self.usuario, self.rol)
                     self.dias_disponibles = float(data.get("dias_disponibles", 0))
-                    self.lbl_disponibles.config(text=str(self.dias_disponibles))
+                    self.lbl_disponibles.config(text=f"{self.dias_disponibles:g}")
                 except Exception:
                     self.dias_disponibles = 0
                     self.lbl_disponibles.config(text="0")
@@ -182,7 +224,26 @@ class PopupSolicitud(tk.Toplevel):
 
         if hasattr(self, "lbl_saldo") and hasattr(self, "dias_disponibles"):
             saldo = self.dias_disponibles - dias
-            self.lbl_saldo.config(text=str(round(saldo, 2)))
+            self.lbl_saldo.config(text=f"{round(saldo, 2):g}")
+
+        if hasattr(self, "lbl_aplicadas"):
+            tratamiento = (self.var_tratamiento_excedente.get() or "ADELANTO").strip().upper()
+            disponibles = float(getattr(self, "dias_disponibles", 0) or 0)
+            if dias <= max(disponibles, 0):
+                aplicadas = dias
+                sin_goce = 0
+                adelanto = 0
+            elif tratamiento == "SIN_GOCE":
+                aplicadas = max(disponibles, 0)
+                sin_goce = dias - aplicadas
+                adelanto = 0
+            else:
+                aplicadas = dias
+                sin_goce = 0
+                adelanto = dias - max(disponibles, 0)
+            self.lbl_aplicadas.config(text=f"{round(aplicadas, 2):g}")
+            self.lbl_sin_goce.config(text=f"{round(sin_goce, 2):g}")
+            self.lbl_adelanto.config(text=f"{round(adelanto, 2):g}")
 
     # =========================================================
     # SUBMIT
@@ -218,8 +279,31 @@ class PopupSolicitud(tk.Toplevel):
                 payload = {
                     "fecha_inicio": fi,
                     "fecha_fin": ff,
+                    "dias": dias,
                     "dias_solicitados": dias
                 }
+
+                if tipo == "VACACIONES":
+                    tratamiento = (self.var_tratamiento_excedente.get() or "ADELANTO").strip().upper()
+                    disponibles = float(getattr(self, "dias_disponibles", 0) or 0)
+                    if dias <= max(disponibles, 0):
+                        aplicadas = dias
+                        sin_goce = 0
+                        adelanto = 0
+                    elif tratamiento == "SIN_GOCE":
+                        aplicadas = max(disponibles, 0)
+                        sin_goce = dias - aplicadas
+                        adelanto = 0
+                    else:
+                        aplicadas = dias
+                        sin_goce = 0
+                        adelanto = dias - max(disponibles, 0)
+                    payload.update({
+                        "tratamiento_excedente": tratamiento,
+                        "dias_vacaciones_aplicadas": aplicadas,
+                        "dias_sin_goce": sin_goce,
+                        "dias_adelanto": adelanto,
+                    })
 
                 if tipo == "LICENCIA":
                     if not self.tipo_licencia.get():
