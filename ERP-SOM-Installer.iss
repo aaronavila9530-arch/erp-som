@@ -8,6 +8,9 @@
 #define MyAppVersion "1.7.29"
 #define MyAppPublisher "InnovaCore SRL"
 #define MyAppExeName "ERP-SOM.exe"
+#ifndef DistRoot
+#define DistRoot "dist"
+#endif
 
 [Setup]
 AppId={{ERP-SOM-INNOVACORE}}
@@ -47,7 +50,7 @@ DisableFinishedPage=no
 
 [Files]
 ; Copia todo el Ã¡rbol exactamente como sale de dist
-Source: "dist\ERP-SOM\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#DistRoot}\ERP-SOM\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\ERP-SOM"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"
