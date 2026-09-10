@@ -259,6 +259,7 @@ class DraftSurveyExcelPdfService:
         text = value.strip()
         if not text:
             return value
+        text = self._strip_excel_text_prefix(text)
         if text.startswith("="):
             return text
 
@@ -295,6 +296,19 @@ class DraftSurveyExcelPdfService:
         if number.is_integer() and "." not in number_text:
             return int(number)
         return number
+
+    def _strip_excel_text_prefix(self, text: str) -> str:
+        if not isinstance(text, str):
+            return text
+        cleaned = text.strip()
+        quote_chars = ("'", "`", "\u00b4", "\u2018", "\u2019")
+        while len(cleaned) > 1 and cleaned[0] in quote_chars:
+            next_char = cleaned[1]
+            if next_char == "=" or next_char.isdigit() or next_char in "+-.,":
+                cleaned = cleaned[1:].strip()
+                continue
+            break
+        return cleaned
 
     def _safe_set(self, ws: Worksheet, cell: str, value):
 
