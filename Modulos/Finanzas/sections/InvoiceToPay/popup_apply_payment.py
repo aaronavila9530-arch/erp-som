@@ -21,7 +21,7 @@ class PopupApplyPayment(tk.Toplevel):
         self.bank_account_by_label = {}
 
         self.title("Apply Payment")
-        self.geometry("470x475")
+        self.geometry("500x525")
         self.resizable(False, False)
         self.transient(parent)
         self.grab_set()
@@ -77,6 +77,10 @@ class PopupApplyPayment(tk.Toplevel):
         self.cmb_bank = ttk.Combobox(frm, state="readonly")
         self.cmb_bank.grid(row=6, column=1, sticky="ew", pady=5)
         self._load_bank_accounts()
+
+        tk.Label(frm, text="Bank Voucher / Reference").grid(row=7, column=0, sticky="w", pady=5)
+        self.ent_reference = ttk.Entry(frm)
+        self.ent_reference.grid(row=7, column=1, sticky="ew", pady=5)
 
         frm.columnconfigure(1, weight=1)
 
@@ -154,6 +158,12 @@ class PopupApplyPayment(tk.Toplevel):
             messagebox.showerror("Error", "Select a bank account.")
             return
 
+        payment_reference = self.ent_reference.get().strip()
+        if not payment_reference:
+            messagebox.showerror("Error", "Bank voucher / reference is required.")
+            self.ent_reference.focus_set()
+            return
+
         # ---------------- LLAMAR API ----------------
         try:
             response = requests.post(
@@ -164,7 +174,8 @@ class PopupApplyPayment(tk.Toplevel):
                     "payment_date": payment_date,
                     "bank_account_code": self._selected_bank().get("account_code"),
                     "bank_account_name": self._selected_bank().get("account_name"),
-                    "bank_name": self._selected_bank().get("account_name")
+                    "bank_name": self._selected_bank().get("account_name"),
+                    "payment_reference": payment_reference,
                 },
                 headers={
                     "X-User": get_user() or "unknown",

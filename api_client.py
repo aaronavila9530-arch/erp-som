@@ -1509,6 +1509,7 @@ def post_invoice_to_pay_apply_payment_api(data: dict):
                 "bank_account_code": data.get("bank_account_code"),
                 "bank_account_name": data.get("bank_account_name"),
                 "bank_name": data.get("bank_name"),
+                "payment_reference": data.get("payment_reference"),
             },
             timeout=15
         )

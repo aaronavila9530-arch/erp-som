@@ -1050,6 +1050,11 @@ def apply_payment(
             ADD COLUMN IF NOT EXISTS payment_reference TEXT
         """)
         payment_reference = str(payment_reference or "").strip()
+        if not payment_reference:
+            raise HTTPException(
+                status_code=400,
+                detail="Comprobante bancario requerido"
+            )
 
         # =====================================================
         # 1️⃣ BLOQUEAR FILA (ANTI CONCURRENCIA)
