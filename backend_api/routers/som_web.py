@@ -17,7 +17,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20260911-masterdata-passkey-1"
+_ASSET_VERSION = "20260911-masterdata-crud-1"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Servicios, facturación, CxC e informes desde agosto en adelante."},
@@ -215,6 +215,10 @@ def som_web_home() -> HTMLResponse:
     .home-card:nth-child(4) { border-top-color:#029fcf; }
     .md-actions { display:flex; flex-wrap:wrap; gap:10px; margin:12px 0 14px; }
     .filters { display:flex; flex-wrap:wrap; gap:10px; align-items:center; padding:12px; margin-bottom:12px; }
+    .form-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+    .form-grid label { display:grid; gap:5px; color:#334155; font-size:13px; }
+    .form-grid .wide { grid-column:1/-1; }
+    .form-grid textarea { width:100%; min-height:78px; border:1px solid var(--line); border-radius:7px; padding:9px 11px; font:inherit; resize:vertical; }
     .view-grid { grid-template-columns:repeat(4,minmax(0,1fr)); }
     .view-card { padding:15px; cursor:pointer; min-height:86px; border-top:3px solid var(--blue); }
     .view-card:hover { outline:2px solid rgba(0,93,168,.18); }
@@ -235,6 +239,7 @@ def som_web_home() -> HTMLResponse:
       .login-card { max-width:none; padding:34px 24px; }
       .hero-logo { min-height:300px; padding:22px; }
       .hero-logo img { width:min(88%,520px); height:250px; }
+      .form-grid { grid-template-columns:1fr; }
       aside { min-height:auto; }
       header { flex-direction:column; }
     }
@@ -315,6 +320,117 @@ def som_web_home() -> HTMLResponse:
     let catalog = { modules:[], master_data_actions:[], master_data_views:[] };
     let currentModule = "dashboard";
     let selectedMasterView = null;
+    let currentRows = [];
+
+    const MASTER_CONFIG = {
+      clientes: {
+        title:"Cliente",
+        endpoint:"/clientes",
+        add:"/clientes/add",
+        update:"/clientes/update",
+        ultimo:"/clientes/ultimo",
+        suffix:"C",
+        codeKey:"Codigo",
+        methodKeys:"upperClient",
+        fields:[
+          ["Codigo","Código","text","",true],["NombreJuridico","Nombre jurídico","text","",true],
+          ["NombreComercial","Nombre comercial","text","",true],["Pais","País","text","Costa Rica",false],
+          ["Correo","Correo","email","",false],["Telefono","Teléfono","text","",false],
+          ["CedulaJuridicaVAT","Cédula jurídica / VAT","text","",false],["Prefijo","Prefijo","text","",false],
+          ["Provincia","Provincia","text","",false],["Canton","Cantón","text","",false],
+          ["Distrito","Distrito","text","",false],["FechaDePago","Fecha de pago","date","",false],
+          ["ContactoPrincipal","Contacto principal","text","",false],["ContactoSecundario","Contacto secundario","text","",false],
+          ["DireccionExacta","Dirección exacta","textarea","",false],["Comentarios","Comentarios","textarea","",false]
+        ]
+      },
+      proveedores: {
+        title:"Proveedor",
+        endpoint:"/proveedores",
+        add:"/proveedores/add",
+        update:"/proveedores/update",
+        ultimo:"/proveedores/ultimo",
+        suffix:"P",
+        codeKey:"Codigo",
+        fields:[
+          ["Codigo","Código","text","",true],["Activo","Activo","checkbox",true,false],
+          ["Nombre","Nombre","text","",true],["Apellidos","Apellidos","text","",false],
+          ["NombreComercial","Nombre comercial","text","",false],["Cedula","Cédula / VAT","text","",false],
+          ["Pais","País","text","Costa Rica",false],["Provincia","Provincia","text","",false],
+          ["Canton","Cantón","text","",false],["Distrito","Distrito","text","",false],
+          ["Prefijo","Prefijo","text","",false],["Telefono","Teléfono","text","",false],
+          ["Correo","Correo","email","",false],["TerminosPago","Términos pago","number","30",false],
+          ["Banco","Banco","text","",false],["CuentaIBAN","Cuenta IBAN","text","",false],
+          ["SwiftCode","Swift Code","text","",false],["UID","UID","text","",false],
+          ["DireccionBanco","Dirección banco","textarea","",false],["DireccionExacta","Dirección exacta","textarea","",false],
+          ["TipoProveeduria","Tipo proveeduría","text","",false],["Comentarios","Comentarios","textarea","",false]
+        ]
+      },
+      empleados: {
+        title:"Empleado",
+        endpoint:"/empleados",
+        add:"/empleados/add",
+        update:"/empleados/update",
+        codeKey:"codigo",
+        fields:[
+          ["codigo","Código","text","AUTO",true],["activo","Activo","checkbox",true,false],
+          ["nombre","Nombre","text","",true],["apellidos","Apellidos","text","",true],
+          ["estado_civil","Estado civil","text","",false],["genero","Género","text","",false],
+          ["nacionalidad","Nacionalidad","text","Costarricense",false],["prefijo","Prefijo","text","",false],
+          ["telefono","Teléfono","text","",false],["provincia","Provincia","text","",false],
+          ["canton","Cantón","text","",false],["distrito","Distrito","text","",false],
+          ["direccion","Dirección","textarea","",false],["jornada","Jornada","text","",false],
+          ["salario","Salario","number","",false],["horas_contratadas","Horas pactadas","number","",false],
+          ["horas_tope_ordinario","Tope ordinario","number","",false],["horas_tope_maximo","Tope máximo","number","",false],
+          ["tarifa_hora_extra","Tarifa hora extra","number","",false],["pago_minimo_garantizado","Pago mínimo garantizado","checkbox",false,false],
+          ["pago","Forma de pago","text","",false],["banco","Banco","text","",false],
+          ["cuenta_iban","Cuenta IBAN","text","",false],["moneda","Moneda","text","CRC",false],
+          ["enfermedades","Enfermedades","textarea","",false],["contacto_emergencia","Contacto emergencia","text","",false],
+          ["telefono_emergencia","Teléfono emergencia","text","",false],["activo1","Activo 1","text","",false],
+          ["marca1","Marca 1","text","",false],["serial1","Serial 1","text","",false],
+          ["activo2","Activo 2","text","",false],["marca2","Marca 2","text","",false],
+          ["serial2","Serial 2","text","",false],["activo3","Activo 3","text","",false],
+          ["marca3","Marca 3","text","",false],["serial3","Serial 3","text","",false]
+        ]
+      },
+      surveyores: {
+        title:"Surveyor",
+        endpoint:"/surveyores",
+        add:"/surveyores/add",
+        update:"/surveyores/update",
+        ultimo:"/surveyores/ultimo",
+        suffix:"S",
+        codeKey:"codigo",
+        fields:[
+          ["codigo","Código","text","",true],["activo","Activo","checkbox",true,false],
+          ["nombre","Nombre","text","",true],["apellidos","Apellidos","text","",false],
+          ["email","Correo","email","",false],["estado_civil","Estado civil","text","",false],
+          ["genero","Género","text","",false],["nacionalidad","Nacionalidad","text","Costarricense",false],
+          ["prefijo","Prefijo","text","",false],["telefono","Teléfono","text","",false],
+          ["provincia","Provincia","text","",false],["canton","Cantón","text","",false],
+          ["distrito","Distrito","text","",false],["direccion","Dirección","textarea","",false],
+          ["jornada","Jornada","text","",false],["puerto","Puerto","text","",false],
+          ["operacion","Operación","text","",false],["honorario","Honorario","number","",false],
+          ["pago","Forma de pago","text","",false],["banco","Banco","text","",false],
+          ["direccion_banco","Dirección banco","textarea","",false],["cuenta_iban","Cuenta IBAN","text","",false],
+          ["moneda","Moneda","text","USD",false],["swift","Swift","text","",false],
+          ["uid","UID","text","",false],["enfermedades","Enfermedades","textarea","",false],
+          ["contacto_emergencia","Contacto emergencia","text","",false],["telefono_emergencia","Teléfono emergencia","text","",false]
+        ]
+      },
+      servicios_md: {
+        title:"Servicio",
+        endpoint:"/servicios_md",
+        add:"/servicios_md/add",
+        update:"/servicios_md/update",
+        ultimo:"/servicios_md/ultimo",
+        suffix:"SV",
+        codeKey:"codigo",
+        fields:[
+          ["codigo","Código","text","",true],["codigo_prod","Código producto","text","",false],
+          ["nombre","Nombre","text","",true],["costo","Costo","number","0",false]
+        ]
+      }
+    };
 
     const money = value => "$" + moneyFmt.format(Number(value || 0));
     const headers = () => ({
@@ -330,7 +446,16 @@ def som_web_home() -> HTMLResponse:
       return resp.json();
     }
     async function postJSON(path, payload) {
-      const resp = await fetch(path, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload) });
+      const resp = await fetch(path, { method:"POST", headers:headers(), body:JSON.stringify(payload) });
+      if (!resp.ok) {
+        let msg = resp.statusText;
+        try { msg = (await resp.json()).detail || msg; } catch {}
+        throw new Error(msg);
+      }
+      return resp.json();
+    }
+    async function sendJSON(method, path, payload) {
+      const resp = await fetch(path, { method, headers:headers(), body:payload ? JSON.stringify(payload) : undefined });
       if (!resp.ok) {
         let msg = resp.statusText;
         try { msg = (await resp.json()).detail || msg; } catch {}
@@ -569,8 +694,7 @@ def som_web_home() -> HTMLResponse:
     }
     function masterAction(key) {
       if (["clientes","surveyores","empleados","proveedores","servicios_md"].includes(key)) {
-        const view = catalog.master_data_views.find(v => v.key === key);
-        alert(`Pantalla de alta ${view?.label || key}: siguiente etapa web con POST/PUT completo. Por ahora usa escritorio para crear.`);
+        openMasterForm(key, null);
         return;
       }
       if (key === "export_form") {
@@ -618,7 +742,8 @@ def som_web_home() -> HTMLResponse:
       try {
         const payload = await getJSON(selectedMasterView.endpoint);
         const rows = rowsFromPayload(payload);
-        ws.innerHTML = `<div class="panel-head"><h2>${selectedMasterView.label}</h2><span class="muted">${rows.length} registros</span></div>${renderTable(rows, selectedMasterView.primary)}`;
+        currentRows = rows;
+        ws.innerHTML = `<div class="panel-head"><h2>${selectedMasterView.label}</h2><div class="toolbar"><button onclick="openMasterForm('${key}', null)">Nuevo</button><span class="muted">${rows.length} registros</span></div></div>${renderTable(rows, selectedMasterView.primary, key)}`;
       } catch (err) {
         ws.innerHTML = `<div class="panel-head"><h2>${selectedMasterView.label}</h2></div><div class="status error">No se pudo cargar: ${err.message}</div>`;
       }
@@ -630,12 +755,116 @@ def som_web_home() -> HTMLResponse:
       if (payload && typeof payload === "object") return [payload];
       return [];
     }
-    function renderTable(rows, preferred) {
+    function renderTable(rows, preferred, viewKey) {
       if (!rows.length) return '<div class="status">Sin datos para esta pantalla.</div>';
       const keys = (preferred || []).filter(k => Object.prototype.hasOwnProperty.call(rows[0], k));
       const fallback = Object.keys(rows[0]).filter(k => !String(k).toLowerCase().includes("hash")).slice(0, 8);
       const cols = keys.length ? keys : fallback;
-      return `<div class="table-wrap"><table><thead><tr>${cols.map(k => `<th>${k}</th>`).join("")}</tr></thead><tbody>${rows.slice(0,100).map(row => `<tr>${cols.map(k => `<td>${row[k] ?? ""}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
+      return `<div class="table-wrap"><table><thead><tr>${cols.map(k => `<th>${k}</th>`).join("")}<th>Acción</th></tr></thead><tbody>${rows.slice(0,100).map((row, i) => `<tr>${cols.map(k => `<td>${row[k] ?? ""}</td>`).join("")}<td><button class="secondary" onclick="openMasterForm('${viewKey}', ${i})">Editar</button></td></tr>`).join("")}</tbody></table></div>`;
+    }
+    function codePrefix() {
+      return (($("company")?.value || session?.company || "MSL-CR").startsWith("MCI")) ? "MCI" : "MSL";
+    }
+    async function nextCode(config) {
+      if (!config.ultimo) return "";
+      try {
+        const data = await getJSON(config.ultimo);
+        const next = Number(data.ultimo || 0) + 1;
+        return `${codePrefix()}-${String(next).padStart(4, "0")}-${config.suffix}`;
+      } catch {
+        return "";
+      }
+    }
+    function rowValue(row, key) {
+      if (!row) return undefined;
+      if (Object.prototype.hasOwnProperty.call(row, key)) return row[key];
+      const lower = key.toLowerCase();
+      const found = Object.keys(row).find(k => k.toLowerCase() === lower);
+      return found ? row[found] : undefined;
+    }
+    function normalizeClientePayload(payload) {
+      if (payload.FechaDePago === "") payload.FechaDePago = null;
+      return payload;
+    }
+    function buildMasterPayload(config) {
+      const payload = {};
+      config.fields.forEach(([key,,type]) => {
+        const el = $(`md_${key}`);
+        if (!el) return;
+        payload[key] = type === "checkbox" ? el.checked : el.value;
+      });
+      payload.company_code = $("company")?.value || session?.company || "MSL-CR";
+      if (config.methodKeys === "upperClient") return normalizeClientePayload(payload);
+      return payload;
+    }
+    function masterFieldHtml(field, row) {
+      const [key, label, type, fallback, required] = field;
+      const value = rowValue(row, key);
+      const val = value === undefined || value === null ? fallback : value;
+      const req = required ? " required" : "";
+      const wide = type === "textarea" ? " wide" : "";
+      if (type === "textarea") return `<label class="${wide}">${label}<textarea id="md_${key}"${req}>${String(val ?? "")}</textarea></label>`;
+      if (type === "checkbox") {
+        const checked = val === true || String(val).toLowerCase() === "true" || String(val).toLowerCase() === "activo" ? " checked" : "";
+        return `<label>${label}<input id="md_${key}" type="checkbox"${checked} /></label>`;
+      }
+      return `<label>${label}<input id="md_${key}" type="${type}" value="${String(val ?? "")}"${req} /></label>`;
+    }
+    async function openMasterForm(key, rowIndex) {
+      const config = MASTER_CONFIG[key];
+      if (!config) return;
+      const editing = rowIndex !== null && rowIndex !== undefined;
+      const row = editing ? currentRows[rowIndex] : {};
+      const ws = $("masterWorkspace");
+      ws.classList.remove("hidden");
+      ws.innerHTML = `<div class="panel-head"><h2>${editing ? "Editar" : "Agregar"} ${config.title}</h2><span class="muted">${editing ? "PUT" : "POST"} conectado a DB</span></div>
+        <div class="form-grid">${config.fields.map(f => masterFieldHtml(f, row)).join("")}</div>
+        <div class="md-actions">
+          <button class="green" onclick="saveMasterRecord('${key}', ${editing ? "true" : "false"})">Guardar</button>
+          ${editing ? `<button class="brown" onclick="deleteMasterRecord('${key}')">Inhabilitar / eliminar</button>` : ""}
+          <button class="secondary" onclick="openMasterView('${key}')">Volver</button>
+        </div>
+        <div id="masterFormMsg" class="status hidden"></div>`;
+      if (!editing && config.ultimo) {
+        const code = await nextCode(config);
+        const input = $(`md_${config.codeKey}`);
+        if (input && code) input.value = code;
+      }
+      const codeInput = $(`md_${config.codeKey}`);
+      if (editing && codeInput) codeInput.readOnly = true;
+    }
+    async function saveMasterRecord(key, editing) {
+      const config = MASTER_CONFIG[key];
+      const msg = $("masterFormMsg");
+      msg.className = "status";
+      msg.textContent = "Guardando...";
+      try {
+        const payload = buildMasterPayload(config);
+        const path = editing ? config.update : config.add;
+        const data = await sendJSON(editing ? "PUT" : "POST", path, payload);
+        msg.textContent = data.msg || "Guardado correctamente.";
+        await openMasterView(key);
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    async function deleteMasterRecord(key) {
+      const config = MASTER_CONFIG[key];
+      const code = $(`md_${config.codeKey}`)?.value;
+      if (!code) return;
+      if (!confirm(`¿Inhabilitar/eliminar ${config.title} ${code}?`)) return;
+      const msg = $("masterFormMsg");
+      msg.className = "status";
+      msg.textContent = "Aplicando...";
+      try {
+        const data = await sendJSON("DELETE", `${config.endpoint}/${encodeURIComponent(code)}`);
+        msg.textContent = data.msg || "Actualizado.";
+        await openMasterView(key);
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
     }
     function renderComingSoon(mod) {
       $("content").innerHTML = `<div class="card panel"><div class="panel-head"><h2>${mod.title}</h2><span class="muted">Siguiente etapa</span></div><div class="status">Esta sección queda en navegación web. Primero estamos replicando Master Data de forma quirúrgica; luego seguimos con ${mod.title}.</div></div>`;
