@@ -59,6 +59,7 @@ from routers.password_reset import router as password_reset_router
 from routers.mobile_auth import router as mobile_auth_router
 from routers.user_admin import router as user_admin_router
 from routers.notifications import router as notifications_router
+from routers.som_web import router as som_web_router
 from routers.companies import router as companies_router
 from routers.masterdata_bank_accounts import router as masterdata_bank_accounts_router
 from routers.masterdata_forms import router as masterdata_forms_router
@@ -255,6 +256,7 @@ app.include_router(password_reset_router)
 app.include_router(mobile_auth_router)
 app.include_router(user_admin_router)
 app.include_router(notifications_router)
+app.include_router(som_web_router)
 app.include_router(companies_router)
 app.include_router(masterdata_bank_accounts_router)
 app.include_router(masterdata_forms_router)
