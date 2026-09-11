@@ -17,7 +17,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20260911-msl-logo"
+_ASSET_VERSION = "20260911-msl-logo-full"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Servicios, facturación, CxC e informes desde agosto en adelante."},
@@ -181,8 +181,8 @@ def som_web_home() -> HTMLResponse:
     .form { display:grid; gap:12px; width:min(100%,420px); min-width:0; }
     .remember { display:flex; gap:8px; align-items:center; color:#334155; font-size:13px; }
     .remember input { width:16px; height:16px; }
-    .hero-logo { background:#073659; display:flex; align-items:center; justify-content:center; padding:48px; }
-    .hero-logo img { width:min(38vw,360px); max-height:70vh; object-fit:contain; background:white; border-radius:10px; padding:20px; box-shadow:0 22px 70px rgba(0,0,0,.25); }
+    .hero-logo { background:#073659; display:flex; align-items:stretch; justify-content:stretch; padding:0; overflow:hidden; }
+    .hero-logo img { width:100%; height:100%; min-height:100vh; object-fit:cover; object-position:center; background:white; border-radius:0; padding:0; box-shadow:none; }
     .qr { max-width:220px; border:1px solid var(--line); border-radius:8px; padding:8px; background:white; }
     .app { min-height:100vh; display:grid; grid-template-columns:280px 1fr; }
     aside { background:var(--nav); color:white; padding:18px 16px; display:flex; flex-direction:column; gap:14px; }
