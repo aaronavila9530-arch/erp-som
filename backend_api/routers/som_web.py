@@ -16,6 +16,7 @@ router = APIRouter(tags=["SOM Web"])
 
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
+_REPO_ASSETS = _ROOT.parent / "assets"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Servicios, facturación, CxC e informes desde agosto en adelante."},
@@ -170,16 +171,17 @@ def som_web_home() -> HTMLResponse:
     button.green { background:#00703c; }
     button.brown { background:#6f4e00; }
     button.gray { background:#4b5563; }
-    input,select { height:38px; border:1px solid var(--line); border-radius:7px; padding:0 11px; background:#fff; color:var(--ink); }
-    .login { min-height:100vh; display:grid; grid-template-columns:minmax(360px,520px) 1fr; background:#fff; }
-    .login-card { padding:54px 58px; display:flex; flex-direction:column; justify-content:center; gap:16px; }
+    input,select { width:100%; min-width:0; height:38px; border:1px solid var(--line); border-radius:7px; padding:0 11px; background:#fff; color:var(--ink); }
+    select { text-overflow:ellipsis; }
+    .login { min-height:100vh; display:grid; grid-template-columns:minmax(380px,38vw) minmax(0,1fr); background:#fff; }
+    .login-card { width:100%; max-width:520px; padding:48px 56px; display:flex; flex-direction:column; justify-content:center; gap:16px; overflow:hidden; }
     .login-card h1 { margin:0; font-size:30px; color:#003a75; }
     .login-card p { margin:0 0 8px; color:var(--muted); line-height:1.45; }
-    .form { display:grid; gap:12px; max-width:420px; }
+    .form { display:grid; gap:12px; width:min(100%,420px); min-width:0; }
     .remember { display:flex; gap:8px; align-items:center; color:#334155; font-size:13px; }
     .remember input { width:16px; height:16px; }
     .hero-logo { background:#073659; display:flex; align-items:center; justify-content:center; padding:48px; }
-    .hero-logo img { width:min(58vw,520px); max-height:70vh; object-fit:contain; background:white; border-radius:10px; padding:20px; box-shadow:0 22px 70px rgba(0,0,0,.25); }
+    .hero-logo img { width:min(38vw,360px); max-height:70vh; object-fit:contain; background:white; border-radius:10px; padding:20px; box-shadow:0 22px 70px rgba(0,0,0,.25); }
     .qr { max-width:220px; border:1px solid var(--line); border-radius:8px; padding:8px; background:white; }
     .app { min-height:100vh; display:grid; grid-template-columns:280px 1fr; }
     aside { background:var(--nav); color:white; padding:18px 16px; display:flex; flex-direction:column; gap:14px; }
@@ -228,6 +230,7 @@ def som_web_home() -> HTMLResponse:
     .hidden { display:none !important; }
     @media(max-width:980px) {
       .login,.app,.kpis,.home-grid,.view-grid { grid-template-columns:1fr; }
+      .login-card { max-width:none; padding:34px 24px; }
       .hero-logo { min-height:260px; }
       aside { min-height:auto; }
       header { flex-direction:column; }
@@ -637,11 +640,16 @@ def som_web_home() -> HTMLResponse:
 
 @router.get("/som/logo/{brand}")
 def som_web_logo(brand: str) -> FileResponse:
-    filename = "mci_logo.png" if brand.lower() in {"mci", "mci-cr"} else "header.png"
-    path = _ASSETS / filename
-    if not path.exists():
-        fallback = _ASSETS / "mci_logo.png"
-        if not fallback.exists():
-            raise HTTPException(status_code=404, detail="Logo no disponible")
-        path = fallback
+    filenames = ["mci_logo.png"] if brand.lower() in {"mci", "mci-cr"} else ["msl_logo.png", "header.png"]
+    path = None
+    for filename in filenames:
+        for folder in (_ASSETS, _REPO_ASSETS):
+            candidate = folder / filename
+            if candidate.exists():
+                path = candidate
+                break
+        if path:
+            break
+    if not path:
+        raise HTTPException(status_code=404, detail="Logo no disponible")
     return FileResponse(path)
