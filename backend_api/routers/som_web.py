@@ -17,7 +17,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20260911-msl-logo-balanced-2"
+_ASSET_VERSION = "20260911-masterdata-passkey-1"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Servicios, facturación, CxC e informes desde agosto en adelante."},
@@ -218,6 +218,7 @@ def som_web_home() -> HTMLResponse:
     .view-grid { grid-template-columns:repeat(4,minmax(0,1fr)); }
     .view-card { padding:15px; cursor:pointer; min-height:86px; border-top:3px solid var(--blue); }
     .view-card:hover { outline:2px solid rgba(0,93,168,.18); }
+    .master-empty { margin-top:12px; }
     .workspace { margin-top:12px; }
     .table-wrap { overflow:auto; border:1px solid var(--line); border-radius:8px; max-height:520px; }
     table { border-collapse:collapse; width:100%; min-width:850px; font-size:13px; }
@@ -305,7 +306,10 @@ def som_web_home() -> HTMLResponse:
     const intFmt = new Intl.NumberFormat("en-US", { maximumFractionDigits:0 });
     const moneyFmt = new Intl.NumberFormat("en-US", { notation:"compact", maximumFractionDigits:1 });
     const $ = id => document.getElementById(id);
-    let session = JSON.parse(localStorage.getItem("somWebSession") || "null");
+    const SESSION_KEY = "somWebSession";
+    const PASSKEY_KEY = "somWebPasskey";
+    const SAVED_LOGIN_KEY = "somWebSavedLogin";
+    let session = JSON.parse(localStorage.getItem(SESSION_KEY) || "null");
     let pendingUser = null;
     let pendingAction = null;
     let catalog = { modules:[], master_data_actions:[], master_data_views:[] };
@@ -352,7 +356,13 @@ def som_web_home() -> HTMLResponse:
         option.textContent = String(y);
         $("year").appendChild(option);
       }
-      $("bioBtn").disabled = !window.PublicKeyCredential || !localStorage.getItem("somWebPasskey");
+      const savedLogin = JSON.parse(localStorage.getItem(SAVED_LOGIN_KEY) || "null");
+      if (savedLogin) {
+        $("user").value = savedLogin.usuario || "";
+        $("loginCompany").value = savedLogin.company || "MSL-CR";
+        $("rememberDevice").checked = true;
+      }
+      $("bioBtn").disabled = !window.PublicKeyCredential || !localStorage.getItem(PASSKEY_KEY);
     }
     async function loadCatalog() {
       catalog = await getJSON("/som/catalog").catch(() => ({ modules:[], master_data_actions:[], master_data_views:[] }));
@@ -403,8 +413,14 @@ def som_web_home() -> HTMLResponse:
         const path = pendingAction === "ENROLL_TOTP" ? "/auth/mobile/totp/confirm" : "/auth/mobile/totp/verify";
         const data = await postJSON(path, { usuario:pendingUser, codigo:$("code").value });
         session = { ...data, company:$("loginCompany").value };
-        localStorage.setItem("somWebSession", JSON.stringify(session));
-        if ($("rememberDevice").checked) await registerDevicePasskey();
+        localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+        if ($("rememberDevice").checked) {
+          localStorage.setItem(SAVED_LOGIN_KEY, JSON.stringify({ usuario:session.usuario, company:session.company }));
+          await registerDevicePasskey();
+        } else {
+          localStorage.removeItem(SAVED_LOGIN_KEY);
+        }
+        $("bioBtn").disabled = !window.PublicKeyCredential || !localStorage.getItem(PASSKEY_KEY);
         await loadCatalog();
         showApp();
       } catch (err) {
@@ -433,11 +449,11 @@ def som_web_home() -> HTMLResponse:
             timeout:60000
           }
         });
-        localStorage.setItem("somWebPasskey", JSON.stringify({ id:base64url(cred.rawId), session }));
+        localStorage.setItem(PASSKEY_KEY, JSON.stringify({ id:base64url(cred.rawId), session, usuario:session.usuario, company:session.company }));
       } catch {}
     }
     async function unlockWithPasskey() {
-      const saved = JSON.parse(localStorage.getItem("somWebPasskey") || "null");
+      const saved = JSON.parse(localStorage.getItem(PASSKEY_KEY) || "null");
       if (!saved || !window.PublicKeyCredential) return;
       $("loginMsg").textContent = "Validando dispositivo...";
       try {
@@ -449,8 +465,9 @@ def som_web_home() -> HTMLResponse:
             timeout:60000
           }
         });
-        session = saved.session;
-        localStorage.setItem("somWebSession", JSON.stringify(session));
+        session = { ...saved.session, company:saved.company || saved.session?.company || $("loginCompany").value || "MSL-CR" };
+        localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+        localStorage.setItem(SAVED_LOGIN_KEY, JSON.stringify({ usuario:session.usuario, company:session.company }));
         await loadCatalog();
         showApp();
       } catch (err) {
@@ -538,7 +555,7 @@ def som_web_home() -> HTMLResponse:
             <select id="mdPuerto"><option>Seleccione puerto</option></select>
             <button onclick="applyMasterFilter()">Buscar</button>
           </div>
-          <div class="grid view-grid">${catalog.master_data_views.map(v => `<div class="card view-card" onclick="openMasterView('${v.key}')"><h2>${v.label}</h2><p class="muted">Abrir pantalla</p></div>`).join("")}</div>
+          <div class="status master-empty">Seleccione una acción arriba o filtre por tipo para abrir la pantalla correspondiente.</div>
         </div>
         <div id="masterWorkspace" class="card panel workspace hidden"></div>`;
       loadMasterFilters();
@@ -627,9 +644,9 @@ def som_web_home() -> HTMLResponse:
     $("totpBtn").onclick = validateTotp;
     $("bioBtn").onclick = unlockWithPasskey;
     $("backLogin").onclick = showLogin;
-    $("logout").onclick = () => { localStorage.removeItem("somWebSession"); session=null; showLogin(); };
+    $("logout").onclick = () => { localStorage.removeItem(SESSION_KEY); session=null; showLogin(); };
     $("refresh").onclick = () => { refreshSummary(); if (currentModule === "master_data") renderMasterData(); };
-    $("company").onchange = () => { if (session) { session.company = $("company").value; localStorage.setItem("somWebSession", JSON.stringify(session)); } setBrand(); refreshSummary(); if (currentModule === "master_data") renderMasterData(); };
+    $("company").onchange = () => { if (session) { session.company = $("company").value; localStorage.setItem(SESSION_KEY, JSON.stringify(session)); const saved = JSON.parse(localStorage.getItem(PASSKEY_KEY) || "null"); if (saved?.session) { saved.session.company = session.company; saved.company = session.company; localStorage.setItem(PASSKEY_KEY, JSON.stringify(saved)); } } setBrand(); refreshSummary(); if (currentModule === "master_data") renderMasterData(); };
     $("year").onchange = refreshSummary;
     bootSelectors();
     loadCatalog().then(() => session ? showApp() : showLogin()).catch(showLogin);
