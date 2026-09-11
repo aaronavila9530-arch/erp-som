@@ -11,7 +11,7 @@ from fastapi import (
 from fastapi.responses import StreamingResponse
 from psycopg2.extras import RealDictCursor
 from psycopg2.extras import Json
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Optional
 import io
@@ -1084,9 +1084,13 @@ def _build_biweekly_obligations_excel(payload: dict):
 
 @router.get("/reports/payment-report.xlsx")
 def itp_payment_report_excel(
-    period: str = Query(..., description="Periodo base YYYY-MM"),
+    period: str = Query("", description="Periodo base YYYY-MM"),
     months: int = Query(1, ge=1, le=60),
     status: str = Query("ALL"),
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date] = Query(None),
+    obligation_type: str = Query("ALL"),
+    payee_type: str = Query("ALL"),
     conn=Depends(get_db),
     x_company_code: str | None = Header(None, alias="X-Company-Code"),
 ):
@@ -1097,9 +1101,16 @@ def itp_payment_report_excel(
         raise HTTPException(status_code=500, detail=f"No se pudo cargar motor Excel: {exc}")
 
     company = normalize_company_code(header_value=x_company_code)
+    period = str(period or date.today().strftime("%Y-%m")).strip()
     end_date = _add_months(_month_start(period), 1)
     start_date = _add_months(end_date, -int(months or 1))
+    if date_from:
+        start_date = date_from
+    if date_to:
+        end_date = date_to + timedelta(days=1)
     status = str(status or "ALL").strip().upper()
+    obligation_type = str(obligation_type or "ALL").strip().upper()
+    payee_type = str(payee_type or "ALL").strip().upper()
 
     filters = [
         "COALESCE(active, TRUE) = TRUE",
@@ -1114,6 +1125,12 @@ def itp_payment_report_excel(
         else:
             filters.append("status = %s")
             params.append(status)
+    if obligation_type != "ALL":
+        filters.append("UPPER(COALESCE(obligation_type,'')) = %s")
+        params.append(obligation_type)
+    if payee_type != "ALL":
+        filters.append("UPPER(COALESCE(payee_type,'')) = %s")
+        params.append(payee_type)
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
     _ensure_company_column(cur)
@@ -1157,7 +1174,7 @@ def itp_payment_report_excel(
     wb = Workbook()
     ws = wb.active
     ws.title = "Detalle ITP"
-    ws["A1"] = f"Reporte ITP pagos {start_date:%Y-%m} a {period} | Estado: {status}"
+    ws["A1"] = f"Reporte ITP pagos {start_date:%Y-%m-%d} a {(end_date - timedelta(days=1)):%Y-%m-%d} | Estado: {status} | Tipo: {obligation_type} | Beneficiario: {payee_type}"
     ws["A1"].font = Font(bold=True, size=14)
     headers = [
         "ID", "Beneficiario", "Tipo beneficiario", "Tipo obligacion", "Referencia",

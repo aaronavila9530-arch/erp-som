@@ -15154,7 +15154,224 @@ function AccountingAdvancedMobile({ session, period }: { session: NonNullable<Re
       <AccountingListActionMobile session={session} title="Dashboard ejecutivo" endpoint={`/accounting/advanced/executive-dashboard?period=${encodeURIComponent(period)}`} />
       <AccountingListActionMobile session={session} title="Alertas inteligentes" endpoint={`/accounting/advanced/smart-alerts?period=${encodeURIComponent(period)}`} />
       <AccountingListActionMobile session={session} title="Resumen fiscal profundo" endpoint={`/accounting/advanced/tax/deep-summary?period=${encodeURIComponent(period)}`} />
+      <BudgetGoalsMobile session={session} period={period} />
       <AccountingListActionMobile session={session} title="Presupuesto vs real" endpoint={`/accounting/advanced/budget-vs-actual?period=${encodeURIComponent(period)}`} />
+    </View>
+  );
+}
+
+function BudgetGoalsMobile({ session, period }: { session: NonNullable<ReturnType<typeof useAuth>["session"]>; period: string }) {
+  const [rows, setRows] = useState<Record<string, unknown>[]>([]);
+  const [selected, setSelected] = useState<Record<string, unknown> | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const [filters, setFilters] = useState({ purpose: "ALL", status: "ALL", date_from: "", date_to: "" });
+  const [form, setForm] = useState({
+    period,
+    purpose: "BUDGET",
+    name: "",
+    account_code: "",
+    cost_center_code: "",
+    currency_code: "CRC",
+    budget_amount: "",
+    target_amount: "",
+    current_amount: "",
+    monthly_contribution: "",
+    target_date: "",
+    funding_bank_account_code: "",
+    status: "ACTIVE",
+    notes: ""
+  });
+
+  function updateForm(key: string, value: string) {
+    setForm((prev) => ({ ...prev, [key]: value }));
+  }
+
+  function updateFilter(key: string, value: string) {
+    setFilters((prev) => ({ ...prev, [key]: value }));
+  }
+
+  async function load() {
+    const params = new URLSearchParams();
+    params.set("period", period);
+    params.set("purpose", filters.purpose);
+    params.set("status", filters.status);
+    if (filters.date_from) params.set("date_from", filters.date_from);
+    if (filters.date_to) params.set("date_to", filters.date_to);
+    setBusy(true);
+    setMessage("");
+    try {
+      const data = await apiRequest<Record<string, unknown>>(`/accounting/advanced/budgets?${params.toString()}`, { session });
+      setRows(payloadItems(data));
+      setMessage("Presupuesto, ahorro y metas cargado.");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo cargar presupuesto.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    setForm((prev) => ({ ...prev, period }));
+    load();
+  }, [period, filters.purpose, filters.status]);
+
+  function selectRow(row: Record<string, unknown>) {
+    setSelected(row);
+    setForm({
+      period: formatValue(row.period || period),
+      purpose: formatValue(row.purpose || "BUDGET"),
+      name: formatValue(row.name),
+      account_code: formatValue(row.account_code),
+      cost_center_code: formatValue(row.cost_center_code),
+      currency_code: formatValue(row.currency_code || "CRC"),
+      budget_amount: formatValue(row.budget_amount),
+      target_amount: formatValue(row.target_amount),
+      current_amount: formatValue(row.current_amount),
+      monthly_contribution: formatValue(row.monthly_contribution),
+      target_date: formatValue(row.target_date),
+      funding_bank_account_code: formatValue(row.funding_bank_account_code),
+      status: formatValue(row.status || "ACTIVE"),
+      notes: formatValue(row.notes)
+    });
+  }
+
+  async function save() {
+    if (!form.period.trim() || !form.account_code.trim()) {
+      Alert.alert("Presupuesto", "Periodo y cuenta contable son obligatorios.");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      await apiRequest<Record<string, unknown>>("/accounting/advanced/budget", {
+        method: "PUT",
+        session,
+        body: form
+      });
+      setMessage("Guardado correctamente.");
+      await load();
+    } catch (err) {
+      const text = err instanceof Error ? err.message : "No se pudo guardar.";
+      Alert.alert("Presupuesto", text);
+      setMessage(text);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeSelected() {
+    const id = formatValue(selected?.id);
+    if (!id || id === "-") {
+      Alert.alert("Presupuesto", "Selecciona una linea.");
+      return;
+    }
+    setBusy(true);
+    try {
+      await apiRequest<Record<string, unknown>>(`/accounting/advanced/budget/${encodeURIComponent(id)}`, { method: "DELETE", session });
+      setSelected(null);
+      setMessage("Eliminado correctamente.");
+      await load();
+    } catch (err) {
+      Alert.alert("Presupuesto", err instanceof Error ? err.message : "No se pudo eliminar.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function contribute() {
+    const id = formatValue(selected?.id);
+    if (!id || id === "-") {
+      Alert.alert("Aporte", "Selecciona una meta o presupuesto.");
+      return;
+    }
+    if (!form.monthly_contribution.trim() || !form.funding_bank_account_code.trim()) {
+      Alert.alert("Aporte", "Completa aporte mensual/monto y banco de fondeo.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const data = await apiRequest<Record<string, unknown>>(`/accounting/advanced/budget/${encodeURIComponent(id)}/contribution`, {
+        method: "POST",
+        session,
+        body: {
+          amount: form.monthly_contribution,
+          currency_code: form.currency_code,
+          contribution_date: new Date().toISOString().slice(0, 10),
+          bank_account_code: form.funding_bank_account_code,
+          reference: `APP-${Date.now()}`,
+          notes: form.notes
+        }
+      });
+      setMessage(`Aporte contabilizado. Asiento ${formatValue(data.entry_id)}.`);
+      await load();
+    } catch (err) {
+      Alert.alert("Aporte", err instanceof Error ? err.message : "No se pudo aportar.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function exportExcel() {
+    const params = new URLSearchParams();
+    params.set("period", period);
+    params.set("purpose", filters.purpose);
+    params.set("status", filters.status);
+    if (filters.date_from) params.set("date_from", filters.date_from);
+    if (filters.date_to) params.set("date_to", filters.date_to);
+    try {
+      await downloadSessionFile(`/accounting/advanced/budget-report.xlsx?${params.toString()}`, session, cleanFilePart(`Presupuesto_Ahorro_Metas_${period}_${filters.purpose}_${filters.status}.xlsx`));
+      setMessage("Excel generado.");
+    } catch (err) {
+      Alert.alert("Exportar", err instanceof Error ? err.message : "No se pudo exportar.");
+    }
+  }
+
+  return (
+    <View style={styles.card}>
+      <Text style={styles.cardTitle}>Presupuesto, ahorro y metas</Text>
+      <View style={styles.rowWrap}>
+        <SelectField label="Tipo" value={filters.purpose} options={["ALL", "BUDGET", "SAVINGS", "GOAL"]} onChange={(value) => updateFilter("purpose", value)} />
+        <SelectField label="Estado" value={filters.status} options={["ALL", "ACTIVE", "PAUSED", "DONE", "CANCELLED"]} onChange={(value) => updateFilter("status", value)} />
+      </View>
+      <DateField label="Desde" value={filters.date_from} onChange={(value) => updateFilter("date_from", value)} />
+      <DateField label="Hasta" value={filters.date_to} onChange={(value) => updateFilter("date_to", value)} />
+      <View style={styles.financeFilterActions}>
+        <Pressable style={styles.actionButton} onPress={load} disabled={busy}><Text style={styles.actionButtonText}>{busy ? "Cargando..." : "Buscar"}</Text></Pressable>
+        <Pressable style={styles.secondaryButton} onPress={exportExcel}><Text style={styles.secondaryButtonText}>Exportar Excel</Text></Pressable>
+      </View>
+      {message ? <Text style={message.includes("No se") ? styles.error : styles.helperText}>{message}</Text> : null}
+      {rows.slice(0, 20).map((row, index) => (
+        <Pressable key={`budget-${index}`} onPress={() => selectRow(row)}>
+          <MiniRecordCard row={row} titleKeys={["name", "account_name", "purpose"]} />
+        </Pressable>
+      ))}
+      <Text style={styles.salarySectionTitle}>{selected ? "Modificar linea seleccionada" : "Agregar linea"}</Text>
+      <Text style={styles.label}>Nombre</Text>
+      <TextInput style={styles.input} value={form.name} onChangeText={(value) => updateForm("name", value)} />
+      <View style={styles.rowWrap}>
+        <SelectField label="Tipo" value={form.purpose} options={["BUDGET", "SAVINGS", "GOAL"]} onChange={(value) => updateForm("purpose", value)} />
+        <SelectField label="Estado" value={form.status} options={["ACTIVE", "PAUSED", "DONE", "CANCELLED"]} onChange={(value) => updateForm("status", value)} />
+      </View>
+      <Text style={styles.label}>Cuenta contable objetivo</Text>
+      <TextInput style={styles.input} value={form.account_code} onChangeText={(value) => updateForm("account_code", value)} placeholder="Ej. 5.1.05 o 1.1.02.99" />
+      <SelectField label="Moneda" value={form.currency_code} options={["CRC", "USD"]} onChange={(value) => updateForm("currency_code", value)} />
+      <Text style={styles.label}>Presupuesto mensual</Text>
+      <TextInput style={styles.input} keyboardType="decimal-pad" value={form.budget_amount} onChangeText={(value) => updateForm("budget_amount", value)} />
+      <Text style={styles.label}>Meta total</Text>
+      <TextInput style={styles.input} keyboardType="decimal-pad" value={form.target_amount} onChangeText={(value) => updateForm("target_amount", value)} />
+      <Text style={styles.label}>Aporte mensual</Text>
+      <TextInput style={styles.input} keyboardType="decimal-pad" value={form.monthly_contribution} onChangeText={(value) => updateForm("monthly_contribution", value)} />
+      <DateField label="Fecha a cumplir" value={form.target_date} onChange={(value) => updateForm("target_date", value)} />
+      <Text style={styles.label}>Banco contable de fondeo</Text>
+      <TextInput style={styles.input} value={form.funding_bank_account_code} onChangeText={(value) => updateForm("funding_bank_account_code", value)} placeholder="Ej. 1.1.02.02.01" />
+      <Text style={styles.label}>Notas</Text>
+      <TextInput style={[styles.input, styles.multilineInput]} multiline value={form.notes} onChangeText={(value) => updateForm("notes", value)} />
+      <View style={styles.financeFilterActions}>
+        <Pressable style={styles.actionButton} onPress={save} disabled={busy}><Text style={styles.actionButtonText}>Guardar</Text></Pressable>
+        <Pressable style={styles.secondaryButton} onPress={contribute} disabled={busy}><Text style={styles.secondaryButtonText}>Aportar</Text></Pressable>
+        <Pressable style={styles.dangerButton} onPress={removeSelected} disabled={busy}><Text style={styles.dangerButtonText}>Eliminar</Text></Pressable>
+      </View>
     </View>
   );
 }
@@ -15734,6 +15951,10 @@ function FinanceFilters({
     payment_date_to: "",
     itp_report_months: "1",
     itp_report_status: "ALL",
+    itp_report_date_from: "",
+    itp_report_date_to: "",
+    itp_report_obligation_type: "ALL",
+    itp_report_payee_type: "ALL",
     period: currentAccountingPeriod(),
     search_mode: "SINGLE",
     period_from: previousAccountingPeriod(),
@@ -15935,6 +16156,10 @@ function FinanceFilters({
       payment_date_to: "",
       itp_report_months: "1",
       itp_report_status: "ALL",
+      itp_report_date_from: "",
+      itp_report_date_to: "",
+      itp_report_obligation_type: "ALL",
+      itp_report_payee_type: "ALL",
       period: currentAccountingPeriod(),
       search_mode: "SINGLE",
       period_from: previousAccountingPeriod(),
@@ -16060,6 +16285,10 @@ function FinanceFilters({
     params.set("period", period);
     params.set("months", months);
     params.set("status", status);
+    params.set("obligation_type", form.itp_report_obligation_type || "ALL");
+    params.set("payee_type", form.itp_report_payee_type || "ALL");
+    if (form.itp_report_date_from) params.set("date_from", form.itp_report_date_from);
+    if (form.itp_report_date_to) params.set("date_to", form.itp_report_date_to);
     onLoading(true);
     onMessage("");
     try {
@@ -16146,6 +16375,10 @@ function FinanceFilters({
             <SelectField label="Periodo base" value={form.period || currentAccountingPeriod()} options={accountingPeriods} onChange={(value) => setValue("period", value)} />
             <SelectField label="Historico meses" value={form.itp_report_months || "1"} options={["1", "3", "6", "12", "24", "36"]} onChange={(value) => setValue("itp_report_months", value)} />
             <SelectField label="Estado" value={form.itp_report_status || "ALL"} options={["ALL", "PENDING", "PARTIAL", "PAID"]} onChange={(value) => setValue("itp_report_status", value)} />
+            <DateField label="Desde" value={form.itp_report_date_from || ""} onChange={(value) => setValue("itp_report_date_from", value)} />
+            <DateField label="Hasta" value={form.itp_report_date_to || ""} onChange={(value) => setValue("itp_report_date_to", value)} />
+            <SelectField label="Tipo obligacion" value={form.itp_report_obligation_type || "ALL"} options={["ALL", "SERVICE", "SURVEYOR_FEE", "TAX", "PAYROLL", "CARD", "MANUAL", "OTHER"]} onChange={(value) => setValue("itp_report_obligation_type", value)} />
+            <SelectField label="Tipo beneficiario" value={form.itp_report_payee_type || "ALL"} options={["ALL", "PROVEEDOR", "SURVEYOR", "EMPLEADO", "TAX", "CARD", "OTHER"]} onChange={(value) => setValue("itp_report_payee_type", value)} />
             <Pressable style={styles.actionButton} onPress={exportItpPaymentReport}>
               <Text style={styles.actionButtonText}>Exportar Excel</Text>
             </Pressable>
@@ -17072,6 +17305,14 @@ const styles = StyleSheet.create({
   barTrack: { backgroundColor: "#E4EAF2", borderRadius: 999, height: 10, overflow: "hidden" },
   brand: { color: BLUE, fontSize: 28, fontWeight: "800", marginBottom: 8, textAlign: "center" },
   cardTitle: { color: "#101828", fontSize: 15, fontWeight: "800" },
+  card: {
+    backgroundColor: "white",
+    borderColor: BORDER,
+    borderRadius: 8,
+    borderWidth: 1,
+    marginBottom: 12,
+    padding: 12
+  },
   chart: { backgroundColor: "white", borderColor: BORDER, borderRadius: 8, borderWidth: 1, marginTop: 12, padding: 14 },
   calendarDay: { alignItems: "center", borderRadius: 6, height: 38, justifyContent: "center", width: "14.28%" },
   calendarDayActive: { backgroundColor: BLUE },
@@ -17252,10 +17493,13 @@ const styles = StyleSheet.create({
     padding: 12
   },
   rowTitle: { color: "#101828", fontSize: 15, fontWeight: "800", marginBottom: 4 },
+  rowWrap: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
   screen: { flex: 1, backgroundColor: "#F5F7FA" },
   secondaryButton: { alignItems: "center", borderColor: BLUE, borderRadius: 6, borderWidth: 1, marginTop: 10, paddingVertical: 12 },
   secondaryButtonCompact: { alignItems: "center", borderColor: BLUE, borderRadius: 6, borderWidth: 1, paddingHorizontal: 12, paddingVertical: 8 },
   secondaryButtonText: { color: BLUE, fontSize: 14, fontWeight: "800" },
+  dangerButton: { alignItems: "center", backgroundColor: "#B42318", borderRadius: 6, marginTop: 10, paddingHorizontal: 12, paddingVertical: 12 },
+  dangerButtonText: { color: "white", fontSize: 14, fontWeight: "800" },
   segmentedControl: { alignSelf: "flex-start", borderColor: BLUE, borderRadius: 6, borderWidth: 1, flexDirection: "row", overflow: "hidden" },
   segmentedOption: { paddingHorizontal: 12, paddingVertical: 8 },
   segmentedOptionActive: { backgroundColor: BLUE },

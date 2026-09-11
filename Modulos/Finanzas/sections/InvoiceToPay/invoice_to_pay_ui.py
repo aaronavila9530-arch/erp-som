@@ -566,7 +566,7 @@ class InvoiceToPayUI(tk.Frame):
     def _export_payment_report(self):
         popup = tk.Toplevel(self)
         popup.title("Reporte pagos ITP / presupuesto")
-        popup.geometry("380x235")
+        popup.geometry("460x370")
         popup.resizable(False, False)
         popup.transient(self)
         popup.grab_set()
@@ -578,6 +578,10 @@ class InvoiceToPayUI(tk.Frame):
         period_var = tk.StringVar(value=date.today().strftime("%Y-%m"))
         months_var = tk.StringVar(value="1")
         status_var = tk.StringVar(value="ALL")
+        date_from_var = tk.StringVar(value="")
+        date_to_var = tk.StringVar(value="")
+        obligation_type_var = tk.StringVar(value="ALL")
+        payee_type_var = tk.StringVar(value="ALL")
 
         tk.Label(form, text="Periodo base").grid(row=0, column=0, sticky="w", pady=5)
         ent_period = ttk.Entry(form, textvariable=period_var, width=12)
@@ -589,6 +593,20 @@ class InvoiceToPayUI(tk.Frame):
 
         tk.Label(form, text="Estado").grid(row=2, column=0, sticky="w", pady=5)
         ttk.Combobox(form, textvariable=status_var, state="readonly", values=("ALL", "PENDING", "PARTIAL", "PAID"), width=14).grid(row=2, column=1, sticky="w", pady=5)
+
+        tk.Label(form, text="Desde").grid(row=3, column=0, sticky="w", pady=5)
+        ttk.Entry(form, textvariable=date_from_var, width=14).grid(row=3, column=1, sticky="w", pady=5)
+        tk.Label(form, text="YYYY-MM-DD opcional").grid(row=3, column=2, sticky="w", padx=5)
+
+        tk.Label(form, text="Hasta").grid(row=4, column=0, sticky="w", pady=5)
+        ttk.Entry(form, textvariable=date_to_var, width=14).grid(row=4, column=1, sticky="w", pady=5)
+        tk.Label(form, text="YYYY-MM-DD opcional").grid(row=4, column=2, sticky="w", padx=5)
+
+        tk.Label(form, text="Tipo obligación").grid(row=5, column=0, sticky="w", pady=5)
+        ttk.Combobox(form, textvariable=obligation_type_var, state="readonly", values=("ALL", "SERVICE", "SURVEYOR_FEE", "TAX", "PAYROLL", "CARD", "MANUAL", "OTHER"), width=18).grid(row=5, column=1, sticky="w", pady=5)
+
+        tk.Label(form, text="Tipo beneficiario").grid(row=6, column=0, sticky="w", pady=5)
+        ttk.Combobox(form, textvariable=payee_type_var, state="readonly", values=("ALL", "PROVEEDOR", "SURVEYOR", "EMPLEADO", "TAX", "CARD", "OTHER"), width=18).grid(row=6, column=1, sticky="w", pady=5)
 
         def export():
             period = period_var.get().strip()
@@ -610,7 +628,16 @@ class InvoiceToPayUI(tk.Frame):
             if not path:
                 return
             try:
-                download_invoice_to_pay_payment_report_api(period, months, status_var.get(), path)
+                download_invoice_to_pay_payment_report_api(
+                    period,
+                    months,
+                    status_var.get(),
+                    path,
+                    date_from=date_from_var.get().strip() or None,
+                    date_to=date_to_var.get().strip() or None,
+                    obligation_type=obligation_type_var.get(),
+                    payee_type=payee_type_var.get(),
+                )
                 messagebox.showinfo("Reporte", f"Reporte exportado correctamente:\n{path}", parent=popup)
                 popup.destroy()
             except Exception as exc:

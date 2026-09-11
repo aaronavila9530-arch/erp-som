@@ -1526,12 +1526,18 @@ def post_invoice_to_pay_apply_payment_api(data: dict):
         }
 
 
-def download_invoice_to_pay_payment_report_api(period: str, months: int, status: str, output_path: str):
+def download_invoice_to_pay_payment_report_api(period: str, months: int, status: str, output_path: str, date_from=None, date_to=None, obligation_type="ALL", payee_type="ALL"):
     params = {
         "period": period,
         "months": int(months or 1),
         "status": status or "ALL",
+        "obligation_type": obligation_type or "ALL",
+        "payee_type": payee_type or "ALL",
     }
+    if date_from:
+        params["date_from"] = date_from
+    if date_to:
+        params["date_to"] = date_to
     resp = api_request(
         "GET",
         "/invoice-to-pay/reports/payment-report.xlsx",
@@ -2074,10 +2080,50 @@ def get_accounting_budget_vs_actual_api(period):
     return r.json()
 
 
+def get_accounting_budgets_api(period=None, date_from=None, date_to=None, purpose="ALL", status="ALL"):
+    params = {"purpose": purpose or "ALL", "status": status or "ALL"}
+    if period:
+        params["period"] = period
+    if date_from:
+        params["date_from"] = date_from
+    if date_to:
+        params["date_to"] = date_to
+    r = api_request("GET", f"{BASE_URL}/accounting/advanced/budgets", params=params, timeout=60)
+    r.raise_for_status()
+    return r.json()
+
+
 def upsert_accounting_budget_api(payload):
     r = api_request("PUT", f"{BASE_URL}/accounting/advanced/budget", json=payload, timeout=30)
     r.raise_for_status()
     return r.json()
+
+
+def delete_accounting_budget_api(budget_id):
+    r = api_request("DELETE", f"{BASE_URL}/accounting/advanced/budget/{budget_id}", timeout=30)
+    r.raise_for_status()
+    return r.json()
+
+
+def post_accounting_budget_contribution_api(budget_id, payload):
+    r = api_request("POST", f"{BASE_URL}/accounting/advanced/budget/{budget_id}/contribution", json=payload, timeout=60)
+    r.raise_for_status()
+    return r.json()
+
+
+def download_accounting_budget_report_api(output_path, period=None, date_from=None, date_to=None, purpose="ALL", status="ALL"):
+    params = {"purpose": purpose or "ALL", "status": status or "ALL"}
+    if period:
+        params["period"] = period
+    if date_from:
+        params["date_from"] = date_from
+    if date_to:
+        params["date_to"] = date_to
+    r = api_request("GET", f"{BASE_URL}/accounting/advanced/budget-report.xlsx", params=params, timeout=60)
+    r.raise_for_status()
+    with open(output_path, "wb") as fh:
+        fh.write(r.content)
+    return output_path
 
 
 def post_portia_accounting_review_api(period, language="ES"):

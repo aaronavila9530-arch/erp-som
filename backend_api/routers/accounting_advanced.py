@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import os
 import socket
 from datetime import date, datetime, timedelta
@@ -8,13 +9,14 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from psycopg2.extras import Json, RealDictCursor
 
 from database import get_db
 from routers.accounting import _ensure_accounting_professional_schema
 from routers.accounting_tax import _ensure_schema as _ensure_tax_schema, tax_iva, obligations
 from services.finance_audit import actor_from_headers, audit_event, ensure_finance_audit_schema
+from services.tenanting import company_code as normalize_company_code
 
 
 router = APIRouter(prefix="/accounting/advanced", tags=["Accounting Advanced Controls"])
@@ -103,11 +105,21 @@ def _ensure_schema(conn):
         cur.execute("""
             CREATE TABLE IF NOT EXISTS accounting_budgets (
                 id BIGSERIAL PRIMARY KEY,
+                company_code VARCHAR(30) NOT NULL DEFAULT 'MSL-CR',
                 period VARCHAR(7) NOT NULL,
                 account_code TEXT NOT NULL,
                 cost_center_code TEXT NOT NULL DEFAULT '',
                 currency_code VARCHAR(3) NOT NULL DEFAULT 'CRC',
                 budget_amount NUMERIC(18,2) NOT NULL DEFAULT 0,
+                purpose TEXT NOT NULL DEFAULT 'BUDGET',
+                name TEXT,
+                target_date DATE,
+                monthly_contribution NUMERIC(18,2) NOT NULL DEFAULT 0,
+                target_amount NUMERIC(18,2) NOT NULL DEFAULT 0,
+                current_amount NUMERIC(18,2) NOT NULL DEFAULT 0,
+                funding_bank_account_code TEXT,
+                funding_bank_account_name TEXT,
+                status TEXT NOT NULL DEFAULT 'ACTIVE',
                 notes TEXT,
                 created_by TEXT,
                 created_at TIMESTAMP NOT NULL DEFAULT NOW(),
@@ -115,6 +127,42 @@ def _ensure_schema(conn):
                 UNIQUE(period, account_code, cost_center_code, currency_code)
             )
         """)
+        for ddl in (
+            "ALTER TABLE accounting_budgets ADD COLUMN IF NOT EXISTS company_code VARCHAR(30) NOT NULL DEFAULT 'MSL-CR'",
+            "ALTER TABLE accounting_budgets ADD COLUMN IF NOT EXISTS purpose TEXT NOT NULL DEFAULT 'BUDGET'",
+            "ALTER TABLE accounting_budgets ADD COLUMN IF NOT EXISTS name TEXT",
+            "ALTER TABLE accounting_budgets ADD COLUMN IF NOT EXISTS target_date DATE",
+            "ALTER TABLE accounting_budgets ADD COLUMN IF NOT EXISTS monthly_contribution NUMERIC(18,2) NOT NULL DEFAULT 0",
+            "ALTER TABLE accounting_budgets ADD COLUMN IF NOT EXISTS target_amount NUMERIC(18,2) NOT NULL DEFAULT 0",
+            "ALTER TABLE accounting_budgets ADD COLUMN IF NOT EXISTS current_amount NUMERIC(18,2) NOT NULL DEFAULT 0",
+            "ALTER TABLE accounting_budgets ADD COLUMN IF NOT EXISTS funding_bank_account_code TEXT",
+            "ALTER TABLE accounting_budgets ADD COLUMN IF NOT EXISTS funding_bank_account_name TEXT",
+            "ALTER TABLE accounting_budgets ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'ACTIVE'",
+        ):
+            cur.execute(ddl)
+        cur.execute("ALTER TABLE accounting_budgets DROP CONSTRAINT IF EXISTS accounting_budgets_period_account_code_cost_center_code_currency_code_key")
+        cur.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_accounting_budgets_company_period_account
+            ON accounting_budgets(company_code, period, account_code, cost_center_code, currency_code)
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS accounting_budget_contributions (
+                id BIGSERIAL PRIMARY KEY,
+                budget_id BIGINT REFERENCES accounting_budgets(id) ON DELETE CASCADE,
+                company_code VARCHAR(30) NOT NULL DEFAULT 'MSL-CR',
+                contribution_date DATE NOT NULL,
+                amount NUMERIC(18,2) NOT NULL,
+                currency_code VARCHAR(3) NOT NULL DEFAULT 'CRC',
+                bank_account_code TEXT NOT NULL,
+                bank_account_name TEXT,
+                reference TEXT NOT NULL,
+                notes TEXT,
+                accounting_entry_id INTEGER REFERENCES accounting_entries(id),
+                created_by TEXT,
+                created_at TIMESTAMP NOT NULL DEFAULT NOW()
+            )
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_accounting_budget_contrib_budget ON accounting_budget_contributions(budget_id, contribution_date)")
         cur.execute("""
             CREATE TABLE IF NOT EXISTS accounting_fx_revaluations (
                 id BIGSERIAL PRIMARY KEY,
@@ -178,6 +226,62 @@ def _serialize(row):
         else:
             output[key] = value
     return output
+
+
+def _company_from_header(x_company_code: str | None = None) -> str:
+    return normalize_company_code(header_value=x_company_code)
+
+
+def _budget_filters(
+    company: str,
+    period: str | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    purpose: str = "ALL",
+    status: str = "ALL",
+):
+    filters = ["company_code = %s"]
+    params: list = [company]
+    if period:
+        _valid_period(period)
+        filters.append("period = %s")
+        params.append(period)
+    if date_from:
+        filters.append("COALESCE(target_date, (period || '-01')::date) >= %s")
+        params.append(date_from)
+    if date_to:
+        filters.append("COALESCE(target_date, (period || '-01')::date) <= %s")
+        params.append(date_to)
+    purpose = str(purpose or "ALL").strip().upper()
+    if purpose != "ALL":
+        filters.append("UPPER(COALESCE(purpose, 'BUDGET')) = %s")
+        params.append(purpose)
+    status = str(status or "ALL").strip().upper()
+    if status != "ALL":
+        filters.append("UPPER(COALESCE(status, 'ACTIVE')) = %s")
+        params.append(status)
+    return filters, params
+
+
+def _get_postable_account(cur, code: str, label: str):
+    code = str(code or "").strip()
+    if not code:
+        raise HTTPException(400, f"{label} is required")
+    cur.execute(
+        """
+        SELECT account_code, account_name
+        FROM accounting_accounts
+        WHERE account_code=%s
+          AND COALESCE(active, TRUE)=TRUE
+          AND COALESCE(accepts_posting, FALSE)=TRUE
+        LIMIT 1
+        """,
+        (code,),
+    )
+    account = cur.fetchone()
+    if not account:
+        raise HTTPException(400, f"{label} does not exist or is not postable: {code}")
+    return account
 
 
 @router.get("/fx/rate")
@@ -467,10 +571,52 @@ def download_accounting_support(support_id: int, conn=Depends(get_db)):
     return FileResponse(row["stored_path"], filename=row["filename"], media_type=row.get("mime_type") or "application/octet-stream")
 
 
+@router.get("/budgets")
+def list_budgets(
+    period: str | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    purpose: str = "ALL",
+    status: str = "ALL",
+    conn=Depends(get_db),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+):
+    _ensure_schema(conn)
+    company = _company_from_header(x_company_code)
+    filters, params = _budget_filters(company, period, date_from, date_to, purpose, status)
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(
+            f"""
+            SELECT b.*,
+                   COALESCE(a.account_name, b.account_code) AS account_name,
+                   COALESCE(c.contrib_amount, 0) AS contributed_amount,
+                   COALESCE(b.current_amount, 0) + COALESCE(c.contrib_amount, 0) AS progress_amount,
+                   CASE
+                     WHEN COALESCE(NULLIF(b.target_amount, 0), b.budget_amount, 0) = 0 THEN 0
+                     ELSE ROUND(((COALESCE(b.current_amount, 0) + COALESCE(c.contrib_amount, 0))
+                          / COALESCE(NULLIF(b.target_amount, 0), b.budget_amount, 1)) * 100, 2)
+                   END AS progress_pct
+            FROM accounting_budgets b
+            LEFT JOIN accounting_accounts a ON a.account_code=b.account_code
+            LEFT JOIN (
+                SELECT budget_id, SUM(amount) AS contrib_amount
+                FROM accounting_budget_contributions
+                WHERE company_code=%s
+                GROUP BY budget_id
+            ) c ON c.budget_id=b.id
+            WHERE {" AND ".join(filters)}
+            ORDER BY COALESCE(b.target_date, (b.period || '-01')::date), b.purpose, b.account_code
+            """,
+            [company] + params,
+        )
+        return {"data": [_serialize(row) for row in cur.fetchall()]}
+
+
 @router.put("/budget")
 def upsert_budget(
     payload: dict,
     conn=Depends(get_db),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
     x_user: str | None = Header(None, alias="X-User"),
     x_role: str | None = Header(None, alias="X-Role"),
     x_user_role: str | None = Header(None, alias="X-User-Role"),
@@ -481,27 +627,175 @@ def upsert_budget(
     account = str(payload.get("account_code") or "").strip()
     if not account:
         raise HTTPException(400, "account_code is required")
+    company = _company_from_header(x_company_code)
+    purpose = str(payload.get("purpose") or "BUDGET").strip().upper()
+    if purpose not in {"BUDGET", "SAVINGS", "GOAL"}:
+        raise HTTPException(400, "purpose must be BUDGET, SAVINGS or GOAL")
+    status = str(payload.get("status") or "ACTIVE").strip().upper()
+    if status not in {"ACTIVE", "PAUSED", "DONE", "CANCELLED"}:
+        raise HTTPException(400, "status must be ACTIVE, PAUSED, DONE or CANCELLED")
     user, role = actor_from_headers(x_user, x_role, x_user_role)
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        cur.execute("SELECT * FROM accounting_budgets WHERE period=%s AND account_code=%s AND cost_center_code=%s AND currency_code=%s",
-                    (period, account, payload.get("cost_center_code") or "", payload.get("currency_code") or "CRC"))
+        _get_postable_account(cur, account, "account_code")
+        funding_code = str(payload.get("funding_bank_account_code") or "").strip()
+        funding_account = _get_postable_account(cur, funding_code, "funding_bank_account_code") if funding_code else None
+        cur.execute("SELECT * FROM accounting_budgets WHERE company_code=%s AND period=%s AND account_code=%s AND cost_center_code=%s AND currency_code=%s",
+                    (company, period, account, payload.get("cost_center_code") or "", payload.get("currency_code") or "CRC"))
         before = cur.fetchone()
         cur.execute("""
-            INSERT INTO accounting_budgets(period,account_code,cost_center_code,currency_code,budget_amount,notes,created_by)
-            VALUES(%s,%s,%s,%s,%s,%s,%s)
-            ON CONFLICT(period,account_code,cost_center_code,currency_code) DO UPDATE SET
-                budget_amount=EXCLUDED.budget_amount, notes=EXCLUDED.notes, updated_at=NOW()
+            INSERT INTO accounting_budgets(
+                company_code, period, account_code, cost_center_code, currency_code,
+                budget_amount, purpose, name, target_date, monthly_contribution,
+                target_amount, current_amount, funding_bank_account_code,
+                funding_bank_account_name, status, notes, created_by
+            )
+            VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            ON CONFLICT(company_code,period,account_code,cost_center_code,currency_code) DO UPDATE SET
+                company_code=EXCLUDED.company_code,
+                budget_amount=EXCLUDED.budget_amount,
+                purpose=EXCLUDED.purpose,
+                name=EXCLUDED.name,
+                target_date=EXCLUDED.target_date,
+                monthly_contribution=EXCLUDED.monthly_contribution,
+                target_amount=EXCLUDED.target_amount,
+                current_amount=EXCLUDED.current_amount,
+                funding_bank_account_code=EXCLUDED.funding_bank_account_code,
+                funding_bank_account_name=EXCLUDED.funding_bank_account_name,
+                status=EXCLUDED.status,
+                notes=EXCLUDED.notes,
+                updated_at=NOW()
             RETURNING *
-        """, (period, account, payload.get("cost_center_code") or "", payload.get("currency_code") or "CRC", _money(payload.get("budget_amount")), payload.get("notes"), user))
+        """, (
+            company, period, account, payload.get("cost_center_code") or "", str(payload.get("currency_code") or "CRC").upper(),
+            _money(payload.get("budget_amount")), purpose, payload.get("name") or None, payload.get("target_date") or None,
+            _money(payload.get("monthly_contribution")), _money(payload.get("target_amount")), _money(payload.get("current_amount")),
+            funding_account["account_code"] if funding_account else None,
+            funding_account["account_name"] if funding_account else payload.get("funding_bank_account_name"),
+            status, payload.get("notes"), user,
+        ))
         after = cur.fetchone()
         audit_event(cur, "accounting", "BUDGET_UPSERTED", "accounting_budget", after["id"], user, role, payload.get("reason"), _serialize(before), _serialize(after))
     conn.commit()
     return {"status": "ok", "budget": after}
 
 
-@router.get("/budget-vs-actual")
-def budget_vs_actual(period: str, conn=Depends(get_db)):
+@router.delete("/budget/{budget_id}")
+def delete_budget(
+    budget_id: int,
+    conn=Depends(get_db),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+    x_user: str | None = Header(None, alias="X-User"),
+    x_role: str | None = Header(None, alias="X-Role"),
+    x_user_role: str | None = Header(None, alias="X-User-Role"),
+):
     _ensure_schema(conn)
+    company = _company_from_header(x_company_code)
+    user, role = actor_from_headers(x_user, x_role, x_user_role)
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("SELECT * FROM accounting_budgets WHERE id=%s AND company_code=%s", (budget_id, company))
+        before = cur.fetchone()
+        if not before:
+            raise HTTPException(404, "Budget not found")
+        cur.execute("DELETE FROM accounting_budgets WHERE id=%s AND company_code=%s RETURNING *", (budget_id, company))
+        after = cur.fetchone()
+        audit_event(cur, "accounting", "BUDGET_DELETED", "accounting_budget", budget_id, user, role, None, _serialize(before), _serialize(after))
+    conn.commit()
+    return {"status": "ok", "deleted": budget_id}
+
+
+@router.post("/budget/{budget_id}/contribution")
+def post_budget_contribution(
+    budget_id: int,
+    payload: dict,
+    conn=Depends(get_db),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+    x_user: str | None = Header(None, alias="X-User"),
+    x_role: str | None = Header(None, alias="X-Role"),
+    x_user_role: str | None = Header(None, alias="X-User-Role"),
+):
+    _ensure_schema(conn)
+    company = _company_from_header(x_company_code)
+    user, role = actor_from_headers(x_user, x_role, x_user_role)
+    contribution_date = payload.get("contribution_date") or date.today().isoformat()
+    try:
+        contribution_date_obj = datetime.strptime(str(contribution_date), "%Y-%m-%d").date()
+    except Exception:
+        raise HTTPException(400, "contribution_date must use YYYY-MM-DD")
+    amount = _money(payload.get("amount"))
+    if amount <= 0:
+        raise HTTPException(400, "amount must be greater than zero")
+    reference = str(payload.get("reference") or "").strip()
+    if not reference:
+        raise HTTPException(400, "reference is required")
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("SELECT * FROM accounting_budgets WHERE id=%s AND company_code=%s FOR UPDATE", (budget_id, company))
+        budget = cur.fetchone()
+        if not budget:
+            raise HTTPException(404, "Budget not found")
+        debit_account = _get_postable_account(cur, budget["account_code"], "budget account")
+        bank_code = str(payload.get("bank_account_code") or budget.get("funding_bank_account_code") or "").strip()
+        bank_account = _get_postable_account(cur, bank_code, "bank_account_code")
+        period = contribution_date_obj.strftime("%Y-%m")
+        description = f"Aporte presupuesto/meta {budget.get('name') or budget.get('account_code')} - {reference}"
+        cur.execute(
+            """
+            INSERT INTO accounting_entries(
+                entry_date, period, description, origin, origin_id, created_by,
+                workflow_status, company_code, currency_code, exchange_rate,
+                posting_rule_code, posting_metadata, posted_by, posted_at
+            )
+            VALUES(%s,%s,%s,'BUDGET_CONTRIBUTION',%s,%s,'POSTED',%s,%s,1,%s,%s,%s,NOW())
+            RETURNING id
+            """,
+            (
+                contribution_date_obj, period, description, budget_id, user, company,
+                str(payload.get("currency_code") or budget.get("currency_code") or "CRC").upper(),
+                "BUDGET_CONTRIBUTION", Json({"budget_id": budget_id, "reference": reference}), user,
+            ),
+        )
+        entry_id = cur.fetchone()["id"]
+        cur.execute(
+            """
+            INSERT INTO accounting_lines(entry_id, account_code, account_name, debit, credit, line_description)
+            VALUES(%s,%s,%s,%s,0,%s),(%s,%s,%s,0,%s,%s)
+            """,
+            (
+                entry_id, debit_account["account_code"], debit_account["account_name"], amount, description,
+                entry_id, bank_account["account_code"], bank_account["account_name"], amount, description,
+            ),
+        )
+        cur.execute(
+            """
+            INSERT INTO accounting_budget_contributions(
+                budget_id, company_code, contribution_date, amount, currency_code,
+                bank_account_code, bank_account_name, reference, notes,
+                accounting_entry_id, created_by
+            )
+            VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            RETURNING *
+            """,
+            (
+                budget_id, company, contribution_date_obj, amount,
+                str(payload.get("currency_code") or budget.get("currency_code") or "CRC").upper(),
+                bank_account["account_code"], bank_account["account_name"], reference,
+                payload.get("notes"), entry_id, user,
+            ),
+        )
+        contribution = cur.fetchone()
+        cur.execute("UPDATE accounting_budgets SET updated_at=NOW() WHERE id=%s", (budget_id,))
+        audit_event(cur, "accounting", "BUDGET_CONTRIBUTION_POSTED", "accounting_budget", budget_id, user, role, None, None, _serialize(contribution), {"entry_id": entry_id})
+    conn.commit()
+    return {"status": "ok", "entry_id": entry_id, "contribution": _serialize(contribution)}
+
+
+@router.get("/budget-vs-actual")
+def budget_vs_actual(
+    period: str,
+    conn=Depends(get_db),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+):
+    _ensure_schema(conn)
+    company = _company_from_header(x_company_code)
     start, end = _period_bounds(period)
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute("""
@@ -511,16 +805,116 @@ def budget_vs_actual(period: str, conn=Depends(get_db)):
             FROM accounting_budgets b
             LEFT JOIN accounting_accounts a ON a.account_code=b.account_code
             LEFT JOIN accounting_lines l ON l.account_code=b.account_code
-            LEFT JOIN accounting_entries e ON e.id=l.entry_id AND e.workflow_status='POSTED' AND e.entry_date >= %s AND e.entry_date < %s
-            WHERE b.period=%s
+            LEFT JOIN accounting_entries e ON e.id=l.entry_id AND e.workflow_status='POSTED' AND e.entry_date >= %s AND e.entry_date < %s AND e.company_code=%s
+            WHERE b.period=%s AND b.company_code=%s AND UPPER(COALESCE(b.purpose,'BUDGET'))='BUDGET'
             GROUP BY b.period,b.account_code,a.account_name,b.cost_center_code,b.currency_code,b.budget_amount
             ORDER BY b.account_code
-        """, (start, end, period))
+        """, (start, end, company, period, company))
         rows = []
         for row in cur.fetchall():
             variance = _money(row["actual_amount"]) - _money(row["budget_amount"])
             rows.append(_serialize(row) | {"variance": _to_float(variance), "variance_pct": float((variance / _money(row["budget_amount"]) * 100).quantize(MONEY)) if _money(row["budget_amount"]) else 0.0})
     return {"period": period, "data": rows}
+
+
+@router.get("/budget-report.xlsx")
+def budget_report_excel(
+    period: str | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    purpose: str = "ALL",
+    status: str = "ALL",
+    conn=Depends(get_db),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+):
+    _ensure_schema(conn)
+    company = _company_from_header(x_company_code)
+    filters, params = _budget_filters(company, period, date_from, date_to, purpose, status)
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill
+    except Exception as exc:
+        raise HTTPException(500, f"No se pudo cargar Excel: {exc}")
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(
+            f"""
+            SELECT b.*, COALESCE(a.account_name,b.account_code) account_name,
+                   COALESCE(c.contrib_amount,0) contributed_amount,
+                   COALESCE(b.current_amount,0) + COALESCE(c.contrib_amount,0) progress_amount
+            FROM accounting_budgets b
+            LEFT JOIN accounting_accounts a ON a.account_code=b.account_code
+            LEFT JOIN (
+                SELECT budget_id, SUM(amount) contrib_amount
+                FROM accounting_budget_contributions
+                WHERE company_code=%s
+                GROUP BY budget_id
+            ) c ON c.budget_id=b.id
+            WHERE {" AND ".join(filters)}
+            ORDER BY COALESCE(b.target_date, (b.period || '-01')::date), b.purpose, b.account_code
+            """,
+            [company] + params,
+        )
+        rows = cur.fetchall()
+        cur.execute(
+            """
+            SELECT c.*, b.name, b.purpose, b.account_code
+            FROM accounting_budget_contributions c
+            JOIN accounting_budgets b ON b.id=c.budget_id
+            WHERE c.company_code=%s
+              AND (%s::date IS NULL OR c.contribution_date >= %s::date)
+              AND (%s::date IS NULL OR c.contribution_date <= %s::date)
+            ORDER BY c.contribution_date DESC, c.id DESC
+            """,
+            [company, date_from, date_from, date_to, date_to],
+        )
+        contribs = cur.fetchall()
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Presupuesto Metas"
+    ws.append([f"Reporte presupuesto, ahorro y metas | Empresa {company}"])
+    headers = [
+        "ID", "Periodo", "Tipo", "Nombre", "Cuenta", "Nombre cuenta", "Centro costo",
+        "Moneda", "Presupuesto", "Meta", "Actual inicial", "Aportado", "Progreso",
+        "Aporte mensual", "Fecha a cumplir", "Banco fondeo", "Nombre banco", "Estado", "Notas",
+    ]
+    ws.append(headers)
+    for cell in ws[2]:
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill("solid", fgColor="003A75")
+    for row in rows:
+        ws.append([
+            row.get("id"), row.get("period"), row.get("purpose"), row.get("name"), row.get("account_code"),
+            row.get("account_name"), row.get("cost_center_code"), row.get("currency_code"),
+            float(_money(row.get("budget_amount"))), float(_money(row.get("target_amount"))),
+            float(_money(row.get("current_amount"))), float(_money(row.get("contributed_amount"))),
+            float(_money(row.get("progress_amount"))), float(_money(row.get("monthly_contribution"))),
+            row.get("target_date"), row.get("funding_bank_account_code"), row.get("funding_bank_account_name"),
+            row.get("status"), row.get("notes"),
+        ])
+    ws2 = wb.create_sheet("Aportes")
+    ws2.append(["ID", "Budget ID", "Fecha", "Tipo", "Nombre", "Cuenta", "Monto", "Moneda", "Banco", "Nombre banco", "Referencia", "Asiento", "Notas"])
+    for cell in ws2[1]:
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill("solid", fgColor="003A75")
+    for row in contribs:
+        ws2.append([
+            row.get("id"), row.get("budget_id"), row.get("contribution_date"), row.get("purpose"), row.get("name"),
+            row.get("account_code"), float(_money(row.get("amount"))), row.get("currency_code"),
+            row.get("bank_account_code"), row.get("bank_account_name"), row.get("reference"),
+            row.get("accounting_entry_id"), row.get("notes"),
+        ])
+    for sheet in wb.worksheets:
+        for column_cells in sheet.columns:
+            sheet.column_dimensions[column_cells[0].column_letter].width = min(max(len(str(cell.value or "")) for cell in column_cells) + 2, 42)
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+    filename = f"Presupuesto_Ahorro_Metas_{period or 'general'}_{purpose}_{status}.xlsx"
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 def _smart_alerts(cur, period: str):
