@@ -1534,7 +1534,7 @@ def download_invoice_to_pay_payment_report_api(period: str, months: int, status:
     }
     resp = api_request(
         "GET",
-        "/invoice-to-pay/payment-report.xlsx",
+        "/invoice-to-pay/reports/payment-report.xlsx",
         params=params,
         timeout=60,
     )

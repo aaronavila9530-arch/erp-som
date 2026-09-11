@@ -1082,7 +1082,7 @@ def _build_biweekly_obligations_excel(payload: dict):
     )
 
 
-@router.get("/payment-report.xlsx")
+@router.get("/reports/payment-report.xlsx")
 def itp_payment_report_excel(
     period: str = Query(..., description="Periodo base YYYY-MM"),
     months: int = Query(1, ge=1, le=60),

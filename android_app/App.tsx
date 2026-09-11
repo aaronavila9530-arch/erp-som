@@ -16063,7 +16063,7 @@ function FinanceFilters({
     onLoading(true);
     onMessage("");
     try {
-      await downloadSessionFile(`/invoice-to-pay/payment-report.xlsx?${params.toString()}`, session, filename);
+      await downloadSessionFile(`/invoice-to-pay/reports/payment-report.xlsx?${params.toString()}`, session, filename);
       onMessage("Reporte ITP abierto.");
     } catch (err) {
       const message = err instanceof Error ? err.message : "No se pudo exportar reporte ITP.";
