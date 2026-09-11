@@ -6,6 +6,7 @@ import json
 
 from database import get_db
 from security.auth import get_current_user
+from services.notifications import create_notification, create_notifications, get_admin_master_users
 
 
 router = APIRouter(
@@ -55,6 +56,71 @@ def _vacation_balance_for_user(cur, usuario: str, fecha_ingreso: date) -> dict:
         "dias_solicitados": dias_solicitados,
         "dias_disponibles": round(dias_generados - dias_solicitados, 2),
     }
+
+
+def _event_label(event_type: str | None) -> str:
+    value = str(event_type or "SOLICITUD").strip().upper()
+    labels = {
+        "VACACIONES": "vacaciones",
+        "CONSTANCIA_SALARIAL": "constancia salarial",
+        "CONSTANCIA_LABORAL": "constancia laboral",
+        "INCAPACIDAD": "incapacidad",
+        "LICENCIA": "licencia",
+    }
+    return labels.get(value, value.replace("_", " ").lower())
+
+
+def _notify_new_request(cur, row_id: int, empleado_nombre: str, event_type: str, usuario: str, payload: dict) -> int:
+    recipients = get_admin_master_users(cur)
+    label = _event_label(event_type)
+    title = "Nueva solicitud HHRR pendiente"
+    message = f"{empleado_nombre or usuario} registró una solicitud de {label} pendiente de revisión."
+    return create_notifications(
+        cur,
+        recipients,
+        title,
+        message,
+        module_code="hhrre",
+        entity_type="hr_event",
+        entity_id=row_id,
+        metadata={
+            "event_type": event_type,
+            "empleado": empleado_nombre,
+            "created_by": usuario,
+            "payload": payload or {},
+        },
+        created_by=usuario,
+    )
+
+
+def _notify_request_resolution(cur, row: dict, action_label: str, resolved_by: str, comentario: str | None) -> int | None:
+    recipient = str(row.get("created_by") or "").strip().lower()
+    if not recipient:
+        return None
+    event_id = row.get("id")
+    label = _event_label(row.get("event_type"))
+    empleado = row.get("empleado") or recipient
+    title = f"Solicitud HHRR {action_label}"
+    message = f"Tu solicitud de {label} fue {action_label.lower()}."
+    if comentario:
+        message = f"{message} Comentario: {comentario}"
+    return create_notification(
+        cur,
+        recipient,
+        title,
+        message,
+        module_code="hhrre",
+        entity_type="hr_event",
+        entity_id=event_id,
+        metadata={
+            "event_type": row.get("event_type"),
+            "empleado": empleado,
+            "status": row.get("status"),
+            "approved_by": resolved_by,
+            "comentario": comentario,
+        },
+        created_by=resolved_by,
+    )
 
 
 # ============================================================
@@ -345,6 +411,14 @@ async def crear_evento(
         ))
 
         row = cur.fetchone()
+        notifications_created = _notify_new_request(
+            cur,
+            row["id"],
+            empleado_nombre,
+            event_type.strip(),
+            usuario,
+            payload,
+        )
         conn.commit()
 
     except Exception as e:
@@ -354,7 +428,8 @@ async def crear_evento(
     return {
         "status": "OK",
         "id": row["id"],
-        "empleado": empleado_nombre
+        "empleado": empleado_nombre,
+        "notifications_created": notifications_created
     }
 
 
@@ -395,6 +470,7 @@ def aprobar_evento(
     if not row:
         raise HTTPException(404, "Solicitud no encontrada")
 
+    _notify_request_resolution(cur, row, "Aprobada", current_user["usuario"], comentario)
     conn.commit()
     return row
 
@@ -424,6 +500,7 @@ def rechazar_evento(
         UPDATE hr_events
         SET status = 'REJECTED',
             approved_by = %s,
+            approved_at = NOW(),
             comentario_apro_rech = %s
         WHERE id = %s
         RETURNING *
@@ -437,6 +514,7 @@ def rechazar_evento(
     if not row:
         raise HTTPException(404, "Solicitud no encontrada")
 
+    _notify_request_resolution(cur, row, "Rechazada", current_user["usuario"], comentario)
     conn.commit()
     return row
 

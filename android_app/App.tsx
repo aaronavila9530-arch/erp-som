@@ -577,6 +577,10 @@ function Shell() {
   const [payload, setPayload] = useState<unknown>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [notifications, setNotifications] = useState<Record<string, unknown>[]>([]);
+  const [unreadNotifications, setUnreadNotifications] = useState(0);
+  const [notificationMessage, setNotificationMessage] = useState("");
   const offlineSync = useOfflineSync(session);
 
   const modules = useMemo(
@@ -601,6 +605,41 @@ function Shell() {
     if (!session) return;
     // Disabled while mobile stability is reviewed. Business alerts must never close the ERP app.
   }, [session]);
+
+  async function loadNotifications(unreadOnly = false) {
+    if (!session) return;
+    try {
+      const data = await apiRequest<Record<string, unknown>>(`/notifications/?unread_only=${unreadOnly ? "true" : "false"}&limit=50`, { session });
+      setNotifications(rowsFromAny(data));
+      const count = Number(data.unread_count ?? 0);
+      setUnreadNotifications(Number.isFinite(count) ? count : 0);
+      setNotificationMessage("");
+    } catch (err) {
+      setNotificationMessage(err instanceof Error ? err.message : "No se pudieron cargar notificaciones.");
+    }
+  }
+
+  async function openNotifications() {
+    setNotificationsOpen(true);
+    await loadNotifications(false);
+  }
+
+  async function markAllNotificationsRead() {
+    if (!session) return;
+    try {
+      await apiRequest("/notifications/read-all", { method: "PATCH", session });
+      await loadNotifications(false);
+    } catch (err) {
+      setNotificationMessage(err instanceof Error ? err.message : "No se pudieron marcar notificaciones.");
+    }
+  }
+
+  useEffect(() => {
+    if (!session) return;
+    loadNotifications(true);
+    const timer = setInterval(() => loadNotifications(true), 30000);
+    return () => clearInterval(timer);
+  }, [session?.usuario, session?.rol]);
 
   useEffect(() => {
     if (activeModule?.code !== "informes" || activeSection || !session) return;
@@ -652,9 +691,14 @@ function Shell() {
             </Text>
             <Text style={styles.headerSub}>{session.company_code || DEFAULT_COMPANY.code}</Text>
           </View>
-          <Pressable style={styles.headerButton} onPress={logout}>
-            <Text style={styles.headerButtonText}>Salir</Text>
-          </Pressable>
+          <View style={styles.headerActions}>
+            <Pressable style={styles.headerButton} onPress={openNotifications}>
+              <Text style={styles.headerButtonText}>Avisos{unreadNotifications ? ` (${unreadNotifications})` : ""}</Text>
+            </Pressable>
+            <Pressable style={styles.headerButton} onPress={logout}>
+              <Text style={styles.headerButtonText}>Salir</Text>
+            </Pressable>
+          </View>
         </View>
         <View style={styles.syncRow}>
           <Pressable style={styles.syncButton} onPress={() => offlineSync.syncNow(true)} disabled={offlineSync.syncing}>
@@ -699,6 +743,36 @@ function Shell() {
           ))}
         </ScrollView>
       </View>
+
+      <Modal visible={notificationsOpen} animationType="slide" onRequestClose={() => setNotificationsOpen(false)}>
+        <SafeAreaView style={styles.modalScreen}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Notificaciones ERP</Text>
+            <Pressable style={styles.modalClose} onPress={() => setNotificationsOpen(false)}>
+              <Text style={styles.modalCloseText}>Cerrar</Text>
+            </Pressable>
+          </View>
+          <ScrollView contentContainerStyle={styles.modalBody}>
+            <View style={styles.actionBar}>
+              <Pressable style={styles.actionButton} onPress={() => loadNotifications(false)}>
+                <Text style={styles.actionButtonText}>Actualizar</Text>
+              </Pressable>
+              <Pressable style={styles.modalClose} onPress={markAllNotificationsRead}>
+                <Text style={styles.modalCloseText}>Marcar leído</Text>
+              </Pressable>
+            </View>
+            {notificationMessage ? <Text style={styles.error}>{notificationMessage}</Text> : null}
+            {notifications.length === 0 ? <Text style={styles.empty}>No hay notificaciones.</Text> : null}
+            {notifications.map((item, index) => (
+              <View key={`${item.id || index}`} style={styles.notificationCard}>
+                <Text style={styles.notificationTitle}>{formatValue(item.title)}</Text>
+                <Text style={styles.notificationMessage}>{formatValue(item.message)}</Text>
+                <Text style={styles.helperText}>{formatValue(item.status)} · {formatValue(item.created_at)}</Text>
+              </View>
+            ))}
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
 
       <ScrollView style={styles.content} contentContainerStyle={styles.contentInner}>
         {!activeModule ? (
@@ -17392,6 +17466,7 @@ const styles = StyleSheet.create({
   informesHomeActions: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   headerButton: { borderColor: "white", borderRadius: 6, borderWidth: 1, paddingHorizontal: 12, paddingVertical: 8 },
   headerButtonText: { color: "white", fontSize: 13, fontWeight: "700" },
+  headerActions: { alignItems: "flex-end", gap: 8 },
   headerSub: { color: "#D8E7F8", fontSize: 12, marginTop: 2 },
   headerTitle: { color: "white", fontSize: 20, fontWeight: "800" },
   input: {
@@ -17614,6 +17689,16 @@ const styles = StyleSheet.create({
   },
   modalScreen: { backgroundColor: "#F5F7FA", flex: 1 },
   modalTitle: { color: "#101828", flex: 1, fontSize: 18, fontWeight: "800", paddingRight: 10 },
+  notificationCard: {
+    backgroundColor: "white",
+    borderColor: BORDER,
+    borderRadius: 8,
+    borderWidth: 1,
+    marginBottom: 10,
+    padding: 12
+  },
+  notificationMessage: { color: "#344054", fontSize: 13, lineHeight: 18, marginTop: 4 },
+  notificationTitle: { color: BLUE, fontSize: 14, fontWeight: "900" },
   multilineInput: { minHeight: 110, textAlignVertical: "top" },
   readonlyInput: { backgroundColor: "#EEF2F6", color: "#344054" },
   optionItem: { borderBottomColor: BORDER, borderBottomWidth: 1, paddingHorizontal: 10, paddingVertical: 10 },

@@ -94,6 +94,7 @@ class MainApp(tk.Frame):
 
         self.cambiar_modulo(self._initial_module())
         self._start_logra_global_alerts()
+        self._start_app_notifications()
         self._start_global_business_alerts()
         self._start_outlook_fiscal_background_sync()
 
@@ -433,6 +434,41 @@ class MainApp(tk.Frame):
             return False
         self._global_alert_shown[key] = now
         return True
+
+    # =========================================================
+    # ERP in-app notifications
+    # =========================================================
+    def _start_app_notifications(self):
+        self.after(30000, self._check_app_notifications)
+
+    def _check_app_notifications(self):
+        try:
+            data = api_client.listar_notificaciones_api(unread_only=True, limit=5)
+            rows = data.get("data") or []
+            if rows:
+                lines = []
+                ids = []
+                for row in rows[:5]:
+                    title = row.get("title") or "Notificacion"
+                    message = row.get("message") or ""
+                    lines.append(f"{title}: {message}")
+                    if row.get("id"):
+                        ids.append(row.get("id"))
+                messagebox.showinfo(
+                    "Notificaciones ERP",
+                    "\n\n".join(lines),
+                    parent=self.parent,
+                )
+                for notification_id in ids:
+                    try:
+                        api_client.marcar_notificacion_leida_api(notification_id)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+        finally:
+            if self.winfo_exists():
+                self.after(30000, self._check_app_notifications)
 
     def _check_logra_global_alerts(self):
         try:

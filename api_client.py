@@ -4891,6 +4891,41 @@ def obtener_vacaciones_disponibles(usuario=None, rol=None):
 
 
 # ============================================================
+# ERP — NOTIFICACIONES IN-APP
+# ============================================================
+
+def listar_notificaciones_api(unread_only=False, limit=100):
+    resp = api_request(
+        "GET",
+        "/notifications/",
+        params={"unread_only": bool(unread_only), "limit": int(limit or 100)},
+        timeout=15
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+def marcar_notificacion_leida_api(notification_id):
+    resp = api_request(
+        "PATCH",
+        f"/notifications/{notification_id}/read",
+        timeout=15
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+def marcar_notificaciones_leidas_api():
+    resp = api_request(
+        "PATCH",
+        "/notifications/read-all",
+        timeout=15
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+# ============================================================
 # HHRR — EMPLEADOS
 # ============================================================
 
