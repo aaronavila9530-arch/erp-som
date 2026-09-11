@@ -65,17 +65,49 @@ class AccountingUI(tk.Frame):
         self._outlook_job_running = False
         self.after(60000, self._outlook_auto_tick)
 
+    def _minimize_window(self):
+        top = self.winfo_toplevel()
+        try:
+            top.state("iconic")
+        except tk.TclError:
+            top.iconify()
+
+    def _toggle_maximize_window(self):
+        top = self.winfo_toplevel()
+        try:
+            top.state("normal" if top.state() == "zoomed" else "zoomed")
+        except tk.TclError:
+            current = bool(getattr(self, "_is_fullscreen_window", False))
+            top.attributes("-fullscreen", not current)
+            self._is_fullscreen_window = not current
+
 
     # ============================================================
     # UI
     # ============================================================
     def _build_ui(self):
+        header = tk.Frame(self, bg="white")
+        header.pack(fill="x", padx=15, pady=(5, 2))
+
         tk.Label(
-            self,
+            header,
             text="Accounting",
             font=("Segoe UI", 16, "bold"),
             bg="white"
-        ).pack(anchor="w", padx=15, pady=(5, 2))
+        ).pack(side="left")
+
+        ttk.Button(
+            header,
+            text="Minimizar",
+            command=self._minimize_window
+        ).pack(side="right", padx=(6, 0))
+
+        ttk.Button(
+            header,
+            text="Maximizar / Restaurar",
+            command=self._toggle_maximize_window
+        ).pack(side="right", padx=(6, 0))
+
         tk.Label(
             self,
             text=f"Empresa activa: {get_company_name()} ({get_company_code()})",

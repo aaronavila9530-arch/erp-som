@@ -8,6 +8,11 @@ from Modulos.Servicios.widgets.date_picker import DatePicker
 from api_client import BASE_URL, get_accounting_bank_accounts_api
 from session_context import get_rol, get_user
 
+PAYMENT_METHODS = {
+    "Banco": "BANK",
+    "Tarjeta empresarial BAC 3155": "CARD_BAC_3155",
+}
+
 
 class PopupApplyPayment(tk.Toplevel):
 
@@ -21,7 +26,7 @@ class PopupApplyPayment(tk.Toplevel):
         self.bank_account_by_label = {}
 
         self.title("Apply Payment")
-        self.geometry("470x475")
+        self.geometry("500x525")
         self.resizable(False, False)
         self.transient(parent)
         self.grab_set()
@@ -59,10 +64,16 @@ class PopupApplyPayment(tk.Toplevel):
         self.ent_amount = ttk.Entry(frm)
         self.ent_amount.grid(row=4, column=1, sticky="ew", pady=5)
 
+        tk.Label(frm, text="Payment Method").grid(row=5, column=0, sticky="w", pady=5)
+        self.cmb_method = ttk.Combobox(frm, state="readonly", values=list(PAYMENT_METHODS.keys()))
+        self.cmb_method.grid(row=5, column=1, sticky="ew", pady=5)
+        self.cmb_method.set("Banco")
+        self.cmb_method.bind("<<ComboboxSelected>>", lambda _event: self._toggle_payment_method())
+
         # ---- Date
-        tk.Label(frm, text="Payment Date").grid(row=5, column=0, sticky="w", pady=5)
+        tk.Label(frm, text="Payment Date").grid(row=6, column=0, sticky="w", pady=5)
         date_frame = ttk.Frame(frm)
-        date_frame.grid(row=5, column=1, sticky="ew", pady=5)
+        date_frame.grid(row=6, column=1, sticky="ew", pady=5)
         self.ent_date = ttk.Entry(date_frame)
         self.ent_date.insert(0, to_long_english_date(date.today()))
         self.ent_date.pack(side="left", fill="x", expand=True)
@@ -73,10 +84,16 @@ class PopupApplyPayment(tk.Toplevel):
             command=lambda: DatePicker(self, self.ent_date, output_format=LONG_DATE_FORMAT)
         ).pack(side="left", padx=(5, 0))
 
-        tk.Label(frm, text="Bank Account").grid(row=6, column=0, sticky="w", pady=5)
+        self.lbl_bank = tk.Label(frm, text="Bank Account")
+        self.lbl_bank.grid(row=7, column=0, sticky="w", pady=5)
         self.cmb_bank = ttk.Combobox(frm, state="readonly")
-        self.cmb_bank.grid(row=6, column=1, sticky="ew", pady=5)
+        self.cmb_bank.grid(row=7, column=1, sticky="ew", pady=5)
         self._load_bank_accounts()
+
+        tk.Label(frm, text="Bank Voucher / Reference").grid(row=8, column=0, sticky="w", pady=5)
+        self.ent_reference = ttk.Entry(frm)
+        self.ent_reference.grid(row=8, column=1, sticky="ew", pady=5)
+        self._toggle_payment_method()
 
         frm.columnconfigure(1, weight=1)
 
@@ -150,8 +167,15 @@ class PopupApplyPayment(tk.Toplevel):
             messagebox.showerror("Error", "Payment date is required.")
             return
 
-        if not self._selected_bank():
+        method = PAYMENT_METHODS.get(self.cmb_method.get(), "BANK")
+        if method == "BANK" and not self._selected_bank():
             messagebox.showerror("Error", "Select a bank account.")
+            return
+
+        payment_reference = self.ent_reference.get().strip()
+        if not payment_reference:
+            messagebox.showerror("Error", "Bank voucher / reference is required.")
+            self.ent_reference.focus_set()
             return
 
         # ---------------- LLAMAR API ----------------
@@ -162,9 +186,12 @@ class PopupApplyPayment(tk.Toplevel):
                     "obligation_id": int(obligation_id),
                     "amount": float(amount),
                     "payment_date": payment_date,
-                    "bank_account_code": self._selected_bank().get("account_code"),
-                    "bank_account_name": self._selected_bank().get("account_name"),
-                    "bank_name": self._selected_bank().get("account_name")
+                    "bank_account_code": self._selected_bank().get("account_code") if method == "BANK" else "2.1.02.10",
+                    "bank_account_name": self._selected_bank().get("account_name") if method == "BANK" else "Tarjeta corporativa BAC por pagar",
+                    "bank_name": self._selected_bank().get("account_name") if method == "BANK" else "Tarjeta empresarial BAC 3155",
+                    "payment_reference": payment_reference,
+                    "payment_method": method,
+                    "payment_card_last4": "3155" if method == "CARD_BAC_3155" else "",
                 },
                 headers={
                     "X-User": get_user() or "unknown",
@@ -242,3 +269,16 @@ class PopupApplyPayment(tk.Toplevel):
 
     def _selected_bank(self):
         return self.bank_account_by_label.get(self.cmb_bank.get().strip(), {})
+
+    def _toggle_payment_method(self):
+        method = PAYMENT_METHODS.get(self.cmb_method.get(), "BANK")
+        if method == "CARD_BAC_3155":
+            self.lbl_bank.config(text="Accounting Account")
+            self.cmb_bank.config(state="disabled")
+            self.cmb_bank.set("2.1.02.10 - Tarjeta corporativa BAC por pagar")
+        else:
+            self.lbl_bank.config(text="Bank Account")
+            self.cmb_bank.config(state="readonly")
+            values = list(self.bank_account_by_label.keys())
+            if values and self.cmb_bank.get() not in values:
+                self.cmb_bank.set(values[0])

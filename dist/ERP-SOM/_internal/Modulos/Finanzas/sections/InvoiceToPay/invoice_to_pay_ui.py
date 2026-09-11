@@ -12,7 +12,8 @@ from Modulos.Servicios.widgets.date_picker import DatePicker
 
 from api_client import (
     get_invoice_to_pay_search_api,
-    get_invoice_to_pay_kpis_api
+    get_invoice_to_pay_kpis_api,
+    download_invoice_to_pay_payment_report_api,
 )
 
 
@@ -134,6 +135,8 @@ class InvoiceToPayUI(tk.Frame):
 
         export_menu.add_command(label="Exportar a CSV", command=self._export_csv)
         export_menu.add_command(label="Exportar a Excel", command=self._export_excel)
+        export_menu.add_separator()
+        export_menu.add_command(label="Reporte pagos ITP / presupuesto", command=self._export_payment_report)
 
         ttk.Button(action_frame, text="➕ Registrar obligación manual", command=self._on_manual_obligation).pack(side="left", padx=5)
         ttk.Button(action_frame, text="📄 Cargar factura PDF / XML", command=self._on_upload_invoice).pack(side="left", padx=5)
@@ -199,6 +202,10 @@ class InvoiceToPayUI(tk.Frame):
         self.context_menu.add_command(
             label="📤 Exportar a Excel",
             command=self._export_excel
+        )
+        self.context_menu.add_command(
+            label="📊 Reporte pagos ITP / presupuesto",
+            command=self._export_payment_report
         )
 
         # Bind click derecho
@@ -555,6 +562,91 @@ class InvoiceToPayUI(tk.Frame):
                 "Error",
                 f"No se pudo exportar Excel:\n{e}"
             )
+
+    def _export_payment_report(self):
+        popup = tk.Toplevel(self)
+        popup.title("Reporte pagos ITP / presupuesto")
+        popup.geometry("460x370")
+        popup.resizable(False, False)
+        popup.transient(self)
+        popup.grab_set()
+
+        tk.Label(popup, text="Reporte pagos ITP / presupuesto", font=("Segoe UI", 12, "bold")).pack(anchor="w", padx=15, pady=(12, 8))
+        form = tk.Frame(popup)
+        form.pack(fill="x", padx=15)
+
+        period_var = tk.StringVar(value=date.today().strftime("%Y-%m"))
+        months_var = tk.StringVar(value="1")
+        status_var = tk.StringVar(value="ALL")
+        date_from_var = tk.StringVar(value="")
+        date_to_var = tk.StringVar(value="")
+        obligation_type_var = tk.StringVar(value="ALL")
+        payee_type_var = tk.StringVar(value="ALL")
+
+        tk.Label(form, text="Periodo base").grid(row=0, column=0, sticky="w", pady=5)
+        ent_period = ttk.Entry(form, textvariable=period_var, width=12)
+        ent_period.grid(row=0, column=1, sticky="w", pady=5)
+        tk.Label(form, text="YYYY-MM").grid(row=0, column=2, sticky="w", padx=5)
+
+        tk.Label(form, text="Histórico meses").grid(row=1, column=0, sticky="w", pady=5)
+        ttk.Combobox(form, textvariable=months_var, state="readonly", values=("1", "3", "6", "12", "24", "36"), width=10).grid(row=1, column=1, sticky="w", pady=5)
+
+        tk.Label(form, text="Estado").grid(row=2, column=0, sticky="w", pady=5)
+        ttk.Combobox(form, textvariable=status_var, state="readonly", values=("ALL", "PENDING", "PARTIAL", "PAID"), width=14).grid(row=2, column=1, sticky="w", pady=5)
+
+        tk.Label(form, text="Desde").grid(row=3, column=0, sticky="w", pady=5)
+        ttk.Entry(form, textvariable=date_from_var, width=14).grid(row=3, column=1, sticky="w", pady=5)
+        tk.Label(form, text="YYYY-MM-DD opcional").grid(row=3, column=2, sticky="w", padx=5)
+
+        tk.Label(form, text="Hasta").grid(row=4, column=0, sticky="w", pady=5)
+        ttk.Entry(form, textvariable=date_to_var, width=14).grid(row=4, column=1, sticky="w", pady=5)
+        tk.Label(form, text="YYYY-MM-DD opcional").grid(row=4, column=2, sticky="w", padx=5)
+
+        tk.Label(form, text="Tipo obligación").grid(row=5, column=0, sticky="w", pady=5)
+        ttk.Combobox(form, textvariable=obligation_type_var, state="readonly", values=("ALL", "SERVICE", "SURVEYOR_FEE", "TAX", "PAYROLL", "CARD", "MANUAL", "OTHER"), width=18).grid(row=5, column=1, sticky="w", pady=5)
+
+        tk.Label(form, text="Tipo beneficiario").grid(row=6, column=0, sticky="w", pady=5)
+        ttk.Combobox(form, textvariable=payee_type_var, state="readonly", values=("ALL", "PROVEEDOR", "SURVEYOR", "EMPLEADO", "TAX", "CARD", "OTHER"), width=18).grid(row=6, column=1, sticky="w", pady=5)
+
+        def export():
+            period = period_var.get().strip()
+            try:
+                year, month = period.split("-")
+                if len(year) != 4 or len(month) != 2 or not (1 <= int(month) <= 12):
+                    raise ValueError
+                months = int(months_var.get())
+            except Exception:
+                messagebox.showerror("Reporte", "Periodo debe tener formato YYYY-MM y meses debe ser valido.", parent=popup)
+                return
+
+            path = filedialog.asksaveasfilename(
+                parent=popup,
+                defaultextension=".xlsx",
+                initialfile=f"ITP_Pagos_{period}_{months}m_{status_var.get()}.xlsx",
+                filetypes=[("Excel files", "*.xlsx")]
+            )
+            if not path:
+                return
+            try:
+                download_invoice_to_pay_payment_report_api(
+                    period,
+                    months,
+                    status_var.get(),
+                    path,
+                    date_from=date_from_var.get().strip() or None,
+                    date_to=date_to_var.get().strip() or None,
+                    obligation_type=obligation_type_var.get(),
+                    payee_type=payee_type_var.get(),
+                )
+                messagebox.showinfo("Reporte", f"Reporte exportado correctamente:\n{path}", parent=popup)
+                popup.destroy()
+            except Exception as exc:
+                messagebox.showerror("Reporte", f"No se pudo exportar el reporte:\n{exc}", parent=popup)
+
+        actions = tk.Frame(popup)
+        actions.pack(fill="x", padx=15, pady=18)
+        ttk.Button(actions, text="Exportar Excel", command=export).pack(side="right")
+        ttk.Button(actions, text="Cancelar", command=popup.destroy).pack(side="right", padx=6)
 
 
     def _show_context_menu(self, event):

@@ -887,6 +887,7 @@ class DraftSurveyForm(ttk.Frame):
         self._entry(frame1, f"{prefix}_hydro1_mtc_m50_1", 4, 2, 10)
 
         # Fila 4
+        self._entry(frame1, f"{prefix}_hydro1_draft_mtc_2", 5, 0, 10)
         self._entry(frame1, f"{prefix}_hydro1_mtc_p50_2", 5, 1, 10)
         self._entry(frame1, f"{prefix}_hydro1_mtc_m50_2", 5, 2, 10)
 
@@ -930,9 +931,57 @@ class DraftSurveyForm(ttk.Frame):
         self._entry(frame2, f"{prefix}_hydro2_mtc_m50_1", 4, 2, 10)
 
         # Fila 4
+        self._entry(frame2, f"{prefix}_hydro2_draft_mtc_2", 5, 0, 10)
         self._entry(frame2, f"{prefix}_hydro2_mtc_p50_2", 5, 1, 10)
         self._entry(frame2, f"{prefix}_hydro2_mtc_m50_2", 5, 2, 10)
 
+        self._bind_hydrostatic_auto_calculations(prefix)
+
+    def _bind_hydrostatic_auto_calculations(self, prefix: str):
+        for table_no in (1, 2):
+            for source in (
+                f"{prefix}_hydro{table_no}_draft_1",
+                f"{prefix}_hydro{table_no}_draft_2",
+            ):
+                self._bind_field_change(
+                    source,
+                    lambda _event=None, p=prefix, t=table_no: self._refresh_hydrostatic_mtc_drafts(p, t)
+                )
+            for target_key in (
+                f"{prefix}_hydro{table_no}_draft_mtc",
+                f"{prefix}_hydro{table_no}_draft_mtc_2",
+            ):
+                target = self.fields.get(target_key)
+                target = target[0] if isinstance(target, list) and target else target
+                try:
+                    target.config(state="readonly")
+                except Exception:
+                    pass
+            self._refresh_hydrostatic_mtc_drafts(prefix, table_no)
+
+    def _refresh_hydrostatic_mtc_drafts(self, prefix: str, table_no: int):
+        for source_key, target_key in (
+            (f"{prefix}_hydro{table_no}_draft_1", f"{prefix}_hydro{table_no}_draft_mtc"),
+            (f"{prefix}_hydro{table_no}_draft_2", f"{prefix}_hydro{table_no}_draft_mtc_2"),
+        ):
+            source = self.fields.get(source_key)
+            source = source[0] if isinstance(source, list) and source else source
+            try:
+                source_value = source.get()
+            except Exception:
+                source_value = ""
+            number = self._coerce_draft_number(source_value)
+            self._set_field_value(
+                target_key,
+                self._fmt_hydrostatic_draft(number + 0.5) if number is not None else ""
+            )
+
+    def _fmt_hydrostatic_draft(self, value):
+        try:
+            number = round(float(value), 3)
+        except Exception:
+            return ""
+        return f"{number:.3f}".rstrip("0").rstrip(".")
 
 
 
@@ -1293,7 +1342,7 @@ class DraftSurveyForm(ttk.Frame):
         self.update_idletasks()
         self.update()
 
-        full_payload = self._normalize_hydrostatic_payload(self.get_payload())
+        full_payload = self.get_payload()
         draft_report_number = str(
             full_payload.get("draft_report_number") or self.draft_report_number or ""
         ).strip()
@@ -1558,6 +1607,11 @@ class DraftSurveyForm(ttk.Frame):
                         continue
 
                     try:
+                        height = tank["height"].get().strip()
+                    except Exception:
+                        height = ""
+
+                    try:
                         sounding = tank["sounding"].get().strip()
                     except Exception:
                         sounding = ""
@@ -1574,6 +1628,7 @@ class DraftSurveyForm(ttk.Frame):
 
                     data["ballast"][prefix].append({
                         "tank_name": tank_name,
+                        "height": height,
                         "sounding": sounding,
                         "volume": volume,
                         "density": density
@@ -1634,8 +1689,9 @@ class DraftSurveyForm(ttk.Frame):
                         "density": density
                     })
 
+        data = self._normalize_hydrostatic_payload(data)
         data = self._apply_word_report_calculations_to_data(data)
-        return self._normalize_hydrostatic_payload(data)
+        return data
 
     def set_payload(self, data: dict):
         """
@@ -1937,6 +1993,7 @@ class DraftSurveyForm(ttk.Frame):
                             continue
                         reconstructed_ballast[prefix].append({
                             "tank_name": tank.get("tank_name"),
+                            "height": tank.get("height"),
                             "sounding": tank.get("sounding"),
                             "volume": tank.get("volume"),
                             "density": tank.get("density")
@@ -1954,13 +2011,15 @@ class DraftSurveyForm(ttk.Frame):
 
                         name = payload.get(f"{base}_name")
                         sounding = payload.get(f"{base}_sounding")
+                        height = payload.get(f"{base}_height")
                         volume = payload.get(f"{base}_volume")
                         density = payload.get(f"{base}_density")
 
-                        if any(v not in [None, ""] for v in [name, sounding, volume, density]):
+                        if any(v not in [None, ""] for v in [name, height, sounding, volume, density]):
 
                             reconstructed_ballast[prefix].append({
                                 "tank_name": name or f"WBT {i}{side.upper()}",
+                                "height": height,
                                 "sounding": sounding,
                                 "volume": volume,
                                 "density": density
@@ -1970,14 +2029,16 @@ class DraftSurveyForm(ttk.Frame):
                 for tank in ["fpt", "apt", "slop_tank"]:
 
                     name = payload.get(f"{prefix}_{tank}_name")
+                    height = payload.get(f"{prefix}_{tank}_height")
                     sounding = payload.get(f"{prefix}_{tank}_sounding")
                     volume = payload.get(f"{prefix}_{tank}_volume")
                     density = payload.get(f"{prefix}_{tank}_density")
 
-                    if any(v not in [None, ""] for v in [name, sounding, volume, density]):
+                    if any(v not in [None, ""] for v in [name, height, sounding, volume, density]):
 
                         reconstructed_ballast[prefix].append({
                             "tank_name": name or tank.upper().replace("_", " "),
+                            "height": height,
                             "sounding": sounding,
                             "volume": volume,
                             "density": density
@@ -2105,6 +2166,16 @@ class DraftSurveyForm(ttk.Frame):
                         pass
 
                     # ===============================
+                    # HEIGHT
+                    # ===============================
+                    try:
+                        val = str(tank.get("height") or "")
+                        tank_dict["height"].delete(0, "end")
+                        tank_dict["height"].insert(0, val)
+                    except Exception:
+                        pass
+
+                    # ===============================
                     # SOUNDING
                     # ===============================
                     try:
@@ -2186,6 +2257,10 @@ class DraftSurveyForm(ttk.Frame):
 
             if f"{prefix}_ballast_total" in self.vars:
                 self.vars[f"{prefix}_ballast_total"].set(f"{total_ballast:.2f}")
+
+        for prefix in ("init", "final"):
+            for table_no in (1, 2):
+                self._refresh_hydrostatic_mtc_drafts(prefix, table_no)
 
 
 
@@ -2651,7 +2726,7 @@ class DraftSurveyForm(ttk.Frame):
         # =========================================================
         # BALLAST HEADERS
         # =========================================================
-        ballast_headers = ["Tank", "Sounding", "Volume", "Density", "Total", ""]
+        ballast_headers = ["Tank", "Height", "Sounding", "Volume", "Density", "Total", ""]
         for col, header in enumerate(ballast_headers):
             ttk.Label(
                 ballast_inner,
@@ -2738,14 +2813,17 @@ class DraftSurveyForm(ttk.Frame):
             tank_cb = ttk.Entry(ballast_inner, width=20)
             tank_cb.grid(row=row, column=0, padx=6, pady=2, sticky="w")
 
+            height = ttk.Entry(ballast_inner, width=10)
+            height.grid(row=row, column=1, padx=6, pady=2, sticky="w")
+
             sounding = ttk.Entry(ballast_inner, width=10)
-            sounding.grid(row=row, column=1, padx=6, pady=2, sticky="w")
+            sounding.grid(row=row, column=2, padx=6, pady=2, sticky="w")
 
             volume = ttk.Entry(ballast_inner, width=10)
-            volume.grid(row=row, column=2, padx=6, pady=2, sticky="w")
+            volume.grid(row=row, column=3, padx=6, pady=2, sticky="w")
 
             density = ttk.Entry(ballast_inner, width=10)
-            density.grid(row=row, column=3, padx=6, pady=2, sticky="w")
+            density.grid(row=row, column=4, padx=6, pady=2, sticky="w")
 
             total_var = tk.StringVar(value="0.00")
 
@@ -2755,23 +2833,25 @@ class DraftSurveyForm(ttk.Frame):
                 state="readonly",
                 width=12
             )
-            total_entry.grid(row=row, column=4, padx=6, pady=2, sticky="w")
+            total_entry.grid(row=row, column=5, padx=6, pady=2, sticky="w")
 
             remove_btn = ttk.Button(
                 ballast_inner,
                 text="✕",
                 width=3
             )
-            remove_btn.grid(row=row, column=5, padx=4, pady=2, sticky="w")
+            remove_btn.grid(row=row, column=6, padx=4, pady=2, sticky="w")
 
             tank_dict = {
                 "tank_name": tank_cb,
+                "height": height,
                 "sounding": sounding,
                 "volume": volume,
                 "density": density,
                 "total_var": total_var,
                 "widgets": [
                     tank_cb,
+                    height,
                     sounding,
                     volume,
                     density,
@@ -2800,7 +2880,7 @@ class DraftSurveyForm(ttk.Frame):
             ballast_inner,
             text="+ Add Tank",
             command=add_tank_row
-        ).grid(row=0, column=5, padx=(10, 0), pady=2, sticky="w")
+        ).grid(row=0, column=6, padx=(10, 0), pady=2, sticky="w")
 
         # =========================================================
         # TOTAL BALLAST
@@ -3353,20 +3433,17 @@ class DraftSurveyForm(ttk.Frame):
 
     def _normalize_hydrostatic_payload(self, payload: dict) -> dict:
         data = dict(payload or {})
-
         for prefix in ("init", "final"):
             for table_no in (1, 2):
-                draft_key = f"{prefix}_hydro{table_no}_draft_1"
-                draft_2_key = f"{prefix}_hydro{table_no}_draft_2"
-                mtc_key = f"{prefix}_hydro{table_no}_draft_mtc"
-
-                if data.get(mtc_key) in (None, ""):
-                    draft_value = self._coerce_draft_number(data.get(draft_2_key))
-                    if draft_value is None:
-                        draft_value = self._coerce_draft_number(data.get(draft_key))
-                    if draft_value is not None:
-                        data[mtc_key] = round(draft_value + 0.5, 6)
-
+                for source_key, target_key in (
+                    (f"{prefix}_hydro{table_no}_draft_1", f"{prefix}_hydro{table_no}_draft_mtc"),
+                    (f"{prefix}_hydro{table_no}_draft_2", f"{prefix}_hydro{table_no}_draft_mtc_2"),
+                ):
+                    if data.get(target_key) not in (None, ""):
+                        continue
+                    number = self._coerce_draft_number(data.get(source_key))
+                    if number is not None:
+                        data[target_key] = self._fmt_hydrostatic_draft(number + 0.5)
         return data
 
 

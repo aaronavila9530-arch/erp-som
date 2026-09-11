@@ -1188,6 +1188,14 @@ def sync_itp_to_accounting(conn):
             ALTER TABLE payment_obligations
             ADD COLUMN IF NOT EXISTS card_holder_name TEXT
         """)
+        cur.execute("""
+            ALTER TABLE payment_obligations
+            ADD COLUMN IF NOT EXISTS payment_method TEXT NOT NULL DEFAULT 'BANK'
+        """)
+        cur.execute("""
+            ALTER TABLE payment_obligations
+            ADD COLUMN IF NOT EXISTS payment_card_last4 TEXT
+        """)
         backfill_missing_bank_accounts(cur)
         employee_itp_ids = employee_obligation_ids(cur)
         if employee_itp_ids:
@@ -1245,6 +1253,8 @@ def sync_itp_to_accounting(conn):
                 p.notes,
                 p.payment_bank_account_code,
                 p.payment_bank_account_name,
+                p.payment_method,
+                p.payment_card_last4,
                 COALESCE(p.paid_with_card, FALSE) AS paid_with_card
             FROM payment_obligations p
             WHERE p.active = TRUE
@@ -1387,6 +1397,13 @@ def sync_itp_to_accounting(conn):
                 BANK_CODE,
                 BANK_NAME
             )
+            CARD_PAYABLE_CODE = "2.1.02.10"
+            CARD_PAYABLE_NAME = "Tarjeta corporativa BAC por pagar"
+            payment_method = (ob.get("payment_method") or "").upper()
+            paid_with_card = bool(ob.get("paid_with_card")) or payment_method == "CARD_BAC_3155" or str(ob.get("payment_card_last4") or "").strip() == "3155"
+            if paid_with_card:
+                BANK_CODE = CARD_PAYABLE_CODE
+                BANK_NAME = CARD_PAYABLE_NAME
 
             WITHHOLDING_CODE = "2.1.02.04"
             WITHHOLDING_NAME = "Impuesto de renta por pagar"
@@ -1398,6 +1415,7 @@ def sync_itp_to_accounting(conn):
             _ensure_account(IVA_CF_CODE, IVA_CF_NAME, "ASSET", "DEBIT", "1.1.13")
             _ensure_account(WITHHOLDING_CODE, WITHHOLDING_NAME, "LIABILITY", "CREDIT", "2.1.02")
             _ensure_account(SURVEYOR_DEDUCTION_CODE, SURVEYOR_DEDUCTION_NAME, "LIABILITY", "CREDIT", "2.1.02")
+            _ensure_account(CARD_PAYABLE_CODE, CARD_PAYABLE_NAME, "LIABILITY", "CREDIT", "2.1.02")
 
             def _first_existing(candidates):
                 for code, name in candidates:
@@ -1524,14 +1542,18 @@ def sync_itp_to_accounting(conn):
             # B) ASIENTO DE PAGO (origin='ITP_PAYMENT')
             # NO aplica para CREDIT NOTES
             # ============================================================
-            if status == "PAID" and balance_crc == 0 and not is_credit_note and not ob.get("paid_with_card"):
+            if status == "PAID" and balance_crc == 0 and not is_credit_note:
 
                 payment_date = _to_date(ob.get("last_payment_date")) or issue_date
                 if payment_date > today:
                     _delete_future_system_entries(obligation_id, "ITP_PAYMENT")
                     continue
                 payment_period = payment_date.strftime("%Y-%m")
-                payment_detail = f"From ITP Payment done to {payee_name}"
+                payment_detail = (
+                    f"From ITP Payment by BAC card 3155 to {payee_name}"
+                    if paid_with_card
+                    else f"From ITP Payment done to {payee_name}"
+                )
 
                 if not bank_account_ok:
                     raise Exception(f"Cuenta bancaria no existe en accounting_ledger: {BANK_CODE}")

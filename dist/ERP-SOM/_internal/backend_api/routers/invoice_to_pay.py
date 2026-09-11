@@ -11,12 +11,14 @@ from fastapi import (
 from fastapi.responses import StreamingResponse
 from psycopg2.extras import RealDictCursor
 from psycopg2.extras import Json
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Optional
 import io
 import os
 import shutil
+import time
+import uuid
 
 from database import get_db
 from rbac_service import has_permission
@@ -34,12 +36,42 @@ router = APIRouter(
     tags=["Finance - Invoice to Pay"]
 )
 
+BIWEEKLY_EXPORT_CACHE: dict[str, dict] = {}
+CARD_3155_METHOD = "CARD_BAC_3155"
+CARD_3155_LAST4 = "3155"
+CARD_3155_LABEL = "Tarjeta empresarial BAC 3155"
+CARD_PAYABLE_CODE = "2.1.02.10"
+CARD_PAYABLE_NAME = "Tarjeta corporativa BAC por pagar"
+
+
+def _cleanup_biweekly_export_cache():
+    now = time.time()
+    expired = [ticket for ticket, item in BIWEEKLY_EXPORT_CACHE.items() if now - float(item.get("created_at") or 0) > 600]
+    for ticket in expired:
+        BIWEEKLY_EXPORT_CACHE.pop(ticket, None)
+
 
 def _ensure_company_column(cur):
     cur.execute("""
         ALTER TABLE payment_obligations
         ADD COLUMN IF NOT EXISTS company_code VARCHAR(30) NOT NULL DEFAULT 'MSL-CR'
     """)
+    cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS payment_method TEXT NOT NULL DEFAULT 'BANK'")
+    cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS payment_card_last4 TEXT")
+    cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS payment_reference TEXT")
+    cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS payment_bank TEXT")
+    cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS payment_bank_account_code TEXT")
+    cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS payment_bank_account_name TEXT")
+    cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS paid_with_card BOOLEAN NOT NULL DEFAULT FALSE")
+    cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS card_paid_at DATE")
+    cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS card_holder_name TEXT")
+
+
+def _normalize_payment_method(value: str | None) -> str:
+    text = str(value or "").strip().upper()
+    if "3155" in text or "CARD" in text or "TARJETA" in text:
+        return CARD_3155_METHOD
+    return "BANK"
 
 
 def _money(value) -> Decimal:
@@ -58,6 +90,16 @@ def _previous_period(period: str) -> str:
 def _fortnight_due_date(period: str, fortnight: int) -> str:
     year, month = [int(part) for part in str(period).split("-")[:2]]
     return f"{year:04d}-{month:02d}-{'15' if int(fortnight or 1) == 1 else '30'}"
+
+
+def _month_start(period: str) -> date:
+    year, month = [int(part) for part in str(period).split("-")[:2]]
+    return date(year, month, 1)
+
+
+def _add_months(value: date, months: int) -> date:
+    month_index = value.year * 12 + value.month - 1 + int(months)
+    return date(month_index // 12, month_index % 12 + 1, 1)
 
 
 def _ensure_biweekly_schema(cur):
@@ -98,6 +140,13 @@ def _ensure_biweekly_schema(cur):
     cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS last_payment_date DATE")
     cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS payment_bank_account_code TEXT")
     cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS payment_bank_account_name TEXT")
+    cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS payment_method TEXT NOT NULL DEFAULT 'BANK'")
+    cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS payment_card_last4 TEXT")
+    cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS paid_with_card BOOLEAN NOT NULL DEFAULT FALSE")
+    cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS card_paid_at DATE")
+    cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS card_holder_name TEXT")
+    cur.execute("ALTER TABLE itp_biweekly_payment_lines ADD COLUMN IF NOT EXISTS payment_method TEXT NOT NULL DEFAULT 'BANK'")
+    cur.execute("ALTER TABLE itp_biweekly_payment_lines ADD COLUMN IF NOT EXISTS payment_card_last4 TEXT")
 
 
 def _exchange_rate(cur, value_date: str) -> Decimal:
@@ -341,6 +390,8 @@ def search_invoice_to_pay(
     status: Optional[str] = Query(None),
     issue_date_from: Optional[date] = Query(None),
     issue_date_to: Optional[date] = Query(None),
+    due_date_from: Optional[date] = Query(None),
+    due_date_to: Optional[date] = Query(None),
     payment_date_from: Optional[date] = Query(None),
     payment_date_to: Optional[date] = Query(None),
     conn=Depends(get_db),
@@ -401,6 +452,14 @@ def search_invoice_to_pay(
         filters.append("issue_date <= %s")
         params.append(issue_date_to)
 
+    if due_date_from:
+        filters.append("due_date >= %s")
+        params.append(due_date_from)
+
+    if due_date_to:
+        filters.append("due_date <= %s")
+        params.append(due_date_to)
+
     if payment_date_from:
         filters.append("last_payment_date >= %s")
         params.append(payment_date_from)
@@ -440,7 +499,14 @@ def search_invoice_to_pay(
             last_payment_date,
             issue_date,
             due_date,
-            origin
+            origin,
+            payment_bank,
+            payment_bank_account_code,
+            payment_bank_account_name,
+            payment_reference,
+            COALESCE(payment_method, CASE WHEN COALESCE(paid_with_card, FALSE) THEN %s ELSE 'BANK' END) AS payment_method,
+            payment_card_last4,
+            COALESCE(paid_with_card, FALSE) AS paid_with_card
 
         FROM payment_obligations
         {where_clause}
@@ -448,7 +514,7 @@ def search_invoice_to_pay(
     """
 
     try:
-        cur.execute(sql, params)
+        cur.execute(sql, [CARD_3155_METHOD] + params)
         rows = cur.fetchall()
     except Exception as e:
         raise HTTPException(
@@ -608,6 +674,8 @@ def biweekly_obligations_preview(
             "bank_accounting_code": "1.1.02.02.01",
             "bank_accounting_name": "Banco BAC San Jose CRC CR87010200009640180220",
             "bank_voucher": "",
+            "payment_method": "BANK",
+            "payment_card_last4": "",
         }
 
     try:
@@ -798,6 +866,11 @@ def biweekly_obligations_apply(
                 payment_date = str(item.get("due_date") or "").strip()
                 currency = str(item.get("currency") or "CRC").upper()
                 amount = _money(item.get("amount"))
+                payment_method = _normalize_payment_method(item.get("payment_method"))
+                is_card_payment = payment_method == CARD_3155_METHOD
+                payment_card_last4 = CARD_3155_LAST4 if is_card_payment else str(item.get("payment_card_last4") or "").strip()
+                if is_card_payment:
+                    bank_code = CARD_PAYABLE_CODE
                 if amount <= 0:
                     continue
                 missing = []
@@ -814,20 +887,23 @@ def biweekly_obligations_apply(
                 if missing:
                     raise ValueError("Faltan campos obligatorios: " + ", ".join(missing))
                 datetime.strptime(payment_date, "%Y-%m-%d")
-                cur.execute(
-                    """
-                    SELECT account_code, account_name
-                    FROM accounting_accounts
-                    WHERE account_code=%s
-                      AND COALESCE(active, TRUE)=TRUE
-                      AND COALESCE(accepts_posting, FALSE)=TRUE
-                    LIMIT 1
-                    """,
-                    (bank_code,),
-                )
-                bank_row = cur.fetchone()
-                if not bank_row:
-                    raise ValueError(f"Cuenta contable banco invalida o inactiva: {bank_code}")
+                if is_card_payment:
+                    bank_row = {"account_code": CARD_PAYABLE_CODE, "account_name": CARD_PAYABLE_NAME}
+                else:
+                    cur.execute(
+                        """
+                        SELECT account_code, account_name
+                        FROM accounting_accounts
+                        WHERE account_code=%s
+                          AND COALESCE(active, TRUE)=TRUE
+                          AND COALESCE(accepts_posting, FALSE)=TRUE
+                        LIMIT 1
+                        """,
+                        (bank_code,),
+                    )
+                    bank_row = cur.fetchone()
+                    if not bank_row:
+                        raise ValueError(f"Cuenta contable banco invalida o inactiva: {bank_code}")
                 rate = _exchange_rate(cur, payment_date) if currency == "USD" else Decimal("1.00")
                 amount_crc = (amount * rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
                 bank_name = bank_row["account_name"]
@@ -850,10 +926,20 @@ def biweekly_obligations_apply(
                                last_payment_date=%s,
                                payment_bank_account_code=%s,
                                payment_bank_account_name=%s,
+                               payment_method=%s,
+                               payment_card_last4=%s,
+                               paid_with_card=%s,
+                               card_paid_at=%s,
+                               card_holder_name=%s,
                                updated_at=NOW()
                          WHERE id=%s AND company_code=%s
                         """,
-                        (new_balance, "PAID" if new_balance == 0 else "PARTIAL", payment_date, bank_code, bank_name, int(obligation_id), company),
+                        (
+                            new_balance, "PAID" if new_balance == 0 else "PARTIAL", payment_date,
+                            bank_code, bank_name, payment_method, payment_card_last4 or None,
+                            is_card_payment, payment_date if is_card_payment else None,
+                            CARD_3155_LABEL if is_card_payment else None, int(obligation_id), company,
+                        ),
                     )
                     applied += 1
                 entry_origin = "ITP_PAYMENT" if obligation_id else "ITP_BIWEEKLY_PAYMENT"
@@ -887,13 +973,14 @@ def biweekly_obligations_apply(
                     INSERT INTO itp_biweekly_payment_lines(
                         batch_id, company_code, category, beneficiary, amount, currency, amount_crc,
                         destination_account, bank_accounting_code, bank_accounting_name, bank_voucher,
+                        payment_method, payment_card_last4,
                         payment_date, obligation_id, reference, source, notes, accounting_entry_id
                     )
-                    VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                     """,
                     (
                         batch_id, company, category, beneficiary, amount, currency, amount_crc,
-                        item.get("bank_account") or "", bank_code, bank_name, voucher, payment_date,
+                        item.get("bank_account") or "", bank_code, bank_name, voucher, payment_method, payment_card_last4 or None, payment_date,
                         obligation_id, item.get("reference") or "", item.get("source") or "", item.get("notes") or "", entry_id,
                     ),
                 )
@@ -914,6 +1001,30 @@ def biweekly_obligations_apply(
 
 @router.post("/biweekly-obligations/export.xlsx")
 def biweekly_obligations_export(payload: dict):
+    return _build_biweekly_obligations_excel(payload)
+
+
+@router.post("/biweekly-obligations/export-ticket")
+def biweekly_obligations_export_ticket(payload: dict):
+    rows = payload.get("rows") or []
+    if not isinstance(rows, list):
+        raise HTTPException(status_code=400, detail="Lineas invalidas")
+    _cleanup_biweekly_export_cache()
+    ticket = uuid.uuid4().hex
+    BIWEEKLY_EXPORT_CACHE[ticket] = {"created_at": time.time(), "payload": payload}
+    return {"ticket": ticket}
+
+
+@router.get("/biweekly-obligations/export/{ticket}.xlsx")
+def biweekly_obligations_export_by_ticket(ticket: str):
+    _cleanup_biweekly_export_cache()
+    item = BIWEEKLY_EXPORT_CACHE.get(str(ticket or "").strip())
+    if not item:
+        raise HTTPException(status_code=404, detail="Exportacion expirada")
+    return _build_biweekly_obligations_excel(item.get("payload") or {})
+
+
+def _build_biweekly_obligations_excel(payload: dict):
     try:
         from openpyxl import Workbook
         from openpyxl.styles import Font, PatternFill
@@ -970,6 +1081,159 @@ def biweekly_obligations_export(payload: dict):
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
+
+@router.get("/reports/payment-report.xlsx")
+def itp_payment_report_excel(
+    period: str = Query("", description="Periodo base YYYY-MM"),
+    months: int = Query(1, ge=1, le=60),
+    status: str = Query("ALL"),
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date] = Query(None),
+    obligation_type: str = Query("ALL"),
+    payee_type: str = Query("ALL"),
+    conn=Depends(get_db),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+):
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"No se pudo cargar motor Excel: {exc}")
+
+    company = normalize_company_code(header_value=x_company_code)
+    period = str(period or date.today().strftime("%Y-%m")).strip()
+    end_date = _add_months(_month_start(period), 1)
+    start_date = _add_months(end_date, -int(months or 1))
+    if date_from:
+        start_date = date_from
+    if date_to:
+        end_date = date_to + timedelta(days=1)
+    status = str(status or "ALL").strip().upper()
+    obligation_type = str(obligation_type or "ALL").strip().upper()
+    payee_type = str(payee_type or "ALL").strip().upper()
+
+    filters = [
+        "COALESCE(active, TRUE) = TRUE",
+        "company_code = %s",
+        "COALESCE(last_payment_date, due_date, issue_date) >= %s",
+        "COALESCE(last_payment_date, due_date, issue_date) < %s",
+    ]
+    params = [company, start_date, end_date]
+    if status != "ALL":
+        if status == "PENDING":
+            filters.append("status IN ('PENDING','PARTIAL')")
+        else:
+            filters.append("status = %s")
+            params.append(status)
+    if obligation_type != "ALL":
+        filters.append("UPPER(COALESCE(obligation_type,'')) = %s")
+        params.append(obligation_type)
+    if payee_type != "ALL":
+        filters.append("UPPER(COALESCE(payee_type,'')) = %s")
+        params.append(payee_type)
+
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    _ensure_company_column(cur)
+    conn.commit()
+    cur.execute(
+        f"""
+        SELECT
+            id,
+            payee_name,
+            payee_type,
+            obligation_type,
+            reference,
+            vessel,
+            country,
+            operation,
+            currency,
+            total,
+            balance,
+            GREATEST(COALESCE(total,0) - COALESCE(balance,0), 0) AS paid_amount,
+            status,
+            issue_date,
+            due_date,
+            last_payment_date,
+            origin,
+            payment_bank,
+            payment_bank_account_code,
+            payment_bank_account_name,
+            payment_reference,
+            COALESCE(payment_method, CASE WHEN COALESCE(paid_with_card, FALSE) THEN %s ELSE 'BANK' END) AS payment_method,
+            payment_card_last4,
+            COALESCE(paid_with_card, FALSE) AS paid_with_card,
+            notes
+        FROM payment_obligations
+        WHERE {" AND ".join(filters)}
+        ORDER BY COALESCE(last_payment_date, due_date, issue_date) DESC, payee_name
+        """,
+        [CARD_3155_METHOD] + params,
+    )
+    rows = cur.fetchall() or []
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Detalle ITP"
+    ws["A1"] = f"Reporte ITP pagos {start_date:%Y-%m-%d} a {(end_date - timedelta(days=1)):%Y-%m-%d} | Estado: {status} | Tipo: {obligation_type} | Beneficiario: {payee_type}"
+    ws["A1"].font = Font(bold=True, size=14)
+    headers = [
+        "ID", "Beneficiario", "Tipo beneficiario", "Tipo obligacion", "Referencia",
+        "Buque", "Pais", "Operacion", "Moneda", "Total", "Pagado", "Pendiente",
+        "Estado", "Fecha factura", "Fecha vencimiento", "Ultimo pago", "Origen",
+        "Metodo pago", "Tarjeta", "Cuenta contable pago", "Nombre cuenta pago",
+        "Comprobante", "Notas",
+    ]
+    ws.append([])
+    ws.append(headers)
+    for cell in ws[3]:
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill("solid", fgColor="003A75")
+
+    summary = {}
+    for row in rows:
+        method = row.get("payment_method") or ("CARD_BAC_3155" if row.get("paid_with_card") else "BANK")
+        method_label = CARD_3155_LABEL if method == CARD_3155_METHOD else "Banco"
+        card_last4 = row.get("payment_card_last4") or (CARD_3155_LAST4 if method == CARD_3155_METHOD else "")
+        total = _money(row.get("total"))
+        paid = _money(row.get("paid_amount"))
+        balance = _money(row.get("balance"))
+        ws.append([
+            row.get("id"), row.get("payee_name"), row.get("payee_type"), row.get("obligation_type"), row.get("reference"),
+            row.get("vessel"), row.get("country"), row.get("operation"), row.get("currency"), float(total), float(paid), float(balance),
+            row.get("status"), row.get("issue_date"), row.get("due_date"), row.get("last_payment_date"), row.get("origin"),
+            method_label, card_last4, row.get("payment_bank_account_code"), row.get("payment_bank_account_name"),
+            row.get("payment_reference"), row.get("notes"),
+        ])
+        key = (row.get("status") or "", row.get("currency") or "CRC", method_label)
+        current = summary.setdefault(key, {"total": Decimal("0.00"), "paid": Decimal("0.00"), "balance": Decimal("0.00"), "count": 0})
+        current["total"] += total
+        current["paid"] += paid
+        current["balance"] += balance
+        current["count"] += 1
+
+    ws2 = wb.create_sheet("Resumen")
+    ws2.append(["Estado", "Moneda", "Metodo pago", "Lineas", "Total", "Pagado", "Pendiente"])
+    for cell in ws2[1]:
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill("solid", fgColor="003A75")
+    for (row_status, currency, method_label), data in sorted(summary.items()):
+        ws2.append([row_status, currency, method_label, data["count"], float(data["total"]), float(data["paid"]), float(data["balance"])])
+
+    for sheet in (ws, ws2):
+        for column_cells in sheet.columns:
+            width = min(max(len(str(cell.value or "")) for cell in column_cells) + 2, 48)
+            sheet.column_dimensions[column_cells[0].column_letter].width = width
+
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+    filename = f"ITP_Pagos_{period}_{months}m_{status}.xlsx"
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
 # ============================================================
 # 3️⃣ APPLY PAYMENT — BLINDADO FINANCIERO
 # ============================================================
@@ -984,6 +1248,8 @@ def apply_payment(
     bank_account_name: Optional[str] = Query(None),
     bank_name: Optional[str] = Query(None),
     payment_reference: Optional[str] = Query(None),
+    payment_method: Optional[str] = Query(None),
+    payment_card_last4: Optional[str] = Query(None),
     conn=Depends(get_db),
     x_user: str | None = Header(None, alias="X-User"),
     x_role: str | None = Header(None, alias="X-Role"),
@@ -996,6 +1262,9 @@ def apply_payment(
         bank_account_code = str(bank_account_code or "").strip()
         bank_account_name = str(bank_account_name or "").strip()
         bank_name = str(bank_name or bank_account_name or "").strip()
+        payment_method = _normalize_payment_method(payment_method)
+        is_card_payment = payment_method == CARD_3155_METHOD
+        payment_card_last4 = CARD_3155_LAST4 if is_card_payment else str(payment_card_last4 or "").strip()
         performed_by, performed_role = actor_from_headers(x_user, x_role, x_user_role)
 
         cur.execute("""
@@ -1014,7 +1283,17 @@ def apply_payment(
             ALTER TABLE payment_obligations
             ADD COLUMN IF NOT EXISTS payment_reference TEXT
         """)
+        cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS payment_method TEXT NOT NULL DEFAULT 'BANK'")
+        cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS payment_card_last4 TEXT")
+        cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS paid_with_card BOOLEAN NOT NULL DEFAULT FALSE")
+        cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS card_paid_at DATE")
+        cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS card_holder_name TEXT")
         payment_reference = str(payment_reference or "").strip()
+        if not payment_reference:
+            raise HTTPException(
+                status_code=400,
+                detail="Comprobante bancario requerido"
+            )
 
         # =====================================================
         # 1️⃣ BLOQUEAR FILA (ANTI CONCURRENCIA)
@@ -1036,22 +1315,28 @@ def apply_payment(
                 detail="Obligation not found"
             )
 
-        bank_row = resolve_itp_bank(
-            cur,
-            bank_account_code,
-            bank_account_name,
-            payee_name=obligation.get("payee_name"),
-            payee_type=obligation.get("payee_type"),
-            obligation_type=obligation.get("obligation_type"),
-            country=obligation.get("country"),
-            reference=obligation.get("reference"),
-            notes=obligation.get("notes"),
-        )
-        if bank_account_code and not bank_row:
-            raise HTTPException(
-                status_code=400,
-                detail="Selected bank account does not exist or is inactive"
+        if is_card_payment:
+            bank_row = {
+                "account_code": CARD_PAYABLE_CODE,
+                "account_name": CARD_PAYABLE_NAME,
+            }
+        else:
+            bank_row = resolve_itp_bank(
+                cur,
+                bank_account_code,
+                bank_account_name,
+                payee_name=obligation.get("payee_name"),
+                payee_type=obligation.get("payee_type"),
+                obligation_type=obligation.get("obligation_type"),
+                country=obligation.get("country"),
+                reference=obligation.get("reference"),
+                notes=obligation.get("notes"),
             )
+            if bank_account_code and not bank_row:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Selected bank account does not exist or is inactive"
+                )
         if bank_row:
             bank_account_code = bank_row["account_code"]
             bank_account_name = bank_row["account_name"]
@@ -1143,6 +1428,11 @@ def apply_payment(
                 payment_bank_account_code = %s,
                 payment_bank_account_name = %s,
                 payment_reference = %s,
+                payment_method = %s,
+                payment_card_last4 = %s,
+                paid_with_card = %s,
+                card_paid_at = %s,
+                card_holder_name = %s,
                 updated_at = NOW()
             WHERE id = %s
         """, (
@@ -1153,6 +1443,11 @@ def apply_payment(
             bank_account_code or None,
             bank_account_name or None,
             payment_reference or None,
+            payment_method,
+            payment_card_last4 or None,
+            is_card_payment,
+            payment_date if is_card_payment else None,
+            CARD_3155_LABEL if is_card_payment else None,
             obligation_id
         ))
 
@@ -1177,6 +1472,8 @@ def apply_payment(
                 "net_payment_usd": str(settlement["net_payment"]),
                 "payment_date": payment_date,
                 "payment_reference": payment_reference or None,
+                "payment_method": payment_method,
+                "payment_card_last4": payment_card_last4 or None,
                 "bank_account_code": bank_account_code or None,
                 "bank_account_name": bank_account_name or None,
                 "new_balance": str(new_balance),
@@ -1203,6 +1500,8 @@ def apply_payment(
             "net_payment_usd": float(settlement["net_payment"]),
             "new_balance": float(new_balance),
             "status": new_status,
+            "payment_method": payment_method,
+            "payment_card_last4": payment_card_last4 or None,
             "accounting_warning": accounting_warning
         }
 

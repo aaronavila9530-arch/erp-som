@@ -164,6 +164,7 @@ class DraftSurveyExcelGenerator:
                 "init_hydro1_mtc_m50_1":  "BJ31",
 
                 # Fila 4
+                "init_hydro1_draft_mtc_2": "BG33",
                 "init_hydro1_mtc_p50_2":  "BH33",
                 "init_hydro1_mtc_m50_2":  "BJ33",
 
@@ -191,6 +192,7 @@ class DraftSurveyExcelGenerator:
                 "init_hydro2_mtc_m50_1":  "BJ40",
 
                 # Fila 4
+                "init_hydro2_draft_mtc_2": "BG42",
                 "init_hydro2_mtc_p50_2":  "BH42",
                 "init_hydro2_mtc_m50_2":  "BJ42",
 
@@ -205,6 +207,7 @@ class DraftSurveyExcelGenerator:
                 "final_hydro1_draft_mtc":  "BG31",
                 "final_hydro1_mtc_p50_1":  "BH31",
                 "final_hydro1_mtc_m50_1":  "BJ31",
+                "final_hydro1_draft_mtc_2": "BG33",
                 "final_hydro1_mtc_p50_2":  "BH33",
                 "final_hydro1_mtc_m50_2":  "BJ33",
 
@@ -219,6 +222,7 @@ class DraftSurveyExcelGenerator:
                 "final_hydro2_draft_mtc":  "BG40",
                 "final_hydro2_mtc_p50_1":  "BH40",
                 "final_hydro2_mtc_m50_1":  "BJ40",
+                "final_hydro2_draft_mtc_2": "BG42",
                 "final_hydro2_mtc_p50_2":  "BH42",
                 "final_hydro2_mtc_m50_2":  "BJ42",
 
@@ -335,6 +339,7 @@ class DraftSurveyExcelGenerator:
         text = value.strip()
         if not text:
             return value
+        text = self._strip_excel_text_prefix(text)
         if text.startswith("="):
             return text
 
@@ -372,6 +377,19 @@ class DraftSurveyExcelGenerator:
             return int(number)
         return number
 
+    def _strip_excel_text_prefix(self, text: str) -> str:
+        if not isinstance(text, str):
+            return text
+        cleaned = text.strip()
+        quote_chars = ("'", "`", "\u00b4", "\u2018", "\u2019")
+        while len(cleaned) > 1 and cleaned[0] in quote_chars:
+            next_char = cleaned[1]
+            if next_char == "=" or next_char.isdigit() or next_char in "+-.,":
+                cleaned = cleaned[1:].strip()
+                continue
+            break
+        return cleaned
+
     def _coerce_number(self, value):
         coerced = self._coerce_excel_value(value)
         if isinstance(coerced, (int, float)):
@@ -387,24 +405,23 @@ class DraftSurveyExcelGenerator:
         return str(value or "").strip().lower() in ("1", "true", "yes", "y", "si", "sí", "on")
 
     def _prepare_hydrostatic_payload(self, payload: dict) -> dict:
-        prepared = dict(payload or {})
+        # The MTC draft cells are formulas in the official template
+        # (base draft + 0.50). The UI may show their calculated guidance, but
+        # exported Excel must preserve the formulas so the workbook recalculates
+        # exactly like the surveyor's reference file.
+        return dict(payload or {})
 
-        # The template needs the MTC draft base. If the user leaves it blank,
-        # derive it from the second hydrostatic draft plus 0.50, as in the
-        # vessel spreadsheet reference. Fall back to the first row if needed.
-        for prefix in ("init", "final"):
-            for table_no in (1, 2):
-                draft_key = f"{prefix}_hydro{table_no}_draft_1"
-                draft_2_key = f"{prefix}_hydro{table_no}_draft_2"
-                mtc_draft_key = f"{prefix}_hydro{table_no}_draft_mtc"
-                if self._is_empty(prepared.get(mtc_draft_key)):
-                    draft_value = self._coerce_number(prepared.get(draft_2_key))
-                    if draft_value is None:
-                        draft_value = self._coerce_number(prepared.get(draft_key))
-                    if draft_value is not None:
-                        prepared[mtc_draft_key] = round(draft_value + 0.5, 6)
-
-        return prepared
+    def _skip_empty_hydrostatic_overwrite(self, key: str, value) -> bool:
+        # Initial and final hydrostatic keys point to the same template cells.
+        # A blank final field must not clear a populated initial field.
+        return (
+            isinstance(key, str)
+            and (
+                (self._is_empty(value) and key.startswith("final_hydro"))
+                or key.endswith("_draft_mtc")
+                or key.endswith("_draft_mtc_2")
+            )
+        )
 
     def _apply_draft_excel_adjustments(self, ws: Worksheet, payload: dict):
         """Apply corrections that intentionally override template defaults."""
@@ -460,7 +477,9 @@ class DraftSurveyExcelGenerator:
         try:
             for merged in ws.merged_cells.ranges:
                 if cell in merged:
-                    ws.cell(row=merged.min_row, column=merged.min_col).value = None
+                    anchor = ws.cell(row=merged.min_row, column=merged.min_col)
+                    if cell == anchor.coordinate:
+                        anchor.value = None
                     return
             ws[cell].value = None
         except Exception:
@@ -570,6 +589,8 @@ class DraftSurveyExcelGenerator:
             for key, cell in fields.items():
 
                 value = (payload or {}).get(key)
+                if sheet_name == "Draft" and self._skip_empty_hydrostatic_overwrite(key, value):
+                    continue
                 if value in [None, ""]:
                     self._safe_clear(ws, cell)
                     continue
@@ -633,7 +654,13 @@ class DraftSurveyExcelGenerator:
                             except Exception:
                                 pass
 
-                def _fill_block(items, start_row, col_name, col_height, col_sounding, col_volume, col_density):
+                def _has_items(items):
+                    return any(
+                        any(_value_present((item or {}).get(k)) for k in ("tank_name", "height", "sounding", "volume", "density"))
+                        for item in (items or [])
+                    )
+
+                def _fill_block(items, start_row, col_name, col_sounding, col_volume, col_density, col_height=None):
                     for i, item in enumerate((items or [])[:20]):
                         item = item or {}
                         source_row = self._coerce_number(item.get("_excel_row"))
@@ -643,7 +670,8 @@ class DraftSurveyExcelGenerator:
                             row = start_row + i
 
                         self._safe_set(ws_ded, f"{col_name}{row}", item.get("tank_name"))
-                        self._safe_set(ws_ded, f"{col_height}{row}", item.get("height"))
+                        if col_height:
+                            self._safe_set(ws_ded, f"{col_height}{row}", item.get("height"))
                         self._safe_set(ws_ded, f"{col_sounding}{row}", item.get("sounding"))
                         self._safe_set(ws_ded, f"{col_volume}{row}", item.get("volume"))
                         self._safe_set(ws_ded, f"{col_density}{row}", item.get("density"))
@@ -658,13 +686,9 @@ class DraftSurveyExcelGenerator:
                     "init"
                 )
 
-                _clear_block(11, ["A", "D", "G", "J", "M"])
-
-                _fill_block(
-                    ballast_initial,
-                    11,
-                    "A", "D", "G", "J", "M"
-                )
+                if _has_items(ballast_initial):
+                    _clear_block(11, ["A", "D", "G", "J", "M"])
+                    _fill_block(ballast_initial, 11, "A", "G", "J", "M", col_height="D")
 
                 # -------------------------------------------------
                 # BALLAST FINAL
@@ -676,13 +700,9 @@ class DraftSurveyExcelGenerator:
                     "final"
                 )
 
-                _clear_block(11, ["T", "W", "Z", "AC", "AF"])
-
-                _fill_block(
-                    ballast_final,
-                    11,
-                    "T", "W", "Z", "AC", "AF"
-                )
+                if _has_items(ballast_final):
+                    _clear_block(11, ["T", "W", "Z", "AC", "AF"])
+                    _fill_block(ballast_final, 11, "T", "Z", "AC", "AF", col_height="W")
 
                 # -------------------------------------------------
                 # FRESH WATER INITIAL
@@ -694,13 +714,9 @@ class DraftSurveyExcelGenerator:
                     "init"
                 )
 
-                _clear_block(47, ["A", "D", "G", "J", "M"])
-
-                _fill_block(
-                    fw_initial,
-                    47,
-                    "A", "D", "G", "J", "M"
-                )
+                if _has_items(fw_initial):
+                    _clear_block(47, ["A", "D", "G", "J", "M"])
+                    _fill_block(fw_initial, 47, "A", "G", "J", "M", col_height="D")
 
                 # -------------------------------------------------
                 # FRESH WATER FINAL
@@ -712,13 +728,9 @@ class DraftSurveyExcelGenerator:
                     "final"
                 )
 
-                _clear_block(47, ["T", "W", "Z", "AC", "AF"])
-
-                _fill_block(
-                    fw_final,
-                    47,
-                    "T", "W", "Z", "AC", "AF"
-                )
+                if _has_items(fw_final):
+                    _clear_block(47, ["T", "W", "Z", "AC", "AF"])
+                    _fill_block(fw_final, 47, "T", "Z", "AC", "AF", col_height="W")
 
         except Exception as e:
             print("ERROR DEDUCTIONS:", e)

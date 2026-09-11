@@ -30,12 +30,12 @@ class VistaSolicitudesHHRR(ttk.Frame):
         "● Rechazado": "REJECTED",
     }
 
-    def __init__(self, parent, usuario, rol_usuario: str, on_back=None, **kwargs):
+    def __init__(self, parent, usuario, rol_usuario: str, on_back=None, can_create: bool | None = None, **kwargs):
         super().__init__(parent)
 
         self.usuario = (usuario or "").strip().lower()   # 🔥 FIX
         self.rol_usuario = (rol_usuario or "").lower().strip()
-        self.read_only = self.usuario in ("surveyor01", "surveyor02", "surveyor03")
+        self.can_create = bool(can_create) if can_create is not None else self.rol_usuario in ("admin", "master")
         self.on_back = on_back
 
         self._raw_rows = []
@@ -93,7 +93,7 @@ class VistaSolicitudesHHRR(ttk.Frame):
             command=self._limpiar_filtros
         ).grid(row=0, column=7, padx=4)
 
-        if not self.read_only:
+        if self.can_create:
             ttk.Button(
                 filtros,
                 text="+ Nueva Solicitud",
@@ -521,8 +521,8 @@ class VistaSolicitudesHHRR(ttk.Frame):
         self._load_data()
 
     def _abrir_popup_solicitud(self):
-        if self.read_only:
-            messagebox.showwarning("Permiso", "Este usuario solo tiene permisos de consulta.")
+        if not self.can_create:
+            messagebox.showwarning("Permiso", "Este usuario no tiene permiso para crear solicitudes.")
             return
 
         try:

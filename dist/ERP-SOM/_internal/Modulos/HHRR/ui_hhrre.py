@@ -220,6 +220,7 @@ class HHRRUI(ttk.Frame):
             parent=self.contenedor,      # 🔥 FIX (no self)
             usuario=self.usuario,        # 🔥 FIX CLAVE
             rol_usuario=self.rol,
+            can_create=self._has_hr_permission("requests_create"),
             on_back=self._mostrar_home   # 🔥 FIX (tu método correcto)
         ).pack(fill="both", expand=True)
 

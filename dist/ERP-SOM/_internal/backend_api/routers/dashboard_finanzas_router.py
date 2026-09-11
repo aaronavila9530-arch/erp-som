@@ -119,6 +119,7 @@ def dashboard_finanzas_resumen(
                         SUM(total) revenue
                     FROM invoicing
                     WHERE EXTRACT(YEAR FROM fecha_emision)=%s
+                      AND EXTRACT(MONTH FROM fecha_emision) >= 8
                     GROUP BY mes
                     ORDER BY mes
                 ) t

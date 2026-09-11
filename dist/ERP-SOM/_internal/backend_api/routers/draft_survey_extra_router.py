@@ -313,14 +313,14 @@ def _build_ballast_flat_payload(payload: dict, cols: set):
         for i in range(1, 21):
             for side in ("p", "s"):
                 base = f"{prefix}_wbt_{i}{side}"
-                for field in ("name", "sounding", "volume", "density"):
+                for field in ("name", "height", "sounding", "volume", "density"):
                     key = f"{base}_{field}"
                     if key in cols:
                         flat_payload[key] = None
 
         for tank in ("fpt", "apt", "slop_tank"):
             base = f"{prefix}_{tank}"
-            for field in ("name", "sounding", "volume", "density"):
+            for field in ("name", "height", "sounding", "volume", "density"):
                 key = f"{base}_{field}"
                 if key in cols:
                     flat_payload[key] = None
@@ -358,6 +358,7 @@ def _build_ballast_flat_payload(payload: dict, cols: set):
 
             mapping = {
                 f"{base}_name": tank_name,
+                f"{base}_height": _normalize_decimal_string(_clean_ballast_value(tank.get("height"))),
                 f"{base}_sounding": _normalize_decimal_string(_clean_ballast_value(tank.get("sounding"))),
                 f"{base}_volume": _normalize_decimal_string(_clean_ballast_value(tank.get("volume"))),
                 f"{base}_density": _normalize_decimal_string(_clean_ballast_value(tank.get("density"))),
