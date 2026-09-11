@@ -1510,6 +1510,8 @@ def post_invoice_to_pay_apply_payment_api(data: dict):
                 "bank_account_name": data.get("bank_account_name"),
                 "bank_name": data.get("bank_name"),
                 "payment_reference": data.get("payment_reference"),
+                "payment_method": data.get("payment_method"),
+                "payment_card_last4": data.get("payment_card_last4"),
             },
             timeout=15
         )
@@ -1522,6 +1524,24 @@ def post_invoice_to_pay_apply_payment_api(data: dict):
             "status": "error",
             "error": str(e)
         }
+
+
+def download_invoice_to_pay_payment_report_api(period: str, months: int, status: str, output_path: str):
+    params = {
+        "period": period,
+        "months": int(months or 1),
+        "status": status or "ALL",
+    }
+    resp = api_request(
+        "GET",
+        "/invoice-to-pay/payment-report.xlsx",
+        params=params,
+        timeout=60,
+    )
+    resp.raise_for_status()
+    with open(output_path, "wb") as fh:
+        fh.write(resp.content)
+    return output_path
 
 
 # ============================================================

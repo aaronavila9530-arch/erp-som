@@ -29,7 +29,24 @@ BANK_ACCOUNT_OPTIONS = [
     "1.1.02.02.01",
     "1.1.02.02.02",
     "1.1.02.04.01",
+    "2.1.02.10",
 ]
+
+PAYMENT_METHOD_LABELS = {
+    "BANK": "Banco",
+    "CARD_BAC_3155": "Tarjeta empresarial BAC 3155",
+}
+PAYMENT_METHOD_CODES = {label: code for code, label in PAYMENT_METHOD_LABELS.items()}
+CARD_3155_CODE = "2.1.02.10"
+CARD_3155_NAME = "Tarjeta corporativa BAC por pagar"
+CARD_3155_LABEL = "Tarjeta empresarial BAC 3155"
+
+
+def _payment_label(row):
+    method = str(row.get("payment_method") or "").strip().upper()
+    if method == "CARD_BAC_3155" or str(row.get("payment_card_last4") or "").strip() == "3155":
+        return CARD_3155_LABEL
+    return "Banco"
 
 
 class PopupObligacionesQuincenales(tk.Toplevel):
@@ -78,7 +95,7 @@ class PopupObligacionesQuincenales(tk.Toplevel):
         ttk.Button(tools, text="Quitar linea", command=self._delete_selected).grid(row=0, column=8, padx=4, pady=6)
         ttk.Label(
             tools,
-            text="Obligatorio antes de aplicar: comprobante bancario y cuenta contable banco en cada linea con monto.",
+            text="Obligatorio antes de aplicar: comprobante y cuenta contable de pago en cada linea con monto.",
             foreground="#7f1d1d",
             font=("Segoe UI", 9, "bold"),
         ).grid(row=1, column=0, columnspan=9, sticky="w", padx=6, pady=(0, 6))
@@ -91,16 +108,17 @@ class PopupObligacionesQuincenales(tk.Toplevel):
         detail.rowconfigure(0, weight=1)
         pane.add(detail, weight=4)
 
-        columns = ("category", "name", "amount", "currency", "bank_account", "bank_accounting_code", "bank_voucher", "due_date", "obligation_id", "reference", "balance", "source", "notes")
+        columns = ("category", "name", "amount", "currency", "payment_method", "bank_account", "bank_accounting_code", "bank_voucher", "due_date", "obligation_id", "reference", "balance", "source", "notes")
         self.tree = ttk.Treeview(detail, columns=columns, show="headings", height=17)
         labels = {
             "category": "Rubro",
             "name": "Nombre / beneficiario",
             "amount": "Monto",
             "currency": "Moneda",
+            "payment_method": "Tipo pago",
             "bank_account": "Cuenta destino / IBAN",
-            "bank_accounting_code": "Cuenta contable banco",
-            "bank_voucher": "Comprobante bancario",
+            "bank_accounting_code": "Cuenta contable pago",
+            "bank_voucher": "Comprobante",
             "due_date": "Fecha pago",
             "obligation_id": "ITP ID",
             "reference": "Referencia",
@@ -113,6 +131,7 @@ class PopupObligacionesQuincenales(tk.Toplevel):
             "name": 260,
             "amount": 120,
             "currency": 70,
+            "payment_method": 160,
             "bank_account": 220,
             "bank_accounting_code": 150,
             "bank_voucher": 150,
@@ -183,6 +202,7 @@ class PopupObligacionesQuincenales(tk.Toplevel):
                 row.get("name") or "",
                 self._fmt(row.get("amount")),
                 row.get("currency") or "CRC",
+                _payment_label(row),
                 row.get("bank_account") or "",
                 row.get("bank_accounting_code") or "",
                 row.get("bank_voucher") or "",
@@ -204,7 +224,8 @@ class PopupObligacionesQuincenales(tk.Toplevel):
             amount = self._money(row.get("amount"))
             currency = row.get("currency") or "CRC"
             by_category[(row.get("category") or "Otros", currency)] += amount
-            by_bank[(row.get("bank_account") or "Sin cuenta", currency)] += amount
+            payment_key = _payment_label(row) if _payment_label(row) != "Banco" else (row.get("bank_account") or "Sin cuenta")
+            by_bank[(payment_key, currency)] += amount
             if currency == "CRC":
                 total_crc += amount
             elif currency == "USD":
@@ -255,6 +276,7 @@ class PopupObligacionesQuincenales(tk.Toplevel):
             "amount": tk.StringVar(value=str(initial.get("amount") or "")),
             "currency": tk.StringVar(value=initial.get("currency") or "CRC"),
             "bank_account": tk.StringVar(value=initial.get("bank_account") or ""),
+            "payment_method": tk.StringVar(value=_payment_label(initial)),
             "bank_accounting_code": tk.StringVar(value=initial.get("bank_accounting_code") or "1.1.02.02.01"),
             "bank_voucher": tk.StringVar(value=initial.get("bank_voucher") or ""),
             "due_date": tk.StringVar(value=initial.get("due_date") or ""),
@@ -268,9 +290,10 @@ class PopupObligacionesQuincenales(tk.Toplevel):
             ("Nombre / beneficiario", "name"),
             ("Monto", "amount"),
             ("Moneda", "currency"),
+            ("Tipo de pago", "payment_method"),
             ("Cuenta destino / IBAN", "bank_account"),
-            ("Cuenta contable banco", "bank_accounting_code"),
-            ("Comprobante bancario", "bank_voucher"),
+            ("Cuenta contable pago", "bank_accounting_code"),
+            ("Comprobante", "bank_voucher"),
             ("Fecha pago", "due_date"),
             ("Referencia ITP", "reference"),
             ("Saldo ITP", "balance"),
@@ -282,6 +305,8 @@ class PopupObligacionesQuincenales(tk.Toplevel):
                 widget = ttk.Combobox(win, textvariable=vars_[key], values=CATEGORIES, state="readonly")
             elif key == "currency":
                 widget = ttk.Combobox(win, textvariable=vars_[key], values=["CRC", "USD"], state="readonly")
+            elif key == "payment_method":
+                widget = ttk.Combobox(win, textvariable=vars_[key], values=list(PAYMENT_METHOD_CODES.keys()), state="readonly")
             elif key == "bank_accounting_code":
                 widget = ttk.Combobox(win, textvariable=vars_[key], values=BANK_ACCOUNT_OPTIONS)
             else:
@@ -289,20 +314,39 @@ class PopupObligacionesQuincenales(tk.Toplevel):
             widget.grid(row=idx, column=1, sticky="ew", padx=12, pady=6)
         win.columnconfigure(1, weight=1)
 
+        def sync_payment_method(*_args):
+            if vars_["payment_method"].get() == CARD_3155_LABEL:
+                vars_["bank_accounting_code"].set(CARD_3155_CODE)
+                if not vars_["bank_account"].get().strip():
+                    vars_["bank_account"].set("BAC")
+
+        vars_["payment_method"].trace_add("write", sync_payment_method)
+        sync_payment_method()
+
         def ok():
             try:
                 amount = self._money(vars_["amount"].get())
             except Exception:
                 messagebox.showwarning("Monto", "Monto invalido.", parent=win)
                 return
+            payment_method = PAYMENT_METHOD_CODES.get(vars_["payment_method"].get(), "BANK")
+            bank_code = vars_["bank_accounting_code"].get().strip()
+            bank_name = initial.get("bank_accounting_name") or ""
+            bank_account = vars_["bank_account"].get().strip()
+            if payment_method == "CARD_BAC_3155":
+                bank_code = CARD_3155_CODE
+                bank_name = CARD_3155_NAME
+                bank_account = bank_account or "BAC"
             result.update({
                 "category": vars_["category"].get(),
                 "name": vars_["name"].get().strip(),
                 "amount": amount,
                 "currency": vars_["currency"].get(),
-                "bank_account": vars_["bank_account"].get().strip(),
-                "bank_accounting_code": vars_["bank_accounting_code"].get().strip(),
-                "bank_accounting_name": initial.get("bank_accounting_name") or "",
+                "payment_method": payment_method,
+                "payment_card_last4": "3155" if payment_method == "CARD_BAC_3155" else "",
+                "bank_account": bank_account,
+                "bank_accounting_code": bank_code,
+                "bank_accounting_name": bank_name,
                 "bank_voucher": vars_["bank_voucher"].get().strip(),
                 "due_date": vars_["due_date"].get().strip(),
                 "source": initial.get("source") or "MANUAL",
@@ -337,7 +381,7 @@ class PopupObligacionesQuincenales(tk.Toplevel):
         ws.title = "Obligaciones"
         ws.append(["Periodo", self.period_var.get(), "Quincena", self.fortnight_var.get()])
         ws.append([])
-        headers = ["Rubro", "Nombre / beneficiario", "Monto a pagar", "Moneda", "Cuenta destino / IBAN", "Cuenta contable banco", "Comprobante bancario", "Fecha pago", "ITP ID", "Referencia", "Saldo ITP", "Pago parcial", "Fuente", "Notas"]
+        headers = ["Rubro", "Nombre / beneficiario", "Monto a pagar", "Moneda", "Tipo pago", "Tarjeta", "Cuenta destino / IBAN", "Cuenta contable pago", "Comprobante", "Fecha pago", "ITP ID", "Referencia", "Saldo ITP", "Pago parcial", "Fuente", "Notas"]
         ws.append(headers)
         for row in self.rows:
             amount = self._money(row.get("amount"))
@@ -347,6 +391,8 @@ class PopupObligacionesQuincenales(tk.Toplevel):
                 row.get("name"),
                 amount,
                 row.get("currency"),
+                _payment_label(row),
+                row.get("payment_card_last4") or "",
                 row.get("bank_account"),
                 row.get("bank_accounting_code"),
                 row.get("bank_voucher"),
@@ -366,11 +412,11 @@ class PopupObligacionesQuincenales(tk.Toplevel):
         ws2.append([])
         ws2.append(["Resumen por cuenta / destino"])
         ws2.append(["Cuenta / destino", "Moneda", "Total"])
-        for (key, currency), amount in sorted(self._summary_data("bank_account").items()):
+        for (key, currency), amount in sorted(self._summary_data("payment_destination").items()):
             ws2.append([key, currency, amount])
         ws3 = wb.create_sheet("Aplicacion ITP")
         ws3.append(["Lineas vinculadas a obligaciones pendientes"])
-        ws3.append(["ITP ID", "Referencia", "Beneficiario", "Saldo ITP", "Monto a pagar", "Moneda", "Pago parcial", "Fecha pago", "Cuenta destino", "Cuenta contable banco", "Comprobante"])
+        ws3.append(["ITP ID", "Referencia", "Beneficiario", "Saldo ITP", "Monto a pagar", "Moneda", "Pago parcial", "Fecha pago", "Tipo pago", "Cuenta destino", "Cuenta contable pago", "Comprobante"])
         for row in self.rows:
             if not row.get("obligation_id"):
                 continue
@@ -385,6 +431,7 @@ class PopupObligacionesQuincenales(tk.Toplevel):
                 row.get("currency"),
                 "SI" if amount < balance else "NO",
                 row.get("due_date"),
+                _payment_label(row),
                 row.get("bank_account"),
                 row.get("bank_accounting_code"),
                 row.get("bank_voucher"),
@@ -399,9 +446,9 @@ class PopupObligacionesQuincenales(tk.Toplevel):
             if self._money(row.get("amount")) <= 0:
                 continue
             if not str(row.get("bank_accounting_code") or "").strip():
-                missing.append(f"Linea {idx}: falta cuenta contable banco")
+                missing.append(f"Linea {idx}: falta cuenta contable pago")
             if not str(row.get("bank_voucher") or "").strip():
-                missing.append(f"Linea {idx}: falta comprobante bancario")
+                missing.append(f"Linea {idx}: falta comprobante")
         return missing
 
     def _save_and_post(self):
@@ -440,7 +487,12 @@ class PopupObligacionesQuincenales(tk.Toplevel):
     def _summary_data(self, key):
         data = defaultdict(float)
         for row in self.rows:
-            data[(row.get(key) or ("Sin cuenta" if key == "bank_account" else "Otros"), row.get("currency") or "CRC")] += self._money(row.get("amount"))
+            if key == "payment_destination":
+                label = _payment_label(row)
+                value = label if label != "Banco" else (row.get("bank_account") or "Sin cuenta")
+            else:
+                value = row.get(key) or ("Sin cuenta" if key == "bank_account" else "Otros")
+            data[(value, row.get("currency") or "CRC")] += self._money(row.get("amount"))
         return data
 
     def _style_workbook(self, wb):

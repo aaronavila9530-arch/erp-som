@@ -14371,6 +14371,7 @@ function ItpApplyPaymentModal({
   const today = new Date().toISOString().slice(0, 10);
   const [amount, setAmount] = useState("");
   const [paymentDate, setPaymentDate] = useState(today);
+  const [paymentMethod, setPaymentMethod] = useState("Banco");
   const [bankCode, setBankCode] = useState("1.1.02.02.01");
   const [bankName, setBankName] = useState("Banco BAC San Jose");
   const [depositNumber, setDepositNumber] = useState("");
@@ -14381,6 +14382,7 @@ function ItpApplyPaymentModal({
     if (!visible) return;
     setAmount(formatValue(row?.balance || row?.saldo || row?.total || ""));
     setPaymentDate(today);
+    setPaymentMethod("Banco");
     setBankCode("1.1.02.02.01");
     setBankName("Banco BAC San Jose");
     setDepositNumber("");
@@ -14398,7 +14400,10 @@ function ItpApplyPaymentModal({
       setMessage("Ingrese un monto valido.");
       return;
     }
-    if (!paymentDate.trim() || !bankCode.trim() || !depositNumber.trim()) {
+    const isCard3155 = paymentMethod === "Tarjeta empresarial BAC 3155";
+    const effectiveBankCode = isCard3155 ? "2.1.02.10" : bankCode.trim();
+    const effectiveBankName = isCard3155 ? "Tarjeta corporativa BAC por pagar" : bankName.trim();
+    if (!paymentDate.trim() || !effectiveBankCode || !depositNumber.trim()) {
       setMessage("Fecha, cuenta contable banco y numero de deposito/pago son obligatorios.");
       return;
     }
@@ -14406,10 +14411,12 @@ function ItpApplyPaymentModal({
     params.set("obligation_id", obligationId);
     params.set("amount", amountValue);
     params.set("payment_date", paymentDate.trim());
-    params.set("bank_account_code", bankCode.trim());
-    params.set("bank_account_name", bankName.trim());
-    params.set("bank_name", bankName.trim());
+    params.set("bank_account_code", effectiveBankCode);
+    params.set("bank_account_name", effectiveBankName);
+    params.set("bank_name", isCard3155 ? "Tarjeta empresarial BAC 3155" : effectiveBankName);
     params.set("payment_reference", depositNumber.trim());
+    params.set("payment_method", isCard3155 ? "CARD_BAC_3155" : "BANK");
+    params.set("payment_card_last4", isCard3155 ? "3155" : "");
     setBusy(true);
     setMessage("");
     try {
@@ -14439,11 +14446,23 @@ function ItpApplyPaymentModal({
           {row ? <MiniRecordCard row={row} titleKeys={["payee_name", "beneficiario", "referencia"]} /> : null}
           <Text style={styles.label}>Monto a pagar</Text>
           <TextInput style={styles.input} value={amount} keyboardType="decimal-pad" onChangeText={setAmount} />
+          <SelectField label="Tipo de pago" value={paymentMethod} options={["Banco", "Tarjeta empresarial BAC 3155"]} onChange={setPaymentMethod} />
           <DateField label="Fecha de pago" value={paymentDate} onChange={setPaymentDate} />
           <Text style={styles.label}>Cuenta contable banco</Text>
-          <TextInput style={styles.input} value={bankCode} onChangeText={setBankCode} placeholder="Ej. 1.1.02.02.01" />
+          <TextInput
+            style={[styles.input, paymentMethod === "Tarjeta empresarial BAC 3155" ? styles.readonlyInput : null]}
+            value={paymentMethod === "Tarjeta empresarial BAC 3155" ? "2.1.02.10" : bankCode}
+            editable={paymentMethod !== "Tarjeta empresarial BAC 3155"}
+            onChangeText={setBankCode}
+            placeholder="Ej. 1.1.02.02.01"
+          />
           <Text style={styles.label}>Banco / nombre cuenta</Text>
-          <TextInput style={styles.input} value={bankName} onChangeText={setBankName} />
+          <TextInput
+            style={[styles.input, paymentMethod === "Tarjeta empresarial BAC 3155" ? styles.readonlyInput : null]}
+            value={paymentMethod === "Tarjeta empresarial BAC 3155" ? "Tarjeta empresarial BAC 3155" : bankName}
+            editable={paymentMethod !== "Tarjeta empresarial BAC 3155"}
+            onChangeText={setBankName}
+          />
           <Text style={styles.label}>Numero deposito / comprobante</Text>
           <TextInput style={styles.input} value={depositNumber} onChangeText={setDepositNumber} />
           <PrimaryButton label="Aplicar pago y postear" loading={busy} onPress={apply} />
@@ -15256,7 +15275,9 @@ function ItpBiweeklyObligationsMobile({
         balance: 0,
         bank_accounting_code: "1.1.02.02.01",
         bank_accounting_name: "Banco BAC San Jose CRC CR87010200009640180220",
-        bank_voucher: ""
+        bank_voucher: "",
+        payment_method: "BANK",
+        payment_card_last4: ""
       }
     ]);
   }
@@ -15288,7 +15309,7 @@ function ItpBiweeklyObligationsMobile({
       .map((row, index) => ({
         index: index + 1,
         voucher: String(row.bank_voucher || "").trim(),
-        bank: String(row.bank_accounting_code || "").trim()
+        bank: String(row.payment_method || "") === "CARD_BAC_3155" ? "2.1.02.10" : String(row.bank_accounting_code || "").trim()
       }))
       .filter((row) => !row.voucher || !row.bank);
     if (missing.length) {
@@ -15372,10 +15393,30 @@ function ItpBiweeklyObligationsMobile({
           <Text style={styles.label}>Monto</Text>
           <TextInput style={styles.input} keyboardType="decimal-pad" value={formatValue(row.amount)} onChangeText={(value) => updateRow(index, "amount", value)} />
           <SelectField label="Moneda" value={formatValue(row.currency || "CRC")} options={["CRC", "USD"]} onChange={(value) => updateRow(index, "currency", value)} />
+          <SelectField
+            label="Tipo de pago"
+            value={formatValue(row.payment_method) === "CARD_BAC_3155" ? "Tarjeta empresarial BAC 3155" : "Banco"}
+            options={["Banco", "Tarjeta empresarial BAC 3155"]}
+            onChange={(value) => {
+              const isCard = value === "Tarjeta empresarial BAC 3155";
+              updateRow(index, "payment_method", isCard ? "CARD_BAC_3155" : "BANK");
+              updateRow(index, "payment_card_last4", isCard ? "3155" : "");
+              if (isCard) {
+                updateRow(index, "bank_accounting_code", "2.1.02.10");
+                updateRow(index, "bank_accounting_name", "Tarjeta corporativa BAC por pagar");
+              }
+            }}
+          />
           <Text style={styles.label}>Cuenta bancaria destino</Text>
           <TextInput style={styles.input} value={formatValue(row.bank_account)} onChangeText={(value) => updateRow(index, "bank_account", value)} />
           <Text style={styles.label}>Cuenta contable banco pago</Text>
-          <TextInput style={styles.input} value={formatValue(row.bank_accounting_code)} onChangeText={(value) => updateRow(index, "bank_accounting_code", value)} placeholder="Ej. 1.1.02.02.01" />
+          <TextInput
+            style={[styles.input, formatValue(row.payment_method) === "CARD_BAC_3155" ? styles.readonlyInput : null]}
+            editable={formatValue(row.payment_method) !== "CARD_BAC_3155"}
+            value={formatValue(row.payment_method) === "CARD_BAC_3155" ? "2.1.02.10" : formatValue(row.bank_accounting_code)}
+            onChangeText={(value) => updateRow(index, "bank_accounting_code", value)}
+            placeholder="Ej. 1.1.02.02.01"
+          />
           <Text style={styles.label}>Comprobante bancario</Text>
           <TextInput style={styles.input} value={formatValue(row.bank_voucher)} onChangeText={(value) => updateRow(index, "bank_voucher", value)} />
           <DateField label="Fecha pago" value={formatValue(row.due_date)} onChange={(value) => updateRow(index, "due_date", value)} />
@@ -15691,6 +15732,8 @@ function FinanceFilters({
     due_date_to: "",
     payment_date_from: "",
     payment_date_to: "",
+    itp_report_months: "1",
+    itp_report_status: "ALL",
     period: currentAccountingPeriod(),
     search_mode: "SINGLE",
     period_from: previousAccountingPeriod(),
@@ -15890,6 +15933,8 @@ function FinanceFilters({
       due_date_to: "",
       payment_date_from: "",
       payment_date_to: "",
+      itp_report_months: "1",
+      itp_report_status: "ALL",
       period: currentAccountingPeriod(),
       search_mode: "SINGLE",
       period_from: previousAccountingPeriod(),
@@ -16006,6 +16051,29 @@ function FinanceFilters({
     }
   }
 
+  async function exportItpPaymentReport() {
+    const period = form.period || currentAccountingPeriod();
+    const months = form.itp_report_months || "1";
+    const status = form.itp_report_status || "ALL";
+    const filename = cleanFilePart(`ITP_Pagos_${period}_${months}m_${status}.xlsx`);
+    const params = new URLSearchParams();
+    params.set("period", period);
+    params.set("months", months);
+    params.set("status", status);
+    onLoading(true);
+    onMessage("");
+    try {
+      await downloadSessionFile(`/invoice-to-pay/payment-report.xlsx?${params.toString()}`, session, filename);
+      onMessage("Reporte ITP abierto.");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "No se pudo exportar reporte ITP.";
+      Alert.alert("Reporte ITP", message);
+      onMessage(message);
+    } finally {
+      onLoading(false);
+    }
+  }
+
   return (
     <View style={styles.financeFilterBox}>
       <Text style={styles.cardTitle}>Filtros</Text>
@@ -16073,6 +16141,15 @@ function FinanceFilters({
               </ScrollView>
             </SafeAreaView>
           </Modal>
+          <View style={styles.reportBox}>
+            <Text style={styles.cardTitle}>Reporte pagos ITP / presupuesto</Text>
+            <SelectField label="Periodo base" value={form.period || currentAccountingPeriod()} options={accountingPeriods} onChange={(value) => setValue("period", value)} />
+            <SelectField label="Historico meses" value={form.itp_report_months || "1"} options={["1", "3", "6", "12", "24", "36"]} onChange={(value) => setValue("itp_report_months", value)} />
+            <SelectField label="Estado" value={form.itp_report_status || "ALL"} options={["ALL", "PENDING", "PARTIAL", "PAID"]} onChange={(value) => setValue("itp_report_status", value)} />
+            <Pressable style={styles.actionButton} onPress={exportItpPaymentReport}>
+              <Text style={styles.actionButtonText}>Exportar Excel</Text>
+            </Pressable>
+          </View>
           <SelectField label="Obligacion" value={form.obligation_type || "Todos"} options={["Todos", "SURVEYOR", "SUPPLIER", "MANUAL"]} onChange={(value) => setValue("obligation_type", value === "Todos" ? "" : value)} />
           <Text style={styles.label}>Beneficiario</Text>
           <TextInput style={styles.input} value={form.payee} onChangeText={(value) => setValue("payee", value)} placeholder="Nombre del beneficiario" />
