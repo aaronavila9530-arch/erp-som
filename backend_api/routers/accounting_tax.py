@@ -25,8 +25,7 @@ MONEY = Decimal("0.01")
 
 
 def _company_code(value: str | None = None, header_value: str | None = None) -> str:
-    code = str(value or header_value or "MSL-CR").strip().upper()
-    return code or "MSL-CR"
+    return normalize_company_code(value, header_value)
 
 
 def _money(value) -> Decimal:
@@ -411,8 +410,13 @@ def _ensure_purchase_obligation(cur, data, xml_path, company_code="MSL-CR"):
 
 
 @router.post("/sync")
-def sync_tax_documents(conn=Depends(get_db)):
+def sync_tax_documents(
+    company_code: str | None = None,
+    conn=Depends(get_db),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+):
     _ensure_schema(conn)
+    company = _company_code(company_code, x_company_code)
     counts = {"sales": 0, "purchases": 0}
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -437,7 +441,8 @@ def sync_tax_documents(conn=Depends(get_db)):
                     ORDER BY i.id DESC
                     LIMIT 1
                 ) inv ON TRUE
-            """)
+                WHERE COALESCE(f.company_code, 'MSL-CR') = %s
+            """, (company,))
             for row in cur.fetchall():
                 cur.execute("SELECT * FROM factura_detalle WHERE factura_id=%s ORDER BY id",(row["id"],))
                 details=cur.fetchall()
@@ -458,7 +463,7 @@ def sync_tax_documents(conn=Depends(get_db)):
                 data = {"document_type":"FE","document_number":row["numero_factura"],"electronic_key":row.get("clave_electronica"),
                         "issue_datetime":row.get("fecha_emision"),"currency_code":row.get("moneda") or "CRC",
                         "subtotal":subtotal,"tax_amount":tax_amount,"total":total}
-                doc_id = _save_document(cur,"SALE",data,source_table="factura",source_id=row["id"],xml_path=row.get("xml_path"),user="SYSTEM_SYNC")
+                doc_id = _save_document(cur,"SALE",data,source_table="factura",source_id=row["id"],xml_path=row.get("xml_path"),user="SYSTEM_SYNC",company_code=company)
                 cur.execute("UPDATE tax_electronic_documents SET pdf_path=%s,status=%s WHERE id=%s",(row.get("pdf_path"),"ACCEPTED" if str(row.get("estado","")).upper() in {"PAGADA","EMITIDA","ACEPTADA"} else "PENDING",doc_id))
                 if details:
                     cur.execute("DELETE FROM tax_document_lines WHERE document_id=%s",(doc_id,))
@@ -485,7 +490,8 @@ def sync_tax_documents(conn=Depends(get_db)):
                 FROM invoicing
                 WHERE UPPER(COALESCE(tipo_documento, '')) = 'FACTURA'
                   AND COALESCE(total, 0) > 0
-            """)
+                  AND COALESCE(company_code, 'MSL-CR') = %s
+            """, (company,))
             for row in cur.fetchall():
                 total = _money(row.get("total") or 0)
                 accounted = _sale_amounts_from_accounting(cur, row.get("numero_documento"))
@@ -521,7 +527,7 @@ def sync_tax_documents(conn=Depends(get_db)):
                         "total": fiscal_total,
                     }],
                 }
-                doc_id = _save_document(cur, "SALE", data, source_table="invoicing", source_id=row["id"], user="SYSTEM_SYNC")
+                doc_id = _save_document(cur, "SALE", data, source_table="invoicing", source_id=row["id"], user="SYSTEM_SYNC", company_code=company)
                 cur.execute("DELETE FROM tax_document_lines WHERE document_id=%s", (doc_id,))
                 for line in data["lines"]:
                     cur.execute(
@@ -544,21 +550,21 @@ def sync_tax_documents(conn=Depends(get_db)):
                 counts["sales"] += 1
             cur.execute("""
                 INSERT INTO tax_electronic_documents(
-                  direction,document_type,document_number,electronic_key,issuer_name,issue_datetime,
+                  company_code,direction,document_type,document_number,electronic_key,issuer_name,issue_datetime,
                   currency_code,total,status,hacienda_status,xml_path,pdf_path,source_table,source_id,metadata,created_by)
-                SELECT 'PURCHASE',CASE WHEN UPPER(COALESCE(obligation_type,'')) LIKE '%%CREDIT%%' THEN 'NC' ELSE 'FE' END,
+                SELECT %s,'PURCHASE',CASE WHEN UPPER(COALESCE(obligation_type,'')) LIKE '%%CREDIT%%' THEN 'NC' ELSE 'FE' END,
                   reference,CASE WHEN LENGTH(COALESCE(reference,''))=50 THEN reference END,payee_name,issue_date,
                   COALESCE(currency,'CRC'),COALESCE(total,0),CASE WHEN UPPER(COALESCE(status,''))='PAID' THEN 'ACCEPTED' ELSE 'PENDING' END,
                   'PENDING',file_xml,file_pdf,'payment_obligations',id::text,
                   jsonb_build_object('quality_origin','ERP_SYNC'),'SYSTEM_SYNC'
-                FROM payment_obligations WHERE active=TRUE AND record_type='OBLIGATION'
-                ON CONFLICT(direction,source_table,source_id) DO UPDATE SET
+                FROM payment_obligations WHERE active=TRUE AND record_type='OBLIGATION' AND company_code=%s
+                ON CONFLICT(company_code,direction,source_table,source_id) DO UPDATE SET
                   document_number=EXCLUDED.document_number,electronic_key=EXCLUDED.electronic_key,
                   issuer_name=EXCLUDED.issuer_name,issue_datetime=EXCLUDED.issue_datetime,currency_code=EXCLUDED.currency_code,
                   total=EXCLUDED.total,status=EXCLUDED.status,xml_path=COALESCE(EXCLUDED.xml_path,tax_electronic_documents.xml_path),
                   pdf_path=COALESCE(EXCLUDED.pdf_path,tax_electronic_documents.pdf_path),updated_at=NOW()
-            """)
-            cur.execute("SELECT COUNT(*) count FROM payment_obligations WHERE active=TRUE AND record_type='OBLIGATION'")
+            """, (company, company))
+            cur.execute("SELECT COUNT(*) count FROM payment_obligations WHERE active=TRUE AND record_type='OBLIGATION' AND company_code=%s", (company,))
             counts["purchases"] = cur.fetchone()["count"]
         conn.commit()
     except Exception as exc:
@@ -630,8 +636,13 @@ async def upload_hacienda_response(document_id:int,file:UploadFile=File(...),con
 
 
 @router.post("/documents/import-hacienda-response")
-async def import_hacienda_response(file:UploadFile=File(...),conn=Depends(get_db)):
-    _ensure_schema(conn); content=await file.read()
+async def import_hacienda_response(
+    company_code: str | None = Form(None),
+    file:UploadFile=File(...),
+    conn=Depends(get_db),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+):
+    _ensure_schema(conn); company = _company_code(company_code, x_company_code); content=await file.read()
     try: root=ET.fromstring(content)
     except ET.ParseError as exc: raise HTTPException(400,f"Respuesta XML inválida: {exc}")
     if _local(root.tag) not in {"MensajeHacienda","RespuestaHacienda"}:
@@ -643,7 +654,7 @@ async def import_hacienda_response(file:UploadFile=File(...),conn=Depends(get_db
     digest=hashlib.sha256(content).hexdigest(); folder=Path("storage/tax/responses")/datetime.now().strftime("%Y/%m"); folder.mkdir(parents=True,exist_ok=True)
     path=folder/f"{digest[:12]}_hacienda.xml"; path.write_bytes(content)
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        cur.execute("SELECT id FROM tax_electronic_documents WHERE electronic_key=%s ORDER BY id DESC LIMIT 1",(key,)); doc=cur.fetchone()
+        cur.execute("SELECT id FROM tax_electronic_documents WHERE electronic_key=%s AND company_code=%s ORDER BY id DESC LIMIT 1",(key,company)); doc=cur.fetchone()
         if not doc: path.unlink(missing_ok=True); raise HTTPException(404,"No existe un comprobante fiscal con la clave de esta respuesta")
         cur.execute("""UPDATE tax_electronic_documents SET hacienda_status=%s,hacienda_message=%s,response_xml_path=%s,
           response_xml_content=%s,status=%s,updated_at=NOW() WHERE id=%s""",(status,detail,str(path),content,status,doc["id"]))
@@ -682,10 +693,14 @@ def _preferred_tax_documents_sql(where_sql: str) -> str:
 
 
 def _company_tax_scope_sql(company: str) -> str:
+    safe_company = str(company or "MSL-CR").replace("'", "''")
+    company_filter = f"d.company_code = '{safe_company}'"
     if company != "MSL-CR":
-        return "1=0"
-    return """
+        return company_filter
+    return f"""
         (
+            {company_filter}
+            OR
             d.source_table IN ('hacienda_emitted_excel', 'hacienda_acceptance_excel')
             OR (
                 d.direction = 'SALE'
@@ -704,8 +719,16 @@ def _company_tax_scope_sql(company: str) -> str:
 
 
 @router.get("/documents")
-def list_documents(direction:str|None=None,period:str|None=None,status:str|None=None,quality_only:bool=False,conn=Depends(get_db)):
-    _ensure_schema(conn); where=["1=1"]; params=[]
+def list_documents(
+    direction:str|None=None,
+    period:str|None=None,
+    status:str|None=None,
+    quality_only:bool=False,
+    company_code: str | None = None,
+    conn=Depends(get_db),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+):
+    _ensure_schema(conn); company = _company_code(company_code, x_company_code); where=["d.company_code=%s"]; params=[company]
     if direction: where.append("d.direction=%s"); params.append(direction.upper())
     if period:
         start,end=_period_bounds(period); where.append("d.issue_datetime >= %s AND d.issue_datetime < %s"); params.extend([start,end])
@@ -713,7 +736,7 @@ def list_documents(direction:str|None=None,period:str|None=None,status:str|None=
     quality="""(d.xml_path IS NULL OR d.electronic_key IS NULL OR d.hacienda_status='PENDING' OR
        NOT EXISTS(SELECT 1 FROM tax_document_lines l WHERE l.document_id=d.id) OR
        EXISTS(SELECT 1 FROM tax_document_lines l WHERE l.document_id=d.id AND (l.cabys_code IS NULL OR l.cabys_code='')) OR
-       (d.electronic_key IS NOT NULL AND EXISTS(SELECT 1 FROM tax_electronic_documents x WHERE x.direction=d.direction AND x.electronic_key=d.electronic_key AND x.id<>d.id)))"""
+       (d.electronic_key IS NOT NULL AND EXISTS(SELECT 1 FROM tax_electronic_documents x WHERE x.company_code=d.company_code AND x.direction=d.direction AND x.electronic_key=d.electronic_key AND x.id<>d.id)))"""
     if quality_only: where.append(quality)
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute(f"""SELECT
@@ -724,28 +747,35 @@ def list_documents(direction:str|None=None,period:str|None=None,status:str|None=
           d.pdf_path,d.source_table,d.source_id,d.metadata,d.created_by,d.created_at,d.updated_at,
           (SELECT COUNT(*) FROM tax_document_lines l WHERE l.document_id=d.id) line_count,
           (SELECT COUNT(*) FROM tax_document_lines l WHERE l.document_id=d.id AND COALESCE(l.cabys_code,'')='') missing_cabys_lines,
-          (SELECT COUNT(*) FROM tax_electronic_documents x WHERE x.direction=d.direction AND x.electronic_key=d.electronic_key AND x.id<>d.id) duplicate_key_count
+          (SELECT COUNT(*) FROM tax_electronic_documents x WHERE x.company_code=d.company_code AND x.direction=d.direction AND x.electronic_key=d.electronic_key AND x.id<>d.id) duplicate_key_count
           FROM tax_electronic_documents d WHERE {' AND '.join(where)} ORDER BY issue_datetime DESC NULLS LAST,id DESC""",params)
         rows=cur.fetchall()
     return {"data":rows,"count":len(rows)}
 
 
 @router.get("/books/{direction}")
-def tax_book(direction:str,period:str,conn=Depends(get_db)):
+def tax_book(
+    direction:str,
+    period:str,
+    company_code: str | None = None,
+    conn=Depends(get_db),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+):
     _ensure_schema(conn); direction=direction.upper()
+    company = _company_code(company_code, x_company_code)
     if direction not in {"SALE","PURCHASE"}: raise HTTPException(400,"Libro debe ser SALE o PURCHASE")
     all_periods = str(period or "").upper() in {"", "ALL", "TODOS"}
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         if all_periods:
             cur.execute(f"""SELECT id,document_type,document_number,electronic_key,issue_datetime,currency_code,exchange_rate,
               issuer_identification,issuer_name,receiver_identification,receiver_name,subtotal,exempt_amount,tax_amount,total,
-              hacienda_status,xml_path FROM {_preferred_tax_documents_sql(f"d.direction=%s AND {_company_tax_scope_sql('MSL-CR')} AND COALESCE(d.issue_datetime::date, CURRENT_DATE) <= CURRENT_DATE")} preferred
+              hacienda_status,xml_path FROM {_preferred_tax_documents_sql(f"d.direction=%s AND {_company_tax_scope_sql(company)} AND COALESCE(d.issue_datetime::date, CURRENT_DATE) <= CURRENT_DATE")} preferred
               ORDER BY issue_datetime DESC NULLS LAST,document_number""",(direction,))
         else:
             start,end=_period_bounds(period)
             cur.execute(f"""SELECT id,document_type,document_number,electronic_key,issue_datetime,currency_code,exchange_rate,
           issuer_identification,issuer_name,receiver_identification,receiver_name,subtotal,exempt_amount,tax_amount,total,
-          hacienda_status,xml_path FROM {_preferred_tax_documents_sql(f"d.direction=%s AND {_company_tax_scope_sql('MSL-CR')} AND d.issue_datetime >= %s AND d.issue_datetime < %s AND COALESCE(d.issue_datetime::date, CURRENT_DATE) <= CURRENT_DATE")} preferred
+          hacienda_status,xml_path FROM {_preferred_tax_documents_sql(f"d.direction=%s AND {_company_tax_scope_sql(company)} AND d.issue_datetime >= %s AND d.issue_datetime < %s AND COALESCE(d.issue_datetime::date, CURRENT_DATE) <= CURRENT_DATE")} preferred
           ORDER BY issue_datetime,document_number""",(direction,start,end))
         rows=cur.fetchall()
     totals={k:float(sum((_money(r[k]) for r in rows),Decimal("0"))) for k in ("subtotal","exempt_amount","tax_amount","total")}
@@ -769,19 +799,16 @@ def tax_iva(
               ELSE %s * COALESCE(NULLIF(exchange_rate,0),1)
             END
         """
-        if company == "MSL-CR":
-            cur.execute(f"""SELECT direction,
-              COALESCE(SUM({amount_crc % ('subtotal', 'subtotal')}),0) subtotal,
-              COALESCE(SUM({amount_crc % ('exempt_amount', 'exempt_amount')}),0) exempt,
-              COALESCE(SUM({amount_crc % ('tax_amount', 'tax_amount')}),0) tax,
-              COALESCE(SUM({amount_crc % ('total', 'total')}),0) total,
-              COUNT(*) documents,
-              COUNT(*) FILTER(WHERE xml_path IS NULL) missing_xml,COUNT(*) FILTER(WHERE hacienda_status='PENDING') pending_hacienda
-              FROM {_preferred_tax_documents_sql(f"{_company_tax_scope_sql(company)} AND d.issue_datetime >= %s AND d.issue_datetime < %s AND COALESCE(d.issue_datetime::date, CURRENT_DATE) <= CURRENT_DATE")} preferred
-              GROUP BY direction""",(start,end))
-            by_direction={r["direction"]:r for r in cur.fetchall()}
-        else:
-            by_direction = {}
+        cur.execute(f"""SELECT direction,
+          COALESCE(SUM({amount_crc % ('subtotal', 'subtotal')}),0) subtotal,
+          COALESCE(SUM({amount_crc % ('exempt_amount', 'exempt_amount')}),0) exempt,
+          COALESCE(SUM({amount_crc % ('tax_amount', 'tax_amount')}),0) tax,
+          COALESCE(SUM({amount_crc % ('total', 'total')}),0) total,
+          COUNT(*) documents,
+          COUNT(*) FILTER(WHERE xml_path IS NULL) missing_xml,COUNT(*) FILTER(WHERE hacienda_status='PENDING') pending_hacienda
+          FROM {_preferred_tax_documents_sql(f"{_company_tax_scope_sql(company)} AND d.issue_datetime >= %s AND d.issue_datetime < %s AND COALESCE(d.issue_datetime::date, CURRENT_DATE) <= CURRENT_DATE")} preferred
+          GROUP BY direction""",(start,end))
+        by_direction={r["direction"]:r for r in cur.fetchall()}
         cur.execute("SELECT setting_key,setting_value FROM tax_settings WHERE setting_key IN ('IVA_DEBIT_ACCOUNT','IVA_CREDIT_ACCOUNT')")
         settings={r["setting_key"]:r["setting_value"] for r in cur.fetchall()}
         debit_codes = list(dict.fromkeys([settings.get("IVA_DEBIT_ACCOUNT","2108"), "2.1.02.03", "2108"]))
@@ -813,17 +840,15 @@ def tax_iva(
           GROUP BY account_code""",
                     (start,end,company,debit_codes,credit_codes,start,end,start,end))
         gl={r["account_code"]:r for r in cur.fetchall()}
-        if company == "MSL-CR":
-            cur.execute("""SELECT
+        cur.execute(f"""SELECT
               COUNT(*) FILTER(WHERE NOT EXISTS(SELECT 1 FROM tax_document_lines x WHERE x.document_id=d.id)) documents_without_lines,
               COALESCE(SUM((SELECT COUNT(*) FROM tax_document_lines l WHERE l.document_id=d.id AND COALESCE(l.cabys_code,'')='')),0) missing_cabys
               FROM tax_electronic_documents d
-              WHERE d.issue_datetime >= %s
+              WHERE {_company_tax_scope_sql(company)}
+                AND d.issue_datetime >= %s
                 AND d.issue_datetime < %s
                 AND COALESCE(d.issue_datetime::date, CURRENT_DATE) <= CURRENT_DATE""",(start,end))
-            quality=cur.fetchone()
-        else:
-            quality = {"documents_without_lines": 0, "missing_cabys": 0}
+        quality=cur.fetchone()
     sales=by_direction.get("SALE",{}); purchases=by_direction.get("PURCHASE",{})
     debit=_money(sales.get("tax")); credit=_money(purchases.get("tax")); net=debit-credit
     debit_gl=sum((_money(gl.get(code,{}).get("credit"))-_money(gl.get(code,{}).get("debit")) for code in debit_codes), Decimal("0"))

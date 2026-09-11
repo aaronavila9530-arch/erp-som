@@ -20,6 +20,8 @@ class PopupOutlookFiscal(tk.Toplevel):
         self.connection=tk.StringVar(value="Verificando Outlook…")
         self.auto=tk.BooleanVar(value=bool(config.get("enabled")))
         self.cards=tk.BooleanVar(value=bool(config.get("process_corporate_cards",True)))
+        self.account=tk.StringVar(value=str(config.get("account") or "gastos@mslogisticsgroup.com"))
+        self.folder=tk.StringVar(value=str(config.get("folder") or "xml gastos electrónicos/FE recibidas"))
         self.interval=tk.IntVar(value=int(config.get("interval_minutes",15)))
         self.batch=tk.IntVar(value=int(config.get("batch_size",50)))
         self.footer=tk.StringVar(value="")
@@ -28,8 +30,8 @@ class PopupOutlookFiscal(tk.Toplevel):
 
     def _build(self):
         info=ttk.LabelFrame(self,text="Origen local",padding=10); info.pack(fill="x",padx=10,pady=10)
-        ttk.Label(info,text="Buzón:").grid(row=0,column=0,sticky="w"); ttk.Label(info,text="gastos@mslogisticsgroup.com",font=("Segoe UI",10,"bold")).grid(row=0,column=1,sticky="w",padx=5)
-        ttk.Label(info,text="Carpeta:").grid(row=1,column=0,sticky="w"); ttk.Label(info,text="xml gastos electrónicos",font=("Segoe UI",10,"bold")).grid(row=1,column=1,sticky="w",padx=5)
+        ttk.Label(info,text="Buzón:").grid(row=0,column=0,sticky="w"); ttk.Entry(info,textvariable=self.account,width=42).grid(row=0,column=1,sticky="we",padx=5)
+        ttk.Label(info,text="Carpeta:").grid(row=1,column=0,sticky="w"); ttk.Entry(info,textvariable=self.folder,width=42).grid(row=1,column=1,sticky="we",padx=5)
         ttk.Label(info,text="Estado:").grid(row=2,column=0,sticky="w"); ttk.Label(info,textvariable=self.connection).grid(row=2,column=1,sticky="w",padx=5)
         info.columnconfigure(2,weight=1)
         ttk.Button(info,text="Revisar Outlook ahora",command=self._scan).grid(row=0,column=3,rowspan=2,padx=8)
@@ -60,12 +62,19 @@ class PopupOutlookFiscal(tk.Toplevel):
         except Exception as exc:self.after(0,self._error,str(exc))
 
     def _apply_inspect(self,data):
-        self.connection.set(f"Conectado · {data['message_count']} mensajes disponibles")
+        self.connection.set(f"Conectado · {data['message_count']} mensajes disponibles · {data.get('folder_path') or data.get('folder')}")
         self.footer.set("Outlook está listo. No se almacena ninguna contraseña.")
 
     def _save(self):
         try:
-            save_config({"enabled":self.auto.get(),"interval_minutes":int(self.interval.get()),"batch_size":int(self.batch.get()),"process_corporate_cards":self.cards.get()})
+            save_config({
+                "enabled":self.auto.get(),
+                "interval_minutes":int(self.interval.get()),
+                "batch_size":int(self.batch.get()),
+                "process_corporate_cards":self.cards.get(),
+                "account":self.account.get().strip() or "gastos@mslogisticsgroup.com",
+                "folder":self.folder.get().strip() or "xml gastos electrónicos/FE recibidas",
+            })
             self.footer.set("Configuración guardada")
         except Exception as exc:messagebox.showerror("Correo fiscal",str(exc),parent=self)
 

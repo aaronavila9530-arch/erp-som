@@ -23,6 +23,7 @@ ACCOUNT="gastos@mslogisticsgroup.com"
 CARD_ACCOUNT="contabilidad@mslogisticsgroup.com"
 SAFE_DEFAULT_FOLDER="xml gastos electronicos"
 DEFAULT_FOLDER="xml gastos electrónicos"
+DEFAULT_RECEIVED_SUBFOLDER="FE recibidas"
 MAX_ATTACHMENT_BYTES=20*1024*1024
 MAX_ZIP_MEMBERS=50
 STARTUP_SYNC_DELAY_SECONDS=180
@@ -45,7 +46,7 @@ def load_config():
         "enabled": True,
         "interval_minutes": 15,
         "account": ACCOUNT,
-        "folder": SAFE_DEFAULT_FOLDER,
+        "folder": f"{SAFE_DEFAULT_FOLDER}/{DEFAULT_RECEIVED_SUBFOLDER}",
         "card_account": CARD_ACCOUNT,
         "batch_size": 50,
         "process_corporate_cards": True,
@@ -133,8 +134,28 @@ def _normalized(value):
     return "".join(x for x in unicodedata.normalize("NFKD",str(text or "").lower()) if not unicodedata.combining(x)).strip()
 
 
+def _split_folder_path(folder_name):
+    text=_repair_mojibake(folder_name or "").replace("\\","/").replace(">","/")
+    return [part.strip() for part in text.split("/") if part.strip()]
+
+
 def _folder_candidates(folder_name):
-    candidates=[folder_name,_repair_mojibake(folder_name),SAFE_DEFAULT_FOLDER,"xml gastos electronicos","xml gastos electrónicos"]
+    parts=_split_folder_path(folder_name)
+    leaf=parts[-1] if parts else folder_name
+    candidates=[
+        folder_name,
+        _repair_mojibake(folder_name),
+        leaf,
+        _repair_mojibake(leaf),
+        f"{DEFAULT_FOLDER}/{DEFAULT_RECEIVED_SUBFOLDER}",
+        f"{SAFE_DEFAULT_FOLDER}/{DEFAULT_RECEIVED_SUBFOLDER}",
+        DEFAULT_RECEIVED_SUBFOLDER,
+        SAFE_DEFAULT_FOLDER,
+        "xml gastos electronicos",
+        "xml gastos electrónicos",
+        "fe recibidas",
+        "facturas recibidas",
+    ]
     seen=set(); output=[]
     for item in candidates:
         key=_normalized(item)
@@ -143,13 +164,45 @@ def _folder_candidates(folder_name):
     return output
 
 
-def _iter_folders(folder,depth=0,max_depth=4):
+def _iter_folders(folder,depth=0,max_depth=8):
     if depth>max_depth:
         return
     for index in range(1,folder.Folders.Count+1):
         child=folder.Folders.Item(index)
         yield child
         yield from _iter_folders(child,depth+1,max_depth)
+
+
+def _child_by_name(folder, name):
+    wanted=_normalized(name)
+    for index in range(1,folder.Folders.Count+1):
+        child=folder.Folders.Item(index)
+        if _normalized(child.Name)==wanted:
+            return child
+    return None
+
+
+def _resolve_folder_path(root, folder_name):
+    parts=_split_folder_path(folder_name)
+    if not parts:
+        return None
+    current=root
+    if _normalized(getattr(root, "Name", "")) == _normalized(parts[0]):
+        parts=parts[1:]
+    for part in parts:
+        child=_child_by_name(current, part)
+        if child is None:
+            return None
+        current=child
+    return current
+
+
+def _prefer_received_subfolder(folder, requested_name):
+    requested_leaf=(_split_folder_path(requested_name) or [""])[-1]
+    if _normalized(requested_leaf)==_normalized(DEFAULT_RECEIVED_SUBFOLDER):
+        return folder
+    child=_child_by_name(folder, DEFAULT_RECEIVED_SUBFOLDER)
+    return child or folder
 
 
 def _find_folder(namespace,account,folder_name):
@@ -162,6 +215,13 @@ def _find_folder(namespace,account,folder_name):
             target_store=store; break
     if target_store is None: raise RuntimeError(f"Outlook no contiene el buzón {account}")
     root=target_store.GetRootFolder()
+    direct=_resolve_folder_path(root,folder_name)
+    if direct is not None:
+        return target_store.DisplayName,_prefer_received_subfolder(direct,folder_name)
+    for candidate in _folder_candidates(folder_name):
+        direct=_resolve_folder_path(root,candidate)
+        if direct is not None:
+            return target_store.DisplayName,direct
     wanted={_normalized(item) for item in _folder_candidates(folder_name)}
     for folder in _iter_folders(root):
         if _normalized(folder.Name) in wanted:
@@ -192,7 +252,7 @@ def inspect_outlook():
         namespace=win32com.client.Dispatch("Outlook.Application").GetNamespace("MAPI")
         config=load_config()
         store,folder=_find_folder(namespace,config["account"],config["folder"])
-        return {"connected":True,"store":str(store),"folder":str(folder.Name),"message_count":int(folder.Items.Count)}
+        return {"connected":True,"store":str(store),"folder":str(folder.Name),"folder_path":str(getattr(folder,"FolderPath",folder.Name)),"message_count":int(folder.Items.Count)}
     finally: pythoncom.CoUninitialize()
 
 

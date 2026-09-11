@@ -194,7 +194,7 @@ def require_permission(module: str, action: str):
 # ============================================================
 # 🔁 SYNC SERVICIOS → PAYMENT OBLIGATIONS
 # ============================================================
-def _sync_servicios_to_itp(cur):
+def _sync_servicios_to_itp(cur, company_code: str):
     """
     Sincroniza obligaciones desde servicios hacia Invoice To Pay.
 
@@ -212,6 +212,7 @@ def _sync_servicios_to_itp(cur):
     # ============================================================
     cur.execute("""
         INSERT INTO payment_obligations (
+            company_code,
             record_type,
             payee_type,
             payee_name,
@@ -232,6 +233,7 @@ def _sync_servicios_to_itp(cur):
             created_at
         )
         SELECT
+            %s,
             'OBLIGATION',
             'SURVEYOR',
             s.surveyor,
@@ -252,6 +254,8 @@ def _sync_servicios_to_itp(cur):
             NOW()
         FROM servicios s
         WHERE
+            COALESCE(s.company_code, 'MSL-CR') = %s
+            AND
             s.surveyor IS NOT NULL
             AND s.honorarios IS NOT NULL
             AND s.honorarios > 0
@@ -262,14 +266,16 @@ def _sync_servicios_to_itp(cur):
                 WHERE po.service_id = s.consec
                   AND po.origin = 'SERVICIOS'
                   AND po.obligation_type = 'SURVEYOR_FEE'
+                  AND po.company_code = %s
             )
-    """)
+    """, (company_code, company_code, company_code))
 
     # ============================================================
     # 2️⃣ INSERTAR COSTO TARJETAS (CARD_PROCESSING)
     # ============================================================
     cur.execute("""
         INSERT INTO payment_obligations (
+            company_code,
             record_type,
             payee_type,
             payee_name,
@@ -290,6 +296,7 @@ def _sync_servicios_to_itp(cur):
             created_at
         )
         SELECT
+            %s,
             'OBLIGATION',
             'SUPPLIER',
             'CARD PROCESSOR',
@@ -310,6 +317,8 @@ def _sync_servicios_to_itp(cur):
             NOW()
         FROM servicios s
         WHERE
+            COALESCE(s.company_code, 'MSL-CR') = %s
+            AND
             s.costo_tarjetas IS NOT NULL
             AND s.costo_tarjetas > 0
             AND s.fecha_fin IS NOT NULL
@@ -319,8 +328,9 @@ def _sync_servicios_to_itp(cur):
                 WHERE po.service_id = s.consec
                   AND po.origin = 'SERVICIOS'
                   AND po.obligation_type = 'CARD_PROCESSING'
+                  AND po.company_code = %s
             )
-    """)
+    """, (company_code, company_code, company_code))
 
     # ============================================================
     # 3️⃣ ACTUALIZAR HONORARIOS MODIFICADOS
@@ -344,13 +354,15 @@ def _sync_servicios_to_itp(cur):
         FROM servicios s
         WHERE
             po.service_id = s.consec
+            AND po.company_code = %s
+            AND COALESCE(s.company_code, 'MSL-CR') = %s
             AND po.origin = 'SERVICIOS'
             AND po.obligation_type = 'SURVEYOR_FEE'
             AND s.honorarios IS NOT NULL
             AND s.honorarios > 0
             AND po.status IN ('PENDING', 'PARTIAL')
             AND po.total IS DISTINCT FROM s.honorarios
-    """)
+    """, (company_code, company_code))
 
     # ============================================================
     # 4️⃣ ACTUALIZAR COSTO TARJETAS MODIFICADO
@@ -373,13 +385,15 @@ def _sync_servicios_to_itp(cur):
         FROM servicios s
         WHERE
             po.service_id = s.consec
+            AND po.company_code = %s
+            AND COALESCE(s.company_code, 'MSL-CR') = %s
             AND po.origin = 'SERVICIOS'
             AND po.obligation_type = 'CARD_PROCESSING'
             AND s.costo_tarjetas IS NOT NULL
             AND s.costo_tarjetas > 0
             AND po.status IN ('PENDING', 'PARTIAL')
             AND po.total IS DISTINCT FROM s.costo_tarjetas
-    """)
+    """, (company_code, company_code))
 
     deactivate_employee_itp_obligations(cur)
 
@@ -402,7 +416,7 @@ def search_invoice_to_pay(
     _ensure_company_column(cur)
 
     # 🔁 Sync servicios → Invoice To Pay
-    _sync_servicios_to_itp(cur)
+    _sync_servicios_to_itp(cur, company)
     deactivate_employee_itp_obligations(cur)
     conn.commit()
 
@@ -1534,7 +1548,8 @@ def create_manual_obligation(
     reference: Optional[str] = None,
     notes: Optional[str] = None,
     payee_type: str = "OTHER",
-    conn=Depends(get_db)
+    conn=Depends(get_db),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
 ):
     if total <= 0:
         raise HTTPException(
@@ -1543,8 +1558,10 @@ def create_manual_obligation(
         )
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
+    company = normalize_company_code(header_value=x_company_code)
 
     try:
+        _ensure_company_column(cur)
         if is_employee_payee(cur, payee_name):
             raise HTTPException(
                 status_code=400,
@@ -1553,6 +1570,7 @@ def create_manual_obligation(
 
         cur.execute("""
             INSERT INTO payment_obligations (
+                company_code,
                 record_type,
                 payee_type,
                 payee_name,
@@ -1568,6 +1586,7 @@ def create_manual_obligation(
                 created_at
             )
             VALUES (
+                %s,
                 'OBLIGATION',
                 %s,
                 %s,
@@ -1584,6 +1603,7 @@ def create_manual_obligation(
             )
             RETURNING id
         """, (
+            company,
             payee_type,
             payee_name,
             obligation_type,
@@ -1850,7 +1870,8 @@ def upload_invoice_pdf(
     reference: str = Form(...),
     issue_date: Optional[date] = Form(None),
     due_date: Optional[date] = Form(None),
-    conn=Depends(get_db)
+    conn=Depends(get_db),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
 ):
     """
     Carga un PDF y crea una obligación en payment_obligations
@@ -1859,6 +1880,8 @@ def upload_invoice_pdf(
       - due_date: si provisto por UI, si no, same day (contado)
     """
     cur = conn.cursor(cursor_factory=RealDictCursor)
+    company = normalize_company_code(header_value=x_company_code)
+    _ensure_company_column(cur)
 
     # Normalizar fechas
     issue_val = issue_date or date.today()
@@ -1875,6 +1898,7 @@ def upload_invoice_pdf(
 
         cur.execute("""
             INSERT INTO payment_obligations (
+                company_code,
                 record_type,
                 obligation_type,
                 reference,
@@ -1891,6 +1915,7 @@ def upload_invoice_pdf(
                 created_at
             )
             VALUES (
+                %s,
                 'OBLIGATION',
                 'PDF_ONLY',
                 %s,
@@ -1907,6 +1932,7 @@ def upload_invoice_pdf(
                 NOW()
             )
         """, (
+            company,
             reference,
             issue_val,
             due_val,

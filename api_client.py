@@ -2766,7 +2766,7 @@ def sync_accounting_tax_api():
 
 
 def get_tax_documents_api(direction=None, period=None, status=None, quality_only=False):
-    params = {"quality_only": quality_only}
+    params = {"quality_only": quality_only, "company_code": get_company_code()}
     if direction: params["direction"] = direction
     if period: params["period"] = period
     if status: params["status"] = status
@@ -2776,7 +2776,7 @@ def get_tax_documents_api(direction=None, period=None, status=None, quality_only
 
 
 def get_tax_book_api(direction, period):
-    r = api_request("GET", f"{BASE_URL}/accounting/tax/books/{direction}", params={"period": period}, timeout=45)
+    r = api_request("GET", f"{BASE_URL}/accounting/tax/books/{direction}", params={"period": period, "company_code": get_company_code()}, timeout=45)
     raise_for_status_with_detail(r)
     return r.json()
 
@@ -2790,7 +2790,7 @@ def get_tax_iva_api(period):
 def upload_tax_xml_api(path, direction, user="ERP_USER"):
     with open(path, "rb") as fh:
         r = api_request("POST", f"{BASE_URL}/accounting/tax/documents/upload-xml",
-                        data={"direction": direction, "user": user},
+                        data={"direction": direction, "user": user, "company_code": get_company_code()},
                         files={"file": (path.split("\\")[-1], fh, "application/xml")}, timeout=90)
     raise_for_status_with_detail(r)
     return r.json()
@@ -2807,6 +2807,7 @@ def upload_tax_hacienda_response_api(document_id, path):
 def upload_tax_response_auto_api(path):
     with open(path,"rb") as fh:
         r=api_request("POST",f"{BASE_URL}/accounting/tax/documents/import-hacienda-response",
+                      data={"company_code": get_company_code()},
                       files={"file":(path.split("\\")[-1],fh,"application/xml")},timeout=90)
     raise_for_status_with_detail(r); return r.json()
 
