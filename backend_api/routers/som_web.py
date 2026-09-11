@@ -17,6 +17,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
+_ASSET_VERSION = "20260911-msl-logo"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Servicios, facturación, CxC e informes desde agosto en adelante."},
@@ -259,13 +260,13 @@ def som_web_home() -> HTMLResponse:
         <div id="totpMsg" class="muted"></div>
       </div>
     </div>
-    <div class="hero-logo"><img src="/som/logo/msl" alt="MSL" /></div>
+    <div class="hero-logo"><img src="/som/logo/msl?v={asset_version}" alt="MSL" /></div>
   </section>
 
   <section id="appView" class="app hidden">
     <aside>
       <div class="brand">
-        <img id="brandLogo" src="/som/logo/msl" alt="Logo" />
+        <img id="brandLogo" src="/som/logo/msl?v={asset_version}" alt="Logo" />
         <div><strong>SOM Web</strong><span id="sessionText">Sesión activa</span></div>
       </div>
       <div class="nav" id="moduleNav"></div>
@@ -466,7 +467,7 @@ def som_web_home() -> HTMLResponse:
       });
     }
     function setBrand() {
-      $("brandLogo").src = ($("company").value || "").startsWith("MCI") ? "/som/logo/mci" : "/som/logo/msl";
+      $("brandLogo").src = ($("company").value || "").startsWith("MCI") ? "/som/logo/mci?v={asset_version}" : "/som/logo/msl?v={asset_version}";
     }
     function selectModule(code) {
       currentModule = code;
@@ -634,7 +635,7 @@ def som_web_home() -> HTMLResponse:
   </script>
 </body>
 </html>"""
-    html = html.replace("{year}", str(year))
+    html = html.replace("{year}", str(year)).replace("{asset_version}", _ASSET_VERSION)
     return HTMLResponse(html)
 
 
