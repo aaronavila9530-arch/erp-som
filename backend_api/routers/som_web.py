@@ -17,7 +17,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20260911-hello-company-1"
+_ASSET_VERSION = "20260911-masterdata-clean-copy-1"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Servicios, facturación, CxC e informes desde agosto en adelante."},
@@ -764,7 +764,7 @@ def som_web_home() -> HTMLResponse:
     function renderMasterData() {
       $("content").innerHTML = `
         <div class="card panel">
-          <div class="panel-head"><h2>Acciones</h2><span class="muted">Igual que escritorio</span></div>
+          <div class="panel-head"><h2>Acciones</h2></div>
           <div class="md-actions">${catalog.master_data_actions.map(a => `<button class="${buttonClass(a)}" onclick="masterAction('${a.key}')">${a.label}</button>`).join("")}</div>
           <div class="filters">
             <select id="mdTipo"><option>Todos</option><option>Empleado</option><option>Surveyor</option><option>Cliente</option><option>Proveedor</option><option>Servicio</option></select>
@@ -827,7 +827,7 @@ def som_web_home() -> HTMLResponse:
       selectedMasterView = catalog.master_data_views.find(v => v.key === key);
       const ws = $("masterWorkspace");
       ws.classList.remove("hidden");
-      ws.innerHTML = `<div class="panel-head"><h2>${selectedMasterView.label}</h2><span class="muted">Cargando...</span></div>`;
+      ws.innerHTML = `<div class="panel-head"><h2>${selectedMasterView.label}</h2></div>`;
       if (key === "bank_accounts") {
         openBankAccounts();
         return;
@@ -926,7 +926,7 @@ def som_web_home() -> HTMLResponse:
       const ws = $("masterWorkspace");
       ws.classList.remove("hidden");
       if (editing) {
-        ws.innerHTML = `<div class="panel-head"><h2>${mode === "view" ? "Ver" : "Editar"} ${config.title}</h2><span class="muted">Consultando GET...</span></div>`;
+        ws.innerHTML = `<div class="panel-head"><h2>${mode === "view" ? "Ver" : "Editar"} ${config.title}</h2></div>`;
         const code = rowValue(row, config.codeKey);
         try {
           row = await getJSON(`${config.endpoint}/${encodeURIComponent(code)}`);
@@ -936,7 +936,7 @@ def som_web_home() -> HTMLResponse:
         }
       }
       const readonly = mode === "view";
-      ws.innerHTML = `<div class="panel-head"><h2>${editing ? "Editar" : "Agregar"} ${config.title}</h2><span class="muted">${editing ? "PUT" : "POST"} conectado a DB</span></div>
+      ws.innerHTML = `<div class="panel-head"><h2>${editing ? "Editar" : "Agregar"} ${config.title}</h2></div>
         <div class="form-grid">${config.fields.map(f => masterFieldHtml(f, row)).join("")}</div>
         <div class="md-actions">
           ${readonly ? "" : `<button class="green" onclick="saveMasterRecord('${key}', ${editing ? "true" : "false"})">Guardar</button>`}
@@ -1010,7 +1010,7 @@ def som_web_home() -> HTMLResponse:
     function bankForm(row=null) {
       const editing = !!row;
       const val = key => esc(row?.[key] ?? "");
-      $("masterWorkspace").innerHTML = `<div class="panel-head"><h2>${editing ? "Editar" : "Agregar"} dato bancario</h2><span class="muted">${editing ? "PUT" : "POST"} protegido</span></div>
+      $("masterWorkspace").innerHTML = `<div class="panel-head"><h2>${editing ? "Editar" : "Agregar"} dato bancario</h2></div>
         <div class="form-grid">
           <label>Banco<input id="bank_bank_name" value="${val("bank_name")}" required /></label>
           <label>Moneda<select id="bank_currency"><option>CRC</option><option>USD</option><option>EUR</option></select></label>
@@ -1043,7 +1043,7 @@ def som_web_home() -> HTMLResponse:
       const ws = $("masterWorkspace");
       ws.classList.remove("hidden");
       if (!bankAccessToken) {
-        ws.innerHTML = `<div class="panel-head"><h2>Datos bancarios</h2><span class="muted">Revalidación requerida</span></div>
+        ws.innerHTML = `<div class="panel-head"><h2>Datos bancarios</h2></div>
           <div class="form-grid">
             <label>Código Microsoft Authenticator<input id="bankTotp" inputmode="numeric" autocomplete="one-time-code" placeholder="000000" /></label>
           </div>
@@ -1069,7 +1069,7 @@ def som_web_home() -> HTMLResponse:
     async function loadBankAccounts() {
       const ws = $("masterWorkspace");
       ws.classList.remove("hidden");
-      ws.innerHTML = `<div class="panel-head"><h2>Datos bancarios</h2><span class="muted">Consultando GET protegido...</span></div>`;
+      ws.innerHTML = `<div class="panel-head"><h2>Datos bancarios</h2></div>`;
       try {
         const payload = await getJSON("/master-data/bank-accounts", { "X-Bank-Access-Token":bankAccessToken });
         bankRows = rowsFromPayload(payload);
@@ -1078,7 +1078,7 @@ def som_web_home() -> HTMLResponse:
           <div class="table-wrap"><table><thead><tr>${cols.map(c => `<th>${esc(c)}</th>`).join("")}<th>Acción</th></tr></thead><tbody>${bankRows.map((row, i) => `<tr>${cols.map(c => `<td>${esc(row[c])}</td>`).join("")}<td><div class="toolbar"><button class="secondary" onclick="viewBankAccount(${i})">Ver</button><button onclick="bankForm(bankRows[${i}])">Editar</button><a href="${bankDownloadLink(row, "ES")}" target="_blank"><button class="green">PDF ES</button></a><a href="${bankDownloadLink(row, "EN")}" target="_blank"><button class="secondary">PDF EN</button></a><button class="brown" onclick="deleteBankAccount(${row.id})">Eliminar</button></div></td></tr>`).join("")}</tbody></table></div>`;
       } catch (err) {
         bankAccessToken = "";
-        ws.innerHTML = `<div class="panel-head"><h2>Datos bancarios</h2><span class="muted">Revalidación requerida</span></div><div class="status error">${esc(err.message)}</div><div class="md-actions"><button onclick="openBankAccounts()">Revalidar</button></div>`;
+        ws.innerHTML = `<div class="panel-head"><h2>Datos bancarios</h2></div><div class="status error">${esc(err.message)}</div><div class="md-actions"><button onclick="openBankAccounts()">Revalidar</button></div>`;
       }
     }
     function viewBankAccount(index) {
@@ -1119,7 +1119,7 @@ def som_web_home() -> HTMLResponse:
     async function openCompanyFiscalForm() {
       const ws = $("masterWorkspace");
       ws.classList.remove("hidden");
-      ws.innerHTML = `<div class="panel-head"><h2>Datos fiscales</h2><span class="muted">Consultando GET...</span></div>`;
+      ws.innerHTML = `<div class="panel-head"><h2>Datos fiscales</h2></div>`;
       try {
         const row = await getJSON("/companies/current");
         currentRows = [row];
@@ -1129,7 +1129,7 @@ def som_web_home() -> HTMLResponse:
       }
     }
     function renderComingSoon(mod) {
-      $("content").innerHTML = `<div class="card panel"><div class="panel-head"><h2>${mod.title}</h2><span class="muted">Siguiente etapa</span></div><div class="status">Esta sección queda en navegación web. Primero estamos replicando Master Data de forma quirúrgica; luego seguimos con ${mod.title}.</div></div>`;
+      $("content").innerHTML = `<div class="card panel"><div class="panel-head"><h2>${mod.title}</h2></div><div class="status">Seleccione una opción del módulo para continuar.</div></div>`;
     }
     $("loginBtn").onclick = login;
     $("totpBtn").onclick = validateTotp;
