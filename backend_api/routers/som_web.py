@@ -17,7 +17,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20260911-masterdata-clean-copy-1"
+_ASSET_VERSION = "20260911-require-auth-on-load-1"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Servicios, facturación, CxC e informes desde agosto en adelante."},
@@ -370,7 +370,8 @@ def som_web_home() -> HTMLResponse:
     const SESSION_KEY = "somWebSession";
     const PASSKEY_KEY = "somWebPasskey";
     const SAVED_LOGIN_KEY = "somWebSavedLogin";
-    let session = JSON.parse(localStorage.getItem(SESSION_KEY) || "null");
+    const rememberedSession = JSON.parse(localStorage.getItem(SESSION_KEY) || "null");
+    let session = null;
     let pendingUser = null;
     let pendingAction = null;
     let catalog = { modules:[], master_data_actions:[], master_data_views:[] };
@@ -564,11 +565,13 @@ def som_web_home() -> HTMLResponse:
         $("year").appendChild(option);
       }
       const savedLogin = JSON.parse(localStorage.getItem(SAVED_LOGIN_KEY) || "null");
-      if (savedLogin) {
-        $("user").value = savedLogin.usuario || "";
-        $("loginCompany").value = savedLogin.company || "MSL-CR";
+      const rememberedLogin = savedLogin || (rememberedSession ? { usuario:rememberedSession.usuario, company:rememberedSession.company } : null);
+      if (rememberedLogin) {
+        $("user").value = rememberedLogin.usuario || "";
+        $("loginCompany").value = rememberedLogin.company || "MSL-CR";
         $("rememberDevice").checked = true;
       }
+      localStorage.removeItem(SESSION_KEY);
       $("bioBtn").disabled = !window.PublicKeyCredential || !localStorage.getItem(PASSKEY_KEY);
     }
     async function loadCatalog() {
@@ -1162,7 +1165,7 @@ def som_web_home() -> HTMLResponse:
     $("companyTop").onchange = () => changeCompany($("companyTop").value);
     $("year").onchange = refreshSummary;
     bootSelectors();
-    loadCatalog().then(() => session ? showApp() : showLogin()).catch(showLogin);
+    loadCatalog().then(showLogin).catch(showLogin);
   </script>
 </body>
 </html>"""
