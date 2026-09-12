@@ -17,7 +17,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20260911-masterdata-kpis-crud-1"
+_ASSET_VERSION = "20260911-hello-company-1"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Servicios, facturación, CxC e informes desde agosto en adelante."},
@@ -343,6 +343,7 @@ def som_web_home() -> HTMLResponse:
           <div id="pageSubtitle" class="muted">Servicios, facturación, CxC e informes.</div>
         </div>
         <div class="toolbar">
+          <select id="companyTop"></select>
           <select id="year"></select>
           <button id="refresh">Actualizar</button>
         </div>
@@ -510,12 +511,15 @@ def som_web_home() -> HTMLResponse:
     const kpiValue = item => item?.format === "money" ? money(item.value) : intFmt.format(Number(item?.value || 0));
     const headers = (extra={}) => ({
       "Content-Type":"application/json",
-      "X-Company-Code": $("company")?.value || session?.company || "MSL-CR",
+      "X-Company-Code": selectedCompany(),
       "X-User": session?.usuario || "",
       "X-Role": session?.rol || "",
       "X-User-Role": session?.rol || "",
       ...extra
     });
+    function selectedCompany() {
+      return $("companyTop")?.value || $("company")?.value || session?.company || "MSL-CR";
+    }
 
     async function getJSON(path, extraHeaders={}) {
       const resp = await fetch(path, { headers:headers(extraHeaders) });
@@ -552,6 +556,7 @@ def som_web_home() -> HTMLResponse:
     function bootSelectors() {
       fillCompanySelect($("loginCompany"));
       fillCompanySelect($("company"));
+      fillCompanySelect($("companyTop"));
       for (let y = {year}; y >= {year} - 4; y--) {
         const option = document.createElement("option");
         option.value = String(y);
@@ -587,6 +592,7 @@ def som_web_home() -> HTMLResponse:
       $("appView").classList.remove("hidden");
       $("sessionText").textContent = `${session.usuario} · ${session.rol}`;
       $("company").value = session.company || "MSL-CR";
+      $("companyTop").value = session.company || "MSL-CR";
       renderNav();
       selectModule(currentModule);
     }
@@ -647,7 +653,7 @@ def som_web_home() -> HTMLResponse:
             rp: { name:"ERP-SOM Web" },
             user: { id:userId, name:session.usuario, displayName:session.usuario },
             pubKeyCredParams:[{ type:"public-key", alg:-7 }, { type:"public-key", alg:-257 }],
-            authenticatorSelection:{ userVerification:"preferred" },
+            authenticatorSelection:{ userVerification:"required" },
             timeout:60000
           }
         });
@@ -663,7 +669,7 @@ def som_web_home() -> HTMLResponse:
           publicKey: {
             challenge:crypto.getRandomValues(new Uint8Array(32)),
             allowCredentials:[{ type:"public-key", id:bytesFromBase64url(saved.id) }],
-            userVerification:"preferred",
+            userVerification:"required",
             timeout:60000
           }
         });
@@ -687,7 +693,7 @@ def som_web_home() -> HTMLResponse:
       });
     }
     function setBrand() {
-      $("brandLogo").src = ($("company").value || "").startsWith("MCI") ? "/som/logo/mci?v={asset_version}" : "/som/logo/msl?v={asset_version}";
+      $("brandLogo").src = selectedCompany().startsWith("MCI") ? "/som/logo/mci?v={asset_version}" : "/som/logo/msl?v={asset_version}";
     }
     function selectModule(code) {
       currentModule = code;
@@ -854,7 +860,7 @@ def som_web_home() -> HTMLResponse:
       return `<div class="table-wrap"><table><thead><tr>${cols.map(k => `<th>${esc(k)}</th>`).join("")}<th>Acción</th></tr></thead><tbody>${rows.slice(0,100).map((row, i) => `<tr>${cols.map(k => `<td>${esc(row[k])}</td>`).join("")}<td><div class="toolbar"><button class="secondary" onclick="openMasterForm('${viewKey}', ${i}, 'view')">Ver</button><button onclick="openMasterForm('${viewKey}', ${i}, 'edit')">Editar</button><button class="brown" onclick="deleteMasterRecord('${viewKey}', ${i})">Inhabilitar</button></div></td></tr>`).join("")}</tbody></table></div>`;
     }
     function codePrefix() {
-      return (($("company")?.value || session?.company || "MSL-CR").startsWith("MCI")) ? "MCI" : "MSL";
+      return selectedCompany().startsWith("MCI") ? "MCI" : "MSL";
     }
     async function nextCode(config) {
       if (!config.ultimo) return "";
@@ -894,7 +900,7 @@ def som_web_home() -> HTMLResponse:
         if (!el) return;
         payload[key] = type === "checkbox" ? el.checked : el.value;
       });
-      payload.company_code = $("company")?.value || session?.company || "MSL-CR";
+      payload.company_code = selectedCompany();
       return normalizePayload(currentMasterKey || "", payload);
     }
     function masterFieldHtml(field, row) {
@@ -958,7 +964,7 @@ def som_web_home() -> HTMLResponse:
       try {
         const payload = buildMasterPayload(config);
         const path = editing ? config.update : config.add;
-        const resolvedPath = path.replace("{company}", encodeURIComponent($("company")?.value || session?.company || "MSL-CR"));
+        const resolvedPath = path.replace("{company}", encodeURIComponent(selectedCompany()));
         const data = await sendJSON(editing ? "PUT" : "POST", resolvedPath, payload);
         msg.textContent = data.msg || "Guardado correctamente.";
         await openMasterView(key);
@@ -1027,8 +1033,8 @@ def som_web_home() -> HTMLResponse:
         request_user:session?.usuario || "",
         request_role:session?.rol || "",
         bank_access_token:bankAccessToken,
-        company:$("company")?.value || session?.company || "MSL-CR",
-        company_name:($("company")?.selectedOptions?.[0]?.textContent || "").split("|").slice(1).join("|").trim(),
+        company:selectedCompany(),
+        company_name:(($("companyTop")?.selectedOptions?.[0] || $("company")?.selectedOptions?.[0])?.textContent || "").split("|").slice(1).join("|").trim(),
         language
       });
       return `/master-data/bank-accounts/${encodeURIComponent(row.id)}/letter-download.pdf?${params.toString()}`;
@@ -1131,7 +1137,29 @@ def som_web_home() -> HTMLResponse:
     $("backLogin").onclick = showLogin;
     $("logout").onclick = () => { localStorage.removeItem(SESSION_KEY); session=null; showLogin(); };
     $("refresh").onclick = () => { refreshSummary(); if (currentModule === "master_data") renderMasterData(); };
-    $("company").onchange = () => { if (session) { session.company = $("company").value; localStorage.setItem(SESSION_KEY, JSON.stringify(session)); const saved = JSON.parse(localStorage.getItem(PASSKEY_KEY) || "null"); if (saved?.session) { saved.session.company = session.company; saved.company = session.company; localStorage.setItem(PASSKEY_KEY, JSON.stringify(saved)); } } setBrand(); refreshSummary(); if (currentModule === "master_data") renderMasterData(); };
+    function changeCompany(value) {
+      if (!value) return;
+      if ($("company")) $("company").value = value;
+      if ($("companyTop")) $("companyTop").value = value;
+      bankAccessToken = "";
+      bankRows = [];
+      if (session) {
+        session.company = value;
+        localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+        const saved = JSON.parse(localStorage.getItem(PASSKEY_KEY) || "null");
+        if (saved?.session) {
+          saved.session.company = value;
+          saved.company = value;
+          localStorage.setItem(PASSKEY_KEY, JSON.stringify(saved));
+        }
+        localStorage.setItem(SAVED_LOGIN_KEY, JSON.stringify({ usuario:session.usuario, company:value }));
+      }
+      setBrand();
+      refreshSummary();
+      if (currentModule === "master_data") renderMasterData();
+    }
+    $("company").onchange = () => changeCompany($("company").value);
+    $("companyTop").onchange = () => changeCompany($("companyTop").value);
     $("year").onchange = refreshSummary;
     bootSelectors();
     loadCatalog().then(() => session ? showApp() : showLogin()).catch(showLogin);
