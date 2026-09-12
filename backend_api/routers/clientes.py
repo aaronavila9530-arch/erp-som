@@ -66,9 +66,11 @@ def require_permission(module: str, action: str):
 @router.post("/add")
 def add_cliente(data: dict, x_company_code: str | None = Header(None, alias="X-Company-Code")):
     _ensure_tenant_schema()
+    data = dict(data or {})
     company = company_code(data.get("company_code"), x_company_code)
     data = set_payload_company(data, company)
     data["FechaDePago"] = _normalize_fecha_pago(data.get("FechaDePago"))
+    data.setdefault("ActividadEconomica", data.get("actividad_economica") or "")
     sql = """
         INSERT INTO cliente (
             company_code,
@@ -99,7 +101,7 @@ def add_cliente(data: dict, x_company_code: str | None = Header(None, alias="X-C
             %(Correo)s,
             %(Telefono)s,
             %(CedulaJuridicaVAT)s,
-            '' , -- valor temporal
+            %(ActividadEconomica)s,
             %(Comentarios)s,
             %(Provincia)s,
             %(Canton)s,
@@ -268,9 +270,11 @@ def get_cliente(codigo: str, x_company_code: str | None = Header(None, alias="X-
 @router.put("/update")
 def update_cliente(data: dict, x_company_code: str | None = Header(None, alias="X-Company-Code")):
     _ensure_tenant_schema()
+    data = dict(data or {})
     company = company_code(data.get("company_code"), x_company_code)
     data = set_payload_company(data, company)
     data["FechaDePago"] = _normalize_fecha_pago(data.get("FechaDePago"))
+    data.setdefault("ActividadEconomica", data.get("actividad_economica") or "")
     sql = """
         UPDATE cliente SET
             nombrejuridico = %(NombreJuridico)s,
@@ -279,6 +283,7 @@ def update_cliente(data: dict, x_company_code: str | None = Header(None, alias="
             correo = %(Correo)s,
             telefono = %(Telefono)s,
             cedulajuridicavat = %(CedulaJuridicaVAT)s,
+            actividad_economica = %(ActividadEconomica)s,
             comentarios = %(Comentarios)s,
             provincia = %(Provincia)s,
             canton = %(Canton)s,
