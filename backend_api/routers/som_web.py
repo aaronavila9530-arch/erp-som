@@ -805,7 +805,7 @@ def som_web_home() -> HTMLResponse:
       refreshSummary();
       if (code === "dashboard") renderHome();
       else if (code === "master_data") renderMasterData();
-      else if (code === "servicios") renderServicios();
+      else if (code === "servicios" || code === "servicios_op" || (mod?.title || "").toLowerCase() === "servicios") renderServicios();
       else renderComingSoon(mod);
     }
     async function refreshSummary() {
