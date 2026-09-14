@@ -61,6 +61,7 @@ class AccountingUI(tk.Frame):
 
         # Estado inicial: periodo único
         self._toggle_period_mode()
+        self.after(250, self._on_search)
         self._outlook_last_auto_run = 0
         self._outlook_job_running = False
         self.after(60000, self._outlook_auto_tick)
