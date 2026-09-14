@@ -20,6 +20,7 @@ from api_client import (
 
 
 ACCOUNT="gastos@mslogisticsgroup.com"
+MCI_ACCOUNT="operations@xtravon.com"
 CARD_ACCOUNT="contabilidad@mslogisticsgroup.com"
 SAFE_DEFAULT_FOLDER="xml gastos electronicos"
 DEFAULT_FOLDER="xml gastos electrónicos"
@@ -27,6 +28,18 @@ DEFAULT_RECEIVED_SUBFOLDER="FE recibidas"
 MAX_ATTACHMENT_BYTES=20*1024*1024
 MAX_ZIP_MEMBERS=50
 STARTUP_SYNC_DELAY_SECONDS=180
+DEFAULT_FISCAL_MAILBOXES=[
+    {
+        "company_code": "MSL-CR",
+        "account": ACCOUNT,
+        "folder": f"{SAFE_DEFAULT_FOLDER}/{DEFAULT_RECEIVED_SUBFOLDER}",
+    },
+    {
+        "company_code": "MCI-CR",
+        "account": MCI_ACCOUNT,
+        "folder": DEFAULT_RECEIVED_SUBFOLDER,
+    },
+]
 _scan_lock=threading.Lock()
 _background_lock=threading.Lock()
 _background_started=False
@@ -47,6 +60,7 @@ def load_config():
         "interval_minutes": 15,
         "account": ACCOUNT,
         "folder": f"{SAFE_DEFAULT_FOLDER}/{DEFAULT_RECEIVED_SUBFOLDER}",
+        "fiscal_mailboxes": DEFAULT_FISCAL_MAILBOXES,
         "card_account": CARD_ACCOUNT,
         "batch_size": 50,
         "process_corporate_cards": True,
@@ -56,6 +70,27 @@ def load_config():
         saved=json.loads(_config_path().read_text(encoding="utf-8")); default.update(saved if isinstance(saved,dict) else {})
     except Exception: pass
     default["folder"]=_repair_mojibake(default.get("folder") or SAFE_DEFAULT_FOLDER)
+    mailboxes=default.get("fiscal_mailboxes")
+    if not isinstance(mailboxes,list) or not mailboxes:
+        mailboxes=DEFAULT_FISCAL_MAILBOXES
+    normalized_mailboxes=[]
+    seen=set()
+    for item in mailboxes:
+        if not isinstance(item,dict):
+            continue
+        account=str(item.get("account") or "").strip()
+        company=str(item.get("company_code") or "").strip() or "MSL-CR"
+        folder=_repair_mojibake(item.get("folder") or DEFAULT_RECEIVED_SUBFOLDER)
+        key=(company.upper(),account.lower(),_normalized(folder))
+        if account and key not in seen:
+            seen.add(key)
+            normalized_mailboxes.append({"company_code":company.upper(),"account":account,"folder":folder})
+    for item in DEFAULT_FISCAL_MAILBOXES:
+        key=(item["company_code"].upper(),item["account"].lower(),_normalized(item["folder"]))
+        if key not in seen:
+            seen.add(key)
+            normalized_mailboxes.append(dict(item))
+    default["fiscal_mailboxes"]=normalized_mailboxes
     return default
 
 
@@ -208,10 +243,11 @@ def _prefer_received_subfolder(folder, requested_name):
 def _find_folder(namespace,account,folder_name):
     target_store=None
     account_norm=_normalized(account)
+    legacy_gastos=account_norm==_normalized(ACCOUNT)
     for index in range(1,namespace.Stores.Count+1):
         store=namespace.Stores.Item(index)
         store_name=_normalized(store.DisplayName)
-        if store_name==account_norm or store_name.startswith("gastos@") or account_norm in store_name:
+        if store_name==account_norm or account_norm in store_name or (legacy_gastos and store_name.startswith("gastos@")):
             target_store=store; break
     if target_store is None: raise RuntimeError(f"Outlook no contiene el buzón {account}")
     root=target_store.GetRootFolder()
@@ -251,8 +287,29 @@ def inspect_outlook():
     try:
         namespace=win32com.client.Dispatch("Outlook.Application").GetNamespace("MAPI")
         config=load_config()
-        store,folder=_find_folder(namespace,config["account"],config["folder"])
-        return {"connected":True,"store":str(store),"folder":str(folder.Name),"folder_path":str(getattr(folder,"FolderPath",folder.Name)),"message_count":int(folder.Items.Count)}
+        fiscal=[]
+        for mailbox in config.get("fiscal_mailboxes") or [{"company_code":"MSL-CR","account":config["account"],"folder":config["folder"]}]:
+            try:
+                store,folder=_find_folder(namespace,mailbox["account"],mailbox["folder"])
+                fiscal.append({
+                    "connected": True,
+                    "company_code": mailbox.get("company_code") or "MSL-CR",
+                    "store": str(store),
+                    "account": mailbox.get("account"),
+                    "folder": str(folder.Name),
+                    "folder_path": str(getattr(folder,"FolderPath",folder.Name)),
+                    "message_count": int(folder.Items.Count),
+                })
+            except Exception as exc:
+                fiscal.append({
+                    "connected": False,
+                    "company_code": mailbox.get("company_code") or "MSL-CR",
+                    "account": mailbox.get("account"),
+                    "folder": mailbox.get("folder"),
+                    "error": str(exc),
+                })
+        primary=next((item for item in fiscal if item.get("connected")), fiscal[0] if fiscal else {})
+        return {"connected":any(item.get("connected") for item in fiscal),"store":primary.get("store",""),"folder":primary.get("folder",""),"folder_path":primary.get("folder_path",""),"message_count":primary.get("message_count",0),"fiscal_mailboxes":fiscal}
     finally: pythoncom.CoUninitialize()
 
 
@@ -415,63 +472,77 @@ def scan_and_import(max_messages=None,progress=None, process_corporate_cards=Non
     pythoncom.CoInitialize()
     try:
         namespace=win32com.client.Dispatch("Outlook.Application").GetNamespace("MAPI")
-        store,folder=_find_folder(namespace,config["account"],config["folder"]); items=folder.Items; items.Sort("[ReceivedTime]",True)
         with tempfile.TemporaryDirectory(prefix="erp_som_outlook_") as temp_dir:
-            scanned=0
-            for index in range(1,items.Count+1):
-                if summary["messages"]>=limit or scanned>=5000: break
-                scanned+=1; message=items.Item(index)
-                try: attachment_count=int(message.Attachments.Count)
-                except Exception: continue
-                pending=[]
-                for attachment_index in range(1,attachment_count+1):
-                    attachment=message.Attachments.Item(attachment_index); filename=str(attachment.FileName or "")
-                    subject=str(getattr(message,"Subject","") or "")
-                    if not filename.lower().endswith((".xml",".zip")) and not (process_corporate_cards and _is_corporate_card_pdf(filename,subject)): continue
-                    key=hashlib.sha256(f"{message.EntryID}|{attachment_index}|{filename}|{getattr(attachment,'Size',0)}".encode()).hexdigest()
-                    if state.get(key,{}).get("status") in {"IMPORTED","DUPLICATE"}: continue
-                    pending.append((attachment,key,filename))
-                if not pending: continue
-                summary["messages"]+=1
-                subject=str(getattr(message,"Subject","") or ""); received=str(getattr(message,"ReceivedTime","") or "")
-                for attachment,key,filename in pending:
-                    summary["attachments"]+=1
-                    try:
-                        safe=hashlib.sha256(key.encode()).hexdigest()[:12]+"_"+Path(filename).name
-                        attachment_path=Path(temp_dir)/safe; attachment.SaveAsFile(str(attachment_path))
-                        if process_corporate_cards and _is_corporate_card_pdf(filename,subject):
-                            summary["card_pdfs"]+=1
-                            try:
-                                response=post_corporate_card_statement_pdf_api(str(attachment_path))
-                                if response.get("status")=="exists":
-                                    summary["card_duplicates"]+=1; status="DUPLICATE"; detail="Estado BAC ya importado"
-                                else:
-                                    summary["card_imported"]+=1; status="IMPORTED"; detail=f"Estado BAC {response.get('statement',{}).get('statement_period','')} movimientos {response.get('transactions_inserted',0)}"
-                            except Exception as exc:
-                                summary["card_errors"]+=1; summary["errors"]+=1; status="ERROR"; detail=str(exc)
-                            results.append({"received":received,"subject":subject,"filename":filename,"status":status,"detail":detail})
-                            state[key]={"status":status,"filename":filename,"updated_at":received}
-                            continue
-                        xml_paths=_xml_files(filename,attachment_path,temp_dir)
-                        if not xml_paths: raise ValueError("El ZIP no contiene XML")
-                        for xml_path in xml_paths:
-                            summary["xml"]+=1
-                            try:
-                                response=upload_tax_response_auto_api(str(xml_path)) if _xml_kind(xml_path)=="HACIENDA" else upload_tax_xml_api(str(xml_path),"PURCHASE","OUTLOOK_LOCAL")
-                                summary["imported"]+=1; status="IMPORTED"; detail=f"Registro fiscal {response.get('id')}"
-                            except Exception as exc:
-                                text=str(exc)
-                                if "duplicado" in text.lower() or "409" in text:
-                                    summary["duplicates"]+=1; status="DUPLICATE"; detail=text
-                                else:
-                                    summary["errors"]+=1; status="ERROR"; detail=text
-                            results.append({"received":received,"subject":subject,"filename":xml_path.name,"status":status,"detail":detail})
-                            state[key]={"status":status,"filename":filename,"updated_at":received}
-                    except Exception as exc:
-                        summary["errors"]+=1; results.append({"received":received,"subject":subject,"filename":filename,"status":"ERROR","detail":str(exc)})
-                        state[key]={"status":"ERROR","filename":filename,"updated_at":received}
-                _save_state(state)
-                if progress: progress(dict(summary))
+            fiscal_mailboxes=config.get("fiscal_mailboxes") or [{"company_code":"MSL-CR","account":config["account"],"folder":config["folder"]}]
+            for mailbox in fiscal_mailboxes:
+                company_code=str(mailbox.get("company_code") or "MSL-CR").strip().upper()
+                account=str(mailbox.get("account") or config["account"]).strip()
+                folder_name=str(mailbox.get("folder") or config["folder"]).strip()
+                try:
+                    store,folder=_find_folder(namespace,account,folder_name)
+                    items=folder.Items; items.Sort("[ReceivedTime]",True)
+                except Exception as exc:
+                    summary["errors"]+=1
+                    results.append({"received":"","subject":"Correo fiscal Outlook","filename":account,"status":"ERROR","detail":str(exc)})
+                    continue
+                scanned=0
+                imported_messages=0
+                for index in range(1,items.Count+1):
+                    if imported_messages>=limit or scanned>=5000: break
+                    scanned+=1; message=items.Item(index)
+                    try: attachment_count=int(message.Attachments.Count)
+                    except Exception: continue
+                    pending=[]
+                    for attachment_index in range(1,attachment_count+1):
+                        attachment=message.Attachments.Item(attachment_index); filename=str(attachment.FileName or "")
+                        subject=str(getattr(message,"Subject","") or "")
+                        if not filename.lower().endswith((".xml",".zip")) and not (process_corporate_cards and _is_corporate_card_pdf(filename,subject)): continue
+                        key=hashlib.sha256(f"{company_code}|{account}|{message.EntryID}|{attachment_index}|{filename}|{getattr(attachment,'Size',0)}".encode()).hexdigest()
+                        if state.get(key,{}).get("status") in {"IMPORTED","DUPLICATE"}: continue
+                        pending.append((attachment,key,filename))
+                    if not pending: continue
+                    summary["messages"]+=1; imported_messages+=1
+                    subject=str(getattr(message,"Subject","") or ""); received=str(getattr(message,"ReceivedTime","") or "")
+                    for attachment,key,filename in pending:
+                        summary["attachments"]+=1
+                        try:
+                            safe=hashlib.sha256(key.encode()).hexdigest()[:12]+"_"+Path(filename).name
+                            attachment_path=Path(temp_dir)/safe; attachment.SaveAsFile(str(attachment_path))
+                            if process_corporate_cards and _is_corporate_card_pdf(filename,subject):
+                                summary["card_pdfs"]+=1
+                                try:
+                                    response=post_corporate_card_statement_pdf_api(str(attachment_path))
+                                    if response.get("status")=="exists":
+                                        summary["card_duplicates"]+=1; status="DUPLICATE"; detail="Estado BAC ya importado"
+                                    else:
+                                        summary["card_imported"]+=1; status="IMPORTED"; detail=f"Estado BAC {response.get('statement',{}).get('statement_period','')} movimientos {response.get('transactions_inserted',0)}"
+                                except Exception as exc:
+                                    summary["card_errors"]+=1; summary["errors"]+=1; status="ERROR"; detail=str(exc)
+                                results.append({"received":received,"subject":subject,"filename":filename,"status":status,"detail":detail,"company_code":company_code,"account":account})
+                                state[key]={"status":status,"filename":filename,"updated_at":received,"company_code":company_code,"account":account}
+                                continue
+                            xml_paths=_xml_files(filename,attachment_path,temp_dir)
+                            if not xml_paths: raise ValueError("El ZIP no contiene XML")
+                            for xml_path in xml_paths:
+                                summary["xml"]+=1
+                                try:
+                                    response=upload_tax_response_auto_api(str(xml_path),company_code=company_code) if _xml_kind(xml_path)=="HACIENDA" else upload_tax_xml_api(str(xml_path),"PURCHASE","OUTLOOK_LOCAL",company_code=company_code)
+                                    summary["imported"]+=1; status="IMPORTED"; detail=f"Registro fiscal {response.get('id')}"
+                                except Exception as exc:
+                                    text=str(exc)
+                                    if "duplicado" in text.lower() or "409" in text:
+                                        summary["duplicates"]+=1; status="DUPLICATE"; detail=text
+                                    else:
+                                        summary["errors"]+=1; status="ERROR"; detail=text
+                                results.append({"received":received,"subject":subject,"filename":xml_path.name,"status":status,"detail":detail,"company_code":company_code,"account":account})
+                                state[key]={"status":status,"filename":filename,"updated_at":received,"company_code":company_code,"account":account}
+                        except Exception as exc:
+                            summary["errors"]+=1; results.append({"received":received,"subject":subject,"filename":filename,"status":"ERROR","detail":str(exc),"company_code":company_code,"account":account})
+                            state[key]={"status":"ERROR","filename":filename,"updated_at":received,"company_code":company_code,"account":account}
+                    _save_state(state)
+                    if progress: progress(dict(summary))
+                summary["store"]=str(store); summary["folder"]=str(folder.Name)
+                summary["last_mailbox"]={"company_code":company_code,"account":account,"folder":str(folder.Name)}
         if post_corporate_card_history and process_corporate_cards:
             try:
                 history=post_corporate_card_history_api({
@@ -483,7 +554,6 @@ def scan_and_import(max_messages=None,progress=None, process_corporate_cards=Non
             except Exception as exc:
                 summary["card_errors"]+=1; summary["errors"]+=1
                 results.append({"received":"","subject":"Tarjetas corporativas","filename":"historial","status":"ERROR","detail":str(exc)})
-        summary["store"]=str(store); summary["folder"]=str(folder.Name)
         _update_runtime_status(last_finished_at=time.strftime("%Y-%m-%d %H:%M:%S"),last_summary={k:v for k,v in summary.items() if k!="results"},last_error=None)
         return summary
     except Exception as exc:

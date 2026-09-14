@@ -2800,10 +2800,11 @@ def get_tax_iva_api(period):
     return r.json()
 
 
-def upload_tax_xml_api(path, direction, user="ERP_USER"):
+def upload_tax_xml_api(path, direction, user="ERP_USER", company_code=None):
+    company = company_code or get_company_code()
     with open(path, "rb") as fh:
         r = api_request("POST", f"{BASE_URL}/accounting/tax/documents/upload-xml",
-                        data={"direction": direction, "user": user, "company_code": get_company_code()},
+                        data={"direction": direction, "user": user, "company_code": company},
                         files={"file": (path.split("\\")[-1], fh, "application/xml")}, timeout=90)
     raise_for_status_with_detail(r)
     return r.json()
@@ -2817,10 +2818,11 @@ def upload_tax_hacienda_response_api(document_id, path):
     return r.json()
 
 
-def upload_tax_response_auto_api(path):
+def upload_tax_response_auto_api(path, company_code=None):
+    company = company_code or get_company_code()
     with open(path,"rb") as fh:
         r=api_request("POST",f"{BASE_URL}/accounting/tax/documents/import-hacienda-response",
-                      data={"company_code": get_company_code()},
+                      data={"company_code": company},
                       files={"file":(path.split("\\")[-1],fh,"application/xml")},timeout=90)
     raise_for_status_with_detail(r); return r.json()
 
