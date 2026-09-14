@@ -593,7 +593,7 @@ def sync_payroll_to_accounting(conn):
         _ensure_account("2.1.05.01", "Obligaciones patronales por pagar-CCSS", 4, "LIABILITY", "2.1.05")
 
         cur.execute("""
-            SELECT id, usuario, year, month, salario_bruto, creado_en
+            SELECT id, usuario, year, month, salario_bruto, monto_horas_extra, creado_en
             FROM payroll_runs
             ORDER BY id
         """)
@@ -615,9 +615,14 @@ def sync_payroll_to_accounting(conn):
 
             if is_quincenal:
                 monthly_gross = gross * Decimal("2") if _is_half_run(gross, employee_salary) else gross
-                half_gross = _money(monthly_gross / Decimal("2"))
                 half_tax = _money(_monthly_income_tax(monthly_gross) / Decimal("2"))
                 total_net_salary = Decimal("0.00")
+                monthly_extra = _money(payroll.get("monto_horas_extra"))
+                base_monthly = _money(monthly_gross - monthly_extra)
+                if base_monthly <= 0:
+                    base_monthly = monthly_gross
+                    monthly_extra = Decimal("0.00")
+                half_base = _money(base_monthly / Decimal("2"))
 
                 for payroll_origin, payment_origin, day, label in (
                     ("PAYROLL", "PAYROLL_PAYMENT", 15, "Quincena 1"),
@@ -625,11 +630,12 @@ def sync_payroll_to_accounting(conn):
                 ):
                     piece_detail = f"{detail} - {label}"
                     entry_date = _entry_date(payroll["year"], payroll["month"], day)
+                    period_gross = half_base + (monthly_extra if label == "Quincena 2" else Decimal("0.00"))
                     lines, net_salary = _payroll_lines(
-                        half_gross,
+                        period_gross,
                         piece_detail,
-                        Decimal("0.0517"),
-                        Decimal("0.0850"),
+                        Decimal("0.1083"),
+                        Decimal("0.1700"),
                         half_tax,
                     )
                     total_net_salary += net_salary

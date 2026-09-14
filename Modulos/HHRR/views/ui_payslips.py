@@ -1,9 +1,10 @@
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
+from tkinter import ttk, messagebox, filedialog, simpledialog
 
 from api_client import (
     get_payslips_api,
-    hr_download_payslip_pdf
+    hr_download_payslip_pdf,
+    hr_update_payroll_run,
 )
 
 
@@ -58,12 +59,14 @@ class VistaColillasEmployee(ttk.Frame):
 
         ttk.Button(filtros, text="Descargar colilla", command=self._descargar_colilla)\
             .grid(row=1, column=4, padx=10)
+        ttk.Button(filtros, text="Corregir bruto", command=self._corregir_bruto)\
+            .grid(row=1, column=5, padx=10)
 
         # ================= TABLA =================
         table_frame = ttk.Frame(self)
         table_frame.pack(fill="both", expand=True, padx=10, pady=5)
 
-        columns = ("id", "usuario", "year", "month", "salario_neto", "generado_por")
+        columns = ("id", "usuario", "year", "month", "salario_bruto", "salario_neto", "generado_por")
 
         self.table = ttk.Treeview(table_frame, columns=columns, show="headings")
 
@@ -126,6 +129,11 @@ class VistaColillasEmployee(ttk.Frame):
                 salario_fmt = f"{salario:,.2f}"
             except Exception:
                 salario_fmt = "0.00"
+            try:
+                bruto = float(r.get("salario_bruto", 0))
+                bruto_fmt = f"{bruto:,.2f}"
+            except Exception:
+                bruto_fmt = "0.00"
 
             self.table.insert(
                 "",
@@ -135,10 +143,43 @@ class VistaColillasEmployee(ttk.Frame):
                     r.get("usuario"),
                     r.get("year"),
                     r.get("month"),
+                    bruto_fmt,
                     salario_fmt,
                     r.get("generado_por")
                 )
             )
+
+    def _selected_row(self):
+        selected = self.table.selection()
+        if not selected:
+            messagebox.showwarning("Atención", "Seleccione una colilla")
+            return None
+        try:
+            return self.data[self.table.index(selected[0])]
+        except Exception:
+            messagebox.showerror("Error", "No se pudo leer la fila seleccionada")
+            return None
+
+    def _corregir_bruto(self):
+        row = self._selected_row()
+        if not row:
+            return
+        current = row.get("salario_bruto") or 0
+        value = simpledialog.askfloat(
+            "Corregir salario bruto",
+            "Nuevo salario bruto mensual:",
+            initialvalue=float(current or 0),
+            minvalue=0.01,
+            parent=self,
+        )
+        if value is None:
+            return
+        try:
+            hr_update_payroll_run(row["id"], {"salario_bruto": value})
+            messagebox.showinfo("Payroll", "Salario bruto actualizado. La colilla se regenerará con este valor.")
+            self._load_data()
+        except Exception as exc:
+            messagebox.showerror("Payroll", str(exc))
 
     # =========================================================
     # FILTROS
@@ -185,17 +226,8 @@ class VistaColillasEmployee(ttk.Frame):
     # =========================================================
     def _descargar_colilla(self):
 
-        selected = self.table.selection()
-
-        if not selected:
-            messagebox.showwarning("Atención", "Seleccione una colilla")
-            return
-
-        try:
-            row_index = self.table.index(selected[0])
-            row = self.data[row_index]
-        except Exception:
-            messagebox.showerror("Error", "No se pudo leer la fila seleccionada")
+        row = self._selected_row()
+        if not row:
             return
 
         year = row.get("year")

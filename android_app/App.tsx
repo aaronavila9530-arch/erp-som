@@ -15577,19 +15577,36 @@ function ItpBiweeklyObligationsMobile({
     setRows((current) => current.filter((_, rowIndex) => rowIndex !== index));
   }
 
-  async function loadPreview() {
+  async function loadPreview(force = false) {
     setBusy(true);
     setMessage("");
     try {
       const payload = await apiRequest<Record<string, unknown>>(
-        `/invoice-to-pay/biweekly-obligations/preview?period=${encodeURIComponent(period)}&fortnight=${encodeURIComponent(fortnight)}`,
+        `/invoice-to-pay/biweekly-obligations/preview?period=${encodeURIComponent(period)}&fortnight=${encodeURIComponent(fortnight)}&force=${force ? "true" : "false"}`,
         { session }
       );
       const nextRows = payloadItems(asRecord(payload)?.rows || payload);
       setRows(nextRows);
-      setMessage(`Preview generado: ${nextRows.length} linea(s).`);
+      setMessage(`${formatValue(asRecord(payload)?.source) === "draft" ? "Borrador cargado" : "Preview generado"}: ${nextRows.length} linea(s).`);
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "No se pudo generar obligaciones quincenales.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveDraft() {
+    setBusy(true);
+    setMessage("");
+    try {
+      const payload = await apiRequest<Record<string, unknown>>("/invoice-to-pay/biweekly-obligations/save-draft", {
+        method: "POST",
+        session,
+        body: { period, fortnight: Number(fortnight), rows }
+      });
+      setMessage(`Borrador guardado. Lineas ${formatValue(payload.saved)}.`);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo guardar borrador.");
     } finally {
       setBusy(false);
     }
@@ -15616,7 +15633,7 @@ function ItpBiweeklyObligationsMobile({
         body: { period, fortnight: Number(fortnight), rows }
       });
       setMessage(`Aplicado. Lineas ${formatValue(payload.saved)} | Asientos ${formatValue(payload.posted)} | ITP ${formatValue(payload.applied)}.`);
-      await loadPreview();
+      await loadPreview(false);
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "No se pudo aplicar pagos ITP.");
     } finally {
@@ -15645,7 +15662,7 @@ function ItpBiweeklyObligationsMobile({
   }
 
   useEffect(() => {
-    loadPreview();
+    loadPreview(false);
   }, []);
 
   return (
@@ -15655,7 +15672,8 @@ function ItpBiweeklyObligationsMobile({
       <TextInput style={styles.input} value={period} onChangeText={setPeriod} placeholder="YYYY-MM" />
       <SelectField label="Quincena" value={fortnight} options={["1", "2"]} onChange={setFortnight} />
       <View style={styles.financeFilterActions}>
-        <Pressable style={styles.actionButton} onPress={loadPreview} disabled={busy}><Text style={styles.actionButtonText}>{busy ? "Procesando..." : "Generar automatico"}</Text></Pressable>
+        <Pressable style={styles.actionButton} onPress={() => loadPreview(true)} disabled={busy}><Text style={styles.actionButtonText}>{busy ? "Procesando..." : "Generar automatico"}</Text></Pressable>
+        <Pressable style={styles.modalClose} onPress={saveDraft}><Text style={styles.modalCloseText}>Guardar borrador</Text></Pressable>
         <Pressable style={styles.modalClose} onPress={exportExcel}><Text style={styles.modalCloseText}>Exportar Excel</Text></Pressable>
       </View>
       <View style={styles.financeFilterActions}>

@@ -9,6 +9,7 @@ from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from api_client import (
     get_itp_biweekly_obligations_preview_api,
     post_itp_biweekly_obligations_apply_api,
+    post_itp_biweekly_obligations_save_draft_api,
 )
 
 
@@ -73,19 +74,20 @@ class PopupObligacionesQuincenales(tk.Toplevel):
 
         header = ttk.Frame(self, padding=(10, 8))
         header.grid(row=0, column=0, sticky="ew")
-        header.columnconfigure(8, weight=1)
+        header.columnconfigure(9, weight=1)
         ttk.Label(header, text="Obligaciones quincenales", font=("Segoe UI", 15, "bold")).grid(row=0, column=0, columnspan=2, sticky="w")
         ttk.Label(header, text="Periodo").grid(row=1, column=0, sticky="w", pady=(8, 0))
         ttk.Entry(header, textvariable=self.period_var, width=10).grid(row=1, column=1, sticky="w", padx=(4, 14), pady=(8, 0))
         ttk.Label(header, text="Quincena").grid(row=1, column=2, sticky="w", pady=(8, 0))
         ttk.Combobox(header, textvariable=self.fortnight_var, values=[1, 2], state="readonly", width=5).grid(row=1, column=3, sticky="w", padx=(4, 14), pady=(8, 0))
-        ttk.Button(header, text="Generar automatico", command=self._load_preview).grid(row=1, column=4, padx=4, pady=(8, 0))
-        ttk.Button(header, text="Exportar Excel", command=self._export_excel).grid(row=1, column=5, padx=4, pady=(8, 0))
-        ttk.Button(header, text="Aplicar pagos y crear asientos", command=self._save_and_post).grid(row=1, column=6, padx=4, pady=(8, 0))
-        ttk.Button(header, text="Cerrar", command=self.destroy).grid(row=1, column=7, padx=4, pady=(8, 0))
-        ttk.Label(header, textvariable=self.total_var, font=("Segoe UI", 12, "bold")).grid(row=0, column=8, sticky="e")
-        ttk.Label(header, textvariable=self.total_usd_var, font=("Segoe UI", 11, "bold")).grid(row=1, column=8, sticky="e", padx=(0, 90))
-        ttk.Label(header, textvariable=self.count_var).grid(row=1, column=8, sticky="e")
+        ttk.Button(header, text="Generar automatico", command=lambda: self._load_preview(force=True)).grid(row=1, column=4, padx=4, pady=(8, 0))
+        ttk.Button(header, text="Guardar borrador", command=self._save_draft).grid(row=1, column=5, padx=4, pady=(8, 0))
+        ttk.Button(header, text="Exportar Excel", command=self._export_excel).grid(row=1, column=6, padx=4, pady=(8, 0))
+        ttk.Button(header, text="Aplicar pagos y crear asientos", command=self._save_and_post).grid(row=1, column=7, padx=4, pady=(8, 0))
+        ttk.Button(header, text="Cerrar", command=self.destroy).grid(row=1, column=8, padx=4, pady=(8, 0))
+        ttk.Label(header, textvariable=self.total_var, font=("Segoe UI", 12, "bold")).grid(row=0, column=9, sticky="e")
+        ttk.Label(header, textvariable=self.total_usd_var, font=("Segoe UI", 11, "bold")).grid(row=1, column=9, sticky="e", padx=(0, 90))
+        ttk.Label(header, textvariable=self.count_var).grid(row=1, column=9, sticky="e")
 
         tools = ttk.LabelFrame(self, text="Agregar / ajustar lineas")
         tools.grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 8))
@@ -184,9 +186,9 @@ class PopupObligacionesQuincenales(tk.Toplevel):
                 return child
         return None
 
-    def _load_preview(self):
+    def _load_preview(self, force=False):
         try:
-            data = get_itp_biweekly_obligations_preview_api(self.period_var.get().strip(), int(self.fortnight_var.get() or 1))
+            data = get_itp_biweekly_obligations_preview_api(self.period_var.get().strip(), int(self.fortnight_var.get() or 1), force=force)
             self.rows = data.get("rows") or []
             self._render()
         except Exception as exc:
@@ -450,6 +452,21 @@ class PopupObligacionesQuincenales(tk.Toplevel):
             if not str(row.get("bank_voucher") or "").strip():
                 missing.append(f"Linea {idx}: falta comprobante")
         return missing
+
+    def _save_draft(self):
+        result = post_itp_biweekly_obligations_save_draft_api({
+            "period": self.period_var.get().strip(),
+            "fortnight": int(self.fortnight_var.get() or 1),
+            "rows": self.rows,
+        })
+        if result.get("status") == "error":
+            messagebox.showerror("Guardar borrador", result.get("error") or "No se pudo guardar.", parent=self)
+            return
+        messagebox.showinfo(
+            "Guardar borrador",
+            f"Borrador guardado correctamente.\nLineas guardadas: {result.get('saved', 0)}",
+            parent=self,
+        )
 
     def _save_and_post(self):
         missing = self._missing_required()

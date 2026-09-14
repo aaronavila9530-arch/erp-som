@@ -910,11 +910,24 @@ def _canvas_frame(canvas, doc):
     canvas.setFillColor(colors.HexColor("#F1F1F1"))
     canvas.rect(0, 0, width, height, stroke=0, fill=1)
     canvas.setStrokeColor(colors.black)
-    canvas.setLineWidth(2)
-    canvas.line(170, height - 86, width - 30, height - 86)
-    canvas.line(170, 42, width - 30, 42)
-    canvas.line(0, height - 86, 50, height - 86)
-    canvas.line(0, 42, 50, 42)
+    canvas.setLineWidth(2.4)
+    canvas.line(162, height - 86, width - 32, height - 86)
+    canvas.line(162, 54, width - 32, 54)
+    canvas.line(0, height - 86, 52, height - 86)
+    canvas.line(0, 54, 52, 54)
+    if getattr(doc, "page", 1) > 1:
+        canvas.setFillColor(colors.black)
+        canvas.setFont("Helvetica-Bold", 14)
+        canvas.saveState()
+        canvas.translate(44, height - 285)
+        canvas.rotate(90)
+        canvas.drawString(0, 0, "Financial Report")
+        canvas.restoreState()
+        canvas.saveState()
+        canvas.translate(44, 110)
+        canvas.rotate(90)
+        canvas.drawString(0, 0, "Marine Surveyors & Logistics")
+        canvas.restoreState()
     canvas.restoreState()
 
 
@@ -1051,10 +1064,10 @@ def generate_monthly_financial_pdf(conn, year: int, month: int):
     path = os.path.join(tmp_dir, _safe_filename(label, "pdf"))
 
     styles = getSampleStyleSheet()
-    styles.add(ParagraphStyle(name="CoverCompany", parent=styles["Title"], fontSize=20, textColor=colors.black, leading=22, alignment=0))
-    styles.add(ParagraphStyle(name="CoverTitle", parent=styles["Title"], fontSize=38, textColor=colors.black, leading=44, alignment=0))
-    styles.add(ParagraphStyle(name="SectionLead", parent=styles["Heading1"], textColor=colors.black, fontSize=15.5, leading=19, spaceBefore=0, spaceAfter=8))
-    styles.add(ParagraphStyle(name="Body", parent=styles["BodyText"], fontSize=14, leading=20, alignment=4, spaceAfter=12))
+    styles.add(ParagraphStyle(name="CoverCompany", parent=styles["Title"], fontName="Helvetica-Bold", fontSize=20, textColor=colors.black, leading=22, alignment=0))
+    styles.add(ParagraphStyle(name="CoverTitle", parent=styles["Title"], fontName="Helvetica-Bold", fontSize=38, textColor=colors.black, leading=44, alignment=0))
+    styles.add(ParagraphStyle(name="SectionLead", parent=styles["Heading1"], fontName="Helvetica-Bold", textColor=colors.black, fontSize=14.5, leading=18, spaceBefore=0, spaceAfter=10))
+    styles.add(ParagraphStyle(name="Body", parent=styles["BodyText"], fontName="Helvetica-Bold", fontSize=12.5, leading=18, alignment=4, spaceAfter=12))
     styles.add(ParagraphStyle(name="Small", parent=styles["BodyText"], fontSize=9, leading=11, textColor=colors.HexColor("#333333")))
 
     story = []
@@ -1072,7 +1085,7 @@ def generate_monthly_financial_pdf(conn, year: int, month: int):
     _pdf_section(story, styles, "Análisis de riesgo financiero", "A continuación el análisis de riesgos financieros:", data["narrative"]["risk"], None, None)
     _pdf_section(story, styles, "Conclusión", "Conclusión y recomendaciones ejecutivas:", data["narrative"]["conclusion"], None, None)
 
-    doc = SimpleDocTemplate(path, pagesize=A4, rightMargin=36, leftMargin=36, topMargin=58, bottomMargin=52)
+    doc = SimpleDocTemplate(path, pagesize=A4, rightMargin=44, leftMargin=82, topMargin=78, bottomMargin=68)
     doc.build(story, onFirstPage=_canvas_frame, onLaterPages=_canvas_frame)
     return path, _safe_filename(label, "pdf")
 
@@ -1082,21 +1095,21 @@ def _pdf_cover(data, styles):
     from reportlab.lib import colors
 
     p = data["period"]
-    logo = Paragraph("● ●&nbsp;&nbsp;Marine&nbsp;&nbsp;&nbsp;&nbsp;Surveyors&nbsp;&nbsp;&nbsp;&nbsp;&amp;<br/>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Logistics", styles["CoverCompany"])
+    logo = Paragraph("Marine&nbsp;&nbsp;&nbsp;&nbsp;Surveyors&nbsp;&nbsp;&nbsp;&nbsp;&amp;<br/>Logistics", styles["CoverCompany"])
     items = [
-        Spacer(1, 24),
+        Spacer(1, 6),
         logo,
-        Spacer(1, 22),
+        Spacer(1, 20),
         Paragraph("Alajuela, Costa Rica", styles["Body"]),
-        Spacer(1, 72),
+        Spacer(1, 66),
         Paragraph(escape(p["report_label"]), styles["CoverTitle"]),
-        Spacer(1, 44),
+        Spacer(1, 36),
         Paragraph("Aarón Ávila Vargas", styles["SectionLead"]),
-        Spacer(1, 24),
+        Spacer(1, 44),
     ]
     ship = _asset_path("barco.jpg")
     if ship:
-        items.append(Image(ship, width=455, height=250))
+        items.append(Image(ship, width=455, height=270))
     else:
         items.append(_pdf_kpi_table(data))
     return items
@@ -1188,12 +1201,12 @@ def _pdf_section(story, styles, side_title, lead, text, chart_path, table_rows=N
     story.append(Paragraph(escape(side_title), styles["SectionLead"]))
     story.append(Paragraph(escape(lead), styles["SectionLead"]))
     if chart_path and os.path.exists(chart_path):
-        story.append(Spacer(1, 4))
-        story.append(Image(chart_path, width=468, height=224))
-        story.append(Spacer(1, 8))
+        story.append(Spacer(1, 6))
+        story.append(Image(chart_path, width=455, height=218))
+        story.append(Spacer(1, 16))
     if extra_chart and os.path.exists(extra_chart):
-        story.append(Image(extra_chart, width=468, height=224))
-        story.append(Spacer(1, 8))
+        story.append(Image(extra_chart, width=455, height=218))
+        story.append(Spacer(1, 16))
     if table_rows is not None:
         story.append(_pdf_table(table_rows))
         story.append(Spacer(1, 8))

@@ -29,6 +29,7 @@ from services.employee_payee_rules import (
     is_employee_payee,
 )
 from services.tenanting import company_code as normalize_company_code
+from routers.hr_ot_log import _employee_hours_policy
 
 
 router = APIRouter(
@@ -42,6 +43,8 @@ CARD_3155_LAST4 = "3155"
 CARD_3155_LABEL = "Tarjeta empresarial BAC 3155"
 CARD_PAYABLE_CODE = "2.1.02.10"
 CARD_PAYABLE_NAME = "Tarjeta corporativa BAC por pagar"
+EMPLOYEE_WORKER_CCSS_RATE = Decimal("0.1083")
+NET_BIWEEKLY_EMPLOYEE_NAMES = ("erasmo", "manfred")
 
 
 def _cleanup_biweekly_export_cache():
@@ -76,6 +79,56 @@ def _normalize_payment_method(value: str | None) -> str:
 
 def _money(value) -> Decimal:
     return Decimal(str(value or 0).replace(",", "")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def _employee_full_name(emp: dict) -> str:
+    return f"{emp.get('nombre') or ''} {emp.get('apellidos') or ''}".strip()
+
+
+def _uses_net_biweekly_rule(emp: dict) -> bool:
+    name = _employee_full_name(emp).lower()
+    return any(token in name for token in NET_BIWEEKLY_EMPLOYEE_NAMES)
+
+
+def _employee_month_overtime_crc(cur, emp: dict, period: str) -> Decimal:
+    usuario = str(emp.get("usuario") or "").strip()
+    if not usuario:
+        return Decimal("0.00")
+    year, month = [int(part) for part in str(period).split("-")[:2]]
+    cur.execute(
+        """
+        SELECT COALESCE(SUM(duracion_horas), 0) AS total
+        FROM hr_ot_log
+        WHERE lower(usuario) = lower(%s)
+          AND estado = 'APROBADO'
+          AND EXTRACT(YEAR FROM fecha_inicio) = %s
+          AND EXTRACT(MONTH FROM fecha_inicio) = %s
+        """,
+        (usuario, year, month),
+    )
+    hours = Decimal(str((cur.fetchone() or {}).get("total") or 0))
+    policy = _employee_hours_policy(emp)
+    ordinary_limit = Decimal(str(policy.get("tope_ordinario") or 0))
+    extra_rate = Decimal(str(policy.get("tarifa_hora_extra") or 0))
+    overtime_hours = max(hours - ordinary_limit, Decimal("0"))
+    return _money(overtime_hours * extra_rate)
+
+
+def _employee_biweekly_pay(cur, emp: dict, period: str, fortnight: int) -> tuple[Decimal, str]:
+    salary = _money(emp.get("salario"))
+    pago = str(emp.get("pago") or "").upper()
+    if not _uses_net_biweekly_rule(emp):
+        divisor = Decimal("2") if "QUINC" in pago else Decimal("1")
+        return _money(salary / divisor), "Salario sugerido por quincena desde Master Data Empleados."
+
+    gross_base = salary / Decimal("2")
+    overtime = _employee_month_overtime_crc(cur, emp, period) if int(fortnight or 1) == 2 else Decimal("0.00")
+    gross_period = gross_base + overtime
+    worker_ccss = _money(gross_period * EMPLOYEE_WORKER_CCSS_RATE)
+    notes = "Salario neto quincenal: salario mensual/2 menos CCSS obrero 10.83%."
+    if overtime:
+        notes += f" Incluye horas extra aprobadas sobre excedente: CRC {float(overtime):,.2f} bruto."
+    return _money(gross_period - worker_ccss), notes
 
 
 def _previous_period(period: str) -> str:
@@ -147,6 +200,129 @@ def _ensure_biweekly_schema(cur):
     cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS card_holder_name TEXT")
     cur.execute("ALTER TABLE itp_biweekly_payment_lines ADD COLUMN IF NOT EXISTS payment_method TEXT NOT NULL DEFAULT 'BANK'")
     cur.execute("ALTER TABLE itp_biweekly_payment_lines ADD COLUMN IF NOT EXISTS payment_card_last4 TEXT")
+
+
+def _load_biweekly_draft(cur, company: str, period: str, fortnight: int):
+    cur.execute(
+        """
+        SELECT id
+        FROM itp_biweekly_payment_batches
+        WHERE company_code = %s
+          AND period = %s
+          AND fortnight = %s
+          AND status = 'DRAFT'
+        ORDER BY created_at DESC, id DESC
+        LIMIT 1
+        """,
+        (company, period, int(fortnight or 1)),
+    )
+    batch = cur.fetchone()
+    if not batch:
+        return None
+    batch_id = batch["id"] if isinstance(batch, dict) else batch[0]
+    cur.execute(
+        """
+        SELECT
+            category,
+            beneficiary AS name,
+            amount,
+            currency,
+            destination_account AS bank_account,
+            bank_accounting_code,
+            bank_accounting_name,
+            bank_voucher,
+            payment_date AS due_date,
+            obligation_id,
+            reference,
+            amount AS balance,
+            source,
+            notes,
+            COALESCE(payment_method, 'BANK') AS payment_method,
+            payment_card_last4
+        FROM itp_biweekly_payment_lines
+        WHERE batch_id = %s
+        ORDER BY id
+        """,
+        (batch_id,),
+    )
+    rows = []
+    for line in cur.fetchall() or []:
+        item = dict(line)
+        if item.get("due_date") is not None:
+            item["due_date"] = str(item["due_date"])
+        item["amount"] = float(_money(item.get("amount")))
+        item["balance"] = float(_money(item.get("balance")))
+        rows.append(item)
+    return {"batch_id": batch_id, "rows": rows}
+
+
+def _save_biweekly_draft(cur, company: str, period: str, fortnight: int, rows: list, user: str):
+    _ensure_biweekly_schema(cur)
+    cur.execute(
+        """
+        DELETE FROM itp_biweekly_payment_batches
+        WHERE company_code = %s
+          AND period = %s
+          AND fortnight = %s
+          AND status = 'DRAFT'
+        """,
+        (company, period, int(fortnight or 1)),
+    )
+    cur.execute(
+        """
+        INSERT INTO itp_biweekly_payment_batches(company_code, period, fortnight, created_by, status)
+        VALUES(%s,%s,%s,%s,'DRAFT')
+        RETURNING id
+        """,
+        (company, period, int(fortnight or 1), user),
+    )
+    batch_id = cur.fetchone()["id"]
+    saved = 0
+    for item in rows or []:
+        amount = _money(item.get("amount"))
+        if amount <= 0:
+            continue
+        payment_date = str(item.get("due_date") or _fortnight_due_date(period, fortnight)).strip()
+        try:
+            datetime.strptime(payment_date, "%Y-%m-%d")
+        except Exception:
+            payment_date = _fortnight_due_date(period, fortnight)
+        payment_method = _normalize_payment_method(item.get("payment_method"))
+        is_card_payment = payment_method == CARD_3155_METHOD
+        bank_code = CARD_PAYABLE_CODE if is_card_payment else str(item.get("bank_accounting_code") or "").strip()
+        bank_name = CARD_PAYABLE_NAME if is_card_payment else str(item.get("bank_accounting_name") or "").strip()
+        cur.execute(
+            """
+            INSERT INTO itp_biweekly_payment_lines(
+                batch_id, company_code, category, beneficiary, amount, currency, amount_crc,
+                destination_account, bank_accounting_code, bank_accounting_name, bank_voucher,
+                payment_method, payment_card_last4, payment_date, obligation_id, reference, source, notes
+            )
+            VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            """,
+            (
+                batch_id,
+                company,
+                str(item.get("category") or "Otros").strip(),
+                str(item.get("name") or "").strip() or "Sin beneficiario",
+                amount,
+                str(item.get("currency") or "CRC").upper(),
+                0,
+                item.get("bank_account") or "",
+                bank_code,
+                bank_name,
+                item.get("bank_voucher") or "",
+                payment_method,
+                CARD_3155_LAST4 if is_card_payment else (item.get("payment_card_last4") or None),
+                payment_date,
+                item.get("obligation_id") or None,
+                item.get("reference") or "",
+                item.get("source") or "DRAFT",
+                item.get("notes") or "",
+            ),
+        )
+        saved += 1
+    return {"status": "ok", "batch_id": batch_id, "saved": saved}
 
 
 def _exchange_rate(cur, value_date: str) -> Decimal:
@@ -651,12 +827,25 @@ def invoice_to_pay_kpis(conn=Depends(get_db)):
 def biweekly_obligations_preview(
     period: str = Query(...),
     fortnight: int = Query(1),
+    force: bool = Query(False),
     conn=Depends(get_db),
     x_company_code: str | None = Header(None, alias="X-Company-Code"),
 ):
     company = normalize_company_code(header_value=x_company_code)
     cur = conn.cursor(cursor_factory=RealDictCursor)
     _ensure_company_column(cur)
+    _ensure_biweekly_schema(cur)
+    if not force:
+        draft = _load_biweekly_draft(cur, company, period, fortnight)
+        if draft:
+            return {
+                "period": period,
+                "fortnight": int(fortnight or 1),
+                "company_code": company,
+                "source": "draft",
+                "batch_id": draft["batch_id"],
+                "rows": draft["rows"],
+            }
     rows = []
     default_crc_bank = "CR87010200009640180220"
     aaron_bank = "CR27010200009688657826"
@@ -695,7 +884,21 @@ def biweekly_obligations_preview(
     try:
         cur.execute(
             """
-            SELECT nombre, apellidos, salario, pago, banco, cuenta_iban, moneda
+            SELECT
+                nombre,
+                apellidos,
+                salario,
+                pago,
+                banco,
+                cuenta_iban,
+                moneda,
+                usuario,
+                jornada,
+                horas_contratadas,
+                horas_tope_ordinario,
+                horas_tope_maximo,
+                tarifa_hora_extra,
+                pago_minimo_garantizado
             FROM empleados
             WHERE COALESCE(estado, 'Activo') = 'Activo'
               AND COALESCE(activo, TRUE) = TRUE
@@ -706,16 +909,15 @@ def biweekly_obligations_preview(
             (company,),
         )
         for emp in cur.fetchall() or []:
-            pago = str(emp.get("pago") or "").upper()
-            amount = _money(emp.get("salario")) / (Decimal("2") if "QUINC" in pago else Decimal("1"))
+            amount, payroll_notes = _employee_biweekly_pay(cur, emp, period, int(fortnight or 1))
             rows.append(row(
                 "Planilla",
-                f"{emp.get('nombre') or ''} {emp.get('apellidos') or ''}".strip(),
+                _employee_full_name(emp),
                 amount,
                 emp.get("moneda") or "CRC",
                 emp.get("cuenta_iban") or emp.get("banco") or "",
                 "EMPLEADOS",
-                "Salario sugerido por quincena desde Master Data Empleados.",
+                payroll_notes,
             ))
 
         if int(fortnight or 1) == 1:
@@ -775,18 +977,40 @@ def biweekly_obligations_preview(
 
             cur.execute(
                 """
-                SELECT DISTINCT ON (COALESCE(card_last4,''), COALESCE(NULLIF(TRIM(card_last4),''), source_filename, id::text))
-                       card_last4, statement_period, payment_due_date, cash_payment_crc, cash_payment_usd
-                FROM corporate_card_statements
-                WHERE company_code=%s
-                  AND COALESCE(status,'IMPORTED') <> 'VOID'
-                ORDER BY COALESCE(card_last4,''), COALESCE(NULLIF(TRIM(card_last4),''), source_filename, id::text),
-                         cutoff_date DESC NULLS LAST, id DESC
+                WITH ranked AS (
+                    SELECT
+                        card_last4, statement_period, payment_due_date, cash_payment_crc, cash_payment_usd,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY COALESCE(card_last4,''), COALESCE(NULLIF(TRIM(card_last4),''), source_filename, id::text)
+                            ORDER BY
+                                CASE WHEN statement_period = %s THEN 0 ELSE 1 END,
+                                cutoff_date DESC NULLS LAST,
+                                id DESC
+                        ) AS rn
+                    FROM corporate_card_statements
+                    WHERE company_code=%s
+                      AND COALESCE(status,'IMPORTED') <> 'VOID'
+                      AND (
+                          statement_period = %s
+                          OR (
+                              statement_period IS NULL
+                              AND cutoff_date >= %s
+                              AND cutoff_date < %s
+                          )
+                      )
+                )
+                SELECT card_last4, statement_period, payment_due_date, cash_payment_crc, cash_payment_usd
+                FROM ranked
+                WHERE rn = 1
+                ORDER BY card_last4
                 """,
-                (company,),
+                (prev_period, company, prev_period, f"{year:04d}-{month:02d}-01", f"{next_year:04d}-{next_month:02d}-01"),
             )
+            statements = cur.fetchall() or []
+            if not statements:
+                rows.append(row("Tarjetas de credito", f"Faltan estados BAC {prev_period}", 0, "CRC", "BAC", "REVISION", "Importar estados BAC del mes anterior para calcular tarjetas.", f"{period}-15"))
             card_labels = {"3155": "Aaron", "1951": "Diana", "1936": "Diana", "1969": "Pabel", "1944": "Pabel", "3148": "ITP"}
-            for st in cur.fetchall() or []:
+            for st in statements:
                 last4 = str(st.get("card_last4") or "").strip()
                 label = card_labels.get(last4, f"Tarjeta {last4 or 'BAC'}")
                 crc = _money(st.get("cash_payment_crc"))
@@ -843,6 +1067,29 @@ def biweekly_obligations_preview(
         raise HTTPException(status_code=500, detail=f"No se pudo generar obligaciones quincenales: {exc}")
 
 
+@router.post("/biweekly-obligations/save-draft")
+def biweekly_obligations_save_draft(
+    payload: dict,
+    conn=Depends(get_db),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+    x_user: str | None = Header(None, alias="X-User"),
+):
+    company = normalize_company_code(header_value=x_company_code)
+    user = x_user or "SYSTEM"
+    period = str(payload.get("period") or "").strip()
+    rows = payload.get("rows") or []
+    if not period or not isinstance(rows, list):
+        raise HTTPException(status_code=400, detail="Periodo y lineas son obligatorios")
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        result = _save_biweekly_draft(cur, company, period, int(payload.get("fortnight") or 1), rows, user)
+        conn.commit()
+        return result
+    except Exception as exc:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"No se pudo guardar borrador quincenal: {exc}")
+
+
 @router.post("/biweekly-obligations/apply")
 def biweekly_obligations_apply(
     payload: dict,
@@ -862,6 +1109,16 @@ def biweekly_obligations_apply(
     errors = []
     saved = posted = applied = 0
     try:
+        cur.execute(
+            """
+            DELETE FROM itp_biweekly_payment_batches
+            WHERE company_code = %s
+              AND period = %s
+              AND fortnight = %s
+              AND status = 'DRAFT'
+            """,
+            (company, period, int(payload.get("fortnight") or 1)),
+        )
         cur.execute(
             """
             INSERT INTO itp_biweekly_payment_batches(company_code, period, fortnight, created_by)

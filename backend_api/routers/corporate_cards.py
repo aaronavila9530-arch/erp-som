@@ -659,6 +659,18 @@ def import_statement_pdf(
     raw = file.file.read()
     digest = sha256(raw).hexdigest()
     parsed = parse_bac_statement(raw)
+    if not parsed.get("card_last4") and not parsed.get("transactions") and _money(parsed.get("cash_payment_crc")) == 0 and _money(parsed.get("cash_payment_usd")) == 0:
+        raw_text = str(parsed.get("raw_text") or "").upper()
+        if "CUENTA IBAN" in raw_text or "CUENTA BANCARIA" in raw_text:
+            raise HTTPException(
+                400,
+                "El PDF corresponde a un estado de cuenta bancaria BAC, no a una tarjeta de credito. "
+                "Para obligaciones quincenales de tarjetas se necesita el estado de tarjeta BAC con pago de contado.",
+            )
+        raise HTTPException(
+            400,
+            "No se detectaron datos de tarjeta BAC en el PDF: falta tarjeta, periodo, pago de contado y movimientos.",
+        )
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         ensure_schema(cur)
         cur.execute("SELECT * FROM corporate_card_statements WHERE file_hash=%s", (digest,))
