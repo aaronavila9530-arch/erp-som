@@ -340,17 +340,23 @@ def _save_biweekly_draft(cur, company: str, period: str, fortnight: int, rows: l
 
 
 def _exchange_rate(cur, value_date: str) -> Decimal:
+    cur.execute("SELECT to_regclass('public.exchange_rate') AS table_name")
+    table_row = cur.fetchone()
+    table_name = (table_row or {}).get("table_name") if isinstance(table_row, dict) else (table_row[0] if table_row else None)
+    if not table_name:
+        return _money(453)
     cur.execute(
         """
-        SELECT venta FROM tipo_cambio
-        WHERE fecha <= %s
-        ORDER BY fecha DESC
+        SELECT rate
+        FROM exchange_rate
+        WHERE rate_date <= %s
+        ORDER BY rate_date DESC
         LIMIT 1
         """,
         (value_date,),
     )
     row = cur.fetchone()
-    return _money((row or {}).get("venta") if isinstance(row, dict) else (row[0] if row else 1))
+    return _money((row or {}).get("rate") if isinstance(row, dict) else (row[0] if row else 453))
 
 
 def _debit_account_for(category: str):

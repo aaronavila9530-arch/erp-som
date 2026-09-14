@@ -4606,14 +4606,22 @@ def _local_biweekly_obligations_apply(payload: dict) -> dict:
         return text
 
     def exchange_rate(cur, value_date):
-        cur.execute("""
-            SELECT venta FROM tipo_cambio
-            WHERE fecha <= %s
-            ORDER BY fecha DESC
+        cur.execute("SELECT to_regclass('public.exchange_rate') AS table_name")
+        table_row = cur.fetchone()
+        if not (table_row or {}).get("table_name"):
+            return m(453)
+        cur.execute(
+            """
+            SELECT rate
+            FROM exchange_rate
+            WHERE rate_date <= %s
+            ORDER BY rate_date DESC
             LIMIT 1
-        """, (value_date,))
+            """,
+            (value_date,),
+        )
         row = cur.fetchone()
-        return m(row.get("venta") if row else 1)
+        return m(row.get("rate") if row else 453)
 
     def account_name(cur, code, fallback=""):
         cur.execute("SELECT account_name FROM accounting_accounts WHERE account_code=%s LIMIT 1", (code,))

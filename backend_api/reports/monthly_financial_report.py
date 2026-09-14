@@ -75,6 +75,31 @@ def _pct(current, previous):
     return ((current - previous) / previous) * 100.0
 
 
+def _complete_billing_trend(year: int, month: int, rows, selected_month_total):
+    by_month = {}
+    for row in rows or []:
+        month_num = int(row.get("month_num") or 0)
+        if month_num:
+            by_month[month_num] = dict(row)
+    if _f(selected_month_total) and _f((by_month.get(month) or {}).get("total")) == 0:
+        by_month[month] = {
+            "month_num": month,
+            "nombre_cliente": f"{calendar.month_abbr[month]} {year}",
+            "total": selected_month_total,
+            "count": 0,
+        }
+    complete = []
+    for month_num in range(1, month + 1):
+        row = by_month.get(month_num)
+        complete.append({
+            "month_num": month_num,
+            "nombre_cliente": f"{calendar.month_abbr[month_num]} {year}",
+            "total": _f(row.get("total")) if row else 0.0,
+            "count": int((row or {}).get("count") or 0),
+        })
+    return complete
+
+
 def _month_label(year: int, month: int):
     q = ((month - 1) // 3) + 1
     month_in_q = ((month - 1) % 3) + 1
@@ -438,13 +463,14 @@ def build_monthly_financial_data(conn, year: int, month: int):
     """, (end,))
 
     billing_trend = _fetch_all(cur, """
-        SELECT TO_CHAR(DATE_TRUNC('month', fecha_emision), 'Mon YYYY') AS nombre_cliente,
+        SELECT EXTRACT(MONTH FROM fecha_emision)::int AS month_num,
+               TO_CHAR(DATE_TRUNC('month', fecha_emision), 'Mon YYYY') AS nombre_cliente,
                COALESCE(SUM(total), 0) AS total,
                COUNT(*) AS count
         FROM invoicing
         WHERE tipo_documento = 'FACTURA'
           AND fecha_emision BETWEEN %s AND %s
-        GROUP BY DATE_TRUNC('month', fecha_emision)
+        GROUP BY EXTRACT(MONTH FROM fecha_emision), DATE_TRUNC('month', fecha_emision)
         ORDER BY DATE_TRUNC('month', fecha_emision)
     """, (date(year, 1, 1), end))
 
@@ -622,6 +648,7 @@ def build_monthly_financial_data(conn, year: int, month: int):
     month_name = MONTH_NAMES_ES.get(month, calendar.month_name[month])
     prev_month_name = MONTH_NAMES_ES.get(prev_start.month, calendar.month_name[prev_start.month])
     next_month_name = MONTH_NAMES_ES.get(next_start.month, calendar.month_name[next_start.month])
+    billing_trend = _complete_billing_trend(year, month, billing_trend, revenue_total)
 
     data = {
         "period": {
@@ -680,6 +707,11 @@ def build_monthly_financial_data(conn, year: int, month: int):
         data["tables"]["monthly_obligations"],
         data["tables"]["month_due_obligations"],
         data["tables"]["month_receivables_due"],
+    )
+    data["tables"]["monthly_cash_detail"] = _build_monthly_cash_detail(
+        data["tables"]["monthly_obligations"],
+        data["tables"]["month_due_obligations"],
+        data["tables"]["monthly_cash_calendar"],
     )
     data["executive"] = _build_executive_dashboard(data)
     data["narrative"] = _build_financial_narrative(data)
@@ -762,6 +794,30 @@ def _build_monthly_cash_calendar(start, end, saved_obligations, due_obligations,
         item["total"] = item["obligations_usd"]
         result.append(item)
     return result
+
+
+def _build_monthly_cash_detail(saved_obligations, due_obligations, weekly_calendar):
+    receivables_by_week = {
+        str(row.get("nombre_cliente") or row.get("week") or ""): _f(row.get("receivables_usd"))
+        for row in weekly_calendar or []
+    }
+    rows = []
+    for source_row in list(saved_obligations or []) + list(due_obligations or []):
+        due = source_row.get("due_date") or source_row.get("issue_date")
+        week = _week_label(due)
+        obligations_usd = _amount_to_usd(source_row)
+        rows.append({
+            "week": week,
+            "due_date": due,
+            "nombre_cliente": source_row.get("nombre_cliente") or source_row.get("payee_name") or "N/A",
+            "concept": source_row.get("concept") or source_row.get("source") or "Obligacion mensual",
+            "amount": source_row.get("total") or source_row.get("amount") or 0,
+            "currency": source_row.get("currency") or "USD",
+            "obligations_usd": obligations_usd,
+            "receivables_usd": receivables_by_week.get(week, 0.0),
+            "net_usd": receivables_by_week.get(week, 0.0) - obligations_usd,
+        })
+    return sorted(rows, key=lambda r: (str(r.get("week") or ""), str(r.get("due_date") or ""), str(r.get("nombre_cliente") or "")))
 
 
 def _build_executive_dashboard(data):
@@ -1143,24 +1199,11 @@ def _chart_image(rows, title, path, kind="bar"):
 
 def _build_charts(data, tmp_dir):
     tables = data["tables"]
-    metrics = data["metrics"]
-    accounting = data["accounting"]
     charts = {
         "collections": _chart_image(tables["top_collections"], "Distribución de cuentas por cobrar recuperadas", os.path.join(tmp_dir, "collections.png"), "pie"),
         "ar": _chart_image(tables["top_ar"], "Cuentas por cobrar a recuperar", os.path.join(tmp_dir, "ar.png"), "bar"),
-        "ar_aging": _chart_image(tables["ar_aging"], "Antigüedad de cuentas por cobrar", os.path.join(tmp_dir, "ar_aging.png"), "bar"),
-        "payment_trend": _chart_image(tables["payment_trend"], "Tendencia de pago por antigüedad", os.path.join(tmp_dir, "payment_trend.png"), "bar"),
         "billing": _chart_image(tables["billing_trend"], "Facturación mensual", os.path.join(tmp_dir, "billing.png"), "bar"),
-        "payables": _chart_image(tables["top_payables_open"], "Cuentas por pagar", os.path.join(tmp_dir, "payables.png"), "pie"),
-        "next_ar": _chart_image(tables["top_next_receivables"], "Cobros esperados próximo mes", os.path.join(tmp_dir, "next_ar.png"), "bar"),
-        "next_payables": _chart_image(tables["top_next_payables"], "Pagos programados próximo mes", os.path.join(tmp_dir, "next_payables.png"), "bar"),
         "monthly_cash_calendar": _chart_image(tables["monthly_cash_calendar"], "Obligaciones por semana", os.path.join(tmp_dir, "monthly_cash_calendar.png"), "bar"),
-        "accounting_mix": _chart_image([
-            {"nombre_cliente": "Ingresos contables", "total": accounting["accounting_revenue"]},
-            {"nombre_cliente": "Gastos contables", "total": accounting["accounting_expense"]},
-            {"nombre_cliente": "Activos", "total": accounting["assets"]},
-            {"nombre_cliente": "Pasivos", "total": accounting["liabilities"]},
-        ], "Composición contable POSTED", os.path.join(tmp_dir, "accounting_mix.png"), "bar"),
     }
     return charts
 
@@ -1190,9 +1233,8 @@ def generate_monthly_financial_pdf(conn, year: int, month: int):
     _pdf_intro_page(story, styles, data)
     _pdf_section(story, styles, "Recupero cuentas por cobrar", f"A continuación la distribución de cuentas por cobrar recuperadas en {data['period']['month_name']}:", data["narrative"]["collections"], charts["collections"])
     _pdf_section(story, styles, "Cuentas por cobrar", f"A continuación la distribución de cuentas por cobrar para {data['period']['label']}:", data["narrative"]["receivables"], charts["ar"])
-    _pdf_section(story, styles, "Tendencia de pago", "A continuación la tendencia de pagos por parte del cliente:", data["narrative"]["payment_trend"], charts["payment_trend"])
     _pdf_section(story, styles, "Facturación", "A continuación el desglose mensual acumulado de facturación para el año en curso:", data["narrative"]["billing"], charts["billing"])
-    _pdf_section(story, styles, "Obligaciones del mes", "Agenda semanal de obligaciones del mes contra monto en calle por cobrar:", data["narrative"]["monthly_obligations"], charts["monthly_cash_calendar"], data["tables"]["monthly_cash_calendar"])
+    _pdf_section(story, styles, "Obligaciones del mes", "Agenda semanal de obligaciones del mes contra monto en calle por cobrar:", data["narrative"]["monthly_obligations"], charts["monthly_cash_calendar"], data["tables"]["monthly_cash_calendar"], table_rows_2=data["tables"]["monthly_cash_detail"])
     _pdf_section(story, styles, "Conclusión", "Conclusión y recomendaciones ejecutivas:", data["narrative"]["conclusion"], None, None)
 
     doc = SimpleDocTemplate(path, pagesize=A4, rightMargin=44, leftMargin=82, topMargin=78, bottomMargin=68)
@@ -1304,7 +1346,7 @@ def _pdf_executive_dashboard(story, styles, data):
         story.append(Paragraph(f"- {escape(item)}", styles["Body"]))
 
 
-def _pdf_section(story, styles, side_title, lead, text, chart_path, table_rows=None, extra_chart=None):
+def _pdf_section(story, styles, side_title, lead, text, chart_path, table_rows=None, extra_chart=None, table_rows_2=None):
     from reportlab.platypus import Image, PageBreak, Paragraph, Spacer
 
     story.append(Paragraph(escape(side_title), styles["SectionLead"]))
@@ -1319,6 +1361,10 @@ def _pdf_section(story, styles, side_title, lead, text, chart_path, table_rows=N
     if table_rows is not None:
         story.append(_pdf_table(table_rows))
         story.append(Spacer(1, 8))
+    if table_rows_2 is not None:
+        story.append(Paragraph("Detalle por obligación", styles["SectionLead"]))
+        story.append(_pdf_table(table_rows_2))
+        story.append(Spacer(1, 8))
     for paragraph in str(text or "").split("\n\n"):
         if paragraph.strip():
             story.append(Paragraph(escape(paragraph.strip()), styles["Body"]))
@@ -1328,6 +1374,34 @@ def _pdf_section(story, styles, side_title, lead, text, chart_path, table_rows=N
 def _pdf_table(rows):
     from reportlab.lib import colors
     from reportlab.platypus import Table, TableStyle
+
+    has_cash_detail = any((row or {}).get("week") and (row or {}).get("due_date") for row in rows or [])
+    if has_cash_detail:
+        table_data = [["Semana", "Vence", "Beneficiario", "Concepto", "Monto", "Calle semana", "Diferencia"]]
+        for row in rows or []:
+            table_data.append([
+                str(row.get("week") or "Sin fecha"),
+                str(row.get("due_date") or ""),
+                str(row.get("nombre_cliente") or "N/A")[:28],
+                str(row.get("concept") or "Obligacion mensual")[:26],
+                f"{row.get('currency') or 'USD'} {_f(row.get('amount')):,.2f}",
+                _money(row.get("receivables_usd")),
+                _money(row.get("net_usd")),
+            ])
+        if len(table_data) == 1:
+            table_data.append(["Sin fecha", "", "Sin obligaciones", "", "USD 0.00", "USD 0.00", "USD 0.00"])
+        table = Table(table_data, colWidths=[72, 58, 100, 95, 75, 80, 80])
+        table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(LIGHT_BLUE)),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor(DARK)),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#D7DEE8")),
+            ("ALIGN", (4, 1), (6, -1), "RIGHT"),
+            ("FONTSIZE", (0, 0), (-1, -1), 7),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ]))
+        return table
 
     has_cash_calendar = any((row or {}).get("obligations_usd") is not None or (row or {}).get("receivables_usd") is not None for row in rows or [])
     if has_cash_calendar:
@@ -1439,14 +1513,11 @@ def generate_monthly_financial_docx(conn, year: int, month: int):
     doc.add_paragraph("Aarón Ávila Vargas").alignment = WD_ALIGN_PARAGRAPH.CENTER
     doc.add_page_break()
 
-    _docx_executive_dashboard(doc, data)
     _docx_section(doc, "Introducción ejecutiva", data["narrative"]["introduction"])
     _docx_section(doc, "Collections Recovery", data["narrative"]["collections"], charts["collections"], data["tables"]["top_collections"])
     _docx_section(doc, "Cuentas por cobrar a recuperar", data["narrative"]["receivables"], charts["ar"], data["tables"]["top_ar"])
-    _docx_section(doc, "Antigüedad de cartera", "Distribución de cartera por antigüedad para priorizar recuperación.", charts["ar_aging"], data["tables"]["ar_aging"])
-    _docx_section(doc, "Tendencia de pago", data["narrative"]["payment_trend"], charts["payment_trend"], data["tables"]["payment_trend"])
     _docx_section(doc, "Facturación", data["narrative"]["billing"], charts["billing"], data["tables"]["top_billing"])
-    _docx_section(doc, "Obligaciones del mes", data["narrative"]["monthly_obligations"], charts["monthly_cash_calendar"], data["tables"]["monthly_cash_calendar"])
+    _docx_section(doc, "Obligaciones del mes", data["narrative"]["monthly_obligations"], charts["monthly_cash_calendar"], data["tables"]["monthly_cash_calendar"], rows_2=data["tables"]["monthly_cash_detail"])
     _docx_section(doc, "Conclusion reporte financiero", data["narrative"]["conclusion"])
 
     doc.save(path)
@@ -1489,7 +1560,7 @@ def _docx_executive_dashboard(doc, data):
     doc.add_page_break()
 
 
-def _docx_section(doc, title, text, chart_path=None, rows=None):
+def _docx_section(doc, title, text, chart_path=None, rows=None, rows_2=None):
     from docx.shared import Inches
 
     doc.add_heading(title, level=1)
@@ -1500,10 +1571,39 @@ def _docx_section(doc, title, text, chart_path=None, rows=None):
         doc.add_picture(chart_path, width=Inches(6.4))
     if rows is not None:
         _docx_table(doc, rows)
+    if rows_2 is not None:
+        doc.add_heading("Detalle por obligación", level=2)
+        _docx_table(doc, rows_2)
     doc.add_page_break()
 
 
 def _docx_table(doc, rows):
+    has_cash_detail = any((row or {}).get("week") and (row or {}).get("due_date") for row in rows or [])
+    if has_cash_detail:
+        table = doc.add_table(rows=1, cols=7)
+        table.style = "Table Grid"
+        headers = ["Semana", "Vence", "Beneficiario", "Concepto", "Monto", "Calle semana", "Diferencia"]
+        for idx, header in enumerate(headers):
+            table.rows[0].cells[idx].text = header
+        if rows:
+            for row in rows:
+                cells = table.add_row().cells
+                cells[0].text = str(row.get("week") or "Sin fecha")
+                cells[1].text = str(row.get("due_date") or "")
+                cells[2].text = str(row.get("nombre_cliente") or "N/A")
+                cells[3].text = str(row.get("concept") or "Obligacion mensual")
+                cells[4].text = f"{row.get('currency') or 'USD'} {_f(row.get('amount')):,.2f}"
+                cells[5].text = _money(row.get("receivables_usd"))
+                cells[6].text = _money(row.get("net_usd"))
+        else:
+            cells = table.add_row().cells
+            cells[0].text = "Sin fecha"
+            cells[2].text = "Sin obligaciones"
+            cells[4].text = "USD 0.00"
+            cells[5].text = "USD 0.00"
+            cells[6].text = "USD 0.00"
+        return
+
     has_cash_calendar = any((row or {}).get("obligations_usd") is not None or (row or {}).get("receivables_usd") is not None for row in rows or [])
     if has_cash_calendar:
         table = doc.add_table(rows=1, cols=5)
