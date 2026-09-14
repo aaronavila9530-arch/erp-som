@@ -106,7 +106,7 @@ def _save_state(state):
         state=dict(list(state.items())[-20000:])
         if runtime:
             state["__runtime__"]=runtime
-    tmp=_state_path().with_suffix(".tmp"); tmp.write_text(json.dumps(state,ensure_ascii=False),encoding="utf-8"); os.replace(tmp,_state_path())
+    tmp=_state_path().with_suffix(".tmp"); tmp.write_text(json.dumps(state,ensure_ascii=False,default=str),encoding="utf-8"); os.replace(tmp,_state_path())
 
 
 def _update_runtime_status(**values):
@@ -339,6 +339,20 @@ def _scan_card_folder(folder,temp_dir,state,summary,years):
         _save_state(state)
 
 
+def _card_scan_folders(root_folder):
+    folders=[root_folder]
+    seen={str(getattr(root_folder,"FolderPath",root_folder))}
+    for child in _iter_folders(root_folder,max_depth=4):
+        name=_normalized(getattr(child,"Name",""))
+        path=str(getattr(child,"FolderPath",child))
+        if path in seen:
+            continue
+        if "bac" in name or "tarjeta" in name or "notificacion" in name or "estado" in name:
+            folders.append(child)
+            seen.add(path)
+    return folders
+
+
 def scan_corporate_card_history(progress=None):
     if not _scan_lock.acquire(blocking=False): return {"status":"busy","message":"Ya existe una revisiÃ³n de Outlook en curso","results":[]}
     import pythoncom
@@ -360,9 +374,10 @@ def scan_corporate_card_history(progress=None):
                         store,folder=_find_inbox(namespace,account)
                     else:
                         store,folder=_find_folder(namespace,account,folder_name)
-                    _scan_card_folder(folder,temp_dir,state,summary,years)
-                    summary["last_store"]=str(store); summary["last_folder"]=str(folder.Name)
-                    if progress: progress(dict(summary))
+                    for scan_folder in _card_scan_folders(folder):
+                        _scan_card_folder(scan_folder,temp_dir,state,summary,years)
+                        summary["last_store"]=str(store); summary["last_folder"]=str(scan_folder.Name)
+                        if progress: progress(dict(summary))
                 except Exception as exc:
                     summary["card_errors"]+=1; summary["errors"]+=1
                     results.append({"received":"","subject":"Tarjetas corporativas","filename":account,"status":"ERROR","detail":str(exc)})

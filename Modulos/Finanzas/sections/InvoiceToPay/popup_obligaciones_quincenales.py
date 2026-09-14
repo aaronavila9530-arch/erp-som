@@ -62,6 +62,8 @@ class PopupObligacionesQuincenales(tk.Toplevel):
         self.title("Obligaciones quincenales")
         self.geometry("1220x760")
         self.minsize(1020, 620)
+        self.resizable(True, True)
+        self._maximized = False
         self.rows = []
         today = date.today()
         self.period_var = tk.StringVar(value=f"{today.year:04d}-{today.month:02d}")
@@ -80,7 +82,7 @@ class PopupObligacionesQuincenales(tk.Toplevel):
 
         header = ttk.Frame(self, padding=(10, 8))
         header.grid(row=0, column=0, sticky="ew")
-        header.columnconfigure(9, weight=1)
+        header.columnconfigure(10, weight=1)
         ttk.Label(header, text="Obligaciones quincenales", font=("Segoe UI", 15, "bold")).grid(row=0, column=0, columnspan=2, sticky="w")
         ttk.Label(header, text="Periodo").grid(row=1, column=0, sticky="w", pady=(8, 0))
         ttk.Entry(header, textvariable=self.period_var, width=10).grid(row=1, column=1, sticky="w", padx=(4, 14), pady=(8, 0))
@@ -90,10 +92,11 @@ class PopupObligacionesQuincenales(tk.Toplevel):
         ttk.Button(header, text="Guardar borrador", command=self._save_draft).grid(row=1, column=5, padx=4, pady=(8, 0))
         ttk.Button(header, text="Exportar Excel", command=self._export_excel).grid(row=1, column=6, padx=4, pady=(8, 0))
         ttk.Button(header, text="Aplicar pagos y crear asientos", command=self._save_and_post).grid(row=1, column=7, padx=4, pady=(8, 0))
-        ttk.Button(header, text="Cerrar", command=self.destroy).grid(row=1, column=8, padx=4, pady=(8, 0))
-        ttk.Label(header, textvariable=self.total_var, font=("Segoe UI", 12, "bold")).grid(row=0, column=9, sticky="e")
-        ttk.Label(header, textvariable=self.total_usd_var, font=("Segoe UI", 11, "bold")).grid(row=1, column=9, sticky="e", padx=(0, 90))
-        ttk.Label(header, textvariable=self.count_var).grid(row=1, column=9, sticky="e")
+        ttk.Button(header, text="Maximizar", command=self._toggle_maximize).grid(row=1, column=8, padx=4, pady=(8, 0))
+        ttk.Button(header, text="Cerrar", command=self.destroy).grid(row=1, column=9, padx=4, pady=(8, 0))
+        ttk.Label(header, textvariable=self.total_var, font=("Segoe UI", 12, "bold")).grid(row=0, column=10, sticky="e")
+        ttk.Label(header, textvariable=self.total_usd_var, font=("Segoe UI", 11, "bold")).grid(row=1, column=10, sticky="e", padx=(0, 90))
+        ttk.Label(header, textvariable=self.count_var).grid(row=1, column=10, sticky="e")
 
         tools = ttk.LabelFrame(self, text="Agregar / ajustar lineas")
         tools.grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 8))
@@ -103,7 +106,7 @@ class PopupObligacionesQuincenales(tk.Toplevel):
         ttk.Button(tools, text="Quitar linea", command=self._delete_selected).grid(row=0, column=8, padx=4, pady=6)
         ttk.Label(
             tools,
-            text="Obligatorio antes de aplicar: comprobante y cuenta contable de pago en cada linea con monto.",
+            text="Para aplicar una linea pagada: comprobante, fecha y cuenta contable. Las demas quedan pendientes en borrador.",
             foreground="#7f1d1d",
             font=("Segoe UI", 9, "bold"),
         ).grid(row=1, column=0, columnspan=9, sticky="w", padx=6, pady=(0, 6))
@@ -116,13 +119,14 @@ class PopupObligacionesQuincenales(tk.Toplevel):
         detail.rowconfigure(0, weight=1)
         pane.add(detail, weight=4)
 
-        columns = ("category", "name", "amount", "currency", "payment_method", "bank_account", "bank_accounting_code", "bank_voucher", "due_date", "obligation_id", "reference", "balance", "source", "notes")
+        columns = ("category", "name", "amount", "currency", "payment_status", "payment_method", "bank_account", "bank_accounting_code", "bank_voucher", "due_date", "obligation_id", "reference", "balance", "source", "notes")
         self.tree = ttk.Treeview(detail, columns=columns, show="headings", height=17)
         labels = {
             "category": "Rubro",
             "name": "Nombre / beneficiario",
             "amount": "Monto",
             "currency": "Moneda",
+            "payment_status": "Estado",
             "payment_method": "Tipo pago",
             "bank_account": "Cuenta destino / IBAN",
             "bank_accounting_code": "Cuenta contable pago",
@@ -139,6 +143,7 @@ class PopupObligacionesQuincenales(tk.Toplevel):
             "name": 260,
             "amount": 120,
             "currency": 70,
+            "payment_status": 95,
             "payment_method": 160,
             "bank_account": 220,
             "bank_accounting_code": 150,
@@ -156,6 +161,8 @@ class PopupObligacionesQuincenales(tk.Toplevel):
         self.tree.tag_configure("auto", background="#eef7f2")
         self.tree.tag_configure("manual", background="#fff7ed")
         self.tree.tag_configure("review", background="#fee2e2")
+        self.tree.tag_configure("paid", background="#dcfce7")
+        self.tree.tag_configure("pending", background="#fef3c7")
         self.tree.bind("<Double-1>", lambda _e: self._edit_selected())
         yscroll = ttk.Scrollbar(detail, orient="vertical", command=self.tree.yview)
         xscroll = ttk.Scrollbar(detail, orient="horizontal", command=self.tree.xview)
@@ -192,6 +199,16 @@ class PopupObligacionesQuincenales(tk.Toplevel):
                 return child
         return None
 
+    def _toggle_maximize(self):
+        self._maximized = not self._maximized
+        try:
+            self.state("zoomed" if self._maximized else "normal")
+        except tk.TclError:
+            if self._maximized:
+                self.geometry(f"{self.winfo_screenwidth()}x{self.winfo_screenheight()}+0+0")
+            else:
+                self.geometry("1220x760")
+
     def _load_preview(self, force=False):
         try:
             data = get_itp_biweekly_obligations_preview_api(self.period_var.get().strip(), int(self.fortnight_var.get() or 1), force=force)
@@ -204,12 +221,16 @@ class PopupObligacionesQuincenales(tk.Toplevel):
         self.tree.delete(*self.tree.get_children())
         for idx, row in enumerate(self.rows):
             source = str(row.get("source") or "").upper()
-            tag = "review" if source == "REVISION" else ("manual" if source == "MANUAL" else "auto")
+            status = str(row.get("payment_status") or "").strip()
+            if not status:
+                status = "Listo" if self._ready_to_apply(row) else "Pendiente"
+            tag = "paid" if status == "Pagado" else ("pending" if status == "Pendiente" else ("review" if source == "REVISION" else ("manual" if source == "MANUAL" else "auto")))
             self.tree.insert("", "end", iid=str(idx), tags=(tag,), values=(
                 row.get("category") or "",
                 row.get("name") or "",
                 self._fmt(row.get("amount")),
                 row.get("currency") or "CRC",
+                status,
                 _payment_label(row),
                 row.get("bank_account") or "",
                 row.get("bank_accounting_code") or "",
@@ -396,7 +417,7 @@ class PopupObligacionesQuincenales(tk.Toplevel):
         ws.title = "Obligaciones"
         ws.append(["Periodo", self.period_var.get(), "Quincena", self.fortnight_var.get()])
         ws.append([])
-        headers = ["Rubro", "Nombre / beneficiario", "Monto a pagar", "Moneda", "Tipo pago", "Tarjeta", "Cuenta destino / IBAN", "Cuenta contable pago", "Comprobante", "Fecha pago", "ITP ID", "Referencia", "Saldo ITP", "Pago parcial", "Fuente", "Notas"]
+        headers = ["Rubro", "Nombre / beneficiario", "Monto a pagar", "Moneda", "Estado", "Tipo pago", "Tarjeta", "Cuenta destino / IBAN", "Cuenta contable pago", "Comprobante", "Fecha pago", "ITP ID", "Referencia", "Saldo ITP", "Pago parcial", "Fuente", "Notas"]
         ws.append(headers)
         for row in self.rows:
             amount = self._money(row.get("amount"))
@@ -406,6 +427,7 @@ class PopupObligacionesQuincenales(tk.Toplevel):
                 row.get("name"),
                 amount,
                 row.get("currency"),
+                row.get("payment_status") or ("Listo" if self._ready_to_apply(row) else "Pendiente"),
                 _payment_label(row),
                 row.get("payment_card_last4") or "",
                 row.get("bank_account"),
@@ -466,6 +488,11 @@ class PopupObligacionesQuincenales(tk.Toplevel):
                 missing.append(f"Linea {idx}: falta comprobante")
         return missing
 
+    def _ready_to_apply(self, row):
+        if self._money(row.get("amount")) <= 0:
+            return False
+        return all(str(row.get(key) or "").strip() for key in ("bank_accounting_code", "bank_voucher", "due_date"))
+
     def _save_draft(self):
         result = post_itp_biweekly_obligations_save_draft_api({
             "period": self.period_var.get().strip(),
@@ -482,19 +509,22 @@ class PopupObligacionesQuincenales(tk.Toplevel):
         )
 
     def _save_and_post(self):
-        missing = self._missing_required()
-        if missing:
+        ready = [row for row in self.rows if self._ready_to_apply(row)]
+        pending = [row for row in self.rows if self._money(row.get("amount")) > 0 and not self._ready_to_apply(row)]
+        if not ready:
             messagebox.showwarning(
                 "Aplicar pagos y crear asientos",
-                "No se puede aplicar ni contabilizar hasta completar estos campos obligatorios:\n"
-                + "\n".join(missing[:12]),
+                "No hay lineas listas para aplicar. Completa comprobante, fecha y cuenta contable en al menos una linea pagada.",
                 parent=self,
             )
             return
         total_crc = sum(self._money(row.get("amount")) for row in self.rows if (row.get("currency") or "CRC") == "CRC")
         ok = messagebox.askyesno(
             "Aplicar pagos y crear asientos",
-            f"Se guardaran las lineas, se aplicaran pagos ITP vinculados y se generaran asientos contables de pago.\n\nTotal CRC visible: {total_crc:,.2f}\n\nContinuar?",
+            "Se aplicaran solo las lineas con comprobante, fecha y cuenta contable; las demas quedaran pendientes en borrador.\n\n"
+            f"Lineas listas: {len(ready):,}\n"
+            f"Lineas pendientes: {len(pending):,}\n"
+            f"Total CRC visible: {total_crc:,.2f}\n\nContinuar?",
             parent=self,
         )
         if not ok:
@@ -509,10 +539,12 @@ class PopupObligacionesQuincenales(tk.Toplevel):
         else:
             messagebox.showinfo(
                 "Aplicar pagos y crear asientos",
-                f"Proceso aplicado.\nBatch: {result.get('batch_id')}\nLineas guardadas: {result.get('saved')}\nAsientos: {result.get('posted')}\nPagos ITP: {result.get('applied')}",
+                f"Proceso aplicado.\nBatch: {result.get('batch_id')}\nLineas pagadas: {result.get('saved')}\nAsientos: {result.get('posted')}\nPagos ITP: {result.get('applied')}\nPendientes en borrador: {result.get('pending', 0)}",
                 parent=self,
             )
-        self._load_preview()
+            for row in self.rows:
+                row["payment_status"] = "Pagado" if self._ready_to_apply(row) else "Pendiente"
+            self._render()
 
     def _summary_data(self, key):
         data = defaultdict(float)

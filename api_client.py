@@ -1,7 +1,7 @@
 import requests
 from requests.adapters import HTTPAdapter
 from typing import Optional, Any
-from datetime import datetime
+from datetime import datetime, date, timedelta
 from session_context import get_user, get_rol, get_company_code, get_company_name
 import os
 import tempfile
@@ -2383,6 +2383,11 @@ def _is_api_not_found(exc: Exception) -> bool:
     return bool(response is not None and getattr(response, "status_code", None) == 404)
 
 
+def _is_missing_desktop_session(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return "usuario no autenticado" in text or "x-user requerido" in text
+
+
 def _corporate_cards_local_call(action: str, *args, **kwargs):
     import sys
     from pathlib import Path
@@ -2512,6 +2517,10 @@ def post_corporate_card_statement_pdf_api(pdf_path: str):
         return r.json()
     except requests.exceptions.HTTPError as exc:
         if _is_api_not_found(exc):
+            return _corporate_cards_local_call("import_pdf", pdf_path)
+        raise
+    except Exception as exc:
+        if _is_missing_desktop_session(exc):
             return _corporate_cards_local_call("import_pdf", pdf_path)
         raise
 
@@ -2668,6 +2677,10 @@ def post_corporate_card_history_api(payload: dict | None = None):
         return r.json()
     except requests.exceptions.HTTPError as exc:
         if _is_api_not_found(exc):
+            return _corporate_cards_local_call("post_history", payload or {})
+        raise
+    except Exception as exc:
+        if _is_missing_desktop_session(exc):
             return _corporate_cards_local_call("post_history", payload or {})
         raise
 
@@ -4036,6 +4049,15 @@ def _fortnight_due_date(period: str, fortnight: int) -> str:
     return f"{year:04d}-{month:02d}-{day:02d}"
 
 
+def _fortnight_window(period: str, fortnight: int) -> tuple[date, date]:
+    year, month = [int(part) for part in str(period).split("-")[:2]]
+    start = date(year, month, 1)
+    if int(fortnight or 1) == 1:
+        return start, date(year, month, 15)
+    next_month = date(year + 1, 1, 1) if month == 12 else date(year, month + 1, 1)
+    return date(year, month, 16), next_month - timedelta(days=1)
+
+
 def _local_biweekly_obligations_preview(period: str, fortnight: int = 1, force: bool = False) -> dict:
     import sys
     from pathlib import Path
@@ -4326,19 +4348,27 @@ def _local_biweekly_obligations_preview(period: str, fortnight: int = 1, force: 
                   AND COALESCE(balance,0) > 0
                 ORDER BY due_date NULLS LAST, payee_name
             """)
+            due_start, due_end = _fortnight_window(period, fortnight)
             for ob in cur.fetchall() or []:
+                due_date = ob.get("due_date")
+                if not due_date:
+                    due_date = ob.get("issue_date")
+                if not due_date:
+                    due_date = due_start
+                if int(fortnight or 1) == 1:
+                    if due_date > due_end:
+                        continue
+                elif due_date < due_start or due_date > due_end:
+                    continue
                 haystack = " ".join(str(ob.get(k) or "") for k in ("payee_name", "obligation_type", "notes", "reference")).lower()
-                if int(fortnight or 1) != 1:
-                    continue
-                issue_date = ob.get("issue_date")
-                if issue_date and str(issue_date)[:7] != period:
-                    continue
                 if "alquiler" in haystack or "rent" in haystack or "prime properties" in haystack:
                     category = "Alquiler"
                 elif "internet" in haystack or "american data" in haystack:
                     category = "Internet"
                 elif "surveyor" in haystack or str(ob.get("obligation_type") or "").upper() == "SURVEYOR_FEE":
                     category = "Surveyors"
+                elif str(ob.get("obligation_type") or "").upper() in {"SUPPLIER_INVOICE", "SUPPLIER_CREDIT_NOTE"}:
+                    category = "Proveedores"
                 else:
                     continue
                 rows.append(row(
@@ -4400,6 +4430,14 @@ def _ensure_local_biweekly_schema(cur):
     """)
     cur.execute("ALTER TABLE itp_biweekly_payment_lines ADD COLUMN IF NOT EXISTS payment_method TEXT NOT NULL DEFAULT 'BANK'")
     cur.execute("ALTER TABLE itp_biweekly_payment_lines ADD COLUMN IF NOT EXISTS payment_card_last4 TEXT")
+    cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS last_payment_date DATE")
+    cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS payment_bank_account_code TEXT")
+    cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS payment_bank_account_name TEXT")
+    cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS payment_method TEXT NOT NULL DEFAULT 'BANK'")
+    cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS payment_card_last4 TEXT")
+    cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS paid_with_card BOOLEAN NOT NULL DEFAULT FALSE")
+    cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS card_paid_at DATE")
+    cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS card_holder_name TEXT")
 
 
 def _local_load_biweekly_draft(cur, company: str, period: str, fortnight: int):
@@ -4605,6 +4643,8 @@ def _local_biweekly_obligations_apply(payload: dict) -> dict:
     applied = 0
     posted = 0
     saved = 0
+    pending = 0
+    pending_rows = []
     errors = []
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -4625,27 +4665,56 @@ def _local_biweekly_obligations_apply(payload: dict) -> dict:
 
             for idx, row in enumerate(rows, start=1):
                 try:
-                    category = require(row.get("category"), f"rubro linea {idx}")
-                    beneficiary = require(row.get("name"), f"beneficiario linea {idx}")
-                    bank_code = require(row.get("bank_accounting_code"), f"cuenta contable banco linea {idx}")
-                    voucher = require(row.get("bank_voucher"), f"comprobante bancario linea {idx}")
-                    payment_date = require(row.get("due_date"), f"fecha pago linea {idx}")
-                    datetime.strptime(payment_date, "%Y-%m-%d")
+                    category = str(row.get("category") or "").strip()
+                    beneficiary = str(row.get("name") or "").strip()
+                    bank_code = str(row.get("bank_accounting_code") or "").strip()
+                    voucher = str(row.get("bank_voucher") or "").strip()
+                    payment_date = str(row.get("due_date") or "").strip()
                     currency = str(row.get("currency") or "CRC").upper()
                     amount = m(row.get("amount"))
+                    method = str(row.get("payment_method") or "BANK").upper()
+                    is_card = "3155" in method or "CARD" in method or "TARJETA" in method
+                    is_hazel = "HAZEL" in method
+                    payment_method = "THIRD_PARTY_HAZEL" if is_hazel else ("CARD_BAC_3155" if is_card else "BANK")
+                    payment_card_last4 = "3155" if is_card else (row.get("payment_card_last4") or None)
+                    if is_hazel:
+                        bank_code = "3.1.99"
+                    elif is_card:
+                        bank_code = "2.1.02.10"
                     if amount <= 0:
                         continue
-                    cur.execute("""
-                        SELECT account_code, account_name
-                        FROM accounting_accounts
-                        WHERE account_code=%s
-                          AND COALESCE(active, TRUE)=TRUE
-                          AND COALESCE(accepts_posting, FALSE)=TRUE
-                        LIMIT 1
-                    """, (bank_code,))
-                    bank_account_row = cur.fetchone()
-                    if not bank_account_row:
-                        raise ValueError(f"Cuenta contable banco invalida o inactiva: {bank_code}")
+                    missing = []
+                    if not category:
+                        missing.append("rubro")
+                    if not beneficiary:
+                        missing.append("beneficiario")
+                    if not bank_code:
+                        missing.append("cuenta contable banco")
+                    if not voucher:
+                        missing.append("comprobante bancario")
+                    if not payment_date:
+                        missing.append("fecha pago")
+                    if missing:
+                        pending_rows.append(row)
+                        pending += 1
+                        continue
+                    datetime.strptime(payment_date, "%Y-%m-%d")
+                    if is_hazel:
+                        bank_account_row = {"account_code": "3.1.99", "account_name": "Aportes de terceros - Hazel Barrantes"}
+                    elif is_card:
+                        bank_account_row = {"account_code": "2.1.02.10", "account_name": "Tarjeta corporativa BAC por pagar"}
+                    else:
+                        cur.execute("""
+                            SELECT account_code, account_name
+                            FROM accounting_accounts
+                            WHERE account_code=%s
+                              AND COALESCE(active, TRUE)=TRUE
+                              AND COALESCE(accepts_posting, FALSE)=TRUE
+                            LIMIT 1
+                        """, (bank_code,))
+                        bank_account_row = cur.fetchone()
+                        if not bank_account_row:
+                            raise ValueError(f"Cuenta contable banco invalida o inactiva: {bank_code}")
                     rate = exchange_rate(cur, payment_date) if currency == "USD" else Decimal("1.00")
                     amount_crc = (amount * rate).quantize(money, rounding=ROUND_HALF_UP)
                     bank_name = bank_account_row["account_name"]
@@ -4670,9 +4739,21 @@ def _local_biweekly_obligations_apply(payload: dict) -> dict:
                                    last_payment_date=%s,
                                    payment_bank_account_code=%s,
                                    payment_bank_account_name=%s,
+                                   payment_method=%s,
+                                   payment_card_last4=%s,
+                                   paid_with_card=%s,
+                                   card_paid_at=%s,
+                                   card_holder_name=%s,
                                    updated_at=NOW()
                              WHERE id=%s
-                        """, (new_balance, "PAID" if new_balance == 0 else "PARTIAL", payment_date, bank_code, bank_name, int(row["obligation_id"])))
+                        """, (
+                            new_balance, "PAID" if new_balance == 0 else "PARTIAL",
+                            payment_date, bank_code, bank_name,
+                            payment_method, payment_card_last4,
+                            is_card, payment_date if is_card else None,
+                            "Tarjeta empresarial BAC 3155" if is_card else None,
+                            int(row["obligation_id"]),
+                        ))
                         applied += 1
 
                     entry_origin = "ITP_PAYMENT" if row.get("obligation_id") else "ITP_BIWEEKLY_PAYMENT"
@@ -4710,12 +4791,14 @@ def _local_biweekly_obligations_apply(payload: dict) -> dict:
                         INSERT INTO itp_biweekly_payment_lines(
                             batch_id, company_code, category, beneficiary, amount, currency, amount_crc,
                             destination_account, bank_accounting_code, bank_accounting_name, bank_voucher,
+                            payment_method, payment_card_last4,
                             payment_date, obligation_id, reference, source, notes, accounting_entry_id
                         )
-                        VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                        VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                     """, (
                         batch_id, company, category, beneficiary, amount, currency, amount_crc,
                         row.get("bank_account") or "", bank_code, bank_name, voucher,
+                        payment_method, payment_card_last4,
                         payment_date, row.get("obligation_id"), row.get("reference") or "",
                         row.get("source") or "", row.get("notes") or "", entry_id,
                     ))
@@ -4725,8 +4808,47 @@ def _local_biweekly_obligations_apply(payload: dict) -> dict:
             if errors:
                 conn.rollback()
                 return {"status": "error", "error": "\n".join(errors[:10]), "saved": 0, "posted": 0, "applied": 0}
+            if pending_rows:
+                cur.execute("""
+                    INSERT INTO itp_biweekly_payment_batches(company_code, period, fortnight, created_by, status)
+                    VALUES(%s,%s,%s,%s,'DRAFT')
+                    RETURNING id
+                """, (company, period, fortnight, user))
+                draft_batch_id = cur.fetchone()["id"]
+                for item in pending_rows:
+                    amount = m(item.get("amount"))
+                    if amount <= 0:
+                        continue
+                    payment_date = str(item.get("due_date") or _fortnight_due_date(period, fortnight)).strip()
+                    try:
+                        datetime.strptime(payment_date, "%Y-%m-%d")
+                    except Exception:
+                        payment_date = _fortnight_due_date(period, fortnight)
+                    method = str(item.get("payment_method") or "BANK").upper()
+                    is_card = "3155" in method or "CARD" in method or "TARJETA" in method
+                    is_hazel = "HAZEL" in method
+                    payment_method = "THIRD_PARTY_HAZEL" if is_hazel else ("CARD_BAC_3155" if is_card else "BANK")
+                    bank_code = "3.1.99" if is_hazel else ("2.1.02.10" if is_card else str(item.get("bank_accounting_code") or "").strip())
+                    bank_name = "Aportes de terceros - Hazel Barrantes" if is_hazel else ("Tarjeta corporativa BAC por pagar" if is_card else str(item.get("bank_accounting_name") or "").strip())
+                    cur.execute("""
+                        INSERT INTO itp_biweekly_payment_lines(
+                            batch_id, company_code, category, beneficiary, amount, currency, amount_crc,
+                            destination_account, bank_accounting_code, bank_accounting_name, bank_voucher,
+                            payment_method, payment_card_last4, payment_date, obligation_id, reference, source, notes
+                        )
+                        VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    """, (
+                        draft_batch_id, company, str(item.get("category") or "Otros").strip(),
+                        str(item.get("name") or "").strip() or "Sin beneficiario",
+                        amount, str(item.get("currency") or "CRC").upper(), 0,
+                        item.get("bank_account") or "", bank_code, bank_name,
+                        item.get("bank_voucher") or "", payment_method,
+                        "3155" if is_card else (item.get("payment_card_last4") or None),
+                        payment_date, item.get("obligation_id") or None,
+                        item.get("reference") or "", item.get("source") or "DRAFT", item.get("notes") or "",
+                    ))
             conn.commit()
-            return {"status": "ok", "batch_id": batch_id, "saved": saved, "posted": posted, "applied": applied}
+            return {"status": "ok", "batch_id": batch_id, "saved": saved, "posted": posted, "applied": applied, "pending": pending}
     except Exception as exc:
         conn.rollback()
         return {"status": "error", "error": str(exc), "saved": 0, "posted": 0, "applied": 0}

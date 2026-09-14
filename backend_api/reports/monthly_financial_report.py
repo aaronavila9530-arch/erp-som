@@ -577,6 +577,35 @@ def build_monthly_financial_data(conn, year: int, month: int):
         ORDER BY COALESCE(issue_date, due_date) NULLS LAST, payee_name
     """, (f"{year}-{month:02d}",))
 
+    month_due_obligations = _fetch_all(cur, """
+        SELECT
+            payee_name AS nombre_cliente,
+            COALESCE(NULLIF(obligation_type, ''), NULLIF(payee_type, ''), 'OBLIGACION') AS concept,
+            balance AS total,
+            currency,
+            COALESCE(due_date, issue_date) AS due_date,
+            origin AS source
+        FROM payment_obligations
+        WHERE status IN ('PENDING','PARTIAL')
+          AND COALESCE(balance, 0) > 0
+          AND COALESCE(due_date, issue_date) BETWEEN %s AND %s
+        ORDER BY COALESCE(due_date, issue_date), payee_name
+    """, (start, end))
+
+    month_receivables_due = _fetch_all(cur, """
+        SELECT
+            nombre_cliente,
+            numero_documento,
+            saldo_pendiente AS total,
+            moneda AS currency,
+            fecha_vencimiento AS due_date
+        FROM collections
+        WHERE saldo_pendiente > 0
+          AND tipo_documento = 'FACTURA'
+          AND fecha_vencimiento BETWEEN %s AND %s
+        ORDER BY fecha_vencimiento, nombre_cliente
+    """, (start, end))
+
     cur.close()
 
     revenue_total = _f(revenue.get("total"))
@@ -641,8 +670,17 @@ def build_monthly_financial_data(conn, year: int, month: int):
             "prev_year_trend": [dict(r) for r in prev_year_trend],
             "current_year_trend": [dict(r) for r in current_year_trend],
             "monthly_obligations": [dict(r) for r in monthly_obligations],
+            "month_due_obligations": [dict(r) for r in month_due_obligations],
+            "month_receivables_due": [dict(r) for r in month_receivables_due],
         },
     }
+    data["tables"]["monthly_cash_calendar"] = _build_monthly_cash_calendar(
+        start,
+        end,
+        data["tables"]["monthly_obligations"],
+        data["tables"]["month_due_obligations"],
+        data["tables"]["month_receivables_due"],
+    )
     data["executive"] = _build_executive_dashboard(data)
     data["narrative"] = _build_financial_narrative(data)
     return data
@@ -652,20 +690,92 @@ def _ratio_label(value):
     return "N/A" if value is None else f"{_f(value):.1f}%"
 
 
+def _amount_to_usd(row):
+    currency = str(row.get("currency") or row.get("moneda") or "USD").upper()
+    amount = _f(row.get("total") or row.get("amount"))
+    if currency == "CRC":
+        return amount / 500.0
+    return amount
+
+
+def _week_label(value):
+    if not value:
+        return "Sin fecha"
+    if isinstance(value, str):
+        value = date.fromisoformat(value[:10])
+    month_start = date(value.year, value.month, 1)
+    week = ((value.day - 1) // 7) + 1
+    week_start = month_start + timedelta(days=(week - 1) * 7)
+    week_end = min(month_start + timedelta(days=(week * 7) - 1), date(value.year, value.month, calendar.monthrange(value.year, value.month)[1]))
+    return f"Semana {week} ({week_start.day:02d}-{week_end.day:02d})"
+
+
+def _build_monthly_cash_calendar(start, end, saved_obligations, due_obligations, receivables_due):
+    weeks = {}
+
+    def bucket(label):
+        if label not in weeks:
+            weeks[label] = {
+                "nombre_cliente": label,
+                "concept": "Obligaciones vs monto en calle",
+                "obligations_usd": 0.0,
+                "receivables_usd": 0.0,
+                "net_usd": 0.0,
+                "obligations_count": 0,
+                "receivables_count": 0,
+                "currency": "USD",
+                "total": 0.0,
+            }
+        return weeks[label]
+
+    for row in (saved_obligations or []):
+        due = row.get("due_date") or row.get("issue_date")
+        label = _week_label(due)
+        item = bucket(label)
+        item["obligations_usd"] += _amount_to_usd(row)
+        item["obligations_count"] += 1
+
+    for row in (due_obligations or []):
+        due = row.get("due_date")
+        label = _week_label(due)
+        item = bucket(label)
+        item["obligations_usd"] += _amount_to_usd(row)
+        item["obligations_count"] += 1
+
+    for row in (receivables_due or []):
+        due = row.get("due_date")
+        label = _week_label(due)
+        item = bucket(label)
+        item["receivables_usd"] += _amount_to_usd(row)
+        item["receivables_count"] += 1
+
+    if not weeks:
+        cursor = start
+        while cursor <= end:
+            bucket(_week_label(cursor))
+            cursor += timedelta(days=7)
+
+    result = []
+    for label in sorted(weeks, key=lambda x: int(x.split()[1]) if x.startswith("Semana ") else 99):
+        item = weeks[label]
+        item["net_usd"] = item["receivables_usd"] - item["obligations_usd"]
+        item["total"] = item["obligations_usd"]
+        result.append(item)
+    return result
+
+
 def _build_executive_dashboard(data):
     m = data["metrics"]
     a = data["accounting"]
     collection_ratio = (m["collections"] / m["revenue"] * 100.0) if m["revenue"] else None
     ar_pressure = (m["ar_open"] / m["revenue"] * 100.0) if m["revenue"] else None
-    payable_coverage = (m["collections"] / m["payables_open"] * 100.0) if m["payables_open"] else None
+    payable_coverage = None
 
     alerts = []
     if abs(a["net_income"]) > 0 and a["net_income"] < 0:
         alerts.append("Resultado contable negativo en el periodo; revisar estructura de gastos y margen operativo.")
     if ar_pressure is not None and ar_pressure > 100:
         alerts.append("La cartera abierta supera la facturacion mensual; priorizar cobranza y seguimiento por cliente.")
-    if payable_coverage is not None and payable_coverage < 100:
-        alerts.append("La cobranza del mes no cubre completamente las cuentas por pagar abiertas.")
     if m["next_net_outlook"] < 0:
         alerts.append("El outlook del proximo mes muestra presion neta de caja negativa.")
     if not alerts:
@@ -681,7 +791,7 @@ def _build_executive_dashboard(data):
         "alerts": alerts,
         "decision_focus": [
             "Confirmar recuperacion de clientes con mayor cartera abierta.",
-            "Calendarizar pagos de mayor impacto contra caja esperada.",
+            "Calendarizar obligaciones de mayor impacto contra caja esperada.",
             "Validar variaciones entre facturacion operativa y resultado contable.",
             "Revisar cuentas bancarias y auxiliares antes del cierre mensual.",
         ],
@@ -696,9 +806,8 @@ def _compact_rows(rows, limit=6):
 
 
 def _build_financial_narrative(data):
-    ai = _ai_financial_narrative(data)
-    if ai:
-        return ai
+    # Keep this report deterministic: the user-facing monthly report must not
+    # reintroduce removed sections through AI-generated narrative.
     return _fallback_financial_narrative(data)
 
 
@@ -787,16 +896,16 @@ def _fallback_financial_narrative(data):
     return {
         "introduction": (
             f"El presente análisis evalúa la situación financiera, comercial y operativa de la compañía al cierre de "
-            f"{p['label']}, considerando facturación, recuperación de cartera, cuentas por cobrar, cuentas por pagar, "
+            f"{p['label']}, considerando facturación, recuperación de cartera, cuentas por cobrar, obligaciones del mes, "
             f"liquidez operativa y riesgos asociados a la continuidad del negocio.\n\n"
             f"Durante el período se registraron {_money(m['revenue'])} en facturación y {_money(m['collections'])} "
             f"en cobranzas. El resultado debe leerse junto con una cartera abierta de {_money(m['ar_open'])} y "
-            f"obligaciones pendientes por {_money(m['payables_open'])}, lo cual permite dimensionar la capacidad "
-            f"de caja y la presión operativa de corto plazo.\n\n"
+            f"obligaciones calendarizadas, lo cual permite dimensionar la capacidad de caja y la presión operativa "
+            f"de corto plazo.\n\n"
             f"El objetivo de este reporte es traducir los movimientos financieros del mes en una lectura ejecutiva "
             f"que permita tomar decisiones oportunas. Por ello, el análisis no se limita a presentar montos; también "
             f"interpreta la relación entre generación de ingresos, velocidad de cobranza, exposición de cartera y "
-            f"compromisos de pago.\n\n"
+            f"vencimientos por semana.\n\n"
             f"La posición de liquidez debe observarse con especial atención porque el flujo disponible depende de dos "
             f"fuentes principales: los cobros efectivamente recuperados durante el mes y la capacidad de convertir "
             f"las cuentas por cobrar abiertas en efectivo dentro de los plazos previstos. Cuando la cobranza se "
@@ -805,7 +914,7 @@ def _fallback_financial_narrative(data):
             f"una base suficiente para sostener sus obligaciones recurrentes, cubrir compromisos extraordinarios y "
             f"mantener capacidad de respuesta ante atrasos o cambios en el calendario de pagos.\n\n"
             f"El reporte también incorpora una vista prospectiva de {p['next_label']}, con el fin de anticipar presión "
-            f"de caja, priorizar gestiones de cobro y calendarizar cuentas por pagar de forma disciplinada. Esta "
+            f"de caja, priorizar gestiones de cobro y calendarizar obligaciones de forma disciplinada. Esta "
             f"visión busca que la administración actúe de manera preventiva y no únicamente reactiva."
         ),
         "collections": (
@@ -831,7 +940,15 @@ def _fallback_financial_narrative(data):
             f"{billing_sentence}. Este indicador muestra el pulso comercial del mes y permite evalúar si la compañía "
             f"mantiene suficiente generacion de ingresos para sostener su estructura operativa.\n\n"
             f"Cuando la facturación se desacelera, la compañía queda mas expuesta a la recuperación de cartera previa. "
-            f"Por ello, el análisis debe observar simultaneamente ventas, cobros y cuentas por pagar."
+            f"Por ello, el análisis debe observar simultaneamente ventas, cobros y calendario de obligaciones."
+        ),
+        "monthly_obligations": (
+            f"Las obligaciones del mes se presentan por semana para comparar vencimientos contra monto en calle por cobrar. "
+            f"Esta vista permite decidir si una obligación puede cubrirse en la quincena correspondiente o si depende de "
+            f"recuperar CxC antes de ejecutar el pago.\n\n"
+            f"El monto en calle corresponde a facturas abiertas con vencimiento dentro del mismo mes del reporte. "
+            f"Si una semana muestra diferencia negativa, esa semana requiere caja inicial, cobro anticipado o reprogramación "
+            f"del pago antes de comprometer fondos."
         ),
         "payables": (
             f"Las cuentas por pagar abiertas al cierre ascienden a {_money(m['payables_open'])}, mientras que los pagos "
@@ -869,14 +986,14 @@ def _fallback_financial_narrative(data):
             f"En términos de gestión, la prioridad inmediata debe ser asegurar la recuperación de los saldos de mayor "
             f"impacto y confirmar fechas de pago con los clientes que concentran la cartera. Esta acción permite "
             f"reducir incertidumbre, mejorar previsibilidad de caja y sostener una operación más ordenada.\n\n"
-            f"De forma paralela, las cuentas por pagar deben administrarse bajo un calendario realista, priorizando "
+            f"De forma paralela, las obligaciones deben administrarse bajo un calendario realista, priorizando "
             f"obligaciones críticas para la continuidad del servicio y revisando aquellos compromisos que puedan "
             f"renegociarse, diferirse o ajustarse sin afectar la calidad operativa.\n\n"
             f"El análisis también confirma la importancia de monitorear la facturación mensual. Si la generación de "
             f"ingresos no mantiene un ritmo suficiente, la empresa dependerá cada vez más de cartera previa, lo cual "
             f"puede limitar el margen de maniobra ante gastos extraordinarios o atrasos de clientes.\n\n"
             f"Por lo tanto, la administración debería usar este reporte como tablero de control mensual: validar "
-            f"cobranza, revisar exposición por cliente, medir comportamiento de pago, controlar obligaciones y "
+            f"cobranza, revisar exposición por cliente, medir comportamiento de pago, controlar obligaciones por semana y "
             f"comparar el desempeño contra meses anteriores.\n\n"
             f"La conclusión estratégica es que la compañía puede mantener una posición operativa saludable si protege "
             f"la liquidez, ejecuta la cobranza con rigor y evita compromisos que no estén directamente alineados con "
@@ -966,8 +1083,10 @@ def _chart_image(rows, title, path, kind="bar"):
     except Exception:
         return None
 
-    rows = [r for r in (rows or []) if _f(r.get("total")) > 0][:7]
-    width, height = 900, 430
+    rows = [r for r in (rows or []) if _f(r.get("total")) > 0]
+    if kind == "pie":
+        rows = rows[:7]
+    width, height = 900, max(430, 115 + (45 * min(len(rows), 12)) + 35)
     img = Image.new("RGB", (width, height), "white")
     draw = ImageDraw.Draw(img)
     try:
@@ -991,7 +1110,7 @@ def _chart_image(rows, title, path, kind="bar"):
         total = sum(_f(r.get("total")) for r in rows) or 1
         start_angle = 0
         box = (70, 105, 360, 395)
-        for idx, row in enumerate(rows):
+        for idx, row in enumerate(rows[:12]):
             amount = _f(row.get("total"))
             angle = amount / total * 360
             draw.pieslice(box, start=start_angle, end=start_angle + angle, fill=CHART_COLORS[idx % len(CHART_COLORS)])
@@ -1035,12 +1154,7 @@ def _build_charts(data, tmp_dir):
         "payables": _chart_image(tables["top_payables_open"], "Cuentas por pagar", os.path.join(tmp_dir, "payables.png"), "pie"),
         "next_ar": _chart_image(tables["top_next_receivables"], "Cobros esperados próximo mes", os.path.join(tmp_dir, "next_ar.png"), "bar"),
         "next_payables": _chart_image(tables["top_next_payables"], "Pagos programados próximo mes", os.path.join(tmp_dir, "next_payables.png"), "bar"),
-        "cash_bridge": _chart_image([
-            {"nombre_cliente": "Cobranza", "total": metrics["collections"]},
-            {"nombre_cliente": "Pagos ITP", "total": metrics["itp_paid"]},
-            {"nombre_cliente": "Caja neta", "total": metrics["net_cash"]},
-            {"nombre_cliente": "AR abierto", "total": metrics["ar_open"]},
-        ], "Puente de caja del periodo", os.path.join(tmp_dir, "cash_bridge.png"), "bar"),
+        "monthly_cash_calendar": _chart_image(tables["monthly_cash_calendar"], "Obligaciones por semana", os.path.join(tmp_dir, "monthly_cash_calendar.png"), "bar"),
         "accounting_mix": _chart_image([
             {"nombre_cliente": "Ingresos contables", "total": accounting["accounting_revenue"]},
             {"nombre_cliente": "Gastos contables", "total": accounting["accounting_expense"]},
@@ -1078,11 +1192,7 @@ def generate_monthly_financial_pdf(conn, year: int, month: int):
     _pdf_section(story, styles, "Cuentas por cobrar", f"A continuación la distribución de cuentas por cobrar para {data['period']['label']}:", data["narrative"]["receivables"], charts["ar"])
     _pdf_section(story, styles, "Tendencia de pago", "A continuación la tendencia de pagos por parte del cliente:", data["narrative"]["payment_trend"], charts["payment_trend"])
     _pdf_section(story, styles, "Facturación", "A continuación el desglose mensual acumulado de facturación para el año en curso:", data["narrative"]["billing"], charts["billing"])
-    _pdf_section(story, styles, "Cuentas por pagar", "A continuación el detalle de cuentas por pagar:", data["narrative"]["payables"], charts["payables"])
-    _pdf_section(story, styles, "Obligaciones del mes", "A continuación el preliminar editable de obligaciones mensuales aceptadas para este reporte:", "Incluye las obligaciones mensuales aprobadas antes de emitir el reporte, incluyendo salarios y compromisos recurrentes. Esta sección funciona como agenda de pagos y base de seguimiento administrativo.", charts["cash_bridge"], data["tables"]["monthly_obligations"])
-    _pdf_section(story, styles, "Cronograma de pago", f"A continuación el cronograma de pago de {data['period']['next_label']}:", data["narrative"]["next_month_outlook"], charts["next_ar"], extra_chart=charts["next_payables"])
-    _pdf_section(story, styles, f"Comparativo {year - 1} vs {year}", f"A continuación el comparativo entre {year - 1} y {year}:", data["narrative"]["year_comparison"], charts["accounting_mix"])
-    _pdf_section(story, styles, "Análisis de riesgo financiero", "A continuación el análisis de riesgos financieros:", data["narrative"]["risk"], None, None)
+    _pdf_section(story, styles, "Obligaciones del mes", "Agenda semanal de obligaciones del mes contra monto en calle por cobrar:", data["narrative"]["monthly_obligations"], charts["monthly_cash_calendar"], data["tables"]["monthly_cash_calendar"])
     _pdf_section(story, styles, "Conclusión", "Conclusión y recomendaciones ejecutivas:", data["narrative"]["conclusion"], None, None)
 
     doc = SimpleDocTemplate(path, pagesize=A4, rightMargin=44, leftMargin=82, topMargin=78, bottomMargin=68)
@@ -1133,10 +1243,10 @@ def _pdf_kpi_table(data):
 
     m = data["metrics"]
     rows = [
-        ["Facturación", "Cobranza", "Cartera", "CxP", "Outlook neto"],
-        [_short_money(m["revenue"]), _short_money(m["collections"]), _short_money(m["ar_open"]), _short_money(m["payables_open"]), _short_money(m["next_net_outlook"])],
+        ["Facturación", "Cobranza", "Cartera", "Outlook neto"],
+        [_short_money(m["revenue"]), _short_money(m["collections"]), _short_money(m["ar_open"]), _short_money(m["next_net_outlook"])],
     ]
-    table = Table(rows, colWidths=[92, 92, 92, 92, 92])
+    table = Table(rows, colWidths=[115, 115, 115, 115])
     table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(BLUE)),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
@@ -1160,7 +1270,7 @@ def _pdf_executive_dashboard(story, styles, data):
     story.append(Paragraph("Executive Financial Dashboard", styles["Section"]))
     story.append(Paragraph(
         "Vista ejecutiva de liquidez, rentabilidad, capital de trabajo y riesgos principales del periodo. "
-        "Los indicadores combinan facturacion, cobranza, cuentas por cobrar, cuentas por pagar y movimientos contables POSTED.",
+        "Los indicadores combinan facturacion, cobranza, cuentas por cobrar, obligaciones mensuales y movimientos contables POSTED.",
         styles["Body"],
     ))
     rows = [
@@ -1170,7 +1280,6 @@ def _pdf_executive_dashboard(story, styles, data):
         ["Resultado contable", _money(a["net_income"]), f"Margen neto contable {_ratio_label(e['net_margin_pct'])}"],
         ["Capital de trabajo", _money(a["working_capital"]), "Activos menos pasivos segun asientos POSTED"],
         ["Cartera abierta", _money(m["ar_open"]), f"Presion de cartera {_ratio_label(e['ar_pressure_pct'])} vs facturacion"],
-        ["CxP abiertas", _money(m["payables_open"]), f"Cobertura por cobranza {_ratio_label(e['payable_coverage_pct'])}"],
         ["Outlook neto proximo mes", _money(m["next_net_outlook"]), "Cobros esperados menos pagos programados"],
     ]
     table = Table(rows, colWidths=[150, 120, 260])
@@ -1219,6 +1328,32 @@ def _pdf_section(story, styles, side_title, lead, text, chart_path, table_rows=N
 def _pdf_table(rows):
     from reportlab.lib import colors
     from reportlab.platypus import Table, TableStyle
+
+    has_cash_calendar = any((row or {}).get("obligations_usd") is not None or (row or {}).get("receivables_usd") is not None for row in rows or [])
+    if has_cash_calendar:
+        table_data = [["Semana", "Obligaciones", "Monto en calle", "Diferencia", "Lectura"]]
+        for row in rows or []:
+            net = _f(row.get("net_usd"))
+            table_data.append([
+                str(row.get("nombre_cliente") or row.get("week") or "N/A"),
+                _money(row.get("obligations_usd")),
+                _money(row.get("receivables_usd")),
+                _money(net),
+                "Alcanza por vencimientos" if net >= 0 else "Requiere caja o cobro previo",
+            ])
+        if len(table_data) == 1:
+            table_data.append(["Sin fecha", "USD 0.00", "USD 0.00", "USD 0.00", "Sin datos"])
+        table = Table(table_data, colWidths=[95, 90, 90, 90, 125])
+        table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(LIGHT_BLUE)),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor(DARK)),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#D7DEE8")),
+            ("ALIGN", (1, 1), (3, -1), "RIGHT"),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+            ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ]))
+        return table
 
     has_obligation_fields = any((row or {}).get("concept") or (row or {}).get("issue_date") or (row or {}).get("due_date") for row in rows or [])
     if has_obligation_fields:
@@ -1311,13 +1446,7 @@ def generate_monthly_financial_docx(conn, year: int, month: int):
     _docx_section(doc, "Antigüedad de cartera", "Distribución de cartera por antigüedad para priorizar recuperación.", charts["ar_aging"], data["tables"]["ar_aging"])
     _docx_section(doc, "Tendencia de pago", data["narrative"]["payment_trend"], charts["payment_trend"], data["tables"]["payment_trend"])
     _docx_section(doc, "Facturación", data["narrative"]["billing"], charts["billing"], data["tables"]["top_billing"])
-    _docx_section(doc, "Cuentas por pagar", data["narrative"]["payables"], charts["payables"], data["tables"]["top_payables_open"])
-    _docx_section(doc, "Obligaciones pendientes del mes", "Obligaciones mensuales aceptadas en el preliminar antes de emitir el reporte. Esta tabla sirve como agenda operativa de pagos y seguimiento.", charts["cash_bridge"], data["tables"]["monthly_obligations"])
-    _docx_section(doc, f"Cronograma y outlook - {data['period']['next_label']}", data["narrative"]["next_month_outlook"], charts["next_ar"], data["tables"]["top_next_receivables"])
-    if charts["next_payables"] and os.path.exists(charts["next_payables"]):
-        doc.add_picture(charts["next_payables"], width=Inches(6.4))
-    _docx_section(doc, f"Comparativo {year - 1} vs {year}", data["narrative"]["year_comparison"], charts["accounting_mix"], _comparison_rows(data))
-    _docx_section(doc, "Análisis de riesgo financiero", data["narrative"]["risk"])
+    _docx_section(doc, "Obligaciones del mes", data["narrative"]["monthly_obligations"], charts["monthly_cash_calendar"], data["tables"]["monthly_cash_calendar"])
     _docx_section(doc, "Conclusion reporte financiero", data["narrative"]["conclusion"])
 
     doc.save(path)
@@ -1331,7 +1460,7 @@ def _docx_executive_dashboard(doc, data):
     doc.add_heading("Executive Financial Dashboard", level=1)
     doc.add_paragraph(
         "Vista ejecutiva de liquidez, rentabilidad, capital de trabajo y riesgos principales del periodo. "
-        "Los indicadores combinan facturacion, cobranza, cuentas por cobrar, cuentas por pagar y movimientos contables POSTED."
+        "Los indicadores combinan facturacion, cobranza, cuentas por cobrar, obligaciones mensuales y movimientos contables POSTED."
     )
     table = doc.add_table(rows=1, cols=3)
     table.style = "Table Grid"
@@ -1344,7 +1473,6 @@ def _docx_executive_dashboard(doc, data):
         ("Resultado contable", _money(a["net_income"]), f"Margen neto contable {_ratio_label(e['net_margin_pct'])}"),
         ("Capital de trabajo", _money(a["working_capital"]), "Activos menos pasivos segun asientos POSTED"),
         ("Cartera abierta", _money(m["ar_open"]), f"Presion de cartera {_ratio_label(e['ar_pressure_pct'])} vs facturacion"),
-        ("CxP abiertas", _money(m["payables_open"]), f"Cobertura por cobranza {_ratio_label(e['payable_coverage_pct'])}"),
         ("Outlook neto proximo mes", _money(m["next_net_outlook"]), "Cobros esperados menos pagos programados"),
     ]
     for indicator, result, reading in rows:
@@ -1376,6 +1504,31 @@ def _docx_section(doc, title, text, chart_path=None, rows=None):
 
 
 def _docx_table(doc, rows):
+    has_cash_calendar = any((row or {}).get("obligations_usd") is not None or (row or {}).get("receivables_usd") is not None for row in rows or [])
+    if has_cash_calendar:
+        table = doc.add_table(rows=1, cols=5)
+        table.style = "Table Grid"
+        headers = ["Semana", "Obligaciones", "Monto en calle", "Diferencia", "Lectura"]
+        for idx, header in enumerate(headers):
+            table.rows[0].cells[idx].text = header
+        if rows:
+            for row in rows:
+                net = _f(row.get("net_usd"))
+                cells = table.add_row().cells
+                cells[0].text = str(row.get("nombre_cliente") or row.get("week") or "N/A")
+                cells[1].text = _money(row.get("obligations_usd"))
+                cells[2].text = _money(row.get("receivables_usd"))
+                cells[3].text = _money(net)
+                cells[4].text = "Alcanza por vencimientos" if net >= 0 else "Requiere caja o cobro previo"
+        else:
+            cells = table.add_row().cells
+            cells[0].text = "Sin fecha"
+            cells[1].text = "USD 0.00"
+            cells[2].text = "USD 0.00"
+            cells[3].text = "USD 0.00"
+            cells[4].text = "Sin datos"
+        return
+
     has_obligation_fields = any((row or {}).get("concept") or (row or {}).get("issue_date") or (row or {}).get("due_date") for row in rows or [])
     table = doc.add_table(rows=1, cols=4 if has_obligation_fields else 2)
     table.style = "Table Grid"

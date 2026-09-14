@@ -151,6 +151,13 @@ def _fortnight_due_date(period: str, fortnight: int) -> str:
     return f"{year:04d}-{month:02d}-{'15' if int(fortnight or 1) == 1 else '30'}"
 
 
+def _fortnight_window(period: str, fortnight: int) -> tuple[date, date]:
+    start = _month_start(period)
+    if int(fortnight or 1) == 1:
+        return start, date(start.year, start.month, 15)
+    return date(start.year, start.month, 16), _add_months(start, 1) - timedelta(days=1)
+
+
 def _month_start(period: str) -> date:
     year, month = [int(part) for part in str(period).split("-")[:2]]
     return date(year, month, 1)
@@ -1040,11 +1047,17 @@ def biweekly_obligations_preview(
             """,
             (company,),
         )
+        due_start, due_end = _fortnight_window(period, fortnight)
         for ob in cur.fetchall() or []:
-            if int(fortnight or 1) != 1:
-                continue
-            issue_date = ob.get("issue_date")
-            if issue_date and str(issue_date)[:7] != period:
+            due_date = ob.get("due_date")
+            if not due_date:
+                due_date = ob.get("issue_date")
+            if not due_date:
+                due_date = due_start
+            if int(fortnight or 1) == 1:
+                if due_date > due_end:
+                    continue
+            elif due_date < due_start or due_date > due_end:
                 continue
             haystack = " ".join(str(ob.get(k) or "") for k in ("payee_name", "obligation_type", "notes", "reference")).lower()
             if "alquiler" in haystack or "rent" in haystack or "prime properties" in haystack:
@@ -1053,6 +1066,8 @@ def biweekly_obligations_preview(
                 category = "Internet"
             elif "surveyor" in haystack or str(ob.get("obligation_type") or "").upper() == "SURVEYOR_FEE":
                 category = "Surveyors"
+            elif str(ob.get("obligation_type") or "").upper() in {"SUPPLIER_INVOICE", "SUPPLIER_CREDIT_NOTE"}:
+                category = "Proveedores"
             else:
                 continue
             rows.append(row(
@@ -1114,7 +1129,8 @@ def biweekly_obligations_apply(
     _ensure_company_column(cur)
     _ensure_biweekly_schema(cur)
     errors = []
-    saved = posted = applied = 0
+    saved = posted = applied = pending = 0
+    pending_rows = []
     try:
         cur.execute(
             """
@@ -1166,7 +1182,9 @@ def biweekly_obligations_apply(
                 if not payment_date:
                     missing.append("fecha pago")
                 if missing:
-                    raise ValueError("Faltan campos obligatorios: " + ", ".join(missing))
+                    pending_rows.append(item)
+                    pending += 1
+                    continue
                 datetime.strptime(payment_date, "%Y-%m-%d")
                 if is_hazel_payment:
                     bank_row = {"account_code": HAZEL_CONTRIBUTION_CODE, "account_name": HAZEL_CONTRIBUTION_NAME}
@@ -1270,11 +1288,13 @@ def biweekly_obligations_apply(
                 saved += 1
             except Exception as exc:
                 errors.append(f"Linea {idx}: {exc}")
+        if pending_rows:
+            _save_biweekly_draft(cur, company, period, int(payload.get("fortnight") or 1), pending_rows, user)
         if errors:
             conn.rollback()
             raise HTTPException(status_code=400, detail="\n".join(errors[:10]))
         conn.commit()
-        return {"status": "ok", "batch_id": batch_id, "saved": saved, "posted": posted, "applied": applied}
+        return {"status": "ok", "batch_id": batch_id, "saved": saved, "posted": posted, "applied": applied, "pending": pending}
     except HTTPException:
         raise
     except Exception as exc:

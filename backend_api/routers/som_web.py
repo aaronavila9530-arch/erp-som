@@ -385,6 +385,7 @@ def som_web_home() -> HTMLResponse:
       <div class="nav" id="moduleNav"></div>
       <div class="side-foot">
         <select id="company"></select>
+        <button id="setupPasskey" class="secondary">Configurar Windows Hello / passkey</button>
         <button id="logout" class="secondary">Cerrar sesión</button>
       </div>
     </aside>
@@ -723,7 +724,6 @@ def som_web_home() -> HTMLResponse:
         localStorage.setItem(SESSION_KEY, JSON.stringify(session));
         if ($("rememberDevice").checked) {
           localStorage.setItem(SAVED_LOGIN_KEY, JSON.stringify({ usuario:session.usuario, company:session.company }));
-          await registerDevicePasskey();
         } else {
           localStorage.removeItem(SAVED_LOGIN_KEY);
         }
@@ -742,7 +742,7 @@ def som_web_home() -> HTMLResponse:
       return btoa(String.fromCharCode(...new Uint8Array(bytes))).replace(/\\+/g, "-").replace(/\\//g, "_").replace(/=+$/g, "");
     }
     async function registerDevicePasskey() {
-      if (!window.PublicKeyCredential) return;
+      if (!window.PublicKeyCredential || !session) return;
       const challenge = crypto.getRandomValues(new Uint8Array(32));
       const userId = crypto.getRandomValues(new Uint8Array(16));
       try {
@@ -757,7 +757,11 @@ def som_web_home() -> HTMLResponse:
           }
         });
         localStorage.setItem(PASSKEY_KEY, JSON.stringify({ id:base64url(cred.rawId), session, usuario:session.usuario, company:session.company }));
-      } catch {}
+        alert("Windows Hello / passkey quedó configurado para este dispositivo.");
+        $("bioBtn").disabled = false;
+      } catch {
+        alert("No se pudo configurar Windows Hello / passkey.");
+      }
     }
     async function unlockWithPasskey() {
       const saved = JSON.parse(localStorage.getItem(PASSKEY_KEY) || "null");
@@ -772,11 +776,14 @@ def som_web_home() -> HTMLResponse:
             timeout:60000
           }
         });
-        session = { ...saved.session, company:saved.company || saved.session?.company || $("loginCompany").value || "MSL-CR" };
-        localStorage.setItem(SESSION_KEY, JSON.stringify(session));
-        localStorage.setItem(SAVED_LOGIN_KEY, JSON.stringify({ usuario:session.usuario, company:session.company }));
-        await loadCatalog();
-        showApp();
+        pendingUser = saved.usuario || saved.session?.usuario || $("user").value;
+        pendingAction = "VERIFY_TOTP";
+        $("loginCompany").value = saved.company || saved.session?.company || $("loginCompany").value || "MSL-CR";
+        $("loginForm").classList.add("hidden");
+        $("totpForm").classList.remove("hidden");
+        $("qr").classList.add("hidden");
+        $("code").value = "";
+        $("totpMsg").textContent = "Windows Hello validado. Ingresa tu código Authenticator para completar el ingreso.";
       } catch (err) {
         $("loginMsg").innerHTML = '<span class="error">No se pudo validar este dispositivo.</span>';
       }
@@ -1680,6 +1687,7 @@ def som_web_home() -> HTMLResponse:
     $("totpBtn").onclick = validateTotp;
     $("bioBtn").onclick = unlockWithPasskey;
     $("backLogin").onclick = showLogin;
+    $("setupPasskey").onclick = registerDevicePasskey;
     $("logout").onclick = () => { localStorage.removeItem(SESSION_KEY); session=null; showLogin(); };
     $("refresh").onclick = () => {
       refreshSummary();
