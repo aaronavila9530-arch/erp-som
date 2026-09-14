@@ -47,6 +47,22 @@ def _period_bounds(year: int, month: int):
     return start, end, prev_start, prev_end, next_start, next_end
 
 
+def _cash_calendar_bounds(report_start: date, report_end: date, today: date | None = None):
+    today = today or date.today()
+    current_month_start = date(today.year, today.month, 1)
+    if report_end < current_month_start:
+        start = current_month_start
+        end = date(today.year, today.month, calendar.monthrange(today.year, today.month)[1])
+        next_month = 1 if today.month == 12 else today.month + 1
+        next_year = today.year + 1 if today.month == 12 else today.year
+        next_end = date(next_year, next_month, calendar.monthrange(next_year, next_month)[1])
+        return start, end, next_end
+    next_month = 1 if report_end.month == 12 else report_end.month + 1
+    next_year = report_end.year + 1 if report_end.month == 12 else report_end.year
+    next_end = date(next_year, next_month, calendar.monthrange(next_year, next_month)[1])
+    return report_start, report_end, next_end
+
+
 def _f(value):
     if isinstance(value, Decimal):
         return float(value)
@@ -349,6 +365,7 @@ def _payments_cte():
 
 def build_monthly_financial_data(conn, year: int, month: int):
     start, end, prev_start, prev_end, next_start, next_end = _period_bounds(year, month)
+    cash_start, cash_end, cash_next_end = _cash_calendar_bounds(start, end)
     cur = conn.cursor(cursor_factory=RealDictCursor)
     _ensure_monthly_report_obligations(conn)
 
@@ -632,7 +649,7 @@ def build_monthly_financial_data(conn, year: int, month: int):
             c.fecha_vencimiento,
             (c.fecha_emision + COALESCE(c.dias_credito, cc.termino_pago::int, 30))::date
         ), c.nombre_cliente
-    """, (start, next_end))
+    """, (cash_start, cash_next_end))
 
     cur.close()
 
@@ -709,13 +726,15 @@ def build_monthly_financial_data(conn, year: int, month: int):
         data["tables"]["monthly_obligations"],
         data["tables"]["month_due_obligations"],
         data["tables"]["month_receivables_due"],
+        cash_start,
+        cash_end,
     )
     data["tables"]["monthly_cash_detail"] = _build_monthly_cash_detail(
         data["tables"]["monthly_obligations"],
         data["tables"]["month_due_obligations"],
         data["tables"]["monthly_cash_calendar"],
-        start,
-        end,
+        cash_start,
+        cash_end,
     )
     data["executive"] = _build_executive_dashboard(data)
     data["narrative"] = _build_financial_narrative(data)
@@ -746,14 +765,15 @@ def _week_label(value, report_start=None, report_end=None, today=None):
         return "Overdue"
     if report_end and value > report_end:
         return "Proximo mes"
-    month_start = date(value.year, value.month, 1)
-    week = ((value.day - 1) // 7) + 1
-    week_start = month_start + timedelta(days=(week - 1) * 7)
-    week_end = min(month_start + timedelta(days=(week * 7) - 1), date(value.year, value.month, calendar.monthrange(value.year, value.month)[1]))
-    return f"Semana {week} ({week_start.day:02d}-{week_end.day:02d})"
+    last_day = calendar.monthrange(value.year, value.month)[1]
+    if value.day <= 15:
+        return "Semana 1 (01-15)"
+    return f"Semana 2 (16-{last_day:02d})"
 
 
-def _build_monthly_cash_calendar(start, end, saved_obligations, due_obligations, receivables_due):
+def _build_monthly_cash_calendar(start, end, saved_obligations, due_obligations, receivables_due, calendar_start=None, calendar_end=None):
+    calendar_start = calendar_start or start
+    calendar_end = calendar_end or end
     weeks = {}
 
     def bucket(label):
@@ -772,31 +792,29 @@ def _build_monthly_cash_calendar(start, end, saved_obligations, due_obligations,
         return weeks[label]
 
     for row in (saved_obligations or []):
-        due = row.get("due_date") or row.get("issue_date") or end
-        label = _week_label(due, start, end)
+        due = row.get("due_date") or row.get("issue_date") or calendar_end
+        label = _week_label(due, calendar_start, calendar_end)
         item = bucket(label)
         item["obligations_usd"] += _amount_to_usd(row)
         item["obligations_count"] += 1
 
     for row in (due_obligations or []):
-        due = row.get("due_date") or row.get("issue_date") or end
-        label = _week_label(due, start, end)
+        due = row.get("due_date") or row.get("issue_date") or calendar_end
+        label = _week_label(due, calendar_start, calendar_end)
         item = bucket(label)
         item["obligations_usd"] += _amount_to_usd(row)
         item["obligations_count"] += 1
 
     for row in (receivables_due or []):
         due = row.get("due_date")
-        label = _week_label(due, start, end)
+        label = _week_label(due, calendar_start, calendar_end)
         item = bucket(label)
         item["receivables_usd"] += _amount_to_usd(row)
         item["receivables_count"] += 1
 
     if not weeks:
-        cursor = start
-        while cursor <= end:
-            bucket(_week_label(cursor))
-            cursor += timedelta(days=7)
+        bucket("Semana 1 (01-15)")
+        bucket(f"Semana 2 (16-{calendar.monthrange(calendar_end.year, calendar_end.month)[1]:02d})")
 
     result = []
     def sort_key(label):
