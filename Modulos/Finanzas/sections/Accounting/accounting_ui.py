@@ -203,8 +203,8 @@ class AccountingUI(tk.Frame):
         tk.Label(filter_frame, text="Origen", bg="white").grid(row=1, column=0)
         self.cmb_source = ttk.Combobox(
             filter_frame,
-            values=["TODOS", "ITP", "COLLECTIONS", "INVOICING", "MANUAL", "CASH_APP"],
-            width=15,
+            values=["TODOS", "ITP", "ITP_PAYMENT", "ITP_BIWEEKLY_PAYMENT", "COLLECTIONS", "INVOICING", "MANUAL", "CASH_APP"],
+            width=22,
             state="readonly"
         )
         self.cmb_source.grid(row=1, column=1, columnspan=2, padx=5)

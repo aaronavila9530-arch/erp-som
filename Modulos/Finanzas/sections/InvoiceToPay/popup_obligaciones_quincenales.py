@@ -82,7 +82,7 @@ class PopupObligacionesQuincenales(tk.Toplevel):
 
         header = ttk.Frame(self, padding=(10, 8))
         header.grid(row=0, column=0, sticky="ew")
-        header.columnconfigure(11, weight=1)
+        header.columnconfigure(9, weight=1)
         ttk.Label(header, text="Obligaciones quincenales", font=("Segoe UI", 15, "bold")).grid(row=0, column=0, columnspan=2, sticky="w")
         ttk.Label(header, text="Periodo").grid(row=1, column=0, sticky="w", pady=(8, 0))
         ttk.Entry(header, textvariable=self.period_var, width=10).grid(row=1, column=1, sticky="w", padx=(4, 14), pady=(8, 0))
@@ -92,12 +92,10 @@ class PopupObligacionesQuincenales(tk.Toplevel):
         ttk.Button(header, text="Guardar borrador", command=self._save_draft).grid(row=1, column=5, padx=4, pady=(8, 0))
         ttk.Button(header, text="Exportar Excel", command=self._export_excel).grid(row=1, column=6, padx=4, pady=(8, 0))
         ttk.Button(header, text="Aplicar pagos y crear asientos", command=self._save_and_post).grid(row=1, column=7, padx=4, pady=(8, 0))
-        ttk.Button(header, text="Minimizar", command=self._minimize_window).grid(row=1, column=8, padx=4, pady=(8, 0))
-        ttk.Button(header, text="Maximizar", command=self._toggle_maximize).grid(row=1, column=9, padx=4, pady=(8, 0))
-        ttk.Button(header, text="Cerrar", command=self.destroy).grid(row=1, column=10, padx=4, pady=(8, 0))
-        ttk.Label(header, textvariable=self.total_var, font=("Segoe UI", 12, "bold")).grid(row=0, column=11, sticky="e")
-        ttk.Label(header, textvariable=self.total_usd_var, font=("Segoe UI", 11, "bold")).grid(row=1, column=11, sticky="e", padx=(0, 90))
-        ttk.Label(header, textvariable=self.count_var).grid(row=1, column=11, sticky="e")
+        ttk.Button(header, text="Cerrar", command=self.destroy).grid(row=1, column=8, padx=4, pady=(8, 0))
+        ttk.Label(header, textvariable=self.total_var, font=("Segoe UI", 12, "bold")).grid(row=0, column=9, sticky="e")
+        ttk.Label(header, textvariable=self.total_usd_var, font=("Segoe UI", 11, "bold")).grid(row=1, column=9, sticky="e", padx=(0, 90))
+        ttk.Label(header, textvariable=self.count_var).grid(row=1, column=9, sticky="e")
 
         tools = ttk.LabelFrame(self, text="Agregar / ajustar lineas")
         tools.grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 8))
@@ -105,14 +103,12 @@ class PopupObligacionesQuincenales(tk.Toplevel):
             ttk.Button(tools, text=f"+ {category}", command=lambda c=category: self._add_line(c)).grid(row=0, column=idx, padx=4, pady=6)
         ttk.Button(tools, text="Editar linea", command=self._edit_selected).grid(row=0, column=7, padx=(18, 4), pady=6)
         ttk.Button(tools, text="Quitar linea", command=self._delete_selected).grid(row=0, column=8, padx=4, pady=6)
-        ttk.Button(tools, text="Minimizar", command=self._minimize_window).grid(row=0, column=9, padx=(18, 4), pady=6)
-        ttk.Button(tools, text="Maximizar", command=self._toggle_maximize).grid(row=0, column=10, padx=4, pady=6)
         ttk.Label(
             tools,
             text="Para aplicar una linea pagada: comprobante, fecha y cuenta contable. Las demas quedan pendientes en borrador.",
             foreground="#7f1d1d",
             font=("Segoe UI", 9, "bold"),
-        ).grid(row=1, column=0, columnspan=11, sticky="w", padx=6, pady=(0, 6))
+        ).grid(row=1, column=0, columnspan=9, sticky="w", padx=6, pady=(0, 6))
 
         pane = ttk.Panedwindow(self, orient="vertical")
         pane.grid(row=2, column=0, sticky="nsew", padx=10, pady=(0, 10))
@@ -201,12 +197,6 @@ class PopupObligacionesQuincenales(tk.Toplevel):
             if isinstance(child, ttk.Treeview):
                 return child
         return None
-
-    def _minimize_window(self):
-        try:
-            self.iconify()
-        except tk.TclError:
-            pass
 
     def _toggle_maximize(self):
         self._maximized = not self._maximized

@@ -609,14 +609,15 @@ def build_monthly_financial_data(conn, year: int, month: int):
             COALESCE(NULLIF(obligation_type, ''), NULLIF(payee_type, ''), 'OBLIGACION') AS concept,
             balance AS total,
             currency,
-            COALESCE(due_date, issue_date) AS due_date,
+            issue_date,
+            COALESCE(due_date, (issue_date + INTERVAL '30 days')::date) AS due_date,
             origin AS source
         FROM payment_obligations
         WHERE status IN ('PENDING','PARTIAL')
           AND COALESCE(balance, 0) > 0
-          AND COALESCE(due_date, issue_date) BETWEEN %s AND %s
-        ORDER BY COALESCE(due_date, issue_date), payee_name
-    """, (start, end))
+          AND COALESCE(due_date, (issue_date + INTERVAL '30 days')::date) BETWEEN %s AND %s
+        ORDER BY COALESCE(due_date, (issue_date + INTERVAL '30 days')::date), payee_name
+    """, (start, next_end))
 
     month_receivables_due = _fetch_all(cur, """
         SELECT
@@ -630,7 +631,7 @@ def build_monthly_financial_data(conn, year: int, month: int):
           AND tipo_documento = 'FACTURA'
           AND fecha_vencimiento BETWEEN %s AND %s
         ORDER BY fecha_vencimiento, nombre_cliente
-    """, (start, end))
+    """, (start, next_end))
 
     cur.close()
 
@@ -712,6 +713,8 @@ def build_monthly_financial_data(conn, year: int, month: int):
         data["tables"]["monthly_obligations"],
         data["tables"]["month_due_obligations"],
         data["tables"]["monthly_cash_calendar"],
+        start,
+        end,
     )
     data["executive"] = _build_executive_dashboard(data)
     data["narrative"] = _build_financial_narrative(data)
@@ -730,11 +733,16 @@ def _amount_to_usd(row):
     return amount
 
 
-def _week_label(value):
+def _week_label(value, report_start=None, report_end=None, today=None):
     if not value:
         return "Sin fecha"
     if isinstance(value, str):
         value = date.fromisoformat(value[:10])
+    today = today or date.today()
+    if value < today:
+        return "Overdue"
+    if report_end and value > report_end:
+        return "Proximo mes"
     month_start = date(value.year, value.month, 1)
     week = ((value.day - 1) // 7) + 1
     week_start = month_start + timedelta(days=(week - 1) * 7)
@@ -762,21 +770,21 @@ def _build_monthly_cash_calendar(start, end, saved_obligations, due_obligations,
 
     for row in (saved_obligations or []):
         due = row.get("due_date") or row.get("issue_date")
-        label = _week_label(due)
+        label = _week_label(due, start, end)
         item = bucket(label)
         item["obligations_usd"] += _amount_to_usd(row)
         item["obligations_count"] += 1
 
     for row in (due_obligations or []):
         due = row.get("due_date")
-        label = _week_label(due)
+        label = _week_label(due, start, end)
         item = bucket(label)
         item["obligations_usd"] += _amount_to_usd(row)
         item["obligations_count"] += 1
 
     for row in (receivables_due or []):
         due = row.get("due_date")
-        label = _week_label(due)
+        label = _week_label(due, start, end)
         item = bucket(label)
         item["receivables_usd"] += _amount_to_usd(row)
         item["receivables_count"] += 1
@@ -788,7 +796,16 @@ def _build_monthly_cash_calendar(start, end, saved_obligations, due_obligations,
             cursor += timedelta(days=7)
 
     result = []
-    for label in sorted(weeks, key=lambda x: int(x.split()[1]) if x.startswith("Semana ") else 99):
+    def sort_key(label):
+        if label == "Overdue":
+            return 0
+        if label.startswith("Semana "):
+            return int(label.split()[1])
+        if label == "Proximo mes":
+            return 98
+        return 99
+
+    for label in sorted(weeks, key=sort_key):
         item = weeks[label]
         item["net_usd"] = item["receivables_usd"] - item["obligations_usd"]
         item["total"] = item["obligations_usd"]
@@ -796,7 +813,7 @@ def _build_monthly_cash_calendar(start, end, saved_obligations, due_obligations,
     return result
 
 
-def _build_monthly_cash_detail(saved_obligations, due_obligations, weekly_calendar):
+def _build_monthly_cash_detail(saved_obligations, due_obligations, weekly_calendar, start=None, end=None):
     receivables_by_week = {
         str(row.get("nombre_cliente") or row.get("week") or ""): _f(row.get("receivables_usd"))
         for row in weekly_calendar or []
@@ -804,7 +821,7 @@ def _build_monthly_cash_detail(saved_obligations, due_obligations, weekly_calend
     rows = []
     for source_row in list(saved_obligations or []) + list(due_obligations or []):
         due = source_row.get("due_date") or source_row.get("issue_date")
-        week = _week_label(due)
+        week = _week_label(due, start, end)
         obligations_usd = _amount_to_usd(source_row)
         rows.append({
             "week": week,
@@ -832,8 +849,6 @@ def _build_executive_dashboard(data):
         alerts.append("Resultado contable negativo en el periodo; revisar estructura de gastos y margen operativo.")
     if ar_pressure is not None and ar_pressure > 100:
         alerts.append("La cartera abierta supera la facturacion mensual; priorizar cobranza y seguimiento por cliente.")
-    if m["next_net_outlook"] < 0:
-        alerts.append("El outlook del proximo mes muestra presion neta de caja negativa.")
     if not alerts:
         alerts.append("No se detectan alertas ejecutivas criticas con los datos disponibles del periodo.")
 
@@ -898,7 +913,7 @@ def _ai_financial_narrative(data):
             "Incluye lectura CFO de liquidez, rentabilidad, capital de trabajo, margen, cobertura de cuentas por pagar, "
             "presion de cartera, riesgos y decisiones recomendadas. "
             "Devuelve JSON valido con estas llaves exactas: introduction, collections, receivables, payment_trend, "
-            "billing, payables, next_month_outlook, year_comparison, risk, conclusion. "
+            "billing, payables, year_comparison, risk, conclusion. "
             "La introduction debe ser amplia: 5 a 7 parrafos ejecutivos, con contexto, alcance del analisis, "
             "lectura de liquidez, facturacion, cobranza, cuentas por cobrar, cuentas por pagar, riesgos y objetivo gerencial. "
             "La conclusion debe ser igualmente amplia: 5 a 7 parrafos ejecutivos, con cierre estrategico, riesgos, "
@@ -921,7 +936,7 @@ def _ai_financial_narrative(data):
         parsed = json.loads(text)
         required = [
             "introduction", "collections", "receivables", "payment_trend", "billing",
-            "payables", "next_month_outlook", "year_comparison", "risk", "conclusion",
+            "payables", "year_comparison", "risk", "conclusion",
         ]
         return {key: str(parsed.get(key) or "").strip() for key in required}
     except Exception:
@@ -968,10 +983,7 @@ def _fallback_financial_narrative(data):
             f"concentra en pocos clientes, el seguimiento comercial y financiero se vuelve un control crítico.\n\n"
             f"Desde la perspectiva operativa, la lectura de {p['label']} permite identificar si la compañía cuenta con "
             f"una base suficiente para sostener sus obligaciones recurrentes, cubrir compromisos extraordinarios y "
-            f"mantener capacidad de respuesta ante atrasos o cambios en el calendario de pagos.\n\n"
-            f"El reporte también incorpora una vista prospectiva de {p['next_label']}, con el fin de anticipar presión "
-            f"de caja, priorizar gestiones de cobro y calendarizar obligaciones de forma disciplinada. Esta "
-            f"visión busca que la administración actúe de manera preventiva y no únicamente reactiva."
+            f"mantener capacidad de respuesta ante atrasos o cambios en el calendario de pagos."
         ),
         "collections": (
             f"Con base en los resultados de cobranza del período, se recuperaron {_money(m['collections'])} en "
@@ -1013,13 +1025,6 @@ def _fallback_financial_narrative(data):
             f"Los rubros de mayor peso deben revisarse por recurrencia, necesidad operativa y posibilidad de negociacion "
             f"sin afectar la calidad del servicio."
         ),
-        "next_month_outlook": (
-            f"Para {p['next_label']}, la vista prospectiva muestra {_money(m['next_receivables'])} en cuentas por cobrar "
-            f"esperadas por vencimiento y {_money(m['next_payables'])} en cuentas por pagar programadas. El resultado neto "
-            f"proyectado es {_money(m['next_net_outlook'])} antes de nuevas facturas, cobros adicionales o ajustes posteriores.\n\n"
-            f"Este outlook debe utilizarse como agenda de caja: priorizar cobros de mayor impacto, confirmar promesas de pago "
-            f"y calendarizar obligaciones para evitar presión innecesaria al inicio del mes."
-        ),
         "year_comparison": (
             f"El comparativo anual permite ubicar el desempeno de {p['label']} frente al comportamiento historico reciente. "
             f"La lectura principal es identificar si el mes responde a una tendencia sostenida, una recuperación puntual o "
@@ -1037,8 +1042,8 @@ def _fallback_financial_narrative(data):
         "conclusion": (
             f"El cierre de {p['label']} muestra una posición que debe gestionarse con disciplina: la estabilidad depende de "
             f"convertir cuentas por cobrar en efectivo, sostener la facturación y calendarizar adecuadamente los pagos.\n\n"
-            f"La recomendación ejecutiva es reforzar el seguimiento de clientes relevantes, proteger caja, evitar compromisos "
-            f"no esenciales y utilizar el outlook de {p['next_label']} como base de planificación financiera.\n\n"
+            f"La recomendación ejecutiva es reforzar el seguimiento de clientes relevantes, proteger caja y evitar compromisos "
+            f"no esenciales que no estén respaldados por cobros confirmados.\n\n"
             f"En términos de gestión, la prioridad inmediata debe ser asegurar la recuperación de los saldos de mayor "
             f"impacto y confirmar fechas de pago con los clientes que concentran la cartera. Esta acción permite "
             f"reducir incertidumbre, mejorar previsibilidad de caja y sostener una operación más ordenada.\n\n"
@@ -1285,10 +1290,10 @@ def _pdf_kpi_table(data):
 
     m = data["metrics"]
     rows = [
-        ["Facturación", "Cobranza", "Cartera", "Outlook neto"],
-        [_short_money(m["revenue"]), _short_money(m["collections"]), _short_money(m["ar_open"]), _short_money(m["next_net_outlook"])],
+        ["Facturación", "Cobranza", "Cartera"],
+        [_short_money(m["revenue"]), _short_money(m["collections"]), _short_money(m["ar_open"])],
     ]
-    table = Table(rows, colWidths=[115, 115, 115, 115])
+    table = Table(rows, colWidths=[150, 150, 150])
     table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(BLUE)),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
@@ -1322,7 +1327,6 @@ def _pdf_executive_dashboard(story, styles, data):
         ["Resultado contable", _money(a["net_income"]), f"Margen neto contable {_ratio_label(e['net_margin_pct'])}"],
         ["Capital de trabajo", _money(a["working_capital"]), "Activos menos pasivos segun asientos POSTED"],
         ["Cartera abierta", _money(m["ar_open"]), f"Presion de cartera {_ratio_label(e['ar_pressure_pct'])} vs facturacion"],
-        ["Outlook neto proximo mes", _money(m["next_net_outlook"]), "Cobros esperados menos pagos programados"],
     ]
     table = Table(rows, colWidths=[150, 120, 260])
     table.setStyle(TableStyle([
@@ -1544,7 +1548,6 @@ def _docx_executive_dashboard(doc, data):
         ("Resultado contable", _money(a["net_income"]), f"Margen neto contable {_ratio_label(e['net_margin_pct'])}"),
         ("Capital de trabajo", _money(a["working_capital"]), "Activos menos pasivos segun asientos POSTED"),
         ("Cartera abierta", _money(m["ar_open"]), f"Presion de cartera {_ratio_label(e['ar_pressure_pct'])} vs facturacion"),
-        ("Outlook neto proximo mes", _money(m["next_net_outlook"]), "Cobros esperados menos pagos programados"),
     ]
     for indicator, result, reading in rows:
         cells = table.add_row().cells
