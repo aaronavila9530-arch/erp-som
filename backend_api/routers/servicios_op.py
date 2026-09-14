@@ -312,32 +312,60 @@ def listar_filtros_servicios(x_company_code: str | None = Header(None, alias="X-
     rows = database.sql(
         """
         SELECT
+            tipo,
             estado,
+            cliente,
+            continente,
+            pais,
+            puerto,
+            operacion,
             surveyor,
             RIGHT(num_informe, 4) AS anio
         FROM servicios
-        WHERE num_informe IS NOT NULL
-          AND LENGTH(num_informe) >= 4
-          AND company_code = %s
+        WHERE company_code = %s
         """,
         (company,),
         fetch=True
     )
 
+    tipos = set()
     statuses = set()
+    clientes = set()
+    continentes = set()
+    paises = set()
+    puertos = set()
+    operaciones = set()
     surveyores = set()
     anios = set()
 
-    for estado, surveyor, anio in rows:
+    for tipo, estado, cliente, continente, pais, puerto, operacion, surveyor, anio in rows:
+        if tipo:
+            tipos.add(tipo)
         if estado:
             statuses.add(estado)
+        if cliente:
+            clientes.add(cliente)
+        if continente:
+            continentes.add(continente)
+        if pais:
+            paises.add(pais)
+        if puerto:
+            puertos.add(puerto)
+        if operacion:
+            operaciones.add(operacion)
         if surveyor:
             surveyores.add(surveyor)
         if anio and anio.isdigit():
             anios.add(int(anio))
 
     return {
+        "tipo": sorted(tipos),
         "status": sorted(statuses),
+        "cliente": sorted(clientes),
+        "continente": sorted(continentes),
+        "pais": sorted(paises),
+        "puerto": sorted(puertos),
+        "operacion": sorted(operaciones),
         "surveyor": sorted(surveyores),
         "year": sorted(anios)
     }
@@ -356,6 +384,13 @@ def listar_servicios(
     year: int | None = None,
     status: str | None = None,
     surveyor: str | None = None,
+    tipo: str | None = None,
+    cliente: str | None = None,
+    continente: str | None = None,
+    pais: str | None = None,
+    puerto: str | None = None,
+    operacion: str | None = None,
+    q: str | None = None,
     company_code_param: str | None = Query(None, alias="company_code"),
     x_company_code: str | None = Header(None, alias="X-Company-Code"),
 ):
@@ -371,6 +406,13 @@ def listar_servicios(
 
     if isinstance(surveyor, str) and surveyor.strip() == "":
         surveyor = None
+    tipo = tipo.strip() if isinstance(tipo, str) and tipo.strip() else None
+    cliente = cliente.strip() if isinstance(cliente, str) and cliente.strip() else None
+    continente = continente.strip() if isinstance(continente, str) and continente.strip() else None
+    pais = pais.strip() if isinstance(pais, str) and pais.strip() else None
+    puerto = puerto.strip() if isinstance(puerto, str) and puerto.strip() else None
+    operacion = operacion.strip() if isinstance(operacion, str) and operacion.strip() else None
+    q = q.strip() if isinstance(q, str) and q.strip() else None
 
     conditions = ["company_code = %(company_code)s"]
     params = {"company_code": company}
@@ -378,7 +420,12 @@ def listar_servicios(
     # --------------------------------------------------------
     # AÑO — LÓGICA ERP-SOM (CORREGIDA Y BLINDADA)
     # --------------------------------------------------------
-    if year is None and status is None and surveyor is None:
+    if (
+        year is None
+        and status is None
+        and surveyor is None
+        and not any([tipo, cliente, continente, pais, puerto, operacion, q])
+    ):
         year_actual = datetime.now().year
 
         conditions.append("""
@@ -420,6 +467,35 @@ def listar_servicios(
         if surveyor_clean:
             conditions.append("surveyor = %(surveyor)s")
             params["surveyor"] = surveyor_clean
+
+    exact_filters = {
+        "tipo": tipo,
+        "cliente": cliente,
+        "continente": continente,
+        "pais": pais,
+        "puerto": puerto,
+        "operacion": operacion,
+    }
+    for column, value in exact_filters.items():
+        if value and str(value).strip().upper() != "TODOS":
+            conditions.append(f"{column} = %({column})s")
+            params[column] = str(value).strip()
+
+    if q and str(q).strip():
+        params["q"] = f"%{str(q).strip()}%"
+        conditions.append("""
+            (
+                CAST(consec AS TEXT) ILIKE %(q)s
+                OR COALESCE(num_informe,'') ILIKE %(q)s
+                OR COALESCE(buque_contenedor,'') ILIKE %(q)s
+                OR COALESCE(cliente,'') ILIKE %(q)s
+                OR COALESCE(contacto,'') ILIKE %(q)s
+                OR COALESCE(detalle,'') ILIKE %(q)s
+                OR COALESCE(operacion,'') ILIKE %(q)s
+                OR COALESCE(surveyor,'') ILIKE %(q)s
+                OR COALESCE(factura,'') ILIKE %(q)s
+            )
+        """)
 
     where_sql = ""
     if conditions:
@@ -557,7 +633,8 @@ def cancelar_servicio(consec: int, data: dict, x_company_code: str | None = Head
             "estado": data.get("estado", "Cancelado"),
             "razon_cancelacion": data.get("razon_cancelacion", ""),
             "comentario_cancelacion": data.get("comentario_cancelacion", ""),
-            "consec": consec
+            "consec": consec,
+            "company_code": company,
         }
 
         database.sql(sql, params)

@@ -196,6 +196,39 @@ def som_web_module_summary(
                     },
                 ],
             }
+        if module == "servicios":
+            start = _period_start(selected_year)
+            end = _period_end(selected_year)
+            return {
+                "company_code": company,
+                "module": module,
+                "kpis": [
+                    {
+                        "label": "Servicios",
+                        "value": _safe_scalar(cur, "SELECT COUNT(*) FROM servicios WHERE company_code=%s AND fecha_inicio >= %s AND fecha_inicio < %s", (company, start, end)),
+                        "hint": "Desde agosto",
+                        "format": "int",
+                    },
+                    {
+                        "label": "En operación",
+                        "value": _safe_scalar(cur, "SELECT COUNT(*) FROM servicios WHERE company_code=%s AND fecha_inicio >= %s AND fecha_inicio < %s AND estado=%s", (company, start, end, "En Operación")),
+                        "hint": "Abiertos",
+                        "format": "int",
+                    },
+                    {
+                        "label": "Facturado",
+                        "value": _safe_scalar(cur, "SELECT COALESCE(SUM(valor_factura),0) FROM servicios WHERE company_code=%s AND fecha_inicio >= %s AND fecha_inicio < %s", (company, start, end)),
+                        "hint": "Servicios",
+                        "format": "money",
+                    },
+                    {
+                        "label": "Países",
+                        "value": _safe_scalar(cur, "SELECT COUNT(DISTINCT pais) FROM servicios WHERE company_code=%s AND fecha_inicio >= %s AND fecha_inicio < %s AND COALESCE(pais,'')<>''", (company, start, end)),
+                        "hint": "Cobertura",
+                        "format": "int",
+                    },
+                ],
+            }
         return som_web_summary(selected_year, x_company_code)
     finally:
         database.release_conn(conn)
@@ -269,10 +302,27 @@ def som_web_home() -> HTMLResponse:
     .home-card:nth-child(4) { border-top-color:#029fcf; }
     .md-actions { display:flex; flex-wrap:wrap; gap:10px; margin:12px 0 14px; }
     .filters { display:flex; flex-wrap:wrap; gap:10px; align-items:center; padding:12px; margin-bottom:12px; }
+    .filters.service-filters { display:grid; grid-template-columns:1.4fr repeat(4,minmax(130px,1fr)) auto auto; align-items:end; }
     .form-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
     .form-grid label { display:grid; gap:5px; color:#334155; font-size:13px; }
     .form-grid .wide { grid-column:1/-1; }
     .form-grid textarea { width:100%; min-height:78px; border:1px solid var(--line); border-radius:7px; padding:9px 11px; font:inherit; resize:vertical; }
+    .service-actions { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0; }
+    .service-actions button { height:34px; }
+    .service-selected { background:#eaf6ff; }
+    .service-warning { background:#fff3f3; }
+    .badge { display:inline-flex; align-items:center; min-height:24px; border:1px solid var(--line); border-radius:999px; padding:2px 9px; background:#f8fafc; font-size:12px; }
+    .badge.open { border-color:#b7d8ff; color:#005da8; background:#edf7ff; }
+    .badge.closed { border-color:#bde5cd; color:#087a52; background:#effaf4; }
+    .badge.cancel { border-color:#f3c4c0; color:#b42318; background:#fff3f1; }
+    .modal-backdrop { position:fixed; inset:0; z-index:20; background:rgba(5,18,32,.44); display:flex; align-items:center; justify-content:center; padding:22px; }
+    .modal { width:min(1120px,96vw); max-height:92vh; overflow:auto; background:#fff; border:1px solid var(--line); border-radius:9px; box-shadow:0 26px 90px rgba(0,0,0,.24); padding:16px; }
+    .modal.small { width:min(560px,94vw); }
+    .modal-head { display:flex; justify-content:space-between; gap:12px; align-items:center; margin-bottom:14px; }
+    .surveyors-box { border:1px solid var(--line); border-radius:8px; padding:10px; background:#fbfdff; }
+    .surveyor-line { display:grid; grid-template-columns:minmax(220px,1fr) 140px 34px; gap:8px; align-items:center; margin-top:8px; }
+    .pager { display:flex; justify-content:space-between; gap:12px; align-items:center; margin-top:10px; }
+    .export-note { font-size:12px; color:var(--muted); }
     .view-grid { grid-template-columns:repeat(4,minmax(0,1fr)); }
     .view-card { padding:15px; cursor:pointer; min-height:86px; border-top:3px solid var(--blue); }
     .view-card:hover { outline:2px solid rgba(0,93,168,.18); }
@@ -294,6 +344,8 @@ def som_web_home() -> HTMLResponse:
       .hero-logo { min-height:300px; padding:22px; }
       .hero-logo img { width:min(88%,520px); height:250px; }
       .form-grid { grid-template-columns:1fr; }
+      .filters.service-filters { grid-template-columns:1fr; }
+      .surveyor-line { grid-template-columns:1fr; }
       aside { min-height:auto; }
       header { flex-direction:column; }
     }
@@ -380,6 +432,18 @@ def som_web_home() -> HTMLResponse:
     let currentRows = [];
     let bankAccessToken = "";
     let bankRows = [];
+    let serviceRows = [];
+    let serviceMeta = {};
+    let serviceSurveyorCatalog = [];
+    let servicePage = 1;
+    let serviceTotal = 0;
+    let selectedServiceIndex = null;
+    const SERVICE_COLUMNS = [
+      "consec","tipo","estado","num_informe","buque_contenedor","cliente","contacto","detalle",
+      "continente","pais","puerto","operacion","surveyor","honorarios","costo_operativo",
+      "costo_tarjetas","fecha_inicio","hora_inicio","fecha_fin","hora_fin","demoras","duracion",
+      "factura","valor_factura","fecha_factura","terminos_pago","fecha_vencimiento","dias_vencido"
+    ];
 
     const MASTER_CONFIG = {
       clientes: {
@@ -545,6 +609,38 @@ def som_web_home() -> HTMLResponse:
       }
       return resp.json();
     }
+    function rowsList(value) {
+      if (Array.isArray(value)) return value;
+      if (Array.isArray(value?.data)) return value.data;
+      if (Array.isArray(value?.items)) return value.items;
+      return [];
+    }
+    function options(values, selected="", placeholder="Todos") {
+      const list = [...new Set(rowsList(values).map(v => String(v ?? "").trim()).filter(Boolean))].sort((a,b) => a.localeCompare(b));
+      return `<option value="">${esc(placeholder)}</option>` + list.map(v => `<option value="${esc(v)}"${v === selected ? " selected" : ""}>${esc(v)}</option>`).join("");
+    }
+    function valueFrom(id) {
+      return ($(id)?.value || "").trim();
+    }
+    function downloadText(filename, text, mime="text/plain;charset=utf-8") {
+      const blob = new Blob([text], { type:mime });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    }
+    function selectedService() {
+      return selectedServiceIndex === null ? null : serviceRows[selectedServiceIndex];
+    }
+    function requireService() {
+      const row = selectedService();
+      if (!row) alert("Seleccione primero un servicio de la tabla.");
+      return row;
+    }
     function fillCompanySelect(select) {
       select.innerHTML = "";
       DEFAULT_COMPANIES.forEach(c => {
@@ -643,7 +739,7 @@ def som_web_home() -> HTMLResponse:
       return Uint8Array.from(atob(text + "===".slice((text.length + 3) % 4)), c => c.charCodeAt(0));
     }
     function base64url(bytes) {
-      return btoa(String.fromCharCode(...new Uint8Array(bytes))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+      return btoa(String.fromCharCode(...new Uint8Array(bytes))).replace(/\\+/g, "-").replace(/\\//g, "_").replace(/=+$/g, "");
     }
     async function registerDevicePasskey() {
       if (!window.PublicKeyCredential) return;
@@ -709,6 +805,7 @@ def som_web_home() -> HTMLResponse:
       refreshSummary();
       if (code === "dashboard") renderHome();
       else if (code === "master_data") renderMasterData();
+      else if (code === "servicios") renderServicios();
       else renderComingSoon(mod);
     }
     async function refreshSummary() {
@@ -1131,6 +1228,451 @@ def som_web_home() -> HTMLResponse:
         ws.innerHTML = `<div class="panel-head"><h2>Datos fiscales</h2></div><div class="status error">No se pudo consultar datos fiscales: ${err.message}</div>`;
       }
     }
+    function renderServicios() {
+      selectedServiceIndex = null;
+      $("content").innerHTML = `
+        <div class="card panel">
+          <div class="panel-head">
+            <h2>Servicios</h2>
+            <span id="svcCount" class="muted">Cargando...</span>
+          </div>
+          <div class="service-actions">
+            <button onclick="openServiceForm()">+ Agregar servicio</button>
+            <button class="secondary" onclick="confirmSelectedService()">Generar Consecutivo</button>
+            <button onclick="editSelectedService()">Editar servicio</button>
+            <button class="green" onclick="closeSelectedService()">Finalizar Servicio</button>
+            <button class="secondary" onclick="viewSelectedService()">Ver</button>
+            <button class="secondary" onclick="delaySelectedService()">Demoras</button>
+            <button class="brown" onclick="cancelSelectedService()">Cancelar</button>
+            <button class="dark" onclick="deleteSelectedService()">Eliminar</button>
+            <button class="secondary" onclick="exportServicios('csv')">CSV</button>
+            <button class="secondary" onclick="exportServicios('pdf')">PDF</button>
+            <button class="secondary" onclick="exportServicios('xml')">XML</button>
+            <button class="secondary" onclick="exportServicios('excel')">Excel</button>
+          </div>
+          <div class="filters service-filters">
+            <label>Buscar<input id="svcQ" placeholder="Consecutivo, buque, cliente, informe, surveyor..." /></label>
+            <label>Año<select id="svcYear"><option value="">Todos</option></select></label>
+            <label>Tipo<select id="svcTipo"></select></label>
+            <label>Estado<select id="svcEstado"></select></label>
+            <label>Cliente<select id="svcCliente"></select></label>
+            <button onclick="loadServicios(1)">Buscar</button>
+            <button class="secondary" onclick="clearServiceFilters()">Limpiar</button>
+            <label>Continente<select id="svcContinente"></select></label>
+            <label>País<select id="svcPais"></select></label>
+            <label>Puerto<select id="svcPuerto"></select></label>
+            <label>Operación<select id="svcOperacion"></select></label>
+            <label>Surveyor<select id="svcSurveyor"></select></label>
+          </div>
+          <div id="svcMsg" class="status hidden"></div>
+          <div id="svcTable" class="workspace"></div>
+        </div>`;
+      for (let y = {year}; y >= {year} - 6; y--) {
+        $("svcYear").insertAdjacentHTML("beforeend", `<option value="${y}"${String(y)===$("year").value ? " selected" : ""}>${y}</option>`);
+      }
+      loadServiceMeta().then(() => loadServicios(1)).catch(err => showServiceMsg(err.message, true));
+    }
+    async function loadServiceMeta() {
+      const meta = await getJSON("/servicios/_meta/filtros");
+      serviceMeta = meta || {};
+      $("svcTipo").innerHTML = options(serviceMeta.tipo, "", "Todos");
+      $("svcEstado").innerHTML = options(serviceMeta.status, "", "Todos");
+      $("svcCliente").innerHTML = options(serviceMeta.cliente, "", "Todos");
+      $("svcOperacion").innerHTML = options(serviceMeta.operacion, "", "Todos");
+      $("svcSurveyor").innerHTML = options(serviceMeta.surveyor, "", "Todos");
+      const continentes = await getJSON("/cpp/continentes").catch(() => serviceMeta.continente || []);
+      $("svcContinente").innerHTML = options(continentes, "", "Todos");
+      $("svcPais").innerHTML = options(serviceMeta.pais, "", "Todos");
+      $("svcPuerto").innerHTML = options(serviceMeta.puerto, "", "Todos");
+      $("svcContinente").onchange = async () => {
+        const cont = valueFrom("svcContinente");
+        const paises = cont ? await getJSON(`/cpp/paises?continente=${encodeURIComponent(cont)}`).catch(() => serviceMeta.pais || []) : serviceMeta.pais || [];
+        $("svcPais").innerHTML = options(paises, "", "Todos");
+        $("svcPuerto").innerHTML = options([], "", "Todos");
+      };
+      $("svcPais").onchange = async () => {
+        const pais = valueFrom("svcPais");
+        const cont = valueFrom("svcContinente");
+        let path = `/cpp/puertos?pais=${encodeURIComponent(pais)}`;
+        if (cont) path += `&continente=${encodeURIComponent(cont)}`;
+        const puertos = pais ? await getJSON(path).catch(() => serviceMeta.puerto || []) : serviceMeta.puerto || [];
+        $("svcPuerto").innerHTML = options(puertos, "", "Todos");
+      };
+    }
+    function serviceQueryParams(page=1) {
+      const params = new URLSearchParams({ page:String(page), page_size:"50" });
+      const map = {
+        svcYear:"year", svcTipo:"tipo", svcEstado:"status", svcCliente:"cliente", svcContinente:"continente",
+        svcPais:"pais", svcPuerto:"puerto", svcOperacion:"operacion", svcSurveyor:"surveyor", svcQ:"q"
+      };
+      Object.entries(map).forEach(([id, key]) => {
+        const val = valueFrom(id);
+        if (val && !val.toLowerCase().startsWith("seleccione")) params.set(key, val);
+      });
+      return params.toString();
+    }
+    async function loadServicios(page=1) {
+      servicePage = page;
+      showServiceMsg("Cargando servicios...", false);
+      try {
+        const payload = await getJSON(`/servicios/?${serviceQueryParams(page)}`);
+        serviceRows = rowsList(payload);
+        serviceTotal = Number(payload.total || serviceRows.length || 0);
+        selectedServiceIndex = null;
+        $("svcCount").textContent = `${intFmt.format(serviceTotal)} servicios`;
+        $("svcMsg").classList.add("hidden");
+        renderServiceTable();
+      } catch (err) {
+        showServiceMsg(`No se pudo consultar GET servicios: ${err.message}`, true);
+      }
+    }
+    function showServiceMsg(text, isError=false) {
+      const msg = $("svcMsg");
+      if (!msg) return;
+      msg.className = isError ? "status error" : "status";
+      msg.textContent = text;
+    }
+    function serviceStatusBadge(status) {
+      const value = String(status || "");
+      const klass = value.toLowerCase().includes("cancel") ? "cancel" : value.toLowerCase().includes("cerr") || value.toLowerCase().includes("final") ? "closed" : "open";
+      return `<span class="badge ${klass}">${esc(value || "Sin estado")}</span>`;
+    }
+    function serviceCell(row, col) {
+      if (col === "estado") return serviceStatusBadge(row[col]);
+      const value = row[col];
+      if (["honorarios","costo_operativo","costo_tarjetas","valor_factura"].includes(col)) return esc(Number(value || 0).toLocaleString("en-US", { minimumFractionDigits:2, maximumFractionDigits:2 }));
+      return esc(value ?? "");
+    }
+    function renderServiceTable() {
+      const target = $("svcTable");
+      if (!serviceRows.length) {
+        target.innerHTML = '<div class="status">Sin servicios para los filtros seleccionados.</div>';
+        return;
+      }
+      target.innerHTML = `
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th></th>${SERVICE_COLUMNS.map(c => `<th>${esc(c)}</th>`).join("")}</tr></thead>
+            <tbody>${serviceRows.map((row, i) => {
+              const missingCosts = String(row.estado || "").toLowerCase().includes("oper") && !Number(row.honorarios || 0) && !Number(row.costo_operativo || 0) && !Number(row.costo_tarjetas || 0);
+              return `<tr id="svcRow_${i}" class="${missingCosts ? "service-warning" : ""}" onclick="selectServiceRow(${i})"><td><input type="radio" name="svcPick" ${selectedServiceIndex === i ? "checked" : ""} /></td>${SERVICE_COLUMNS.map(c => `<td>${serviceCell(row, c)}</td>`).join("")}</tr>`;
+            }).join("")}</tbody>
+          </table>
+        </div>
+        <div class="pager">
+          <button class="secondary" onclick="loadServicios(Math.max(1, servicePage-1))">Anterior</button>
+          <span class="muted">Página ${servicePage} · ${serviceRows.length} visibles de ${intFmt.format(serviceTotal)}</span>
+          <button class="secondary" onclick="loadServicios(servicePage+1)" ${servicePage*50 >= serviceTotal ? "disabled" : ""}>Siguiente</button>
+        </div>`;
+    }
+    function selectServiceRow(index) {
+      selectedServiceIndex = index;
+      serviceRows.forEach((_, i) => $("svcRow_" + i)?.classList.remove("service-selected"));
+      $("svcRow_" + index)?.classList.add("service-selected");
+      const radio = $("svcRow_" + index)?.querySelector("input[type=radio]");
+      if (radio) radio.checked = true;
+    }
+    function clearServiceFilters() {
+      ["svcQ","svcYear","svcTipo","svcEstado","svcCliente","svcContinente","svcPais","svcPuerto","svcOperacion","svcSurveyor"].forEach(id => {
+        const el = $(id);
+        if (el) el.value = "";
+      });
+      loadServiceMeta().then(() => loadServicios(1));
+    }
+    async function serviceLookup(kind, term="") {
+      const params = new URLSearchParams({ page:"1", page_size:"250" });
+      if (term) params.set("q", term);
+      const endpoints = {
+        clientes:"/clientes",
+        operaciones:"/servicios_md",
+        surveyores:"/surveyores"
+      };
+      const data = await getJSON(`${endpoints[kind]}?${params.toString()}`).catch(() => ({ data:[] }));
+      return rowsList(data);
+    }
+    async function ensureServiceCatalogs() {
+      const [clientes, operaciones, surveyors] = await Promise.all([
+        serviceLookup("clientes"),
+        serviceLookup("operaciones"),
+        getJSON("/servicios-surveyors/catalogo/lista").catch(() => ({ data:[] }))
+      ]);
+      serviceMeta.clientesCatalog = clientes;
+      serviceMeta.operacionesCatalog = operaciones;
+      serviceSurveyorCatalog = rowsList(surveyors).map(row => ({
+        ...row,
+        full_name:[row.nombre, row.apellidos].filter(Boolean).join(" ") || row.surveyor_nombre || row.nombre_completo || row.nombre || ""
+      }));
+    }
+    function catalogOptionText(row, keys) {
+      for (const key of keys) if (row?.[key]) return String(row[key]);
+      return "";
+    }
+    function serviceSelectOptions(rows, selected, keys, placeholder="Seleccione") {
+      const values = rowsList(rows).map(r => catalogOptionText(r, keys)).filter(Boolean);
+      return options(values, selected || "", placeholder);
+    }
+    async function loadFormLocation(row={}) {
+      const cont = valueFrom("svcForm_continente") || row.continente || "";
+      const pais = valueFrom("svcForm_pais") || row.pais || "";
+      $("svcForm_continente").innerHTML = options(await getJSON("/cpp/continentes").catch(() => serviceMeta.continente || []), cont, "Seleccione continente");
+      $("svcForm_pais").innerHTML = options(cont ? await getJSON(`/cpp/paises?continente=${encodeURIComponent(cont)}`).catch(() => serviceMeta.pais || []) : serviceMeta.pais || [], pais, "Seleccione país");
+      let puertoPath = `/cpp/puertos?pais=${encodeURIComponent(pais)}`;
+      if (cont) puertoPath += `&continente=${encodeURIComponent(cont)}`;
+      $("svcForm_puerto").innerHTML = options(pais ? await getJSON(puertoPath).catch(() => serviceMeta.puerto || []) : serviceMeta.puerto || [], row.puerto || "", "Seleccione puerto");
+      $("svcForm_continente").onchange = async () => {
+        const selected = valueFrom("svcForm_continente");
+        const paises = selected ? await getJSON(`/cpp/paises?continente=${encodeURIComponent(selected)}`).catch(() => []) : [];
+        $("svcForm_pais").innerHTML = options(paises, "", "Seleccione país");
+        $("svcForm_puerto").innerHTML = options([], "", "Seleccione puerto");
+      };
+      $("svcForm_pais").onchange = async () => {
+        const selectedPais = valueFrom("svcForm_pais");
+        const selectedCont = valueFrom("svcForm_continente");
+        let path = `/cpp/puertos?pais=${encodeURIComponent(selectedPais)}`;
+        if (selectedCont) path += `&continente=${encodeURIComponent(selectedCont)}`;
+        const puertos = selectedPais ? await getJSON(path).catch(() => []) : [];
+        $("svcForm_puerto").innerHTML = options(puertos, "", "Seleccione puerto");
+      };
+    }
+    function serviceFormValue(id) {
+      const el = $("svcForm_" + id);
+      return el ? el.value.trim() : "";
+    }
+    function servicePayload() {
+      const surveyors = readSurveyorLines();
+      const names = surveyors.map(s => s.surveyor_nombre).filter(Boolean);
+      const honorarios = surveyors.reduce((sum, item) => sum + Number(item.honorario || 0), 0);
+      return {
+        tipo:serviceFormValue("tipo"),
+        buque_contenedor:serviceFormValue("buque_contenedor"),
+        cliente:serviceFormValue("cliente"),
+        contacto:serviceFormValue("contacto"),
+        detalle:serviceFormValue("detalle"),
+        continente:serviceFormValue("continente"),
+        pais:serviceFormValue("pais"),
+        puerto:serviceFormValue("puerto"),
+        operacion:serviceFormValue("operacion"),
+        surveyor:names.length > 1 ? names.join(", ") : (names[0] || serviceFormValue("surveyor")),
+        honorarios:String(honorarios || Number(serviceFormValue("honorarios") || 0)),
+        costo_operativo:serviceFormValue("costo_operativo") || "0",
+        costo_tarjetas:serviceFormValue("costo_tarjetas") || "0",
+        fecha_inicio:serviceFormValue("fecha_inicio"),
+        hora_inicio:serviceFormValue("hora_inicio"),
+        fecha_fin:serviceFormValue("fecha_fin") || null,
+        hora_fin:serviceFormValue("hora_fin") || null,
+        fecha_factura:serviceFormValue("fecha_factura") || null,
+        fecha_vencimiento:serviceFormValue("fecha_vencimiento") || null
+      };
+    }
+    function surveyorLineHtml(name="", amount="") {
+      return `<div class="surveyor-line">
+        <select class="svcSurveyorName">${serviceSelectOptions(serviceSurveyorCatalog, name, ["full_name","nombre_completo","nombre","surveyor_nombre"], "Seleccione surveyor")}</select>
+        <input class="svcSurveyorAmount" type="number" step="0.01" value="${esc(amount)}" placeholder="Honorario" />
+        <button class="secondary" type="button" onclick="this.closest('.surveyor-line').remove(); updateSurveyorTotals()">-</button>
+      </div>`;
+    }
+    function readSurveyorLines() {
+      return [...document.querySelectorAll(".surveyor-line")].map(line => ({
+        surveyor_nombre:line.querySelector(".svcSurveyorName")?.value || "",
+        honorario:Number(line.querySelector(".svcSurveyorAmount")?.value || 0)
+      })).filter(item => item.surveyor_nombre);
+    }
+    function updateSurveyorTotals() {
+      const total = readSurveyorLines().reduce((sum, item) => sum + Number(item.honorario || 0), 0);
+      const input = $("svcForm_honorarios");
+      if (input) input.value = String(total || "");
+    }
+    function addSurveyorLine(name="", amount="") {
+      $("svcSurveyorLines").insertAdjacentHTML("beforeend", surveyorLineHtml(name, amount));
+      document.querySelectorAll(".svcSurveyorAmount").forEach(el => el.oninput = updateSurveyorTotals);
+    }
+    async function openServiceForm(row=null) {
+      await ensureServiceCatalogs();
+      const editing = !!row;
+      const val = key => esc(row?.[key] ?? "");
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal">
+            <div class="modal-head">
+              <h2>${editing ? "Editar servicio " + esc(row.consec) : "Agregar servicio"}</h2>
+              <button class="secondary" onclick="closeModal()">Cerrar</button>
+            </div>
+            <div class="form-grid">
+              <label>Tipo<select id="svcForm_tipo"><option>Buque</option><option>Contenedor</option></select></label>
+              <label>Buque / contenedor<input id="svcForm_buque_contenedor" value="${val("buque_contenedor")}" required /></label>
+              <label>Cliente<select id="svcForm_cliente">${serviceSelectOptions(serviceMeta.clientesCatalog, row?.cliente, ["nombrejuridico","NombreJuridico","nombrecomercial","NombreComercial"], "Seleccione cliente")}</select></label>
+              <label>Contacto<input id="svcForm_contacto" value="${val("contacto")}" /></label>
+              <label>Continente<select id="svcForm_continente"></select></label>
+              <label>País<select id="svcForm_pais"></select></label>
+              <label>Puerto<select id="svcForm_puerto"></select></label>
+              <label>Operación<select id="svcForm_operacion">${serviceSelectOptions(serviceMeta.operacionesCatalog, row?.operacion, ["nombre","Nombre"], "Seleccione operación")}</select></label>
+              <label>Fecha inicio<input id="svcForm_fecha_inicio" type="date" value="${val("fecha_inicio")}" required /></label>
+              <label>Hora inicio<input id="svcForm_hora_inicio" type="time" value="${val("hora_inicio")}" required /></label>
+              <label>Fecha fin<input id="svcForm_fecha_fin" type="date" value="${val("fecha_fin")}" /></label>
+              <label>Hora fin<input id="svcForm_hora_fin" type="time" value="${val("hora_fin")}" /></label>
+              <label>Honorarios<input id="svcForm_honorarios" type="number" step="0.01" value="${val("honorarios")}" /></label>
+              <label>Costo operativo<input id="svcForm_costo_operativo" type="number" step="0.01" value="${val("costo_operativo")}" /></label>
+              <label>Costo tarjetas<input id="svcForm_costo_tarjetas" type="number" step="0.01" value="${val("costo_tarjetas")}" /></label>
+              <label>Fecha factura<input id="svcForm_fecha_factura" type="date" value="${val("fecha_factura")}" /></label>
+              <label>Fecha vencimiento<input id="svcForm_fecha_vencimiento" type="date" value="${val("fecha_vencimiento")}" /></label>
+              <label class="wide">Detalle<textarea id="svcForm_detalle">${val("detalle")}</textarea></label>
+              <input id="svcForm_surveyor" type="hidden" value="${val("surveyor")}" />
+              <div class="wide surveyors-box">
+                <div class="panel-head"><h2>Surveyors</h2><button type="button" onclick="addSurveyorLine()">+ Surveyor</button></div>
+                <div id="svcSurveyorLines"></div>
+              </div>
+            </div>
+            <div class="md-actions">
+              <button class="green" onclick="saveService(${editing ? Number(row.consec) : "null"})">Guardar</button>
+              <button class="secondary" onclick="closeModal()">Cancelar</button>
+            </div>
+            <div id="svcFormMsg" class="status hidden"></div>
+          </div>
+        </div>`);
+      $("svcForm_tipo").value = row?.tipo || "Buque";
+      await loadFormLocation(row || {});
+      let savedSurveyors = [];
+      if (editing) {
+        const loaded = await getJSON(`/servicios-surveyors/${encodeURIComponent(row.consec)}`).catch(() => ({ data:[] }));
+        savedSurveyors = rowsList(loaded);
+      }
+      if (savedSurveyors.length) {
+        savedSurveyors.forEach(item => addSurveyorLine(item.surveyor_nombre || item.nombre || "", item.honorario || ""));
+      } else {
+        addSurveyorLine(row?.surveyor || "", row?.honorarios || "");
+      }
+      document.querySelectorAll(".svcSurveyorName").forEach(el => el.onchange = updateSurveyorTotals);
+    }
+    function closeModal() {
+      $("svcModal")?.remove();
+    }
+    async function saveService(consec=null) {
+      const msg = $("svcFormMsg");
+      msg.className = "status";
+      msg.textContent = "Guardando...";
+      try {
+        const payload = servicePayload();
+        const required = ["tipo","buque_contenedor","cliente","continente","pais","puerto","operacion","surveyor","fecha_inicio","hora_inicio"];
+        const missing = required.filter(k => !payload[k]);
+        if (missing.length) throw new Error("Faltan campos obligatorios: " + missing.join(", "));
+        const data = consec
+          ? await sendJSON("PUT", `/servicios/editar/${encodeURIComponent(consec)}`, payload)
+          : await postJSON("/servicios/add", payload);
+        const serviceId = consec || data.consec || data.id;
+        if (serviceId) await sendJSON(consec ? "PUT" : "POST", `/servicios-surveyors/${encodeURIComponent(serviceId)}`, { surveyors:readSurveyorLines() }).catch(() => null);
+        msg.textContent = data.msg || "Servicio guardado.";
+        closeModal();
+        await loadServiceMeta();
+        await loadServicios(servicePage);
+        refreshSummary();
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    async function editSelectedService() {
+      const row = requireService();
+      if (!row) return;
+      try {
+        const full = await getJSON(`/servicios/${encodeURIComponent(row.consec)}`);
+        await openServiceForm(full);
+      } catch (err) {
+        showServiceMsg(`No se pudo consultar GET del servicio: ${err.message}`, true);
+      }
+    }
+    async function viewSelectedService() {
+      const row = requireService();
+      if (!row) return;
+      try {
+        const full = await getJSON(`/servicios/${encodeURIComponent(row.consec)}`);
+        document.body.insertAdjacentHTML("beforeend", `
+          <div class="modal-backdrop" id="svcModal">
+            <div class="modal">
+              <div class="modal-head"><h2>Servicio ${esc(full.consec)}</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+              <div class="table-wrap"><table><tbody>${SERVICE_COLUMNS.map(c => `<tr><th>${esc(c)}</th><td>${serviceCell(full, c)}</td></tr>`).join("")}</tbody></table></div>
+            </div>
+          </div>`);
+      } catch (err) {
+        showServiceMsg(`No se pudo abrir servicio: ${err.message}`, true);
+      }
+    }
+    async function confirmSelectedService() {
+      const row = requireService();
+      if (!row) return;
+      const fecha = prompt("Fecha inicio (YYYY-MM-DD)", row.fecha_inicio || new Date().toISOString().slice(0,10));
+      if (!fecha) return;
+      const hora = prompt("Hora inicio (HH:MM)", String(row.hora_inicio || "08:00").slice(0,5));
+      if (!hora) return;
+      await serviceAction("PUT", `/servicios/confirmar/${encodeURIComponent(row.consec)}`, { fecha_inicio:fecha, hora_inicio:hora }, "Consecutivo generado.");
+    }
+    async function closeSelectedService() {
+      const row = requireService();
+      if (!row) return;
+      const fecha = prompt("Fecha fin (YYYY-MM-DD)", row.fecha_fin || new Date().toISOString().slice(0,10));
+      if (!fecha) return;
+      const hora = prompt("Hora fin (HH:MM)", String(row.hora_fin || "17:00").slice(0,5));
+      if (!hora) return;
+      await serviceAction("PUT", `/servicios/cerrar/${encodeURIComponent(row.consec)}`, { fecha_fin:fecha, hora_fin:hora }, "Servicio cerrado.");
+      await sendJSON("PUT", `/servicios/generar_informe/${encodeURIComponent(row.consec)}`, {}).catch(() => null);
+      await loadServicios(servicePage);
+    }
+    async function delaySelectedService() {
+      const row = requireService();
+      if (!row) return;
+      const total = prompt("Demoras / tiempo total", row.demoras || "");
+      if (total === null) return;
+      await serviceAction("PUT", `/servicios/demoras/${encodeURIComponent(row.consec)}`, { total }, "Demoras actualizadas.");
+    }
+    async function cancelSelectedService() {
+      const row = requireService();
+      if (!row) return;
+      const razon = prompt("Razón de cancelación", row.razon_cancelacion || "");
+      if (razon === null) return;
+      const comentario = prompt("Comentario de cancelación", row.comentario_cancelacion || "") || "";
+      await serviceAction("PUT", `/servicios/cancelar/${encodeURIComponent(row.consec)}`, { estado:"Cancelado", razon_cancelacion:razon, comentario_cancelacion:comentario }, "Servicio cancelado.");
+    }
+    async function deleteSelectedService() {
+      const row = requireService();
+      if (!row || !confirm(`¿Eliminar servicio ${row.consec}?`)) return;
+      await serviceAction("DELETE", `/servicios/${encodeURIComponent(row.consec)}`, null, "Servicio eliminado.");
+    }
+    async function serviceAction(method, path, payload, okText) {
+      showServiceMsg("Procesando...", false);
+      try {
+        await sendJSON(method, path, payload);
+        showServiceMsg(okText, false);
+        await loadServicios(servicePage);
+        refreshSummary();
+      } catch (err) {
+        showServiceMsg(err.message, true);
+      }
+    }
+    function exportServicios(kind) {
+      if (!serviceRows.length) {
+        alert("No hay datos para exportar.");
+        return;
+      }
+      const stamp = new Date().toISOString().slice(0,10);
+      const escapeCsv = value => `"${String(value ?? "").replace(/"/g, '""')}"`;
+      const csv = [SERVICE_COLUMNS.join(",")].concat(serviceRows.map(row => SERVICE_COLUMNS.map(c => escapeCsv(row[c])).join(","))).join("\\n");
+      if (kind === "csv") {
+        downloadText(`servicios_${stamp}.csv`, csv, "text/csv;charset=utf-8");
+        return;
+      }
+      if (kind === "xml") {
+        const xml = `<?xml version="1.0" encoding="UTF-8"?><servicios>${serviceRows.map(row => `<servicio>${SERVICE_COLUMNS.map(c => `<${c}>${esc(row[c] ?? "")}</${c}>`).join("")}</servicio>`).join("")}</servicios>`;
+        downloadText(`servicios_${stamp}.xml`, xml, "application/xml;charset=utf-8");
+        return;
+      }
+      const tableHtml = `<table border="1"><thead><tr>${SERVICE_COLUMNS.map(c => `<th>${esc(c)}</th>`).join("")}</tr></thead><tbody>${serviceRows.map(row => `<tr>${SERVICE_COLUMNS.map(c => `<td>${esc(row[c] ?? "")}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+      if (kind === "excel") {
+        downloadText(`servicios_${stamp}.xls`, `<html><head><meta charset="utf-8"></head><body>${tableHtml}</body></html>`, "application/vnd.ms-excel;charset=utf-8");
+        return;
+      }
+      const win = window.open("", "_blank");
+      win.document.write(`<html><head><title>Servicios ${stamp}</title><style>body{font-family:Arial,sans-serif}table{border-collapse:collapse;width:100%;font-size:10px}th,td{border:1px solid #bbb;padding:4px;text-align:left}th{background:#eef3f8}</style></head><body><h2>Servicios ${esc(selectedCompany())}</h2>${tableHtml}<script>window.print()<\\/script></body></html>`);
+      win.document.close();
+    }
     function renderComingSoon(mod) {
       $("content").innerHTML = `<div class="card panel"><div class="panel-head"><h2>${mod.title}</h2></div><div class="status">Seleccione una opción del módulo para continuar.</div></div>`;
     }
@@ -1139,7 +1681,11 @@ def som_web_home() -> HTMLResponse:
     $("bioBtn").onclick = unlockWithPasskey;
     $("backLogin").onclick = showLogin;
     $("logout").onclick = () => { localStorage.removeItem(SESSION_KEY); session=null; showLogin(); };
-    $("refresh").onclick = () => { refreshSummary(); if (currentModule === "master_data") renderMasterData(); };
+    $("refresh").onclick = () => {
+      refreshSummary();
+      if (currentModule === "master_data") renderMasterData();
+      if (currentModule === "servicios") renderServicios();
+    };
     function changeCompany(value) {
       if (!value) return;
       if ($("company")) $("company").value = value;
@@ -1160,10 +1706,14 @@ def som_web_home() -> HTMLResponse:
       setBrand();
       refreshSummary();
       if (currentModule === "master_data") renderMasterData();
+      if (currentModule === "servicios") renderServicios();
     }
     $("company").onchange = () => changeCompany($("company").value);
     $("companyTop").onchange = () => changeCompany($("companyTop").value);
-    $("year").onchange = refreshSummary;
+    $("year").onchange = () => {
+      refreshSummary();
+      if (currentModule === "servicios") renderServicios();
+    };
     bootSelectors();
     loadCatalog().then(showLogin).catch(showLogin);
   </script>
