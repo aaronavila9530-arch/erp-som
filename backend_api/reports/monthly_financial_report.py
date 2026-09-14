@@ -138,6 +138,7 @@ def _ensure_monthly_report_obligations(conn):
         """
     )
     cur.execute("ALTER TABLE monthly_report_obligations ADD COLUMN IF NOT EXISTS issue_date DATE")
+    cur.execute("ALTER TABLE monthly_report_obligations ADD COLUMN IF NOT EXISTS due_date DATE")
     conn.commit()
 
 
@@ -191,7 +192,7 @@ def build_monthly_obligation_preview(conn, year: int, month: int):
             "amount": _f(row.get("amount")),
             "currency": row.get("currency") or "USD",
             "issue_date": date(year, month, issue_day).isoformat(),
-            "due_date": None,
+            "due_date": date(year, month, issue_day).isoformat(),
             "source": f"HISTORICO_{int(row.get('samples') or 0)}",
             "accepted": True,
         })
@@ -238,7 +239,7 @@ def build_monthly_obligation_preview(conn, year: int, month: int):
             "amount": _f(row.get("amount")),
             "currency": row.get("currency") or "CRC",
             "issue_date": salary_date,
-            "due_date": None,
+            "due_date": salary_date,
             "source": row.get("source") or "PAYROLL",
             "accepted": True,
         })
@@ -258,7 +259,7 @@ def save_monthly_obligations(conn, year: int, month: int, rows, user=None):
         if amount <= 0:
             continue
         issue_date = row.get("issue_date") or row.get("due_date") or None
-        due_date = row.get("due_date") or None
+        due_date = row.get("due_date") or issue_date or None
         cur.execute(
             """
             INSERT INTO monthly_report_obligations (
@@ -603,34 +604,34 @@ def build_monthly_financial_data(conn, year: int, month: int):
         ORDER BY COALESCE(issue_date, due_date) NULLS LAST, payee_name
     """, (f"{year}-{month:02d}",))
 
-    month_due_obligations = _fetch_all(cur, """
-        SELECT
-            payee_name AS nombre_cliente,
-            COALESCE(NULLIF(obligation_type, ''), NULLIF(payee_type, ''), 'OBLIGACION') AS concept,
-            balance AS total,
-            currency,
-            issue_date,
-            COALESCE(due_date, (issue_date + INTERVAL '30 days')::date) AS due_date,
-            origin AS source
-        FROM payment_obligations
-        WHERE status IN ('PENDING','PARTIAL')
-          AND COALESCE(balance, 0) > 0
-          AND COALESCE(due_date, (issue_date + INTERVAL '30 days')::date) BETWEEN %s AND %s
-        ORDER BY COALESCE(due_date, (issue_date + INTERVAL '30 days')::date), payee_name
-    """, (start, next_end))
+    # El calendario ejecutivo NO debe arrastrar todo ITP. La obligacion del mes
+    # sale unicamente de monthly_report_obligations, que es lo que el usuario
+    # confirma en el popup antes de generar el reporte.
+    month_due_obligations = []
 
     month_receivables_due = _fetch_all(cur, """
         SELECT
-            nombre_cliente,
-            numero_documento,
-            saldo_pendiente AS total,
-            moneda AS currency,
-            fecha_vencimiento AS due_date
-        FROM collections
-        WHERE saldo_pendiente > 0
-          AND tipo_documento = 'FACTURA'
-          AND fecha_vencimiento BETWEEN %s AND %s
-        ORDER BY fecha_vencimiento, nombre_cliente
+            c.nombre_cliente,
+            c.numero_documento,
+            c.saldo_pendiente AS total,
+            c.moneda AS currency,
+            COALESCE(
+                c.fecha_vencimiento,
+                (c.fecha_emision + COALESCE(c.dias_credito, cc.termino_pago::int, 30))::date
+            ) AS due_date
+        FROM collections c
+        LEFT JOIN cliente_credito cc
+          ON cc.codigo_cliente = c.codigo_cliente
+        WHERE c.saldo_pendiente > 0
+          AND c.tipo_documento = 'FACTURA'
+          AND COALESCE(
+                c.fecha_vencimiento,
+                (c.fecha_emision + COALESCE(c.dias_credito, cc.termino_pago::int, 30))::date
+              ) BETWEEN %s AND %s
+        ORDER BY COALESCE(
+            c.fecha_vencimiento,
+            (c.fecha_emision + COALESCE(c.dias_credito, cc.termino_pago::int, 30))::date
+        ), c.nombre_cliente
     """, (start, next_end))
 
     cur.close()
@@ -734,6 +735,8 @@ def _amount_to_usd(row):
 
 
 def _week_label(value, report_start=None, report_end=None, today=None):
+    if not value and report_end:
+        value = report_end
     if not value:
         return "Sin fecha"
     if isinstance(value, str):
@@ -769,14 +772,14 @@ def _build_monthly_cash_calendar(start, end, saved_obligations, due_obligations,
         return weeks[label]
 
     for row in (saved_obligations or []):
-        due = row.get("due_date") or row.get("issue_date")
+        due = row.get("due_date") or row.get("issue_date") or end
         label = _week_label(due, start, end)
         item = bucket(label)
         item["obligations_usd"] += _amount_to_usd(row)
         item["obligations_count"] += 1
 
     for row in (due_obligations or []):
-        due = row.get("due_date")
+        due = row.get("due_date") or row.get("issue_date") or end
         label = _week_label(due, start, end)
         item = bucket(label)
         item["obligations_usd"] += _amount_to_usd(row)
@@ -820,7 +823,7 @@ def _build_monthly_cash_detail(saved_obligations, due_obligations, weekly_calend
     }
     rows = []
     for source_row in list(saved_obligations or []) + list(due_obligations or []):
-        due = source_row.get("due_date") or source_row.get("issue_date")
+        due = source_row.get("due_date") or source_row.get("issue_date") or end
         week = _week_label(due, start, end)
         obligations_usd = _amount_to_usd(source_row)
         rows.append({

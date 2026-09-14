@@ -4045,8 +4045,22 @@ def _previous_period(period: str) -> str:
 
 def _fortnight_due_date(period: str, fortnight: int) -> str:
     year, month = [int(part) for part in str(period).split("-")[:2]]
-    day = 15 if int(fortnight or 1) == 1 else 30
+    day = 15 if int(fortnight or 1) == 1 else calendar.monthrange(year, month)[1]
     return f"{year:04d}-{month:02d}-{day:02d}"
+
+
+def _biweekly_payment_date(period: str, fortnight: int, value: str | None) -> str:
+    fallback = _fortnight_due_date(period, fortnight)
+    text = str(value or "").strip()
+    if not text:
+        return fallback
+    try:
+        parsed = datetime.strptime(text, "%Y-%m-%d").date()
+    except Exception:
+        return fallback
+    if parsed.strftime("%Y-%m") != str(period):
+        return fallback
+    return parsed.isoformat()
 
 
 def _fortnight_window(period: str, fortnight: int) -> tuple[date, date]:
@@ -4379,7 +4393,7 @@ def _local_biweekly_obligations_preview(period: str, fortnight: int = 1, force: 
                     ob.get("payment_bank_account_name") or ob.get("payment_bank_account_code") or ob.get("payment_bank") or "",
                     "ITP",
                     f"Aplicar pago a ITP #{ob.get('id')} | Ref: {ob.get('reference') or ''}".strip(),
-                    str(ob.get("due_date") or _fortnight_due_date(period, fortnight)),
+                    _fortnight_due_date(period, fortnight),
                     obligation_id=ob.get("id"),
                     reference=ob.get("reference") or "",
                     balance=ob.get("balance"),
@@ -4540,11 +4554,7 @@ def _local_biweekly_obligations_save_draft(payload: dict) -> dict:
                 amount = m2(item.get("amount"))
                 if amount <= 0:
                     continue
-                payment_date = str(item.get("due_date") or _fortnight_due_date(period, fortnight)).strip()
-                try:
-                    datetime.strptime(payment_date, "%Y-%m-%d")
-                except Exception:
-                    payment_date = _fortnight_due_date(period, fortnight)
+                payment_date = _biweekly_payment_date(period, fortnight, item.get("due_date"))
                 method = str(item.get("payment_method") or "BANK").upper()
                 is_card = "3155" in method or "CARD" in method or "TARJETA" in method
                 is_hazel = "HAZEL" in method
@@ -4677,7 +4687,7 @@ def _local_biweekly_obligations_apply(payload: dict) -> dict:
                     beneficiary = str(row.get("name") or "").strip()
                     bank_code = str(row.get("bank_accounting_code") or "").strip()
                     voucher = str(row.get("bank_voucher") or "").strip()
-                    payment_date = str(row.get("due_date") or "").strip()
+                    payment_date = _biweekly_payment_date(period, fortnight, row.get("due_date"))
                     currency = str(row.get("currency") or "CRC").upper()
                     amount = m(row.get("amount"))
                     method = str(row.get("payment_method") or "BANK").upper()
@@ -4700,8 +4710,6 @@ def _local_biweekly_obligations_apply(payload: dict) -> dict:
                         missing.append("cuenta contable banco")
                     if not voucher:
                         missing.append("comprobante bancario")
-                    if not payment_date:
-                        missing.append("fecha pago")
                     if missing:
                         pending_rows.append(row)
                         pending += 1
@@ -4827,11 +4835,7 @@ def _local_biweekly_obligations_apply(payload: dict) -> dict:
                     amount = m(item.get("amount"))
                     if amount <= 0:
                         continue
-                    payment_date = str(item.get("due_date") or _fortnight_due_date(period, fortnight)).strip()
-                    try:
-                        datetime.strptime(payment_date, "%Y-%m-%d")
-                    except Exception:
-                        payment_date = _fortnight_due_date(period, fortnight)
+                    payment_date = _biweekly_payment_date(period, fortnight, item.get("due_date"))
                     method = str(item.get("payment_method") or "BANK").upper()
                     is_card = "3155" in method or "CARD" in method or "TARJETA" in method
                     is_hazel = "HAZEL" in method

@@ -188,7 +188,7 @@ class PopupMonthlyFinancialReport(tk.Toplevel):
             font=("Segoe UI", 10, "bold")
         ).pack(anchor="w", padx=12, pady=(10, 4))
 
-        cols = ("incluir", "payee_name", "concept", "issue_date", "currency", "amount")
+        cols = ("incluir", "payee_name", "concept", "issue_date", "due_date", "currency", "amount")
         tree_frame = ttk.Frame(win)
         tree_frame.pack(fill="both", expand=True, padx=12, pady=8)
         tree = ttk.Treeview(tree_frame, columns=cols, show="headings", height=15)
@@ -200,10 +200,11 @@ class PopupMonthlyFinancialReport(tk.Toplevel):
             "payee_name": "Proveedor",
             "concept": "Concepto",
             "issue_date": "Fecha factura",
+            "due_date": "Vencimiento",
             "currency": "Moneda",
             "amount": "Monto",
         }
-        widths = {"incluir": 70, "payee_name": 260, "concept": 210, "issue_date": 110, "currency": 80, "amount": 120}
+        widths = {"incluir": 70, "payee_name": 230, "concept": 190, "issue_date": 105, "due_date": 105, "currency": 75, "amount": 120}
         for col in cols:
             tree.heading(col, text=labels[col])
             tree.column(col, width=widths[col], anchor="e" if col == "amount" else "w")
@@ -242,7 +243,8 @@ class PopupMonthlyFinancialReport(tk.Toplevel):
                         "Si" if row.get("accepted", True) else "No",
                         row.get("payee_name") or "",
                         row.get("concept") or "",
-                        row.get("issue_date") or row.get("due_date") or "",
+                        row.get("issue_date") or "",
+                        row.get("due_date") or row.get("issue_date") or "",
                         row.get("currency") or "USD",
                         money_text(row.get("amount")),
                     )
@@ -254,15 +256,17 @@ class PopupMonthlyFinancialReport(tk.Toplevel):
         payee_var = tk.StringVar()
         concept_var = tk.StringVar()
         issue_var = tk.StringVar()
+        due_var = tk.StringVar()
         currency_var = tk.StringVar(value="USD")
         amount_var = tk.StringVar()
 
         ttk.Checkbutton(form, text="Incluir", variable=include_var).grid(row=0, column=0, sticky="w", padx=4)
-        ttk.Entry(form, textvariable=payee_var, width=30).grid(row=0, column=1, padx=4)
-        ttk.Entry(form, textvariable=concept_var, width=28).grid(row=0, column=2, padx=4)
-        ttk.Entry(form, textvariable=issue_var, width=12).grid(row=0, column=3, padx=4)
-        ttk.Combobox(form, textvariable=currency_var, values=["USD", "CRC"], width=8, state="readonly").grid(row=0, column=4, padx=4)
-        ttk.Entry(form, textvariable=amount_var, width=14).grid(row=0, column=5, padx=4)
+        ttk.Entry(form, textvariable=payee_var, width=26).grid(row=0, column=1, padx=4)
+        ttk.Entry(form, textvariable=concept_var, width=24).grid(row=0, column=2, padx=4)
+        ttk.Entry(form, textvariable=issue_var, width=11).grid(row=0, column=3, padx=4)
+        ttk.Entry(form, textvariable=due_var, width=11).grid(row=0, column=4, padx=4)
+        ttk.Combobox(form, textvariable=currency_var, values=["USD", "CRC"], width=7, state="readonly").grid(row=0, column=5, padx=4)
+        ttk.Entry(form, textvariable=amount_var, width=12).grid(row=0, column=6, padx=4)
 
         def selected_index():
             sel = tree.selection()
@@ -276,7 +280,8 @@ class PopupMonthlyFinancialReport(tk.Toplevel):
             include_var.set(bool(row.get("accepted", True)))
             payee_var.set(str(row.get("payee_name") or ""))
             concept_var.set(str(row.get("concept") or ""))
-            issue_var.set(str(row.get("issue_date") or row.get("due_date") or ""))
+            issue_var.set(str(row.get("issue_date") or ""))
+            due_var.set(str(row.get("due_date") or row.get("issue_date") or ""))
             currency_var.set(str(row.get("currency") or "USD"))
             amount_var.set(money_text(row.get("amount")))
 
@@ -295,7 +300,7 @@ class PopupMonthlyFinancialReport(tk.Toplevel):
                 "payee_name": payee_var.get().strip(),
                 "concept": concept_var.get().strip(),
                 "issue_date": issue_var.get().strip() or None,
-                "due_date": None,
+                "due_date": due_var.get().strip() or issue_var.get().strip() or None,
                 "currency": currency_var.get().strip() or "USD",
                 "amount": amount,
             })
@@ -308,7 +313,7 @@ class PopupMonthlyFinancialReport(tk.Toplevel):
                 "payee_name": "Nuevo proveedor",
                 "concept": "Obligacion mensual",
                 "issue_date": f"{year}-{month:02d}-01",
-                "due_date": None,
+                "due_date": f"{year}-{month:02d}-01",
                 "currency": "USD",
                 "amount": 0,
                 "source": "MANUAL",
