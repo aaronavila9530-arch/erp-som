@@ -11,6 +11,11 @@ from session_context import get_rol, get_user
 PAYMENT_METHODS = {
     "Banco": "BANK",
     "Tarjeta empresarial BAC 3155": "CARD_BAC_3155",
+    "Pagado por Hazel Barrantes": "THIRD_PARTY_HAZEL",
+}
+EXTERNAL_PAYMENT_ACCOUNTS = {
+    "CARD_BAC_3155": ("2.1.02.10", "Tarjeta corporativa BAC por pagar", "Tarjeta empresarial BAC 3155"),
+    "THIRD_PARTY_HAZEL": ("3.1.99", "Aportes de terceros - Hazel Barrantes", "Pagado por Hazel Barrantes"),
 }
 
 
@@ -186,9 +191,9 @@ class PopupApplyPayment(tk.Toplevel):
                     "obligation_id": int(obligation_id),
                     "amount": float(amount),
                     "payment_date": payment_date,
-                    "bank_account_code": self._selected_bank().get("account_code") if method == "BANK" else "2.1.02.10",
-                    "bank_account_name": self._selected_bank().get("account_name") if method == "BANK" else "Tarjeta corporativa BAC por pagar",
-                    "bank_name": self._selected_bank().get("account_name") if method == "BANK" else "Tarjeta empresarial BAC 3155",
+                    "bank_account_code": self._selected_bank().get("account_code") if method == "BANK" else EXTERNAL_PAYMENT_ACCOUNTS[method][0],
+                    "bank_account_name": self._selected_bank().get("account_name") if method == "BANK" else EXTERNAL_PAYMENT_ACCOUNTS[method][1],
+                    "bank_name": self._selected_bank().get("account_name") if method == "BANK" else EXTERNAL_PAYMENT_ACCOUNTS[method][2],
                     "payment_reference": payment_reference,
                     "payment_method": method,
                     "payment_card_last4": "3155" if method == "CARD_BAC_3155" else "",
@@ -272,10 +277,11 @@ class PopupApplyPayment(tk.Toplevel):
 
     def _toggle_payment_method(self):
         method = PAYMENT_METHODS.get(self.cmb_method.get(), "BANK")
-        if method == "CARD_BAC_3155":
+        if method in EXTERNAL_PAYMENT_ACCOUNTS:
+            code, name, _label = EXTERNAL_PAYMENT_ACCOUNTS[method]
             self.lbl_bank.config(text="Accounting Account")
             self.cmb_bank.config(state="disabled")
-            self.cmb_bank.set("2.1.02.10 - Tarjeta corporativa BAC por pagar")
+            self.cmb_bank.set(f"{code} - {name}")
         else:
             self.lbl_bank.config(text="Bank Account")
             self.cmb_bank.config(state="readonly")

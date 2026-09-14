@@ -4509,8 +4509,9 @@ def _local_biweekly_obligations_save_draft(payload: dict) -> dict:
                     payment_date = _fortnight_due_date(period, fortnight)
                 method = str(item.get("payment_method") or "BANK").upper()
                 is_card = "3155" in method or "CARD" in method or "TARJETA" in method
-                bank_code = "2.1.02.10" if is_card else str(item.get("bank_accounting_code") or "").strip()
-                bank_name = "Tarjeta corporativa BAC por pagar" if is_card else str(item.get("bank_accounting_name") or "").strip()
+                is_hazel = "HAZEL" in method
+                bank_code = "3.1.99" if is_hazel else ("2.1.02.10" if is_card else str(item.get("bank_accounting_code") or "").strip())
+                bank_name = "Aportes de terceros - Hazel Barrantes" if is_hazel else ("Tarjeta corporativa BAC por pagar" if is_card else str(item.get("bank_accounting_name") or "").strip())
                 cur.execute("""
                     INSERT INTO itp_biweekly_payment_lines(
                         batch_id, company_code, category, beneficiary, amount, currency, amount_crc,
@@ -4523,7 +4524,7 @@ def _local_biweekly_obligations_save_draft(payload: dict) -> dict:
                     str(item.get("name") or "").strip() or "Sin beneficiario",
                     amount, str(item.get("currency") or "CRC").upper(), 0,
                     item.get("bank_account") or "", bank_code, bank_name,
-                    item.get("bank_voucher") or "", "CARD_BAC_3155" if is_card else "BANK",
+                    item.get("bank_voucher") or "", "THIRD_PARTY_HAZEL" if is_hazel else ("CARD_BAC_3155" if is_card else "BANK"),
                     "3155" if is_card else (item.get("payment_card_last4") or None),
                     payment_date, item.get("obligation_id") or None,
                     item.get("reference") or "", item.get("source") or "DRAFT", item.get("notes") or "",

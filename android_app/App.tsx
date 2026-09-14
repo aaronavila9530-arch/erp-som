@@ -14451,6 +14451,9 @@ function ItpApplyPaymentModal({
   const [depositNumber, setDepositNumber] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const isCard3155 = paymentMethod === "Tarjeta empresarial BAC 3155";
+  const isHazelPayment = paymentMethod === "Pagado por Hazel Barrantes";
+  const isExternalPayment = isCard3155 || isHazelPayment;
 
   useEffect(() => {
     if (!visible) return;
@@ -14474,9 +14477,8 @@ function ItpApplyPaymentModal({
       setMessage("Ingrese un monto valido.");
       return;
     }
-    const isCard3155 = paymentMethod === "Tarjeta empresarial BAC 3155";
-    const effectiveBankCode = isCard3155 ? "2.1.02.10" : bankCode.trim();
-    const effectiveBankName = isCard3155 ? "Tarjeta corporativa BAC por pagar" : bankName.trim();
+    const effectiveBankCode = isHazelPayment ? "3.1.99" : (isCard3155 ? "2.1.02.10" : bankCode.trim());
+    const effectiveBankName = isHazelPayment ? "Aportes de terceros - Hazel Barrantes" : (isCard3155 ? "Tarjeta corporativa BAC por pagar" : bankName.trim());
     if (!paymentDate.trim() || !effectiveBankCode || !depositNumber.trim()) {
       setMessage("Fecha, cuenta contable banco y numero de deposito/pago son obligatorios.");
       return;
@@ -14487,9 +14489,9 @@ function ItpApplyPaymentModal({
     params.set("payment_date", paymentDate.trim());
     params.set("bank_account_code", effectiveBankCode);
     params.set("bank_account_name", effectiveBankName);
-    params.set("bank_name", isCard3155 ? "Tarjeta empresarial BAC 3155" : effectiveBankName);
+    params.set("bank_name", isHazelPayment ? "Pagado por Hazel Barrantes" : (isCard3155 ? "Tarjeta empresarial BAC 3155" : effectiveBankName));
     params.set("payment_reference", depositNumber.trim());
-    params.set("payment_method", isCard3155 ? "CARD_BAC_3155" : "BANK");
+    params.set("payment_method", isHazelPayment ? "THIRD_PARTY_HAZEL" : (isCard3155 ? "CARD_BAC_3155" : "BANK"));
     params.set("payment_card_last4", isCard3155 ? "3155" : "");
     setBusy(true);
     setMessage("");
@@ -14520,21 +14522,21 @@ function ItpApplyPaymentModal({
           {row ? <MiniRecordCard row={row} titleKeys={["payee_name", "beneficiario", "referencia"]} /> : null}
           <Text style={styles.label}>Monto a pagar</Text>
           <TextInput style={styles.input} value={amount} keyboardType="decimal-pad" onChangeText={setAmount} />
-          <SelectField label="Tipo de pago" value={paymentMethod} options={["Banco", "Tarjeta empresarial BAC 3155"]} onChange={setPaymentMethod} />
+          <SelectField label="Tipo de pago" value={paymentMethod} options={["Banco", "Tarjeta empresarial BAC 3155", "Pagado por Hazel Barrantes"]} onChange={setPaymentMethod} />
           <DateField label="Fecha de pago" value={paymentDate} onChange={setPaymentDate} />
           <Text style={styles.label}>Cuenta contable banco</Text>
           <TextInput
-            style={[styles.input, paymentMethod === "Tarjeta empresarial BAC 3155" ? styles.readonlyInput : null]}
-            value={paymentMethod === "Tarjeta empresarial BAC 3155" ? "2.1.02.10" : bankCode}
-            editable={paymentMethod !== "Tarjeta empresarial BAC 3155"}
+            style={[styles.input, isExternalPayment ? styles.readonlyInput : null]}
+            value={isHazelPayment ? "3.1.99" : (isCard3155 ? "2.1.02.10" : bankCode)}
+            editable={!isExternalPayment}
             onChangeText={setBankCode}
             placeholder="Ej. 1.1.02.02.01"
           />
           <Text style={styles.label}>Banco / nombre cuenta</Text>
           <TextInput
-            style={[styles.input, paymentMethod === "Tarjeta empresarial BAC 3155" ? styles.readonlyInput : null]}
-            value={paymentMethod === "Tarjeta empresarial BAC 3155" ? "Tarjeta empresarial BAC 3155" : bankName}
-            editable={paymentMethod !== "Tarjeta empresarial BAC 3155"}
+            style={[styles.input, isExternalPayment ? styles.readonlyInput : null]}
+            value={isHazelPayment ? "Pagado por Hazel Barrantes" : (isCard3155 ? "Tarjeta empresarial BAC 3155" : bankName)}
+            editable={!isExternalPayment}
             onChangeText={setBankName}
           />
           <Text style={styles.label}>Numero deposito / comprobante</Text>
@@ -15617,7 +15619,7 @@ function ItpBiweeklyObligationsMobile({
       .map((row, index) => ({
         index: index + 1,
         voucher: String(row.bank_voucher || "").trim(),
-        bank: String(row.payment_method || "") === "CARD_BAC_3155" ? "2.1.02.10" : String(row.bank_accounting_code || "").trim()
+        bank: String(row.payment_method || "") === "THIRD_PARTY_HAZEL" ? "3.1.99" : (String(row.payment_method || "") === "CARD_BAC_3155" ? "2.1.02.10" : String(row.bank_accounting_code || "").trim())
       }))
       .filter((row) => !row.voucher || !row.bank);
     if (missing.length) {
@@ -15704,13 +15706,18 @@ function ItpBiweeklyObligationsMobile({
           <SelectField label="Moneda" value={formatValue(row.currency || "CRC")} options={["CRC", "USD"]} onChange={(value) => updateRow(index, "currency", value)} />
           <SelectField
             label="Tipo de pago"
-            value={formatValue(row.payment_method) === "CARD_BAC_3155" ? "Tarjeta empresarial BAC 3155" : "Banco"}
-            options={["Banco", "Tarjeta empresarial BAC 3155"]}
+            value={formatValue(row.payment_method) === "THIRD_PARTY_HAZEL" ? "Pagado por Hazel Barrantes" : (formatValue(row.payment_method) === "CARD_BAC_3155" ? "Tarjeta empresarial BAC 3155" : "Banco")}
+            options={["Banco", "Tarjeta empresarial BAC 3155", "Pagado por Hazel Barrantes"]}
             onChange={(value) => {
               const isCard = value === "Tarjeta empresarial BAC 3155";
-              updateRow(index, "payment_method", isCard ? "CARD_BAC_3155" : "BANK");
+              const isHazel = value === "Pagado por Hazel Barrantes";
+              updateRow(index, "payment_method", isHazel ? "THIRD_PARTY_HAZEL" : (isCard ? "CARD_BAC_3155" : "BANK"));
               updateRow(index, "payment_card_last4", isCard ? "3155" : "");
-              if (isCard) {
+              if (isHazel) {
+                updateRow(index, "bank_account", "Hazel Barrantes");
+                updateRow(index, "bank_accounting_code", "3.1.99");
+                updateRow(index, "bank_accounting_name", "Aportes de terceros - Hazel Barrantes");
+              } else if (isCard) {
                 updateRow(index, "bank_accounting_code", "2.1.02.10");
                 updateRow(index, "bank_accounting_name", "Tarjeta corporativa BAC por pagar");
               }
@@ -15720,9 +15727,9 @@ function ItpBiweeklyObligationsMobile({
           <TextInput style={styles.input} value={formatValue(row.bank_account)} onChangeText={(value) => updateRow(index, "bank_account", value)} />
           <Text style={styles.label}>Cuenta contable banco pago</Text>
           <TextInput
-            style={[styles.input, formatValue(row.payment_method) === "CARD_BAC_3155" ? styles.readonlyInput : null]}
-            editable={formatValue(row.payment_method) !== "CARD_BAC_3155"}
-            value={formatValue(row.payment_method) === "CARD_BAC_3155" ? "2.1.02.10" : formatValue(row.bank_accounting_code)}
+            style={[styles.input, ["CARD_BAC_3155", "THIRD_PARTY_HAZEL"].includes(formatValue(row.payment_method)) ? styles.readonlyInput : null]}
+            editable={!(["CARD_BAC_3155", "THIRD_PARTY_HAZEL"].includes(formatValue(row.payment_method)))}
+            value={formatValue(row.payment_method) === "THIRD_PARTY_HAZEL" ? "3.1.99" : (formatValue(row.payment_method) === "CARD_BAC_3155" ? "2.1.02.10" : formatValue(row.bank_accounting_code))}
             onChangeText={(value) => updateRow(index, "bank_accounting_code", value)}
             placeholder="Ej. 1.1.02.02.01"
           />

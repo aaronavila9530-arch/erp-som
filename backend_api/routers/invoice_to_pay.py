@@ -43,6 +43,10 @@ CARD_3155_LAST4 = "3155"
 CARD_3155_LABEL = "Tarjeta empresarial BAC 3155"
 CARD_PAYABLE_CODE = "2.1.02.10"
 CARD_PAYABLE_NAME = "Tarjeta corporativa BAC por pagar"
+HAZEL_PAYMENT_METHOD = "THIRD_PARTY_HAZEL"
+HAZEL_PAYMENT_LABEL = "Pagado por Hazel Barrantes"
+HAZEL_CONTRIBUTION_CODE = "3.1.99"
+HAZEL_CONTRIBUTION_NAME = "Aportes de terceros - Hazel Barrantes"
 EMPLOYEE_WORKER_CCSS_RATE = Decimal("0.1083")
 NET_BIWEEKLY_EMPLOYEE_NAMES = ("erasmo", "manfred")
 
@@ -72,6 +76,8 @@ def _ensure_company_column(cur):
 
 def _normalize_payment_method(value: str | None) -> str:
     text = str(value or "").strip().upper()
+    if "HAZEL" in text or text == HAZEL_PAYMENT_METHOD:
+        return HAZEL_PAYMENT_METHOD
     if "3155" in text or "CARD" in text or "TARJETA" in text:
         return CARD_3155_METHOD
     return "BANK"
@@ -289,8 +295,9 @@ def _save_biweekly_draft(cur, company: str, period: str, fortnight: int, rows: l
             payment_date = _fortnight_due_date(period, fortnight)
         payment_method = _normalize_payment_method(item.get("payment_method"))
         is_card_payment = payment_method == CARD_3155_METHOD
-        bank_code = CARD_PAYABLE_CODE if is_card_payment else str(item.get("bank_accounting_code") or "").strip()
-        bank_name = CARD_PAYABLE_NAME if is_card_payment else str(item.get("bank_accounting_name") or "").strip()
+        is_hazel_payment = payment_method == HAZEL_PAYMENT_METHOD
+        bank_code = HAZEL_CONTRIBUTION_CODE if is_hazel_payment else (CARD_PAYABLE_CODE if is_card_payment else str(item.get("bank_accounting_code") or "").strip())
+        bank_name = HAZEL_CONTRIBUTION_NAME if is_hazel_payment else (CARD_PAYABLE_NAME if is_card_payment else str(item.get("bank_accounting_name") or "").strip())
         cur.execute(
             """
             INSERT INTO itp_biweekly_payment_lines(
@@ -1139,8 +1146,11 @@ def biweekly_obligations_apply(
                 amount = _money(item.get("amount"))
                 payment_method = _normalize_payment_method(item.get("payment_method"))
                 is_card_payment = payment_method == CARD_3155_METHOD
+                is_hazel_payment = payment_method == HAZEL_PAYMENT_METHOD
                 payment_card_last4 = CARD_3155_LAST4 if is_card_payment else str(item.get("payment_card_last4") or "").strip()
-                if is_card_payment:
+                if is_hazel_payment:
+                    bank_code = HAZEL_CONTRIBUTION_CODE
+                elif is_card_payment:
                     bank_code = CARD_PAYABLE_CODE
                 if amount <= 0:
                     continue
@@ -1158,7 +1168,9 @@ def biweekly_obligations_apply(
                 if missing:
                     raise ValueError("Faltan campos obligatorios: " + ", ".join(missing))
                 datetime.strptime(payment_date, "%Y-%m-%d")
-                if is_card_payment:
+                if is_hazel_payment:
+                    bank_row = {"account_code": HAZEL_CONTRIBUTION_CODE, "account_name": HAZEL_CONTRIBUTION_NAME}
+                elif is_card_payment:
                     bank_row = {"account_code": CARD_PAYABLE_CODE, "account_name": CARD_PAYABLE_NAME}
                 else:
                     cur.execute(
@@ -1463,7 +1475,7 @@ def itp_payment_report_excel(
     summary = {}
     for row in rows:
         method = row.get("payment_method") or ("CARD_BAC_3155" if row.get("paid_with_card") else "BANK")
-        method_label = CARD_3155_LABEL if method == CARD_3155_METHOD else "Banco"
+        method_label = HAZEL_PAYMENT_LABEL if method == HAZEL_PAYMENT_METHOD else (CARD_3155_LABEL if method == CARD_3155_METHOD else "Banco")
         card_last4 = row.get("payment_card_last4") or (CARD_3155_LAST4 if method == CARD_3155_METHOD else "")
         total = _money(row.get("total"))
         paid = _money(row.get("paid_amount"))
@@ -1535,6 +1547,7 @@ def apply_payment(
         bank_name = str(bank_name or bank_account_name or "").strip()
         payment_method = _normalize_payment_method(payment_method)
         is_card_payment = payment_method == CARD_3155_METHOD
+        is_hazel_payment = payment_method == HAZEL_PAYMENT_METHOD
         payment_card_last4 = CARD_3155_LAST4 if is_card_payment else str(payment_card_last4 or "").strip()
         performed_by, performed_role = actor_from_headers(x_user, x_role, x_user_role)
 
@@ -1586,7 +1599,12 @@ def apply_payment(
                 detail="Obligation not found"
             )
 
-        if is_card_payment:
+        if is_hazel_payment:
+            bank_row = {
+                "account_code": HAZEL_CONTRIBUTION_CODE,
+                "account_name": HAZEL_CONTRIBUTION_NAME,
+            }
+        elif is_card_payment:
             bank_row = {
                 "account_code": CARD_PAYABLE_CODE,
                 "account_name": CARD_PAYABLE_NAME,

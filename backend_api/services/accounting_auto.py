@@ -1405,9 +1405,15 @@ def sync_itp_to_accounting(conn):
             )
             CARD_PAYABLE_CODE = "2.1.02.10"
             CARD_PAYABLE_NAME = "Tarjeta corporativa BAC por pagar"
+            HAZEL_CONTRIBUTION_CODE = "3.1.99"
+            HAZEL_CONTRIBUTION_NAME = "Aportes de terceros - Hazel Barrantes"
             payment_method = (ob.get("payment_method") or "").upper()
             paid_with_card = bool(ob.get("paid_with_card")) or payment_method == "CARD_BAC_3155" or str(ob.get("payment_card_last4") or "").strip() == "3155"
-            if paid_with_card:
+            paid_by_hazel = payment_method == "THIRD_PARTY_HAZEL"
+            if paid_by_hazel:
+                BANK_CODE = HAZEL_CONTRIBUTION_CODE
+                BANK_NAME = HAZEL_CONTRIBUTION_NAME
+            elif paid_with_card:
                 BANK_CODE = CARD_PAYABLE_CODE
                 BANK_NAME = CARD_PAYABLE_NAME
 
@@ -1422,6 +1428,7 @@ def sync_itp_to_accounting(conn):
             _ensure_account(WITHHOLDING_CODE, WITHHOLDING_NAME, "LIABILITY", "CREDIT", "2.1.02")
             _ensure_account(SURVEYOR_DEDUCTION_CODE, SURVEYOR_DEDUCTION_NAME, "LIABILITY", "CREDIT", "2.1.02")
             _ensure_account(CARD_PAYABLE_CODE, CARD_PAYABLE_NAME, "LIABILITY", "CREDIT", "2.1.02")
+            _ensure_account(HAZEL_CONTRIBUTION_CODE, HAZEL_CONTRIBUTION_NAME, "EQUITY", "CREDIT", "3.1")
 
             def _first_existing(candidates):
                 for code, name in candidates:
@@ -1556,9 +1563,9 @@ def sync_itp_to_accounting(conn):
                     continue
                 payment_period = payment_date.strftime("%Y-%m")
                 payment_detail = (
-                    f"From ITP Payment by BAC card 3155 to {payee_name}"
-                    if paid_with_card
-                    else f"From ITP Payment done to {payee_name}"
+                    f"From ITP Payment by Hazel Barrantes to {payee_name}"
+                    if paid_by_hazel
+                    else (f"From ITP Payment by BAC card 3155 to {payee_name}" if paid_with_card else f"From ITP Payment done to {payee_name}")
                 )
 
                 if not bank_account_ok:

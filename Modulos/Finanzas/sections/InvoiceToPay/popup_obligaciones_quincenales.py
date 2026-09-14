@@ -36,17 +36,23 @@ BANK_ACCOUNT_OPTIONS = [
 PAYMENT_METHOD_LABELS = {
     "BANK": "Banco",
     "CARD_BAC_3155": "Tarjeta empresarial BAC 3155",
+    "THIRD_PARTY_HAZEL": "Pagado por Hazel Barrantes",
 }
 PAYMENT_METHOD_CODES = {label: code for code, label in PAYMENT_METHOD_LABELS.items()}
 CARD_3155_CODE = "2.1.02.10"
 CARD_3155_NAME = "Tarjeta corporativa BAC por pagar"
 CARD_3155_LABEL = "Tarjeta empresarial BAC 3155"
+HAZEL_CODE = "3.1.99"
+HAZEL_NAME = "Aportes de terceros - Hazel Barrantes"
+HAZEL_LABEL = "Pagado por Hazel Barrantes"
 
 
 def _payment_label(row):
     method = str(row.get("payment_method") or "").strip().upper()
     if method == "CARD_BAC_3155" or str(row.get("payment_card_last4") or "").strip() == "3155":
         return CARD_3155_LABEL
+    if method == "THIRD_PARTY_HAZEL":
+        return HAZEL_LABEL
     return "Banco"
 
 
@@ -321,6 +327,9 @@ class PopupObligacionesQuincenales(tk.Toplevel):
                 vars_["bank_accounting_code"].set(CARD_3155_CODE)
                 if not vars_["bank_account"].get().strip():
                     vars_["bank_account"].set("BAC")
+            elif vars_["payment_method"].get() == HAZEL_LABEL:
+                vars_["bank_accounting_code"].set(HAZEL_CODE)
+                vars_["bank_account"].set("Hazel Barrantes")
 
         vars_["payment_method"].trace_add("write", sync_payment_method)
         sync_payment_method()
@@ -339,6 +348,10 @@ class PopupObligacionesQuincenales(tk.Toplevel):
                 bank_code = CARD_3155_CODE
                 bank_name = CARD_3155_NAME
                 bank_account = bank_account or "BAC"
+            elif payment_method == "THIRD_PARTY_HAZEL":
+                bank_code = HAZEL_CODE
+                bank_name = HAZEL_NAME
+                bank_account = "Hazel Barrantes"
             result.update({
                 "category": vars_["category"].get(),
                 "name": vars_["name"].get().strip(),
