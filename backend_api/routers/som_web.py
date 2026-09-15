@@ -978,7 +978,7 @@ def som_web_home() -> HTMLResponse:
       if (financeTab === "invoicing") financeTab = "billing";
       $("content").innerHTML = `
         <div class="grid home-grid">
-          <div class="card home-card" onclick="openFinanceBlock('order-to-cash')"><h2>Order To Cash</h2><p class="muted">Credit, Invoicing, Collections, Bank y Disputes.</p></div>
+          <div class="card home-card" onclick="openFinanceBlock('order-to-cash')"><h2>Order To Cash</h2><p class="muted">Credit, Invoicing and Billing, Collections, Bank y Disputes.</p></div>
           <div class="card home-card" onclick="openFinanceBlock('invoice-to-pay')"><h2>Invoice To Pay</h2><p class="muted">Obligaciones, proveedores y pagos.</p></div>
           <div class="card home-card" onclick="openFinanceBlock('accounting')"><h2>Accounting</h2><p class="muted">Asientos, cierres, fiscal y reportes.</p></div>
         </div>
@@ -1000,13 +1000,13 @@ def som_web_home() -> HTMLResponse:
           <div class="card panel">
             <div class="panel-head"><h2>Order To Cash</h2><span class="muted">Seleccione una sección y luego presione Buscar</span></div>
             <div class="tabs">
-              <button onclick="switchFinanceTab('credit')">Credit</button>
-              <button onclick="switchFinanceTab('billing')">Invoicing & Billing</button>
+              <button onclick="switchFinanceTab('credit')">Credit, Order Hold and Release</button>
+              <button onclick="switchFinanceTab('billing')">Invoicing and Billing</button>
               <button onclick="switchFinanceTab('collections')">Collections</button>
               <button onclick="switchFinanceTab('bank')">Bank</button>
               <button onclick="switchFinanceTab('disputes')">Disputes</button>
             </div>
-            <div id="orderCashWorkspace" class="workspace"><div class="status">Seleccione Credit, Invoicing & Billing, Collections, Bank o Disputes.</div></div>
+            <div id="orderCashWorkspace" class="workspace"><div class="status">Seleccione Credit, Order Hold and Release, Invoicing and Billing, Collections, Bank o Disputes.</div></div>
           </div>`;
         switchFinanceTab("credit");
         return;
@@ -1074,18 +1074,44 @@ def som_web_home() -> HTMLResponse:
       financeClientes = financeClienteRows.map(c => c.nombrecomercial || c.NombreComercial || c.nombrejuridico || c.NombreJuridico || c.codigo || c.Codigo).filter(Boolean);
       return financeClientes;
     }
+    function financeClientName(row) {
+      return row?.nombrecomercial || row?.NombreComercial || row?.nombrejuridico || row?.NombreJuridico || row?.cliente || "";
+    }
+    function financeClientId(row) {
+      return row?.codigo || row?.Codigo || row?.codigo_cliente || "";
+    }
     function financeClientCode(name) {
       const row = financeClienteRows.find(c => [c.nombrecomercial, c.NombreComercial, c.nombrejuridico, c.NombreJuridico, c.codigo, c.Codigo].filter(Boolean).includes(name));
       return row?.codigo || row?.Codigo || "";
     }
+    async function loadFinanceClientCombos() {
+      await ensureFinanceClientes();
+      ["billableCliente","billingCliente"].forEach(id => {
+        const el = $(id);
+        if (el && el.tagName === "SELECT" && el.options.length <= 1) {
+          el.innerHTML = '<option value="">Todos</option>' + financeClienteRows.map(row => {
+            const name = financeClientName(row);
+            return `<option value="${esc(name)}">${esc(financeClientId(row))} | ${esc(name)}</option>`;
+          }).join("");
+        }
+      });
+      const credit = $("creditCliente");
+      if (credit && credit.options.length <= 1) {
+        credit.innerHTML = '<option value="">Todos</option>' + financeClienteRows.map(row => {
+          const code = financeClientId(row);
+          const name = financeClientName(row);
+          return `<option value="${esc(code)}">${esc(code)} | ${esc(name)}</option>`;
+        }).join("");
+      }
+    }
     async function renderBillingWeb(target=orderCashWorkspace()) {
       target.innerHTML = `
           <div class="panel-head">
-            <h2>Invoicing & Billing</h2>
+            <h2>Invoicing and Billing</h2>
             <span id="billableCount" class="muted">Servicios finalizados pendientes de factura</span>
           </div>
           <div class="filters">
-            <label>Cliente<input id="billableCliente" placeholder="Cliente exacto o comercial" /></label>
+            <label>Cliente<select id="billableCliente" onpointerdown="loadFinanceClientCombos()" onfocus="loadFinanceClientCombos()"><option value="">Todos</option></select></label>
             <button onclick="loadBillables()">Buscar</button>
             <button class="secondary" onclick="clearBillableFilters()">Limpiar</button>
           </div>
@@ -1112,7 +1138,7 @@ def som_web_home() -> HTMLResponse:
             <button class="secondary" onclick="downloadBillingExport()">Exportar CSV</button>
           </div>
           <div class="filters">
-            <label>Cliente<input id="billingCliente" placeholder="Cliente" /></label>
+            <label>Cliente<select id="billingCliente" onpointerdown="loadFinanceClientCombos()" onfocus="loadFinanceClientCombos()"><option value="">Todos</option></select></label>
             <label>Desde<input id="billingDesde" type="date" /></label>
             <label>Hasta<input id="billingHasta" type="date" /></label>
             <label>Tipo factura<select id="billingTipoFactura"><option value="">Todos</option><option>MANUAL</option><option>ELECTRONICA</option></select></label>
@@ -1138,6 +1164,7 @@ def som_web_home() -> HTMLResponse:
     }
     async function loadBillables() {
       selectedBillableIndex = null;
+      await loadFinanceClientCombos();
       const cliente = valueFrom("billableCliente");
       const msg = $("billableMsg");
       const table = $("billableTable");
@@ -1336,6 +1363,7 @@ def som_web_home() -> HTMLResponse:
     async function loadBillingRows() {
       if (!$("billingTable")) return;
       selectedBillingIndex = null;
+      await loadFinanceClientCombos();
       const msg = $("billingMsg");
       msg.className = "status";
       msg.textContent = "Consultando facturas...";
@@ -1557,19 +1585,21 @@ def som_web_home() -> HTMLResponse:
     function renderCreditHoldWeb(target=orderCashWorkspace()) {
       target.innerHTML = `
           <div class="panel-head">
-            <h2>Credit</h2>
-            <span class="muted">Credit, Order Hold & Release</span>
+            <h2>Credit, Order Hold and Release</h2>
+            <span class="muted">Límite, términos crediticios y hold por cliente</span>
           </div>
           <div class="service-actions">
             <button onclick="loadCreditHold()">Buscar</button>
             <button onclick="openCreditConfigForm('add')">Agregar límite</button>
+            <button class="secondary" onclick="viewSelectedCreditConfig()">Ver</button>
             <button class="gray" onclick="openCreditConfigForm('edit')">Editar</button>
             <button class="brown" onclick="toggleSelectedCreditHold()">Bloquear / liberar</button>
             <button class="dark" onclick="deleteSelectedCreditConfig()">Eliminar</button>
             <button class="secondary" onclick="clearCreditHold()">Limpiar</button>
           </div>
           <div class="filters">
-            <label>Cliente / código<input id="creditQ" placeholder="Buscar cliente..." /></label>
+            <label>Cliente<select id="creditCliente" onpointerdown="loadFinanceClientCombos()" onfocus="loadFinanceClientCombos()" onchange="selectCreditByCombo()"><option value="">Todos</option></select></label>
+            <label>Texto<input id="creditQ" placeholder="Nombre o código..." /></label>
           </div>
           <div id="creditMsg" class="status hidden"></div>
           <div id="creditTable" class="workspace"></div>
@@ -1578,6 +1608,7 @@ def som_web_home() -> HTMLResponse:
     }
     function clearCreditHold() {
       if ($("creditQ")) $("creditQ").value = "";
+      if ($("creditCliente")) $("creditCliente").value = "";
       creditRows = [];
       selectedCreditIndex = null;
       if ($("creditMsg")) $("creditMsg").classList.add("hidden");
@@ -1588,7 +1619,8 @@ def som_web_home() -> HTMLResponse:
       const table = $("creditTable");
       msg.className = "status";
       msg.textContent = "Consultando credito...";
-      const q = valueFrom("creditQ");
+      await loadFinanceClientCombos();
+      const q = valueFrom("creditCliente") || valueFrom("creditQ");
       try {
         const payload = await getJSON(`/som/finance/order-to-cash/credit-hold${q ? `?q=${encodeURIComponent(q)}` : ""}`);
         creditRows = rowsList(payload);
@@ -1605,7 +1637,13 @@ def som_web_home() -> HTMLResponse:
       }
     }
     function creditRow() {
-      return selectedCreditIndex === null ? null : creditRows[selectedCreditIndex];
+      if (selectedCreditIndex !== null) return creditRows[selectedCreditIndex];
+      const code = valueFrom("creditCliente");
+      if (!code) return null;
+      const found = creditRows.find(row => String(row.codigo || row.codigo_cliente || "") === code);
+      if (found) return found;
+      const option = $("creditCliente")?.selectedOptions?.[0];
+      return { codigo:code, cliente:(option?.textContent || "").split("|").slice(1).join("|").trim() };
     }
     function requireCreditRow() {
       const row = creditRow();
@@ -1622,12 +1660,12 @@ def som_web_home() -> HTMLResponse:
         <div class="table-wrap">
           <table>
             <thead><tr>
-              <th>Código</th><th>Cliente</th><th>Límite</th><th>CxC abierta</th><th>Disponible</th><th>Estado</th><th>Hold</th><th>Decisión</th>
+              <th>Código</th><th>Cliente</th><th>Límite</th><th>CxC abierta</th><th>Disponible</th><th>Estado</th><th>Hold</th><th>Decisión</th><th>Acción</th>
             </tr></thead>
             <tbody>${creditRows.map((row, idx) => {
               const decision = String(row.decision || "");
               const badge = decision === "REQUIRES_RELEASE" ? "cancel" : "closed";
-              return `<tr class="${idx === selectedCreditIndex ? "service-selected" : ""}" onclick="selectedCreditIndex=${idx}; renderCreditTable()">
+              return `<tr class="${idx === selectedCreditIndex ? "service-selected" : ""}" onclick="selectCreditRow(${idx})">
                 <td>${esc(row.codigo)}</td>
                 <td>${esc(row.cliente)}</td>
                 <td>${esc(row.moneda)} ${Number(row.limite || 0).toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
@@ -1636,10 +1674,36 @@ def som_web_home() -> HTMLResponse:
                 <td>${esc(row.estado || "-")}</td>
                 <td>${row.hold_manual ? "Si" : "No"}</td>
                 <td><span class="badge ${badge}">${esc(decision)}</span></td>
+                <td><div class="toolbar"><button class="secondary" onclick="event.stopPropagation(); selectCreditRow(${idx}); viewSelectedCreditConfig()">Ver</button><button onclick="event.stopPropagation(); selectCreditRow(${idx}); openCreditConfigForm('edit')">Editar</button><button class="brown" onclick="event.stopPropagation(); selectCreditRow(${idx}); toggleSelectedCreditHold()">Hold</button><button class="dark" onclick="event.stopPropagation(); selectCreditRow(${idx}); deleteSelectedCreditConfig()">Eliminar</button></div></td>
               </tr>`;
             }).join("")}</tbody>
           </table>
         </div>`;
+    }
+    function selectCreditRow(index) {
+      selectedCreditIndex = index;
+      const row = creditRows[index];
+      if ($("creditCliente") && row?.codigo) $("creditCliente").value = row.codigo;
+      renderCreditTable();
+    }
+    function selectCreditByCombo() {
+      const code = valueFrom("creditCliente");
+      selectedCreditIndex = code ? creditRows.findIndex(row => String(row.codigo || row.codigo_cliente || "") === code) : null;
+      if (selectedCreditIndex < 0) selectedCreditIndex = null;
+      if (creditRows.length) renderCreditTable();
+    }
+    async function viewSelectedCreditConfig() {
+      const row = requireCreditRow();
+      if (!row) return;
+      const data = await getJSON(`/cliente-credito/${encodeURIComponent(row.codigo)}`);
+      const detail = data.exists ? data.data : { codigo_cliente:row.codigo, nombre_cliente:row.cliente, estado:"Sin límite crediticio" };
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal">
+            <div class="modal-head"><h2>Información crediticia</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+            <div class="table-wrap"><table><tbody>${Object.keys(detail).filter(k => !String(k).toLowerCase().includes("hash")).map(k => `<tr><th>${esc(k)}</th><td>${esc(detail[k])}</td></tr>`).join("")}</tbody></table></div>
+          </div>
+        </div>`);
     }
     async function openCreditConfigForm(mode) {
       const selected = creditRow();
