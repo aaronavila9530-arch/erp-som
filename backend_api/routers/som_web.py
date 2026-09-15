@@ -378,8 +378,9 @@ def som_web_home() -> HTMLResponse:
     .tabs button { background:#fff; color:var(--ink); border:1px solid var(--line); }
     .tabs button.active { background:var(--blue); color:#fff; border-color:var(--blue); }
     .split-panels { display:grid; grid-template-columns:minmax(0,1fr); gap:12px; }
-    .finance-section { padding:14px; border:1px solid var(--line); border-radius:8px; background:#fbfdff; margin-top:12px; }
-    .finance-section:first-child { margin-top:0; }
+    .billing-unified { display:grid; grid-template-columns:minmax(0,.9fr) minmax(0,1.1fr); gap:18px; align-items:start; margin-top:10px; }
+    .finance-section { min-width:0; padding:4px 0; }
+    .finance-section + .finance-section { border-left:1px solid var(--line); padding-left:18px; }
     .section-head { display:flex; justify-content:space-between; gap:12px; align-items:flex-end; margin-bottom:12px; padding-bottom:8px; border-bottom:1px solid #edf2f7; }
     .section-head h3 { margin:0; font-size:16px; }
     .finance-filter-row { display:grid; grid-template-columns:minmax(220px,300px) repeat(4,minmax(120px,170px)) max-content max-content; gap:10px; align-items:end; margin:10px 0 12px; }
@@ -423,7 +424,8 @@ def som_web_home() -> HTMLResponse:
       .hero-logo img { width:min(88%,520px); height:250px; }
       .form-grid { grid-template-columns:1fr; }
       .filters.service-filters { grid-template-columns:1fr; }
-      .finance-filter-row,.finance-filter-row.compact { grid-template-columns:1fr; }
+      .billing-unified,.finance-filter-row,.finance-filter-row.compact { grid-template-columns:1fr; }
+      .finance-section + .finance-section { border-left:0; border-top:1px solid var(--line); padding-left:0; padding-top:14px; }
       .surveyor-line { grid-template-columns:1fr; }
       aside { min-height:auto; }
       header { flex-direction:column; }
@@ -1122,49 +1124,51 @@ def som_web_home() -> HTMLResponse:
             <h2>Invoicing and Billing</h2>
             <span class="muted">Facturación desde servicios y documentos emitidos</span>
           </div>
-          <section class="finance-section">
-            <div class="section-head">
-              <h3>Billing</h3>
-              <span id="billableCount" class="muted">Servicios finalizados pendientes de factura</span>
-            </div>
-            <div class="finance-filter-row compact">
-              <label>Cliente<select id="billableCliente"><option value="">Seleccione cliente</option></select></label>
-              <button onclick="loadBillables()">Buscar</button>
-              <button class="secondary" onclick="clearBillableFilters()">Limpiar</button>
-            </div>
-            <div class="finance-toolbar">
-              <button onclick="openManualInvoiceForm()">Factura Manual</button>
-              <button class="secondary" onclick="openXmlInvoiceForm()">Factura XML</button>
-              <button class="gray" onclick="openAdvanceInvoiceForm()">Facturación Anticipada</button>
-              <button class="brown" onclick="openCreditNoteForm()">Nota Crédito</button>
-              <button class="secondary" onclick="viewSelectedBillable()">Ver servicio</button>
-            </div>
-            <div id="billableMsg" class="status hidden"></div>
-            <div id="billableTable" class="workspace"></div>
-          </section>
-          <section class="finance-section">
-            <div class="section-head">
-              <h3>Invoicing</h3>
-              <span id="billingCount" class="muted">Facturas emitidas</span>
-            </div>
-            <div class="finance-filter-row">
-              <label>Cliente<select id="billingCliente"><option value="">Todos</option></select></label>
-              <label>Desde<input id="billingDesde" type="date" /></label>
-              <label>Hasta<input id="billingHasta" type="date" /></label>
-              <label>Tipo factura<select id="billingTipoFactura"><option value="">Todos</option><option>MANUAL</option><option>ELECTRONICA</option></select></label>
-              <label>Documento<select id="billingTipoDocumento"><option value="">Todos</option><option>FACTURA</option><option>NOTA_CREDITO</option></select></label>
-              <button onclick="loadBillingRows()">Buscar</button>
-              <button class="secondary" onclick="clearBillingFilters()">Limpiar</button>
-            </div>
-            <div class="finance-toolbar">
-              <button onclick="viewSelectedInvoice()">Ver Factura</button>
-              <button class="gray" onclick="openBillingEditForm()">Editar</button>
-              <button class="brown" onclick="deleteSelectedInvoice()">Eliminar / anular</button>
-              <button class="secondary" onclick="downloadBillingExport()">Exportar CSV</button>
-            </div>
-            <div id="billingMsg" class="status hidden"></div>
-            <div id="billingTable" class="workspace"></div>
-          </section>
+          <div class="billing-unified">
+            <section class="finance-section">
+              <div class="section-head">
+                <h3>Billing</h3>
+                <span id="billableCount" class="muted">Servicios pendientes</span>
+              </div>
+              <div class="finance-filter-row compact">
+                <label>Cliente<select id="billableCliente"><option value="">Seleccione cliente</option></select></label>
+                <button onclick="loadBillables()">Buscar</button>
+                <button class="secondary" onclick="clearBillableFilters()">Limpiar</button>
+              </div>
+              <div class="finance-toolbar">
+                <button onclick="openManualInvoiceForm()">Factura Manual</button>
+                <button class="secondary" onclick="openXmlInvoiceForm()">Factura XML</button>
+                <button class="gray" onclick="openAdvanceInvoiceForm()">Facturación Anticipada</button>
+                <button class="brown" onclick="openCreditNoteForm()">Nota Crédito</button>
+                <button class="secondary" onclick="viewSelectedBillable()">Ver servicio</button>
+              </div>
+              <div id="billableMsg" class="status hidden"></div>
+              <div id="billableTable" class="workspace"></div>
+            </section>
+            <section class="finance-section">
+              <div class="section-head">
+                <h3>Invoicing</h3>
+                <span id="billingCount" class="muted">Facturas emitidas</span>
+              </div>
+              <div class="finance-filter-row">
+                <label>Cliente<select id="billingCliente"><option value="">Todos</option></select></label>
+                <label>Desde<input id="billingDesde" type="date" /></label>
+                <label>Hasta<input id="billingHasta" type="date" /></label>
+                <label>Tipo factura<select id="billingTipoFactura"><option value="">Todos</option><option>MANUAL</option><option>ELECTRONICA</option></select></label>
+                <label>Documento<select id="billingTipoDocumento"><option value="">Todos</option><option>FACTURA</option><option>NOTA_CREDITO</option></select></label>
+                <button onclick="loadBillingRows()">Buscar</button>
+                <button class="secondary" onclick="clearBillingFilters()">Limpiar</button>
+              </div>
+              <div class="finance-toolbar">
+                <button onclick="viewSelectedInvoice()">Ver Factura</button>
+                <button class="gray" onclick="openBillingEditForm()">Editar</button>
+                <button class="brown" onclick="deleteSelectedInvoice()">Eliminar / anular</button>
+                <button class="secondary" onclick="downloadBillingExport()">Exportar CSV</button>
+              </div>
+              <div id="billingMsg" class="status hidden"></div>
+              <div id="billingTable" class="workspace"></div>
+            </section>
+          </div>
         `;
       billableRows = [];
       billingRows = [];
