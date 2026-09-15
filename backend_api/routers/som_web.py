@@ -513,6 +513,8 @@ def som_web_home() -> HTMLResponse:
     let billingRows = [];
     let selectedBillableIndex = null;
     let selectedBillingIndex = null;
+    let creditRows = [];
+    let selectedCreditIndex = null;
     let financeClientes = [];
     let financeClienteRows = [];
     const SERVICE_COLUMNS = [
@@ -896,7 +898,8 @@ def som_web_home() -> HTMLResponse:
       $("pageTitle").textContent = mod?.title || "SOM";
       $("pageSubtitle").textContent = mod?.subtitle || "";
       renderNav();
-      refreshSummary();
+      if (code === "dashboard") refreshSummary();
+      else resetKpisForManualLoad();
       if (code === "dashboard") renderHome();
       else if (code === "master_data") renderMasterData();
       else if (code === "servicios" || code === "servicios_op" || (mod?.title || "").toLowerCase() === "servicios") renderServicios();
@@ -928,6 +931,21 @@ def som_web_home() -> HTMLResponse:
         }
       }
     }
+    function resetKpisForManualLoad() {
+      const mod = catalog.modules.find(m => m.code === currentModule);
+      const labels = currentModule === "finanzas"
+        ? ["CxC abierta", "Clientes con crédito", "Hold manual", "Order-to-Cash"]
+        : currentModule === "master_data"
+          ? ["Clientes", "Proveedores", "Empleados", "Servicios"]
+          : currentModule === "servicios"
+            ? ["Servicios", "Abiertos", "Finalizados", "Pendientes"]
+            : [mod?.title || "SOM", "Datos", "Acciones", "Estado"];
+      for (let i = 0; i < 4; i++) {
+        $(`kpiLabel${i+1}`).textContent = labels[i] || "-";
+        $(`kpiValue${i+1}`).textContent = "0";
+        $(`kpiHint${i+1}`).textContent = "Presione Actualizar";
+      }
+    }
     function renderHome() {
       $("content").innerHTML = `
         <div class="grid home-grid">
@@ -957,6 +975,7 @@ def som_web_home() -> HTMLResponse:
       }).join("");
     }
     function renderFinanzas() {
+      if (financeTab === "invoicing") financeTab = "billing";
       $("content").innerHTML = `
         <div class="grid home-grid">
           <div class="card home-card" onclick="openFinanceBlock('order-to-cash')"><h2>Order To Cash</h2><p class="muted">Credit, Invoicing, Collections, Bank y Disputes.</p></div>
@@ -964,11 +983,13 @@ def som_web_home() -> HTMLResponse:
           <div class="card home-card" onclick="openFinanceBlock('accounting')"><h2>Accounting</h2><p class="muted">Asientos, cierres, fiscal y reportes.</p></div>
         </div>
         <div id="financeWorkspace" class="workspace"></div>`;
-      if (["credit","billing","invoicing","collections","bank","disputes"].includes(financeTab)) {
+      if (["credit","billing","collections","bank","disputes"].includes(financeTab)) {
         openFinanceBlock("order-to-cash");
         switchFinanceTab(financeTab);
       } else if (financeTab && financeTab !== "finance-home") {
         openFinanceBlock(financeTab);
+      } else {
+        openFinanceBlock("order-to-cash");
       }
     }
     function openFinanceBlock(block) {
@@ -987,6 +1008,7 @@ def som_web_home() -> HTMLResponse:
             </div>
             <div id="orderCashWorkspace" class="workspace"><div class="status">Seleccione Credit, Invoicing & Billing, Collections, Bank o Disputes.</div></div>
           </div>`;
+        switchFinanceTab("credit");
         return;
       }
       if (block === "invoice-to-pay") {
@@ -1022,7 +1044,6 @@ def som_web_home() -> HTMLResponse:
     function switchFinanceTab(tab) {
       financeTab = tab;
       if (tab === "billing") renderBillingWeb(orderCashWorkspace());
-      else if (tab === "invoicing") renderInvoicingWeb(orderCashWorkspace());
       else if (tab === "credit") renderCreditHoldWeb(orderCashWorkspace());
       else if (tab === "collections") renderCollectionsWeb(orderCashWorkspace());
       else if (tab === "bank") renderBankWeb(orderCashWorkspace());
@@ -1066,7 +1087,7 @@ def som_web_home() -> HTMLResponse:
           <div class="filters">
             <label>Cliente<input id="billableCliente" placeholder="Cliente exacto o comercial" /></label>
             <button onclick="loadBillables()">Buscar</button>
-            <button class="secondary" onclick="$('billableCliente').value=''; loadBillables()">Limpiar</button>
+            <button class="secondary" onclick="clearBillableFilters()">Limpiar</button>
           </div>
           <div class="service-actions">
             <button onclick="openManualInvoiceForm()">Factura Manual</button>
@@ -1077,10 +1098,43 @@ def som_web_home() -> HTMLResponse:
           </div>
           <div id="billableMsg" class="status hidden"></div>
           <div id="billableTable" class="workspace"></div>
+          <hr />
+          <div class="panel-head">
+            <h2>Invoicing</h2>
+            <span id="billingCount" class="muted">Facturas emitidas</span>
+          </div>
+          <div class="service-actions">
+            <button onclick="loadBillingRows()">Buscar</button>
+            <button class="secondary" onclick="clearBillingFilters()">Limpiar</button>
+            <button onclick="viewSelectedInvoice()">Ver Factura</button>
+            <button class="gray" onclick="openBillingEditForm()">Editar</button>
+            <button class="brown" onclick="deleteSelectedInvoice()">Eliminar / anular</button>
+            <button class="secondary" onclick="downloadBillingExport()">Exportar CSV</button>
+          </div>
+          <div class="filters">
+            <label>Cliente<input id="billingCliente" placeholder="Cliente" /></label>
+            <label>Desde<input id="billingDesde" type="date" /></label>
+            <label>Hasta<input id="billingHasta" type="date" /></label>
+            <label>Tipo factura<select id="billingTipoFactura"><option value="">Todos</option><option>MANUAL</option><option>ELECTRONICA</option></select></label>
+            <label>Documento<select id="billingTipoDocumento"><option value="">Todos</option><option>FACTURA</option><option>NOTA_CREDITO</option></select></label>
+          </div>
+          <div id="billingMsg" class="status hidden"></div>
+          <div id="billingTable" class="workspace"></div>
         `;
       billableRows = [];
+      billingRows = [];
       selectedBillableIndex = null;
+      selectedBillingIndex = null;
       $("billableTable").innerHTML = '<div class="status">Ingrese cliente y presione Buscar.</div>';
+      $("billingTable").innerHTML = '<div class="status">Configure filtros y presione Buscar.</div>';
+    }
+    function clearBillableFilters() {
+      if ($("billableCliente")) $("billableCliente").value = "";
+      billableRows = [];
+      selectedBillableIndex = null;
+      if ($("billableCount")) $("billableCount").textContent = "Servicios finalizados pendientes de factura";
+      if ($("billableMsg")) $("billableMsg").classList.add("hidden");
+      if ($("billableTable")) $("billableTable").innerHTML = '<div class="status">Ingrese cliente y presione Buscar.</div>';
     }
     async function loadBillables() {
       selectedBillableIndex = null;
@@ -1273,7 +1327,11 @@ def som_web_home() -> HTMLResponse:
     }
     function clearBillingFilters() {
       ["billingCliente","billingDesde","billingHasta","billingTipoFactura","billingTipoDocumento"].forEach(id => { if ($(id)) $(id).value = ""; });
-      loadBillingRows();
+      billingRows = [];
+      selectedBillingIndex = null;
+      if ($("billingCount")) $("billingCount").textContent = "Facturas emitidas";
+      if ($("billingMsg")) $("billingMsg").classList.add("hidden");
+      if ($("billingTable")) $("billingTable").innerHTML = '<div class="status">Configure filtros y presione Buscar.</div>';
     }
     async function loadBillingRows() {
       if (!$("billingTable")) return;
@@ -1439,7 +1497,7 @@ def som_web_home() -> HTMLResponse:
         const data = await postJSON("/invoicing/anticipada", payload);
         await postJSON("/collections/sync-from-invoicing", {}).catch(() => null);
         closeModal();
-        if (financeTab === "invoicing") await loadBillingRows();
+        if (financeTab === "billing" && $("billingTable")) await loadBillingRows();
         alert(`Factura anticipada creada: ${data.numero_documento}`);
       } catch (err) {
         msg.className = "status error";
@@ -1489,7 +1547,7 @@ def som_web_home() -> HTMLResponse:
         const data = await postJSON("/invoicing/nota-credito", payload);
         await postJSON("/collections/sync-from-invoicing", {}).catch(() => null);
         closeModal();
-        if (financeTab === "invoicing") await loadBillingRows();
+        if (financeTab === "billing" && $("billingTable")) await loadBillingRows();
         alert(`Nota de crédito creada: ${data.numero_documento}`);
       } catch (err) {
         msg.className = "status error";
@@ -1504,7 +1562,11 @@ def som_web_home() -> HTMLResponse:
           </div>
           <div class="service-actions">
             <button onclick="loadCreditHold()">Buscar</button>
-            <button class="secondary" onclick="$('creditQ').value=''; $('creditTable').innerHTML='<div class=&quot;status&quot;>Presione Buscar para consultar crédito.</div>'">Limpiar</button>
+            <button onclick="openCreditConfigForm('add')">Agregar límite</button>
+            <button class="gray" onclick="openCreditConfigForm('edit')">Editar</button>
+            <button class="brown" onclick="toggleSelectedCreditHold()">Bloquear / liberar</button>
+            <button class="dark" onclick="deleteSelectedCreditConfig()">Eliminar</button>
+            <button class="secondary" onclick="clearCreditHold()">Limpiar</button>
           </div>
           <div class="filters">
             <label>Cliente / código<input id="creditQ" placeholder="Buscar cliente..." /></label>
@@ -1514,6 +1576,13 @@ def som_web_home() -> HTMLResponse:
         `;
       $("creditTable").innerHTML = '<div class="status">Presione Buscar para consultar crédito.</div>';
     }
+    function clearCreditHold() {
+      if ($("creditQ")) $("creditQ").value = "";
+      creditRows = [];
+      selectedCreditIndex = null;
+      if ($("creditMsg")) $("creditMsg").classList.add("hidden");
+      if ($("creditTable")) $("creditTable").innerHTML = '<div class="status">Presione Buscar para consultar crédito.</div>';
+    }
     async function loadCreditHold() {
       const msg = $("creditMsg");
       const table = $("creditTable");
@@ -1522,38 +1591,147 @@ def som_web_home() -> HTMLResponse:
       const q = valueFrom("creditQ");
       try {
         const payload = await getJSON(`/som/finance/order-to-cash/credit-hold${q ? `?q=${encodeURIComponent(q)}` : ""}`);
-        const rows = rowsList(payload);
+        creditRows = rowsList(payload);
+        selectedCreditIndex = null;
         msg.classList.add("hidden");
-        if (!rows.length) {
+        if (!creditRows.length) {
           table.innerHTML = '<div class="status">Sin clientes para la consulta.</div>';
           return;
         }
-        table.innerHTML = `
-          <div class="table-wrap">
-            <table>
-              <thead><tr>
-                <th>Código</th><th>Cliente</th><th>Límite</th><th>CxC abierta</th><th>Disponible</th><th>Estado</th><th>Hold</th><th>Decisión</th>
-              </tr></thead>
-              <tbody>${rows.map(row => {
-                const decision = String(row.decision || "");
-                const badge = decision === "REQUIRES_RELEASE" ? "cancel" : "closed";
-                return `<tr>
-                  <td>${esc(row.codigo)}</td>
-                  <td>${esc(row.cliente)}</td>
-                  <td>${esc(row.moneda)} ${Number(row.limite || 0).toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
-                  <td>${esc(row.moneda)} ${Number(row.cxC_abierta || 0).toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
-                  <td>${esc(row.moneda)} ${Number(row.disponible || 0).toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
-                  <td>${esc(row.estado || "-")}</td>
-                  <td>${row.hold_manual ? "Si" : "No"}</td>
-                  <td><span class="badge ${badge}">${esc(decision)}</span></td>
-                </tr>`;
-              }).join("")}</tbody>
-            </table>
-          </div>`;
+        renderCreditTable();
       } catch (err) {
         msg.className = "status error";
         msg.textContent = err.message;
       }
+    }
+    function creditRow() {
+      return selectedCreditIndex === null ? null : creditRows[selectedCreditIndex];
+    }
+    function requireCreditRow() {
+      const row = creditRow();
+      if (!row) alert("Seleccione primero un cliente de Credit.");
+      return row;
+    }
+    function renderCreditTable() {
+      const table = $("creditTable");
+      if (!creditRows.length) {
+        table.innerHTML = '<div class="status">Sin clientes para la consulta.</div>';
+        return;
+      }
+      table.innerHTML = `
+        <div class="table-wrap">
+          <table>
+            <thead><tr>
+              <th>Código</th><th>Cliente</th><th>Límite</th><th>CxC abierta</th><th>Disponible</th><th>Estado</th><th>Hold</th><th>Decisión</th>
+            </tr></thead>
+            <tbody>${creditRows.map((row, idx) => {
+              const decision = String(row.decision || "");
+              const badge = decision === "REQUIRES_RELEASE" ? "cancel" : "closed";
+              return `<tr class="${idx === selectedCreditIndex ? "service-selected" : ""}" onclick="selectedCreditIndex=${idx}; renderCreditTable()">
+                <td>${esc(row.codigo)}</td>
+                <td>${esc(row.cliente)}</td>
+                <td>${esc(row.moneda)} ${Number(row.limite || 0).toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
+                <td>${esc(row.moneda)} ${Number(row.cxC_abierta || 0).toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
+                <td>${esc(row.moneda)} ${Number(row.disponible || 0).toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
+                <td>${esc(row.estado || "-")}</td>
+                <td>${row.hold_manual ? "Si" : "No"}</td>
+                <td><span class="badge ${badge}">${esc(decision)}</span></td>
+              </tr>`;
+            }).join("")}</tbody>
+          </table>
+        </div>`;
+    }
+    async function openCreditConfigForm(mode) {
+      const selected = creditRow();
+      let row = selected || {};
+      let exists = false;
+      if (mode === "edit") {
+        row = requireCreditRow();
+        if (!row) return;
+        const data = await getJSON(`/cliente-credito/${encodeURIComponent(row.codigo)}`);
+        exists = !!data.exists;
+        if (!exists) {
+          if (!confirm("Este cliente existe en Master Data pero no tiene límite crediticio. ¿Desea crearlo ahora?")) return;
+          mode = "add";
+        } else {
+          row = { ...row, ...(data.data || {}) };
+        }
+      }
+      const isEdit = mode === "edit";
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal small">
+            <div class="modal-head"><h2>${isEdit ? "Editar crédito" : "Agregar límite crediticio"}</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+            <div class="form-grid">
+              <label>Código cliente<input id="cred_codigo" value="${esc(row.codigo_cliente || row.codigo || "")}" ${isEdit ? "readonly" : ""} required /></label>
+              <label>Nombre<input id="cred_nombre" value="${esc(row.nombre_cliente || row.cliente || "")}" readonly /></label>
+              <label>Límite<input id="cred_limite" type="number" step="0.01" value="${esc(row.limite_credito ?? row.limite ?? "")}" required /></label>
+              <label>Moneda<select id="cred_moneda"><option>USD</option><option>CRC</option></select></label>
+              <label>Término pago<input id="cred_termino" type="number" value="${esc(row.termino_pago ?? 30)}" /></label>
+              <label>Estado<select id="cred_estado"><option>ACTIVE</option><option>HOLD</option><option>INACTIVE</option></select></label>
+              <label>Hold manual<input id="cred_hold" type="checkbox" ${row.hold_manual ? "checked" : ""} /></label>
+              <label class="wide">Observaciones<textarea id="cred_obs">${esc(row.observaciones || row.mensaje || "")}</textarea></label>
+            </div>
+            <div class="md-actions"><button class="green" onclick="saveCreditConfig('${isEdit ? "edit" : "add"}')">Guardar</button><button class="secondary" onclick="closeModal()">Cancelar</button></div>
+            <div id="credMsg" class="status hidden"></div>
+          </div>
+        </div>`);
+      $("cred_moneda").value = row.moneda || "USD";
+      $("cred_estado").value = row.estado_credito || row.estado || (row.hold_manual ? "HOLD" : "ACTIVE");
+    }
+    async function saveCreditConfig(mode) {
+      const msg = $("credMsg");
+      msg.className = "status";
+      msg.textContent = "Guardando crédito...";
+      const payload = {
+        codigo_cliente:valueFrom("cred_codigo"),
+        nombre_cliente:valueFrom("cred_nombre"),
+        limite_credito:Number(valueFrom("cred_limite") || 0),
+        moneda:valueFrom("cred_moneda") || "USD",
+        termino_pago:Number(valueFrom("cred_termino") || 0),
+        estado_credito:valueFrom("cred_estado") || "ACTIVE",
+        hold_manual:!!($("cred_hold")?.checked),
+        observaciones:valueFrom("cred_obs")
+      };
+      if (!payload.codigo_cliente || payload.limite_credito < 0) {
+        msg.className = "status error";
+        msg.textContent = "Código cliente y límite válido son requeridos.";
+        return;
+      }
+      try {
+        if (mode === "edit") {
+          await sendJSON("PUT", `/cliente-credito/${encodeURIComponent(payload.codigo_cliente)}`, payload);
+        } else {
+          await postJSON("/cliente-credito/", payload);
+        }
+        closeModal();
+        await loadCreditHold();
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    async function toggleSelectedCreditHold() {
+      const row = requireCreditRow();
+      if (!row) return;
+      const data = await getJSON(`/cliente-credito/${encodeURIComponent(row.codigo)}`);
+      if (!data.exists) return alert("Este cliente aún no tiene configuración crediticia. Primero agregue un límite.");
+      const current = data.data || {};
+      const nextHold = !current.hold_manual;
+      if (!confirm(`${nextHold ? "Bloquear" : "Liberar"} crédito para ${row.cliente}?`)) return;
+      await sendJSON("PUT", `/cliente-credito/${encodeURIComponent(row.codigo)}`, {
+        ...current,
+        hold_manual:nextHold,
+        estado_credito:nextHold ? "HOLD" : "ACTIVE"
+      });
+      await loadCreditHold();
+    }
+    async function deleteSelectedCreditConfig() {
+      const row = requireCreditRow();
+      if (!row) return;
+      if (!confirm(`¿Eliminar configuración crediticia de ${row.cliente}?`)) return;
+      await sendJSON("DELETE", `/cliente-credito/${encodeURIComponent(row.codigo)}`, null);
+      await loadCreditHold();
     }
     function renderMasterData() {
       $("content").innerHTML = `
@@ -1565,12 +1743,12 @@ def som_web_home() -> HTMLResponse:
             <select id="mdContinente"><option>Seleccione continente</option></select>
             <select id="mdPais"><option>Seleccione país</option></select>
             <select id="mdPuerto"><option>Seleccione puerto</option></select>
+            <button class="secondary" onclick="loadMasterFilters()">Cargar filtros</button>
             <button onclick="applyMasterFilter()">Buscar</button>
           </div>
           <div class="status master-empty">Seleccione una acción arriba o filtre por tipo para abrir la pantalla correspondiente.</div>
         </div>
         <div id="masterWorkspace" class="card panel workspace hidden"></div>`;
-      loadMasterFilters();
     }
     function buttonClass(action) {
       if (action.key === "export_form") return "green";
@@ -1928,7 +2106,7 @@ def som_web_home() -> HTMLResponse:
         <div class="card panel">
           <div class="panel-head">
             <h2>Servicios</h2>
-            <span id="svcCount" class="muted">Cargando...</span>
+            <span id="svcCount" class="muted">Presione Buscar</span>
           </div>
           <div class="service-actions">
             <button onclick="openServiceForm()">+ Agregar servicio</button>
@@ -1950,7 +2128,7 @@ def som_web_home() -> HTMLResponse:
             <label>Tipo<select id="svcTipo"></select></label>
             <label>Estado<select id="svcEstado"></select></label>
             <label>Cliente<select id="svcCliente"></select></label>
-            <button onclick="loadServicios(1)">Buscar</button>
+            <button onclick="loadServiceMeta().then(() => loadServicios(1)).catch(err => showServiceMsg(err.message, true))">Buscar</button>
             <button class="secondary" onclick="clearServiceFilters()">Limpiar</button>
             <label>Continente<select id="svcContinente"></select></label>
             <label>País<select id="svcPais"></select></label>
@@ -1964,7 +2142,10 @@ def som_web_home() -> HTMLResponse:
       for (let y = {year}; y >= {year} - 6; y--) {
         $("svcYear").insertAdjacentHTML("beforeend", `<option value="${y}"${String(y)===$("year").value ? " selected" : ""}>${y}</option>`);
       }
-      loadServiceMeta().then(() => loadServicios(1)).catch(err => showServiceMsg(err.message, true));
+      ["svcTipo","svcEstado","svcCliente","svcContinente","svcPais","svcPuerto","svcOperacion","svcSurveyor"].forEach(id => {
+        if ($(id)) $(id).innerHTML = '<option value="">Todos</option>';
+      });
+      $("svcTable").innerHTML = '<div class="status">Configure filtros y presione Buscar.</div>';
     }
     async function loadServiceMeta() {
       const meta = await getJSON("/servicios/_meta/filtros");
@@ -2071,7 +2252,12 @@ def som_web_home() -> HTMLResponse:
         const el = $(id);
         if (el) el.value = "";
       });
-      loadServiceMeta().then(() => loadServicios(1));
+      serviceRows = [];
+      selectedServiceIndex = null;
+      serviceTotal = 0;
+      $("svcCount").textContent = "Presione Buscar";
+      $("svcMsg").classList.add("hidden");
+      $("svcTable").innerHTML = '<div class="status">Configure filtros y presione Buscar.</div>';
     }
     async function serviceLookup(kind, term="") {
       const params = new URLSearchParams({ page:"1", page_size:"250" });
@@ -2429,7 +2615,8 @@ def som_web_home() -> HTMLResponse:
         localStorage.setItem(SAVED_LOGIN_KEY, JSON.stringify({ usuario:session.usuario, company:value }));
       }
       setBrand();
-      refreshSummary();
+      if (currentModule === "dashboard") refreshSummary();
+      else resetKpisForManualLoad();
       if (currentModule === "master_data") renderMasterData();
       if (currentModule === "servicios") renderServicios();
       if (currentModule === "finanzas") renderFinanzas();
@@ -2437,7 +2624,8 @@ def som_web_home() -> HTMLResponse:
     $("company").onchange = () => changeCompany($("company").value);
     $("companyTop").onchange = () => changeCompany($("companyTop").value);
     $("year").onchange = () => {
-      refreshSummary();
+      if (currentModule === "dashboard") refreshSummary();
+      else resetKpisForManualLoad();
       if (currentModule === "servicios") renderServicios();
       if (currentModule === "finanzas") renderFinanzas();
     };
