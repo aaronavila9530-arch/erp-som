@@ -508,7 +508,7 @@ def som_web_home() -> HTMLResponse:
     let servicePage = 1;
     let serviceTotal = 0;
     let selectedServiceIndex = null;
-    let financeTab = "billing";
+    let financeTab = "finance-home";
     let billableRows = [];
     let billingRows = [];
     let selectedBillableIndex = null;
@@ -958,20 +958,93 @@ def som_web_home() -> HTMLResponse:
     }
     function renderFinanzas() {
       $("content").innerHTML = `
-        <div class="tabs">
-          <button id="tabBilling" onclick="switchFinanceTab('billing')">Billing</button>
-          <button id="tabInvoicing" onclick="switchFinanceTab('invoicing')">Invoicing</button>
-          <button id="tabCredit" onclick="switchFinanceTab('credit')">Credit Hold & Release</button>
+        <div class="grid home-grid">
+          <div class="card home-card" onclick="openFinanceBlock('order-to-cash')"><h2>Order To Cash</h2><p class="muted">Credit, Invoicing, Collections, Bank y Disputes.</p></div>
+          <div class="card home-card" onclick="openFinanceBlock('invoice-to-pay')"><h2>Invoice To Pay</h2><p class="muted">Obligaciones, proveedores y pagos.</p></div>
+          <div class="card home-card" onclick="openFinanceBlock('accounting')"><h2>Accounting</h2><p class="muted">Asientos, cierres, fiscal y reportes.</p></div>
         </div>
-        <div id="financeWorkspace"></div>`;
-      switchFinanceTab(financeTab || "billing");
+        <div id="financeWorkspace" class="workspace"></div>`;
+      if (["credit","billing","invoicing","collections","bank","disputes"].includes(financeTab)) {
+        openFinanceBlock("order-to-cash");
+        switchFinanceTab(financeTab);
+      } else if (financeTab && financeTab !== "finance-home") {
+        openFinanceBlock(financeTab);
+      }
+    }
+    function openFinanceBlock(block) {
+      financeTab = block;
+      const ws = $("financeWorkspace");
+      if (block === "order-to-cash") {
+        ws.innerHTML = `
+          <div class="card panel">
+            <div class="panel-head"><h2>Order To Cash</h2><span class="muted">Seleccione una sección y luego presione Buscar</span></div>
+            <div class="tabs">
+              <button onclick="switchFinanceTab('credit')">Credit</button>
+              <button onclick="switchFinanceTab('billing')">Invoicing & Billing</button>
+              <button onclick="switchFinanceTab('collections')">Collections</button>
+              <button onclick="switchFinanceTab('bank')">Bank</button>
+              <button onclick="switchFinanceTab('disputes')">Disputes</button>
+            </div>
+            <div id="orderCashWorkspace" class="workspace"><div class="status">Seleccione Credit, Invoicing & Billing, Collections, Bank o Disputes.</div></div>
+          </div>`;
+        return;
+      }
+      if (block === "invoice-to-pay") {
+        ws.innerHTML = `<div class="card panel"><div class="panel-head"><h2>Invoice To Pay</h2><span class="muted">Carga manual solo con Buscar</span></div><div class="service-actions"><button onclick="loadGenericFinance('/invoice-to-pay/search?status=ALL','itpWorkspace')">Buscar</button></div><div id="itpWorkspace" class="status">Presione Buscar para consultar obligaciones.</div></div>`;
+        return;
+      }
+      if (block === "accounting") {
+        ws.innerHTML = `<div class="card panel"><div class="panel-head"><h2>Accounting</h2><span class="muted">Carga manual solo con Buscar</span></div><div class="service-actions"><button onclick="loadGenericFinance('/accounting/ledger','accountingWorkspace')">Buscar</button></div><div id="accountingWorkspace" class="status">Presione Buscar para consultar asientos.</div></div>`;
+      }
+    }
+    function orderCashWorkspace() {
+      return $("orderCashWorkspace") || $("financeWorkspace");
+    }
+    async function loadGenericFinance(path, targetId) {
+      const target = $(targetId);
+      target.className = "status";
+      target.textContent = "Consultando...";
+      try {
+        const payload = await getJSON(path);
+        const rows = rowsList(payload);
+        target.className = "";
+        target.innerHTML = renderFinanceGenericTable(rows);
+      } catch (err) {
+        target.className = "status error";
+        target.textContent = err.message;
+      }
+    }
+    function renderFinanceGenericTable(rows) {
+      if (!rows.length) return '<div class="status">Sin datos para esta consulta.</div>';
+      const cols = Object.keys(rows[0]).filter(k => !String(k).toLowerCase().includes("hash")).slice(0, 12);
+      return `<div class="table-wrap"><table><thead><tr>${cols.map(c => `<th>${esc(c)}</th>`).join("")}</tr></thead><tbody>${rows.slice(0,100).map(row => `<tr>${cols.map(c => `<td>${esc(row[c])}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
     }
     function switchFinanceTab(tab) {
       financeTab = tab;
-      ["Billing","Invoicing","Credit"].forEach(name => $("tab" + name)?.classList.toggle("active", tab === name.toLowerCase()));
-      if (tab === "billing") renderBillingWeb();
-      else if (tab === "invoicing") renderInvoicingWeb();
-      else renderCreditHoldWeb();
+      if (tab === "billing") renderBillingWeb(orderCashWorkspace());
+      else if (tab === "invoicing") renderInvoicingWeb(orderCashWorkspace());
+      else if (tab === "credit") renderCreditHoldWeb(orderCashWorkspace());
+      else if (tab === "collections") renderCollectionsWeb(orderCashWorkspace());
+      else if (tab === "bank") renderBankWeb(orderCashWorkspace());
+      else if (tab === "disputes") renderDisputesWeb(orderCashWorkspace());
+    }
+    function renderCollectionsWeb(target=orderCashWorkspace()) {
+      target.innerHTML = `
+        <div class="panel-head"><h2>Collections</h2><span class="muted">Cuentas por cobrar</span></div>
+        <div class="service-actions"><button onclick="loadGenericFinance('/collections/search?page=1&page_size=100','collectionsWorkspace')">Buscar</button></div>
+        <div id="collectionsWorkspace" class="status">Presione Buscar para consultar Collections.</div>`;
+    }
+    function renderBankWeb(target=orderCashWorkspace()) {
+      target.innerHTML = `
+        <div class="panel-head"><h2>Bank</h2><span class="muted">Bank Reconciliation</span></div>
+        <div class="service-actions"><button onclick="loadGenericFinance('/bank-reconciliation?ver_todos=true&page=1&page_size=100','bankWorkspace')">Buscar</button></div>
+        <div id="bankWorkspace" class="status">Presione Buscar para consultar bancos.</div>`;
+    }
+    function renderDisputesWeb(target=orderCashWorkspace()) {
+      target.innerHTML = `
+        <div class="panel-head"><h2>Disputes</h2><span class="muted">Disputas de facturación y cobro</span></div>
+        <div class="service-actions"><button onclick="loadGenericFinance('/dispute-management?page=1&page_size=100','disputesWorkspace')">Buscar</button></div>
+        <div id="disputesWorkspace" class="status">Presione Buscar para consultar Disputes.</div>`;
     }
     async function ensureFinanceClientes() {
       if (financeClientes.length) return financeClientes;
@@ -984,16 +1057,14 @@ def som_web_home() -> HTMLResponse:
       const row = financeClienteRows.find(c => [c.nombrecomercial, c.NombreComercial, c.nombrejuridico, c.NombreJuridico, c.codigo, c.Codigo].filter(Boolean).includes(name));
       return row?.codigo || row?.Codigo || "";
     }
-    async function renderBillingWeb() {
-      const ws = $("financeWorkspace");
-      ws.innerHTML = `
-        <div class="card panel">
+    async function renderBillingWeb(target=orderCashWorkspace()) {
+      target.innerHTML = `
           <div class="panel-head">
-            <h2>Billing</h2>
+            <h2>Invoicing & Billing</h2>
             <span id="billableCount" class="muted">Servicios finalizados pendientes de factura</span>
           </div>
           <div class="filters">
-            <label>Cliente<select id="billableCliente"><option value="">Cargando...</option></select></label>
+            <label>Cliente<input id="billableCliente" placeholder="Cliente exacto o comercial" /></label>
             <button onclick="loadBillables()">Buscar</button>
             <button class="secondary" onclick="$('billableCliente').value=''; loadBillables()">Limpiar</button>
           </div>
@@ -1006,10 +1077,10 @@ def som_web_home() -> HTMLResponse:
           </div>
           <div id="billableMsg" class="status hidden"></div>
           <div id="billableTable" class="workspace"></div>
-        </div>`;
-      const clientes = await ensureFinanceClientes();
-      $("billableCliente").innerHTML = `<option value="">Seleccione cliente</option>` + clientes.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join("");
-      loadBillables();
+        `;
+      billableRows = [];
+      selectedBillableIndex = null;
+      $("billableTable").innerHTML = '<div class="status">Ingrese cliente y presione Buscar.</div>';
     }
     async function loadBillables() {
       selectedBillableIndex = null;
@@ -1160,10 +1231,8 @@ def som_web_home() -> HTMLResponse:
         msg.textContent = err.message;
       }
     }
-    async function renderInvoicingWeb() {
-      const ws = $("financeWorkspace");
-      ws.innerHTML = `
-        <div class="card panel">
+    async function renderInvoicingWeb(target=orderCashWorkspace()) {
+      target.innerHTML = `
           <div class="panel-head">
             <h2>Invoicing</h2>
             <span id="billingCount" class="muted">Facturas emitidas</span>
@@ -1185,8 +1254,10 @@ def som_web_home() -> HTMLResponse:
           </div>
           <div id="billingMsg" class="status hidden"></div>
           <div id="billingTable" class="workspace"></div>
-        </div>`;
-      loadBillingRows();
+        `;
+      billingRows = [];
+      selectedBillingIndex = null;
+      $("billingTable").innerHTML = '<div class="status">Configure filtros y presione Buscar.</div>';
     }
     function billingParams() {
       const params = new URLSearchParams({ page:"1", page_size:"100" });
@@ -1322,8 +1393,8 @@ def som_web_home() -> HTMLResponse:
       const csv = [cols.join(",")].concat(billingRows.map(row => cols.map(c => `"${String(row[c] ?? "").replace(/"/g, '""')}"`).join(","))).join("\\n");
       downloadText(`billing_${new Date().toISOString().slice(0,10)}.csv`, csv, "text/csv;charset=utf-8");
     }
-    function openAdvanceInvoiceForm() {
-      const clientes = financeClientes.length ? financeClientes : [];
+    async function openAdvanceInvoiceForm() {
+      const clientes = await ensureFinanceClientes();
       document.body.insertAdjacentHTML("beforeend", `
         <div class="modal-backdrop" id="svcModal">
           <div class="modal small">
@@ -1375,8 +1446,8 @@ def som_web_home() -> HTMLResponse:
         msg.textContent = err.message;
       }
     }
-    function openCreditNoteForm() {
-      const clientes = financeClientes.length ? financeClientes : [];
+    async function openCreditNoteForm() {
+      const clientes = await ensureFinanceClientes();
       document.body.insertAdjacentHTML("beforeend", `
         <div class="modal-backdrop" id="svcModal">
           <div class="modal small">
@@ -1425,24 +1496,23 @@ def som_web_home() -> HTMLResponse:
         msg.textContent = err.message;
       }
     }
-    function renderCreditHoldWeb() {
-      $("financeWorkspace").innerHTML = `
-        <div class="card panel">
+    function renderCreditHoldWeb(target=orderCashWorkspace()) {
+      target.innerHTML = `
           <div class="panel-head">
-            <h2>Order-to-Cash</h2>
+            <h2>Credit</h2>
             <span class="muted">Credit, Order Hold & Release</span>
           </div>
           <div class="service-actions">
             <button onclick="loadCreditHold()">Buscar</button>
-            <button class="secondary" onclick="$('creditQ').value=''; loadCreditHold()">Limpiar</button>
+            <button class="secondary" onclick="$('creditQ').value=''; $('creditTable').innerHTML='<div class=&quot;status&quot;>Presione Buscar para consultar crédito.</div>'">Limpiar</button>
           </div>
           <div class="filters">
             <label>Cliente / código<input id="creditQ" placeholder="Buscar cliente..." /></label>
           </div>
           <div id="creditMsg" class="status hidden"></div>
           <div id="creditTable" class="workspace"></div>
-        </div>`;
-      loadCreditHold();
+        `;
+      $("creditTable").innerHTML = '<div class="status">Presione Buscar para consultar crédito.</div>';
     }
     async function loadCreditHold() {
       const msg = $("creditMsg");
