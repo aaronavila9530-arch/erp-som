@@ -374,6 +374,10 @@ def som_web_home() -> HTMLResponse:
     .form-grid textarea { width:100%; min-height:78px; border:1px solid var(--line); border-radius:7px; padding:9px 11px; font:inherit; resize:vertical; }
     .service-actions { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0; }
     .service-actions button { height:34px; }
+    .tabs { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0; }
+    .tabs button { background:#fff; color:var(--ink); border:1px solid var(--line); }
+    .tabs button.active { background:var(--blue); color:#fff; border-color:var(--blue); }
+    .split-panels { display:grid; grid-template-columns:minmax(0,1fr); gap:12px; }
     .service-selected { background:#eaf6ff; }
     .service-warning { background:#fff3f3; }
     .badge { display:inline-flex; align-items:center; min-height:24px; border:1px solid var(--line); border-radius:999px; padding:2px 9px; background:#f8fafc; font-size:12px; }
@@ -504,6 +508,13 @@ def som_web_home() -> HTMLResponse:
     let servicePage = 1;
     let serviceTotal = 0;
     let selectedServiceIndex = null;
+    let financeTab = "billing";
+    let billableRows = [];
+    let billingRows = [];
+    let selectedBillableIndex = null;
+    let selectedBillingIndex = null;
+    let financeClientes = [];
+    let financeClienteRows = [];
     const SERVICE_COLUMNS = [
       "consec","tipo","estado","credit_status","credit_release_by","credit_release_at","credit_decision","num_informe","buque_contenedor","cliente","contacto","detalle",
       "continente","pais","puerto","operacion","surveyor","honorarios","costo_operativo",
@@ -668,6 +679,17 @@ def som_web_home() -> HTMLResponse:
     }
     async function sendJSON(method, path, payload, extraHeaders={}) {
       const resp = await fetch(path, { method, headers:headers(extraHeaders), body:payload ? JSON.stringify(payload) : undefined });
+      if (!resp.ok) {
+        let msg = resp.statusText;
+        try { msg = (await resp.json()).detail || msg; } catch {}
+        throw new Error(msg);
+      }
+      return resp.json();
+    }
+    async function sendForm(path, formData) {
+      const h = headers();
+      delete h["Content-Type"];
+      const resp = await fetch(path, { method:"POST", headers:h, body:formData });
       if (!resp.ok) {
         let msg = resp.statusText;
         try { msg = (await resp.json()).detail || msg; } catch {}
@@ -936,6 +958,475 @@ def som_web_home() -> HTMLResponse:
     }
     function renderFinanzas() {
       $("content").innerHTML = `
+        <div class="tabs">
+          <button id="tabBilling" onclick="switchFinanceTab('billing')">Billing</button>
+          <button id="tabInvoicing" onclick="switchFinanceTab('invoicing')">Invoicing</button>
+          <button id="tabCredit" onclick="switchFinanceTab('credit')">Credit Hold & Release</button>
+        </div>
+        <div id="financeWorkspace"></div>`;
+      switchFinanceTab(financeTab || "billing");
+    }
+    function switchFinanceTab(tab) {
+      financeTab = tab;
+      ["Billing","Invoicing","Credit"].forEach(name => $("tab" + name)?.classList.toggle("active", tab === name.toLowerCase()));
+      if (tab === "billing") renderBillingWeb();
+      else if (tab === "invoicing") renderInvoicingWeb();
+      else renderCreditHoldWeb();
+    }
+    async function ensureFinanceClientes() {
+      if (financeClientes.length) return financeClientes;
+      const payload = await getJSON("/clientes?page=1&page_size=500").catch(() => ({ data:[] }));
+      financeClienteRows = rowsList(payload);
+      financeClientes = financeClienteRows.map(c => c.nombrecomercial || c.NombreComercial || c.nombrejuridico || c.NombreJuridico || c.codigo || c.Codigo).filter(Boolean);
+      return financeClientes;
+    }
+    function financeClientCode(name) {
+      const row = financeClienteRows.find(c => [c.nombrecomercial, c.NombreComercial, c.nombrejuridico, c.NombreJuridico, c.codigo, c.Codigo].filter(Boolean).includes(name));
+      return row?.codigo || row?.Codigo || "";
+    }
+    async function renderBillingWeb() {
+      const ws = $("financeWorkspace");
+      ws.innerHTML = `
+        <div class="card panel">
+          <div class="panel-head">
+            <h2>Billing</h2>
+            <span id="billableCount" class="muted">Servicios finalizados pendientes de factura</span>
+          </div>
+          <div class="filters">
+            <label>Cliente<select id="billableCliente"><option value="">Cargando...</option></select></label>
+            <button onclick="loadBillables()">Buscar</button>
+            <button class="secondary" onclick="$('billableCliente').value=''; loadBillables()">Limpiar</button>
+          </div>
+          <div class="service-actions">
+            <button onclick="openManualInvoiceForm()">Factura Manual</button>
+            <button class="secondary" onclick="openXmlInvoiceForm()">Factura XML</button>
+            <button class="gray" onclick="openAdvanceInvoiceForm()">Facturación Anticipada</button>
+            <button class="brown" onclick="openCreditNoteForm()">Nota Crédito</button>
+            <button class="secondary" onclick="viewSelectedBillable()">Ver servicio</button>
+          </div>
+          <div id="billableMsg" class="status hidden"></div>
+          <div id="billableTable" class="workspace"></div>
+        </div>`;
+      const clientes = await ensureFinanceClientes();
+      $("billableCliente").innerHTML = `<option value="">Seleccione cliente</option>` + clientes.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join("");
+      loadBillables();
+    }
+    async function loadBillables() {
+      selectedBillableIndex = null;
+      const cliente = valueFrom("billableCliente");
+      const msg = $("billableMsg");
+      const table = $("billableTable");
+      if (!cliente) {
+        billableRows = [];
+        $("billableCount").textContent = "Seleccione un cliente";
+        table.innerHTML = '<div class="status">Seleccione cliente y presione Buscar.</div>';
+        msg.classList.add("hidden");
+        return;
+      }
+      msg.className = "status";
+      msg.textContent = "Consultando servicios facturables...";
+      try {
+        const payload = await getJSON(`/invoicing/facturables?cliente=${encodeURIComponent(cliente)}`);
+        billableRows = rowsList(payload);
+        $("billableCount").textContent = `${billableRows.length} servicios listos para facturar`;
+        msg.classList.add("hidden");
+        renderBillableTable();
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    function billableRow() {
+      return selectedBillableIndex === null ? null : billableRows[selectedBillableIndex];
+    }
+    function requireBillable() {
+      const row = billableRow();
+      if (!row) alert("Seleccione primero un servicio facturable.");
+      return row;
+    }
+    function renderBillableTable() {
+      const cols = ["consec","tipo","buque_contenedor","num_informe","detalle","cliente","pais","puerto","operacion","fecha_inicio","fecha_fin","demoras","duracion"];
+      if (!billableRows.length) {
+        $("billableTable").innerHTML = '<div class="status">Sin servicios pendientes por facturar para este cliente.</div>';
+        return;
+      }
+      $("billableTable").innerHTML = `<div class="table-wrap"><table><thead><tr>${cols.map(c => `<th>${esc(c)}</th>`).join("")}</tr></thead><tbody>${billableRows.map((row, idx) => `<tr class="${idx === selectedBillableIndex ? "service-selected" : ""}" onclick="selectedBillableIndex=${idx}; renderBillableTable()">${cols.map(c => `<td>${esc(row[c])}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
+    }
+    async function viewSelectedBillable() {
+      const row = requireBillable();
+      if (!row) return;
+      const full = await getJSON(`/servicios/${encodeURIComponent(row.consec)}`).catch(() => row);
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal">
+            <div class="modal-head"><h2>Servicio ${esc(full.consec)}</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+            <div class="table-wrap"><table><tbody>${Object.keys(full).filter(k => !String(k).toLowerCase().includes("hash")).map(k => `<tr><th>${esc(k)}</th><td>${esc(full[k])}</td></tr>`).join("")}</tbody></table></div>
+          </div>
+        </div>`);
+    }
+    function defaultInvoiceDescription(row) {
+      return [row?.puerto, row?.pais, row?.operacion, row?.detalle].filter(Boolean).join(" - ");
+    }
+    async function invoiceTerms(cliente) {
+      try {
+        const data = await getJSON(`/factura/termino-pago?nombre_cliente=${encodeURIComponent(cliente)}`);
+        return data.termino_pago ?? 0;
+      } catch {
+        return 0;
+      }
+    }
+    async function openManualInvoiceForm() {
+      const row = requireBillable();
+      if (!row) return;
+      const terms = await invoiceTerms(row.cliente);
+      const today = new Date().toISOString().slice(0,10);
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal small">
+            <div class="modal-head"><h2>Factura Manual</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+            <div class="form-grid">
+              <label>Servicio<input value="${esc(row.consec)}" readonly /></label>
+              <label>Fecha emisión<input id="inv_fecha" type="date" value="${today}" /></label>
+              <label>Moneda<select id="inv_moneda"><option>USD</option><option>CRC</option></select></label>
+              <label>Término pago<input id="inv_termino" type="number" value="${esc(terms)}" readonly /></label>
+              <label>Total<input id="inv_total" type="number" step="0.01" value="${esc(row.valor_factura || "")}" /></label>
+              <label class="wide">Descripción<textarea id="inv_desc">${esc(defaultInvoiceDescription(row))}</textarea></label>
+            </div>
+            <div class="md-actions"><button class="green" onclick="saveManualInvoice()">Facturar</button><button class="secondary" onclick="closeModal()">Cancelar</button></div>
+            <div id="invMsg" class="status hidden"></div>
+          </div>
+        </div>`);
+    }
+    async function saveManualInvoice() {
+      const row = requireBillable();
+      const msg = $("invMsg");
+      msg.className = "status";
+      msg.textContent = "Creando factura...";
+      try {
+        const payload = {
+          servicio_id:Number(row.consec),
+          descripcion:valueFrom("inv_desc"),
+          fecha_factura:valueFrom("inv_fecha"),
+          moneda:valueFrom("inv_moneda") || "USD",
+          termino_pago:Number(valueFrom("inv_termino") || 0),
+          total:Number(valueFrom("inv_total") || 0)
+        };
+        if (!payload.total || payload.total <= 0) throw new Error("Total requerido.");
+        const data = await postJSON("/factura/manual", payload);
+        await postJSON("/collections/sync-from-invoicing", {}).catch(() => null);
+        closeModal();
+        await loadBillables();
+        await loadBillingRows();
+        alert(`Factura manual creada: ${data.numero_factura || data.numero_documento}`);
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    function openXmlInvoiceForm() {
+      const row = requireBillable();
+      if (!row) return;
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal small">
+            <div class="modal-head"><h2>Factura XML</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+            <div class="form-grid">
+              <label class="wide">XML<input id="xmlFile" type="file" accept=".xml,application/xml,text/xml" /></label>
+            </div>
+            <div class="md-actions"><button class="green" onclick="saveXmlInvoice()">Registrar XML</button><button class="secondary" onclick="closeModal()">Cancelar</button></div>
+            <div id="xmlMsg" class="status hidden"></div>
+          </div>
+        </div>`);
+    }
+    async function saveXmlInvoice() {
+      const row = requireBillable();
+      const file = $("xmlFile")?.files?.[0];
+      if (!file) return alert("Seleccione el XML.");
+      const msg = $("xmlMsg");
+      msg.className = "status";
+      msg.textContent = "Registrando XML...";
+      try {
+        const form = new FormData();
+        form.append("servicio_id", row.consec);
+        form.append("file", file, file.name);
+        const data = await sendForm("/factura/electronica", form);
+        await postJSON("/collections/sync-from-invoicing", {}).catch(() => null);
+        closeModal();
+        await loadBillables();
+        await loadBillingRows();
+        alert(`Factura XML registrada: ${data.numero_documento}`);
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    async function renderInvoicingWeb() {
+      const ws = $("financeWorkspace");
+      ws.innerHTML = `
+        <div class="card panel">
+          <div class="panel-head">
+            <h2>Invoicing</h2>
+            <span id="billingCount" class="muted">Facturas emitidas</span>
+          </div>
+          <div class="service-actions">
+            <button onclick="loadBillingRows()">Buscar</button>
+            <button class="secondary" onclick="clearBillingFilters()">Limpiar</button>
+            <button onclick="viewSelectedInvoice()">Ver Factura</button>
+            <button class="gray" onclick="openBillingEditForm()">Editar</button>
+            <button class="brown" onclick="deleteSelectedInvoice()">Eliminar / anular</button>
+            <button class="secondary" onclick="downloadBillingExport()">Exportar CSV</button>
+          </div>
+          <div class="filters">
+            <label>Cliente<input id="billingCliente" placeholder="Cliente" /></label>
+            <label>Desde<input id="billingDesde" type="date" /></label>
+            <label>Hasta<input id="billingHasta" type="date" /></label>
+            <label>Tipo factura<select id="billingTipoFactura"><option value="">Todos</option><option>MANUAL</option><option>ELECTRONICA</option></select></label>
+            <label>Documento<select id="billingTipoDocumento"><option value="">Todos</option><option>FACTURA</option><option>NOTA_CREDITO</option></select></label>
+          </div>
+          <div id="billingMsg" class="status hidden"></div>
+          <div id="billingTable" class="workspace"></div>
+        </div>`;
+      loadBillingRows();
+    }
+    function billingParams() {
+      const params = new URLSearchParams({ page:"1", page_size:"100" });
+      const map = {
+        cliente:valueFrom("billingCliente"),
+        fecha_desde:valueFrom("billingDesde"),
+        fecha_hasta:valueFrom("billingHasta"),
+        tipo_factura:valueFrom("billingTipoFactura"),
+        tipo_documento:valueFrom("billingTipoDocumento")
+      };
+      Object.entries(map).forEach(([k,v]) => { if (v) params.set(k, v); });
+      return params.toString();
+    }
+    function clearBillingFilters() {
+      ["billingCliente","billingDesde","billingHasta","billingTipoFactura","billingTipoDocumento"].forEach(id => { if ($(id)) $(id).value = ""; });
+      loadBillingRows();
+    }
+    async function loadBillingRows() {
+      if (!$("billingTable")) return;
+      selectedBillingIndex = null;
+      const msg = $("billingMsg");
+      msg.className = "status";
+      msg.textContent = "Consultando facturas...";
+      try {
+        const payload = await getJSON(`/billing/search?${billingParams()}`);
+        billingRows = rowsList(payload);
+        $("billingCount").textContent = `${payload.total ?? billingRows.length} documentos`;
+        msg.classList.add("hidden");
+        renderBillingTable();
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    function billingRow() {
+      return selectedBillingIndex === null ? null : billingRows[selectedBillingIndex];
+    }
+    function requireBillingRow() {
+      const row = billingRow();
+      if (!row) alert("Seleccione primero una factura.");
+      return row;
+    }
+    function renderBillingTable() {
+      const cols = ["id","tipo_factura","tipo_documento","numero_documento","nombre_cliente","fecha_emision","moneda","total","estado"];
+      if (!billingRows.length) {
+        $("billingTable").innerHTML = '<div class="status">Sin facturas para esta consulta.</div>';
+        return;
+      }
+      $("billingTable").innerHTML = `<div class="table-wrap"><table><thead><tr>${cols.map(c => `<th>${esc(c)}</th>`).join("")}</tr></thead><tbody>${billingRows.map((row, idx) => `<tr class="${idx === selectedBillingIndex ? "service-selected" : ""}" onclick="selectedBillingIndex=${idx}; renderBillingTable()">${cols.map(c => `<td>${esc(c === "total" ? Number(row[c] || 0).toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2}) : row[c])}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
+    }
+    async function viewSelectedInvoice() {
+      const row = requireBillingRow();
+      if (!row) return;
+      const full = await getJSON(`/billing/${encodeURIComponent(row.numero_documento)}`);
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal">
+            <div class="modal-head"><h2>Factura ${esc(full.numero_documento)}</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+            <div class="service-actions"><a href="/billing/pdf/${encodeURIComponent(full.numero_documento)}" target="_blank"><button>Ver / descargar PDF</button></a></div>
+            <div class="table-wrap"><table><tbody>${Object.keys(full).filter(k => !String(k).toLowerCase().includes("hash")).map(k => `<tr><th>${esc(k)}</th><td>${esc(full[k])}</td></tr>`).join("")}</tbody></table></div>
+          </div>
+        </div>`);
+    }
+    async function openBillingEditForm() {
+      const row = requireBillingRow();
+      if (!row) return;
+      const full = await getJSON(`/billing/${encodeURIComponent(row.numero_documento)}`);
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal small">
+            <div class="modal-head"><h2>Editar factura ${esc(full.numero_documento)}</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+            <div class="form-grid">
+              <label>Número<input id="editInv_numero" value="${esc(full.numero_documento)}" /></label>
+              <label>Cliente<input id="editInv_cliente" value="${esc(full.nombre_cliente)}" /></label>
+              <label>Fecha emisión<input id="editInv_fecha" type="date" value="${esc(String(full.fecha_emision || "").slice(0,10))}" /></label>
+              <label>Moneda<select id="editInv_moneda"><option${full.moneda === "USD" ? " selected" : ""}>USD</option><option${full.moneda === "CRC" ? " selected" : ""}>CRC</option></select></label>
+              <label>Total<input id="editInv_total" type="number" step="0.01" value="${esc(full.total)}" /></label>
+              <label>Estado<select id="editInv_estado"><option${full.estado === "EMITIDA" ? " selected" : ""}>EMITIDA</option><option${full.estado === "ANULADA" ? " selected" : ""}>ANULADA</option></select></label>
+              <label>Término pago<input id="editInv_termino" type="number" value="${esc(full.termino_pago || 0)}" /></label>
+              <label>Num informe<input id="editInv_informe" value="${esc(full.num_informe || "")}" /></label>
+              <label>Buque / contenedor<input id="editInv_buque" value="${esc(full.buque_contenedor || "")}" /></label>
+              <label>Operación<input id="editInv_operacion" value="${esc(full.operacion || "")}" /></label>
+              <label class="wide">Descripción<textarea id="editInv_desc">${esc(full.descripcion_servicio || "")}</textarea></label>
+            </div>
+            <div class="md-actions"><button class="green" onclick="saveBillingEdit(${Number(full.id)})">Guardar</button><button class="secondary" onclick="closeModal()">Cancelar</button></div>
+            <div id="editInvMsg" class="status hidden"></div>
+          </div>
+        </div>`);
+    }
+    async function saveBillingEdit(id) {
+      const msg = $("editInvMsg");
+      msg.className = "status";
+      msg.textContent = "Guardando...";
+      try {
+        const payload = {
+          numero_documento:valueFrom("editInv_numero"),
+          nombre_cliente:valueFrom("editInv_cliente"),
+          fecha_emision:valueFrom("editInv_fecha"),
+          moneda:valueFrom("editInv_moneda"),
+          total:Number(valueFrom("editInv_total") || 0),
+          estado:valueFrom("editInv_estado"),
+          termino_pago:Number(valueFrom("editInv_termino") || 0),
+          num_informe:valueFrom("editInv_informe"),
+          buque_contenedor:valueFrom("editInv_buque"),
+          operacion:valueFrom("editInv_operacion"),
+          descripcion_servicio:valueFrom("editInv_desc")
+        };
+        if (!payload.numero_documento || !payload.nombre_cliente || payload.total <= 0) throw new Error("Número, cliente y total son requeridos.");
+        await sendJSON("PUT", `/billing/${encodeURIComponent(id)}`, payload);
+        closeModal();
+        await loadBillingRows();
+        refreshSummary();
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    async function deleteSelectedInvoice() {
+      const row = requireBillingRow();
+      if (!row) return;
+      if (!confirm(`¿Anular factura ${row.numero_documento}?`)) return;
+      try {
+        await sendJSON("DELETE", `/billing/${encodeURIComponent(row.id)}`, null);
+        await loadBillingRows();
+        refreshSummary();
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+    function downloadBillingExport() {
+      if (!billingRows.length) return alert("No hay datos para exportar.");
+      const cols = ["id","tipo_factura","tipo_documento","numero_documento","nombre_cliente","fecha_emision","moneda","total","estado"];
+      const csv = [cols.join(",")].concat(billingRows.map(row => cols.map(c => `"${String(row[c] ?? "").replace(/"/g, '""')}"`).join(","))).join("\\n");
+      downloadText(`billing_${new Date().toISOString().slice(0,10)}.csv`, csv, "text/csv;charset=utf-8");
+    }
+    function openAdvanceInvoiceForm() {
+      const clientes = financeClientes.length ? financeClientes : [];
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal small">
+            <div class="modal-head"><h2>Facturación Anticipada</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+            <div class="form-grid">
+              <label>Cliente<select id="adv_cliente">${clientes.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join("")}</select></label>
+              <label>Fecha emisión<input value="${new Date().toISOString().slice(0,10)}" readonly /></label>
+              <label>Moneda<select id="adv_moneda"><option>USD</option><option>CRC</option></select></label>
+              <label>Término pago<input id="adv_termino" type="number" value="0" /></label>
+              <label>Total<input id="adv_total" type="number" step="0.01" /></label>
+              <label>Buque / contenedor<input id="adv_buque" /></label>
+              <label>Operación<input id="adv_operacion" /></label>
+              <label>Num informe<input id="adv_informe" /></label>
+              <label>Periodo<input id="adv_periodo" /></label>
+              <label class="wide">Descripción<textarea id="adv_desc"></textarea></label>
+            </div>
+            <div class="md-actions"><button class="green" onclick="saveAdvanceInvoice()">Facturar</button><button class="secondary" onclick="closeModal()">Cancelar</button></div>
+            <div id="advMsg" class="status hidden"></div>
+          </div>
+        </div>`);
+    }
+    async function saveAdvanceInvoice() {
+      const cliente = valueFrom("adv_cliente");
+      const msg = $("advMsg");
+      msg.className = "status";
+      msg.textContent = "Creando factura anticipada...";
+      try {
+        const payload = {
+          tipo_factura:"MANUAL",
+          codigo_cliente:financeClientCode(cliente),
+          nombre_cliente:cliente,
+          descripcion:valueFrom("adv_desc"),
+          moneda:valueFrom("adv_moneda") || "USD",
+          termino_pago:Number(valueFrom("adv_termino") || 0),
+          total:Number(valueFrom("adv_total") || 0),
+          buque:valueFrom("adv_buque"),
+          operacion:valueFrom("adv_operacion"),
+          num_informe:valueFrom("adv_informe"),
+          periodo_operacion:valueFrom("adv_periodo")
+        };
+        if (!payload.codigo_cliente || !payload.nombre_cliente || !payload.descripcion || payload.total <= 0) throw new Error("Cliente, descripción y total son requeridos.");
+        const data = await postJSON("/invoicing/anticipada", payload);
+        await postJSON("/collections/sync-from-invoicing", {}).catch(() => null);
+        closeModal();
+        if (financeTab === "invoicing") await loadBillingRows();
+        alert(`Factura anticipada creada: ${data.numero_documento}`);
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    function openCreditNoteForm() {
+      const clientes = financeClientes.length ? financeClientes : [];
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal small">
+            <div class="modal-head"><h2>Nota de Crédito</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+            <div class="form-grid">
+              <label>Cliente<select id="nc_cliente">${clientes.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join("")}</select></label>
+              <label>Moneda<select id="nc_moneda"><option>USD</option><option>CRC</option></select></label>
+              <label>Total<input id="nc_total" type="number" step="0.01" /></label>
+              <label>Buque / contenedor<input id="nc_buque" /></label>
+              <label>Operación<input id="nc_operacion" /></label>
+              <label>Num informe<input id="nc_informe" /></label>
+              <label>Periodo<input id="nc_periodo" /></label>
+              <label class="wide">Descripción<textarea id="nc_desc"></textarea></label>
+            </div>
+            <div class="md-actions"><button class="brown" onclick="saveCreditNote()">Crear NC</button><button class="secondary" onclick="closeModal()">Cancelar</button></div>
+            <div id="ncMsg" class="status hidden"></div>
+          </div>
+        </div>`);
+    }
+    async function saveCreditNote() {
+      const cliente = valueFrom("nc_cliente");
+      const msg = $("ncMsg");
+      msg.className = "status";
+      msg.textContent = "Creando nota de crédito...";
+      try {
+        const payload = {
+          tipo_factura:"MANUAL",
+          codigo_cliente:financeClientCode(cliente),
+          nombre_cliente:cliente,
+          descripcion:valueFrom("nc_desc"),
+          moneda:valueFrom("nc_moneda") || "USD",
+          total:Number(valueFrom("nc_total") || 0),
+          buque:valueFrom("nc_buque"),
+          operacion:valueFrom("nc_operacion"),
+          num_informe:valueFrom("nc_informe"),
+          periodo_operacion:valueFrom("nc_periodo")
+        };
+        if (!payload.codigo_cliente || !payload.nombre_cliente || !payload.descripcion || payload.total <= 0) throw new Error("Cliente, descripción y total son requeridos.");
+        const data = await postJSON("/invoicing/nota-credito", payload);
+        await postJSON("/collections/sync-from-invoicing", {}).catch(() => null);
+        closeModal();
+        if (financeTab === "invoicing") await loadBillingRows();
+        alert(`Nota de crédito creada: ${data.numero_documento}`);
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    function renderCreditHoldWeb() {
+      $("financeWorkspace").innerHTML = `
         <div class="card panel">
           <div class="panel-head">
             <h2>Order-to-Cash</h2>
@@ -1848,6 +2339,7 @@ def som_web_home() -> HTMLResponse:
       refreshSummary();
       if (currentModule === "master_data") renderMasterData();
       if (currentModule === "servicios") renderServicios();
+      if (currentModule === "finanzas") renderFinanzas();
     };
     function changeCompany(value) {
       if (!value) return;
@@ -1870,12 +2362,14 @@ def som_web_home() -> HTMLResponse:
       refreshSummary();
       if (currentModule === "master_data") renderMasterData();
       if (currentModule === "servicios") renderServicios();
+      if (currentModule === "finanzas") renderFinanzas();
     }
     $("company").onchange = () => changeCompany($("company").value);
     $("companyTop").onchange = () => changeCompany($("companyTop").value);
     $("year").onchange = () => {
       refreshSummary();
       if (currentModule === "servicios") renderServicios();
+      if (currentModule === "finanzas") renderFinanzas();
     };
     bootSelectors();
     loadCatalog().then(showLogin).catch(showLogin);
