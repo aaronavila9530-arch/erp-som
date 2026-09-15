@@ -378,12 +378,15 @@ def som_web_home() -> HTMLResponse:
     .tabs button { background:#fff; color:var(--ink); border:1px solid var(--line); }
     .tabs button.active { background:var(--blue); color:#fff; border-color:var(--blue); }
     .split-panels { display:grid; grid-template-columns:minmax(0,1fr); gap:12px; }
-    .finance-section { padding:14px 0 18px; border-top:1px solid var(--line); }
-    .finance-section:first-child { padding-top:0; border-top:0; }
-    .section-head { display:flex; justify-content:space-between; gap:12px; align-items:flex-end; margin-bottom:10px; }
+    .finance-section { padding:14px; border:1px solid var(--line); border-radius:8px; background:#fbfdff; margin-top:12px; }
+    .finance-section:first-child { margin-top:0; }
+    .section-head { display:flex; justify-content:space-between; gap:12px; align-items:flex-end; margin-bottom:12px; padding-bottom:8px; border-bottom:1px solid #edf2f7; }
     .section-head h3 { margin:0; font-size:16px; }
-    .finance-filter-row { display:grid; grid-template-columns:minmax(240px,1.3fr) repeat(4,minmax(140px,1fr)) auto auto; gap:10px; align-items:end; margin:10px 0 12px; }
-    .finance-filter-row.compact { grid-template-columns:minmax(280px,420px) auto auto; }
+    .finance-filter-row { display:grid; grid-template-columns:minmax(220px,300px) repeat(4,minmax(120px,170px)) max-content max-content; gap:10px; align-items:end; margin:10px 0 12px; }
+    .finance-filter-row.compact { grid-template-columns:minmax(260px,420px) max-content max-content; }
+    .finance-filter-row button { justify-self:start; min-width:92px; padding:0 16px; }
+    .finance-toolbar { display:flex; flex-wrap:wrap; gap:8px; margin:8px 0 12px; }
+    .finance-toolbar button { height:34px; }
     .service-selected { background:#eaf6ff; }
     .service-warning { background:#fff3f3; }
     .badge { display:inline-flex; align-items:center; min-height:24px; border:1px solid var(--line); border-radius:999px; padding:2px 9px; background:#f8fafc; font-size:12px; }
@@ -1100,6 +1103,7 @@ def som_web_home() -> HTMLResponse:
             const name = financeClientName(row);
             return `<option value="${esc(name)}">${esc(financeClientId(row))} | ${esc(name)}</option>`;
           }).join("");
+          if (!financeClienteRows.length) el.innerHTML = '<option value="">Sin clientes disponibles</option>';
         }
       });
       const credit = $("creditCliente");
@@ -1109,6 +1113,7 @@ def som_web_home() -> HTMLResponse:
           const name = financeClientName(row);
           return `<option value="${esc(code)}">${esc(code)} | ${esc(name)}</option>`;
         }).join("");
+        if (!financeClienteRows.length) credit.innerHTML = '<option value="">Sin clientes disponibles</option>';
       }
     }
     async function renderBillingWeb(target=orderCashWorkspace()) {
@@ -1127,7 +1132,7 @@ def som_web_home() -> HTMLResponse:
               <button onclick="loadBillables()">Buscar</button>
               <button class="secondary" onclick="clearBillableFilters()">Limpiar</button>
             </div>
-            <div class="service-actions">
+            <div class="finance-toolbar">
               <button onclick="openManualInvoiceForm()">Factura Manual</button>
               <button class="secondary" onclick="openXmlInvoiceForm()">Factura XML</button>
               <button class="gray" onclick="openAdvanceInvoiceForm()">Facturación Anticipada</button>
@@ -1151,7 +1156,7 @@ def som_web_home() -> HTMLResponse:
               <button onclick="loadBillingRows()">Buscar</button>
               <button class="secondary" onclick="clearBillingFilters()">Limpiar</button>
             </div>
-            <div class="service-actions">
+            <div class="finance-toolbar">
               <button onclick="viewSelectedInvoice()">Ver Factura</button>
               <button class="gray" onclick="openBillingEditForm()">Editar</button>
               <button class="brown" onclick="deleteSelectedInvoice()">Eliminar / anular</button>
