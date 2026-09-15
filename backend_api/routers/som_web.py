@@ -505,7 +505,7 @@ def som_web_home() -> HTMLResponse:
     let serviceTotal = 0;
     let selectedServiceIndex = null;
     const SERVICE_COLUMNS = [
-      "consec","tipo","estado","credit_status","num_informe","buque_contenedor","cliente","contacto","detalle",
+      "consec","tipo","estado","credit_status","credit_release_by","credit_release_at","credit_decision","num_informe","buque_contenedor","cliente","contacto","detalle",
       "continente","pais","puerto","operacion","surveyor","honorarios","costo_operativo",
       "costo_tarjetas","fecha_inicio","hora_inicio","fecha_fin","hora_fin","demoras","duracion",
       "factura","valor_factura","fecha_factura","terminos_pago","fecha_vencimiento","dias_vencido"
@@ -1621,7 +1621,8 @@ def som_web_home() -> HTMLResponse:
         "¿Desea liberar y continuar?"
       );
       if (!ok) throw new Error("Servicio detenido por control crediticio.");
-      const reason = prompt("Justificacion del release crediticio", decision.reason_code || "Release aprobado por admin/master") || "";
+      const reason = prompt("Justificacion del release crediticio", decision.reason_code || "Release aprobado por admin/master");
+      if (!reason || !reason.trim()) throw new Error("Justificacion de release crediticio requerida.");
       return { ...payload, credit_release_approved:true, credit_release_reason:reason };
     }
     function surveyorLineHtml(name="", amount="") {

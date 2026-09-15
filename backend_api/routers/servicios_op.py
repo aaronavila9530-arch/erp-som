@@ -297,6 +297,8 @@ def add_servicio(
         if credit_decision.get("requires_release"):
             if not payload.get("credit_release_approved"):
                 raise HTTPException(status_code=409, detail=credit_decision)
+            if not str(payload.get("credit_release_reason") or "").strip():
+                raise HTTPException(status_code=400, detail="Justificacion de release crediticio requerida")
             try:
                 assert_release_allowed(x_role)
             except PermissionError as exc:
@@ -981,6 +983,8 @@ def editar_servicio(
         if credit_decision.get("requires_release"):
             if not data.get("credit_release_approved"):
                 raise HTTPException(status_code=409, detail=credit_decision)
+            if not str(data.get("credit_release_reason") or "").strip():
+                raise HTTPException(status_code=400, detail="Justificacion de release crediticio requerida")
             try:
                 assert_release_allowed(x_role)
             except PermissionError as exc:

@@ -179,11 +179,11 @@ class VistaServicios(tk.Frame):
         # COLUMNAS VISIBLES (las que SÍ deben mostrarse en la tabla)
         # =============================================================
         self.columnas = [
-            "consec","tipo","estado","num_informe","buque_contenedor","cliente",
+            "consec","tipo","estado","credit_status","credit_release_by","credit_release_at","num_informe","buque_contenedor","cliente",
             "contacto","detalle","continente","pais","puerto","operacion","surveyor",
             "honorarios","costo_operativo","costo_tarjetas","fecha_inicio","hora_inicio","fecha_fin",
             "hora_fin","demoras","duracion","factura","valor_factura","fecha_factura",
-            "terminos_pago","fecha_vencimiento","dias_vencido"
+            "terminos_pago","fecha_vencimiento","dias_vencido","credit_decision"
         ]
 
         # =============================================================

@@ -534,8 +534,15 @@ class PopupServicio(tk.Toplevel):
                     "Indique la justificacion del release crediticio:",
                     parent=self,
                 )
+                if not str(reason or "").strip():
+                    messagebox.showwarning(
+                        "Release requerido",
+                        "Debe indicar una justificacion para aprobar el release crediticio.",
+                        parent=self,
+                    )
+                    return
                 data["credit_release_approved"] = True
-                data["credit_release_reason"] = reason or decision.get("reason_code") or "Release aprobado"
+                data["credit_release_reason"] = reason.strip()
             resp = post_servicio(data)
             if resp.get("status") == "OK":
                 messagebox.showinfo(
