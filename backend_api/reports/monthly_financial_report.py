@@ -783,10 +783,12 @@ def _week_label(value, report_start=None, report_end=None, today=None):
         return "Overdue"
     if report_end and value > report_end:
         return "Proximo mes"
-    last_day = calendar.monthrange(value.year, value.month)[1]
     if value.day <= 15:
         return "Semana 1 (01-15)"
-    return f"Semana 2 (16-{last_day:02d})"
+    if value.day <= 22:
+        return "Semana 2 (16-22)"
+    last_day = calendar.monthrange(value.year, value.month)[1]
+    return f"Semana 3 (23-{last_day:02d})"
 
 
 def _build_monthly_cash_calendar(start, end, saved_obligations, due_obligations, receivables_due, calendar_start=None, calendar_end=None):
@@ -839,7 +841,10 @@ def _build_monthly_cash_calendar(start, end, saved_obligations, due_obligations,
         if label == "Overdue":
             return 0
         if label.startswith("Semana "):
-            return int(label.split()[1])
+            try:
+                return int(label.split()[1])
+            except (IndexError, ValueError):
+                return 50
         if label == "Proximo mes":
             return 98
         return 99
