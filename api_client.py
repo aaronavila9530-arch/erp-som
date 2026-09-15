@@ -1000,7 +1000,43 @@ def close_bank_reconciliation_statement_api(statement_id, note=None, force_close
     return r.json()
 
 
+def _download_monthly_financial_report_local(year: int, month: int, fmt: str, save_path: str):
+    conn = None
+    generated_path = None
+    try:
+        from backend_api.database import connect
+        from backend_api.reports.monthly_financial_report import (
+            generate_monthly_financial_docx,
+            generate_monthly_financial_pdf,
+        )
+
+        conn = connect()
+        if str(fmt).lower() in ("word", "docx"):
+            generated_path, _filename = generate_monthly_financial_docx(conn, int(year), int(month))
+        else:
+            generated_path, _filename = generate_monthly_financial_pdf(conn, int(year), int(month))
+
+        with open(generated_path, "rb") as f:
+            content = f.read()
+        final_path = _write_report_file_safely(save_path, content)
+        return {"status": "ok", "path": final_path, "source": "local"}
+    finally:
+        if conn:
+            conn.close()
+        if generated_path:
+            try:
+                os.remove(generated_path)
+            except OSError:
+                pass
+
+
 def download_monthly_financial_report_api(year: int, month: int, fmt: str, save_path: str):
+    local_error = None
+    try:
+        return _download_monthly_financial_report_local(year, month, fmt, save_path)
+    except Exception as e:
+        local_error = str(e)
+
     endpoint = "word" if str(fmt).lower() in ("word", "docx") else "pdf"
     try:
         r = api_request(
@@ -1015,7 +1051,10 @@ def download_monthly_financial_report_api(year: int, month: int, fmt: str, save_
     except PermissionError as e:
         return {"status": "error", "error": f"No se pudo escribir el archivo porque Windows lo tiene bloqueado: {e}"}
     except Exception as e:
-        return {"status": "error", "error": str(e)}
+        error = str(e)
+        if local_error:
+            error = f"{error}. Generacion local tambien fallo: {local_error}"
+        return {"status": "error", "error": error}
 
 
 def get_monthly_financial_obligations_preview_api(year: int, month: int):

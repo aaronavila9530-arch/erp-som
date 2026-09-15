@@ -51,16 +51,34 @@ def _cash_calendar_bounds(report_start: date, report_end: date, today: date | No
     today = today or date.today()
     current_month_start = date(today.year, today.month, 1)
     if report_end < current_month_start:
-        start = current_month_start
-        end = date(today.year, today.month, calendar.monthrange(today.year, today.month)[1])
-        next_month = 1 if today.month == 12 else today.month + 1
-        next_year = today.year + 1 if today.month == 12 else today.year
+        start = report_end + timedelta(days=1)
+        end = date(start.year, start.month, calendar.monthrange(start.year, start.month)[1])
+        next_month = 1 if start.month == 12 else start.month + 1
+        next_year = start.year + 1 if start.month == 12 else start.year
         next_end = date(next_year, next_month, calendar.monthrange(next_year, next_month)[1])
         return start, end, next_end
     next_month = 1 if report_end.month == 12 else report_end.month + 1
     next_year = report_end.year + 1 if report_end.month == 12 else report_end.year
     next_end = date(next_year, next_month, calendar.monthrange(next_year, next_month)[1])
     return report_start, report_end, next_end
+
+
+def _report_tmp_dir():
+    candidates = [
+        os.path.join(os.getcwd(), "tmp", "reports"),
+        os.path.join(os.path.expanduser("~"), "Documents", "ERP-SOM", "tmp", "reports"),
+        os.path.join(os.getenv("LOCALAPPDATA") or tempfile.gettempdir(), "ERP-SOM", "reports", "tmp"),
+        tempfile.gettempdir(),
+    ]
+    last_error = None
+    for base_dir in candidates:
+        try:
+            os.makedirs(base_dir, exist_ok=True)
+            return tempfile.mkdtemp(prefix="financial_report_", dir=base_dir)
+        except OSError as exc:
+            last_error = exc
+            continue
+    raise PermissionError(last_error or "No se pudo crear carpeta temporal para el reporte financiero")
 
 
 def _f(value):
@@ -1242,7 +1260,7 @@ def generate_monthly_financial_pdf(conn, year: int, month: int):
 
     data = build_monthly_financial_data(conn, year, month)
     label = data["period"]["label"]
-    tmp_dir = tempfile.mkdtemp(prefix="erp_som_financial_report_")
+    tmp_dir = _report_tmp_dir()
     charts = _build_charts(data, tmp_dir)
     path = os.path.join(tmp_dir, _safe_filename(label, "pdf"))
 
@@ -1506,7 +1524,7 @@ def generate_monthly_financial_docx(conn, year: int, month: int):
 
     data = build_monthly_financial_data(conn, year, month)
     label = data["period"]["label"]
-    tmp_dir = tempfile.mkdtemp(prefix="erp_som_financial_report_")
+    tmp_dir = _report_tmp_dir()
     charts = _build_charts(data, tmp_dir)
     path = os.path.join(tmp_dir, _safe_filename(label, "docx"))
 
