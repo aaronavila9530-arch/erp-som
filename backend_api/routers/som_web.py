@@ -378,6 +378,12 @@ def som_web_home() -> HTMLResponse:
     .tabs button { background:#fff; color:var(--ink); border:1px solid var(--line); }
     .tabs button.active { background:var(--blue); color:#fff; border-color:var(--blue); }
     .split-panels { display:grid; grid-template-columns:minmax(0,1fr); gap:12px; }
+    .finance-section { padding:14px 0 18px; border-top:1px solid var(--line); }
+    .finance-section:first-child { padding-top:0; border-top:0; }
+    .section-head { display:flex; justify-content:space-between; gap:12px; align-items:flex-end; margin-bottom:10px; }
+    .section-head h3 { margin:0; font-size:16px; }
+    .finance-filter-row { display:grid; grid-template-columns:minmax(240px,1.3fr) repeat(4,minmax(140px,1fr)) auto auto; gap:10px; align-items:end; margin:10px 0 12px; }
+    .finance-filter-row.compact { grid-template-columns:minmax(280px,420px) auto auto; }
     .service-selected { background:#eaf6ff; }
     .service-warning { background:#fff3f3; }
     .badge { display:inline-flex; align-items:center; min-height:24px; border:1px solid var(--line); border-radius:999px; padding:2px 9px; background:#f8fafc; font-size:12px; }
@@ -414,6 +420,7 @@ def som_web_home() -> HTMLResponse:
       .hero-logo img { width:min(88%,520px); height:250px; }
       .form-grid { grid-template-columns:1fr; }
       .filters.service-filters { grid-template-columns:1fr; }
+      .finance-filter-row,.finance-filter-row.compact { grid-template-columns:1fr; }
       .surveyor-line { grid-template-columns:1fr; }
       aside { min-height:auto; }
       header { flex-direction:column; }
@@ -1108,44 +1115,51 @@ def som_web_home() -> HTMLResponse:
       target.innerHTML = `
           <div class="panel-head">
             <h2>Invoicing and Billing</h2>
-            <span id="billableCount" class="muted">Servicios finalizados pendientes de factura</span>
+            <span class="muted">Facturación desde servicios y documentos emitidos</span>
           </div>
-          <div class="filters">
-            <label>Cliente<select id="billableCliente" onpointerdown="loadFinanceClientCombos()" onfocus="loadFinanceClientCombos()"><option value="">Todos</option></select></label>
-            <button onclick="loadBillables()">Buscar</button>
-            <button class="secondary" onclick="clearBillableFilters()">Limpiar</button>
-          </div>
-          <div class="service-actions">
-            <button onclick="openManualInvoiceForm()">Factura Manual</button>
-            <button class="secondary" onclick="openXmlInvoiceForm()">Factura XML</button>
-            <button class="gray" onclick="openAdvanceInvoiceForm()">Facturación Anticipada</button>
-            <button class="brown" onclick="openCreditNoteForm()">Nota Crédito</button>
-            <button class="secondary" onclick="viewSelectedBillable()">Ver servicio</button>
-          </div>
-          <div id="billableMsg" class="status hidden"></div>
-          <div id="billableTable" class="workspace"></div>
-          <hr />
-          <div class="panel-head">
-            <h2>Invoicing</h2>
-            <span id="billingCount" class="muted">Facturas emitidas</span>
-          </div>
-          <div class="service-actions">
-            <button onclick="loadBillingRows()">Buscar</button>
-            <button class="secondary" onclick="clearBillingFilters()">Limpiar</button>
-            <button onclick="viewSelectedInvoice()">Ver Factura</button>
-            <button class="gray" onclick="openBillingEditForm()">Editar</button>
-            <button class="brown" onclick="deleteSelectedInvoice()">Eliminar / anular</button>
-            <button class="secondary" onclick="downloadBillingExport()">Exportar CSV</button>
-          </div>
-          <div class="filters">
-            <label>Cliente<select id="billingCliente" onpointerdown="loadFinanceClientCombos()" onfocus="loadFinanceClientCombos()"><option value="">Todos</option></select></label>
-            <label>Desde<input id="billingDesde" type="date" /></label>
-            <label>Hasta<input id="billingHasta" type="date" /></label>
-            <label>Tipo factura<select id="billingTipoFactura"><option value="">Todos</option><option>MANUAL</option><option>ELECTRONICA</option></select></label>
-            <label>Documento<select id="billingTipoDocumento"><option value="">Todos</option><option>FACTURA</option><option>NOTA_CREDITO</option></select></label>
-          </div>
-          <div id="billingMsg" class="status hidden"></div>
-          <div id="billingTable" class="workspace"></div>
+          <section class="finance-section">
+            <div class="section-head">
+              <h3>Billing</h3>
+              <span id="billableCount" class="muted">Servicios finalizados pendientes de factura</span>
+            </div>
+            <div class="finance-filter-row compact">
+              <label>Cliente<select id="billableCliente"><option value="">Seleccione cliente</option></select></label>
+              <button onclick="loadBillables()">Buscar</button>
+              <button class="secondary" onclick="clearBillableFilters()">Limpiar</button>
+            </div>
+            <div class="service-actions">
+              <button onclick="openManualInvoiceForm()">Factura Manual</button>
+              <button class="secondary" onclick="openXmlInvoiceForm()">Factura XML</button>
+              <button class="gray" onclick="openAdvanceInvoiceForm()">Facturación Anticipada</button>
+              <button class="brown" onclick="openCreditNoteForm()">Nota Crédito</button>
+              <button class="secondary" onclick="viewSelectedBillable()">Ver servicio</button>
+            </div>
+            <div id="billableMsg" class="status hidden"></div>
+            <div id="billableTable" class="workspace"></div>
+          </section>
+          <section class="finance-section">
+            <div class="section-head">
+              <h3>Invoicing</h3>
+              <span id="billingCount" class="muted">Facturas emitidas</span>
+            </div>
+            <div class="finance-filter-row">
+              <label>Cliente<select id="billingCliente"><option value="">Todos</option></select></label>
+              <label>Desde<input id="billingDesde" type="date" /></label>
+              <label>Hasta<input id="billingHasta" type="date" /></label>
+              <label>Tipo factura<select id="billingTipoFactura"><option value="">Todos</option><option>MANUAL</option><option>ELECTRONICA</option></select></label>
+              <label>Documento<select id="billingTipoDocumento"><option value="">Todos</option><option>FACTURA</option><option>NOTA_CREDITO</option></select></label>
+              <button onclick="loadBillingRows()">Buscar</button>
+              <button class="secondary" onclick="clearBillingFilters()">Limpiar</button>
+            </div>
+            <div class="service-actions">
+              <button onclick="viewSelectedInvoice()">Ver Factura</button>
+              <button class="gray" onclick="openBillingEditForm()">Editar</button>
+              <button class="brown" onclick="deleteSelectedInvoice()">Eliminar / anular</button>
+              <button class="secondary" onclick="downloadBillingExport()">Exportar CSV</button>
+            </div>
+            <div id="billingMsg" class="status hidden"></div>
+            <div id="billingTable" class="workspace"></div>
+          </section>
         `;
       billableRows = [];
       billingRows = [];
@@ -1153,6 +1167,7 @@ def som_web_home() -> HTMLResponse:
       selectedBillingIndex = null;
       $("billableTable").innerHTML = '<div class="status">Ingrese cliente y presione Buscar.</div>';
       $("billingTable").innerHTML = '<div class="status">Configure filtros y presione Buscar.</div>';
+      loadFinanceClientCombos().catch(() => null);
     }
     function clearBillableFilters() {
       if ($("billableCliente")) $("billableCliente").value = "";
@@ -1313,32 +1328,7 @@ def som_web_home() -> HTMLResponse:
       }
     }
     async function renderInvoicingWeb(target=orderCashWorkspace()) {
-      target.innerHTML = `
-          <div class="panel-head">
-            <h2>Invoicing</h2>
-            <span id="billingCount" class="muted">Facturas emitidas</span>
-          </div>
-          <div class="service-actions">
-            <button onclick="loadBillingRows()">Buscar</button>
-            <button class="secondary" onclick="clearBillingFilters()">Limpiar</button>
-            <button onclick="viewSelectedInvoice()">Ver Factura</button>
-            <button class="gray" onclick="openBillingEditForm()">Editar</button>
-            <button class="brown" onclick="deleteSelectedInvoice()">Eliminar / anular</button>
-            <button class="secondary" onclick="downloadBillingExport()">Exportar CSV</button>
-          </div>
-          <div class="filters">
-            <label>Cliente<input id="billingCliente" placeholder="Cliente" /></label>
-            <label>Desde<input id="billingDesde" type="date" /></label>
-            <label>Hasta<input id="billingHasta" type="date" /></label>
-            <label>Tipo factura<select id="billingTipoFactura"><option value="">Todos</option><option>MANUAL</option><option>ELECTRONICA</option></select></label>
-            <label>Documento<select id="billingTipoDocumento"><option value="">Todos</option><option>FACTURA</option><option>NOTA_CREDITO</option></select></label>
-          </div>
-          <div id="billingMsg" class="status hidden"></div>
-          <div id="billingTable" class="workspace"></div>
-        `;
-      billingRows = [];
-      selectedBillingIndex = null;
-      $("billingTable").innerHTML = '<div class="status">Configure filtros y presione Buscar.</div>';
+      await renderBillingWeb(target);
     }
     function billingParams() {
       const params = new URLSearchParams({ page:"1", page_size:"100" });
@@ -1588,23 +1578,24 @@ def som_web_home() -> HTMLResponse:
             <h2>Credit, Order Hold and Release</h2>
             <span class="muted">Límite, términos crediticios y hold por cliente</span>
           </div>
-          <div class="service-actions">
+          <div class="finance-filter-row compact">
+            <label>Cliente<select id="creditCliente" onchange="selectCreditByCombo()"><option value="">Todos</option></select></label>
             <button onclick="loadCreditHold()">Buscar</button>
+            <button class="secondary" onclick="clearCreditHold()">Limpiar</button>
+          </div>
+          <div class="service-actions">
             <button onclick="openCreditConfigForm('add')">Agregar límite</button>
             <button class="secondary" onclick="viewSelectedCreditConfig()">Ver</button>
             <button class="gray" onclick="openCreditConfigForm('edit')">Editar</button>
             <button class="brown" onclick="toggleSelectedCreditHold()">Bloquear / liberar</button>
             <button class="dark" onclick="deleteSelectedCreditConfig()">Eliminar</button>
-            <button class="secondary" onclick="clearCreditHold()">Limpiar</button>
           </div>
-          <div class="filters">
-            <label>Cliente<select id="creditCliente" onpointerdown="loadFinanceClientCombos()" onfocus="loadFinanceClientCombos()" onchange="selectCreditByCombo()"><option value="">Todos</option></select></label>
-            <label>Texto<input id="creditQ" placeholder="Nombre o código..." /></label>
-          </div>
+          <input id="creditQ" class="hidden" />
           <div id="creditMsg" class="status hidden"></div>
           <div id="creditTable" class="workspace"></div>
         `;
       $("creditTable").innerHTML = '<div class="status">Presione Buscar para consultar crédito.</div>';
+      loadFinanceClientCombos().catch(() => null);
     }
     function clearCreditHold() {
       if ($("creditQ")) $("creditQ").value = "";
@@ -2699,7 +2690,13 @@ def som_web_home() -> HTMLResponse:
 </body>
 </html>"""
     html = html.replace("{year}", str(year)).replace("{asset_version}", _ASSET_VERSION)
-    return HTMLResponse(html)
+    return HTMLResponse(
+        html,
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+        },
+    )
 
 
 @router.get("/som/logo/{brand}")
