@@ -9,6 +9,7 @@ from psycopg2.extras import RealDictCursor
 
 import database
 from routers.user_admin import MODULES
+from services.credit_control import build_credit_decision
 from services.tenanting import company_code
 
 
@@ -229,7 +230,71 @@ def som_web_module_summary(
                     },
                 ],
             }
+        if module == "finanzas":
+            open_ar = _safe_scalar(cur, "SELECT COALESCE(SUM(saldo_pendiente),0) FROM collections WHERE company_code=%s AND saldo_pendiente > 0", (company,))
+            clients_hold = _safe_scalar(cur, "SELECT COUNT(*) FROM cliente_credito WHERE company_code=%s AND (COALESCE(hold_manual,FALSE)=TRUE OR estado_credito='HOLD')", (company,))
+            configured = _safe_scalar(cur, "SELECT COUNT(*) FROM cliente_credito WHERE company_code=%s", (company,))
+            return {
+                "company_code": company,
+                "module": module,
+                "kpis": [
+                    {"label": "CxC abierta", "value": open_ar, "hint": "Collections", "format": "money"},
+                    {"label": "Clientes con credito", "value": configured, "hint": "Configurados", "format": "int"},
+                    {"label": "Hold manual", "value": clients_hold, "hint": "Bloqueados", "format": "int"},
+                    {"label": "Order-to-Cash", "value": 1, "hint": "Credit activo", "format": "int"},
+                ],
+            }
         return som_web_summary(selected_year, x_company_code)
+    finally:
+        database.release_conn(conn)
+
+
+@router.get("/som/finance/order-to-cash/credit-hold")
+def som_web_credit_hold(
+    q: str | None = Query(None),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+):
+    company = company_code(header_value=x_company_code)
+    conn = database.get_conn()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        params = {"company": company}
+        where = "WHERE c.company_code = %(company)s"
+        if q and q.strip():
+            params["q"] = f"%{q.strip()}%"
+            where += """
+              AND (
+                    c.codigo ILIKE %(q)s
+                 OR c.nombrecomercial ILIKE %(q)s
+                 OR c.nombrejuridico ILIKE %(q)s
+              )
+            """
+        cur.execute(
+            f"""
+            SELECT c.codigo, c.nombrecomercial, c.nombrejuridico
+            FROM cliente c
+            {where}
+            ORDER BY COALESCE(c.nombrecomercial, c.nombrejuridico, c.codigo)
+            LIMIT 200
+            """,
+            params,
+        )
+        rows = []
+        for client in cur.fetchall():
+            decision = build_credit_decision(company, client["codigo"], projected_amount=0, projected_currency="USD")
+            rows.append({
+                "codigo": client["codigo"],
+                "cliente": client["nombrecomercial"] or client["nombrejuridico"] or client["codigo"],
+                "limite": decision.get("credit_limit"),
+                "moneda": decision.get("currency"),
+                "cxC_abierta": decision.get("open_ar"),
+                "disponible": decision.get("available"),
+                "estado": decision.get("estado_credito"),
+                "hold_manual": decision.get("hold_manual"),
+                "decision": decision.get("status"),
+                "mensaje": decision.get("message"),
+            })
+        return {"company_code": company, "data": rows, "total": len(rows)}
     finally:
         database.release_conn(conn)
 
@@ -440,7 +505,7 @@ def som_web_home() -> HTMLResponse:
     let serviceTotal = 0;
     let selectedServiceIndex = null;
     const SERVICE_COLUMNS = [
-      "consec","tipo","estado","num_informe","buque_contenedor","cliente","contacto","detalle",
+      "consec","tipo","estado","credit_status","num_informe","buque_contenedor","cliente","contacto","detalle",
       "continente","pais","puerto","operacion","surveyor","honorarios","costo_operativo",
       "costo_tarjetas","fecha_inicio","hora_inicio","fecha_fin","hora_fin","demoras","duracion",
       "factura","valor_factura","fecha_factura","terminos_pago","fecha_vencimiento","dias_vencido"
@@ -813,6 +878,7 @@ def som_web_home() -> HTMLResponse:
       if (code === "dashboard") renderHome();
       else if (code === "master_data") renderMasterData();
       else if (code === "servicios" || code === "servicios_op" || (mod?.title || "").toLowerCase() === "servicios") renderServicios();
+      else if (code === "finanzas") renderFinanzas();
       else renderComingSoon(mod);
     }
     async function refreshSummary() {
@@ -867,6 +933,66 @@ def som_web_home() -> HTMLResponse:
         const value = Number(r.invoiced || 0);
         return `<div class="bar-row"><div>${r.month}</div><div class="track"><div class="fill" style="width:${Math.max(5, (value || r.services) / max * 100)}%"></div></div><strong>${money(value)}</strong></div>`;
       }).join("");
+    }
+    function renderFinanzas() {
+      $("content").innerHTML = `
+        <div class="card panel">
+          <div class="panel-head">
+            <h2>Order-to-Cash</h2>
+            <span class="muted">Credit, Order Hold & Release</span>
+          </div>
+          <div class="service-actions">
+            <button onclick="loadCreditHold()">Buscar</button>
+            <button class="secondary" onclick="$('creditQ').value=''; loadCreditHold()">Limpiar</button>
+          </div>
+          <div class="filters">
+            <label>Cliente / código<input id="creditQ" placeholder="Buscar cliente..." /></label>
+          </div>
+          <div id="creditMsg" class="status hidden"></div>
+          <div id="creditTable" class="workspace"></div>
+        </div>`;
+      loadCreditHold();
+    }
+    async function loadCreditHold() {
+      const msg = $("creditMsg");
+      const table = $("creditTable");
+      msg.className = "status";
+      msg.textContent = "Consultando credito...";
+      const q = valueFrom("creditQ");
+      try {
+        const payload = await getJSON(`/som/finance/order-to-cash/credit-hold${q ? `?q=${encodeURIComponent(q)}` : ""}`);
+        const rows = rowsList(payload);
+        msg.classList.add("hidden");
+        if (!rows.length) {
+          table.innerHTML = '<div class="status">Sin clientes para la consulta.</div>';
+          return;
+        }
+        table.innerHTML = `
+          <div class="table-wrap">
+            <table>
+              <thead><tr>
+                <th>Código</th><th>Cliente</th><th>Límite</th><th>CxC abierta</th><th>Disponible</th><th>Estado</th><th>Hold</th><th>Decisión</th>
+              </tr></thead>
+              <tbody>${rows.map(row => {
+                const decision = String(row.decision || "");
+                const badge = decision === "REQUIRES_RELEASE" ? "cancel" : "closed";
+                return `<tr>
+                  <td>${esc(row.codigo)}</td>
+                  <td>${esc(row.cliente)}</td>
+                  <td>${esc(row.moneda)} ${Number(row.limite || 0).toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
+                  <td>${esc(row.moneda)} ${Number(row.cxC_abierta || 0).toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
+                  <td>${esc(row.moneda)} ${Number(row.disponible || 0).toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
+                  <td>${esc(row.estado || "-")}</td>
+                  <td>${row.hold_manual ? "Si" : "No"}</td>
+                  <td><span class="badge ${badge}">${esc(decision)}</span></td>
+                </tr>`;
+              }).join("")}</tbody>
+            </table>
+          </div>`;
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
     }
     function renderMasterData() {
       $("content").innerHTML = `
@@ -1471,6 +1597,33 @@ def som_web_home() -> HTMLResponse:
         fecha_vencimiento:serviceFormValue("fecha_vencimiento") || null
       };
     }
+    function estimatedServiceAmount(payload) {
+      return Number(payload.valor_factura || 0)
+        || (Number(payload.honorarios || 0) + Number(payload.costo_operativo || 0) + Number(payload.costo_tarjetas || 0));
+    }
+    async function applyCreditReleaseIfNeeded(payload) {
+      const decision = await postJSON("/cliente-credito/order-to-cash/check", {
+        cliente:payload.cliente,
+        projected_amount:estimatedServiceAmount(payload),
+        currency:"USD"
+      });
+      if (!decision.requires_release) return payload;
+      const role = String(session?.rol || "").toLowerCase();
+      if (!["admin", "master"].includes(role)) {
+        throw new Error(decision.message || "Cliente requiere liberacion crediticia de admin/master.");
+      }
+      const ok = confirm(
+        `${decision.message || "Cliente requiere liberacion crediticia."}\n\n` +
+        `Limite: ${decision.currency} ${Number(decision.credit_limit || 0).toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2})}\n` +
+        `CxC pendiente: ${decision.currency} ${Number(decision.open_ar || 0).toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2})}\n` +
+        `Nueva exposicion: ${decision.currency} ${Number(decision.projected_exposure || 0).toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2})}\n` +
+        `Exceso: ${decision.currency} ${Number(decision.over_amount || 0).toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2})}\n\n` +
+        "¿Desea liberar y continuar?"
+      );
+      if (!ok) throw new Error("Servicio detenido por control crediticio.");
+      const reason = prompt("Justificacion del release crediticio", decision.reason_code || "Release aprobado por admin/master") || "";
+      return { ...payload, credit_release_approved:true, credit_release_reason:reason };
+    }
     function surveyorLineHtml(name="", amount="") {
       return `<div class="surveyor-line">
         <select class="svcSurveyorName">${serviceSelectOptions(serviceSurveyorCatalog, name, ["full_name","nombre_completo","nombre","surveyor_nombre"], "Seleccione surveyor")}</select>
@@ -1562,9 +1715,10 @@ def som_web_home() -> HTMLResponse:
         const required = ["tipo","buque_contenedor","cliente","continente","pais","puerto","operacion","surveyor","fecha_inicio","hora_inicio"];
         const missing = required.filter(k => !payload[k]);
         if (missing.length) throw new Error("Faltan campos obligatorios: " + missing.join(", "));
+        const approvedPayload = await applyCreditReleaseIfNeeded(payload);
         const data = consec
-          ? await sendJSON("PUT", `/servicios/editar/${encodeURIComponent(consec)}`, payload)
-          : await postJSON("/servicios/add", payload);
+          ? await sendJSON("PUT", `/servicios/editar/${encodeURIComponent(consec)}`, approvedPayload)
+          : await postJSON("/servicios/add", approvedPayload);
         const serviceId = consec || data.consec || data.id;
         if (serviceId) await sendJSON(consec ? "PUT" : "POST", `/servicios-surveyors/${encodeURIComponent(serviceId)}`, { surveyors:readSurveyorLines() }).catch(() => null);
         msg.textContent = data.msg || "Servicio guardado.";

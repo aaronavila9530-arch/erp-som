@@ -365,6 +365,21 @@ def post_servicio(data):
     return r.json()
 
 
+def check_order_to_cash_credit_api(cliente: str, projected_amount=0, currency="USD"):
+    r = api_request(
+        "POST",
+        f"{BASE_URL}/cliente-credito/order-to-cash/check",
+        json={
+            "cliente": cliente,
+            "projected_amount": projected_amount or 0,
+            "currency": currency or "USD",
+        },
+        timeout=20,
+    )
+    r.raise_for_status()
+    return r.json()
+
+
 # ============================================================
 # CONTINENTES (CPP) — NUEVO ENDPOINT
 # ============================================================

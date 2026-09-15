@@ -5,6 +5,12 @@ import re
 import database
 
 from rbac_service import has_permission
+from services.credit_control import (
+    assert_release_allowed,
+    build_credit_decision,
+    ensure_credit_control_schema,
+    mark_service_credit_decision,
+)
 from services.tenanting import company_code, ensure_company_column, set_payload_company
 
 router = APIRouter(prefix="/servicios", tags=["Servicios"])
@@ -249,15 +255,23 @@ class ServicioCreate(BaseModel):
     costo_tarjetas: float | None = None   # 👈 AGREGAR
     fecha_inicio: str    # "YYYY-MM-DD"
     hora_inicio: str     # "HH:MM"
+    credit_release_approved: bool | None = False
+    credit_release_reason: str | None = None
 
 
 # ============================================================
 # INSERTAR SERVICIO
 # ============================================================
 @router.post("/add")
-def add_servicio(data: ServicioCreate, x_company_code: str | None = Header(None, alias="X-Company-Code")):
+def add_servicio(
+    data: ServicioCreate,
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+    x_user: str | None = Header(None, alias="X-User"),
+    x_role: str | None = Header(None, alias="X-Role"),
+):
     try:
         _ensure_tenant_schema()
+        ensure_credit_control_schema()
         payload = set_payload_company(data.dict(), company_code(None, x_company_code))
         for key, value in list(payload.items()):
             if isinstance(value, str):
@@ -270,6 +284,23 @@ def add_servicio(data: ServicioCreate, x_company_code: str | None = Header(None,
             raise HTTPException(status_code=400, detail="Fecha u hora de inicio invalida")
         _validate_required_service_payload(payload)
         _validate_location_combo(payload)
+        projected_amount = (
+            payload.get("valor_factura")
+            or (float(payload.get("honorarios") or 0) + float(payload.get("costo_operativo") or 0) + float(payload.get("costo_tarjetas") or 0))
+        )
+        credit_decision = build_credit_decision(
+            payload["company_code"],
+            payload.get("cliente"),
+            projected_amount=projected_amount,
+            projected_currency="USD",
+        )
+        if credit_decision.get("requires_release"):
+            if not payload.get("credit_release_approved"):
+                raise HTTPException(status_code=409, detail=credit_decision)
+            try:
+                assert_release_allowed(x_role)
+            except PermissionError as exc:
+                raise HTTPException(status_code=403, detail=str(exc))
 
         sql = """
             INSERT INTO servicios (
@@ -292,6 +323,14 @@ def add_servicio(data: ServicioCreate, x_company_code: str | None = Header(None,
         """
         result = database.sql(sql, payload, fetch=True)
         new_id = result[0][0]
+        mark_service_credit_decision(
+            new_id,
+            payload["company_code"],
+            credit_decision,
+            approved_by=x_user if credit_decision.get("requires_release") else None,
+            approved_role=x_role if credit_decision.get("requires_release") else None,
+            approval_reason=payload.get("credit_release_reason"),
+        )
         return {"status": "OK", "msg": "Servicio creado", "consec": new_id}
     except HTTPException:
         raise
@@ -395,6 +434,7 @@ def listar_servicios(
     x_company_code: str | None = Header(None, alias="X-Company-Code"),
 ):
     _ensure_tenant_schema()
+    ensure_credit_control_schema()
     company = company_code(company_code_param, x_company_code)
     offset = (page - 1) * page_size
 
@@ -512,7 +552,8 @@ def listar_servicios(
             fecha_fin, hora_fin, demoras, duracion,
             factura, valor_factura, fecha_factura,
             terminos_pago, fecha_vencimiento, dias_vencido,
-            razon_cancelacion, comentario_cancelacion
+            razon_cancelacion, comentario_cancelacion,
+            credit_status, credit_decision, credit_release_by, credit_release_at
         FROM servicios
         {where_sql}
         ORDER BY consec DESC
@@ -541,7 +582,8 @@ def listar_servicios(
         "fecha_fin", "hora_fin", "demoras", "duracion",
         "factura", "valor_factura", "fecha_factura",
         "terminos_pago", "fecha_vencimiento", "dias_vencido",
-        "razon_cancelacion", "comentario_cancelacion"
+        "razon_cancelacion", "comentario_cancelacion",
+        "credit_status", "credit_decision", "credit_release_by", "credit_release_at"
     ]
 
     data = []
@@ -563,6 +605,7 @@ def listar_servicios(
 @router.get("/{consec}")
 def get_servicio(consec: int, x_company_code: str | None = Header(None, alias="X-Company-Code")):
     _ensure_tenant_schema()
+    ensure_credit_control_schema()
     company = company_code(None, x_company_code)
     row = database.sql("""
         SELECT
@@ -574,7 +617,8 @@ def get_servicio(consec: int, x_company_code: str | None = Header(None, alias="X
             fecha_fin, hora_fin, demoras, duracion,
             factura, valor_factura, fecha_factura,
             terminos_pago, fecha_vencimiento, dias_vencido,
-            razon_cancelacion, comentario_cancelacion
+            razon_cancelacion, comentario_cancelacion,
+            credit_status, credit_decision, credit_release_by, credit_release_at
         FROM servicios
         WHERE consec = %s
           AND company_code = %s
@@ -593,7 +637,8 @@ def get_servicio(consec: int, x_company_code: str | None = Header(None, alias="X
         "fecha_fin", "hora_fin", "demoras", "duracion",
         "factura", "valor_factura", "fecha_factura",
         "terminos_pago", "fecha_vencimiento", "dias_vencido",
-        "razon_cancelacion", "comentario_cancelacion"
+        "razon_cancelacion", "comentario_cancelacion",
+        "credit_status", "credit_decision", "credit_release_by", "credit_release_at"
     ]
 
     return {c: ("" if r[i] is None else str(r[i])) for i, c in enumerate(columnas)}
@@ -608,6 +653,8 @@ def eliminar_servicio(consec: int, x_company_code: str | None = Header(None, ali
         database.sql(sql, (consec, company))
 
         return {"status": "ok", "msg": f"Servicio {consec} eliminado"}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -774,9 +821,16 @@ def actualizar_demoras(consec: int, payload: DemoraUpdate, x_company_code: str |
 # EDITAR SERVICIO (SIN CAMBIAR ESTADO)
 # ============================================================
 @router.put("/editar/{consec}")
-def editar_servicio(consec: int, data: dict, x_company_code: str | None = Header(None, alias="X-Company-Code")):
+def editar_servicio(
+    consec: int,
+    data: dict,
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+    x_user: str | None = Header(None, alias="X-User"),
+    x_role: str | None = Header(None, alias="X-Role"),
+):
     try:
         _ensure_tenant_schema()
+        ensure_credit_control_schema()
         company = company_code(None, x_company_code)
         data = dict(data)
         for date_key in ("fecha_inicio", "fecha_fin", "fecha_factura", "fecha_vencimiento"):
@@ -914,8 +968,33 @@ def editar_servicio(consec: int, data: dict, x_company_code: str | None = Header
         }
         _validate_required_service_payload(params)
         _validate_location_combo(params)
+        projected_amount = (
+            params.get("valor_factura")
+            or (float(params.get("honorarios") or 0) + float(params.get("costo_operativo") or 0) + float(params.get("costo_tarjetas") or 0))
+        )
+        credit_decision = build_credit_decision(
+            company,
+            params.get("cliente"),
+            projected_amount=projected_amount,
+            projected_currency="USD",
+        )
+        if credit_decision.get("requires_release"):
+            if not data.get("credit_release_approved"):
+                raise HTTPException(status_code=409, detail=credit_decision)
+            try:
+                assert_release_allowed(x_role)
+            except PermissionError as exc:
+                raise HTTPException(status_code=403, detail=str(exc))
 
         database.sql(sql, params)
+        mark_service_credit_decision(
+            consec,
+            company,
+            credit_decision,
+            approved_by=x_user if credit_decision.get("requires_release") else None,
+            approved_role=x_role if credit_decision.get("requires_release") else None,
+            approval_reason=data.get("credit_release_reason"),
+        )
         return {"status": "ok", "msg": "Servicio actualizado"}
 
     except Exception as e:

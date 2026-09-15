@@ -16734,6 +16734,26 @@ function ServiceCreateModal({
     setForm((current) => ({ ...current, [key]: value }));
   }
 
+  function confirmCreditRelease(decision: Record<string, unknown>): Promise<boolean> {
+    const currency = formatValue(decision.currency || "USD");
+    const text = [
+      formatValue(decision.message || "Cliente requiere liberacion crediticia."),
+      "",
+      `Limite: ${currency} ${formatValue(decision.credit_limit)}`,
+      `CxC pendiente: ${currency} ${formatValue(decision.open_ar)}`,
+      `Exposicion proyectada: ${currency} ${formatValue(decision.projected_exposure)}`,
+      `Exceso: ${currency} ${formatValue(decision.over_amount)}`,
+      "",
+      "Desea liberar y continuar?"
+    ].join("\n");
+    return new Promise((resolve) => {
+      Alert.alert("Credit Hold / Release", text, [
+        { text: "Cancelar", style: "cancel", onPress: () => resolve(false) },
+        { text: "Liberar", style: "destructive", onPress: () => resolve(true) }
+      ]);
+    });
+  }
+
   async function save() {
     if (!form.tipo || !form.buque_contenedor || !form.cliente || !form.continente || !form.pais || !form.puerto) {
       setMessage("Complete tipo, buque/contenedor, cliente, continente, pais y puerto.");
@@ -16742,15 +16762,45 @@ function ServiceCreateModal({
     setBusy(true);
     setMessage("");
     try {
+      const cleanHonorarios = Number(String(form.honorarios || "0").replace(",", ""));
+      const cleanCosto = Number(String(form.costo_operativo || "0").replace(",", ""));
+      const baseBody = {
+        ...form,
+        honorarios: cleanHonorarios,
+        costo_operativo: cleanCosto
+      };
+      const decision = await apiRequest<Record<string, unknown>>("/cliente-credito/order-to-cash/check", {
+        method: "POST",
+        session,
+        body: {
+          cliente: form.cliente,
+          projected_amount: cleanHonorarios + cleanCosto,
+          currency: "USD"
+        }
+      });
+      let body: Record<string, unknown> = baseBody;
+      if (Boolean(decision.requires_release)) {
+        const role = String(session.rol || "").toLowerCase();
+        if (!["admin", "master"].includes(role)) {
+          setMessage(formatValue(decision.message || "Cliente requiere liberacion crediticia de admin/master."));
+          return;
+        }
+        const approved = await confirmCreditRelease(decision);
+        if (!approved) {
+          setMessage("Servicio detenido por control crediticio.");
+          return;
+        }
+        body = {
+          ...baseBody,
+          credit_release_approved: true,
+          credit_release_reason: formatValue(decision.reason_code || "Release aprobado desde Android")
+        };
+      }
       const result = await offlineApiRequest("/servicios/add", {
         method: "POST",
         session,
         offlineLabel: `Crear Servicio ${form.cliente || form.buque_contenedor}`,
-        body: {
-          ...form,
-          honorarios: Number(String(form.honorarios || "0").replace(",", "")),
-          costo_operativo: Number(String(form.costo_operativo || "0").replace(",", ""))
-        }
+        body
       });
       if (isQueuedOffline(result)) {
         setMessage("Sin internet: servicio guardado en cache local para sincronizar.");
@@ -16989,6 +17039,50 @@ function ServiceActionModal({
     return true;
   }
 
+  function confirmCreditRelease(decision: Record<string, unknown>): Promise<boolean> {
+    const currency = formatValue(decision.currency || "USD");
+    const text = [
+      formatValue(decision.message || "Cliente requiere liberacion crediticia."),
+      "",
+      `Limite: ${currency} ${formatValue(decision.credit_limit)}`,
+      `CxC pendiente: ${currency} ${formatValue(decision.open_ar)}`,
+      `Exposicion proyectada: ${currency} ${formatValue(decision.projected_exposure)}`,
+      `Exceso: ${currency} ${formatValue(decision.over_amount)}`,
+      "",
+      "Desea liberar y continuar?"
+    ].join("\n");
+    return new Promise((resolve) => {
+      Alert.alert("Credit Hold / Release", text, [
+        { text: "Cancelar", style: "cancel", onPress: () => resolve(false) },
+        { text: "Liberar", style: "destructive", onPress: () => resolve(true) }
+      ]);
+    });
+  }
+
+  async function applyCreditRelease(body: Record<string, unknown>) {
+    const decision = await apiRequest<Record<string, unknown>>("/cliente-credito/order-to-cash/check", {
+      method: "POST",
+      session,
+      body: {
+        cliente: body.cliente,
+        projected_amount: toNumber(body.valor_factura) || (toNumber(body.honorarios) + toNumber(body.costo_operativo) + toNumber(body.costo_tarjetas)),
+        currency: "USD"
+      }
+    });
+    if (!Boolean(decision.requires_release)) return body;
+    const role = String(session.rol || "").toLowerCase();
+    if (!["admin", "master"].includes(role)) {
+      throw new Error(formatValue(decision.message || "Cliente requiere liberacion crediticia de admin/master."));
+    }
+    const approved = await confirmCreditRelease(decision);
+    if (!approved) throw new Error("Servicio detenido por control crediticio.");
+    return {
+      ...body,
+      credit_release_approved: true,
+      credit_release_reason: formatValue(decision.reason_code || "Release aprobado desde Android")
+    };
+  }
+
   function updateDelayRow(index: number, key: "f1" | "h1" | "f2" | "h2", value: string) {
     setDelayRows((current) => current.map((row, rowIndex) => (rowIndex === index ? { ...row, [key]: value } : row)));
   }
@@ -17043,27 +17137,28 @@ function ServiceActionModal({
     try {
       if (mode === "edit") {
         const cardCostAllowed = allowsCardCost();
+        const body = await applyCreditRelease({
+          tipo: form.tipo || formatValue(service?.tipo) || "Buque",
+          buque_contenedor: form.buque_contenedor,
+          cliente: form.cliente,
+          contacto: form.contacto,
+          detalle: form.detalle,
+          continente: form.continente,
+          pais: form.pais,
+          puerto: form.puerto,
+          operacion: form.operacion,
+          surveyor: surveyorList.length ? surveyorList.join(", ") : form.surveyor,
+          honorarios: toNumber(form.honorarios),
+          costo_operativo: toNumber(form.costo_operativo),
+          costo_tarjetas: cardCostAllowed ? toNumber(form.costo_tarjetas) : null,
+          fecha_inicio: form.fecha_inicio,
+          hora_inicio: form.hora_inicio
+        });
         const result = await offlineApiRequest(`/servicios/editar/${consec}`, {
           method: "PUT",
           session,
           offlineLabel: `Editar Servicio ${consec}`,
-          body: {
-            tipo: form.tipo || formatValue(service?.tipo) || "Buque",
-            buque_contenedor: form.buque_contenedor,
-            cliente: form.cliente,
-            contacto: form.contacto,
-            detalle: form.detalle,
-            continente: form.continente,
-            pais: form.pais,
-            puerto: form.puerto,
-            operacion: form.operacion,
-            surveyor: surveyorList.length ? surveyorList.join(", ") : form.surveyor,
-            honorarios: toNumber(form.honorarios),
-            costo_operativo: toNumber(form.costo_operativo),
-            costo_tarjetas: cardCostAllowed ? toNumber(form.costo_tarjetas) : null,
-            fecha_inicio: form.fecha_inicio,
-            hora_inicio: form.hora_inicio
-          }
+          body
         });
         if (isQueuedOffline(result)) {
           setMessage("Sin internet: cambios del servicio guardados en cache local.");

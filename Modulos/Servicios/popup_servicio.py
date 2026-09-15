@@ -1,11 +1,12 @@
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, simpledialog
 import re
 from Modulos.Servicios.widgets.date_picker import DatePicker
 from Modulos.Servicios.widgets.time_picker import TimePicker
 from Modulos.Servicios.date_utils import LONG_DATE_FORMAT, to_db_date
 from api_client import (
     post_servicio,
+    check_order_to_cash_credit_api,
     get_clientes_api,
     get_continentes_cpp_api,
     get_paises_cpp_api,
@@ -511,6 +512,30 @@ class PopupServicio(tk.Toplevel):
         }
 
         try:
+            projected_amount = honorarios_val + costo_op_val
+            decision = check_order_to_cash_credit_api(
+                data["cliente"],
+                projected_amount=projected_amount,
+                currency="USD",
+            )
+            if decision.get("requires_release"):
+                msg = (
+                    f"{decision.get('message')}\n\n"
+                    f"Limite: {decision.get('currency')} {float(decision.get('credit_limit') or 0):,.2f}\n"
+                    f"CxC pendiente: {decision.get('currency')} {float(decision.get('open_ar') or 0):,.2f}\n"
+                    f"Exposicion proyectada: {decision.get('currency')} {float(decision.get('projected_exposure') or 0):,.2f}\n"
+                    f"Exceso: {decision.get('currency')} {float(decision.get('over_amount') or 0):,.2f}\n\n"
+                    "Desea liberar y continuar con el servicio?"
+                )
+                if not messagebox.askyesno("Credit Hold / Release", msg, parent=self):
+                    return
+                reason = simpledialog.askstring(
+                    "Justificacion release",
+                    "Indique la justificacion del release crediticio:",
+                    parent=self,
+                )
+                data["credit_release_approved"] = True
+                data["credit_release_reason"] = reason or decision.get("reason_code") or "Release aprobado"
             resp = post_servicio(data)
             if resp.get("status") == "OK":
                 messagebox.showinfo(
