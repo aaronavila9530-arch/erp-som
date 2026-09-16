@@ -528,6 +528,12 @@ def som_web_home() -> HTMLResponse:
     let billingPane = "billables";
     let creditRows = [];
     let selectedCreditIndex = null;
+    let collectionRows = [];
+    let selectedCollectionIndex = null;
+    let collectionPage = 1;
+    let collectionTotal = 0;
+    let collectionClientesLoaded = false;
+    let collectionClientes = [];
     let financeClientes = [];
     let financeClienteRows = [];
     const SERVICE_COLUMNS = [
@@ -1064,9 +1070,317 @@ def som_web_home() -> HTMLResponse:
     }
     function renderCollectionsWeb(target=orderCashWorkspace()) {
       target.innerHTML = `
-        <div class="panel-head"><h2>Collections</h2><span class="muted">Cuentas por cobrar</span></div>
-        <div class="service-actions"><button onclick="loadGenericFinance('/collections/search?page=1&page_size=100','collectionsWorkspace')">Buscar</button></div>
-        <div id="collectionsWorkspace" class="status">Presione Buscar para consultar Collections.</div>`;
+        <div class="panel-head">
+          <h2>Collections — Accounts Receivable</h2>
+          <span class="muted">Use filtros y presione Buscar</span>
+        </div>
+        <div class="finance-filter-row">
+          <label>Cliente<select id="collectionsCliente" onpointerdown="loadCollectionsClientes()" onfocus="loadCollectionsClientes()"><option value="ALL">ALL</option></select></label>
+          <label>Aging<select id="collectionsBucket"><option value="">Todos</option><option>CURRENT</option><option>1-30</option><option>31-60</option><option>61-90</option><option>90+</option></select></label>
+          <label>Estado<select id="collectionsEstado"><option value="">Todos</option><option>EMITIDA</option><option>PENDIENTE_PAGO</option><option>PAGADA</option><option>DISPUTADA</option><option>WRITE_OFF</option></select></label>
+          <label>Disputada<select id="collectionsDisputada"><option value="">Todos</option><option value="true">True</option><option value="false">False</option></select></label>
+          <button onclick="loadCollections(1)">Buscar</button>
+          <button class="secondary" onclick="clearCollections()">Limpiar</button>
+        </div>
+        <div class="finance-toolbar">
+          <button class="secondary" onclick="syncCollectionsFromInvoicing()">Sincronizar facturas</button>
+          <button onclick="viewSelectedCollectionInvoice()">Ver factura</button>
+          <button class="brown" onclick="openCollectionDisputeForm()">Disputar</button>
+          <button class="green" onclick="openCollectionPaymentForm()">Aplicar pago / NC</button>
+          <button class="secondary" onclick="downloadCollectionsCsv()">Exportar CSV</button>
+          <button class="secondary" onclick="downloadCollectionsStatement()">Estado de cuenta</button>
+        </div>
+        <div id="collectionsKpis" class="grid kpis hidden"></div>
+        <div id="collectionsMsg" class="status hidden"></div>
+        <div id="collectionsTable" class="workspace"><div class="status">Use los filtros y presione Buscar para cargar Collections.</div></div>`;
+    }
+    async function loadCollectionsClientes() {
+      if (collectionClientesLoaded) return;
+      const select = $("collectionsCliente");
+      if (!select) return;
+      select.innerHTML = '<option value="ALL">Cargando...</option>';
+      try {
+        const names = new Set();
+        let page = 1;
+        const pageSize = 200;
+        while (page <= 20) {
+          const payload = await getJSON(`/collections/search?page=${page}&page_size=${pageSize}`);
+          rowsList(payload).forEach(row => {
+            const name = row.nombre_cliente || row.codigo_cliente;
+            if (name) names.add(String(name));
+          });
+          const total = Number(payload.total || 0);
+          if (!rowsList(payload).length || page * pageSize >= total) break;
+          page += 1;
+        }
+        collectionClientes = ["ALL", ...Array.from(names).sort((a,b) => a.localeCompare(b))];
+        select.innerHTML = collectionClientes.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join("");
+        collectionClientesLoaded = true;
+      } catch (err) {
+        select.innerHTML = '<option value="ALL">ALL</option>';
+        alert(`No se pudieron cargar clientes de Collections: ${err.message}`);
+      }
+    }
+    function collectionParams(page=1) {
+      const params = new URLSearchParams({ page:String(page), page_size:"50" });
+      const map = {
+        collectionsCliente:"cliente",
+        collectionsBucket:"bucket_aging",
+        collectionsEstado:"estado_factura",
+        collectionsDisputada:"disputada"
+      };
+      Object.entries(map).forEach(([id, key]) => {
+        const val = valueFrom(id);
+        if (val && val !== "ALL") params.set(key, val);
+      });
+      return params.toString();
+    }
+    async function loadCollections(page=1) {
+      collectionPage = page;
+      selectedCollectionIndex = null;
+      const msg = $("collectionsMsg");
+      const table = $("collectionsTable");
+      msg.className = "status";
+      msg.textContent = "Consultando Collections...";
+      try {
+        const payload = await getJSON(`/collections/search?${collectionParams(page)}`);
+        collectionRows = rowsList(payload).sort((a,b) => Number(b.aging_dias || 0) - Number(a.aging_dias || 0));
+        collectionTotal = Number(payload.total || collectionRows.length || 0);
+        msg.classList.add("hidden");
+        renderCollectionsKpis();
+        renderCollectionsTable();
+      } catch (err) {
+        table.innerHTML = "";
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    function clearCollections() {
+      ["collectionsCliente","collectionsBucket","collectionsEstado","collectionsDisputada"].forEach(id => { if ($(id)) $(id).value = id === "collectionsCliente" ? "ALL" : ""; });
+      collectionRows = [];
+      selectedCollectionIndex = null;
+      collectionPage = 1;
+      collectionTotal = 0;
+      $("collectionsKpis")?.classList.add("hidden");
+      $("collectionsMsg")?.classList.add("hidden");
+      if ($("collectionsTable")) $("collectionsTable").innerHTML = '<div class="status">Use los filtros y presione Buscar para cargar Collections.</div>';
+    }
+    function renderCollectionsKpis() {
+      const totals = collectionRows.reduce((acc, row) => {
+        const saldo = Number(row.saldo_pendiente || 0);
+        const aging = Number(row.aging_dias || 0);
+        acc.total += saldo;
+        if (aging < 1) acc.current += saldo;
+        else acc.overdue += saldo;
+        if (aging > 90) acc.over90 += saldo;
+        return acc;
+      }, { total:0, current:0, overdue:0, over90:0 });
+      const kpis = $("collectionsKpis");
+      if (!kpis) return;
+      kpis.classList.remove("hidden");
+      kpis.innerHTML = [
+        ["Total AR (Saldo)", totals.total],
+        ["Current (Saldo)", totals.current],
+        ["Overdue (Saldo)", totals.overdue],
+        ["Over 90 (Saldo)", totals.over90],
+      ].map(([label,value]) => `<div class="card kpi"><span>${esc(label)}</span><strong>${Number(value).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:2})}</strong></div>`).join("");
+    }
+    function collectionRow() {
+      return selectedCollectionIndex === null ? null : collectionRows[selectedCollectionIndex];
+    }
+    function requireCollectionRow() {
+      const row = collectionRow();
+      if (!row) alert("Seleccione primero una factura de Collections.");
+      return row;
+    }
+    function renderCollectionsTable() {
+      const table = $("collectionsTable");
+      const cols = ["codigo_cliente","nombre_cliente","tipo_factura","tipo_documento","numero_documento","fecha_emision","dias_credito","fecha_vencimiento","aging_dias","moneda","total","saldo_pendiente","num_informe","buque_contenedor","operacion","periodo_operacion","estado_factura","disputada"];
+      if (!collectionRows.length) {
+        table.innerHTML = '<div class="status">Sin registros para los filtros seleccionados.</div>';
+        return;
+      }
+      const totalPages = Math.max(1, Math.ceil(collectionTotal / 50));
+      table.innerHTML = `
+        <div class="table-wrap"><table><thead><tr>${cols.map(c => `<th>${esc(c.replace(/_/g," "))}</th>`).join("")}</tr></thead>
+        <tbody>${collectionRows.map((row, idx) => {
+          const overdue = Number(row.aging_dias || 0) > 1 ? "service-warning" : "";
+          return `<tr class="${idx === selectedCollectionIndex ? "service-selected" : overdue}" onclick="selectedCollectionIndex=${idx}; renderCollectionsTable()">${cols.map(c => `<td>${esc(["total","saldo_pendiente"].includes(c) ? Number(row[c] || 0).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:2}) : row[c])}</td>`).join("")}</tr>`;
+        }).join("")}</tbody></table></div>
+        <div class="pager">
+          <button class="secondary" onclick="loadCollections(Math.max(1, collectionPage-1))" ${collectionPage <= 1 ? "disabled" : ""}>Anterior</button>
+          <span class="muted">Página ${collectionPage} de ${totalPages} · ${collectionRows.length} visibles de ${intFmt.format(collectionTotal)}</span>
+          <button class="secondary" onclick="loadCollections(collectionPage+1)" ${collectionPage >= totalPages ? "disabled" : ""}>Siguiente</button>
+        </div>`;
+    }
+    async function syncCollectionsFromInvoicing() {
+      if (!confirm("Esto sincronizará facturas emitidas hacia Collections. ¿Desea continuar?")) return;
+      try {
+        const result = await postJSON("/collections/sync-from-invoicing", {});
+        alert(`Sincronización completada. Facturas nuevas: ${result.inserted || 0}`);
+        if (collectionRows.length) await loadCollections(collectionPage);
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+    function viewSelectedCollectionInvoice() {
+      const row = requireCollectionRow();
+      if (!row) return;
+      if (row.tipo_documento !== "FACTURA") return alert("Solo es posible visualizar Facturas.");
+      if (row.tipo_factura === "ELECTRONICA") return alert("Para ver la factura electrónica debe dirigirse a GTI.");
+      window.open(`/billing/pdf/${encodeURIComponent(row.numero_documento)}`, "_blank");
+    }
+    function downloadCollectionsCsv() {
+      if (!collectionRows.length) return alert("No hay datos para exportar.");
+      const cols = ["codigo_cliente","nombre_cliente","tipo_factura","tipo_documento","numero_documento","fecha_emision","dias_credito","fecha_vencimiento","aging_dias","moneda","total","saldo_pendiente","num_informe","buque_contenedor","operacion","periodo_operacion","estado_factura","disputada"];
+      const csv = [cols.join(",")].concat(collectionRows.map(row => cols.map(c => `"${String(row[c] ?? "").replace(/"/g,'""')}"`).join(","))).join("\\n");
+      downloadText(`collections_${new Date().toISOString().slice(0,10)}.csv`, csv, "text/csv;charset=utf-8");
+    }
+    function downloadCollectionsStatement() {
+      if (!collectionRows.length) return alert("No hay información cargada para generar estado de cuenta.");
+      downloadCollectionsCsv();
+    }
+    function openCollectionDisputeForm() {
+      const row = requireCollectionRow();
+      if (!row) return;
+      if (row.tipo_documento !== "FACTURA") return alert("Solo se pueden disputar Facturas.");
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal small">
+            <div class="modal-head"><h2>Crear Disputa</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+            <div class="status">Factura ${esc(row.numero_documento)} · ${esc(row.nombre_cliente)} · ${esc(row.moneda)} ${Number(row.total || 0).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:2})}</div>
+            <div class="form-grid">
+              <label>Motivo<select id="colDisputaMotivo"><option value="">Seleccione</option><option>PRECIO</option><option>DESCUENTO</option><option>CALIDAD</option><option>WRITE_OFF</option><option>CLIENTE_INCORRECTO</option></select></label>
+              <label class="wide">Comentario<textarea id="colDisputaComentario"></textarea></label>
+            </div>
+            <div class="md-actions"><button class="brown" onclick="saveCollectionDispute()">Confirmar Disputa</button><button class="secondary" onclick="closeModal()">Cancelar</button></div>
+            <div id="colDisputaMsg" class="status hidden"></div>
+          </div>
+        </div>`);
+    }
+    async function saveCollectionDispute() {
+      const row = requireCollectionRow();
+      const msg = $("colDisputaMsg");
+      const motivo = valueFrom("colDisputaMotivo");
+      const comentario = valueFrom("colDisputaComentario");
+      if (!motivo || !comentario) return alert("Seleccione motivo e ingrese comentario.");
+      msg.className = "status";
+      msg.textContent = "Registrando disputa...";
+      try {
+        await postJSON("/collections/disputa", {
+          numero_documento:row.numero_documento,
+          codigo_cliente:row.codigo_cliente,
+          nombre_cliente:row.nombre_cliente,
+          fecha_factura:String(row.fecha_emision || "").slice(0,10),
+          fecha_vencimiento:String(row.fecha_vencimiento || "").slice(0,10),
+          monto:row.total,
+          motivo,
+          comentario,
+          buque_contenedor:row.buque_contenedor,
+          operacion:row.operacion,
+          periodo_operacion:row.periodo_operacion,
+          descripcion_servicio:row.descripcion_servicio || null
+        });
+        closeModal();
+        await loadCollections(collectionPage);
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    async function openCollectionPaymentForm() {
+      const row = requireCollectionRow();
+      if (!row) return;
+      if (row.tipo_documento !== "FACTURA") return alert("Solo se puede aplicar pago a Facturas.");
+      if (!["PENDIENTE","VENCIDA","PENDIENTE_PAGO"].includes(String(row.estado_factura || ""))) return alert("La factura no tiene saldo pendiente.");
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal small">
+            <div class="modal-head"><h2>Aplicar Pago / Nota de Crédito</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+            <div class="status">Factura ${esc(row.numero_documento)} · Saldo ${esc(row.moneda)} ${Number(row.saldo_pendiente || row.total || 0).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:2})}</div>
+            <div class="form-grid">
+              <label>Tipo de aplicación<select id="colPayTipo" onchange="toggleCollectionPaymentMode()"><option>PAGO</option><option>NOTA_CREDITO</option></select></label>
+              <label class="colPayField">Banco / cuenta<select id="colPayBanco"><option value="">Cargando...</option></select></label>
+              <label class="colPayField">Fecha de pago<input id="colPayFecha" type="date" value="${new Date().toISOString().slice(0,10)}" /></label>
+              <label class="colPayField">Comisión<input id="colPayComision" type="number" step="0.01" value="0" /></label>
+              <label class="colPayField">Referencia<input id="colPayReferencia" /></label>
+              <label class="colPayField">Monto a aplicar<input id="colPayMonto" type="number" step="0.01" /></label>
+              <label class="colNcField hidden wide">Nota de Crédito disponible<select id="colPayNc"><option value="">Cargando...</option></select></label>
+            </div>
+            <div class="md-actions"><button class="green" onclick="saveCollectionPayment()">Aplicar</button><button class="secondary" onclick="closeModal()">Cancelar</button></div>
+            <div id="colPayMsg" class="status hidden"></div>
+          </div>
+        </div>`);
+      await loadCollectionPaymentBanks();
+    }
+    function toggleCollectionPaymentMode() {
+      const nc = valueFrom("colPayTipo") === "NOTA_CREDITO";
+      document.querySelectorAll(".colPayField").forEach(el => el.classList.toggle("hidden", nc));
+      document.querySelectorAll(".colNcField").forEach(el => el.classList.toggle("hidden", !nc));
+      if (nc) loadCollectionCreditNotes().catch(err => alert(err.message));
+    }
+    async function loadCollectionPaymentBanks() {
+      const select = $("colPayBanco");
+      if (!select) return;
+      try {
+        const rows = rowsList(await getJSON("/accounting/bank-accounts"));
+        select.innerHTML = rows.map(row => {
+          const code = row.account_code || "";
+          const name = row.account_name || "";
+          return `<option value="${esc(code)}|${esc(name)}">${esc(code)} - ${esc(name)}</option>`;
+        }).join("") || '<option value="">Sin bancos disponibles</option>';
+      } catch {
+        select.innerHTML = '<option value="">Sin bancos disponibles</option>';
+      }
+    }
+    async function loadCollectionCreditNotes() {
+      const row = requireCollectionRow();
+      const select = $("colPayNc");
+      if (!row || !select) return;
+      const payload = await getJSON(`/collections/search?cliente=${encodeURIComponent(row.codigo_cliente)}&estado_factura=PENDIENTE_PAGO&page=1&page_size=200`);
+      const notes = rowsList(payload).filter(item => item.tipo_documento === "NOTA_CREDITO");
+      select.innerHTML = notes.map(item => `<option value="${esc(item.numero_documento)}">${esc(item.numero_documento)} | ${Number(item.total || 0).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:2})}</option>`).join("") || '<option value="">Sin notas disponibles</option>';
+    }
+    async function saveCollectionPayment() {
+      const row = requireCollectionRow();
+      const msg = $("colPayMsg");
+      msg.className = "status";
+      msg.textContent = "Aplicando...";
+      try {
+        if (valueFrom("colPayTipo") === "NOTA_CREDITO") {
+          const nc = valueFrom("colPayNc");
+          if (!nc) throw new Error("Seleccione una Nota de Crédito.");
+          await postJSON("/collections/aplicar-nota-credito", {
+            factura_numero:row.numero_documento,
+            nota_credito_numero:nc,
+            codigo_cliente:row.codigo_cliente,
+            nombre_cliente:row.nombre_cliente
+          });
+        } else {
+          const [bankCode, bankName] = valueFrom("colPayBanco").split("|");
+          const monto = Number(valueFrom("colPayMonto") || 0);
+          if (!bankCode) throw new Error("Seleccione banco / cuenta contable.");
+          if (monto <= 0) throw new Error("Monto inválido.");
+          await postJSON("/collections/pago", {
+            numero_documento:row.numero_documento,
+            codigo_cliente:row.codigo_cliente,
+            nombre_cliente:row.nombre_cliente,
+            banco:valueFrom("colPayBanco"),
+            bank_account_code:bankCode,
+            bank_account_name:bankName,
+            fecha_pago:valueFrom("colPayFecha"),
+            comision:Number(valueFrom("colPayComision") || 0),
+            referencia:valueFrom("colPayReferencia"),
+            monto_pagado:monto,
+            tipo_aplicacion:"PAGO"
+          });
+        }
+        closeModal();
+        await loadCollections(collectionPage);
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
     }
     function renderBankWeb(target=orderCashWorkspace()) {
       target.innerHTML = `
