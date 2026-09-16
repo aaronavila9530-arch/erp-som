@@ -287,10 +287,12 @@ def get_credit_exposure(
         "disponible": decision.get("available"),
         "exposicion": "OVERLIMIT" if decision.get("requires_release") and decision.get("reason_code") == "OVERLIMIT" else decision.get("status"),
         "semaforo": "ROJO" if decision.get("requires_release") else "VERDE",
-        "payment_trend": {
-            "avg_days_to_pay": None,
-            "trend": "COLLECTIONS"
-        },
+        "payment_trend": decision.get("payment_trend"),
+        "overdue_ar": decision.get("overdue_ar"),
+        "overdue_invoice_count": decision.get("overdue_invoice_count"),
+        "max_days_overdue": decision.get("max_days_overdue"),
+        "risk_alerts": decision.get("risk_alerts"),
+        "risk_summary": decision.get("risk_summary"),
         "order_to_cash": decision,
     }
 

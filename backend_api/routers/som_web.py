@@ -2779,19 +2779,33 @@ def som_web_home() -> HTMLResponse:
         projected_amount:estimatedServiceAmount(payload),
         currency:"USD"
       });
-      if (!decision.requires_release) return payload;
+      const money = value => Number(value || 0).toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2});
+      const trend = decision.payment_trend || {};
+      const alerts = Array.isArray(decision.risk_alerts) ? decision.risk_alerts : [];
+      const alertBlock = alerts.length ? `\\nAlertas:\\n${alerts.map(item => `- ${item}`).join("\\n")}\\n` : "";
+      const riskText =
+        `${decision.message || "Revision crediticia."}\n\n` +
+        `Limite: ${decision.currency} ${money(decision.credit_limit)}\n` +
+        `CxC pendiente: ${decision.currency} ${money(decision.open_ar)}\n` +
+        `CxC vencida: ${decision.currency} ${money(decision.overdue_ar)}\n` +
+        `Nueva exposicion: ${decision.currency} ${money(decision.projected_exposure)}\n` +
+        `Disponible proyectado: ${decision.currency} ${money(decision.available)}\n` +
+        `Exceso: ${decision.currency} ${money(decision.over_amount)}\n` +
+        `Payment trend: ${trend.label || trend.trend || "Sin datos"}\n` +
+        `Estado credito: ${decision.estado_credito || "-"} | Hold manual: ${decision.hold_manual ? "Si" : "No"}\n` +
+        alertBlock;
+      if (!decision.requires_release) {
+        if (decision.advisory_requires_ack) {
+          const ok = confirm(`${riskText}\n¿Desea continuar con el servicio?`);
+          if (!ok) throw new Error("Servicio detenido por alerta crediticia.");
+        }
+        return payload;
+      }
       const role = String(session?.rol || "").toLowerCase();
       if (!["admin", "master"].includes(role)) {
         throw new Error(decision.message || "Cliente requiere liberacion crediticia de admin/master.");
       }
-      const ok = confirm(
-        `${decision.message || "Cliente requiere liberacion crediticia."}\n\n` +
-        `Limite: ${decision.currency} ${Number(decision.credit_limit || 0).toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2})}\n` +
-        `CxC pendiente: ${decision.currency} ${Number(decision.open_ar || 0).toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2})}\n` +
-        `Nueva exposicion: ${decision.currency} ${Number(decision.projected_exposure || 0).toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2})}\n` +
-        `Exceso: ${decision.currency} ${Number(decision.over_amount || 0).toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2})}\n\n` +
-        "¿Desea liberar y continuar?"
-      );
+      const ok = confirm(`${riskText}\n¿Desea liberar y continuar?`);
       if (!ok) throw new Error("Servicio detenido por control crediticio.");
       const reason = prompt("Justificacion del release crediticio", decision.reason_code || "Release aprobado por admin/master");
       if (!reason || !reason.trim()) throw new Error("Justificacion de release crediticio requerida.");

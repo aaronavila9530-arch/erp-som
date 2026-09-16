@@ -51,6 +51,116 @@ def _convert(amount: Decimal, source: str, target: str, rate: Decimal) -> Decima
     return amount
 
 
+def _collections_risk(cur, company: str, client_code: str, credit_currency: str, rate: Decimal) -> dict[str, Any]:
+    cur.execute(
+        """
+        SELECT
+            moneda,
+            COALESCE(SUM(saldo_pendiente),0) AS total,
+            COUNT(*) AS invoice_count,
+            COALESCE(SUM(CASE WHEN fecha_vencimiento < CURRENT_DATE THEN saldo_pendiente ELSE 0 END),0) AS overdue_total,
+            COUNT(*) FILTER (WHERE fecha_vencimiento < CURRENT_DATE) AS overdue_count,
+            COALESCE(MAX(CASE WHEN fecha_vencimiento < CURRENT_DATE THEN CURRENT_DATE - fecha_vencimiento ELSE 0 END),0) AS max_days_overdue
+        FROM collections
+        WHERE company_code = %s
+          AND codigo_cliente = %s
+          AND saldo_pendiente > 0
+        GROUP BY moneda
+        """,
+        (company, client_code),
+    )
+    open_ar = Decimal("0.00")
+    overdue_ar = Decimal("0.00")
+    invoice_count = 0
+    overdue_count = 0
+    max_days_overdue = 0
+    ar_by_currency = []
+    for currency, total, count, overdue_total, overdue_docs, days_overdue in cur.fetchall():
+        source_currency = currency or "USD"
+        subtotal = _money(total)
+        overdue_subtotal = _money(overdue_total)
+        ar_by_currency.append({"currency": source_currency, "amount": float(subtotal)})
+        open_ar += _convert(subtotal, source_currency, credit_currency, rate)
+        overdue_ar += _convert(overdue_subtotal, source_currency, credit_currency, rate)
+        invoice_count += int(count or 0)
+        overdue_count += int(overdue_docs or 0)
+        max_days_overdue = max(max_days_overdue, int(days_overdue or 0))
+    return {
+        "open_ar": open_ar.quantize(MONEY, rounding=ROUND_HALF_UP),
+        "overdue_ar": overdue_ar.quantize(MONEY, rounding=ROUND_HALF_UP),
+        "invoice_count": invoice_count,
+        "overdue_count": overdue_count,
+        "max_days_overdue": max_days_overdue,
+        "ar_by_currency": ar_by_currency,
+    }
+
+
+def _payment_trend(cur, company: str, client_code: str, termino_pago: Any) -> dict[str, Any]:
+    terms = int(termino_pago or 0)
+    try:
+        cur.execute(
+            """
+            SELECT
+                AVG(ca.fecha_pago::date - COALESCE(c.fecha_vencimiento::date, c.fecha_emision::date + COALESCE(%s::int, 0))) AS avg_days_after_due,
+                AVG(ca.fecha_pago::date - c.fecha_emision::date) AS avg_days_to_pay,
+                COUNT(DISTINCT ca.numero_documento) AS paid_documents,
+                MAX(ca.fecha_pago::date) AS last_payment_date
+            FROM cash_app ca
+            JOIN collections c
+              ON c.company_code = ca.company_code
+             AND c.codigo_cliente = ca.codigo_cliente
+             AND ltrim(c.numero_documento, '0') = ltrim(ca.numero_documento, '0')
+             AND c.tipo_documento = 'FACTURA'
+            WHERE ca.company_code = %s
+              AND ca.codigo_cliente = %s
+              AND ca.tipo_aplicacion = 'PAGO'
+              AND ca.fecha_pago IS NOT NULL
+              AND c.fecha_emision IS NOT NULL
+            """,
+            (terms, company, client_code),
+        )
+        row = cur.fetchone()
+    except Exception:
+        row = None
+
+    if not row or row[2] in (None, 0):
+        return {
+            "trend": "SIN_HISTORIAL",
+            "label": "Sin historial de pago aplicado",
+            "avg_days_to_pay": None,
+            "avg_days_after_due": None,
+            "paid_documents": 0,
+            "last_payment_date": None,
+            "severity": "warning",
+        }
+
+    avg_after_due = int(round(row[0] or 0))
+    avg_to_pay = int(round(row[1] or 0))
+    paid_documents = int(row[2] or 0)
+    last_payment_date = row[3].isoformat() if hasattr(row[3], "isoformat") else row[3]
+    if avg_after_due <= 0:
+        trend = "BUENO"
+        label = "Paga dentro del plazo"
+        severity = "ok"
+    elif avg_after_due <= 15:
+        trend = "MEDIO"
+        label = f"Paga en promedio {avg_after_due} dias despues del vencimiento"
+        severity = "warning"
+    else:
+        trend = "LENTO"
+        label = f"Paga lento: promedio {avg_after_due} dias despues del vencimiento"
+        severity = "danger"
+    return {
+        "trend": trend,
+        "label": label,
+        "avg_days_to_pay": avg_to_pay,
+        "avg_days_after_due": avg_after_due,
+        "paid_documents": paid_documents,
+        "last_payment_date": last_payment_date,
+        "severity": severity,
+    }
+
+
 def ensure_credit_control_schema() -> None:
     database.sql(
         """
@@ -149,6 +259,19 @@ def build_credit_decision(
         if not credit:
             credit_currency = (projected_currency or "USD").upper()
             projected = _money(projected_amount)
+            trend = {
+                "trend": "SIN_CONFIG",
+                "label": "No se puede medir tendencia sin configuracion crediticia",
+                "avg_days_to_pay": None,
+                "avg_days_after_due": None,
+                "paid_documents": 0,
+                "last_payment_date": None,
+                "severity": "danger",
+            }
+            alerts = [
+                "Cliente sin configuracion crediticia.",
+                "Debe aprobarse release antes de crear el servicio.",
+            ]
             return {
                 "status": "REQUIRES_RELEASE",
                 "requires_release": True,
@@ -164,6 +287,10 @@ def build_credit_decision(
                 "available": float(-projected),
                 "over_amount": float(projected),
                 "exchange_rate": float(rate),
+                "payment_trend": trend,
+                "risk_alerts": alerts,
+                "risk_summary": " | ".join(alerts),
+                "advisory_requires_ack": True,
             }
 
         termino_pago, limite_credito, moneda, estado_credito, hold_manual, observaciones = credit
@@ -171,23 +298,11 @@ def build_credit_decision(
         credit_limit = _money(limite_credito)
         projected = _convert(_money(projected_amount), projected_currency, credit_currency, rate)
 
-        cur.execute(
-            """
-            SELECT moneda, COALESCE(SUM(saldo_pendiente),0) AS total
-            FROM collections
-            WHERE company_code = %s
-              AND codigo_cliente = %s
-              AND saldo_pendiente > 0
-            GROUP BY moneda
-            """,
-            (company, client_code),
-        )
-        open_ar = Decimal("0.00")
-        ar_by_currency = []
-        for currency, total in cur.fetchall():
-            subtotal = _money(total)
-            ar_by_currency.append({"currency": currency or "USD", "amount": float(subtotal)})
-            open_ar += _convert(subtotal, currency or "USD", credit_currency, rate)
+        collections_risk = _collections_risk(cur, company, client_code, credit_currency, rate)
+        open_ar = collections_risk["open_ar"]
+        overdue_ar = collections_risk["overdue_ar"]
+        ar_by_currency = collections_risk["ar_by_currency"]
+        trend = _payment_trend(cur, company, client_code, termino_pago)
 
         projected_exposure = (open_ar + projected).quantize(MONEY, rounding=ROUND_HALF_UP)
         available = (credit_limit - projected_exposure).quantize(MONEY, rounding=ROUND_HALF_UP)
@@ -195,15 +310,18 @@ def build_credit_decision(
         status = "CLEAR"
         reason_code = "OK"
         message = "Cliente dentro del limite crediticio."
+        alerts: list[str] = []
 
         if str(estado_credito or "").upper() == "HOLD" or bool(hold_manual):
             status = "REQUIRES_RELEASE"
             reason_code = "MANUAL_HOLD"
             message = f"Cliente {client_name} esta en hold crediticio."
+            alerts.append("Cliente bloqueado por hold crediticio/manual.")
         elif credit_limit <= 0:
             status = "REQUIRES_RELEASE"
             reason_code = "ZERO_LIMIT"
             message = f"Cliente {client_name} no tiene limite crediticio disponible."
+            alerts.append("Cliente sin limite crediticio disponible.")
         elif projected_exposure > credit_limit:
             status = "REQUIRES_RELEASE"
             reason_code = "OVERLIMIT"
@@ -211,6 +329,22 @@ def build_credit_decision(
                 f"Cliente {client_name} excede limite {credit_currency} "
                 f"{credit_limit:,.2f}; exposicion proyectada {projected_exposure:,.2f}."
             )
+            alerts.append(f"Excede el limite por {credit_currency} {over_amount:,.2f}.")
+
+        if overdue_ar > 0:
+            alerts.append(
+                f"Tiene {collections_risk['overdue_count']} factura(s) vencida(s) por "
+                f"{credit_currency} {overdue_ar:,.2f}; mayor atraso {collections_risk['max_days_overdue']} dias."
+            )
+        if trend.get("trend") in {"LENTO", "MEDIO", "SIN_HISTORIAL"}:
+            alerts.append(f"Payment trend: {trend.get('label')}.")
+        if status == "CLEAR" and credit_limit > 0:
+            available_pct = (available / credit_limit) if credit_limit else Decimal("0")
+            if available_pct <= Decimal("0.20"):
+                alerts.append(f"Disponible bajo: {credit_currency} {available:,.2f} despues del servicio.")
+        if alerts and status == "CLEAR":
+            message = f"Cliente {client_name} dentro del limite, con alertas de riesgo."
+        risk_summary = " | ".join(alerts) if alerts else "Sin alertas criticas de credito."
 
         return {
             "status": status,
@@ -223,6 +357,10 @@ def build_credit_decision(
             "currency": credit_currency,
             "credit_limit": float(credit_limit),
             "open_ar": float(open_ar),
+            "overdue_ar": float(overdue_ar),
+            "open_invoice_count": collections_risk["invoice_count"],
+            "overdue_invoice_count": collections_risk["overdue_count"],
+            "max_days_overdue": collections_risk["max_days_overdue"],
             "open_ar_by_currency": ar_by_currency,
             "projected_amount": float(projected),
             "projected_exposure": float(projected_exposure),
@@ -232,6 +370,10 @@ def build_credit_decision(
             "hold_manual": bool(hold_manual),
             "observaciones": observaciones,
             "exchange_rate": float(rate),
+            "payment_trend": trend,
+            "risk_alerts": alerts,
+            "risk_summary": risk_summary,
+            "advisory_requires_ack": bool(alerts),
         }
     finally:
         database.release_conn(conn)

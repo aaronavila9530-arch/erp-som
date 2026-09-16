@@ -16736,20 +16736,28 @@ function ServiceCreateModal({
 
   function confirmCreditRelease(decision: Record<string, unknown>): Promise<boolean> {
     const currency = formatValue(decision.currency || "USD");
+    const trend = asRecord(decision.payment_trend) || {};
+    const alerts = Array.isArray(decision.risk_alerts) ? decision.risk_alerts.map((item) => formatValue(item)) : [];
+    const requiresRelease = Boolean(decision.requires_release);
     const text = [
       formatValue(decision.message || "Cliente requiere liberacion crediticia."),
       "",
       `Limite: ${currency} ${formatValue(decision.credit_limit)}`,
       `CxC pendiente: ${currency} ${formatValue(decision.open_ar)}`,
+      `CxC vencida: ${currency} ${formatValue(decision.overdue_ar)}`,
       `Exposicion proyectada: ${currency} ${formatValue(decision.projected_exposure)}`,
+      `Disponible proyectado: ${currency} ${formatValue(decision.available)}`,
       `Exceso: ${currency} ${formatValue(decision.over_amount)}`,
+      `Payment trend: ${formatValue(trend.label || trend.trend || "Sin datos")}`,
+      `Estado credito: ${formatValue(decision.estado_credito || "-")} | Hold manual: ${Boolean(decision.hold_manual) ? "Si" : "No"}`,
+      ...(alerts.length ? ["", "Alertas:", ...alerts.map((item) => `- ${item}`)] : []),
       "",
-      "Desea liberar y continuar?"
+      requiresRelease ? "Desea liberar y continuar?" : "Desea continuar con el servicio?"
     ].join("\n");
     return new Promise((resolve) => {
-      Alert.alert("Credit Hold / Release", text, [
+      Alert.alert(requiresRelease ? "Credit Hold / Release" : "Alerta crediticia", text, [
         { text: "Cancelar", style: "cancel", onPress: () => resolve(false) },
-        { text: "Liberar", style: "destructive", onPress: () => resolve(true) }
+        { text: requiresRelease ? "Liberar" : "Continuar", style: requiresRelease ? "destructive" : "default", onPress: () => resolve(true) }
       ]);
     });
   }
@@ -16795,6 +16803,12 @@ function ServiceCreateModal({
           credit_release_approved: true,
           credit_release_reason: formatValue(decision.reason_code || "Release aprobado desde Android")
         };
+      } else if (Boolean(decision.advisory_requires_ack)) {
+        const approved = await confirmCreditRelease({ ...decision, message: decision.message || "Cliente dentro del limite con alertas crediticias." });
+        if (!approved) {
+          setMessage("Servicio detenido por alerta crediticia.");
+          return;
+        }
       }
       const result = await offlineApiRequest("/servicios/add", {
         method: "POST",
@@ -17041,20 +17055,28 @@ function ServiceActionModal({
 
   function confirmCreditRelease(decision: Record<string, unknown>): Promise<boolean> {
     const currency = formatValue(decision.currency || "USD");
+    const trend = asRecord(decision.payment_trend) || {};
+    const alerts = Array.isArray(decision.risk_alerts) ? decision.risk_alerts.map((item) => formatValue(item)) : [];
+    const requiresRelease = Boolean(decision.requires_release);
     const text = [
       formatValue(decision.message || "Cliente requiere liberacion crediticia."),
       "",
       `Limite: ${currency} ${formatValue(decision.credit_limit)}`,
       `CxC pendiente: ${currency} ${formatValue(decision.open_ar)}`,
+      `CxC vencida: ${currency} ${formatValue(decision.overdue_ar)}`,
       `Exposicion proyectada: ${currency} ${formatValue(decision.projected_exposure)}`,
+      `Disponible proyectado: ${currency} ${formatValue(decision.available)}`,
       `Exceso: ${currency} ${formatValue(decision.over_amount)}`,
+      `Payment trend: ${formatValue(trend.label || trend.trend || "Sin datos")}`,
+      `Estado credito: ${formatValue(decision.estado_credito || "-")} | Hold manual: ${Boolean(decision.hold_manual) ? "Si" : "No"}`,
+      ...(alerts.length ? ["", "Alertas:", ...alerts.map((item) => `- ${item}`)] : []),
       "",
-      "Desea liberar y continuar?"
+      requiresRelease ? "Desea liberar y continuar?" : "Desea continuar con el servicio?"
     ].join("\n");
     return new Promise((resolve) => {
-      Alert.alert("Credit Hold / Release", text, [
+      Alert.alert(requiresRelease ? "Credit Hold / Release" : "Alerta crediticia", text, [
         { text: "Cancelar", style: "cancel", onPress: () => resolve(false) },
-        { text: "Liberar", style: "destructive", onPress: () => resolve(true) }
+        { text: requiresRelease ? "Liberar" : "Continuar", style: requiresRelease ? "destructive" : "default", onPress: () => resolve(true) }
       ]);
     });
   }
@@ -17069,7 +17091,13 @@ function ServiceActionModal({
         currency: "USD"
       }
     });
-    if (!Boolean(decision.requires_release)) return body;
+    if (!Boolean(decision.requires_release)) {
+      if (Boolean(decision.advisory_requires_ack)) {
+        const approved = await confirmCreditRelease({ ...decision, message: decision.message || "Cliente dentro del limite con alertas crediticias." });
+        if (!approved) throw new Error("Servicio detenido por alerta crediticia.");
+      }
+      return body;
+    }
     const role = String(session.rol || "").toLowerCase();
     if (!["admin", "master"].includes(role)) {
       throw new Error(formatValue(decision.message || "Cliente requiere liberacion crediticia de admin/master."));
