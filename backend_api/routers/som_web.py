@@ -3443,6 +3443,13 @@ def som_web_home() -> HTMLResponse:
     }
     let currentMasterKey = "";
     async function openMasterForm(key, rowIndex, mode="edit") {
+      if (key === "puertos") {
+        if (rowIndex !== null && rowIndex !== undefined && !portRows.length && currentRows.length) {
+          portRows = currentRows;
+        }
+        openPortForm(rowIndex, mode);
+        return;
+      }
       currentMasterKey = key;
       const config = MASTER_CONFIG[key];
       if (!config) return;
