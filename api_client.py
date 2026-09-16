@@ -599,6 +599,39 @@ def get_puertos_all_api():
         print("❌ Error cargando puertos:", e)
         return []
 
+
+def get_masterdata_ports_api(page=1, page_size=100, continente=None, pais=None, puerto=None, q=None):
+    params = {"page": page, "page_size": page_size}
+    if continente:
+        params["continente"] = continente
+    if pais:
+        params["pais"] = pais
+    if puerto:
+        params["puerto"] = puerto
+    if q:
+        params["q"] = q
+    resp = api_request("GET", f"{BASE_URL}/cpp/ports", params=params, timeout=15)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def post_masterdata_port_api(data: dict):
+    resp = api_request("POST", f"{BASE_URL}/cpp/ports", json=data, timeout=15)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def put_masterdata_port_api(port_id: int, data: dict):
+    resp = api_request("PUT", f"{BASE_URL}/cpp/ports/{port_id}", json=data, timeout=15)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def delete_masterdata_port_api(port_id: int):
+    resp = api_request("DELETE", f"{BASE_URL}/cpp/ports/{port_id}", timeout=15)
+    resp.raise_for_status()
+    return resp.json()
+
 # ============================================================
 # eliminar servicio
 # ============================================================

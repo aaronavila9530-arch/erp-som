@@ -39,6 +39,7 @@ MASTER_DATA_ACTIONS = [
     {"key": "empleados", "label": "+ Empleado", "kind": "create", "entity": "empleado"},
     {"key": "proveedores", "label": "+ Proveedor", "kind": "create", "entity": "proveedor"},
     {"key": "servicios_md", "label": "+ Servicio", "kind": "create", "entity": "servicio"},
+    {"key": "puertos", "label": "+ Puerto", "kind": "create", "entity": "puerto"},
     {"key": "export_form", "label": "Exportar form", "kind": "tool", "entity": "forms"},
     {"key": "import_form", "label": "Cargar form", "kind": "tool", "entity": "forms"},
     {"key": "company_fiscal", "label": "Datos fiscales", "kind": "tool", "entity": "fiscal"},
@@ -51,6 +52,7 @@ MASTER_DATA_VIEWS = [
     {"key": "empleados", "label": "Empleados", "endpoint": "/empleados/?page=1&page_size=100&include_inactive=true", "primary": ["codigo", "activo", "nombre", "apellidos", "horas_contratadas", "horas_tope_ordinario", "horas_tope_maximo"]},
     {"key": "surveyores", "label": "Surveyors", "endpoint": "/surveyores/?page=1&page_size=100&include_inactive=true", "primary": ["codigo", "activo", "nombre", "apellidos", "correo", "telefono"]},
     {"key": "servicios_md", "label": "Servicios", "endpoint": "/servicios_md/?page=1&page_size=100", "primary": ["codigo", "codigo_prod", "nombre", "costo"]},
+    {"key": "puertos", "label": "Puertos", "endpoint": "/cpp/ports?page=1&page_size=100", "primary": ["id", "continente", "pais", "puerto"]},
     {"key": "company_fiscal", "label": "Datos fiscales", "endpoint": "/companies/current", "primary": ["company_code", "company_name", "tax_id", "economic_activity", "billing_email", "address"]},
     {"key": "bank_accounts", "label": "Datos bancarios", "endpoint": "", "primary": ["bank_name", "currency", "iban", "swift_code", "beneficiary_name"]},
 ]
@@ -670,6 +672,19 @@ def som_web_home() -> HTMLResponse:
         fields:[
           ["codigo","Código","text","",true],["codigo_prod","Código producto","text","",false],
           ["nombre","Nombre","text","",true],["costo","Costo","number","0",false]
+        ]
+      },
+      puertos: {
+        title:"Puerto",
+        endpoint:"/cpp/ports",
+        add:"/cpp/ports",
+        update:"/cpp/ports/{id}",
+        codeKey:"id",
+        fields:[
+          ["id","ID","number","",false],
+          ["continente","Continente","text","",true],
+          ["pais","País","text","",true],
+          ["puerto","Puerto","text","",true]
         ]
       },
       company_fiscal: {
@@ -2842,7 +2857,7 @@ def som_web_home() -> HTMLResponse:
           <div class="panel-head"><h2>Acciones</h2></div>
           <div class="md-actions">${catalog.master_data_actions.map(a => `<button class="${buttonClass(a)}" onclick="masterAction('${a.key}')">${a.label}</button>`).join("")}</div>
           <div class="filters">
-            <select id="mdTipo"><option>Todos</option><option>Empleado</option><option>Surveyor</option><option>Cliente</option><option>Proveedor</option><option>Servicio</option></select>
+            <select id="mdTipo"><option>Todos</option><option>Empleado</option><option>Surveyor</option><option>Cliente</option><option>Proveedor</option><option>Servicio</option><option>Puerto</option></select>
             <select id="mdContinente"><option>Seleccione continente</option></select>
             <select id="mdPais"><option>Seleccione país</option></select>
             <select id="mdPuerto"><option>Seleccione puerto</option></select>
@@ -2861,7 +2876,7 @@ def som_web_home() -> HTMLResponse:
       return "";
     }
     function masterAction(key) {
-      if (["clientes","surveyores","empleados","proveedores","servicios_md"].includes(key)) {
+      if (["clientes","surveyores","empleados","proveedores","servicios_md","puertos"].includes(key)) {
         openMasterForm(key, null);
         return;
       }
@@ -2895,7 +2910,7 @@ def som_web_home() -> HTMLResponse:
     }
     function applyMasterFilter() {
       const tipo = $("mdTipo").value;
-      const map = { Cliente:"clientes", Proveedor:"proveedores", Empleado:"empleados", Surveyor:"surveyores", Servicio:"servicios_md" };
+      const map = { Cliente:"clientes", Proveedor:"proveedores", Empleado:"empleados", Surveyor:"surveyores", Servicio:"servicios_md", Puerto:"puertos" };
       if (map[tipo]) openMasterView(map[tipo]);
     }
     async function openMasterView(key) {
@@ -3039,7 +3054,10 @@ def som_web_home() -> HTMLResponse:
       try {
         const payload = buildMasterPayload(config);
         const path = editing ? config.update : config.add;
-        const resolvedPath = path.replace("{company}", encodeURIComponent(selectedCompany()));
+        const recordId = payload[config.codeKey] || $(`md_${config.codeKey}`)?.value || "";
+        const resolvedPath = path
+          .replace("{company}", encodeURIComponent(selectedCompany()))
+          .replace("{id}", encodeURIComponent(recordId));
         const data = await sendJSON(editing ? "PUT" : "POST", resolvedPath, payload);
         msg.textContent = data.msg || "Guardado correctamente.";
         await openMasterView(key);

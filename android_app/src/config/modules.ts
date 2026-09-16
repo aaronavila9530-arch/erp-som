@@ -179,6 +179,13 @@ const serviceColumns = [
   "comentario_cancelacion"
 ];
 
+const portColumns = [
+  "id",
+  "continente",
+  "pais",
+  "puerto"
+];
+
 const billingColumns = [
   "id",
   "tipo_factura",
@@ -401,7 +408,21 @@ export const ERP_MODULES: AppModule[] = [
           filters: ["codigo", "codigo_prod", "nombre"]
         }
       },
-      { key: "puertos", label: "Continentes / Paises / Puertos", endpoint: "/cpp/puertos_all" }
+      {
+        key: "puertos",
+        label: "Continentes / Paises / Puertos",
+        endpoint: "/cpp/ports?page=1&page_size=100",
+        table: {
+          idField: "id",
+          columns: portColumns,
+          detailEndpoint: "/cpp/ports/{id}",
+          createEndpoint: "/cpp/ports",
+          updateEndpoint: "/cpp/ports/{id}",
+          deleteEndpoint: "/cpp/ports/{id}",
+          actions: masterActions,
+          filters: ["continente", "pais", "puerto"]
+        }
+      }
     ]
   },
   {
