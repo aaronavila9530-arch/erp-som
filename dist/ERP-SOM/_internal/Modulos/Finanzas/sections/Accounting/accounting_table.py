@@ -39,7 +39,7 @@ class AccountingTable(tk.Frame):
     # ============================================================
     def _build_ui(self):
 
-        columns = ("date", "entry", "status", "account", "detail", "debit", "credit")
+        columns = ("date", "entry", "origin", "status", "account", "detail", "debit", "credit")
 
         self.tree = ttk.Treeview(
             self,
@@ -51,6 +51,7 @@ class AccountingTable(tk.Frame):
         headers = {
             "date": "Fecha",
             "entry": "Asiento",
+            "origin": "Origen",
             "status": "Estado",
             "account": "Cuenta contable",
             "detail": "Detalle",
@@ -61,9 +62,10 @@ class AccountingTable(tk.Frame):
         widths = {
             "date": 90,
             "entry": 90,
+            "origin": 150,
             "status": 105,
-            "account": 260,
-            "detail": 340,
+            "account": 235,
+            "detail": 320,
             "debit": 110,
             "credit": 110
         }
@@ -176,6 +178,7 @@ class AccountingTable(tk.Frame):
                     "values": (
                         entry_date,
                         entry_id,
+                        entry.get("origin") or "",
                         workflow_status,
                         f"{line.get('account_code')} {line.get('account_name')}".strip(),
                         line.get("line_description") or "",
@@ -202,7 +205,7 @@ class AccountingTable(tk.Frame):
             # Separador visual solo si hubo líneas
             if debit_lines or credit_lines:
                 self.all_rows.append({
-                    "values": ("", "", "", "────────────", "", "", ""),
+                    "values": ("", "", "", "────────────", "", "", "", ""),
                     "debit": 0,
                     "credit": 0,
                     "tag": "separator"
@@ -271,7 +274,7 @@ class AccountingTable(tk.Frame):
         if not values or values[3] == "────────────":
             return None, None
         try:
-            return int(values[1]), values[2]
+            return int(values[1]), values[3]
         except Exception:
             return None, None
 
@@ -342,7 +345,7 @@ class AccountingTable(tk.Frame):
 
         with open(path, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
-            writer.writerow(["Fecha", "Asiento", "Estado", "Cuenta", "Detalle", "Debe", "Haber"])
+            writer.writerow(["Fecha", "Asiento", "Origen", "Estado", "Cuenta", "Detalle", "Debe", "Haber"])
             for row in self.all_rows:
                 if row["values"][3] != "────────────":
                     writer.writerow(row["values"])
@@ -358,7 +361,7 @@ class AccountingTable(tk.Frame):
 
         wb = Workbook()
         ws = wb.active
-        ws.append(["Fecha", "Asiento", "Estado", "Cuenta", "Detalle", "Debe", "Haber"])
+        ws.append(["Fecha", "Asiento", "Origen", "Estado", "Cuenta", "Detalle", "Debe", "Haber"])
 
         for row in self.all_rows:
             if row["values"][3] != "────────────":

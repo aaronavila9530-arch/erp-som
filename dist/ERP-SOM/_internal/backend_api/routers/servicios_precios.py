@@ -11,6 +11,7 @@ from datetime import datetime
 
 from database import get_db
 from rbac_service import has_permission
+from services.tenanting import company_code
 
 # ============================================================
 # RBAC — MISMA LÓGICA QUE ROUTERS FUNCIONALES
@@ -53,6 +54,46 @@ class PrecioUpdate(BaseModel):
     activo: Optional[bool] = None
 
 
+def _ensure_precios_company(cur):
+    cur.execute("""
+        ALTER TABLE servicios_precios
+        ADD COLUMN IF NOT EXISTS company_code VARCHAR(30) NOT NULL DEFAULT 'MSL-CR';
+    """)
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_servicios_precios_company
+        ON servicios_precios(company_code, activo, cliente, servicio);
+    """)
+    cur.execute("""
+        WITH client_keys AS (
+            SELECT UPPER(TRIM(nombrejuridico::text)) AS client_key,
+                   COALESCE(NULLIF(TRIM(company_code::text), ''), 'MSL-CR') AS company_code
+            FROM cliente
+            WHERE nombrejuridico IS NOT NULL AND TRIM(nombrejuridico::text) <> ''
+            UNION ALL
+            SELECT UPPER(TRIM(nombrecomercial::text)) AS client_key,
+                   COALESCE(NULLIF(TRIM(company_code::text), ''), 'MSL-CR') AS company_code
+            FROM cliente
+            WHERE nombrecomercial IS NOT NULL AND TRIM(nombrecomercial::text) <> ''
+            UNION ALL
+            SELECT UPPER(TRIM(codigo::text)) AS client_key,
+                   COALESCE(NULLIF(TRIM(company_code::text), ''), 'MSL-CR') AS company_code
+            FROM cliente
+            WHERE codigo IS NOT NULL AND TRIM(codigo::text) <> ''
+        ),
+        unique_client_company AS (
+            SELECT client_key, MAX(company_code) AS company_code
+            FROM client_keys
+            GROUP BY client_key
+            HAVING COUNT(DISTINCT company_code) = 1
+        )
+        UPDATE servicios_precios sp
+        SET company_code = u.company_code
+        FROM unique_client_company u
+        WHERE UPPER(TRIM(sp.cliente::text)) = u.client_key
+          AND COALESCE(NULLIF(TRIM(sp.company_code::text), ''), 'MSL-CR') <> u.company_code;
+    """)
+
+
 # ============================================================
 # GET — DATA PARA POPUP (DESPLEGABLES)
 # ============================================================
@@ -61,8 +102,14 @@ class PrecioUpdate(BaseModel):
     "/meta",
     dependencies=[Depends(require_permission("comercial", "view"))]
 )
-def get_precios_meta(conn=Depends(get_db)):
+def get_precios_meta(
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+    conn=Depends(get_db),
+):
     cur = conn.cursor(cursor_factory=RealDictCursor)
+    _ensure_precios_company(cur)
+    conn.commit()
+    company = company_code(header_value=x_company_code)
 
     # Servicios (Catálogo)
     cur.execute("""
@@ -81,8 +128,9 @@ def get_precios_meta(conn=Depends(get_db)):
             codigo,
             TRIM(nombrejuridico) AS nombrejuridico
         FROM cliente
+        WHERE COALESCE(NULLIF(TRIM(company_code::text), ''), 'MSL-CR') = %(company_code)s
         ORDER BY nombrejuridico;
-    """)
+    """, {"company_code": company})
     clientes = cur.fetchall()
 
     # Ubicaciones
@@ -116,12 +164,19 @@ def get_precios_meta(conn=Depends(get_db)):
     "",
     dependencies=[Depends(require_permission("comercial", "view"))]
 )
-def listar_precios(conn=Depends(get_db)):
+def listar_precios(
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+    conn=Depends(get_db),
+):
     cur = conn.cursor(cursor_factory=RealDictCursor)
+    _ensure_precios_company(cur)
+    conn.commit()
+    company = company_code(header_value=x_company_code)
 
     cur.execute("""
         SELECT
             id,
+            company_code,
             servicio,
             cliente,
             continente,
@@ -132,8 +187,9 @@ def listar_precios(conn=Depends(get_db)):
             created_at,
             updated_at
         FROM servicios_precios
+        WHERE COALESCE(NULLIF(TRIM(company_code::text), ''), 'MSL-CR') = %(company_code)s
         ORDER BY cliente, servicio;
-    """)
+    """, {"company_code": company})
 
     data = cur.fetchall()
     cur.close()
@@ -152,11 +208,18 @@ def listar_precios(conn=Depends(get_db)):
     "",
     dependencies=[Depends(require_permission("comercial", "edit"))]
 )
-def crear_precio(payload: PrecioCreate, conn=Depends(get_db)):
+def crear_precio(
+    payload: PrecioCreate,
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+    conn=Depends(get_db),
+):
     cur = conn.cursor()
+    _ensure_precios_company(cur)
+    company = company_code(header_value=x_company_code)
 
     sql = """
         INSERT INTO servicios_precios (
+            company_code,
             servicio,
             cliente,
             continente,
@@ -168,6 +231,7 @@ def crear_precio(payload: PrecioCreate, conn=Depends(get_db)):
             updated_at
         )
         VALUES (
+            %(company_code)s,
             %(servicio)s,
             %(cliente)s,
             %(continente)s,
@@ -181,7 +245,9 @@ def crear_precio(payload: PrecioCreate, conn=Depends(get_db)):
         RETURNING id;
     """
 
-    cur.execute(sql, payload.dict())
+    data = payload.dict()
+    data["company_code"] = company
+    cur.execute(sql, data)
     new_id = cur.fetchone()[0]
     conn.commit()
     cur.close()
@@ -203,9 +269,12 @@ def crear_precio(payload: PrecioCreate, conn=Depends(get_db)):
 def actualizar_precio(
     precio_id: int,
     payload: PrecioUpdate,
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
     conn=Depends(get_db)
 ):
     cur = conn.cursor()
+    _ensure_precios_company(cur)
+    company = company_code(header_value=x_company_code)
 
     fields = []
     params = {"id": precio_id}
@@ -215,6 +284,8 @@ def actualizar_precio(
         params[k] = v
 
     if not fields:
+        conn.rollback()
+        cur.close()
         raise HTTPException(status_code=400, detail="No hay campos para actualizar")
 
     fields.append("updated_at = NOW()")
@@ -222,10 +293,16 @@ def actualizar_precio(
     sql = f"""
         UPDATE servicios_precios
         SET {", ".join(fields)}
-        WHERE id = %(id)s;
+        WHERE id = %(id)s
+          AND COALESCE(NULLIF(TRIM(company_code::text), ''), 'MSL-CR') = %(company_code)s;
     """
 
+    params["company_code"] = company
     cur.execute(sql, params)
+    if cur.rowcount == 0:
+        conn.rollback()
+        cur.close()
+        raise HTTPException(status_code=404, detail="Precio no encontrado para esta empresa")
     conn.commit()
     cur.close()
 
@@ -240,13 +317,24 @@ def actualizar_precio(
     "/{precio_id}",
     dependencies=[Depends(require_permission("comercial", "edit"))]
 )
-def eliminar_precio(precio_id: int, conn=Depends(get_db)):
+def eliminar_precio(
+    precio_id: int,
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+    conn=Depends(get_db),
+):
     cur = conn.cursor()
+    _ensure_precios_company(cur)
+    company = company_code(header_value=x_company_code)
 
     cur.execute("""
         DELETE FROM servicios_precios
-        WHERE id = %s;
-    """, (precio_id,))
+        WHERE id = %s
+          AND COALESCE(NULLIF(TRIM(company_code::text), ''), 'MSL-CR') = %s;
+    """, (precio_id, company))
+    if cur.rowcount == 0:
+        conn.rollback()
+        cur.close()
+        raise HTTPException(status_code=404, detail="Precio no encontrado para esta empresa")
 
     conn.commit()
     cur.close()

@@ -9,12 +9,31 @@ from psycopg2.extras import RealDictCursor
 
 from database import get_db
 from rbac_service import has_permission
+from services.credit_control import build_credit_decision
+from services.tenanting import company_code
 
 
 router = APIRouter(
     prefix="/cliente-credito",
     tags=["Cliente Crédito"]
 )
+
+
+@router.post("/order-to-cash/check")
+def check_order_to_cash_credit(
+    payload: dict,
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+):
+    company = company_code(payload.get("company_code"), x_company_code)
+    cliente = payload.get("codigo_cliente") or payload.get("cliente")
+    if not cliente:
+        raise HTTPException(400, "Cliente requerido para validar credito")
+    return build_credit_decision(
+        company=company,
+        client_ref=cliente,
+        projected_amount=payload.get("projected_amount") or payload.get("amount") or 0,
+        projected_currency=payload.get("currency") or payload.get("moneda") or "USD",
+    )
 
 # ============================================================
 # RBAC GUARD
@@ -34,8 +53,13 @@ def require_permission(module: str, action: str):
 # GET crédito por cliente
 # ============================================================
 @router.get("/{codigo_cliente}")
-def get_credito_cliente(codigo_cliente: str, conn=Depends(get_db)):
+def get_credito_cliente(
+    codigo_cliente: str,
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+    conn=Depends(get_db),
+):
     try:
+        company = company_code(None, x_company_code)
         cur = conn.cursor(cursor_factory=RealDictCursor)
 
         cur.execute("""
@@ -49,7 +73,8 @@ def get_credito_cliente(codigo_cliente: str, conn=Depends(get_db)):
                 observaciones
             FROM cliente_credito
             WHERE codigo_cliente = %s
-        """, (codigo_cliente,))
+              AND company_code = %s
+        """, (codigo_cliente, company))
 
         data = cur.fetchone()
         cur.close()
@@ -73,7 +98,11 @@ def get_credito_cliente(codigo_cliente: str, conn=Depends(get_db)):
 # POST crear crédito inicial por cliente
 # ============================================================
 @router.post("/")
-def create_credito_cliente(payload: dict, conn=Depends(get_db)):
+def create_credito_cliente(
+    payload: dict,
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+    conn=Depends(get_db),
+):
     """
     payload esperado:
     {
@@ -88,10 +117,13 @@ def create_credito_cliente(payload: dict, conn=Depends(get_db)):
         cur = conn.cursor()
 
         # Verificar si ya existe
+        company = company_code(payload.get("company_code"), x_company_code)
+
         cur.execute("""
             SELECT 1 FROM cliente_credito
             WHERE codigo_cliente = %s
-        """, (payload["codigo_cliente"],))
+              AND company_code = %s
+        """, (payload["codigo_cliente"], company))
 
         if cur.fetchone():
             raise HTTPException(
@@ -105,14 +137,16 @@ def create_credito_cliente(payload: dict, conn=Depends(get_db)):
                 termino_pago,
                 limite_credito,
                 moneda,
-                observaciones
-            ) VALUES (%s, %s, %s, %s, %s)
+                observaciones,
+                company_code
+            ) VALUES (%s, %s, %s, %s, %s, %s)
         """, (
             payload["codigo_cliente"],
             payload.get("termino_pago"),
             payload.get("limite_credito", 0),
             payload.get("moneda", "USD"),
-            payload.get("observaciones")
+            payload.get("observaciones"),
+            company,
         ))
 
         conn.commit()
@@ -134,11 +168,13 @@ def create_credito_cliente(payload: dict, conn=Depends(get_db)):
 def update_credito_cliente(
     codigo_cliente: str,
     payload: dict,
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
     conn=Depends(get_db)
 ):
     cur = conn.cursor()
 
     try:
+        company = company_code(payload.get("company_code"), x_company_code)
         fields = []
         values = []
 
@@ -179,9 +215,11 @@ def update_credito_cliente(
             UPDATE cliente_credito
             SET {", ".join(fields)}
             WHERE codigo_cliente = %s
+              AND company_code = %s
         """
 
         values.append(codigo_cliente)
+        values.append(company)
 
         cur.execute(sql, values)
 
@@ -210,11 +248,16 @@ def update_credito_cliente(
         cur.close()
 
 @router.delete("/{codigo_cliente}")
-def delete_credito_cliente(codigo_cliente: str, conn=Depends(get_db)):
+def delete_credito_cliente(
+    codigo_cliente: str,
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+    conn=Depends(get_db),
+):
+    company = company_code(None, x_company_code)
     cur = conn.cursor()
     cur.execute(
-        "DELETE FROM cliente_credito WHERE codigo_cliente = %s",
-        (codigo_cliente,)
+        "DELETE FROM cliente_credito WHERE codigo_cliente = %s AND company_code = %s",
+        (codigo_cliente, company)
     )
 
     if cur.rowcount == 0:
@@ -232,8 +275,26 @@ def delete_credito_cliente(codigo_cliente: str, conn=Depends(get_db)):
 @router.get("/exposure/{codigo_cliente}")
 def get_credit_exposure(
     codigo_cliente: str,
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
     conn=Depends(get_db)
 ):
+    company = company_code(None, x_company_code)
+    decision = build_credit_decision(company, codigo_cliente, projected_amount=0, projected_currency="USD")
+    return {
+        "codigo_cliente": decision.get("codigo_cliente"),
+        "limite_credito": decision.get("credit_limit"),
+        "total_facturado": decision.get("open_ar"),
+        "disponible": decision.get("available"),
+        "exposicion": "OVERLIMIT" if decision.get("requires_release") and decision.get("reason_code") == "OVERLIMIT" else decision.get("status"),
+        "semaforo": "ROJO" if decision.get("requires_release") else "VERDE",
+        "payment_trend": decision.get("payment_trend"),
+        "overdue_ar": decision.get("overdue_ar"),
+        "overdue_invoice_count": decision.get("overdue_invoice_count"),
+        "max_days_overdue": decision.get("max_days_overdue"),
+        "risk_alerts": decision.get("risk_alerts"),
+        "risk_summary": decision.get("risk_summary"),
+        "order_to_cash": decision,
+    }
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
 

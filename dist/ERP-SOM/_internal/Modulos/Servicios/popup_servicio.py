@@ -1,11 +1,12 @@
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, simpledialog
 import re
 from Modulos.Servicios.widgets.date_picker import DatePicker
 from Modulos.Servicios.widgets.time_picker import TimePicker
 from Modulos.Servicios.date_utils import LONG_DATE_FORMAT, to_db_date
 from api_client import (
     post_servicio,
+    check_order_to_cash_credit_api,
     get_clientes_api,
     get_continentes_cpp_api,
     get_paises_cpp_api,
@@ -511,6 +512,56 @@ class PopupServicio(tk.Toplevel):
         }
 
         try:
+            projected_amount = honorarios_val + costo_op_val
+            decision = check_order_to_cash_credit_api(
+                data["cliente"],
+                projected_amount=projected_amount,
+                currency="USD",
+            )
+            alerts = decision.get("risk_alerts") or []
+            trend = decision.get("payment_trend") or {}
+            if decision.get("requires_release"):
+                msg = (
+                    f"{decision.get('message')}\n\n"
+                    f"Limite: {decision.get('currency')} {float(decision.get('credit_limit') or 0):,.2f}\n"
+                    f"CxC pendiente: {decision.get('currency')} {float(decision.get('open_ar') or 0):,.2f}\n"
+                    f"CxC vencida: {decision.get('currency')} {float(decision.get('overdue_ar') or 0):,.2f}\n"
+                    f"Exposicion proyectada: {decision.get('currency')} {float(decision.get('projected_exposure') or 0):,.2f}\n"
+                    f"Exceso: {decision.get('currency')} {float(decision.get('over_amount') or 0):,.2f}\n"
+                    f"Payment trend: {trend.get('label') or trend.get('trend') or 'Sin datos'}\n"
+                    f"Estado credito: {decision.get('estado_credito') or '-'} | Hold manual: {'Si' if decision.get('hold_manual') else 'No'}\n\n"
+                    + ("\n".join(f"- {a}" for a in alerts) + "\n\n" if alerts else "")
+                    + "Desea liberar y continuar con el servicio?"
+                )
+                if not messagebox.askyesno("Credit Hold / Release", msg, parent=self):
+                    return
+                reason = simpledialog.askstring(
+                    "Justificacion release",
+                    "Indique la justificacion del release crediticio:",
+                    parent=self,
+                )
+                if not str(reason or "").strip():
+                    messagebox.showwarning(
+                        "Release requerido",
+                        "Debe indicar una justificacion para aprobar el release crediticio.",
+                        parent=self,
+                    )
+                    return
+                data["credit_release_approved"] = True
+                data["credit_release_reason"] = reason.strip()
+            elif decision.get("advisory_requires_ack"):
+                msg = (
+                    f"{decision.get('message')}\n\n"
+                    f"Limite: {decision.get('currency')} {float(decision.get('credit_limit') or 0):,.2f}\n"
+                    f"CxC pendiente: {decision.get('currency')} {float(decision.get('open_ar') or 0):,.2f}\n"
+                    f"CxC vencida: {decision.get('currency')} {float(decision.get('overdue_ar') or 0):,.2f}\n"
+                    f"Disponible proyectado: {decision.get('currency')} {float(decision.get('available') or 0):,.2f}\n"
+                    f"Payment trend: {trend.get('label') or trend.get('trend') or 'Sin datos'}\n\n"
+                    + ("\n".join(f"- {a}" for a in alerts) + "\n\n" if alerts else "")
+                    + "Desea continuar con el servicio?"
+                )
+                if not messagebox.askyesno("Alerta crediticia", msg, parent=self):
+                    return
             resp = post_servicio(data)
             if resp.get("status") == "OK":
                 messagebox.showinfo(

@@ -16,6 +16,7 @@ import uuid
 
 from database import get_db
 from rbac_service import has_permission
+from routers.servicios_precios import _ensure_precios_company
 from services.tenanting import company_code
 from services.cotizacion_export_service import export_cotizacion_pdf, export_cotizacion_word
 
@@ -273,10 +274,16 @@ def _build_quote_text(row: dict) -> str:
     "/meta",
     dependencies=[Depends(require_permission("comercial", "view"))]
 )
-def get_cotizaciones_meta(conn=Depends(get_db)):
+def get_cotizaciones_meta(
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+    conn=Depends(get_db),
+):
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     try:
+        selected_company = company_code(header_value=x_company_code)
+        _ensure_precios_company(cur)
+        conn.commit()
         # Clientes
         cur.execute("""
             SELECT
@@ -285,8 +292,9 @@ def get_cotizaciones_meta(conn=Depends(get_db)):
             FROM cliente
             WHERE nombrejuridico IS NOT NULL
               AND TRIM(nombrejuridico) <> ''
+              AND COALESCE(NULLIF(TRIM(company_code::text), ''), 'MSL-CR') = %(company_code)s
             ORDER BY nombre;
-        """)
+        """, {"company_code": selected_company})
         clientes = cur.fetchall() or []
 
         # Servicios
@@ -331,12 +339,13 @@ def get_cotizaciones_meta(conn=Depends(get_db)):
                 activo
             FROM servicios_precios
             WHERE activo = TRUE
+              AND COALESCE(NULLIF(TRIM(company_code::text), ''), 'MSL-CR') = %(company_code)s
               AND cliente IS NOT NULL
               AND TRIM(cliente) <> ''
               AND servicio IS NOT NULL
               AND TRIM(servicio) <> ''
             ORDER BY cliente, servicio, continente, pais, puerto;
-        """)
+        """, {"company_code": selected_company})
         precios = cur.fetchall() or []
 
         return {

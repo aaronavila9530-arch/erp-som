@@ -349,6 +349,18 @@ def _append_account_filter(conditions, params, account_code: str | None):
     params.extend(values)
 
 
+def _append_origin_filter(conditions, params, origin: str | None):
+    origin = str(origin or "").strip().upper()
+    if not origin or origin == "TODOS":
+        return
+    if origin == "ITP":
+        conditions.append("e.origin = ANY(%s)")
+        params.append(["ITP", "ITP_PAYMENT", "ITP_BIWEEKLY_PAYMENT"])
+        return
+    conditions.append("e.origin = %s")
+    params.append(origin)
+
+
 def _fetch_accounting_report_lines(
     conn,
     period: str | None = None,
@@ -359,7 +371,7 @@ def _fetch_accounting_report_lines(
 ):
     _ensure_accounting_professional_schema(conn)
     cur = conn.cursor(cursor_factory=RealDictCursor)
-    conditions = ["e.workflow_status = 'POSTED'", "e.entry_date <= CURRENT_DATE"]
+    conditions = ["e.workflow_status = 'POSTED'"]
     params = []
 
     if period:
@@ -374,9 +386,7 @@ def _fetch_accounting_report_lines(
         conditions.append("e.period <= %s")
         params.append(period_to)
 
-    if origin and origin != "TODOS":
-        conditions.append("e.origin = %s")
-        params.append(origin)
+    _append_origin_filter(conditions, params, origin)
 
     _append_account_filter(conditions, params, account_code)
 
@@ -1599,9 +1609,7 @@ def get_accounting_validation_alerts(
     if period_to:
         conditions.append("e.period <= %s")
         params.append(period_to)
-    if origin and origin != "TODOS":
-        conditions.append("e.origin = %s")
-        params.append(origin)
+    _append_origin_filter(conditions, params, origin)
     where = "WHERE " + " AND ".join(conditions) if conditions else ""
 
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -2015,13 +2023,13 @@ def get_accounting_ledger(
     company = _company_code(company_code, x_company_code)
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
-    conditions = ["e.entry_date <= CURRENT_DATE", "e.company_code = %s"]
+    conditions = ["e.company_code = %s"]
     params = [company]
 
     # -----------------------------
     # VALIDACIONES
     # -----------------------------
-    if origin and not period:
+    if origin and not (period or period_from or period_to):
         raise HTTPException(
             status_code=400,
             detail="period es obligatorio cuando se filtra por origin"
@@ -2040,9 +2048,7 @@ def get_accounting_ledger(
         conditions.append("e.period <= %s")
         params.append(period_to)
 
-    if origin:
-        conditions.append("e.origin = %s")
-        params.append(origin)
+    _append_origin_filter(conditions, params, origin)
 
     _append_account_filter(conditions, params, account_code)
 

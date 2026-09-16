@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from psycopg2.extras import RealDictCursor
 from datetime import date
+from decimal import Decimal, ROUND_HALF_UP
 import os
 from fastapi.responses import FileResponse
 
@@ -80,8 +81,8 @@ def calcular_renta(monto: float) -> float:
 def _payroll_rates(pago: str) -> tuple[float, float, bool]:
     is_quincenal = "QUINC" in ((pago or "").upper())
     return (
-        0.0517 if is_quincenal else 0.1034,
-        0.085 if is_quincenal else 0.17,
+        0.1083 if is_quincenal else 0.1083,
+        0.17 if is_quincenal else 0.17,
         is_quincenal,
     )
 
@@ -95,9 +96,104 @@ def _income_tax_for_period(salario_bruto: float, salario_mensual: float, is_quin
 
 def _payroll_rates_for_stored_run(salario_bruto: float, salario_mensual: float, pago: str) -> tuple[float, float, bool]:
     deduccion_rate, patronal_rate, is_quincenal = _payroll_rates(pago)
-    if is_quincenal and salario_mensual and salario_bruto > (salario_mensual / 2 + 1):
-        return 0.1034, 0.17, is_quincenal
     return deduccion_rate, patronal_rate, is_quincenal
+
+
+def _money(value) -> Decimal:
+    return Decimal(str(value or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def _insert_payroll_adjustment_entry(cur, run: dict, before: dict, after: dict, user_name: str, deduccion_rate: float, patronal_rate: float):
+    old_gross = _money(before.get("salario_bruto"))
+    new_gross = _money(after.get("salario_bruto"))
+    old_net = _money(before.get("salario_neto"))
+    new_net = _money(after.get("salario_neto"))
+    gross_delta = _money(new_gross - old_gross)
+    net_delta = _money(new_net - old_net)
+    if gross_delta == 0 and net_delta == 0:
+        return None
+
+    worker_delta = _money(gross_delta * Decimal(str(deduccion_rate)))
+    employer_delta = _money(gross_delta * Decimal(str(patronal_rate)))
+    tax_delta = _money(calcular_renta(float(new_gross)) - calcular_renta(float(old_gross)))
+    bonus_delta = _money(gross_delta * Decimal("0.0833"))
+    vacation_delta = _money(gross_delta * Decimal("0.0417"))
+
+    def signed_line(code, name, debit, credit, description):
+        debit = _money(debit)
+        credit = _money(credit)
+        if debit < 0 or credit < 0:
+            return {
+                "account_code": code,
+                "account_name": name,
+                "debit": abs(credit),
+                "credit": abs(debit),
+                "line_description": description,
+            }
+        return {
+            "account_code": code,
+            "account_name": name,
+            "debit": debit,
+            "credit": credit,
+            "line_description": description,
+        }
+
+    detail = f"Ajuste Payroll {run.get('usuario')} {run.get('year')}-{int(run.get('month')):02d}"
+    lines = [
+        signed_line("500-001-001-001", "Sueldos", gross_delta, 0, f"{detail} - ajuste salario bruto"),
+        signed_line("500-001-001-002", "Cargas Sociales", employer_delta, 0, f"{detail} - ajuste carga patronal"),
+        signed_line("500-001-001-003", "Aguinaldos", bonus_delta, 0, f"{detail} - ajuste aguinaldo"),
+        signed_line("500-001-001-004", "Vacaciones", vacation_delta, 0, f"{detail} - ajuste vacaciones"),
+        signed_line("2.1.05.01", "Obligaciones patronales por pagar-CCSS", 0, employer_delta, f"{detail} - ajuste CCSS patronal"),
+        signed_line("2.1.03.01", "Retenciones obreras por pagar-CCSS", 0, worker_delta, f"{detail} - ajuste CCSS obrera"),
+        signed_line("2.1.02.07", "Salarios por pagar", 0, net_delta, f"{detail} - ajuste salario neto"),
+        signed_line("2.1.04.03", "Provision aguinaldo", 0, bonus_delta, f"{detail} - ajuste reserva aguinaldo"),
+        signed_line("2.1.04.01", "Provision vacaciones", 0, vacation_delta, f"{detail} - ajuste reserva vacaciones"),
+    ]
+    if tax_delta != 0:
+        lines.insert(6, signed_line("2.1.02.04", "Impuesto de renta por pagar", 0, tax_delta, f"{detail} - ajuste renta salarial"))
+
+    total_debit = sum(_money(line["debit"]) for line in lines)
+    total_credit = sum(_money(line["credit"]) for line in lines)
+    if total_debit != total_credit:
+        raise HTTPException(500, f"Ajuste Payroll descuadrado: debe {total_debit} haber {total_credit}")
+
+    current_period = date.today().strftime("%Y-%m")
+    cur.execute(
+        """
+        INSERT INTO accounting_entries(
+            entry_date, period, description, origin, origin_id, created_by,
+            workflow_status, company_code, posting_metadata
+        )
+        VALUES(CURRENT_DATE, %s, %s, 'PAYROLL_ADJUSTMENT', %s, %s, 'POSTED', 'MSL-CR', %s::jsonb)
+        RETURNING id
+        """,
+        (
+            current_period,
+            f"{detail} - bruto {old_gross} -> {new_gross}",
+            str(run.get("id")),
+            user_name,
+            __import__("json").dumps({
+                "payroll_run_id": run.get("id"),
+                "usuario": run.get("usuario"),
+                "payroll_period": f"{run.get('year')}-{int(run.get('month')):02d}",
+                "old_gross": str(old_gross),
+                "new_gross": str(new_gross),
+                "old_net": str(old_net),
+                "new_net": str(new_net),
+            }),
+        ),
+    )
+    entry_id = cur.fetchone()["id"]
+    for line in lines:
+        cur.execute(
+            """
+            INSERT INTO accounting_lines(entry_id, account_code, account_name, debit, credit, line_description)
+            VALUES(%s,%s,%s,%s,%s,%s)
+            """,
+            (entry_id, line["account_code"], line["account_name"], line["debit"], line["credit"], line["line_description"]),
+        )
+    return entry_id
 
 # ============================================================
 # 1️⃣ LISTADO BASE PAYROLL (TABLA FIJA)
@@ -242,7 +338,7 @@ def calcular_payroll(
 
     salario_base_mensual = float(emp["salario"] or 0)
     pago = (emp["pago"] or "").upper()
-    salario_base = salario_base_mensual / 2 if "QUINC" in pago else salario_base_mensual
+    salario_base = salario_base_mensual
     jornada = (emp["jornada"] or "").upper()
     hours_policy = _employee_hours_policy(emp)
 
@@ -270,9 +366,6 @@ def calcular_payroll(
         tope_ordinario = float(hours_policy.get("tope_ordinario") or emp["horas_contratadas"] or 0)
         tarifa_hora_extra = float(hours_policy.get("tarifa_hora_extra") or 0)
         salario_base = float(hours_policy.get("salario_base_mensual") or salario_base_mensual or salario_base)
-        if "QUINC" in pago:
-            salario_base = salario_base / 2
-
         horas_ot = max(horas_registradas - tope_ordinario, 0) if tope_ordinario else horas_registradas
         pago_horas_extra = round(horas_ot * tarifa_hora_extra, 2) if tarifa_hora_extra else 0.0
 
@@ -292,6 +385,18 @@ def calcular_payroll(
     )
 
     cargas_patronales = round(salario_bruto * patronal_rate, 2)
+    salario_neto_quincena_1 = None
+    salario_neto_quincena_2 = None
+    salario_neto_mensual_estimado = None
+    if is_quincenal:
+        base_quincenal = round(salario_base_mensual / 2, 2)
+        neto_q1 = round(base_quincenal - (base_quincenal * deduccion_rate), 2)
+        bruto_q2 = round(base_quincenal + pago_horas_extra, 2)
+        renta_q2 = round(impuesto_renta / 2, 2)
+        neto_q2 = round(bruto_q2 - (bruto_q2 * deduccion_rate) - renta_q2, 2)
+        salario_neto_quincena_1 = neto_q1
+        salario_neto_quincena_2 = neto_q2
+        salario_neto_mensual_estimado = round(neto_q1 + neto_q2, 2)
 
     # --------------------------------------------------------
     # RESPONSE
@@ -306,6 +411,7 @@ def calcular_payroll(
         "year": year,
         "month": month,
         "salario_base": round(salario_base, 2),
+        "salario_base_quincenal": round(salario_base_mensual / 2, 2) if is_quincenal else None,
         "horas_registradas": round(horas_registradas, 2),
         "horas_ot": round(horas_ot, 2),
         "pago_horas_extra": pago_horas_extra,
@@ -313,6 +419,9 @@ def calcular_payroll(
         "deducciones_trabajador": deducciones_trabajador,
         "impuesto_renta": impuesto_renta,
         "salario_neto": salario_neto,
+        "salario_neto_quincena_1": salario_neto_quincena_1,
+        "salario_neto_quincena_2": salario_neto_quincena_2,
+        "salario_neto_mensual_estimado": salario_neto_mensual_estimado,
         "cargas_patronales": cargas_patronales,
         "costo_total_empresa": round(salario_bruto + cargas_patronales, 2)
     }
@@ -462,6 +571,88 @@ def listar_payslips(
         "page_size": page_size,
         "total": total,
         "data": rows
+    }
+
+
+@router.put(
+    "/runs/{run_id}",
+    dependencies=[Depends(require_permission("hhrr", "generate"))]
+)
+def actualizar_payroll_run(
+    run_id: int,
+    payload: dict,
+    user=Depends(get_current_user),
+    conn=Depends(get_db)
+):
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute(
+        """
+        SELECT id, usuario, year, month, salario_bruto, salario_neto, monto_horas_extra
+        FROM payroll_runs
+        WHERE id = %s
+        LIMIT 1
+        """,
+        (run_id,),
+    )
+    run = cur.fetchone()
+    if not run:
+        raise HTTPException(404, "Planilla no encontrada")
+
+    cur.execute(
+        """
+        SELECT salario, pago
+        FROM empleados
+        WHERE usuario = %s
+        LIMIT 1
+        """,
+        (run["usuario"],),
+    )
+    emp = cur.fetchone() or {}
+    try:
+        salario_bruto = round(float(payload.get("salario_bruto")), 2)
+    except Exception:
+        raise HTTPException(400, "Salario bruto invalido")
+    if salario_bruto <= 0:
+        raise HTTPException(400, "Salario bruto debe ser mayor a cero")
+
+    pago = (emp.get("pago") or "").upper()
+    deduccion_rate, patronal_rate, is_quincenal = _payroll_rates(pago)
+    impuesto_renta = calcular_renta(salario_bruto)
+    deducciones_trabajador = round(salario_bruto * deduccion_rate, 2)
+    salario_neto = round(salario_bruto - deducciones_trabajador - impuesto_renta, 2)
+    monto_horas_extra = round(float(payload.get("pago_horas_extra", run.get("monto_horas_extra") or 0) or 0), 2)
+
+    cur.execute(
+        """
+        UPDATE payroll_runs
+           SET salario_bruto = %s,
+               salario_neto = %s,
+               monto_horas_extra = %s,
+               generado_por = %s
+         WHERE id = %s
+        RETURNING id, usuario, year, month, salario_neto, salario_bruto, horas_extra, monto_horas_extra, generado_por
+        """,
+        (salario_bruto, salario_neto, monto_horas_extra, user["usuario"], run_id),
+    )
+    updated = cur.fetchone()
+    adjustment_entry_id = _insert_payroll_adjustment_entry(
+        cur=cur,
+        run=run,
+        before=run,
+        after=updated,
+        user_name=user["usuario"],
+        deduccion_rate=deduccion_rate,
+        patronal_rate=patronal_rate,
+    )
+    conn.commit()
+    return {
+        "status": "ok",
+        "data": updated,
+        "adjustment_entry_id": adjustment_entry_id,
+        "deducciones_trabajador": deducciones_trabajador,
+        "impuesto_renta": impuesto_renta,
+        "cargas_patronales": round(salario_bruto * patronal_rate, 2),
+        "is_quincenal": is_quincenal,
     }
 
 

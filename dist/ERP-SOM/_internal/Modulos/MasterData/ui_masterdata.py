@@ -62,7 +62,7 @@ class MasterDataUI(tk.Frame):
             frame,
             textvariable=self.tipo_var,
             state="readonly",
-            values=["Todos", "Empleado", "Surveyor", "Cliente", "Proveedor", "Servicio"],
+            values=["Todos", "Empleado", "Surveyor", "Cliente", "Proveedor", "Servicio", "Puerto"],
             width=14
         )
         self.cbo_tipo.grid(row=0, column=1, padx=5)
@@ -137,6 +137,10 @@ class MasterDataUI(tk.Frame):
         btn_serv = tk.Button(frame, text="➕ Servicio", bg="#005A9C", fg="white",
                              width=15, command=self._add_servicio)
         btn_serv.grid(row=0, column=4, padx=5)
+
+        btn_port = tk.Button(frame, text="➕ Puerto", bg="#005A9C", fg="white",
+                             width=15, command=self._add_puerto)
+        btn_port.grid(row=0, column=5, padx=5)
 
         btn_export = tk.Button(frame, text="Exportar form", bg="#00703C", fg="white",
                                width=16, command=self._export_masterdata_form)
@@ -456,6 +460,10 @@ class MasterDataUI(tk.Frame):
             self.mostrar_tabla_servicios()
             return
 
+        if tipo == "Puerto":
+            self.mostrar_tabla_puertos()
+            return
+
         if tipo == "Proveedor":
             self.mostrar_tabla_proveedores()
             return
@@ -708,6 +716,11 @@ class MasterDataUI(tk.Frame):
             messagebox.showerror("Error API", str(e))
 
 
+    def _add_puerto(self):
+        self.mostrar_tabla_puertos()
+        messagebox.showinfo("Puertos", "Use Agregar puerto dentro de la tabla para crear el registro.")
+
+
 
     # ======================================================
     # Mostrar tabla Servicios
@@ -721,6 +734,21 @@ class MasterDataUI(tk.Frame):
 
         # Crear nueva vista SAP
         tabla = TablaServiciosUI(
+            parent=self.table_frame,
+            on_back=self._volver_inicio
+        )
+        tabla.pack(fill="both", expand=True)
+
+    # ======================================================
+    # Mostrar tabla Puertos
+    # ======================================================
+    def mostrar_tabla_puertos(self):
+        from Modulos.MasterData.tablas.tabla_puertos import TablaPuertosUI
+
+        for w in self.table_frame.winfo_children():
+            w.destroy()
+
+        tabla = TablaPuertosUI(
             parent=self.table_frame,
             on_back=self._volver_inicio
         )

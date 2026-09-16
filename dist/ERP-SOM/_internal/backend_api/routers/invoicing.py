@@ -186,11 +186,16 @@ def emitir_factura_anticipada(
                 "cliente": nombre_cliente,
                 "buque": payload.get("buque"),
                 "operacion": payload.get("operacion"),
+                "survey": payload.get("survey") or payload.get("operacion"),
+                "place": payload.get("place") or payload.get("lugar"),
+                "puerto": payload.get("puerto"),
+                "pais": payload.get("pais"),
                 "num_informe": payload.get("num_informe"),
                 "periodo": payload.get("periodo_operacion"),
                 "descripcion": descripcion,
                 "moneda": moneda,
                 "termino_pago": termino_pago,
+                "payment_terms": payload.get("payment_terms"),
                 "total": total
             }
 

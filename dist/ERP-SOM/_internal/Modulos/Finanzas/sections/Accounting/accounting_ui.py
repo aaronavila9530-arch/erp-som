@@ -65,23 +65,6 @@ class AccountingUI(tk.Frame):
         self._outlook_job_running = False
         self.after(60000, self._outlook_auto_tick)
 
-    def _minimize_window(self):
-        top = self.winfo_toplevel()
-        try:
-            top.state("iconic")
-        except tk.TclError:
-            top.iconify()
-
-    def _toggle_maximize_window(self):
-        top = self.winfo_toplevel()
-        try:
-            top.state("normal" if top.state() == "zoomed" else "zoomed")
-        except tk.TclError:
-            current = bool(getattr(self, "_is_fullscreen_window", False))
-            top.attributes("-fullscreen", not current)
-            self._is_fullscreen_window = not current
-
-
     # ============================================================
     # UI
     # ============================================================
@@ -95,18 +78,6 @@ class AccountingUI(tk.Frame):
             font=("Segoe UI", 16, "bold"),
             bg="white"
         ).pack(side="left")
-
-        ttk.Button(
-            header,
-            text="Minimizar",
-            command=self._minimize_window
-        ).pack(side="right", padx=(6, 0))
-
-        ttk.Button(
-            header,
-            text="Maximizar / Restaurar",
-            command=self._toggle_maximize_window
-        ).pack(side="right", padx=(6, 0))
 
         tk.Label(
             self,
@@ -203,8 +174,8 @@ class AccountingUI(tk.Frame):
         tk.Label(filter_frame, text="Origen", bg="white").grid(row=1, column=0)
         self.cmb_source = ttk.Combobox(
             filter_frame,
-            values=["TODOS", "ITP", "COLLECTIONS", "INVOICING", "MANUAL", "CASH_APP"],
-            width=15,
+            values=["TODOS", "ITP", "ITP_PAYMENT", "ITP_BIWEEKLY_PAYMENT", "COLLECTIONS", "INVOICING", "MANUAL", "CASH_APP"],
+            width=22,
             state="readonly"
         )
         self.cmb_source.grid(row=1, column=1, columnspan=2, padx=5)

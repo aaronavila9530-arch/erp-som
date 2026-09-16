@@ -593,7 +593,7 @@ def sync_payroll_to_accounting(conn):
         _ensure_account("2.1.05.01", "Obligaciones patronales por pagar-CCSS", 4, "LIABILITY", "2.1.05")
 
         cur.execute("""
-            SELECT id, usuario, year, month, salario_bruto, creado_en
+            SELECT id, usuario, year, month, salario_bruto, monto_horas_extra, creado_en
             FROM payroll_runs
             ORDER BY id
         """)
@@ -615,9 +615,14 @@ def sync_payroll_to_accounting(conn):
 
             if is_quincenal:
                 monthly_gross = gross * Decimal("2") if _is_half_run(gross, employee_salary) else gross
-                half_gross = _money(monthly_gross / Decimal("2"))
                 half_tax = _money(_monthly_income_tax(monthly_gross) / Decimal("2"))
                 total_net_salary = Decimal("0.00")
+                monthly_extra = _money(payroll.get("monto_horas_extra"))
+                base_monthly = _money(monthly_gross - monthly_extra)
+                if base_monthly <= 0:
+                    base_monthly = monthly_gross
+                    monthly_extra = Decimal("0.00")
+                half_base = _money(base_monthly / Decimal("2"))
 
                 for payroll_origin, payment_origin, day, label in (
                     ("PAYROLL", "PAYROLL_PAYMENT", 15, "Quincena 1"),
@@ -625,11 +630,12 @@ def sync_payroll_to_accounting(conn):
                 ):
                     piece_detail = f"{detail} - {label}"
                     entry_date = _entry_date(payroll["year"], payroll["month"], day)
+                    period_gross = half_base + (monthly_extra if label == "Quincena 2" else Decimal("0.00"))
                     lines, net_salary = _payroll_lines(
-                        half_gross,
+                        period_gross,
                         piece_detail,
-                        Decimal("0.0517"),
-                        Decimal("0.0850"),
+                        Decimal("0.1083"),
+                        Decimal("0.1700"),
                         half_tax,
                     )
                     total_net_salary += net_salary
@@ -1399,9 +1405,15 @@ def sync_itp_to_accounting(conn):
             )
             CARD_PAYABLE_CODE = "2.1.02.10"
             CARD_PAYABLE_NAME = "Tarjeta corporativa BAC por pagar"
+            HAZEL_CONTRIBUTION_CODE = "3.1.99"
+            HAZEL_CONTRIBUTION_NAME = "Aportes de terceros - Hazel Barrantes"
             payment_method = (ob.get("payment_method") or "").upper()
             paid_with_card = bool(ob.get("paid_with_card")) or payment_method == "CARD_BAC_3155" or str(ob.get("payment_card_last4") or "").strip() == "3155"
-            if paid_with_card:
+            paid_by_hazel = payment_method == "THIRD_PARTY_HAZEL"
+            if paid_by_hazel:
+                BANK_CODE = HAZEL_CONTRIBUTION_CODE
+                BANK_NAME = HAZEL_CONTRIBUTION_NAME
+            elif paid_with_card:
                 BANK_CODE = CARD_PAYABLE_CODE
                 BANK_NAME = CARD_PAYABLE_NAME
 
@@ -1416,6 +1428,7 @@ def sync_itp_to_accounting(conn):
             _ensure_account(WITHHOLDING_CODE, WITHHOLDING_NAME, "LIABILITY", "CREDIT", "2.1.02")
             _ensure_account(SURVEYOR_DEDUCTION_CODE, SURVEYOR_DEDUCTION_NAME, "LIABILITY", "CREDIT", "2.1.02")
             _ensure_account(CARD_PAYABLE_CODE, CARD_PAYABLE_NAME, "LIABILITY", "CREDIT", "2.1.02")
+            _ensure_account(HAZEL_CONTRIBUTION_CODE, HAZEL_CONTRIBUTION_NAME, "EQUITY", "CREDIT", "3.1")
 
             def _first_existing(candidates):
                 for code, name in candidates:
@@ -1550,9 +1563,9 @@ def sync_itp_to_accounting(conn):
                     continue
                 payment_period = payment_date.strftime("%Y-%m")
                 payment_detail = (
-                    f"From ITP Payment by BAC card 3155 to {payee_name}"
-                    if paid_with_card
-                    else f"From ITP Payment done to {payee_name}"
+                    f"From ITP Payment by Hazel Barrantes to {payee_name}"
+                    if paid_by_hazel
+                    else (f"From ITP Payment by BAC card 3155 to {payee_name}" if paid_with_card else f"From ITP Payment done to {payee_name}")
                 )
 
                 if not bank_account_ok:
