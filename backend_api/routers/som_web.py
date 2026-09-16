@@ -1230,9 +1230,17 @@ def som_web_home() -> HTMLResponse:
       if (row.tipo_factura === "ELECTRONICA") return alert("Para ver la factura electrónica debe dirigirse a GTI.");
       window.open(`/billing/pdf/${encodeURIComponent(row.numero_documento)}`, "_blank");
     }
+    const EXCEL_TEXT_COLUMNS = new Set(["numero_documento","codigo_cliente","num_informe","referencia","factura_numero","nota_credito_numero","comprobante"]);
+    function excelCell(row, col) {
+      const raw = row[col] ?? "";
+      const value = String(raw);
+      const forceText = EXCEL_TEXT_COLUMNS.has(col) || /^0\\d+$/.test(value) || /^\\d{11,}$/.test(value);
+      if (forceText) return `<td class="text-cell" style="mso-number-format:'\\@';" x:str>${esc(value)}</td>`;
+      return `<td>${esc(raw)}</td>`;
+    }
     function downloadExcelFile(filename, rows, cols, title="Detalle") {
-      const table = `<table><thead><tr>${cols.map(c => `<th>${esc(c)}</th>`).join("")}</tr></thead><tbody>${rows.map(row => `<tr>${cols.map(c => `<td>${esc(row[c] ?? "")}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
-      const html = `<!doctype html><html><head><meta charset="utf-8" /></head><body><h3>${esc(title)}</h3>${table}</body></html>`;
+      const table = `<table><thead><tr>${cols.map(c => `<th>${esc(c)}</th>`).join("")}</tr></thead><tbody>${rows.map(row => `<tr>${cols.map(c => excelCell(row, c)).join("")}</tr>`).join("")}</tbody></table>`;
+      const html = `<!doctype html><html><head><meta charset="utf-8" /><style>.text-cell{mso-number-format:"\\@";}</style></head><body><h3>${esc(title)}</h3>${table}</body></html>`;
       downloadText(filename, html, "application/vnd.ms-excel;charset=utf-8");
     }
     function downloadWordFile(filename, htmlBody) {
