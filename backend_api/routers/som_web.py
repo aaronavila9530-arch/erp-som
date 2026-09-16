@@ -1810,7 +1810,7 @@ def som_web_home() -> HTMLResponse:
         </div>
         <div id="bankStatementMsg" class="status hidden"></div>
         <div id="bankStatementsTable" class="workspace"><div class="status">Presione Buscar extractos para cargar conciliaciones.</div></div>
-        <div id="bankStatementLinesTable" class="workspace"><div class="status">Seleccione un extracto y presione Ver líneas.</div></div>`;
+        <div id="bankStatementLinesTable" class="workspace hidden"></div>`;
       syncBankStatementActions();
     }
     function bankStatementParams() {
@@ -1857,11 +1857,14 @@ def som_web_home() -> HTMLResponse:
         const payload = await getJSON(`/bank-reconciliation/statements?${bankStatementParams()}`);
         bankStatementRows = rowsList(payload);
         renderBankStatementsTable();
-        $("bankStatementLinesTable").innerHTML = '<div class="status">Seleccione un extracto y presione Ver líneas.</div>';
         if (!bankStatementRows.length) {
-          showBankStatementMsg("Sin extractos para esta consulta. Cambie filtros o importe un CSV.", false);
+          clearBankStatementMsg();
+          $("bankStatementLinesTable").classList.add("hidden");
+          $("bankStatementLinesTable").innerHTML = "";
         } else {
           clearBankStatementMsg();
+          $("bankStatementLinesTable").classList.remove("hidden");
+          $("bankStatementLinesTable").innerHTML = '<div class="status">Seleccione un extracto y presione Ver líneas.</div>';
         }
         syncBankStatementActions();
       } catch (err) {
@@ -1873,7 +1876,7 @@ def som_web_home() -> HTMLResponse:
     function renderBankStatementsTable() {
       const table = $("bankStatementsTable");
       if (!bankStatementRows.length) {
-        table.innerHTML = '<div class="status">Sin extractos para esta consulta.</div>';
+        table.innerHTML = '<div class="status">Sin extractos para esta consulta. Cambie filtros o importe un CSV.</div>';
         return;
       }
       const cols = ["id","bank_name","bank_account_code","currency_code","statement_period","status","line_count","open_count","statement_total","matched_total","open_total"];
@@ -1898,6 +1901,7 @@ def som_web_home() -> HTMLResponse:
         return;
       }
       const table = $("bankStatementLinesTable");
+      table.classList.remove("hidden");
       table.innerHTML = '<div class="status">Consultando líneas...</div>';
       selectedBankLineIndex = null;
       selectedBankLineIndexes = new Set();
@@ -1987,7 +1991,8 @@ def som_web_home() -> HTMLResponse:
       try {
         await postJSON(`/bank-reconciliation/statements/${encodeURIComponent(selectedBankStatementId)}/close`, { note, force_close:force });
         await loadBankStatements();
-        $("bankStatementLinesTable").innerHTML = '<div class="status">Seleccione un extracto y presione Ver líneas.</div>';
+        $("bankStatementLinesTable").classList.add("hidden");
+        $("bankStatementLinesTable").innerHTML = "";
         showBankStatementMsg("Conciliación cerrada correctamente.", false);
         syncBankStatementActions();
       } catch (err) {
@@ -2005,7 +2010,10 @@ def som_web_home() -> HTMLResponse:
       ["bankStatementAccount","bankStatementCurrency","bankStatementStatus"].forEach(id => { if ($(id)) $(id).value = ""; });
       if ($("bankStatementPeriod")) $("bankStatementPeriod").value = new Date().toISOString().slice(0,7);
       if ($("bankStatementsTable")) $("bankStatementsTable").innerHTML = '<div class="status">Presione Buscar extractos para cargar conciliaciones.</div>';
-      if ($("bankStatementLinesTable")) $("bankStatementLinesTable").innerHTML = '<div class="status">Seleccione un extracto y presione Ver líneas.</div>';
+      if ($("bankStatementLinesTable")) {
+        $("bankStatementLinesTable").classList.add("hidden");
+        $("bankStatementLinesTable").innerHTML = "";
+      }
       if ($("bankStatementMsg")) $("bankStatementMsg").className = "status hidden";
       syncBankStatementActions();
     }
