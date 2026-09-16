@@ -557,8 +557,13 @@ def som_web_home() -> HTMLResponse:
     let selectedBankLineIndexes = new Set();
     let selectedGenericFinanceIndexes = new Set();
     let selectedPaidInvoiceIndexes = new Set();
+    let disputeRows = [];
+    let disputeHistoryRows = [];
+    let selectedDisputeIndex = null;
+    let selectedDisputeIndexes = new Set();
     let financeClientes = [];
     let financeClienteRows = [];
+    const DISPUTE_STATUSES = ["New","In process","Process by Sales","Process by RTR","Process by Invoicing","Process by Collections","Process by Bank","Process by Disputes","Written Off","Resolved"];
     const SERVICE_COLUMNS = [
       "consec","tipo","estado","credit_status","credit_release_by","credit_release_at","credit_decision","num_informe","buque_contenedor","cliente","contacto","detalle",
       "continente","pais","puerto","operacion","surveyor","honorarios","costo_operativo",
@@ -2076,9 +2081,193 @@ def som_web_home() -> HTMLResponse:
     }
     function renderDisputesWeb(target=orderCashWorkspace()) {
       target.innerHTML = `
-        <div class="panel-head"><h2>Disputes</h2><span class="muted">Disputas de facturación y cobro</span></div>
-        <div class="service-actions"><button onclick="loadGenericFinance('/dispute-management?page=1&page_size=100','disputesWorkspace')">Buscar</button></div>
-        <div id="disputesWorkspace" class="status">Presione Buscar para consultar Disputes.</div>`;
+        <div class="panel-head">
+          <h2>Disputes</h2>
+          <span class="muted">Gestión de disputas de facturación y cobro</span>
+        </div>
+        <div class="finance-filter-row compact">
+          <label>Cliente<select id="disputeCliente" onpointerdown="loadFinanceClientCombos()" onfocus="loadFinanceClientCombos()"><option value="">Todos</option></select></label>
+          <label>Status<select id="disputeStatus"><option value="">Todos</option>${DISPUTE_STATUSES.map(s => `<option>${esc(s)}</option>`).join("")}</select></label>
+          <button onclick="loadDisputes()">Buscar</button>
+          <button class="secondary" onclick="clearDisputes()">Limpiar</button>
+        </div>
+        <div class="finance-toolbar">
+          <button onclick="openSelectedDisputeManagement()">Gestionar Disputa</button>
+          <button class="secondary" onclick="openSelectedDisputeHistory()">Ver historial</button>
+          <button class="secondary" onclick="downloadDisputesExcel()">Exportar Excel</button>
+        </div>
+        <div id="disputesKpis" class="grid kpis hidden"></div>
+        <div id="disputesMsg" class="status hidden"></div>
+        <div id="disputesTable" class="workspace"><div class="status">Seleccione filtros y presione Buscar para consultar Disputes.</div></div>`;
+    }
+    function disputeParams() {
+      const params = new URLSearchParams({ page:"1", page_size:"100" });
+      const cliente = valueFrom("disputeCliente");
+      if (cliente) params.set("cliente", cliente);
+      return params.toString();
+    }
+    async function loadDisputes() {
+      const msg = $("disputesMsg");
+      const table = $("disputesTable");
+      selectedDisputeIndex = null;
+      selectedDisputeIndexes = new Set();
+      disputeHistoryRows = [];
+      msg.className = "status";
+      msg.textContent = "Consultando Disputes...";
+      try {
+        await loadFinanceClientCombos();
+        const [payload, kpis] = await Promise.all([
+          getJSON(`/dispute-management?${disputeParams()}`),
+          getJSON("/dispute-management/kpis/summary").catch(() => null)
+        ]);
+        const status = valueFrom("disputeStatus");
+        disputeRows = rowsList(payload).filter(row => !status || String(row.status || "New") === status);
+        msg.classList.add("hidden");
+        renderDisputesKpis(kpis);
+        renderDisputesTable();
+      } catch (err) {
+        disputeRows = [];
+        table.innerHTML = "";
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    function clearDisputes() {
+      ["disputeCliente","disputeStatus"].forEach(id => { if ($(id)) $(id).value = ""; });
+      disputeRows = [];
+      disputeHistoryRows = [];
+      selectedDisputeIndex = null;
+      selectedDisputeIndexes = new Set();
+      $("disputesKpis")?.classList.add("hidden");
+      $("disputesMsg")?.classList.add("hidden");
+      if ($("disputesTable")) $("disputesTable").innerHTML = '<div class="status">Seleccione filtros y presione Buscar para consultar Disputes.</div>';
+    }
+    function renderDisputesKpis(kpis) {
+      const host = $("disputesKpis");
+      if (!host) return;
+      const totals = kpis || {};
+      host.classList.remove("hidden");
+      host.innerHTML = [
+        ["ADO", totals.ADO ?? 0, "Días promedio abiertos"],
+        ["DDO", totals.DDO ?? 0, "Días promedio resueltos"],
+        ["Incoming", totals.IncomingVolume ?? 0, "Disputas del mes"],
+        ["Disputed", Number(totals.DisputedAmount || 0).toLocaleString("en-US", { minimumFractionDigits:2, maximumFractionDigits:2 }), "Monto disputado abierto"]
+      ].map(([label,value,hint]) => `<div class="card kpi"><span>${esc(label)}</span><strong>${esc(value)}</strong><small>${esc(hint)}</small></div>`).join("");
+    }
+    function disputeRow() {
+      if (selectedDisputeIndex === null) selectedDisputeIndex = firstFromSet(selectedDisputeIndexes);
+      return selectedDisputeIndex === null ? null : disputeRows[selectedDisputeIndex];
+    }
+    function requireDisputeRow() {
+      const row = disputeRow();
+      if (!row) alert("Seleccione primero una disputa.");
+      return row;
+    }
+    function disputeStatusBadge(status) {
+      const text = status || "New";
+      const cls = text === "Resolved" ? "closed" : (text === "Written Off" ? "cancel" : "open");
+      return `<span class="badge ${cls}">${esc(text)}</span>`;
+    }
+    function renderDisputesTable() {
+      const table = $("disputesTable");
+      const cols = ["dispute_case","numero_documento","codigo_cliente","nombre_cliente","fecha_factura","fecha_vencimiento","monto","status","motivo","comentario","buque_contenedor","operacion","periodo_operacion","descripcion_servicio","created_at"];
+      if (!disputeRows.length) {
+        table.innerHTML = '<div class="status">Sin disputas para los filtros seleccionados.</div>';
+        return;
+      }
+      table.innerHTML = `
+        <div class="table-wrap"><table><thead><tr><th class="pick-col"></th>${cols.map(c => `<th>${esc(c.replace(/_/g," "))}</th>`).join("")}</tr></thead>
+        <tbody>${disputeRows.map((row, idx) => {
+          const selected = selectedDisputeIndexes.has(idx);
+          return `<tr class="${selected ? "service-selected" : ""}" onclick="toggleDisputeRow(${idx})">
+            <td class="pick-col"><input class="row-pick" type="checkbox" ${selected ? "checked" : ""} onclick="event.stopPropagation(); toggleDisputeRow(${idx}, this.checked)" /></td>
+            ${cols.map(c => `<td>${c === "status" ? disputeStatusBadge(row[c]) : esc(c === "monto" ? Number(row[c] || 0).toLocaleString("en-US", { minimumFractionDigits:2, maximumFractionDigits:2 }) : row[c])}</td>`).join("")}
+          </tr>`;
+        }).join("")}</tbody></table></div>`;
+    }
+    function toggleDisputeRow(idx, checked=null) {
+      const next = checked === null ? !selectedDisputeIndexes.has(idx) : checked;
+      selectedDisputeIndex = setIndexSelection(selectedDisputeIndexes, idx, next);
+      renderDisputesTable();
+    }
+    async function ensureDisputeManagement(row) {
+      const info = await postJSON(`/dispute-management/from-dispute/${encodeURIComponent(row.dispute_id)}`, {});
+      row.management_id = info.management_id;
+      row.status = info.status || row.status || "New";
+      return info;
+    }
+    async function loadDisputeHistory(managementId) {
+      disputeHistoryRows = rowsList(await getJSON(`/dispute-management/${encodeURIComponent(managementId)}/history`));
+      return disputeHistoryRows;
+    }
+    function renderDisputeHistoryRows(rows) {
+      if (!rows.length) return '<div class="status">Sin historial registrado.</div>';
+      return `<div class="table-wrap"><table><thead><tr><th>Fecha</th><th>Usuario</th><th>Comentario</th></tr></thead><tbody>${rows.map(row => `<tr><td>${esc(row.created_at)}</td><td>${esc(row.created_by)}</td><td>${esc(row.comentario)}</td></tr>`).join("")}</tbody></table></div>`;
+    }
+    async function openSelectedDisputeManagement() {
+      const row = requireDisputeRow();
+      if (!row) return;
+      try {
+        const info = await ensureDisputeManagement(row);
+        const history = await loadDisputeHistory(info.management_id);
+        document.body.insertAdjacentHTML("beforeend", `
+          <div class="modal-backdrop" id="svcModal">
+            <div class="modal">
+              <div class="modal-head"><h2>Dispute Management</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+              <div class="status">Dispute ${esc(row.dispute_case || row.dispute_id)} · Management ID ${esc(info.management_id)} · ${esc(row.nombre_cliente || "")} · ${Number(row.monto || 0).toLocaleString("en-US", { minimumFractionDigits:2, maximumFractionDigits:2 })}</div>
+              <div class="form-grid">
+                <label>Status<select id="disputeMgmtStatus">${DISPUTE_STATUSES.map(s => `<option${s === (info.status || row.status) ? " selected" : ""}>${esc(s)}</option>`).join("")}</select></label>
+                <label class="wide">Nuevo comentario<textarea id="disputeMgmtComment"></textarea></label>
+              </div>
+              <h3>Historial</h3>
+              <div id="disputeHistoryTable">${renderDisputeHistoryRows(history)}</div>
+              <div class="md-actions"><button class="green" onclick="saveDisputeStatus(${Number(info.management_id)})">Guardar cambios</button><button class="secondary" onclick="closeModal()">Cancelar</button></div>
+              <div id="disputeMgmtMsg" class="status hidden"></div>
+            </div>
+          </div>`);
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+    async function saveDisputeStatus(managementId) {
+      const msg = $("disputeMgmtMsg");
+      msg.className = "status";
+      msg.textContent = "Guardando status...";
+      try {
+        await postJSON(`/dispute-management/${encodeURIComponent(managementId)}/status`, {
+          status:valueFrom("disputeMgmtStatus"),
+          comentario:valueFrom("disputeMgmtComment"),
+          user:session?.usuario || "SOM-WEB"
+        });
+        closeModal();
+        await loadDisputes();
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    async function openSelectedDisputeHistory() {
+      const row = requireDisputeRow();
+      if (!row) return;
+      try {
+        const info = await ensureDisputeManagement(row);
+        const history = await loadDisputeHistory(info.management_id);
+        document.body.insertAdjacentHTML("beforeend", `
+          <div class="modal-backdrop" id="svcModal">
+            <div class="modal">
+              <div class="modal-head"><h2>Historial de disputa</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+              <div class="status">Dispute ${esc(row.dispute_case || row.dispute_id)} · ${esc(row.numero_documento || "")}</div>
+              ${renderDisputeHistoryRows(history)}
+            </div>
+          </div>`);
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+    function downloadDisputesExcel() {
+      if (!disputeRows.length) return alert("No hay datos para exportar.");
+      const cols = ["management_id","dispute_id","dispute_case","numero_documento","codigo_cliente","nombre_cliente","fecha_factura","fecha_vencimiento","monto","status","motivo","comentario","buque_contenedor","operacion","periodo_operacion","descripcion_servicio","ultimo_comentario","created_at"];
+      downloadExcelFile(`disputes_${new Date().toISOString().slice(0,10)}.xls`, disputeRows, cols, "Disputes - detalle");
     }
     async function ensureFinanceClientes() {
       if (financeClientes.length) return financeClientes;
@@ -2117,6 +2306,15 @@ def som_web_home() -> HTMLResponse:
           return `<option value="${esc(code)}">${esc(code)} | ${esc(name)}</option>`;
         }).join("");
         if (!financeClienteRows.length) credit.innerHTML = '<option value="">Sin clientes disponibles</option>';
+      }
+      const dispute = $("disputeCliente");
+      if (dispute && dispute.options.length <= 1) {
+        dispute.innerHTML = '<option value="">Todos</option>' + financeClienteRows.map(row => {
+          const code = financeClientId(row);
+          const name = financeClientName(row);
+          return `<option value="${esc(code)}">${esc(code)} | ${esc(name)}</option>`;
+        }).join("");
+        if (!financeClienteRows.length) dispute.innerHTML = '<option value="">Sin clientes disponibles</option>';
       }
     }
     async function renderBillingWeb(target=orderCashWorkspace()) {
