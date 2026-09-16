@@ -1087,8 +1087,8 @@ def som_web_home() -> HTMLResponse:
           <button onclick="viewSelectedCollectionInvoice()">Ver factura</button>
           <button class="brown" onclick="openCollectionDisputeForm()">Disputar</button>
           <button class="green" onclick="openCollectionPaymentForm()">Aplicar pago / NC</button>
-          <button class="secondary" onclick="downloadCollectionsCsv()">Exportar CSV</button>
-          <button class="secondary" onclick="downloadCollectionsStatement()">Estado de cuenta</button>
+          <button class="secondary" onclick="downloadCollectionsExcel()">Exportar Excel</button>
+          <button class="secondary" onclick="downloadCollectionsStatementWord()">Estado de cuenta Word</button>
         </div>
         <div id="collectionsKpis" class="grid kpis hidden"></div>
         <div id="collectionsMsg" class="status hidden"></div>
@@ -1230,15 +1230,36 @@ def som_web_home() -> HTMLResponse:
       if (row.tipo_factura === "ELECTRONICA") return alert("Para ver la factura electrónica debe dirigirse a GTI.");
       window.open(`/billing/pdf/${encodeURIComponent(row.numero_documento)}`, "_blank");
     }
-    function downloadCollectionsCsv() {
+    function downloadExcelFile(filename, rows, cols, title="Detalle") {
+      const table = `<table><thead><tr>${cols.map(c => `<th>${esc(c)}</th>`).join("")}</tr></thead><tbody>${rows.map(row => `<tr>${cols.map(c => `<td>${esc(row[c] ?? "")}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+      const html = `<!doctype html><html><head><meta charset="utf-8" /></head><body><h3>${esc(title)}</h3>${table}</body></html>`;
+      downloadText(filename, html, "application/vnd.ms-excel;charset=utf-8");
+    }
+    function downloadWordFile(filename, htmlBody) {
+      const html = `<!doctype html><html><head><meta charset="utf-8" /><style>body{font-family:Arial,sans-serif} table{border-collapse:collapse;width:100%} th,td{border:1px solid #999;padding:6px;font-size:10pt} th{background:#e9eef5}</style></head><body>${htmlBody}</body></html>`;
+      downloadText(filename, html, "application/msword;charset=utf-8");
+    }
+    function downloadCollectionsExcel() {
       if (!collectionRows.length) return alert("No hay datos para exportar.");
       const cols = ["codigo_cliente","nombre_cliente","tipo_factura","tipo_documento","numero_documento","fecha_emision","dias_credito","fecha_vencimiento","aging_dias","moneda","total","saldo_pendiente","num_informe","buque_contenedor","operacion","periodo_operacion","estado_factura","disputada"];
-      const csv = [cols.join(",")].concat(collectionRows.map(row => cols.map(c => `"${String(row[c] ?? "").replace(/"/g,'""')}"`).join(","))).join("\\n");
-      downloadText(`collections_${new Date().toISOString().slice(0,10)}.csv`, csv, "text/csv;charset=utf-8");
+      downloadExcelFile(`collections_${new Date().toISOString().slice(0,10)}.xls`, collectionRows, cols, "Collections - detalle de facturas");
     }
-    function downloadCollectionsStatement() {
+    function downloadCollectionsStatementWord() {
       if (!collectionRows.length) return alert("No hay información cargada para generar estado de cuenta.");
-      downloadCollectionsCsv();
+      const cliente = collectionRows[0]?.nombre_cliente || "Cliente";
+      const today = new Date().toISOString().slice(0,10);
+      const total = collectionRows.reduce((sum,row) => sum + Number(row.saldo_pendiente || 0), 0);
+      const overdue = collectionRows.reduce((sum,row) => sum + (Number(row.aging_dias || 0) > 0 ? Number(row.saldo_pendiente || 0) : 0), 0);
+      const cols = ["numero_documento","fecha_emision","fecha_vencimiento","aging_dias","moneda","total","saldo_pendiente","buque_contenedor","operacion","num_informe"];
+      const rows = collectionRows.map(row => `<tr>${cols.map(c => `<td>${esc(["total","saldo_pendiente"].includes(c) ? Number(row[c] || 0).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:2}) : row[c])}</td>`).join("")}</tr>`).join("");
+      const body = `
+        <h2>Estado de cuenta</h2>
+        <p><strong>Cliente:</strong> ${esc(cliente)}</p>
+        <p><strong>Fecha:</strong> ${esc(today)}</p>
+        <p><strong>Total pendiente:</strong> ${Number(total).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:2})}</p>
+        <p><strong>Overdue:</strong> ${Number(overdue).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:2})}</p>
+        <table><thead><tr>${cols.map(c => `<th>${esc(c.replace(/_/g," "))}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table>`;
+      downloadWordFile(`estado_cuenta_${String(cliente).replace(/[^a-z0-9]+/gi,"_")}_${today}.doc`, body);
     }
     function openCollectionDisputeForm() {
       const row = requireCollectionRow();
@@ -1503,7 +1524,7 @@ def som_web_home() -> HTMLResponse:
                 <button onclick="viewSelectedInvoice()">Ver Factura</button>
                 <button class="gray" onclick="openBillingEditForm()">Editar</button>
                 <button class="brown" onclick="deleteSelectedInvoice()">Eliminar / anular</button>
-                <button class="secondary" onclick="downloadBillingExport()">Exportar CSV</button>
+                <button class="secondary" onclick="downloadBillingExcel()">Exportar Excel</button>
               </div>
               <div id="billingMsg" class="status hidden"></div>
               <div id="billingTable" class="workspace"></div>
@@ -1805,11 +1826,10 @@ def som_web_home() -> HTMLResponse:
         alert(err.message);
       }
     }
-    function downloadBillingExport() {
+    function downloadBillingExcel() {
       if (!billingRows.length) return alert("No hay datos para exportar.");
       const cols = ["id","tipo_factura","tipo_documento","numero_documento","nombre_cliente","fecha_emision","moneda","total","estado"];
-      const csv = [cols.join(",")].concat(billingRows.map(row => cols.map(c => `"${String(row[c] ?? "").replace(/"/g, '""')}"`).join(","))).join("\\n");
-      downloadText(`billing_${new Date().toISOString().slice(0,10)}.csv`, csv, "text/csv;charset=utf-8");
+      downloadExcelFile(`billing_${new Date().toISOString().slice(0,10)}.xls`, billingRows, cols, "Invoicing - detalle de facturas");
     }
     async function openAdvanceInvoiceForm() {
       const clientes = await ensureFinanceClientes();
