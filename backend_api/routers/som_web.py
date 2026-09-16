@@ -2736,7 +2736,10 @@ def som_web_home() -> HTMLResponse:
           <div class="modal">
             <div class="modal-head"><h2>Facturación Anticipada</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
             <div class="form-grid">
-              <label>Cliente<select id="adv_cliente" onchange="loadAdvanceInvoiceServices()"><option value="">Seleccione cliente</option>${clientes.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join("")}</select></label>
+              <label>Cliente / código<input id="adv_cliente" list="advClientList" placeholder="Seleccione o escriba cliente" onchange="syncAdvanceClient(); loadAdvanceInvoiceServices()" oninput="syncAdvanceClient()" /></label>
+              <label>Nombre en factura<input id="adv_nombre_factura" placeholder="Nombre editable para la factura" /></label>
+              <input id="adv_codigo_cliente" type="hidden" />
+              <datalist id="advClientList">${clientes.map(c => `<option value="${esc(c)}"></option>`).join("")}</datalist>
               <label>Survey / servicio<select id="adv_service" onchange="applyAdvanceInvoiceService()"><option value="">Seleccione cliente primero</option></select></label>
               <label>Fecha emisión<input value="${new Date().toISOString().slice(0,10)}" readonly /></label>
               <label>Moneda<select id="adv_moneda"><option>USD</option><option>CRC</option></select></label>
@@ -2755,6 +2758,19 @@ def som_web_home() -> HTMLResponse:
             <div id="advMsg" class="status hidden"></div>
           </div>
         </div>`);
+    }
+    function syncAdvanceClient() {
+      const selected = valueFrom("adv_cliente");
+      const code = financeClientCode(selected);
+      if ($("adv_codigo_cliente")) $("adv_codigo_cliente").value = code;
+      const invoiceName = $("adv_nombre_factura");
+      if (invoiceName && (!invoiceName.value || invoiceName.dataset.synced === "1")) {
+        invoiceName.value = selected;
+        invoiceName.dataset.synced = "1";
+      }
+      if (invoiceName && !invoiceName.oninput) {
+        invoiceName.oninput = () => { invoiceName.dataset.synced = "0"; };
+      }
     }
     function advanceTermsDays(text) {
       const match = String(text || "").match(/(\\d+)/);
@@ -2805,7 +2821,7 @@ def som_web_home() -> HTMLResponse:
       const idx = Number(valueFrom("adv_service"));
       const row = Number.isFinite(idx) ? advanceServiceRows[idx] : null;
       if (!row) return;
-      const cliente = valueFrom("adv_cliente");
+      const cliente = valueFrom("adv_nombre_factura") || valueFrom("adv_cliente");
       $("adv_place").value = advancePlace(row);
       $("adv_buque").value = row.buque_contenedor || "";
       $("adv_survey").value = advanceSurvey(row);
@@ -2815,6 +2831,8 @@ def som_web_home() -> HTMLResponse:
     }
     async function saveAdvanceInvoice() {
       const cliente = valueFrom("adv_cliente");
+      const nombreFactura = valueFrom("adv_nombre_factura") || cliente;
+      const codigoCliente = valueFrom("adv_codigo_cliente") || financeClientCode(cliente);
       const msg = $("advMsg");
       msg.className = "status";
       msg.textContent = "Creando factura anticipada...";
@@ -2822,8 +2840,8 @@ def som_web_home() -> HTMLResponse:
         const paymentTerms = valueFrom("adv_payment_terms") || "DUE UPON RECEIPT";
         const payload = {
           tipo_factura:"MANUAL",
-          codigo_cliente:financeClientCode(cliente),
-          nombre_cliente:cliente,
+          codigo_cliente:codigoCliente,
+          nombre_cliente:nombreFactura,
           descripcion:valueFrom("adv_desc"),
           moneda:valueFrom("adv_moneda") || "USD",
           termino_pago:advanceTermsDays(paymentTerms),
@@ -2836,7 +2854,8 @@ def som_web_home() -> HTMLResponse:
           num_informe:valueFrom("adv_informe"),
           periodo_operacion:valueFrom("adv_periodo")
         };
-        if (!payload.codigo_cliente || !payload.nombre_cliente || !payload.descripcion || payload.total <= 0) throw new Error("Cliente, descripción y total son requeridos.");
+        if (!payload.codigo_cliente) throw new Error("Seleccione un cliente válido para tomar el código; luego puede corregir el Nombre en factura.");
+        if (!payload.nombre_cliente || !payload.descripcion || payload.total <= 0) throw new Error("Nombre en factura, descripción y total son requeridos.");
         const data = await postJSON("/invoicing/anticipada", payload);
         await postJSON("/collections/sync-from-invoicing", {}).catch(() => null);
         closeModal();
