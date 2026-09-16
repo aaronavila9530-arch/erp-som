@@ -378,9 +378,10 @@ def som_web_home() -> HTMLResponse:
     .tabs button { background:#fff; color:var(--ink); border:1px solid var(--line); }
     .tabs button.active { background:var(--blue); color:#fff; border-color:var(--blue); }
     .split-panels { display:grid; grid-template-columns:minmax(0,1fr); gap:12px; }
-    .billing-unified { display:grid; grid-template-columns:minmax(0,.9fr) minmax(0,1.1fr); gap:18px; align-items:start; margin-top:10px; }
-    .finance-section { min-width:0; padding:4px 0; }
-    .finance-section + .finance-section { border-left:1px solid var(--line); padding-left:18px; }
+    .subtabs { display:inline-flex; gap:4px; padding:4px; border:1px solid var(--line); border-radius:8px; background:#f7fafc; margin:2px 0 12px; }
+    .subtabs button { height:34px; background:transparent; color:var(--ink); border-radius:6px; padding:0 16px; }
+    .subtabs button.active { background:var(--blue); color:#fff; }
+    .billing-pane { min-width:0; padding-top:4px; }
     .section-head { display:flex; justify-content:space-between; gap:12px; align-items:flex-end; margin-bottom:12px; padding-bottom:8px; border-bottom:1px solid #edf2f7; }
     .section-head h3 { margin:0; font-size:16px; }
     .finance-filter-row { display:grid; grid-template-columns:minmax(220px,300px) repeat(4,minmax(120px,170px)) max-content max-content; gap:10px; align-items:end; margin:10px 0 12px; }
@@ -424,8 +425,7 @@ def som_web_home() -> HTMLResponse:
       .hero-logo img { width:min(88%,520px); height:250px; }
       .form-grid { grid-template-columns:1fr; }
       .filters.service-filters { grid-template-columns:1fr; }
-      .billing-unified,.finance-filter-row,.finance-filter-row.compact { grid-template-columns:1fr; }
-      .finance-section + .finance-section { border-left:0; border-top:1px solid var(--line); padding-left:0; padding-top:14px; }
+      .finance-filter-row,.finance-filter-row.compact { grid-template-columns:1fr; }
       .surveyor-line { grid-template-columns:1fr; }
       aside { min-height:auto; }
       header { flex-direction:column; }
@@ -525,6 +525,7 @@ def som_web_home() -> HTMLResponse:
     let billingRows = [];
     let selectedBillableIndex = null;
     let selectedBillingIndex = null;
+    let billingPane = "billables";
     let creditRows = [];
     let selectedCreditIndex = null;
     let financeClientes = [];
@@ -1124,8 +1125,28 @@ def som_web_home() -> HTMLResponse:
             <h2>Invoicing and Billing</h2>
             <span class="muted">Facturación desde servicios y documentos emitidos</span>
           </div>
-          <div class="billing-unified">
-            <section class="finance-section">
+          <div class="subtabs">
+            <button id="billablesTab" onclick="switchBillingPane('billables')">Billing</button>
+            <button id="invoicesTab" onclick="switchBillingPane('invoices')">Invoicing</button>
+          </div>
+          <div id="billingPaneHost" class="billing-pane"></div>
+        `;
+      renderBillingPane();
+      loadFinanceClientCombos().catch(() => null);
+    }
+    function switchBillingPane(pane) {
+      billingPane = pane;
+      renderBillingPane();
+      loadFinanceClientCombos().catch(() => null);
+    }
+    function renderBillingPane() {
+      const host = $("billingPaneHost");
+      if (!host) return;
+      $("billablesTab")?.classList.toggle("active", billingPane === "billables");
+      $("invoicesTab")?.classList.toggle("active", billingPane === "invoices");
+      if (billingPane === "billables") {
+        host.innerHTML = `
+            <section class="billing-pane">
               <div class="section-head">
                 <h3>Billing</h3>
                 <span id="billableCount" class="muted">Servicios pendientes</span>
@@ -1144,8 +1165,13 @@ def som_web_home() -> HTMLResponse:
               </div>
               <div id="billableMsg" class="status hidden"></div>
               <div id="billableTable" class="workspace"></div>
-            </section>
-            <section class="finance-section">
+            </section>`;
+        $("billableTable").innerHTML = billableRows.length ? "" : '<div class="status">Ingrese cliente y presione Buscar.</div>';
+        if (billableRows.length) renderBillableTable();
+        return;
+      }
+      host.innerHTML = `
+            <section class="billing-pane">
               <div class="section-head">
                 <h3>Invoicing</h3>
                 <span id="billingCount" class="muted">Facturas emitidas</span>
@@ -1167,16 +1193,9 @@ def som_web_home() -> HTMLResponse:
               </div>
               <div id="billingMsg" class="status hidden"></div>
               <div id="billingTable" class="workspace"></div>
-            </section>
-          </div>
-        `;
-      billableRows = [];
-      billingRows = [];
-      selectedBillableIndex = null;
-      selectedBillingIndex = null;
-      $("billableTable").innerHTML = '<div class="status">Ingrese cliente y presione Buscar.</div>';
-      $("billingTable").innerHTML = '<div class="status">Configure filtros y presione Buscar.</div>';
-      loadFinanceClientCombos().catch(() => null);
+            </section>`;
+      $("billingTable").innerHTML = billingRows.length ? "" : '<div class="status">Configure filtros y presione Buscar.</div>';
+      if (billingRows.length) renderBillingTable();
     }
     function clearBillableFilters() {
       if ($("billableCliente")) $("billableCliente").value = "";
