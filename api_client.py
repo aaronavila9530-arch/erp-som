@@ -600,6 +600,27 @@ def get_puertos_all_api():
         return []
 
 
+def get_continentes_cpp_api():
+    resp = api_request("GET", f"{BASE_URL}/cpp/continentes", timeout=15)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def get_paises_cpp_api(continente: str):
+    resp = api_request("GET", f"{BASE_URL}/cpp/paises", params={"continente": continente}, timeout=15)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def get_puertos_cpp_api(pais: str, continente: str | None = None):
+    params = {"pais": pais}
+    if continente:
+        params["continente"] = continente
+    resp = api_request("GET", f"{BASE_URL}/cpp/puertos", params=params, timeout=15)
+    resp.raise_for_status()
+    return resp.json()
+
+
 def get_masterdata_ports_api(page=1, page_size=100, continente=None, pais=None, puerto=None, q=None):
     params = {"page": page, "page_size": page_size}
     if continente:
