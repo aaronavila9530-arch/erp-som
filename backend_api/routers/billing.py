@@ -528,3 +528,52 @@ def obtener_pdf_factura(
         media_type="application/pdf",
         filename=os.path.basename(pdf_path)
     )
+
+
+@router.get("/word/{numero_documento}")
+def obtener_word_factura(
+    numero_documento: str,
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+    conn=Depends(get_db),
+):
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    company = company_code(header_value=x_company_code)
+    ensure_company_column("invoicing")
+
+    cur.execute(
+        """
+        SELECT *
+        FROM invoicing
+        WHERE numero_documento = %s
+          AND company_code = %s
+        """,
+        (numero_documento, company),
+    )
+    row = cur.fetchone()
+    cur.close()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Factura no encontrada")
+
+    from services.pdf.factura_manual_pdf import generar_factura_manual_word
+
+    word_path = generar_factura_manual_word({
+        "numero_documento": row.get("numero_documento"),
+        "fecha_emision": row.get("fecha_emision"),
+        "cliente": row.get("nombre_cliente"),
+        "buque": row.get("buque_contenedor"),
+        "operacion": row.get("operacion"),
+        "survey": row.get("operacion"),
+        "num_informe": row.get("num_informe"),
+        "periodo": row.get("periodo_operacion"),
+        "descripcion": row.get("descripcion_servicio"),
+        "moneda": row.get("moneda"),
+        "termino_pago": row.get("termino_pago"),
+        "total": row.get("total"),
+    })
+
+    return FileResponse(
+        path=word_path,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        filename=os.path.basename(word_path),
+    )

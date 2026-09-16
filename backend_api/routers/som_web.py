@@ -531,6 +531,7 @@ def som_web_home() -> HTMLResponse:
     let financeTab = "finance-home";
     let billableRows = [];
     let billingRows = [];
+    let advanceServiceRows = [];
     let selectedBillableIndex = null;
     let selectedBillingIndex = null;
     let selectedBillableIndexes = new Set();
@@ -2648,7 +2649,10 @@ def som_web_home() -> HTMLResponse:
         <div class="modal-backdrop" id="svcModal">
           <div class="modal">
             <div class="modal-head"><h2>Factura ${esc(full.numero_documento)}</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
-            <div class="service-actions"><a href="/billing/pdf/${encodeURIComponent(full.numero_documento)}" target="_blank"><button>Ver / descargar PDF</button></a></div>
+            <div class="service-actions">
+              <a href="/billing/pdf/${encodeURIComponent(full.numero_documento)}" target="_blank"><button>Ver / descargar PDF</button></a>
+              <a href="/billing/word/${encodeURIComponent(full.numero_documento)}" target="_blank"><button class="secondary">Exportar Word</button></a>
+            </div>
             <div class="table-wrap"><table><tbody>${Object.keys(full).filter(k => !String(k).toLowerCase().includes("hash")).map(k => `<tr><th>${esc(k)}</th><td>${esc(full[k])}</td></tr>`).join("")}</tbody></table></div>
           </div>
         </div>`);
@@ -2726,26 +2730,88 @@ def som_web_home() -> HTMLResponse:
     }
     async function openAdvanceInvoiceForm() {
       const clientes = await ensureFinanceClientes();
+      advanceServiceRows = [];
       document.body.insertAdjacentHTML("beforeend", `
         <div class="modal-backdrop" id="svcModal">
-          <div class="modal small">
+          <div class="modal">
             <div class="modal-head"><h2>Facturación Anticipada</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
             <div class="form-grid">
-              <label>Cliente<select id="adv_cliente">${clientes.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join("")}</select></label>
+              <label>Cliente<select id="adv_cliente" onchange="loadAdvanceInvoiceServices()"><option value="">Seleccione cliente</option>${clientes.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join("")}</select></label>
+              <label>Survey / servicio<select id="adv_service" onchange="applyAdvanceInvoiceService()"><option value="">Seleccione cliente primero</option></select></label>
               <label>Fecha emisión<input value="${new Date().toISOString().slice(0,10)}" readonly /></label>
               <label>Moneda<select id="adv_moneda"><option>USD</option><option>CRC</option></select></label>
-              <label>Término pago<input id="adv_termino" type="number" value="0" /></label>
+              <label>Payment terms<input id="adv_payment_terms" placeholder="CREDIT 10 DAYS" /></label>
               <label>Total<input id="adv_total" type="number" step="0.01" /></label>
+              <label>Place<input id="adv_place" placeholder="PUERTO, PAIS" /></label>
               <label>Buque / contenedor<input id="adv_buque" /></label>
-              <label>Operación<input id="adv_operacion" /></label>
+              <label>Survey<input id="adv_survey" list="advSurveyList" /></label>
               <label>Num informe<input id="adv_informe" /></label>
               <label>Periodo<input id="adv_periodo" /></label>
+              <datalist id="advSurveyList"></datalist>
               <label class="wide">Descripción<textarea id="adv_desc"></textarea></label>
             </div>
+            <div class="status">La cuenta bancaria se mantiene fija: BCR Banco de Costa Rica · IBAN CR49015201308000025850 · SWIFT BCRICRSJ.</div>
             <div class="md-actions"><button class="green" onclick="saveAdvanceInvoice()">Facturar</button><button class="secondary" onclick="closeModal()">Cancelar</button></div>
             <div id="advMsg" class="status hidden"></div>
           </div>
         </div>`);
+    }
+    function advanceTermsDays(text) {
+      const match = String(text || "").match(/(\\d+)/);
+      return match ? Number(match[1]) : 0;
+    }
+    function advancePlace(row) {
+      return [row?.puerto, row?.pais].filter(Boolean).join(", ");
+    }
+    function advanceSurvey(row) {
+      return row?.operacion || row?.detalle || row?.tipo || "SURVEY";
+    }
+    function advanceDescription(row, cliente) {
+      const first = [row?.num_informe, row?.buque_contenedor, cliente].filter(Boolean).join(" / ");
+      return [first, advancePlace(row), "", "SURVEY:", `-${advanceSurvey(row)}`].join("\\n");
+    }
+    async function loadAdvanceInvoiceServices() {
+      const cliente = valueFrom("adv_cliente");
+      const svc = $("adv_service");
+      const msg = $("advMsg");
+      advanceServiceRows = [];
+      if (!cliente) {
+        svc.innerHTML = '<option value="">Seleccione cliente primero</option>';
+        return;
+      }
+      msg.className = "status";
+      msg.textContent = "Consultando servicios del cliente...";
+      try {
+        const payload = await getJSON(`/invoicing/facturables?cliente=${encodeURIComponent(cliente)}`);
+        advanceServiceRows = rowsList(payload);
+        svc.innerHTML = '<option value="">Seleccione survey / servicio</option>' + advanceServiceRows.map((row, idx) => {
+          const label = [advanceSurvey(row), row.num_informe, row.buque_contenedor, advancePlace(row)].filter(Boolean).join(" | ");
+          return `<option value="${idx}">${esc(label)}</option>`;
+        }).join("");
+        $("advSurveyList").innerHTML = [...new Set(advanceServiceRows.map(advanceSurvey).filter(Boolean))].map(v => `<option value="${esc(v)}"></option>`).join("");
+        msg.classList.add("hidden");
+        if (!advanceServiceRows.length) {
+          svc.innerHTML = '<option value="">Sin servicios finalizados pendientes</option>';
+          msg.className = "status";
+          msg.textContent = "No hay servicios facturables para este cliente. Puede completar los campos manualmente.";
+        }
+      } catch (err) {
+        svc.innerHTML = '<option value="">No se pudieron cargar servicios</option>';
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    function applyAdvanceInvoiceService() {
+      const idx = Number(valueFrom("adv_service"));
+      const row = Number.isFinite(idx) ? advanceServiceRows[idx] : null;
+      if (!row) return;
+      const cliente = valueFrom("adv_cliente");
+      $("adv_place").value = advancePlace(row);
+      $("adv_buque").value = row.buque_contenedor || "";
+      $("adv_survey").value = advanceSurvey(row);
+      $("adv_informe").value = row.num_informe || "";
+      $("adv_periodo").value = [row.fecha_inicio, row.fecha_fin].filter(Boolean).join(" a ");
+      $("adv_desc").value = advanceDescription(row, cliente);
     }
     async function saveAdvanceInvoice() {
       const cliente = valueFrom("adv_cliente");
@@ -2753,16 +2819,20 @@ def som_web_home() -> HTMLResponse:
       msg.className = "status";
       msg.textContent = "Creando factura anticipada...";
       try {
+        const paymentTerms = valueFrom("adv_payment_terms") || "DUE UPON RECEIPT";
         const payload = {
           tipo_factura:"MANUAL",
           codigo_cliente:financeClientCode(cliente),
           nombre_cliente:cliente,
           descripcion:valueFrom("adv_desc"),
           moneda:valueFrom("adv_moneda") || "USD",
-          termino_pago:Number(valueFrom("adv_termino") || 0),
+          termino_pago:advanceTermsDays(paymentTerms),
+          payment_terms:paymentTerms,
           total:Number(valueFrom("adv_total") || 0),
           buque:valueFrom("adv_buque"),
-          operacion:valueFrom("adv_operacion"),
+          operacion:valueFrom("adv_survey"),
+          survey:valueFrom("adv_survey"),
+          place:valueFrom("adv_place"),
           num_informe:valueFrom("adv_informe"),
           periodo_operacion:valueFrom("adv_periodo")
         };
@@ -2771,7 +2841,7 @@ def som_web_home() -> HTMLResponse:
         await postJSON("/collections/sync-from-invoicing", {}).catch(() => null);
         closeModal();
         if (financeTab === "billing" && $("billingTable")) await loadBillingRows();
-        alert(`Factura anticipada creada: ${data.numero_documento}`);
+        alert(`Factura anticipada creada: ${data.numero_documento}. Puede exportarla en PDF o Word desde Ver Factura.`);
       } catch (err) {
         msg.className = "status error";
         msg.textContent = err.message;
