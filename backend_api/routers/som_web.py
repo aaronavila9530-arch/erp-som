@@ -1735,6 +1735,18 @@ def som_web_home() -> HTMLResponse:
       if (status) params.set("status", status);
       return params.toString();
     }
+    function showBankStatementMsg(message, isError=false) {
+      const msg = $("bankStatementMsg");
+      if (!msg) return;
+      msg.className = isError ? "status error" : "status";
+      msg.textContent = message;
+    }
+    function clearBankStatementMsg() {
+      const msg = $("bankStatementMsg");
+      if (!msg) return;
+      msg.className = "status hidden";
+      msg.textContent = "";
+    }
     async function loadBankStatements() {
       const msg = $("bankStatementMsg");
       msg.className = "status";
@@ -1747,7 +1759,11 @@ def som_web_home() -> HTMLResponse:
         bankStatementRows = rowsList(payload);
         renderBankStatementsTable();
         $("bankStatementLinesTable").innerHTML = '<div class="status">Seleccione un extracto y presione Ver líneas.</div>';
-        msg.className = "status hidden";
+        if (!bankStatementRows.length) {
+          showBankStatementMsg("Sin extractos para esta consulta. Cambie filtros o importe un CSV.", false);
+        } else {
+          clearBankStatementMsg();
+        }
       } catch (err) {
         msg.className = "status error";
         msg.textContent = err.message;
@@ -1760,10 +1776,13 @@ def som_web_home() -> HTMLResponse:
         return;
       }
       const cols = ["id","bank_name","bank_account_code","currency_code","statement_period","status","line_count","open_count","statement_total","matched_total","open_total"];
-      table.innerHTML = `<div class="table-wrap"><table><thead><tr>${cols.map(c => `<th>${esc(c.replace(/_/g," "))}</th>`).join("")}</tr></thead><tbody>${bankStatementRows.map(row => `<tr class="${String(row.id) === String(selectedBankStatementId) ? "service-selected" : ""}" onclick="selectedBankStatementId=${Number(row.id)}; renderBankStatementsTable()">${cols.map(c => `<td>${esc(["statement_total","matched_total","open_total"].includes(c) ? bankFmt(row[c]) : row[c])}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
+      table.innerHTML = `<div class="table-wrap"><table><thead><tr>${cols.map(c => `<th>${esc(c.replace(/_/g," "))}</th>`).join("")}</tr></thead><tbody>${bankStatementRows.map(row => `<tr class="${String(row.id) === String(selectedBankStatementId) ? "service-selected" : ""}" onclick="selectedBankStatementId=${Number(row.id)}; clearBankStatementMsg(); renderBankStatementsTable()">${cols.map(c => `<td>${esc(["statement_total","matched_total","open_total"].includes(c) ? bankFmt(row[c]) : row[c])}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
     }
     async function loadBankStatementLines() {
-      if (!selectedBankStatementId) return alert("Seleccione un extracto.");
+      if (!selectedBankStatementId) {
+        showBankStatementMsg("Seleccione un extracto de la tabla antes de ver líneas.", true);
+        return;
+      }
       const table = $("bankStatementLinesTable");
       table.innerHTML = '<div class="status">Consultando líneas...</div>';
       selectedBankLineIndex = null;
@@ -1771,8 +1790,10 @@ def som_web_home() -> HTMLResponse:
         const payload = await getJSON(`/bank-reconciliation/statements/${encodeURIComponent(selectedBankStatementId)}/lines`);
         bankStatementLineRows = rowsList(payload);
         renderBankStatementLinesTable();
+        clearBankStatementMsg();
       } catch (err) {
         table.innerHTML = `<div class="status error">${esc(err.message)}</div>`;
+        showBankStatementMsg(err.message, true);
       }
     }
     function renderBankStatementLinesTable() {
@@ -1785,32 +1806,45 @@ def som_web_home() -> HTMLResponse:
       table.innerHTML = `<div class="table-wrap"><table><thead><tr>${cols.map(c => `<th>${esc(c.replace(/_/g," "))}</th>`).join("")}</tr></thead><tbody>${bankStatementLineRows.map((row,idx) => `<tr class="${idx === selectedBankLineIndex ? "service-selected" : ""}" onclick="selectedBankLineIndex=${idx}; renderBankStatementLinesTable()">${cols.map(c => `<td>${esc(["debit","credit","amount","difference"].includes(c) ? bankFmt(row[c]) : row[c])}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
     }
     async function autoMatchSelectedStatement() {
-      if (!selectedBankStatementId) return alert("Seleccione un extracto.");
+      if (!selectedBankStatementId) {
+        showBankStatementMsg("Seleccione un extracto de la tabla antes de ejecutar matching automático.", true);
+        return;
+      }
       const tolerance = prompt("Tolerancia de matching", "1.00");
       if (tolerance === null) return;
       try {
+        const statementId = selectedBankStatementId;
         const result = await postJSON(`/bank-reconciliation/statements/${encodeURIComponent(selectedBankStatementId)}/auto-match`, { tolerance:Number(tolerance || 0) });
-        alert(`Matching terminado. Matcheadas: ${result.matched || 0}. Diferencias: ${result.differences || 0}.`);
         await loadBankStatements();
-        selectedBankStatementId = Number(result.statement_id || selectedBankStatementId);
+        selectedBankStatementId = statementId;
+        renderBankStatementsTable();
+        await loadBankStatementLines();
+        showBankStatementMsg(`Matching terminado. Matcheadas: ${result.matched || 0}. Diferencias: ${result.differences || 0}.`, false);
       } catch (err) {
-        alert(err.message);
+        showBankStatementMsg(err.message, true);
       }
     }
     async function markSelectedBankLineFee() {
       const row = selectedBankLineIndex === null ? null : bankStatementLineRows[selectedBankLineIndex];
-      if (!row) return alert("Seleccione una línea.");
+      if (!row) {
+        showBankStatementMsg("Seleccione una línea del extracto antes de marcar cargo bancario.", true);
+        return;
+      }
       const note = prompt("Nota del cargo bancario", "Cargo bancario identificado");
       if (note === null) return;
       try {
         await postJSON(`/bank-reconciliation/lines/${encodeURIComponent(row.id)}/bank-fee`, { note });
         await loadBankStatementLines();
+        showBankStatementMsg("Cargo bancario marcado correctamente.", false);
       } catch (err) {
-        alert(err.message);
+        showBankStatementMsg(err.message, true);
       }
     }
     async function closeSelectedBankStatement() {
-      if (!selectedBankStatementId) return alert("Seleccione un extracto.");
+      if (!selectedBankStatementId) {
+        showBankStatementMsg("Seleccione un extracto de la tabla antes de cerrar conciliación.", true);
+        return;
+      }
       const note = prompt("Nota de cierre", "");
       if (note === null) return;
       const force = confirm("Si quedan partidas abiertas, ¿forzar cierre documentado?");
@@ -1818,8 +1852,9 @@ def som_web_home() -> HTMLResponse:
         await postJSON(`/bank-reconciliation/statements/${encodeURIComponent(selectedBankStatementId)}/close`, { note, force_close:force });
         await loadBankStatements();
         $("bankStatementLinesTable").innerHTML = '<div class="status">Seleccione un extracto y presione Ver líneas.</div>';
+        showBankStatementMsg("Conciliación cerrada correctamente.", false);
       } catch (err) {
-        alert(err.message);
+        showBankStatementMsg(err.message, true);
       }
     }
     function clearBankStatements() {
