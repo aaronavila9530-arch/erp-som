@@ -534,6 +534,12 @@ def som_web_home() -> HTMLResponse:
     let collectionTotal = 0;
     let collectionClientesLoaded = false;
     let collectionClientes = [];
+    let bankRowsWeb = [];
+    let selectedBankIndex = null;
+    let bankStatementRows = [];
+    let selectedBankStatementId = null;
+    let bankStatementLineRows = [];
+    let selectedBankLineIndex = null;
     let financeClientes = [];
     let financeClienteRows = [];
     const SERVICE_COLUMNS = [
@@ -1413,9 +1419,489 @@ def som_web_home() -> HTMLResponse:
     }
     function renderBankWeb(target=orderCashWorkspace()) {
       target.innerHTML = `
-        <div class="panel-head"><h2>Bank</h2><span class="muted">Bank Reconciliation</span></div>
-        <div class="service-actions"><button onclick="loadGenericFinance('/bank-reconciliation?ver_todos=true&page=1&page_size=100','bankWorkspace')">Buscar</button></div>
-        <div id="bankWorkspace" class="status">Presione Buscar para consultar bancos.</div>`;
+        <div class="panel-head">
+          <h2>Bank Reconciliation</h2>
+          <span class="muted">Pagos, extractos, matching y cierre bancario</span>
+        </div>
+        <div class="subtabs">
+          <button id="bankTabPayments" class="active" onclick="switchBankPane('payments')">Pagos</button>
+          <button id="bankTabStatements" onclick="switchBankPane('statements')">Conciliación profesional</button>
+          <button id="bankTabPaid" onclick="switchBankPane('paid')">Paid Invoices Report</button>
+        </div>
+        <div id="bankPane"></div>`;
+      switchBankPane("payments");
+    }
+    function switchBankPane(pane) {
+      ["Payments","Statements","Paid"].forEach(name => $("bankTab" + name)?.classList.remove("active"));
+      const map = { payments:"Payments", statements:"Statements", paid:"Paid" };
+      $("bankTab" + map[pane])?.classList.add("active");
+      if (pane === "statements") renderBankStatementsPane();
+      else if (pane === "paid") renderPaidInvoicesPane();
+      else renderBankPaymentsPane();
+    }
+    async function loadBankClienteOptions() {
+      await ensureFinanceClientes();
+      ["bankCliente"].forEach(id => {
+        const el = $(id);
+        if (!el || el.options.length > 1) return;
+        el.innerHTML = '<option value="">Todos</option>' + financeClienteRows.map(row => {
+          const name = financeClientName(row);
+          const code = financeClientId(row);
+          return `<option value="${esc(code)}">${esc(code)} | ${esc(name)}</option>`;
+        }).join("");
+      });
+    }
+    async function loadBankAccountOptions() {
+      const select = $("bankStatementAccount");
+      if (!select || select.options.length > 1) return;
+      try {
+        const rows = rowsList(await getJSON("/accounting/bank-accounts"));
+        select.innerHTML = '<option value="">Todas</option>' + rows.map(row => {
+          const code = row.account_code || "";
+          const name = row.account_name || "";
+          return `<option value="${esc(code)}" data-name="${esc(name)}">${esc(code)} | ${esc(name)}</option>`;
+        }).join("");
+      } catch {
+        select.innerHTML = '<option value="">Todas</option>';
+      }
+    }
+    function renderBankPaymentsPane() {
+      $("bankPane").innerHTML = `
+        <div class="finance-filter-row compact">
+          <label>Cliente<select id="bankCliente" onfocus="loadBankClienteOptions()" onpointerdown="loadBankClienteOptions()"><option value="">Todos</option></select></label>
+          <label>Referencia / comprobante<input id="bankReferencia" placeholder="Referencia bancaria" /></label>
+          <label>Ver todos<select id="bankVerTodos"><option value="false">No</option><option value="true">Sí</option></select></label>
+          <button onclick="loadBankPayments(1)">Buscar</button>
+          <button class="secondary" onclick="clearBankPayments()">Limpiar</button>
+        </div>
+        <div class="finance-toolbar">
+          <button class="green" onclick="openManualBankPaymentForm()">Registrar Pago Manual</button>
+          <button onclick="viewBankPaymentDetail()">Ver detalle del pago</button>
+          <button class="brown" onclick="reverseSelectedBankPayment()">Reversar pago</button>
+          <button class="secondary" onclick="downloadBankPaymentsExcel()">Exportar Excel</button>
+        </div>
+        <div id="bankPaymentsKpis" class="grid kpis hidden"></div>
+        <div id="bankPaymentsMsg" class="status hidden"></div>
+        <div id="bankPaymentsTable" class="workspace"><div class="status">Use filtros y presione Buscar para consultar pagos bancarios.</div></div>`;
+    }
+    function bankPaymentParams(page=1) {
+      const params = new URLSearchParams({ page:String(page), page_size:"100" });
+      const cliente = valueFrom("bankCliente");
+      const ref = valueFrom("bankReferencia");
+      const verTodos = valueFrom("bankVerTodos") === "true";
+      if (cliente) params.set("codigo_cliente", cliente);
+      if (ref) params.set("referencia", ref);
+      if (verTodos) params.set("ver_todos", "true");
+      return params.toString();
+    }
+    async function loadBankPayments(page=1) {
+      const msg = $("bankPaymentsMsg");
+      const table = $("bankPaymentsTable");
+      selectedBankIndex = null;
+      msg.className = "status";
+      msg.textContent = "Consultando pagos bancarios...";
+      table.innerHTML = "";
+      try {
+        const payload = await getJSON(`/bank-reconciliation?${bankPaymentParams(page)}`);
+        bankRowsWeb = rowsList(payload);
+        renderBankPaymentKpis();
+        renderBankPaymentsTable();
+        msg.className = "status hidden";
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    function clearBankPayments() {
+      bankRowsWeb = [];
+      selectedBankIndex = null;
+      if ($("bankCliente")) $("bankCliente").value = "";
+      if ($("bankReferencia")) $("bankReferencia").value = "";
+      if ($("bankVerTodos")) $("bankVerTodos").value = "false";
+      $("bankPaymentsKpis")?.classList.add("hidden");
+      if ($("bankPaymentsMsg")) $("bankPaymentsMsg").className = "status hidden";
+      if ($("bankPaymentsTable")) $("bankPaymentsTable").innerHTML = '<div class="status">Use filtros y presione Buscar para consultar pagos bancarios.</div>';
+    }
+    function renderBankPaymentKpis() {
+      const kpis = $("bankPaymentsKpis");
+      if (!kpis) return;
+      const total = bankRowsWeb.reduce((sum,row) => sum + Number(row.monto_pagado || 0), 0);
+      const applied = bankRowsWeb.filter(row => String(row.estado || "").toUpperCase().includes("APLIC")).length;
+      const incoming = bankRowsWeb.filter(row => String(row.id || "").startsWith("incoming_")).length;
+      kpis.classList.remove("hidden");
+      kpis.innerHTML = [
+        ["Pagos", bankRowsWeb.length, "Registros cargados"],
+        ["Monto", money(total), "Monto pagado"],
+        ["Aplicados", applied, "Estado aplicado"],
+        ["Incoming", incoming, "Pagos no cash_app"]
+      ].map(([label,value,hint]) => `<div class="card"><span>${label}</span><strong>${value}</strong><small>${hint}</small></div>`).join("");
+    }
+    function bankFmt(value) {
+      return Number(value || 0).toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2});
+    }
+    function renderBankPaymentsTable() {
+      const table = $("bankPaymentsTable");
+      if (!table) return;
+      if (!bankRowsWeb.length) {
+        table.innerHTML = '<div class="status">Sin pagos bancarios para esta consulta.</div>';
+        return;
+      }
+      const cols = ["banco","fecha_pago","nombre_cliente","numero_documento","referencia","tipo_aplicacion","monto_pagado","monto_aplicado","saldo","estado"];
+      table.innerHTML = `<div class="table-wrap"><table><thead><tr>${cols.map(c => `<th>${esc(c.replace(/_/g," "))}</th>`).join("")}</tr></thead><tbody>${bankRowsWeb.map((row, idx) => `<tr class="${idx === selectedBankIndex ? "service-selected" : ""}" onclick="selectedBankIndex=${idx}; renderBankPaymentsTable()">${cols.map(c => `<td>${esc(["monto_pagado","monto_aplicado","saldo"].includes(c) ? bankFmt(row[c]) : row[c])}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
+    }
+    function selectedBankPayment() {
+      return selectedBankIndex === null ? null : bankRowsWeb[selectedBankIndex];
+    }
+    async function openManualBankPaymentForm() {
+      await ensureFinanceClientes();
+      $("app").insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal small">
+            <div class="modal-head"><h2>Registrar Pago Manual</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+            <div class="form-grid">
+              <label>Cliente<select id="bankManualCliente">${financeClienteRows.map(row => {
+                const code = financeClientId(row);
+                const name = financeClientName(row);
+                return `<option value="${esc(code)}" data-name="${esc(name)}">${esc(code)} | ${esc(name)}</option>`;
+              }).join("")}</select></label>
+              <label>Banco<input id="bankManualBanco" /></label>
+              <label>Referencia<input id="bankManualReferencia" /></label>
+              <label>Fecha pago<input id="bankManualFecha" type="date" value="${new Date().toISOString().slice(0,10)}" /></label>
+              <label>Documento<input id="bankManualDocumento" placeholder="Opcional" /></label>
+              <label>Monto<input id="bankManualMonto" type="number" step="0.01" /></label>
+            </div>
+            <div class="md-actions"><button class="green" onclick="submitManualBankPayment()">Registrar pago</button></div>
+            <div id="bankManualMsg" class="status hidden"></div>
+          </div>
+        </div>`);
+    }
+    async function submitManualBankPayment() {
+      const msg = $("bankManualMsg");
+      msg.className = "status";
+      msg.textContent = "Registrando...";
+      try {
+        const select = $("bankManualCliente");
+        const amount = Number(valueFrom("bankManualMonto") || 0);
+        if (!valueFrom("bankManualCliente")) throw new Error("Seleccione cliente.");
+        if (!valueFrom("bankManualBanco")) throw new Error("Ingrese banco.");
+        if (!valueFrom("bankManualReferencia")) throw new Error("Ingrese referencia.");
+        if (!valueFrom("bankManualFecha")) throw new Error("Ingrese fecha de pago.");
+        if (amount <= 0) throw new Error("Monto inválido.");
+        await postJSON("/incoming-payments", {
+          origen:"MANUAL",
+          codigo_cliente:valueFrom("bankManualCliente"),
+          nombre_cliente:select?.selectedOptions?.[0]?.dataset?.name || "",
+          banco:valueFrom("bankManualBanco"),
+          numero_referencia:valueFrom("bankManualReferencia"),
+          fecha_pago:valueFrom("bankManualFecha"),
+          documento:valueFrom("bankManualDocumento") || null,
+          monto:amount
+        });
+        closeModal();
+        await loadBankPayments(1);
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    function viewBankPaymentDetail() {
+      const row = selectedBankPayment();
+      if (!row) return alert("Seleccione un pago.");
+      $("app").insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal">
+            <div class="modal-head"><h2>Detalle de Pago</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+            <div class="table-wrap"><table><tbody>${Object.keys(row).filter(k => !String(k).toLowerCase().includes("hash")).map(k => `<tr><th>${esc(k)}</th><td>${esc(row[k])}</td></tr>`).join("")}</tbody></table></div>
+          </div>
+        </div>`);
+    }
+    async function reverseSelectedBankPayment() {
+      const row = selectedBankPayment();
+      if (!row) return alert("Seleccione un pago.");
+      const rawId = String(row.id || "");
+      const id = rawId.startsWith("incoming_") ? rawId.replace("incoming_", "") : rawId;
+      const reason = prompt("Motivo de reversa", "WRONG_PAYMENT");
+      if (!reason) return;
+      const comment = prompt("Comentario / soporte de reversa", "");
+      if (!comment) return alert("Comentario requerido.");
+      if (!confirm(`¿Reversar pago ${rawId}? Esta acción elimina el registro de pago.`)) return;
+      try {
+        await postJSON(`/bank-reconciliation/${encodeURIComponent(id)}/reverse`, { reason, comment });
+        await loadBankPayments(1);
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+    function downloadBankPaymentsExcel() {
+      if (!bankRowsWeb.length) return alert("No hay datos para exportar.");
+      const cols = ["id","banco","fecha_pago","codigo_cliente","nombre_cliente","numero_documento","referencia","tipo_aplicacion","monto_pagado","monto_aplicado","saldo","estado"];
+      downloadExcelFile(`bank_reconciliation_${new Date().toISOString().slice(0,10)}.xls`, bankRowsWeb, cols, "Bank Reconciliation - pagos");
+    }
+    function renderPaidInvoicesPane() {
+      $("bankPane").innerHTML = `
+        <div class="finance-filter-row">
+          <label>Año<input id="paidYear" value="${esc($("year")?.value || new Date().getFullYear())}" /></label>
+          <label>Mes<select id="paidMonth"><option value="">Todos</option>${Array.from({length:12},(_,i)=>`<option value="${i+1}">${String(i+1).padStart(2,"0")}</option>`).join("")}</select></label>
+          <label>Desde<input id="paidFrom" type="date" /></label>
+          <label>Hasta<input id="paidTo" type="date" /></label>
+          <label>Cliente<input id="paidCliente" placeholder="Cliente o código" /></label>
+          <button onclick="loadPaidInvoicesReport()">Buscar</button>
+          <button class="secondary" onclick="clearPaidInvoicesReport()">Limpiar</button>
+        </div>
+        <div class="finance-toolbar"><button class="secondary" onclick="downloadPaidInvoicesExcel()">Exportar Excel</button></div>
+        <div id="paidInvoicesKpis" class="grid kpis hidden"></div>
+        <div id="paidInvoicesTable" class="workspace"><div class="status">Configure filtros y presione Buscar.</div></div>`;
+    }
+    let paidInvoiceRows = [];
+    function paidInvoiceParams() {
+      const params = new URLSearchParams({ page:"1", page_size:"1000" });
+      [["paidYear","year"],["paidMonth","month"],["paidFrom","date_from"],["paidTo","date_to"],["paidCliente","cliente"]].forEach(([id,key]) => {
+        const value = valueFrom(id);
+        if (value) params.set(key, value);
+      });
+      return params.toString();
+    }
+    async function loadPaidInvoicesReport() {
+      const table = $("paidInvoicesTable");
+      table.innerHTML = '<div class="status">Consultando facturas pagadas...</div>';
+      try {
+        const payload = await getJSON(`/bank-reconciliation/paid-invoices-report?${paidInvoiceParams()}`);
+        paidInvoiceRows = rowsList(payload);
+        const summary = payload.summary || {};
+        const kpis = $("paidInvoicesKpis");
+        kpis.classList.remove("hidden");
+        kpis.innerHTML = [
+          ["Facturas", summary.total_facturas || 0, "Documentos pagados"],
+          ["Clientes", summary.total_clientes || 0, "Clientes únicos"],
+          ["Pagado", money(summary.total_pagado || 0), "Monto pagado"],
+          ["Comisiones", money(summary.total_comision || 0), "Comisiones"]
+        ].map(([label,value,hint]) => `<div class="card"><span>${label}</span><strong>${value}</strong><small>${hint}</small></div>`).join("");
+        renderPaidInvoicesTable();
+      } catch (err) {
+        table.innerHTML = `<div class="status error">${esc(err.message)}</div>`;
+      }
+    }
+    function renderPaidInvoicesTable() {
+      const table = $("paidInvoicesTable");
+      if (!paidInvoiceRows.length) {
+        table.innerHTML = '<div class="status">Sin facturas pagadas para esta consulta.</div>';
+        return;
+      }
+      const cols = ["numero_documento","nombre_cliente","fecha_pago","monto_pagado","comision","banco","referencia","estado_factura","source"];
+      table.innerHTML = `<div class="table-wrap"><table><thead><tr>${cols.map(c => `<th>${esc(c.replace(/_/g," "))}</th>`).join("")}</tr></thead><tbody>${paidInvoiceRows.map(row => `<tr>${cols.map(c => `<td>${esc(["monto_pagado","comision"].includes(c) ? bankFmt(row[c]) : row[c])}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
+    }
+    function clearPaidInvoicesReport() {
+      paidInvoiceRows = [];
+      ["paidYear","paidMonth","paidFrom","paidTo","paidCliente"].forEach(id => { if ($(id)) $(id).value = id === "paidYear" ? ($("year")?.value || "") : ""; });
+      $("paidInvoicesKpis")?.classList.add("hidden");
+      if ($("paidInvoicesTable")) $("paidInvoicesTable").innerHTML = '<div class="status">Configure filtros y presione Buscar.</div>';
+    }
+    function downloadPaidInvoicesExcel() {
+      if (!paidInvoiceRows.length) return alert("No hay datos para exportar.");
+      const cols = ["source","payment_id","numero_documento","codigo_cliente","nombre_cliente","banco","fecha_pago","comision","referencia","monto_pagado","tipo_aplicacion","estado_factura","total_factura","saldo_pendiente"];
+      downloadExcelFile(`paid_invoices_${new Date().toISOString().slice(0,10)}.xls`, paidInvoiceRows, cols, "Paid Invoices Report");
+    }
+    function renderBankStatementsPane() {
+      $("bankPane").innerHTML = `
+        <div class="finance-filter-row">
+          <label>Cuenta contable<select id="bankStatementAccount" onfocus="loadBankAccountOptions()" onpointerdown="loadBankAccountOptions()"><option value="">Todas</option></select></label>
+          <label>Moneda<select id="bankStatementCurrency"><option value="">Todas</option><option>CRC</option><option>USD</option></select></label>
+          <label>Periodo<input id="bankStatementPeriod" value="${new Date().toISOString().slice(0,7)}" placeholder="YYYY-MM" /></label>
+          <label>Status<select id="bankStatementStatus"><option value="">Todos</option><option>OPEN</option><option>MATCHED</option><option>CLOSED</option><option>REOPENED</option></select></label>
+          <button onclick="loadBankStatements()">Buscar extractos</button>
+          <button class="secondary" onclick="clearBankStatements()">Limpiar</button>
+        </div>
+        <div class="finance-toolbar">
+          <button onclick="loadBankStatementLines()">Ver líneas</button>
+          <button class="green" onclick="autoMatchSelectedStatement()">Matching automático</button>
+          <button class="brown" onclick="markSelectedBankLineFee()">Cargo bancario</button>
+          <button onclick="closeSelectedBankStatement()">Cerrar conciliación</button>
+          <button class="secondary" onclick="openBankImportCsv()">Importar CSV</button>
+          <button class="secondary" onclick="downloadBankStatementLinesExcel()">Exportar líneas Excel</button>
+        </div>
+        <div id="bankStatementMsg" class="status hidden"></div>
+        <div id="bankStatementsTable" class="workspace"><div class="status">Presione Buscar extractos para cargar conciliaciones.</div></div>
+        <div id="bankStatementLinesTable" class="workspace"><div class="status">Seleccione un extracto y presione Ver líneas.</div></div>`;
+    }
+    function bankStatementParams() {
+      const params = new URLSearchParams();
+      const account = valueFrom("bankStatementAccount");
+      const currency = valueFrom("bankStatementCurrency");
+      const period = valueFrom("bankStatementPeriod");
+      const status = valueFrom("bankStatementStatus");
+      if (account) params.set("bank_account_code", account);
+      if (currency) params.set("currency_code", currency);
+      if (period) params.set("period", period);
+      if (status) params.set("status", status);
+      return params.toString();
+    }
+    async function loadBankStatements() {
+      const msg = $("bankStatementMsg");
+      msg.className = "status";
+      msg.textContent = "Consultando extractos...";
+      selectedBankStatementId = null;
+      bankStatementLineRows = [];
+      selectedBankLineIndex = null;
+      try {
+        const payload = await getJSON(`/bank-reconciliation/statements?${bankStatementParams()}`);
+        bankStatementRows = rowsList(payload);
+        renderBankStatementsTable();
+        $("bankStatementLinesTable").innerHTML = '<div class="status">Seleccione un extracto y presione Ver líneas.</div>';
+        msg.className = "status hidden";
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    function renderBankStatementsTable() {
+      const table = $("bankStatementsTable");
+      if (!bankStatementRows.length) {
+        table.innerHTML = '<div class="status">Sin extractos para esta consulta.</div>';
+        return;
+      }
+      const cols = ["id","bank_name","bank_account_code","currency_code","statement_period","status","line_count","open_count","statement_total","matched_total","open_total"];
+      table.innerHTML = `<div class="table-wrap"><table><thead><tr>${cols.map(c => `<th>${esc(c.replace(/_/g," "))}</th>`).join("")}</tr></thead><tbody>${bankStatementRows.map(row => `<tr class="${String(row.id) === String(selectedBankStatementId) ? "service-selected" : ""}" onclick="selectedBankStatementId=${Number(row.id)}; renderBankStatementsTable()">${cols.map(c => `<td>${esc(["statement_total","matched_total","open_total"].includes(c) ? bankFmt(row[c]) : row[c])}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
+    }
+    async function loadBankStatementLines() {
+      if (!selectedBankStatementId) return alert("Seleccione un extracto.");
+      const table = $("bankStatementLinesTable");
+      table.innerHTML = '<div class="status">Consultando líneas...</div>';
+      selectedBankLineIndex = null;
+      try {
+        const payload = await getJSON(`/bank-reconciliation/statements/${encodeURIComponent(selectedBankStatementId)}/lines`);
+        bankStatementLineRows = rowsList(payload);
+        renderBankStatementLinesTable();
+      } catch (err) {
+        table.innerHTML = `<div class="status error">${esc(err.message)}</div>`;
+      }
+    }
+    function renderBankStatementLinesTable() {
+      const table = $("bankStatementLinesTable");
+      if (!bankStatementLineRows.length) {
+        table.innerHTML = '<div class="status">Sin líneas para este extracto.</div>';
+        return;
+      }
+      const cols = ["id","line_date","reference","description","debit","credit","amount","match_status","matched_source","matched_id","difference"];
+      table.innerHTML = `<div class="table-wrap"><table><thead><tr>${cols.map(c => `<th>${esc(c.replace(/_/g," "))}</th>`).join("")}</tr></thead><tbody>${bankStatementLineRows.map((row,idx) => `<tr class="${idx === selectedBankLineIndex ? "service-selected" : ""}" onclick="selectedBankLineIndex=${idx}; renderBankStatementLinesTable()">${cols.map(c => `<td>${esc(["debit","credit","amount","difference"].includes(c) ? bankFmt(row[c]) : row[c])}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
+    }
+    async function autoMatchSelectedStatement() {
+      if (!selectedBankStatementId) return alert("Seleccione un extracto.");
+      const tolerance = prompt("Tolerancia de matching", "1.00");
+      if (tolerance === null) return;
+      try {
+        const result = await postJSON(`/bank-reconciliation/statements/${encodeURIComponent(selectedBankStatementId)}/auto-match`, { tolerance:Number(tolerance || 0) });
+        alert(`Matching terminado. Matcheadas: ${result.matched || 0}. Diferencias: ${result.differences || 0}.`);
+        await loadBankStatements();
+        selectedBankStatementId = Number(result.statement_id || selectedBankStatementId);
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+    async function markSelectedBankLineFee() {
+      const row = selectedBankLineIndex === null ? null : bankStatementLineRows[selectedBankLineIndex];
+      if (!row) return alert("Seleccione una línea.");
+      const note = prompt("Nota del cargo bancario", "Cargo bancario identificado");
+      if (note === null) return;
+      try {
+        await postJSON(`/bank-reconciliation/lines/${encodeURIComponent(row.id)}/bank-fee`, { note });
+        await loadBankStatementLines();
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+    async function closeSelectedBankStatement() {
+      if (!selectedBankStatementId) return alert("Seleccione un extracto.");
+      const note = prompt("Nota de cierre", "");
+      if (note === null) return;
+      const force = confirm("Si quedan partidas abiertas, ¿forzar cierre documentado?");
+      try {
+        await postJSON(`/bank-reconciliation/statements/${encodeURIComponent(selectedBankStatementId)}/close`, { note, force_close:force });
+        await loadBankStatements();
+        $("bankStatementLinesTable").innerHTML = '<div class="status">Seleccione un extracto y presione Ver líneas.</div>';
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+    function clearBankStatements() {
+      bankStatementRows = [];
+      bankStatementLineRows = [];
+      selectedBankStatementId = null;
+      selectedBankLineIndex = null;
+      ["bankStatementAccount","bankStatementCurrency","bankStatementStatus"].forEach(id => { if ($(id)) $(id).value = ""; });
+      if ($("bankStatementPeriod")) $("bankStatementPeriod").value = new Date().toISOString().slice(0,7);
+      if ($("bankStatementsTable")) $("bankStatementsTable").innerHTML = '<div class="status">Presione Buscar extractos para cargar conciliaciones.</div>';
+      if ($("bankStatementLinesTable")) $("bankStatementLinesTable").innerHTML = '<div class="status">Seleccione un extracto y presione Ver líneas.</div>';
+      if ($("bankStatementMsg")) $("bankStatementMsg").className = "status hidden";
+    }
+    function downloadBankStatementLinesExcel() {
+      if (!bankStatementLineRows.length) return alert("No hay líneas para exportar.");
+      const cols = ["id","line_date","reference","description","debit","credit","amount","currency_code","match_status","matched_source","matched_id","matched_entry_id","difference"];
+      downloadExcelFile(`bank_statement_lines_${selectedBankStatementId || "all"}_${new Date().toISOString().slice(0,10)}.xls`, bankStatementLineRows, cols, "Bank Statement Lines");
+    }
+    function parseBankCsv(text) {
+      const lines = text.split(/\\r?\\n/).filter(line => line.trim());
+      if (lines.length < 2) return [];
+      const split = line => line.split(",").map(cell => cell.trim().replace(/^"|"$/g, ""));
+      const headers = split(lines[0]).map(h => h.toLowerCase());
+      return lines.slice(1).map(line => {
+        const values = split(line);
+        const row = Object.fromEntries(headers.map((h,i) => [h, values[i] || ""]));
+        const pick = (...names) => names.map(n => row[n]).find(v => v !== undefined && v !== "");
+        return {
+          line_date:String(pick("fecha","date","line_date","fecha pago","fecha_pago") || "").slice(0,10),
+          description:pick("descripcion","description","detalle","concepto") || "",
+          reference:pick("referencia","reference","comprobante","numero","documento") || "",
+          debit:Number(String(pick("debito","debit","retiro","withdrawal") || 0).replace(/,/g,"")) || 0,
+          credit:Number(String(pick("credito","credit","deposito","deposit") || 0).replace(/,/g,"")) || 0,
+          amount:Number(String(pick("monto","amount","importe") || 0).replace(/,/g,"")) || 0,
+          currency_code:valueFrom("bankStatementCurrency") || "CRC"
+        };
+      }).filter(row => row.line_date);
+    }
+    function openBankImportCsv() {
+      $("app").insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal small">
+            <div class="modal-head"><h2>Importar extracto CSV</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+            <div class="form-grid">
+              <label>Banco<input id="bankImportName" placeholder="Banco" /></label>
+              <label>Periodo<input id="bankImportPeriod" value="${esc(valueFrom("bankStatementPeriod") || new Date().toISOString().slice(0,7))}" /></label>
+              <label>Moneda<select id="bankImportCurrency"><option${valueFrom("bankStatementCurrency") === "CRC" ? " selected" : ""}>CRC</option><option${valueFrom("bankStatementCurrency") === "USD" ? " selected" : ""}>USD</option></select></label>
+              <label class="wide">CSV<input id="bankImportFile" type="file" accept=".csv,text/csv" /></label>
+            </div>
+            <div class="md-actions"><button onclick="submitBankImportCsv()">Importar</button></div>
+            <div id="bankImportMsg" class="status hidden"></div>
+          </div>
+        </div>`);
+    }
+    async function submitBankImportCsv() {
+      const msg = $("bankImportMsg");
+      msg.className = "status";
+      msg.textContent = "Importando...";
+      try {
+        const file = $("bankImportFile")?.files?.[0];
+        if (!file) throw new Error("Seleccione un CSV.");
+        const text = await file.text();
+        const rows = parseBankCsv(text);
+        if (!rows.length) throw new Error("CSV sin líneas válidas.");
+        const account = $("bankStatementAccount")?.selectedOptions?.[0];
+        const result = await postJSON("/bank-reconciliation/statements/import", {
+          bank_name:valueFrom("bankImportName") || account?.dataset?.name || "Banco",
+          bank_account_code:valueFrom("bankStatementAccount") || null,
+          bank_account_name:account?.dataset?.name || null,
+          currency_code:valueFrom("bankImportCurrency") || "CRC",
+          statement_period:valueFrom("bankImportPeriod"),
+          statement_date:new Date().toISOString().slice(0,10),
+          source_filename:file.name,
+          rows
+        });
+        closeModal();
+        alert(`Extracto importado. Líneas: ${result.inserted || 0}. Omitidas: ${result.skipped || 0}.`);
+        await loadBankStatements();
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
     }
     function renderDisputesWeb(target=orderCashWorkspace()) {
       target.innerHTML = `
