@@ -561,6 +561,7 @@ def som_web_home() -> HTMLResponse:
     let disputeHistoryRows = [];
     let selectedDisputeIndex = null;
     let selectedDisputeIndexes = new Set();
+    let portRows = [];
     let financeClientes = [];
     let financeClienteRows = [];
     const DISPUTE_STATUSES = ["New","In process","Process by Sales","Process by RTR","Process by Invoicing","Process by Collections","Process by Bank","Process by Disputes","Written Off","Resolved"];
@@ -686,7 +687,6 @@ def som_web_home() -> HTMLResponse:
         update:"/cpp/ports/{id}",
         codeKey:"id",
         fields:[
-          ["id","ID","number","",false],
           ["continente","Continente","text","",true],
           ["pais","País","text","",true],
           ["puerto","Puerto","text","",true]
@@ -3083,6 +3083,10 @@ def som_web_home() -> HTMLResponse:
     }
     function masterAction(key) {
       if (["clientes","surveyores","empleados","proveedores","servicios_md","puertos"].includes(key)) {
+        if (key === "puertos") {
+          openPortForm(null);
+          return;
+        }
         openMasterForm(key, null);
         return;
       }
@@ -3108,15 +3112,34 @@ def som_web_home() -> HTMLResponse:
           $("mdPuerto").innerHTML = "<option>Seleccione puerto</option>";
         };
         $("mdPais").onchange = async () => {
+          const cont = $("mdContinente").value;
           const pais = $("mdPais").value;
-          const puertos = pais.startsWith("Seleccione") ? [] : await getJSON(`/cpp/puertos?pais=${encodeURIComponent(pais)}`);
+          const puertos = pais.startsWith("Seleccione") ? [] : await getJSON(`/cpp/puertos?pais=${encodeURIComponent(pais)}${cont && !cont.startsWith("Seleccione") ? `&continente=${encodeURIComponent(cont)}` : ""}`);
           $("mdPuerto").innerHTML = "<option>Seleccione puerto</option>" + puertos.map(x => `<option>${x}</option>`).join("");
         };
       } catch {}
     }
-    function applyMasterFilter() {
+    async function applyMasterFilter() {
       const tipo = $("mdTipo").value;
       const map = { Cliente:"clientes", Proveedor:"proveedores", Empleado:"empleados", Surveyor:"surveyores", Servicio:"servicios_md", Puerto:"puertos" };
+      if (tipo === "Puerto") {
+        renderPortsMasterView();
+        const cont = valueFrom("mdContinente");
+        const pais = valueFrom("mdPais");
+        const puerto = valueFrom("mdPuerto");
+        await loadPortFilterContinents(cont && !cont.startsWith("Seleccione") ? cont : "");
+        if (cont && !cont.startsWith("Seleccione")) {
+          $("portFilterCont").value = cont;
+          await loadPortFilterCountries(pais && !pais.startsWith("Seleccione") ? pais : "");
+        }
+        if (pais && !pais.startsWith("Seleccione")) {
+          $("portFilterPais").value = pais;
+          await loadPortFilterPorts(puerto && !puerto.startsWith("Seleccione") ? puerto : "");
+        }
+        if (puerto && !puerto.startsWith("Seleccione")) $("portFilterPuerto").value = puerto;
+        await loadPorts();
+        return;
+      }
       if (map[tipo]) openMasterView(map[tipo]);
     }
     async function openMasterView(key) {
@@ -3130,6 +3153,10 @@ def som_web_home() -> HTMLResponse:
       }
       if (key === "company_fiscal") {
         await openCompanyFiscalForm();
+        return;
+      }
+      if (key === "puertos") {
+        renderPortsMasterView();
         return;
       }
       try {
@@ -3154,6 +3181,208 @@ def som_web_home() -> HTMLResponse:
       const fallback = Object.keys(rows[0]).filter(k => !String(k).toLowerCase().includes("hash")).slice(0, 8);
       const cols = keys.length ? keys : fallback;
       return `<div class="table-wrap"><table><thead><tr>${cols.map(k => `<th>${esc(k)}</th>`).join("")}<th>Acción</th></tr></thead><tbody>${rows.slice(0,100).map((row, i) => `<tr>${cols.map(k => `<td>${esc(row[k])}</td>`).join("")}<td><div class="toolbar"><button class="secondary" onclick="openMasterForm('${viewKey}', ${i}, 'view')">Ver</button><button onclick="openMasterForm('${viewKey}', ${i}, 'edit')">Editar</button><button class="brown" onclick="deleteMasterRecord('${viewKey}', ${i})">Inhabilitar</button></div></td></tr>`).join("")}</tbody></table></div>`;
+    }
+    function renderPortsMasterView() {
+      const ws = $("masterWorkspace");
+      ws.classList.remove("hidden");
+      ws.innerHTML = `
+        <div class="panel-head">
+          <h2>Puertos</h2>
+          <div class="toolbar"><button onclick="openPortForm(null)">Nuevo</button><span id="portsCount" class="muted">Presione Buscar</span></div>
+        </div>
+        <div class="finance-filter-row">
+          <label>Continente<select id="portFilterCont" onchange="loadPortFilterCountries()"><option value="">Seleccione continente</option></select></label>
+          <label>País<select id="portFilterPais" onchange="loadPortFilterPorts()"><option value="">Seleccione país</option></select></label>
+          <label>Puerto<select id="portFilterPuerto"><option value="">Seleccione puerto</option></select></label>
+          <button class="secondary" onclick="loadPortFilterContinents()">Cargar combos</button>
+          <button onclick="loadPorts()">Buscar</button>
+          <button class="secondary" onclick="clearPortFilters()">Limpiar</button>
+        </div>
+        <div id="portsMsg" class="status hidden"></div>
+        <div id="portsTable" class="workspace"><div class="status">Cargue combos si desea filtrar, luego presione Buscar.</div></div>`;
+    }
+    async function loadPortFilterContinents(selected="") {
+      const el = $("portFilterCont");
+      if (!el) return;
+      el.innerHTML = '<option value="">Cargando...</option>';
+      try {
+        const rows = await getJSON("/cpp/continentes");
+        el.innerHTML = options(rows, selected, "Seleccione continente");
+      } catch (err) {
+        el.innerHTML = '<option value="">Seleccione continente</option>';
+        showPortsMsg(err.message, true);
+      }
+    }
+    async function loadPortFilterCountries(selected="") {
+      const cont = valueFrom("portFilterCont");
+      const pais = $("portFilterPais");
+      const puerto = $("portFilterPuerto");
+      if (!pais) return;
+      pais.innerHTML = '<option value="">Seleccione país</option>';
+      if (puerto) puerto.innerHTML = '<option value="">Seleccione puerto</option>';
+      if (!cont) return;
+      try {
+        const rows = await getJSON(`/cpp/paises?continente=${encodeURIComponent(cont)}`);
+        pais.innerHTML = options(rows, selected, "Seleccione país");
+      } catch (err) {
+        showPortsMsg(err.message, true);
+      }
+    }
+    async function loadPortFilterPorts(selected="") {
+      const cont = valueFrom("portFilterCont");
+      const pais = valueFrom("portFilterPais");
+      const puerto = $("portFilterPuerto");
+      if (!puerto) return;
+      puerto.innerHTML = '<option value="">Seleccione puerto</option>';
+      if (!pais) return;
+      try {
+        const rows = await getJSON(`/cpp/puertos?pais=${encodeURIComponent(pais)}${cont ? `&continente=${encodeURIComponent(cont)}` : ""}`);
+        puerto.innerHTML = options(rows, selected, "Seleccione puerto");
+      } catch (err) {
+        showPortsMsg(err.message, true);
+      }
+    }
+    function portsParams() {
+      const params = new URLSearchParams({ page:"1", page_size:"100" });
+      [["portFilterCont","continente"],["portFilterPais","pais"],["portFilterPuerto","puerto"]].forEach(([id,key]) => {
+        const value = valueFrom(id);
+        if (value) params.set(key, value);
+      });
+      return params.toString();
+    }
+    function showPortsMsg(message, isError=false) {
+      const msg = $("portsMsg");
+      if (!msg) return;
+      msg.className = isError ? "status error" : "status";
+      msg.textContent = message;
+    }
+    function clearPortsMsg() {
+      const msg = $("portsMsg");
+      if (!msg) return;
+      msg.className = "status hidden";
+      msg.textContent = "";
+    }
+    async function loadPorts() {
+      const table = $("portsTable");
+      showPortsMsg("Consultando puertos...");
+      try {
+        const payload = await getJSON(`/cpp/ports?${portsParams()}`);
+        portRows = rowsFromPayload(payload);
+        currentRows = portRows;
+        clearPortsMsg();
+        if ($("portsCount")) $("portsCount").textContent = `${portRows.length} registros`;
+        renderPortsTable();
+      } catch (err) {
+        table.innerHTML = "";
+        showPortsMsg(err.message, true);
+      }
+    }
+    function renderPortsTable() {
+      const table = $("portsTable");
+      if (!portRows.length) {
+        table.innerHTML = '<div class="status">Sin puertos para los filtros seleccionados.</div>';
+        return;
+      }
+      const cols = ["id","continente","pais","puerto"];
+      table.innerHTML = `<div class="table-wrap"><table><thead><tr>${cols.map(c => `<th>${esc(c)}</th>`).join("")}<th>Acción</th></tr></thead><tbody>${portRows.map((row, i) => `<tr>${cols.map(c => `<td>${esc(row[c])}</td>`).join("")}<td><div class="toolbar"><button class="secondary" onclick="openPortForm(${i}, 'view')">Ver</button><button onclick="openPortForm(${i}, 'edit')">Editar</button><button class="brown" onclick="deletePortRecord(${i})">Eliminar</button></div></td></tr>`).join("")}</tbody></table></div>`;
+    }
+    function clearPortFilters() {
+      ["portFilterCont","portFilterPais","portFilterPuerto"].forEach(id => { if ($(id)) $(id).innerHTML = `<option value="">${id === "portFilterCont" ? "Seleccione continente" : id === "portFilterPais" ? "Seleccione país" : "Seleccione puerto"}</option>`; });
+      portRows = [];
+      currentRows = [];
+      if ($("portsCount")) $("portsCount").textContent = "Presione Buscar";
+      clearPortsMsg();
+      if ($("portsTable")) $("portsTable").innerHTML = '<div class="status">Cargue combos si desea filtrar, luego presione Buscar.</div>';
+    }
+    function portFormValue(row, key) {
+      return esc(row?.[key] ?? "");
+    }
+    function openPortForm(rowIndex=null, mode="edit") {
+      const editing = rowIndex !== null && rowIndex !== undefined;
+      const row = editing ? portRows[rowIndex] : {};
+      const readonly = mode === "view";
+      const ws = $("masterWorkspace");
+      ws.classList.remove("hidden");
+      ws.innerHTML = `
+        <div class="panel-head"><h2>${editing ? (readonly ? "Ver" : "Editar") : "Agregar"} Puerto</h2><span class="muted">El ID se genera automáticamente al guardar</span></div>
+        <div class="form-grid">
+          ${editing ? `<label>ID<input id="portFormId" value="${portFormValue(row, "id")}" readonly /></label>` : ""}
+          <label>Continente<input id="portFormContinente" value="${portFormValue(row, "continente")}" list="portContinentesList" required /></label>
+          <label>País<input id="portFormPais" value="${portFormValue(row, "pais")}" list="portPaisesList" required /></label>
+          <label>Puerto<input id="portFormPuerto" value="${portFormValue(row, "puerto")}" required /></label>
+          <datalist id="portContinentesList"></datalist>
+          <datalist id="portPaisesList"></datalist>
+        </div>
+        <div class="md-actions">
+          ${readonly ? "" : `<button class="green" onclick="savePortRecord(${editing ? Number(row.id) : "null"})">Guardar</button>`}
+          ${editing && !readonly ? `<button class="brown" onclick="deletePortById(${Number(row.id)})">Eliminar</button>` : ""}
+          <button class="secondary" onclick="renderPortsMasterView()">Volver</button>
+        </div>
+        <div id="portFormMsg" class="status hidden"></div>`;
+      if (readonly) ["portFormContinente","portFormPais","portFormPuerto"].forEach(id => { if ($(id)) $(id).disabled = true; });
+      loadPortFormDatalists().catch(() => null);
+    }
+    async function loadPortFormDatalists() {
+      const conts = await getJSON("/cpp/continentes").catch(() => []);
+      if ($("portContinentesList")) $("portContinentesList").innerHTML = rowsList(conts).map(x => `<option value="${esc(x)}"></option>`).join("");
+      const cont = valueFrom("portFormContinente");
+      const paises = cont ? await getJSON(`/cpp/paises?continente=${encodeURIComponent(cont)}`).catch(() => []) : [];
+      if ($("portPaisesList")) $("portPaisesList").innerHTML = rowsList(paises).map(x => `<option value="${esc(x)}"></option>`).join("");
+      const contInput = $("portFormContinente");
+      if (contInput) contInput.onchange = loadPortFormDatalists;
+    }
+    function portPayloadFromForm() {
+      return {
+        continente:valueFrom("portFormContinente"),
+        pais:valueFrom("portFormPais"),
+        puerto:valueFrom("portFormPuerto")
+      };
+    }
+    async function savePortRecord(id=null) {
+      const msg = $("portFormMsg");
+      msg.className = "status";
+      msg.textContent = "Guardando...";
+      try {
+        const payload = portPayloadFromForm();
+        if (!payload.continente || !payload.pais || !payload.puerto) throw new Error("Continente, país y puerto son requeridos.");
+        await sendJSON(id ? "PUT" : "POST", id ? `/cpp/ports/${encodeURIComponent(id)}` : "/cpp/ports", payload);
+        renderPortsMasterView();
+        await loadPortFilterContinents(payload.continente);
+        $("portFilterCont").value = payload.continente;
+        await loadPortFilterCountries(payload.pais);
+        $("portFilterPais").value = payload.pais;
+        await loadPortFilterPorts(payload.puerto);
+        $("portFilterPuerto").value = payload.puerto;
+        await loadPorts();
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    async function deletePortRecord(rowIndex) {
+      const row = portRows[rowIndex];
+      if (!row) return;
+      await deletePortById(row.id);
+    }
+    async function deletePortById(id) {
+      if (!id) return;
+      if (!confirm(`¿Eliminar puerto ${id}?`)) return;
+      const msg = $("portFormMsg") || $("portsMsg");
+      if (msg) {
+        msg.className = "status";
+        msg.textContent = "Eliminando...";
+      }
+      try {
+        await sendJSON("DELETE", `/cpp/ports/${encodeURIComponent(id)}`, null);
+        renderPortsMasterView();
+      } catch (err) {
+        if (msg) {
+          msg.className = "status error";
+          msg.textContent = err.message;
+        } else {
+          alert(err.message);
+        }
+      }
     }
     function codePrefix() {
       return selectedCompany().startsWith("MCI") ? "MCI" : "MSL";
