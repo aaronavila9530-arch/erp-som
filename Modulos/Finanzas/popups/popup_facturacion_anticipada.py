@@ -7,6 +7,7 @@ from Modulos.Finanzas.date_utils import LONG_DATE_FORMAT, to_long_english_date
 from Modulos.Servicios.widgets.date_picker import DatePicker
 from api_client import (
     get_clientes_finanzas_api,
+    get_invoicing_facturables_api,
     post_invoicing_anticipada_manual_api,
     post_invoicing_anticipada_xml_api
 )
@@ -22,7 +23,7 @@ class PopupFacturacionAnticipada(tk.Toplevel):
         self.servicio = servicio or {}  # NO requerido
 
         self.title("Factura Anticipada")
-        self.geometry("600x560")
+        self.geometry("780x720")
         self.transient(parent)
         self.grab_set()
 
@@ -31,8 +32,11 @@ class PopupFacturacionAnticipada(tk.Toplevel):
 
         # Cliente (combo)
         self.cliente_nombre = tk.StringVar()
+        self.nombre_factura = tk.StringVar()
         self.cliente_codigo = None
         self._clientes_map = {}  # nombre -> codigo
+        self._servicios = []
+        self._servicio_labels = {}
 
         # Manual
         self.fecha = tk.StringVar(value=to_long_english_date(date.today()))
@@ -42,6 +46,8 @@ class PopupFacturacionAnticipada(tk.Toplevel):
 
         self.buque = tk.StringVar()
         self.operacion = tk.StringVar()
+        self.place = tk.StringVar()
+        self.servicio_label = tk.StringVar()
         self.num_informe = tk.StringVar()
         self.periodo_operacion = tk.StringVar()
 
@@ -83,26 +89,61 @@ class PopupFacturacionAnticipada(tk.Toplevel):
 
         r += 1
 
-        # -------- Cliente (combo) --------
+        # -------- Cliente (combo editable) --------
         tk.Label(frame, text="Cliente:", bg="white", fg="black")\
             .grid(row=r, column=0, sticky="w", pady=5)
 
         self.cbo_cliente = ttk.Combobox(
             frame,
             textvariable=self.cliente_nombre,
-            state="readonly",
-            width=42
+            state="normal",
+            width=48
         )
         self.cbo_cliente.grid(row=r, column=1, sticky="w", pady=5)
         self.cbo_cliente.bind("<<ComboboxSelected>>", self._on_cliente_select)
+        self.cbo_cliente.bind("<FocusOut>", self._on_cliente_select)
+
+        r += 1
+
+        self.manual_widgets = []
+
+        self.manual_widgets += self._field(frame, "Nombre en factura:", self.nombre_factura, r); r += 1
+
+        lbl_srv = tk.Label(frame, text="Servicio / Survey:", bg="white", fg="black")
+        lbl_srv.grid(row=r, column=0, sticky="w", pady=5)
+        self.manual_widgets.append(lbl_srv)
+
+        srv_wrap = tk.Frame(frame, bg="white")
+        srv_wrap.grid(row=r, column=1, columnspan=2, sticky="w", pady=5)
+        self.manual_widgets.append(srv_wrap)
+
+        self.cbo_servicio = ttk.Combobox(
+            srv_wrap,
+            textvariable=self.servicio_label,
+            state="readonly",
+            width=50
+        )
+        self.cbo_servicio.pack(side="left")
+        self.cbo_servicio.bind("<<ComboboxSelected>>", self._on_servicio_select)
+
+        btn_buscar_servicios = tk.Button(
+            srv_wrap,
+            text="Buscar servicios",
+            width=16,
+            command=self._buscar_servicios,
+            bg="white",
+            fg="black",
+            relief="solid",
+            bd=1
+        )
+        btn_buscar_servicios.pack(side="left", padx=8)
 
         r += 1
 
         # -------- Campos MANUAL (guardamos widgets para ocultar/mostrar) --------
-        self.manual_widgets = []
-
+        self.manual_widgets += self._field(frame, "Place:", self.place, r); r += 1
         self.manual_widgets += self._field(frame, "Buque / Contenedor:", self.buque, r); r += 1
-        self.manual_widgets += self._field(frame, "Operación:", self.operacion, r); r += 1
+        self.manual_widgets += self._field(frame, "Survey:", self.operacion, r); r += 1
         self.manual_widgets += self._field(frame, "Número de informe:", self.num_informe, r); r += 1
         self.manual_widgets += self._field(frame, "Periodo de operación:", self.periodo_operacion, r); r += 1
         self.manual_widgets += self._field(frame, "Fecha emisión:", self.fecha, r); r += 1
@@ -235,6 +276,74 @@ class PopupFacturacionAnticipada(tk.Toplevel):
     def _on_cliente_select(self, *_):
         nombre = (self.cliente_nombre.get() or "").strip()
         self.cliente_codigo = self._clientes_map.get(nombre)
+        if nombre and not self.nombre_factura.get().strip():
+            self.nombre_factura.set(nombre)
+        elif nombre in self._clientes_map:
+            self.nombre_factura.set(nombre)
+
+    def _buscar_servicios(self):
+        if not self._validate_cliente():
+            return
+        try:
+            rows = get_invoicing_facturables_api(self.cliente_nombre.get().strip())
+            self._servicios = rows
+            self._servicio_labels = {}
+            labels = []
+            for row in rows:
+                num = str(row.get("num_informe") or row.get("numero_informe") or row.get("consec") or "").strip()
+                vessel = str(row.get("buque_contenedor") or row.get("buque") or "").strip()
+                op = str(row.get("operacion") or row.get("survey") or "").strip()
+                label = " | ".join([part for part in [num, vessel, op] if part])
+                if not label:
+                    label = f"Servicio {len(labels) + 1}"
+                self._servicio_labels[label] = row
+                labels.append(label)
+            self.cbo_servicio["values"] = labels
+            if labels:
+                self.servicio_label.set(labels[0])
+                self._on_servicio_select()
+            else:
+                self.servicio_label.set("")
+                messagebox.showinfo("Servicios", "No hay servicios pendientes de factura para este cliente.")
+        except Exception as e:
+            messagebox.showerror("Error", f"No se pudieron cargar servicios: {e}")
+
+    def _on_servicio_select(self, *_):
+        row = self._servicio_labels.get((self.servicio_label.get() or "").strip()) or {}
+        if not row:
+            return
+        buque = row.get("buque_contenedor") or row.get("buque") or row.get("contenedor") or ""
+        survey = row.get("operacion") or row.get("survey") or ""
+        num = row.get("num_informe") or row.get("numero_informe") or ""
+        puerto = row.get("puerto") or ""
+        pais = row.get("pais") or ""
+        place = ", ".join([str(x).strip() for x in [puerto, pais] if str(x or "").strip()])
+        periodo = row.get("periodo_operacion") or row.get("periodo") or row.get("fecha_inicio") or ""
+
+        self.buque.set(str(buque).strip())
+        self.operacion.set(str(survey).strip())
+        self.num_informe.set(str(num).strip())
+        self.place.set(place)
+        self.periodo_operacion.set(str(periodo).strip()[:10])
+        self._build_description()
+
+    def _build_description(self):
+        cliente = self.nombre_factura.get().strip() or self.cliente_nombre.get().strip()
+        first_line = " / ".join([part for part in [
+            self.num_informe.get().strip(),
+            self.buque.get().strip(),
+            cliente
+        ] if part])
+        lines = []
+        if first_line:
+            lines.append(first_line)
+        if self.place.get().strip():
+            lines.extend(["", self.place.get().strip()])
+        if self.operacion.get().strip():
+            lines.extend(["", "SURVEY:", f"-{self.operacion.get().strip()}"])
+        if lines:
+            self.txt_desc.delete("1.0", "end")
+            self.txt_desc.insert("1.0", "\n".join(lines))
 
     # ============================================================
     # TÉRMINO PAGO (si viene desde servicio, lo muestra)
@@ -301,6 +410,9 @@ class PopupFacturacionAnticipada(tk.Toplevel):
             messagebox.showerror("Error", "Código de cliente no encontrado.")
             return False
 
+        if not self.nombre_factura.get().strip():
+            self.nombre_factura.set(nombre)
+
         return True
 
     def _validate_manual(self) -> bool:
@@ -324,7 +436,7 @@ class PopupFacturacionAnticipada(tk.Toplevel):
             return False
 
         if not self.operacion.get().strip():
-            messagebox.showerror("Error", "Operación requerida.")
+            messagebox.showerror("Error", "Survey requerido.")
             return False
 
         if not self.periodo_operacion.get().strip():
@@ -354,7 +466,7 @@ class PopupFacturacionAnticipada(tk.Toplevel):
         try:
             data = post_invoicing_anticipada_manual_api(
                 codigo_cliente=self.cliente_codigo,
-                nombre_cliente=self.cliente_nombre.get().strip(),
+                nombre_cliente=self.nombre_factura.get().strip() or self.cliente_nombre.get().strip(),
                 num_informe=self.num_informe.get().strip(),
                 buque=self.buque.get().strip(),
                 operacion=self.operacion.get().strip(),
@@ -362,7 +474,10 @@ class PopupFacturacionAnticipada(tk.Toplevel):
                 descripcion=self.txt_desc.get("1.0", "end").strip(),
                 moneda=self.moneda.get().strip() or "USD",
                 termino_pago=int(self.termino_pago.get().strip() or 0),
-                total=float(self.total.get().strip())
+                total=float(self.total.get().strip()),
+                payment_terms=self.termino_pago.get().strip(),
+                place=self.place.get().strip(),
+                survey=self.operacion.get().strip()
             )
 
             messagebox.showinfo(
@@ -387,7 +502,7 @@ class PopupFacturacionAnticipada(tk.Toplevel):
         try:
             data = post_invoicing_anticipada_xml_api(
                 codigo_cliente=self.cliente_codigo,
-                nombre_cliente=self.cliente_nombre.get().strip(),
+                nombre_cliente=self.nombre_factura.get().strip() or self.cliente_nombre.get().strip(),
                 xml_path=self.xml_path
             )
 
@@ -411,8 +526,8 @@ class PopupFacturacionAnticipada(tk.Toplevel):
 
         data = {
             # cliente
-            "cliente": self.cliente_nombre.get().strip(),
-            "nombre_cliente": self.cliente_nombre.get().strip(),
+            "cliente": self.nombre_factura.get().strip() or self.cliente_nombre.get().strip(),
+            "nombre_cliente": self.nombre_factura.get().strip() or self.cliente_nombre.get().strip(),
             "codigo_cliente": self.cliente_codigo,
 
             # fechas / términos
@@ -425,6 +540,9 @@ class PopupFacturacionAnticipada(tk.Toplevel):
             "buque": self.buque.get().strip(),
             "buque_contenedor": self.buque.get().strip(),
             "operacion": self.operacion.get().strip(),
+            "survey": self.operacion.get().strip(),
+            "place": self.place.get().strip(),
+            "payment_terms": self.termino_pago.get().strip(),
 
             "num_informe": self.num_informe.get().strip(),
 

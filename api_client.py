@@ -1220,6 +1220,31 @@ def get_clientes_finanzas_api():
         return []
 
 
+def get_invoicing_facturables_api(cliente: str):
+    """
+    Servicios finalizados pendientes de factura para facturacion/billing.
+    La llamada es explicita desde UI; no se ejecuta al abrir pantallas.
+    """
+    cliente = (cliente or "").strip()
+    if not cliente:
+        return []
+    try:
+        r = api_request(
+            "GET",
+            f"{BASE_URL}/invoicing/facturables",
+            params={"cliente": cliente},
+            timeout=20
+        )
+        r.raise_for_status()
+        payload = r.json()
+        if isinstance(payload, list):
+            return payload
+        return payload.get("data", []) or []
+    except Exception as e:
+        print("Error get_invoicing_facturables_api:", e)
+        return []
+
+
 # ============================================================
 # INCOMING PAYMENTS - REGISTRAR PAGO MANUAL
 # ============================================================
@@ -3588,7 +3613,12 @@ def post_invoicing_anticipada_manual_api(
     descripcion: str,
     moneda: str,
     termino_pago: int,
-    total: float
+    total: float,
+    payment_terms: str = "",
+    place: str = "",
+    survey: str = "",
+    puerto: str = "",
+    pais: str = ""
 ):
     payload = {
         "tipo_factura": "MANUAL",
@@ -3601,7 +3631,12 @@ def post_invoicing_anticipada_manual_api(
         "descripcion": descripcion,
         "moneda": moneda,
         "termino_pago": int(termino_pago),
-        "total": float(total)
+        "total": float(total),
+        "payment_terms": payment_terms,
+        "place": place,
+        "survey": survey,
+        "puerto": puerto,
+        "pais": pais
     }
 
     return post_invoicing_anticipada_api(payload)

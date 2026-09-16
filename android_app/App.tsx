@@ -16027,6 +16027,7 @@ function FinanceFilters({
   const [accounts, setAccounts] = useState<string[]>(["TODOS"]);
   const [accountingActionsOpen, setAccountingActionsOpen] = useState(false);
   const [biweeklyOpen, setBiweeklyOpen] = useState(false);
+  const [advanceInvoiceOpen, setAdvanceInvoiceOpen] = useState(false);
   const accountingPeriods = useMemo(() => buildAccountingPeriods(), []);
   const [form, setForm] = useState<Record<string, string>>({
     cliente: sectionKey === "billing" ? "" : "ALL",
@@ -16070,8 +16071,16 @@ function FinanceFilters({
       .then((payload) => {
         const names = toOptions(payload, ["nombrecomercial", "nombrejuridico", "NombreComercial", "NombreJuridico"]);
         const { labels, codes } = clientLabelsAndCodes(payload);
+        const nameCodes: Record<string, string> = {};
+        pickList(payload).forEach((item) => {
+          const row = asRecord(item);
+          if (!row) return;
+          const code = formatValue(row.codigo ?? row.Codigo);
+          const name = formatValue(row.nombrecomercial ?? row.nombrejuridico ?? row.NombreComercial ?? row.NombreJuridico);
+          if (code && code !== "-" && name && name !== "-") nameCodes[name] = code;
+        });
         const needsCode = sectionKey === "bank-reconciliation";
-        setClientCodes(codes);
+        setClientCodes({ ...codes, ...nameCodes });
         setClientes(sectionKey === "billing" ? names : ["ALL", ...(needsCode ? labels : names)]);
       })
       .catch(() => setClientes(sectionKey === "billing" ? [] : ["ALL"]));
@@ -16417,6 +16426,28 @@ function FinanceFilters({
 
       {sectionKey === "invoicing" ? (
         <>
+          <View style={styles.reportBox}>
+            <View style={styles.salaryHeader}>
+              <Text style={styles.cardTitle}>Factura anticipada</Text>
+              <Pressable style={styles.actionButton} onPress={() => setAdvanceInvoiceOpen(true)}>
+                <Text style={styles.actionButtonText}>Abrir</Text>
+              </Pressable>
+            </View>
+            <Text style={styles.helperText}>Formato MSL SRL con invoice incremental, cliente editable, survey desde servicios y exportacion PDF/Word.</Text>
+          </View>
+          <Modal visible={advanceInvoiceOpen} animationType="slide" onRequestClose={() => setAdvanceInvoiceOpen(false)}>
+            <SafeAreaView style={styles.modalScreen}>
+              <AdvanceInvoiceMobile
+                session={session}
+                clientes={clientes.filter((item) => item !== "ALL")}
+                clientCodes={clientCodes}
+                onClose={() => setAdvanceInvoiceOpen(false)}
+                onSaved={(message) => {
+                  onMessage(message);
+                }}
+              />
+            </SafeAreaView>
+          </Modal>
           <SelectField label="Cliente" value={form.cliente} options={clientes} onChange={(value) => setValue("cliente", value)} />
           <Text style={styles.label}>Desde</Text>
           <TextInput style={styles.input} value={form.fecha_desde} onChangeText={(value) => setValue("fecha_desde", value)} placeholder="YYYY-MM-DD" />
@@ -16572,6 +16603,237 @@ function FinanceFilters({
         </Pressable>
       </View>
     </View>
+  );
+}
+
+function AdvanceInvoiceMobile({
+  session,
+  clientes,
+  clientCodes,
+  onClose,
+  onSaved
+}: {
+  session: NonNullable<ReturnType<typeof useAuth>["session"]>;
+  clientes: string[];
+  clientCodes: Record<string, string>;
+  onClose: () => void;
+  onSaved: (message: string) => void;
+}) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [form, setForm] = useState<Record<string, string>>({
+    cliente: clientes[0] || "",
+    nombre_factura: clientes[0] || "",
+    fecha_emision: today,
+    moneda: "USD",
+    termino_pago: "",
+    total: "",
+    buque: "",
+    survey: "",
+    num_informe: "",
+    periodo_operacion: "",
+    place: "",
+    descripcion: ""
+  });
+  const [services, setServices] = useState<Record<string, unknown>[]>([]);
+  const [selectedService, setSelectedService] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const [invoiceNumber, setInvoiceNumber] = useState("");
+
+  const serviceOptions = useMemo(
+    () =>
+      services.map((row, index) => {
+        const num = formatValue(row.num_informe || row.numero_informe || row.consec);
+        const vessel = formatValue(row.buque_contenedor || row.buque || row.contenedor);
+        const survey = formatValue(row.operacion || row.survey);
+        return [num, vessel, survey].filter((part) => part && part !== "-").join(" | ") || `Servicio ${index + 1}`;
+      }),
+    [services]
+  );
+
+  function update(key: string, value: string) {
+    setForm((current) => ({ ...current, [key]: value }));
+  }
+
+  function buildDescription(next: Record<string, string>) {
+    const firstLine = [next.num_informe, next.buque, next.nombre_factura].map((part) => String(part || "").trim()).filter(Boolean).join(" / ");
+    const lines: string[] = [];
+    if (firstLine) lines.push(firstLine);
+    if (next.place) lines.push("", next.place);
+    if (next.survey) lines.push("", "SURVEY:", `-${next.survey}`);
+    return lines.join("\n");
+  }
+
+  function selectClient(value: string) {
+    setInvoiceNumber("");
+    setSelectedService("");
+    setServices([]);
+    setForm((current) => ({ ...current, cliente: value, nombre_factura: value }));
+  }
+
+  async function loadServices() {
+    const cliente = form.cliente.trim();
+    if (!cliente) {
+      setMessage("Seleccione un cliente para buscar servicios.");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    setInvoiceNumber("");
+    try {
+      const payload = await apiRequest(`/invoicing/facturables?cliente=${encodeURIComponent(cliente)}`, { session });
+      const rows = extractRows(payload);
+      setServices(rows);
+      setSelectedService("");
+      setMessage(rows.length ? `Servicios pendientes: ${rows.length}.` : "No hay servicios pendientes para este cliente.");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudieron buscar servicios.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function applyService(label: string) {
+    const index = serviceOptions.indexOf(label);
+    const row = index >= 0 ? services[index] : null;
+    setSelectedService(label);
+    if (!row) return;
+    const puerto = formatValue(row.puerto);
+    const pais = formatValue(row.pais);
+    const place = [puerto, pais].filter((part) => part && part !== "-").join(", ");
+    setForm((current) => {
+      const next = {
+        ...current,
+        buque: formatValue(row.buque_contenedor || row.buque || row.contenedor),
+        survey: formatValue(row.operacion || row.survey),
+        num_informe: formatValue(row.num_informe || row.numero_informe),
+        periodo_operacion: formatValue(row.periodo_operacion || row.periodo || row.fecha_inicio).slice(0, 10),
+        place
+      };
+      return { ...next, descripcion: buildDescription(next) };
+    });
+  }
+
+  async function createInvoice() {
+    const total = Number(String(form.total || "").replace(",", ""));
+    const code = clientCodes[form.cliente] || "";
+    if (!code) {
+      setMessage("Seleccione un cliente existente de Master Data para obtener el codigo.");
+      return;
+    }
+    if (!form.nombre_factura.trim() || !form.descripcion.trim() || !Number.isFinite(total) || total <= 0) {
+      setMessage("Cliente, descripcion y total son requeridos.");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      const result = await apiRequest<Record<string, unknown>>("/invoicing/anticipada", {
+        method: "POST",
+        session,
+        body: {
+          tipo_factura: "MANUAL",
+          codigo_cliente: code,
+          nombre_cliente: form.nombre_factura.trim(),
+          fecha_emision: form.fecha_emision,
+          moneda: form.moneda || "USD",
+          termino_pago: Number(form.termino_pago || 0),
+          payment_terms: form.termino_pago,
+          total,
+          buque: form.buque,
+          operacion: form.survey,
+          survey: form.survey,
+          num_informe: form.num_informe,
+          periodo_operacion: form.periodo_operacion,
+          place: form.place,
+          descripcion: form.descripcion
+        }
+      });
+      const numero = formatValue(result.numero_documento);
+      setInvoiceNumber(numero);
+      setMessage(`Factura anticipada ${numero} creada.`);
+      onSaved(`Factura anticipada ${numero} creada.`);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo crear la factura anticipada.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function exportInvoice(kind: "pdf" | "word") {
+    if (!invoiceNumber) {
+      setMessage("Primero genere la factura.");
+      return;
+    }
+    const ext = kind === "pdf" ? "pdf" : "docx";
+    const endpoint = kind === "pdf" ? `/billing/pdf/${encodeURIComponent(invoiceNumber)}` : `/billing/word/${encodeURIComponent(invoiceNumber)}`;
+    try {
+      await downloadSessionFile(endpoint, session, cleanFilePart(`Factura_Anticipada_${invoiceNumber}.${ext}`));
+      setMessage(`Exportacion ${kind.toUpperCase()} abierta.`);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo exportar la factura.");
+    }
+  }
+
+  return (
+    <>
+      <View style={styles.modalHeader}>
+        <Text style={styles.modalTitle}>Facturacion Anticipada</Text>
+        <Pressable style={styles.modalClose} onPress={onClose}>
+          <Text style={styles.modalCloseText}>Cerrar</Text>
+        </Pressable>
+      </View>
+      <ScrollView style={styles.content} contentContainerStyle={styles.modalBody} keyboardShouldPersistTaps="handled">
+        <SelectField label="Cliente / codigo" value={form.cliente || "Seleccionar"} options={clientes} onChange={selectClient} />
+        <Text style={styles.label}>Nombre en factura</Text>
+        <TextInput style={styles.input} value={form.nombre_factura} onChangeText={(value) => update("nombre_factura", value)} />
+        <View style={styles.financeFilterActions}>
+          <Pressable style={styles.actionButton} onPress={loadServices} disabled={busy}>
+            <Text style={styles.actionButtonText}>{busy ? "Buscando..." : "Buscar servicios"}</Text>
+          </Pressable>
+          <Pressable style={styles.modalClose} onPress={() => setServices([])}>
+            <Text style={styles.modalCloseText}>Limpiar</Text>
+          </Pressable>
+        </View>
+        <SelectField label="Survey / servicio" value={selectedService || "Seleccionar"} options={["Seleccionar", ...serviceOptions]} onChange={(value) => value !== "Seleccionar" && applyService(value)} />
+        <Text style={styles.label}>Fecha emision</Text>
+        <TextInput style={styles.input} value={form.fecha_emision} onChangeText={(value) => update("fecha_emision", value)} placeholder="YYYY-MM-DD" />
+        <SelectField label="Moneda" value={form.moneda} options={["USD", "CRC"]} onChange={(value) => update("moneda", value)} />
+        <Text style={styles.label}>Payment terms</Text>
+        <TextInput keyboardType="number-pad" style={styles.input} value={form.termino_pago} onChangeText={(value) => update("termino_pago", value)} placeholder="Ej: 10" />
+        <Text style={styles.label}>Total</Text>
+        <TextInput keyboardType="decimal-pad" style={styles.input} value={form.total} onChangeText={(value) => update("total", value)} />
+        <Text style={styles.label}>Place</Text>
+        <TextInput style={styles.input} value={form.place} onChangeText={(value) => update("place", value)} />
+        <Text style={styles.label}>Buque / contenedor</Text>
+        <TextInput style={styles.input} value={form.buque} onChangeText={(value) => update("buque", value)} />
+        <Text style={styles.label}>Survey</Text>
+        <TextInput style={styles.input} value={form.survey} onChangeText={(value) => update("survey", value)} />
+        <Text style={styles.label}>Num informe</Text>
+        <TextInput style={styles.input} value={form.num_informe} onChangeText={(value) => update("num_informe", value)} />
+        <Text style={styles.label}>Periodo</Text>
+        <TextInput style={styles.input} value={form.periodo_operacion} onChangeText={(value) => update("periodo_operacion", value)} />
+        <Text style={styles.label}>Descripcion</Text>
+        <TextInput
+          multiline
+          style={[styles.input, styles.multilineInput]}
+          value={form.descripcion}
+          onChangeText={(value) => update("descripcion", value)}
+        />
+        <PrimaryButton label={busy ? "Procesando..." : "Facturar"} loading={busy} onPress={createInvoice} />
+        {invoiceNumber ? (
+          <View style={styles.financeFilterActions}>
+            <Pressable style={styles.actionButton} onPress={() => exportInvoice("pdf")}>
+              <Text style={styles.actionButtonText}>Exportar PDF</Text>
+            </Pressable>
+            <Pressable style={styles.modalClose} onPress={() => exportInvoice("word")}>
+              <Text style={styles.modalCloseText}>Exportar Word</Text>
+            </Pressable>
+          </View>
+        ) : null}
+        {message ? <Text style={message.includes("No ") || message.includes("requer") ? styles.error : styles.helperText}>{message}</Text> : null}
+      </ScrollView>
+    </>
   );
 }
 
