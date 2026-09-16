@@ -390,6 +390,11 @@ def som_web_home() -> HTMLResponse:
     .finance-toolbar { display:flex; flex-wrap:wrap; gap:8px; margin:8px 0 12px; }
     .finance-toolbar button { height:34px; }
     .service-selected { background:#eaf6ff; }
+    .pick-col { width:42px; min-width:42px; text-align:center; }
+    .row-pick { appearance:none; -webkit-appearance:none; width:20px; height:20px; border:1.5px solid #8b95a5; border-radius:50%; background:#fff; display:inline-grid; place-content:center; margin:0; vertical-align:middle; cursor:pointer; }
+    .row-pick::before { content:""; width:10px; height:10px; border-radius:50%; transform:scale(0); transition:transform .08s ease-in-out; background:var(--blue); }
+    .row-pick:checked { border-color:var(--blue); background:#eff7ff; }
+    .row-pick:checked::before { transform:scale(1); }
     .service-warning { background:#fff3f3; }
     .badge { display:inline-flex; align-items:center; min-height:24px; border:1px solid var(--line); border-radius:999px; padding:2px 9px; background:#f8fafc; font-size:12px; }
     .badge.open { border-color:#b7d8ff; color:#005da8; background:#edf7ff; }
@@ -520,26 +525,36 @@ def som_web_home() -> HTMLResponse:
     let servicePage = 1;
     let serviceTotal = 0;
     let selectedServiceIndex = null;
+    let selectedServiceIndexes = new Set();
     let financeTab = "finance-home";
     let billableRows = [];
     let billingRows = [];
     let selectedBillableIndex = null;
     let selectedBillingIndex = null;
+    let selectedBillableIndexes = new Set();
+    let selectedBillingIndexes = new Set();
     let billingPane = "billables";
     let creditRows = [];
     let selectedCreditIndex = null;
+    let selectedCreditIndexes = new Set();
     let collectionRows = [];
     let selectedCollectionIndex = null;
+    let selectedCollectionIndexes = new Set();
     let collectionPage = 1;
     let collectionTotal = 0;
     let collectionClientesLoaded = false;
     let collectionClientes = [];
     let bankRowsWeb = [];
     let selectedBankIndex = null;
+    let selectedBankIndexes = new Set();
     let bankStatementRows = [];
     let selectedBankStatementId = null;
+    let selectedBankStatementIds = new Set();
     let bankStatementLineRows = [];
     let selectedBankLineIndex = null;
+    let selectedBankLineIndexes = new Set();
+    let selectedGenericFinanceIndexes = new Set();
+    let selectedPaidInvoiceIndexes = new Set();
     let financeClientes = [];
     let financeClienteRows = [];
     const SERVICE_COLUMNS = [
@@ -730,6 +745,15 @@ def som_web_home() -> HTMLResponse:
       if (Array.isArray(value?.items)) return value.items;
       return [];
     }
+    function firstFromSet(set) {
+      const first = set.values().next();
+      return first.done ? null : first.value;
+    }
+    function setIndexSelection(set, index, checked) {
+      if (checked) set.add(index);
+      else set.delete(index);
+      return firstFromSet(set);
+    }
     function options(values, selected="", placeholder="Todos") {
       const list = [...new Set(rowsList(values).map(v => String(v ?? "").trim()).filter(Boolean))].sort((a,b) => a.localeCompare(b));
       return `<option value="">${esc(placeholder)}</option>` + list.map(v => `<option value="${esc(v)}"${v === selected ? " selected" : ""}>${esc(v)}</option>`).join("");
@@ -749,6 +773,7 @@ def som_web_home() -> HTMLResponse:
       URL.revokeObjectURL(url);
     }
     function selectedService() {
+      if (selectedServiceIndex === null) selectedServiceIndex = firstFromSet(selectedServiceIndexes);
       return selectedServiceIndex === null ? null : serviceRows[selectedServiceIndex];
     }
     function requireService() {
@@ -1049,6 +1074,7 @@ def som_web_home() -> HTMLResponse:
     }
     async function loadGenericFinance(path, targetId) {
       const target = $(targetId);
+      selectedGenericFinanceIndexes = new Set();
       target.className = "status";
       target.textContent = "Consultando...";
       try {
@@ -1064,7 +1090,20 @@ def som_web_home() -> HTMLResponse:
     function renderFinanceGenericTable(rows) {
       if (!rows.length) return '<div class="status">Sin datos para esta consulta.</div>';
       const cols = Object.keys(rows[0]).filter(k => !String(k).toLowerCase().includes("hash")).slice(0, 12);
-      return `<div class="table-wrap"><table><thead><tr>${cols.map(c => `<th>${esc(c)}</th>`).join("")}</tr></thead><tbody>${rows.slice(0,100).map(row => `<tr>${cols.map(c => `<td>${esc(row[c])}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
+      return `<div class="table-wrap"><table><thead><tr><th class="pick-col"></th>${cols.map(c => `<th>${esc(c)}</th>`).join("")}</tr></thead><tbody>${rows.slice(0,100).map((row, idx) => {
+        const selected = selectedGenericFinanceIndexes.has(idx);
+        return `<tr class="${selected ? "service-selected" : ""}" onclick="toggleGenericFinanceRow(${idx})"><td class="pick-col"><input class="row-pick" type="checkbox" ${selected ? "checked" : ""} onclick="event.stopPropagation(); toggleGenericFinanceRow(${idx}, this.checked)" /></td>${cols.map(c => `<td>${esc(row[c])}</td>`).join("")}</tr>`;
+      }).join("")}</tbody></table></div>`;
+    }
+    function toggleGenericFinanceRow(idx, checked=null) {
+      const next = checked === null ? !selectedGenericFinanceIndexes.has(idx) : checked;
+      setIndexSelection(selectedGenericFinanceIndexes, idx, next);
+      document.querySelectorAll("#itpWorkspace .table-wrap tr, #accountingWorkspace .table-wrap tr, #disputesWorkspace .table-wrap tr").forEach((tr, i) => {
+        if (i === 0) return;
+        tr.classList.toggle("service-selected", selectedGenericFinanceIndexes.has(i - 1));
+        const input = tr.querySelector("input.row-pick");
+        if (input) input.checked = selectedGenericFinanceIndexes.has(i - 1);
+      });
     }
     function switchFinanceTab(tab) {
       financeTab = tab;
@@ -1144,6 +1183,7 @@ def som_web_home() -> HTMLResponse:
     async function loadCollections(page=1) {
       collectionPage = page;
       selectedCollectionIndex = null;
+      selectedCollectionIndexes = new Set();
       const msg = $("collectionsMsg");
       const table = $("collectionsTable");
       msg.className = "status";
@@ -1165,6 +1205,7 @@ def som_web_home() -> HTMLResponse:
       ["collectionsCliente","collectionsBucket","collectionsEstado","collectionsDisputada"].forEach(id => { if ($(id)) $(id).value = id === "collectionsCliente" ? "ALL" : ""; });
       collectionRows = [];
       selectedCollectionIndex = null;
+      selectedCollectionIndexes = new Set();
       collectionPage = 1;
       collectionTotal = 0;
       $("collectionsKpis")?.classList.add("hidden");
@@ -1192,7 +1233,13 @@ def som_web_home() -> HTMLResponse:
       ].map(([label,value]) => `<div class="card kpi"><span>${esc(label)}</span><strong>${Number(value).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:2})}</strong></div>`).join("");
     }
     function collectionRow() {
+      if (selectedCollectionIndex === null) selectedCollectionIndex = firstFromSet(selectedCollectionIndexes);
       return selectedCollectionIndex === null ? null : collectionRows[selectedCollectionIndex];
+    }
+    function toggleCollectionRow(idx, checked=null) {
+      const next = checked === null ? !selectedCollectionIndexes.has(idx) : checked;
+      selectedCollectionIndex = setIndexSelection(selectedCollectionIndexes, idx, next);
+      renderCollectionsTable();
     }
     function requireCollectionRow() {
       const row = collectionRow();
@@ -1208,10 +1255,11 @@ def som_web_home() -> HTMLResponse:
       }
       const totalPages = Math.max(1, Math.ceil(collectionTotal / 50));
       table.innerHTML = `
-        <div class="table-wrap"><table><thead><tr>${cols.map(c => `<th>${esc(c.replace(/_/g," "))}</th>`).join("")}</tr></thead>
+        <div class="table-wrap"><table><thead><tr><th class="pick-col"></th>${cols.map(c => `<th>${esc(c.replace(/_/g," "))}</th>`).join("")}</tr></thead>
         <tbody>${collectionRows.map((row, idx) => {
           const overdue = Number(row.aging_dias || 0) > 1 ? "service-warning" : "";
-          return `<tr class="${idx === selectedCollectionIndex ? "service-selected" : overdue}" onclick="selectedCollectionIndex=${idx}; renderCollectionsTable()">${cols.map(c => `<td>${esc(["total","saldo_pendiente"].includes(c) ? Number(row[c] || 0).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:2}) : row[c])}</td>`).join("")}</tr>`;
+          const selected = selectedCollectionIndexes.has(idx);
+          return `<tr class="${selected ? "service-selected" : overdue}" onclick="toggleCollectionRow(${idx})"><td class="pick-col"><input class="row-pick" type="checkbox" ${selected ? "checked" : ""} onclick="event.stopPropagation(); toggleCollectionRow(${idx}, this.checked)" /></td>${cols.map(c => `<td>${esc(["total","saldo_pendiente"].includes(c) ? Number(row[c] || 0).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:2}) : row[c])}</td>`).join("")}</tr>`;
         }).join("")}</tbody></table></div>
         <div class="pager">
           <button class="secondary" onclick="loadCollections(Math.max(1, collectionPage-1))" ${collectionPage <= 1 ? "disabled" : ""}>Anterior</button>
@@ -1498,6 +1546,7 @@ def som_web_home() -> HTMLResponse:
       const msg = $("bankPaymentsMsg");
       const table = $("bankPaymentsTable");
       selectedBankIndex = null;
+      selectedBankIndexes = new Set();
       msg.className = "status";
       msg.textContent = "Consultando pagos bancarios...";
       table.innerHTML = "";
@@ -1515,6 +1564,7 @@ def som_web_home() -> HTMLResponse:
     function clearBankPayments() {
       bankRowsWeb = [];
       selectedBankIndex = null;
+      selectedBankIndexes = new Set();
       if ($("bankCliente")) $("bankCliente").value = "";
       if ($("bankReferencia")) $("bankReferencia").value = "";
       if ($("bankVerTodos")) $("bankVerTodos").value = "false";
@@ -1547,9 +1597,18 @@ def som_web_home() -> HTMLResponse:
         return;
       }
       const cols = ["banco","fecha_pago","nombre_cliente","numero_documento","referencia","tipo_aplicacion","monto_pagado","monto_aplicado","saldo","estado"];
-      table.innerHTML = `<div class="table-wrap"><table><thead><tr>${cols.map(c => `<th>${esc(c.replace(/_/g," "))}</th>`).join("")}</tr></thead><tbody>${bankRowsWeb.map((row, idx) => `<tr class="${idx === selectedBankIndex ? "service-selected" : ""}" onclick="selectedBankIndex=${idx}; renderBankPaymentsTable()">${cols.map(c => `<td>${esc(["monto_pagado","monto_aplicado","saldo"].includes(c) ? bankFmt(row[c]) : row[c])}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
+      table.innerHTML = `<div class="table-wrap"><table><thead><tr><th class="pick-col"></th>${cols.map(c => `<th>${esc(c.replace(/_/g," "))}</th>`).join("")}</tr></thead><tbody>${bankRowsWeb.map((row, idx) => {
+        const selected = selectedBankIndexes.has(idx);
+        return `<tr class="${selected ? "service-selected" : ""}" onclick="toggleBankPaymentRow(${idx})"><td class="pick-col"><input class="row-pick" type="checkbox" ${selected ? "checked" : ""} onclick="event.stopPropagation(); toggleBankPaymentRow(${idx}, this.checked)" /></td>${cols.map(c => `<td>${esc(["monto_pagado","monto_aplicado","saldo"].includes(c) ? bankFmt(row[c]) : row[c])}</td>`).join("")}</tr>`;
+      }).join("")}</tbody></table></div>`;
+    }
+    function toggleBankPaymentRow(idx, checked=null) {
+      const next = checked === null ? !selectedBankIndexes.has(idx) : checked;
+      selectedBankIndex = setIndexSelection(selectedBankIndexes, idx, next);
+      renderBankPaymentsTable();
     }
     function selectedBankPayment() {
+      if (selectedBankIndex === null) selectedBankIndex = firstFromSet(selectedBankIndexes);
       return selectedBankIndex === null ? null : bankRowsWeb[selectedBankIndex];
     }
     async function openManualBankPaymentForm() {
@@ -1663,6 +1722,7 @@ def som_web_home() -> HTMLResponse:
     }
     async function loadPaidInvoicesReport() {
       const table = $("paidInvoicesTable");
+      selectedPaidInvoiceIndexes = new Set();
       table.innerHTML = '<div class="status">Consultando facturas pagadas...</div>';
       try {
         const payload = await getJSON(`/bank-reconciliation/paid-invoices-report?${paidInvoiceParams()}`);
@@ -1688,10 +1748,19 @@ def som_web_home() -> HTMLResponse:
         return;
       }
       const cols = ["numero_documento","nombre_cliente","fecha_pago","monto_pagado","comision","banco","referencia","estado_factura","source"];
-      table.innerHTML = `<div class="table-wrap"><table><thead><tr>${cols.map(c => `<th>${esc(c.replace(/_/g," "))}</th>`).join("")}</tr></thead><tbody>${paidInvoiceRows.map(row => `<tr>${cols.map(c => `<td>${esc(["monto_pagado","comision"].includes(c) ? bankFmt(row[c]) : row[c])}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
+      table.innerHTML = `<div class="table-wrap"><table><thead><tr><th class="pick-col"></th>${cols.map(c => `<th>${esc(c.replace(/_/g," "))}</th>`).join("")}</tr></thead><tbody>${paidInvoiceRows.map((row, idx) => {
+        const selected = selectedPaidInvoiceIndexes.has(idx);
+        return `<tr class="${selected ? "service-selected" : ""}" onclick="togglePaidInvoiceRow(${idx})"><td class="pick-col"><input class="row-pick" type="checkbox" ${selected ? "checked" : ""} onclick="event.stopPropagation(); togglePaidInvoiceRow(${idx}, this.checked)" /></td>${cols.map(c => `<td>${esc(["monto_pagado","comision"].includes(c) ? bankFmt(row[c]) : row[c])}</td>`).join("")}</tr>`;
+      }).join("")}</tbody></table></div>`;
+    }
+    function togglePaidInvoiceRow(idx, checked=null) {
+      const next = checked === null ? !selectedPaidInvoiceIndexes.has(idx) : checked;
+      setIndexSelection(selectedPaidInvoiceIndexes, idx, next);
+      renderPaidInvoicesTable();
     }
     function clearPaidInvoicesReport() {
       paidInvoiceRows = [];
+      selectedPaidInvoiceIndexes = new Set();
       ["paidYear","paidMonth","paidFrom","paidTo","paidCliente"].forEach(id => { if ($(id)) $(id).value = id === "paidYear" ? ($("year")?.value || "") : ""; });
       $("paidInvoicesKpis")?.classList.add("hidden");
       if ($("paidInvoicesTable")) $("paidInvoicesTable").innerHTML = '<div class="status">Configure filtros y presione Buscar.</div>';
@@ -1752,8 +1821,10 @@ def som_web_home() -> HTMLResponse:
       msg.className = "status";
       msg.textContent = "Consultando extractos...";
       selectedBankStatementId = null;
+      selectedBankStatementIds = new Set();
       bankStatementLineRows = [];
       selectedBankLineIndex = null;
+      selectedBankLineIndexes = new Set();
       try {
         const payload = await getJSON(`/bank-reconciliation/statements?${bankStatementParams()}`);
         bankStatementRows = rowsList(payload);
@@ -1776,9 +1847,20 @@ def som_web_home() -> HTMLResponse:
         return;
       }
       const cols = ["id","bank_name","bank_account_code","currency_code","statement_period","status","line_count","open_count","statement_total","matched_total","open_total"];
-      table.innerHTML = `<div class="table-wrap"><table><thead><tr>${cols.map(c => `<th>${esc(c.replace(/_/g," "))}</th>`).join("")}</tr></thead><tbody>${bankStatementRows.map(row => `<tr class="${String(row.id) === String(selectedBankStatementId) ? "service-selected" : ""}" onclick="selectedBankStatementId=${Number(row.id)}; clearBankStatementMsg(); renderBankStatementsTable()">${cols.map(c => `<td>${esc(["statement_total","matched_total","open_total"].includes(c) ? bankFmt(row[c]) : row[c])}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
+      table.innerHTML = `<div class="table-wrap"><table><thead><tr><th class="pick-col"></th>${cols.map(c => `<th>${esc(c.replace(/_/g," "))}</th>`).join("")}</tr></thead><tbody>${bankStatementRows.map(row => {
+        const id = Number(row.id);
+        const selected = selectedBankStatementIds.has(id);
+        return `<tr class="${selected ? "service-selected" : ""}" onclick="toggleBankStatementRow(${id})"><td class="pick-col"><input class="row-pick" type="checkbox" ${selected ? "checked" : ""} onclick="event.stopPropagation(); toggleBankStatementRow(${id}, this.checked)" /></td>${cols.map(c => `<td>${esc(["statement_total","matched_total","open_total"].includes(c) ? bankFmt(row[c]) : row[c])}</td>`).join("")}</tr>`;
+      }).join("")}</tbody></table></div>`;
+    }
+    function toggleBankStatementRow(id, checked=null) {
+      const next = checked === null ? !selectedBankStatementIds.has(id) : checked;
+      selectedBankStatementId = setIndexSelection(selectedBankStatementIds, id, next);
+      clearBankStatementMsg();
+      renderBankStatementsTable();
     }
     async function loadBankStatementLines() {
+      if (!selectedBankStatementId) selectedBankStatementId = firstFromSet(selectedBankStatementIds);
       if (!selectedBankStatementId) {
         showBankStatementMsg("Seleccione un extracto de la tabla antes de ver líneas.", true);
         return;
@@ -1786,6 +1868,7 @@ def som_web_home() -> HTMLResponse:
       const table = $("bankStatementLinesTable");
       table.innerHTML = '<div class="status">Consultando líneas...</div>';
       selectedBankLineIndex = null;
+      selectedBankLineIndexes = new Set();
       try {
         const payload = await getJSON(`/bank-reconciliation/statements/${encodeURIComponent(selectedBankStatementId)}/lines`);
         bankStatementLineRows = rowsList(payload);
@@ -1803,9 +1886,18 @@ def som_web_home() -> HTMLResponse:
         return;
       }
       const cols = ["id","line_date","reference","description","debit","credit","amount","match_status","matched_source","matched_id","difference"];
-      table.innerHTML = `<div class="table-wrap"><table><thead><tr>${cols.map(c => `<th>${esc(c.replace(/_/g," "))}</th>`).join("")}</tr></thead><tbody>${bankStatementLineRows.map((row,idx) => `<tr class="${idx === selectedBankLineIndex ? "service-selected" : ""}" onclick="selectedBankLineIndex=${idx}; renderBankStatementLinesTable()">${cols.map(c => `<td>${esc(["debit","credit","amount","difference"].includes(c) ? bankFmt(row[c]) : row[c])}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
+      table.innerHTML = `<div class="table-wrap"><table><thead><tr><th class="pick-col"></th>${cols.map(c => `<th>${esc(c.replace(/_/g," "))}</th>`).join("")}</tr></thead><tbody>${bankStatementLineRows.map((row,idx) => {
+        const selected = selectedBankLineIndexes.has(idx);
+        return `<tr class="${selected ? "service-selected" : ""}" onclick="toggleBankStatementLineRow(${idx})"><td class="pick-col"><input class="row-pick" type="checkbox" ${selected ? "checked" : ""} onclick="event.stopPropagation(); toggleBankStatementLineRow(${idx}, this.checked)" /></td>${cols.map(c => `<td>${esc(["debit","credit","amount","difference"].includes(c) ? bankFmt(row[c]) : row[c])}</td>`).join("")}</tr>`;
+      }).join("")}</tbody></table></div>`;
+    }
+    function toggleBankStatementLineRow(idx, checked=null) {
+      const next = checked === null ? !selectedBankLineIndexes.has(idx) : checked;
+      selectedBankLineIndex = setIndexSelection(selectedBankLineIndexes, idx, next);
+      renderBankStatementLinesTable();
     }
     async function autoMatchSelectedStatement() {
+      if (!selectedBankStatementId) selectedBankStatementId = firstFromSet(selectedBankStatementIds);
       if (!selectedBankStatementId) {
         showBankStatementMsg("Seleccione un extracto de la tabla antes de ejecutar matching automático.", true);
         return;
@@ -1825,6 +1917,7 @@ def som_web_home() -> HTMLResponse:
       }
     }
     async function markSelectedBankLineFee() {
+      if (selectedBankLineIndex === null) selectedBankLineIndex = firstFromSet(selectedBankLineIndexes);
       const row = selectedBankLineIndex === null ? null : bankStatementLineRows[selectedBankLineIndex];
       if (!row) {
         showBankStatementMsg("Seleccione una línea del extracto antes de marcar cargo bancario.", true);
@@ -1841,6 +1934,7 @@ def som_web_home() -> HTMLResponse:
       }
     }
     async function closeSelectedBankStatement() {
+      if (!selectedBankStatementId) selectedBankStatementId = firstFromSet(selectedBankStatementIds);
       if (!selectedBankStatementId) {
         showBankStatementMsg("Seleccione un extracto de la tabla antes de cerrar conciliación.", true);
         return;
@@ -1861,7 +1955,9 @@ def som_web_home() -> HTMLResponse:
       bankStatementRows = [];
       bankStatementLineRows = [];
       selectedBankStatementId = null;
+      selectedBankStatementIds = new Set();
       selectedBankLineIndex = null;
+      selectedBankLineIndexes = new Set();
       ["bankStatementAccount","bankStatementCurrency","bankStatementStatus"].forEach(id => { if ($(id)) $(id).value = ""; });
       if ($("bankStatementPeriod")) $("bankStatementPeriod").value = new Date().toISOString().slice(0,7);
       if ($("bankStatementsTable")) $("bankStatementsTable").innerHTML = '<div class="status">Presione Buscar extractos para cargar conciliaciones.</div>';
@@ -2065,12 +2161,14 @@ def som_web_home() -> HTMLResponse:
       if ($("billableCliente")) $("billableCliente").value = "";
       billableRows = [];
       selectedBillableIndex = null;
+      selectedBillableIndexes = new Set();
       if ($("billableCount")) $("billableCount").textContent = "Servicios finalizados pendientes de factura";
       if ($("billableMsg")) $("billableMsg").classList.add("hidden");
       if ($("billableTable")) $("billableTable").innerHTML = '<div class="status">Ingrese cliente y presione Buscar.</div>';
     }
     async function loadBillables() {
       selectedBillableIndex = null;
+      selectedBillableIndexes = new Set();
       await loadFinanceClientCombos();
       const cliente = valueFrom("billableCliente");
       const msg = $("billableMsg");
@@ -2096,7 +2194,13 @@ def som_web_home() -> HTMLResponse:
       }
     }
     function billableRow() {
+      if (selectedBillableIndex === null) selectedBillableIndex = firstFromSet(selectedBillableIndexes);
       return selectedBillableIndex === null ? null : billableRows[selectedBillableIndex];
+    }
+    function toggleBillableRow(idx, checked=null) {
+      const next = checked === null ? !selectedBillableIndexes.has(idx) : checked;
+      selectedBillableIndex = setIndexSelection(selectedBillableIndexes, idx, next);
+      renderBillableTable();
     }
     function requireBillable() {
       const row = billableRow();
@@ -2109,7 +2213,10 @@ def som_web_home() -> HTMLResponse:
         $("billableTable").innerHTML = '<div class="status">Sin servicios pendientes por facturar para este cliente.</div>';
         return;
       }
-      $("billableTable").innerHTML = `<div class="table-wrap"><table><thead><tr>${cols.map(c => `<th>${esc(c)}</th>`).join("")}</tr></thead><tbody>${billableRows.map((row, idx) => `<tr class="${idx === selectedBillableIndex ? "service-selected" : ""}" onclick="selectedBillableIndex=${idx}; renderBillableTable()">${cols.map(c => `<td>${esc(row[c])}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
+      $("billableTable").innerHTML = `<div class="table-wrap"><table><thead><tr><th class="pick-col"></th>${cols.map(c => `<th>${esc(c)}</th>`).join("")}</tr></thead><tbody>${billableRows.map((row, idx) => {
+        const selected = selectedBillableIndexes.has(idx);
+        return `<tr class="${selected ? "service-selected" : ""}" onclick="toggleBillableRow(${idx})"><td class="pick-col"><input class="row-pick" type="checkbox" ${selected ? "checked" : ""} onclick="event.stopPropagation(); toggleBillableRow(${idx}, this.checked)" /></td>${cols.map(c => `<td>${esc(row[c])}</td>`).join("")}</tr>`;
+      }).join("")}</tbody></table></div>`;
     }
     async function viewSelectedBillable() {
       const row = requireBillable();
@@ -2238,6 +2345,7 @@ def som_web_home() -> HTMLResponse:
       ["billingCliente","billingDesde","billingHasta","billingTipoFactura","billingTipoDocumento"].forEach(id => { if ($(id)) $(id).value = ""; });
       billingRows = [];
       selectedBillingIndex = null;
+      selectedBillingIndexes = new Set();
       if ($("billingCount")) $("billingCount").textContent = "Facturas emitidas";
       if ($("billingMsg")) $("billingMsg").classList.add("hidden");
       if ($("billingTable")) $("billingTable").innerHTML = '<div class="status">Configure filtros y presione Buscar.</div>';
@@ -2245,6 +2353,7 @@ def som_web_home() -> HTMLResponse:
     async function loadBillingRows() {
       if (!$("billingTable")) return;
       selectedBillingIndex = null;
+      selectedBillingIndexes = new Set();
       await loadFinanceClientCombos();
       const msg = $("billingMsg");
       msg.className = "status";
@@ -2261,7 +2370,13 @@ def som_web_home() -> HTMLResponse:
       }
     }
     function billingRow() {
+      if (selectedBillingIndex === null) selectedBillingIndex = firstFromSet(selectedBillingIndexes);
       return selectedBillingIndex === null ? null : billingRows[selectedBillingIndex];
+    }
+    function toggleBillingRow(idx, checked=null) {
+      const next = checked === null ? !selectedBillingIndexes.has(idx) : checked;
+      selectedBillingIndex = setIndexSelection(selectedBillingIndexes, idx, next);
+      renderBillingTable();
     }
     function requireBillingRow() {
       const row = billingRow();
@@ -2274,7 +2389,10 @@ def som_web_home() -> HTMLResponse:
         $("billingTable").innerHTML = '<div class="status">Sin facturas para esta consulta.</div>';
         return;
       }
-      $("billingTable").innerHTML = `<div class="table-wrap"><table><thead><tr>${cols.map(c => `<th>${esc(c)}</th>`).join("")}</tr></thead><tbody>${billingRows.map((row, idx) => `<tr class="${idx === selectedBillingIndex ? "service-selected" : ""}" onclick="selectedBillingIndex=${idx}; renderBillingTable()">${cols.map(c => `<td>${esc(c === "total" ? Number(row[c] || 0).toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2}) : row[c])}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
+      $("billingTable").innerHTML = `<div class="table-wrap"><table><thead><tr><th class="pick-col"></th>${cols.map(c => `<th>${esc(c)}</th>`).join("")}</tr></thead><tbody>${billingRows.map((row, idx) => {
+        const selected = selectedBillingIndexes.has(idx);
+        return `<tr class="${selected ? "service-selected" : ""}" onclick="toggleBillingRow(${idx})"><td class="pick-col"><input class="row-pick" type="checkbox" ${selected ? "checked" : ""} onclick="event.stopPropagation(); toggleBillingRow(${idx}, this.checked)" /></td>${cols.map(c => `<td>${esc(c === "total" ? Number(row[c] || 0).toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2}) : row[c])}</td>`).join("")}</tr>`;
+      }).join("")}</tbody></table></div>`;
     }
     async function viewSelectedInvoice() {
       const row = requireBillingRow();
@@ -2493,6 +2611,7 @@ def som_web_home() -> HTMLResponse:
       if ($("creditCliente")) $("creditCliente").value = "";
       creditRows = [];
       selectedCreditIndex = null;
+      selectedCreditIndexes = new Set();
       if ($("creditMsg")) $("creditMsg").classList.add("hidden");
       if ($("creditTable")) $("creditTable").innerHTML = '<div class="status">Presione Buscar para consultar crédito.</div>';
     }
@@ -2507,6 +2626,7 @@ def som_web_home() -> HTMLResponse:
         const payload = await getJSON(`/som/finance/order-to-cash/credit-hold${q ? `?q=${encodeURIComponent(q)}` : ""}`);
         creditRows = rowsList(payload);
         selectedCreditIndex = null;
+        selectedCreditIndexes = new Set();
         msg.classList.add("hidden");
         if (!creditRows.length) {
           table.innerHTML = '<div class="status">Sin clientes para la consulta.</div>';
@@ -2519,6 +2639,7 @@ def som_web_home() -> HTMLResponse:
       }
     }
     function creditRow() {
+      if (selectedCreditIndex === null) selectedCreditIndex = firstFromSet(selectedCreditIndexes);
       if (selectedCreditIndex !== null) return creditRows[selectedCreditIndex];
       const code = valueFrom("creditCliente");
       if (!code) return null;
@@ -2542,12 +2663,14 @@ def som_web_home() -> HTMLResponse:
         <div class="table-wrap">
           <table>
             <thead><tr>
-              <th>Código</th><th>Cliente</th><th>Límite</th><th>CxC abierta</th><th>Disponible</th><th>Estado</th><th>Hold</th><th>Decisión</th><th>Acción</th>
+              <th class="pick-col"></th><th>Código</th><th>Cliente</th><th>Límite</th><th>CxC abierta</th><th>Disponible</th><th>Estado</th><th>Hold</th><th>Decisión</th><th>Acción</th>
             </tr></thead>
             <tbody>${creditRows.map((row, idx) => {
               const decision = String(row.decision || "");
               const badge = decision === "REQUIRES_RELEASE" ? "cancel" : "closed";
-              return `<tr class="${idx === selectedCreditIndex ? "service-selected" : ""}" onclick="selectCreditRow(${idx})">
+              const selected = selectedCreditIndexes.has(idx);
+              return `<tr class="${selected ? "service-selected" : ""}" onclick="toggleCreditRow(${idx})">
+                <td class="pick-col"><input class="row-pick" type="checkbox" ${selected ? "checked" : ""} onclick="event.stopPropagation(); toggleCreditRow(${idx}, this.checked)" /></td>
                 <td>${esc(row.codigo)}</td>
                 <td>${esc(row.cliente)}</td>
                 <td>${esc(row.moneda)} ${Number(row.limite || 0).toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
@@ -2562,8 +2685,16 @@ def som_web_home() -> HTMLResponse:
           </table>
         </div>`;
     }
+    function toggleCreditRow(index, checked=null) {
+      const next = checked === null ? !selectedCreditIndexes.has(index) : checked;
+      selectedCreditIndex = setIndexSelection(selectedCreditIndexes, index, next);
+      const row = selectedCreditIndex === null ? null : creditRows[selectedCreditIndex];
+      if ($("creditCliente")) $("creditCliente").value = row?.codigo || "";
+      renderCreditTable();
+    }
     function selectCreditRow(index) {
       selectedCreditIndex = index;
+      selectedCreditIndexes = new Set([index]);
       const row = creditRows[index];
       if ($("creditCliente") && row?.codigo) $("creditCliente").value = row.codigo;
       renderCreditTable();
@@ -2572,6 +2703,7 @@ def som_web_home() -> HTMLResponse:
       const code = valueFrom("creditCliente");
       selectedCreditIndex = code ? creditRows.findIndex(row => String(row.codigo || row.codigo_cliente || "") === code) : null;
       if (selectedCreditIndex < 0) selectedCreditIndex = null;
+      selectedCreditIndexes = selectedCreditIndex === null ? new Set() : new Set([selectedCreditIndex]);
       if (creditRows.length) renderCreditTable();
     }
     async function viewSelectedCreditConfig() {
@@ -3140,6 +3272,7 @@ def som_web_home() -> HTMLResponse:
         serviceRows = rowsList(payload);
         serviceTotal = Number(payload.total || serviceRows.length || 0);
         selectedServiceIndex = null;
+        selectedServiceIndexes = new Set();
         $("svcCount").textContent = `${intFmt.format(serviceTotal)} servicios`;
         $("svcMsg").classList.add("hidden");
         renderServiceTable();
@@ -3173,10 +3306,11 @@ def som_web_home() -> HTMLResponse:
       target.innerHTML = `
         <div class="table-wrap">
           <table>
-            <thead><tr><th></th>${SERVICE_COLUMNS.map(c => `<th>${esc(c)}</th>`).join("")}</tr></thead>
+            <thead><tr><th class="pick-col"></th>${SERVICE_COLUMNS.map(c => `<th>${esc(c)}</th>`).join("")}</tr></thead>
             <tbody>${serviceRows.map((row, i) => {
               const missingCosts = String(row.estado || "").toLowerCase().includes("oper") && !Number(row.honorarios || 0) && !Number(row.costo_operativo || 0) && !Number(row.costo_tarjetas || 0);
-              return `<tr id="svcRow_${i}" class="${missingCosts ? "service-warning" : ""}" onclick="selectServiceRow(${i})"><td><input type="radio" name="svcPick" ${selectedServiceIndex === i ? "checked" : ""} /></td>${SERVICE_COLUMNS.map(c => `<td>${serviceCell(row, c)}</td>`).join("")}</tr>`;
+              const selected = selectedServiceIndexes.has(i);
+              return `<tr id="svcRow_${i}" class="${selected ? "service-selected" : missingCosts ? "service-warning" : ""}" onclick="toggleServiceRow(${i})"><td class="pick-col"><input class="row-pick" type="checkbox" ${selected ? "checked" : ""} onclick="event.stopPropagation(); toggleServiceRow(${i}, this.checked)" /></td>${SERVICE_COLUMNS.map(c => `<td>${serviceCell(row, c)}</td>`).join("")}</tr>`;
             }).join("")}</tbody>
           </table>
         </div>
@@ -3186,12 +3320,15 @@ def som_web_home() -> HTMLResponse:
           <button class="secondary" onclick="loadServicios(servicePage+1)" ${servicePage*50 >= serviceTotal ? "disabled" : ""}>Siguiente</button>
         </div>`;
     }
+    function toggleServiceRow(index, checked=null) {
+      const next = checked === null ? !selectedServiceIndexes.has(index) : checked;
+      selectedServiceIndex = setIndexSelection(selectedServiceIndexes, index, next);
+      renderServiceTable();
+    }
     function selectServiceRow(index) {
+      selectedServiceIndexes = new Set([index]);
       selectedServiceIndex = index;
-      serviceRows.forEach((_, i) => $("svcRow_" + i)?.classList.remove("service-selected"));
-      $("svcRow_" + index)?.classList.add("service-selected");
-      const radio = $("svcRow_" + index)?.querySelector("input[type=radio]");
-      if (radio) radio.checked = true;
+      renderServiceTable();
     }
     function clearServiceFilters() {
       ["svcQ","svcYear","svcTipo","svcEstado","svcCliente","svcContinente","svcPais","svcPuerto","svcOperacion","svcSurveyor"].forEach(id => {
@@ -3200,6 +3337,7 @@ def som_web_home() -> HTMLResponse:
       });
       serviceRows = [];
       selectedServiceIndex = null;
+      selectedServiceIndexes = new Set();
       serviceTotal = 0;
       $("svcCount").textContent = "Presione Buscar";
       $("svcMsg").classList.add("hidden");
