@@ -292,7 +292,7 @@ def finance_planning_summary(
     x_company_code: str | None = Header(None, alias="X-Company-Code"),
 ):
     """
-    RECONIS-style planning summary for SOM Finance.
+    Enterprise planning summary for SOM Finance.
 
     It intentionally reads only when the user presses Buscar in each UI.  The
     endpoint consolidates ITP, payment application, Accounting, projects and

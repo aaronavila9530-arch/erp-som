@@ -1135,7 +1135,7 @@ def som_web_home() -> HTMLResponse:
     function renderFinancePlanning(target) {
       const period = new Date().toISOString().slice(0,7);
       target.innerHTML = `
-        <div class="panel-head"><h2>PLN / Planificación financiera</h2><span class="muted">RECONIS: planificación, ITP, gastos, pagos, accounting, metas, proyectos y ahorros</span></div>
+        <div class="panel-head"><h2>PLN / Planificación financiera</h2><span class="muted">Planificación, ITP, gastos, pagos, accounting, metas, proyectos y ahorros</span></div>
         <div class="finance-filter-row compact">
           <label>Periodo<input id="plnPeriod" value="${esc(period)}" placeholder="YYYY-MM" /></label>
           <label>Meses<select id="plnMonths"><option>1</option><option>2</option><option>3</option><option selected>4</option><option>6</option><option>12</option></select></label>
