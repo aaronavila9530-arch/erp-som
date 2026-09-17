@@ -1051,6 +1051,7 @@ def som_web_home() -> HTMLResponse:
         <div class="grid home-grid">
           <div class="card home-card" onclick="openFinanceBlock('order-to-cash')"><h2>Order To Cash</h2><p class="muted">Credit, Invoicing and Billing, Collections, Bank y Disputes.</p></div>
           <div class="card home-card" onclick="openFinanceBlock('invoice-to-pay')"><h2>Invoice To Pay</h2><p class="muted">Obligaciones, proveedores y pagos.</p></div>
+          <div class="card home-card" onclick="openFinanceBlock('planning')"><h2>PLN / Planificación</h2><p class="muted">ITP, gastos, pagos, metas, proyectos y ahorros.</p></div>
           <div class="card home-card" onclick="openFinanceBlock('accounting')"><h2>Accounting</h2><p class="muted">Asientos, cierres, fiscal y reportes.</p></div>
         </div>
         <div id="financeWorkspace" class="workspace"></div>`;
@@ -1083,7 +1084,12 @@ def som_web_home() -> HTMLResponse:
         return;
       }
       if (block === "invoice-to-pay") {
-        ws.innerHTML = `<div class="card panel"><div class="panel-head"><h2>Invoice To Pay</h2><span class="muted">Carga manual solo con Buscar</span></div><div class="service-actions"><button onclick="loadGenericFinance('/invoice-to-pay/search?status=ALL','itpWorkspace')">Buscar</button></div><div id="itpWorkspace" class="status">Presione Buscar para consultar obligaciones.</div></div>`;
+        ws.innerHTML = `<div class="card panel"><div class="panel-head"><h2>Invoice To Pay</h2><span class="muted">Carga manual solo con Buscar</span></div><div class="service-actions"><button onclick="loadGenericFinance('/invoice-to-pay/search?status=ALL','itpWorkspace')">Buscar</button><button class="secondary" onclick="renderFinancePlanning($('itpWorkspace'))">PLN / Planificación</button></div><div id="itpWorkspace" class="status">Presione Buscar para consultar obligaciones.</div></div>`;
+        return;
+      }
+      if (block === "planning") {
+        ws.innerHTML = `<div class="card panel"><div id="planningWorkspace"></div></div>`;
+        renderFinancePlanning($("planningWorkspace"));
         return;
       }
       if (block === "accounting") {
@@ -1125,6 +1131,59 @@ def som_web_home() -> HTMLResponse:
         const input = tr.querySelector("input.row-pick");
         if (input) input.checked = selectedGenericFinanceIndexes.has(i - 1);
       });
+    }
+    function renderFinancePlanning(target) {
+      const period = new Date().toISOString().slice(0,7);
+      target.innerHTML = `
+        <div class="panel-head"><h2>PLN / Planificación financiera</h2><span class="muted">RECONIS: planificación, ITP, gastos, pagos, accounting, metas, proyectos y ahorros</span></div>
+        <div class="finance-filter-row compact">
+          <label>Periodo<input id="plnPeriod" value="${esc(period)}" placeholder="YYYY-MM" /></label>
+          <label>Meses<select id="plnMonths"><option>1</option><option>2</option><option>3</option><option selected>4</option><option>6</option><option>12</option></select></label>
+          <button onclick="loadFinancePlanning()">Buscar</button>
+          <button class="secondary" onclick="renderFinancePlanning($('planningWorkspace') || $('itpWorkspace'))">Limpiar</button>
+        </div>
+        <div id="planningMsg" class="status">Presione Buscar para consultar PLN.</div>
+        <div id="planningResult" class="workspace"></div>`;
+    }
+    async function loadFinancePlanning() {
+      const msg = $("planningMsg");
+      const result = $("planningResult");
+      const period = valueFrom("plnPeriod") || new Date().toISOString().slice(0,7);
+      const months = valueFrom("plnMonths") || "4";
+      msg.className = "status";
+      msg.textContent = "Consultando planificación...";
+      result.innerHTML = "";
+      try {
+        const payload = await getJSON(`/finance/planning/summary?period=${encodeURIComponent(period)}&months=${encodeURIComponent(months)}`);
+        msg.className = "status hidden";
+        result.innerHTML = renderPlanningSummary(payload);
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    function renderPlanningSummary(payload) {
+      const totals = payload.totals || {};
+      const pending = totals.pending_by_currency || {};
+      const cards = [
+        ["Pendiente ITP", Object.entries(pending).map(([cur,val]) => `${cur} ${money(val)}`).join(" | ") || "0.00"],
+        ["Líneas", totals.obligation_lines || 0],
+        ["Metas activas", totals.goals_active || 0],
+        ["Proyectos", totals.projects || 0]
+      ];
+      return `
+        <div class="grid kpis">${cards.map(([label,value]) => `<div class="card kpi"><span>${esc(label)}</span><strong>${esc(value)}</strong></div>`).join("")}</div>
+        ${renderPlanningSection("Calendario ITP", payload.obligation_buckets || [], ["currency","bucket","count","amount"])}
+        ${renderPlanningSection("Obligaciones", payload.obligations || [], ["id","payee_name","obligation_type","due_date","currency","balance","status","origin"])}
+        ${renderPlanningSection("Pagos aplicados", payload.applied_payments || [], ["currency","count","amount"])}
+        ${renderPlanningSection("Gastos Accounting", payload.expenses || [], ["period","account_code","account_name","actual_amount"])}
+        ${renderPlanningSection("Metas / ahorros", payload.goals || [], ["id","period","purpose","name","account_code","currency_code","target_amount","progress_amount","progress_pct","target_date","status"])}
+        ${renderPlanningSection("Proyectos", payload.projects || [], ["nombre_proyecto","moneda","personas","total_honorarios","total_gastos","precio","utilidad","creado_el"])}
+        <div class="status">${(payload.decision_notes || []).map(esc).join("<br>")}</div>`;
+    }
+    function renderPlanningSection(title, rows, cols) {
+      if (!rows.length) return `<h3>${esc(title)}</h3><div class="status">Sin datos.</div>`;
+      return `<h3>${esc(title)}</h3><div class="table-wrap"><table><thead><tr><th class="pick-col"></th>${cols.map(c => `<th>${esc(c.replace(/_/g," "))}</th>`).join("")}</tr></thead><tbody>${rows.slice(0,120).map((row,idx) => `<tr><td class="pick-col"><input class="row-pick" type="checkbox" /></td>${cols.map(c => `<td>${esc(["amount","balance","total","target_amount","progress_amount","actual_amount","total_honorarios","total_gastos","precio","utilidad"].includes(c) ? money(row[c]) : row[c])}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
     }
     function switchFinanceTab(tab) {
       financeTab = tab;

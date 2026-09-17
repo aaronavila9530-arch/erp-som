@@ -92,6 +92,7 @@ class InvoiceToPayUI(tk.Frame):
         ttk.Button(filter_frame, text="Buscar", command=self._on_search).grid(row=0, column=4, padx=10)
         ttk.Button(filter_frame, text="Limpiar", command=self._on_clear).grid(row=0, column=5)
         ttk.Button(filter_frame, text="Obligaciones quincenales", command=self._on_biweekly_obligations).grid(row=0, column=6, padx=10)
+        ttk.Button(filter_frame, text="PLN / Planificación", command=self._on_planning).grid(row=0, column=7, padx=10)
 
         # ================= CONTENEDOR LAZY (OCULTO) =================
         self.lazy_container = tk.Frame(self)
@@ -390,6 +391,14 @@ class InvoiceToPayUI(tk.Frame):
         )
 
         PopupObligacionesQuincenales(self)
+
+    def _on_planning(self):
+        popup = tk.Toplevel(self)
+        popup.title("PLN / Planificación financiera")
+        popup.geometry("1260x760")
+        popup.minsize(1040, 620)
+        from Modulos.Finanzas.sections.Planning.planning_ui import FinancePlanningUI
+        FinancePlanningUI(popup).pack(fill="both", expand=True)
 
     def _on_clear(self):
         self.cmb_obligation.set("")

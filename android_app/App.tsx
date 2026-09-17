@@ -14911,6 +14911,7 @@ const ACCOUNTING_MOBILE_ACTIONS = [
   { key: "fixed-assets", label: "Activos fijos", description: "Inventario, depreciacion y control de activos." },
   { key: "corporate-cards", label: "Tarjetas corporativas", description: "BAC por usuario, cruces ITP, clasificacion y posteos." },
   { key: "itp-biweekly", label: "Obligaciones quincenales", description: "Planilla, IVA, CCSS, tarjetas, alquiler, internet y pagos ITP." },
+  { key: "planning", label: "PLN / Planificacion", description: "ITP, gastos, pagos, proyectos, metas y ahorros para decidir caja." },
   { key: "inventory", label: "Inventarios", description: "Items inventariables y activos menores." },
   { key: "tax-center", label: "Centro fiscal Costa Rica", description: "IVA, XML, libros, CAByS y obligaciones." },
   { key: "legal-library", label: "Biblioteca legal Costa Rica", description: "Reglas tributarias y contables de referencia." },
@@ -15041,6 +15042,7 @@ function AccountingActionScreen({
         {actionKey === "tax-simulator" ? <TaxScenarioPlannerMobile session={session} /> : null}
         {actionKey === "corporate-cards" ? <CorporateCardsMobile session={session} /> : null}
         {actionKey === "itp-biweekly" ? <ItpBiweeklyObligationsMobile session={session} initialPeriod={period} /> : null}
+        {actionKey === "planning" ? <FinancePlanningMobile session={session} initialPeriod={period} /> : null}
         {actionKey === "manual-entry" ? <ManualEntryMobile session={session} /> : null}
         {actionKey === "sync" ? <AccountingSyncMobile session={session} period={period} /> : null}
         {actionKey === "alerts" ? <AccountingListActionMobile session={session} title="Alertas y validaciones" endpoint={`/accounting/validation-alerts?period=${encodeURIComponent(period)}&company_code=${encodeURIComponent(session.company_code || DEFAULT_COMPANY.code)}`} /> : null}
@@ -15232,6 +15234,68 @@ function AccountingAdvancedMobile({ session, period }: { session: NonNullable<Re
       <AccountingListActionMobile session={session} title="Resumen fiscal profundo" endpoint={`/accounting/advanced/tax/deep-summary?period=${encodeURIComponent(period)}`} />
       <BudgetGoalsMobile session={session} period={period} />
       <AccountingListActionMobile session={session} title="Presupuesto vs real" endpoint={`/accounting/advanced/budget-vs-actual?period=${encodeURIComponent(period)}`} />
+    </View>
+  );
+}
+
+function FinancePlanningMobile({ session, initialPeriod }: { session: NonNullable<ReturnType<typeof useAuth>["session"]>; initialPeriod: string }) {
+  const [period, setPeriod] = useState(initialPeriod || currentAccountingPeriod());
+  const [months, setMonths] = useState("4");
+  const [payload, setPayload] = useState<Record<string, unknown> | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("Presione Buscar para consultar PLN.");
+
+  async function load() {
+    setBusy(true);
+    setMessage("");
+    try {
+      const data = await apiRequest<Record<string, unknown>>(`/finance/planning/summary?period=${encodeURIComponent(period)}&months=${encodeURIComponent(months)}`, { session });
+      setPayload(data);
+      setMessage("PLN actualizado.");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo cargar PLN.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const totals = asRecord(payload?.totals);
+  const pending = asRecord(totals?.pending_by_currency);
+  return (
+    <View>
+      <Text style={styles.helperText}>Planificacion financiera consolidada desde ITP, pagos aplicados, Accounting, proyectos, metas y ahorros.</Text>
+      <Text style={styles.label}>Periodo</Text>
+      <TextInput style={styles.input} value={period} onChangeText={setPeriod} placeholder="YYYY-MM" />
+      <SelectField label="Meses" value={months} options={["1", "2", "3", "4", "6", "12"]} onChange={setMonths} />
+      <Pressable style={styles.actionButton} onPress={load} disabled={busy}>
+        <Text style={styles.actionButtonText}>{busy ? "Consultando..." : "Buscar"}</Text>
+      </Pressable>
+      {message ? <Text style={message.includes("No se") ? styles.error : styles.helperText}>{message}</Text> : null}
+      {payload ? (
+        <>
+          <View style={styles.kpiGrid}>
+            <View style={styles.kpiCard}><Text style={styles.kpiLabel}>Pendiente ITP</Text><Text style={styles.kpiValue}>{Object.entries(pending || {}).map(([key, value]) => `${key} ${formatValue(value)}`).join(" | ") || "0"}</Text></View>
+            <View style={styles.kpiCard}><Text style={styles.kpiLabel}>Lineas</Text><Text style={styles.kpiValue}>{formatValue(totals?.obligation_lines)}</Text></View>
+            <View style={styles.kpiCard}><Text style={styles.kpiLabel}>Metas</Text><Text style={styles.kpiValue}>{formatValue(totals?.goals_active)}</Text></View>
+            <View style={styles.kpiCard}><Text style={styles.kpiLabel}>Proyectos</Text><Text style={styles.kpiValue}>{formatValue(totals?.projects)}</Text></View>
+          </View>
+          <PlanningRows title="Calendario ITP" rows={payloadItems(payload.obligation_buckets)} />
+          <PlanningRows title="Obligaciones" rows={payloadItems(payload.obligations)} />
+          <PlanningRows title="Pagos aplicados" rows={payloadItems(payload.applied_payments)} />
+          <PlanningRows title="Gastos Accounting" rows={payloadItems(payload.expenses)} />
+          <PlanningRows title="Metas / ahorros" rows={payloadItems(payload.goals)} />
+          <PlanningRows title="Proyectos" rows={payloadItems(payload.projects)} />
+        </>
+      ) : null}
+    </View>
+  );
+}
+
+function PlanningRows({ title, rows }: { title: string; rows: Record<string, unknown>[] }) {
+  return (
+    <View style={styles.reportBox}>
+      <Text style={styles.cardTitle}>{title}</Text>
+      {!rows.length ? <Text style={styles.empty}>Sin datos.</Text> : rows.slice(0, 30).map((row, index) => <MiniRecordCard key={`${title}-${index}`} row={row} titleKeys={["payee_name", "name", "nombre_proyecto", "bucket", "account_name"]} />)}
     </View>
   );
 }
@@ -16027,6 +16091,7 @@ function FinanceFilters({
   const [accounts, setAccounts] = useState<string[]>(["TODOS"]);
   const [accountingActionsOpen, setAccountingActionsOpen] = useState(false);
   const [biweeklyOpen, setBiweeklyOpen] = useState(false);
+  const [planningOpen, setPlanningOpen] = useState(false);
   const [advanceInvoiceOpen, setAdvanceInvoiceOpen] = useState(false);
   const accountingPeriods = useMemo(() => buildAccountingPeriods(), []);
   const [form, setForm] = useState<Record<string, string>>({
@@ -16497,6 +16562,28 @@ function FinanceFilters({
               </View>
               <ScrollView style={styles.content} contentContainerStyle={styles.modalBody}>
                 <ItpBiweeklyObligationsMobile session={session} initialPeriod={form.period || currentAccountingPeriod()} />
+              </ScrollView>
+            </SafeAreaView>
+          </Modal>
+          <View style={styles.reportBox}>
+            <View style={styles.salaryHeader}>
+              <Text style={styles.cardTitle}>PLN / Planificación</Text>
+              <Pressable style={styles.actionButton} onPress={() => setPlanningOpen(true)}>
+                <Text style={styles.actionButtonText}>Abrir</Text>
+              </Pressable>
+            </View>
+            <Text style={styles.helperText}>Cruza obligaciones, pagos, gastos reales, proyectos, metas y ahorros antes de decidir caja.</Text>
+          </View>
+          <Modal visible={planningOpen} animationType="slide" onRequestClose={() => setPlanningOpen(false)}>
+            <SafeAreaView style={styles.modalScreen}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>PLN / Planificación financiera</Text>
+                <Pressable style={styles.modalClose} onPress={() => setPlanningOpen(false)}>
+                  <Text style={styles.modalCloseText}>Cerrar</Text>
+                </Pressable>
+              </View>
+              <ScrollView style={styles.content} contentContainerStyle={styles.modalBody}>
+                <FinancePlanningMobile session={session} initialPeriod={form.period || currentAccountingPeriod()} />
               </ScrollView>
             </SafeAreaView>
           </Modal>

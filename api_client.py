@@ -2259,6 +2259,15 @@ def download_accounting_budget_report_api(output_path, period=None, date_from=No
     return output_path
 
 
+def get_finance_planning_summary_api(period=None, months=4):
+    params = {"months": months or 4}
+    if period:
+        params["period"] = period
+    r = api_request("GET", f"{BASE_URL}/finance/planning/summary", params=params, timeout=90)
+    r.raise_for_status()
+    return r.json()
+
+
 def post_portia_accounting_review_api(period, language="ES"):
     r = api_request(
         "POST",
