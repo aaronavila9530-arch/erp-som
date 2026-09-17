@@ -15244,6 +15244,18 @@ function FinancePlanningMobile({ session, initialPeriod }: { session: NonNullabl
   const [payload, setPayload] = useState<Record<string, unknown> | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("Presione Buscar para consultar PLN.");
+  const [projectForm, setProjectForm] = useState<Record<string, string>>({
+    name: "",
+    client_name: "",
+    target_date: new Date().toISOString().slice(0, 10),
+    currency_code: "USD",
+    expected_revenue: "",
+    expected_cost: "",
+    monthly_savings: "",
+    probability_pct: "100",
+    status: "PLANNED",
+    priority: "MEDIUM"
+  });
 
   async function load() {
     setBusy(true);
@@ -15261,6 +15273,36 @@ function FinancePlanningMobile({ session, initialPeriod }: { session: NonNullabl
 
   const totals = asRecord(payload?.totals);
   const pending = asRecord(totals?.pending_by_currency);
+  async function saveProject() {
+    if (!projectForm.name.trim()) {
+      setMessage("Nombre de proyecto requerido.");
+      return;
+    }
+    setBusy(true);
+    try {
+      await apiRequest("/finance/planning/projects", {
+        method: "POST",
+        session,
+        body: {
+          ...projectForm,
+          expected_revenue: Number(projectForm.expected_revenue || 0),
+          expected_cost: Number(projectForm.expected_cost || 0),
+          monthly_savings: Number(projectForm.monthly_savings || 0),
+          probability_pct: Number(projectForm.probability_pct || 100)
+        }
+      });
+      setProjectForm((current) => ({ ...current, name: "", client_name: "", expected_revenue: "", expected_cost: "", monthly_savings: "" }));
+      setMessage("Proyecto PLN guardado.");
+      await load();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo guardar proyecto.");
+    } finally {
+      setBusy(false);
+    }
+  }
+  function setProjectValue(key: string, value: string) {
+    setProjectForm((current) => ({ ...current, [key]: value }));
+  }
   return (
     <View>
       <Text style={styles.helperText}>Planificacion financiera consolidada desde ITP, pagos aplicados, Accounting, proyectos, metas y ahorros.</Text>
@@ -15271,6 +15313,26 @@ function FinancePlanningMobile({ session, initialPeriod }: { session: NonNullabl
         <Text style={styles.actionButtonText}>{busy ? "Consultando..." : "Buscar"}</Text>
       </Pressable>
       {message ? <Text style={message.includes("No se") ? styles.error : styles.helperText}>{message}</Text> : null}
+      <View style={styles.reportBox}>
+        <Text style={styles.cardTitle}>Agregar proyecto PLN</Text>
+        <Text style={styles.label}>Nombre</Text>
+        <TextInput style={styles.input} value={projectForm.name} onChangeText={(value) => setProjectValue("name", value)} />
+        <Text style={styles.label}>Cliente</Text>
+        <TextInput style={styles.input} value={projectForm.client_name} onChangeText={(value) => setProjectValue("client_name", value)} />
+        <DateField label="Fecha objetivo" value={projectForm.target_date} onChange={(value) => setProjectValue("target_date", value)} />
+        <SelectField label="Moneda" value={projectForm.currency_code} options={["USD", "CRC"]} onChange={(value) => setProjectValue("currency_code", value)} />
+        <Text style={styles.label}>Ingreso esperado</Text>
+        <TextInput style={styles.input} keyboardType="decimal-pad" value={projectForm.expected_revenue} onChangeText={(value) => setProjectValue("expected_revenue", value)} />
+        <Text style={styles.label}>Costo esperado</Text>
+        <TextInput style={styles.input} keyboardType="decimal-pad" value={projectForm.expected_cost} onChangeText={(value) => setProjectValue("expected_cost", value)} />
+        <Text style={styles.label}>Ahorro mensual</Text>
+        <TextInput style={styles.input} keyboardType="decimal-pad" value={projectForm.monthly_savings} onChangeText={(value) => setProjectValue("monthly_savings", value)} />
+        <SelectField label="Estado" value={projectForm.status} options={["PLANNED", "ACTIVE", "PAUSED", "DONE", "CANCELLED"]} onChange={(value) => setProjectValue("status", value)} />
+        <SelectField label="Prioridad" value={projectForm.priority} options={["LOW", "MEDIUM", "HIGH", "CRITICAL"]} onChange={(value) => setProjectValue("priority", value)} />
+        <Pressable style={styles.actionButton} onPress={saveProject} disabled={busy}>
+          <Text style={styles.actionButtonText}>Guardar proyecto</Text>
+        </Pressable>
+      </View>
       {payload ? (
         <>
           <View style={styles.kpiGrid}>
@@ -15285,6 +15347,9 @@ function FinancePlanningMobile({ session, initialPeriod }: { session: NonNullabl
           <PlanningRows title="Gastos Accounting" rows={payloadItems(payload.expenses)} />
           <PlanningRows title="Metas / ahorros" rows={payloadItems(payload.goals)} />
           <PlanningRows title="Proyectos" rows={payloadItems(payload.projects)} />
+          <PlanningRows title="Cronograma" rows={payloadItems(payload.project_schedule)} />
+          <PlanningRows title="Ahorro mensual" rows={payloadItems(payload.monthly_plan)} />
+          <PlanningRows title="Alertas" rows={payloadItems(payload.alerts)} />
         </>
       ) : null}
     </View>

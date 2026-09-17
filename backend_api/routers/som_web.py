@@ -1140,6 +1140,7 @@ def som_web_home() -> HTMLResponse:
           <label>Periodo<input id="plnPeriod" value="${esc(period)}" placeholder="YYYY-MM" /></label>
           <label>Meses<select id="plnMonths"><option>1</option><option>2</option><option>3</option><option selected>4</option><option>6</option><option>12</option></select></label>
           <button onclick="loadFinancePlanning()">Buscar</button>
+          <button class="green" onclick="openPlanningProjectForm()">Agregar proyecto</button>
           <button class="secondary" onclick="renderFinancePlanning($('planningWorkspace') || $('itpWorkspace'))">Limpiar</button>
         </div>
         <div id="planningMsg" class="status">Presione Buscar para consultar PLN.</div>
@@ -1169,21 +1170,102 @@ def som_web_home() -> HTMLResponse:
         ["Pendiente ITP", Object.entries(pending).map(([cur,val]) => `${cur} ${money(val)}`).join(" | ") || "0.00"],
         ["Líneas", totals.obligation_lines || 0],
         ["Metas activas", totals.goals_active || 0],
-        ["Proyectos", totals.projects || 0]
+        ["Proyectos", totals.projects || 0],
+        ["Utilidad proyectos", money(totals.project_expected_profit || 0)],
+        ["Ahorro mensual", money(totals.monthly_savings || 0)]
       ];
+      const profitability = payload.profitability || {};
       return `
         <div class="grid kpis">${cards.map(([label,value]) => `<div class="card kpi"><span>${esc(label)}</span><strong>${esc(value)}</strong></div>`).join("")}</div>
+        ${renderPlanningSection("Rentabilidad empresa", [
+          {metric:"Ingresos", value:money(profitability.revenue || 0)},
+          {metric:"Gastos", value:money(profitability.expenses || 0)},
+          {metric:"Utilidad", value:money(profitability.profit || 0)},
+          {metric:"Margen %", value:profitability.margin_pct || 0}
+        ], ["metric","value"])}
+        ${renderPlanningSection("Alertas", payload.alerts || [], ["severity","code","message"])}
         ${renderPlanningSection("Calendario ITP", payload.obligation_buckets || [], ["currency","bucket","count","amount"])}
         ${renderPlanningSection("Obligaciones", payload.obligations || [], ["id","payee_name","obligation_type","due_date","currency","balance","status","origin"])}
         ${renderPlanningSection("Pagos aplicados", payload.applied_payments || [], ["currency","count","amount"])}
         ${renderPlanningSection("Gastos Accounting", payload.expenses || [], ["period","account_code","account_name","actual_amount"])}
         ${renderPlanningSection("Metas / ahorros", payload.goals || [], ["id","period","purpose","name","account_code","currency_code","target_amount","progress_amount","progress_pct","target_date","status"])}
-        ${renderPlanningSection("Proyectos", payload.projects || [], ["nombre_proyecto","moneda","personas","total_honorarios","total_gastos","precio","utilidad","creado_el"])}
+        ${renderPlanningSection("Proyectos", payload.projects || [], ["id","name","client_name","status","priority","target_date","currency_code","expected_revenue","expected_cost","expected_profit","expected_margin_pct","monthly_savings"])}
+        ${renderPlanningSection("Cronograma", payload.project_schedule || [], ["due_date","concept","direction","currency_code","amount","status","project_id"])}
+        ${renderPlanningSection("Ahorro mensual", payload.monthly_plan || [], ["month","currency_code","planned_inflow","planned_outflow","planned_saving"])}
         <div class="status">${(payload.decision_notes || []).map(esc).join("<br>")}</div>`;
     }
     function renderPlanningSection(title, rows, cols) {
       if (!rows.length) return `<h3>${esc(title)}</h3><div class="status">Sin datos.</div>`;
-      return `<h3>${esc(title)}</h3><div class="table-wrap"><table><thead><tr><th class="pick-col"></th>${cols.map(c => `<th>${esc(c.replace(/_/g," "))}</th>`).join("")}</tr></thead><tbody>${rows.slice(0,120).map((row,idx) => `<tr><td class="pick-col"><input class="row-pick" type="checkbox" /></td>${cols.map(c => `<td>${esc(["amount","balance","total","target_amount","progress_amount","actual_amount","total_honorarios","total_gastos","precio","utilidad"].includes(c) ? money(row[c]) : row[c])}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
+      return `<h3>${esc(title)}</h3><div class="table-wrap"><table><thead><tr><th class="pick-col"></th>${cols.map(c => `<th>${esc(c.replace(/_/g," "))}</th>`).join("")}<th>Acción</th></tr></thead><tbody>${rows.slice(0,120).map((row,idx) => `<tr><td class="pick-col"><input class="row-pick" type="checkbox" /></td>${cols.map(c => `<td>${esc(["amount","balance","total","target_amount","progress_amount","actual_amount","total_honorarios","total_gastos","precio","utilidad","expected_revenue","expected_cost","expected_profit","monthly_savings","planned_inflow","planned_outflow","planned_saving"].includes(c) ? money(row[c]) : row[c])}</td>`).join("")}<td>${title === "Proyectos" ? `<button onclick='openPlanningProjectForm(${JSON.stringify(row).replace(/'/g, "&#39;")})'>Editar</button><button class="brown" onclick="deletePlanningProject(${Number(row.id || 0)})">Eliminar</button>` : ""}</td></tr>`).join("")}</tbody></table></div>`;
+    }
+    function openPlanningProjectForm(project={}) {
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal small">
+            <div class="modal-head"><h2>${project.id ? "Modificar proyecto PLN" : "Agregar proyecto PLN"}</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+            <div class="form-grid">
+              <label>Nombre<input id="plnProjName" value="${esc(project.name || "")}" required /></label>
+              <label>Cliente<input id="plnProjClient" value="${esc(project.client_name || "")}" /></label>
+              <label>Responsable<input id="plnProjOwner" value="${esc(project.owner || "")}" /></label>
+              <label>Fecha objetivo<input id="plnProjTarget" value="${esc(project.target_date || new Date().toISOString().slice(0,10))}" /></label>
+              <label>Moneda<select id="plnProjCurrency"><option>USD</option><option>CRC</option></select></label>
+              <label>Ingreso esperado<input id="plnProjRevenue" type="number" step="0.01" value="${esc(project.expected_revenue || 0)}" /></label>
+              <label>Costo esperado<input id="plnProjCost" type="number" step="0.01" value="${esc(project.expected_cost || 0)}" /></label>
+              <label>Ahorro mensual<input id="plnProjSaving" type="number" step="0.01" value="${esc(project.monthly_savings || 0)}" /></label>
+              <label>Probabilidad %<input id="plnProjProb" type="number" step="0.01" value="${esc(project.probability_pct || 100)}" /></label>
+              <label>Estado<select id="plnProjStatus"><option>PLANNED</option><option>ACTIVE</option><option>PAUSED</option><option>DONE</option><option>CANCELLED</option></select></label>
+              <label>Prioridad<select id="plnProjPriority"><option>LOW</option><option>MEDIUM</option><option>HIGH</option><option>CRITICAL</option></select></label>
+              <label class="wide">Notas<textarea id="plnProjNotes">${esc(project.notes || "")}</textarea></label>
+            </div>
+            <div class="md-actions"><button class="green" onclick="savePlanningProject(${project.id || 0})">Guardar</button><button class="secondary" onclick="closeModal()">Cancelar</button></div>
+            <div id="plnProjectMsg" class="status hidden"></div>
+          </div>
+        </div>`);
+      $("plnProjCurrency").value = project.currency_code || "USD";
+      $("plnProjStatus").value = project.status || "PLANNED";
+      $("plnProjPriority").value = project.priority || "MEDIUM";
+    }
+    async function savePlanningProject(id=0) {
+      const msg = $("plnProjectMsg");
+      msg.className = "status";
+      msg.textContent = "Guardando proyecto...";
+      const payload = {
+        name:valueFrom("plnProjName"),
+        client_name:valueFrom("plnProjClient"),
+        owner:valueFrom("plnProjOwner"),
+        target_date:valueFrom("plnProjTarget"),
+        currency_code:valueFrom("plnProjCurrency") || "USD",
+        expected_revenue:Number(valueFrom("plnProjRevenue") || 0),
+        expected_cost:Number(valueFrom("plnProjCost") || 0),
+        monthly_savings:Number(valueFrom("plnProjSaving") || 0),
+        probability_pct:Number(valueFrom("plnProjProb") || 100),
+        status:valueFrom("plnProjStatus") || "PLANNED",
+        priority:valueFrom("plnProjPriority") || "MEDIUM",
+        notes:valueFrom("plnProjNotes")
+      };
+      if (!payload.name) {
+        msg.className = "status error";
+        msg.textContent = "Nombre requerido.";
+        return;
+      }
+      try {
+        if (id) await sendJSON("PUT", `/finance/planning/projects/${id}`, payload);
+        else await postJSON("/finance/planning/projects", payload);
+        closeModal();
+        await loadFinancePlanning();
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    async function deletePlanningProject(id) {
+      if (!id || !confirm("Eliminar proyecto PLN?")) return;
+      try {
+        await sendJSON("DELETE", `/finance/planning/projects/${id}`, null);
+        await loadFinancePlanning();
+      } catch (err) {
+        alert(err.message);
+      }
     }
     function switchFinanceTab(tab) {
       financeTab = tab;

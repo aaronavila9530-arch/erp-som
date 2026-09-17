@@ -2268,6 +2268,30 @@ def get_finance_planning_summary_api(period=None, months=4):
     return r.json()
 
 
+def get_finance_planning_projects_api(status="ALL"):
+    r = api_request("GET", f"{BASE_URL}/finance/planning/projects", params={"status": status or "ALL"}, timeout=60)
+    r.raise_for_status()
+    return r.json()
+
+
+def create_finance_planning_project_api(payload):
+    r = api_request("POST", f"{BASE_URL}/finance/planning/projects", json=payload, timeout=60)
+    r.raise_for_status()
+    return r.json()
+
+
+def update_finance_planning_project_api(project_id, payload):
+    r = api_request("PUT", f"{BASE_URL}/finance/planning/projects/{project_id}", json=payload, timeout=60)
+    r.raise_for_status()
+    return r.json()
+
+
+def delete_finance_planning_project_api(project_id):
+    r = api_request("DELETE", f"{BASE_URL}/finance/planning/projects/{project_id}", timeout=30)
+    r.raise_for_status()
+    return r.json()
+
+
 def post_portia_accounting_review_api(period, language="ES"):
     r = api_request(
         "POST",
