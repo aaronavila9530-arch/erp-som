@@ -179,11 +179,11 @@ class VistaServicios(tk.Frame):
         # COLUMNAS VISIBLES (las que SÍ deben mostrarse en la tabla)
         # =============================================================
         self.columnas = [
-            "consec","tipo","estado","credit_status","credit_release_by","credit_release_at","num_informe","buque_contenedor","cliente",
+            "consec","tipo","estado","num_informe","buque_contenedor","cliente",
             "contacto","detalle","continente","pais","puerto","operacion","surveyor",
             "honorarios","costo_operativo","costo_tarjetas","fecha_inicio","hora_inicio","fecha_fin",
             "hora_fin","demoras","duracion","factura","valor_factura","fecha_factura",
-            "terminos_pago","fecha_vencimiento","dias_vencido","credit_decision"
+            "terminos_pago","fecha_vencimiento","dias_vencido"
         ]
 
         # =============================================================
@@ -477,6 +477,11 @@ class VistaServicios(tk.Frame):
     # =====================================================================
     # EXPORTAR
     # =====================================================================
+    def _visible_export_row(self, row_id):
+        values = self.table.item(row_id)["values"]
+        lookup = dict(zip(self.table["columns"], values))
+        return [lookup.get(col, "") for col in self.columnas]
+
     def export_csv(self):
         file = filedialog.asksaveasfilename(defaultextension=".csv")
         if not file:
@@ -484,9 +489,9 @@ class VistaServicios(tk.Frame):
 
         with open(file, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
-            writer.writerow(self.table["columns"])
+            writer.writerow(self.columnas)
             for row in self.table.get_children():
-                writer.writerow(self.table.item(row)["values"])
+                writer.writerow(self._visible_export_row(row))
 
         messagebox.showinfo("CSV", "Exportación exitosa.")
 
@@ -499,11 +504,11 @@ class VistaServicios(tk.Frame):
         y = 800
 
         pdf.setFont("Helvetica", 10)
-        pdf.drawString(20, y, ", ".join(self.table["columns"]))
+        pdf.drawString(20, y, ", ".join(self.columnas))
         y -= 20
 
         for row in self.table.get_children():
-            pdf.drawString(20, y, ", ".join(str(x) for x in self.table.item(row)["values"]))
+            pdf.drawString(20, y, ", ".join(str(x) for x in self._visible_export_row(row)))
             y -= 15
 
         pdf.save()
@@ -518,7 +523,7 @@ class VistaServicios(tk.Frame):
 
         for row in self.table.get_children():
             item = ET.SubElement(root, "Servicio")
-            for col, val in zip(self.table["columns"], self.table.item(row)["values"]):
+            for col, val in zip(self.columnas, self._visible_export_row(row)):
                 ET.SubElement(item, col).text = str(val)
 
         tree = ET.ElementTree(root)
@@ -539,12 +544,12 @@ class VistaServicios(tk.Frame):
         ws.title = "Servicios"
 
         # Encabezados EXACTOS como la tabla
-        columns = self.table["columns"]
+        columns = self.columnas
         ws.append(columns)
 
         # Filas EXACTAS como se ven en la tabla
         for row_id in self.table.get_children():
-            ws.append(self.table.item(row_id)["values"])
+            ws.append(self._visible_export_row(row_id))
 
         normalize_invoice_text_columns(ws, columns)
 

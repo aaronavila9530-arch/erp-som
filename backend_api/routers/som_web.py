@@ -567,7 +567,7 @@ def som_web_home() -> HTMLResponse:
     let financeClienteRows = [];
     const DISPUTE_STATUSES = ["New","In process","Process by Sales","Process by RTR","Process by Invoicing","Process by Collections","Process by Bank","Process by Disputes","Written Off","Resolved"];
     const SERVICE_COLUMNS = [
-      "consec","tipo","estado","credit_status","credit_release_by","credit_release_at","credit_decision","num_informe","buque_contenedor","cliente","contacto","detalle",
+      "consec","tipo","estado","num_informe","buque_contenedor","cliente","contacto","detalle",
       "continente","pais","puerto","operacion","surveyor","honorarios","costo_operativo",
       "costo_tarjetas","fecha_inicio","hora_inicio","fecha_fin","hora_fin","demoras","duracion",
       "factura","valor_factura","fecha_factura","terminos_pago","fecha_vencimiento","dias_vencido"
