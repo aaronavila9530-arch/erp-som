@@ -337,10 +337,22 @@ def get_puertos_api(pais):
 # ============================================================
 # SERVICIOS MD (OPERACIONES)
 # ============================================================
-def get_serviciosmd_api():
-    url = f"{BASE_URL}/servicios_md?page=1&page_size=500"
+def get_serviciosmd_api(page_size=2000):
+    url = f"{BASE_URL}/servicios_md?page=1&page_size={page_size}"
     resp = api_request("GET", url).json()
-    return [s["nombre"] for s in resp.get("data", [])]
+    data = resp.get("data", []) if isinstance(resp, dict) else resp
+    nombres = []
+    vistos = set()
+    for servicio in data:
+        if isinstance(servicio, dict):
+            nombre = str(servicio.get("nombre") or "").strip()
+        else:
+            nombre = str(servicio or "").strip()
+        key = nombre.casefold()
+        if nombre and key not in vistos:
+            vistos.add(key)
+            nombres.append(nombre)
+    return sorted(nombres, key=str.casefold)
 
 
 

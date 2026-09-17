@@ -1,7 +1,6 @@
 import tkinter as tk
 from tkinter import ttk
-import requests
-from api_client import BASE_URL
+from api_client import get_serviciosmd_api
 from Modulos.MasterData.prefijos_telefonicos import PREFIJOS_TELEFONICOS
 
 
@@ -57,15 +56,7 @@ class PopupSurveyor(tk.Toplevel):
     def _ensure_catalogs(self):
         if not self.lista_operaciones:
             try:
-                url = f"{BASE_URL}/servicios_md?page=1&page_size=500"
-                response = requests.get(url, timeout=10)
-                response.raise_for_status()
-                payload = response.json()
-                self.lista_operaciones = [
-                    item.get("nombre", "")
-                    for item in payload.get("data", [])
-                    if item.get("nombre")
-                ]
+                self.lista_operaciones = get_serviciosmd_api()
             except Exception as e:
                 print("Error cargando operaciones iniciales:", e)
 
@@ -567,14 +558,7 @@ class PopupSurveyor(tk.Toplevel):
     def _cargar_operaciones(self, event=None):
 
         try:
-            url = f"{BASE_URL}/servicios_md/"
-            response = requests.get(url, timeout=10)
-            response.raise_for_status()
-
-            payload = response.json()
-            data = payload.get("data", [])
-
-            operaciones = [item["nombre"] for item in data if item.get("nombre")]
+            operaciones = get_serviciosmd_api()
             self.lista_operaciones = operaciones
 
             self.combo_operacion["values"] = operaciones
