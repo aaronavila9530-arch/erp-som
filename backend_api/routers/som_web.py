@@ -18,7 +18,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20260911-require-auth-on-load-1"
+_ASSET_VERSION = "20260917-hide-service-credit-columns-1"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Servicios, facturación, CxC e informes desde agosto en adelante."},
@@ -576,6 +576,8 @@ def som_web_home() -> HTMLResponse:
       "costo_tarjetas","fecha_inicio","hora_inicio","fecha_fin","hora_fin","demoras","duracion",
       "factura","valor_factura","fecha_factura","terminos_pago","fecha_vencimiento","dias_vencido"
     ];
+    const SERVICE_HIDDEN_COLUMNS = new Set(["credit_status","credit_release_by","credit_release_at","credit_decision"]);
+    const visibleServiceColumns = () => SERVICE_COLUMNS.filter(col => !SERVICE_HIDDEN_COLUMNS.has(col));
 
     const MASTER_CONFIG = {
       clientes: {
@@ -4427,7 +4429,11 @@ def som_web_home() -> HTMLResponse:
       showServiceMsg("Cargando servicios...", false);
       try {
         const payload = await getJSON(`/servicios/?${serviceQueryParams(page)}`);
-        serviceRows = rowsList(payload);
+        serviceRows = rowsList(payload).map(row => {
+          const clean = { ...row };
+          SERVICE_HIDDEN_COLUMNS.forEach(col => delete clean[col]);
+          return clean;
+        });
         serviceTotal = Number(payload.total || serviceRows.length || 0);
         selectedServiceIndex = null;
         selectedServiceIndexes = new Set();
@@ -4464,11 +4470,11 @@ def som_web_home() -> HTMLResponse:
       target.innerHTML = `
         <div class="table-wrap">
           <table>
-            <thead><tr><th class="pick-col"></th>${SERVICE_COLUMNS.map(c => `<th>${esc(c)}</th>`).join("")}</tr></thead>
+            <thead><tr><th class="pick-col"></th>${visibleServiceColumns().map(c => `<th>${esc(c)}</th>`).join("")}</tr></thead>
             <tbody>${serviceRows.map((row, i) => {
               const missingCosts = String(row.estado || "").toLowerCase().includes("oper") && !Number(row.honorarios || 0) && !Number(row.costo_operativo || 0) && !Number(row.costo_tarjetas || 0);
               const selected = selectedServiceIndexes.has(i);
-              return `<tr id="svcRow_${i}" class="${selected ? "service-selected" : missingCosts ? "service-warning" : ""}" onclick="toggleServiceRow(${i})"><td class="pick-col"><input class="row-pick" type="checkbox" ${selected ? "checked" : ""} onclick="event.stopPropagation(); toggleServiceRow(${i}, this.checked)" /></td>${SERVICE_COLUMNS.map(c => `<td>${serviceCell(row, c)}</td>`).join("")}</tr>`;
+              return `<tr id="svcRow_${i}" class="${selected ? "service-selected" : missingCosts ? "service-warning" : ""}" onclick="toggleServiceRow(${i})"><td class="pick-col"><input class="row-pick" type="checkbox" ${selected ? "checked" : ""} onclick="event.stopPropagation(); toggleServiceRow(${i}, this.checked)" /></td>${visibleServiceColumns().map(c => `<td>${serviceCell(row, c)}</td>`).join("")}</tr>`;
             }).join("")}</tbody>
           </table>
         </div>
@@ -4754,7 +4760,7 @@ def som_web_home() -> HTMLResponse:
           <div class="modal-backdrop" id="svcModal">
             <div class="modal">
               <div class="modal-head"><h2>Servicio ${esc(full.consec)}</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
-              <div class="table-wrap"><table><tbody>${SERVICE_COLUMNS.map(c => `<tr><th>${esc(c)}</th><td>${serviceCell(full, c)}</td></tr>`).join("")}</tbody></table></div>
+              <div class="table-wrap"><table><tbody>${visibleServiceColumns().map(c => `<tr><th>${esc(c)}</th><td>${serviceCell(full, c)}</td></tr>`).join("")}</tbody></table></div>
             </div>
           </div>`);
       } catch (err) {
@@ -4819,17 +4825,18 @@ def som_web_home() -> HTMLResponse:
       }
       const stamp = new Date().toISOString().slice(0,10);
       const escapeCsv = value => `"${String(value ?? "").replace(/"/g, '""')}"`;
-      const csv = [SERVICE_COLUMNS.join(",")].concat(serviceRows.map(row => SERVICE_COLUMNS.map(c => escapeCsv(row[c])).join(","))).join("\\n");
+      const cols = visibleServiceColumns();
+      const csv = [cols.join(",")].concat(serviceRows.map(row => cols.map(c => escapeCsv(row[c])).join(","))).join("\\n");
       if (kind === "csv") {
         downloadText(`servicios_${stamp}.csv`, csv, "text/csv;charset=utf-8");
         return;
       }
       if (kind === "xml") {
-        const xml = `<?xml version="1.0" encoding="UTF-8"?><servicios>${serviceRows.map(row => `<servicio>${SERVICE_COLUMNS.map(c => `<${c}>${esc(row[c] ?? "")}</${c}>`).join("")}</servicio>`).join("")}</servicios>`;
+        const xml = `<?xml version="1.0" encoding="UTF-8"?><servicios>${serviceRows.map(row => `<servicio>${cols.map(c => `<${c}>${esc(row[c] ?? "")}</${c}>`).join("")}</servicio>`).join("")}</servicios>`;
         downloadText(`servicios_${stamp}.xml`, xml, "application/xml;charset=utf-8");
         return;
       }
-      const tableHtml = `<table border="1"><thead><tr>${SERVICE_COLUMNS.map(c => `<th>${esc(c)}</th>`).join("")}</tr></thead><tbody>${serviceRows.map(row => `<tr>${SERVICE_COLUMNS.map(c => `<td>${esc(row[c] ?? "")}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+      const tableHtml = `<table border="1"><thead><tr>${cols.map(c => `<th>${esc(c)}</th>`).join("")}</tr></thead><tbody>${serviceRows.map(row => `<tr>${cols.map(c => `<td>${esc(row[c] ?? "")}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
       if (kind === "excel") {
         downloadText(`servicios_${stamp}.xls`, `<html><head><meta charset="utf-8"></head><body>${tableHtml}</body></html>`, "application/vnd.ms-excel;charset=utf-8");
         return;
