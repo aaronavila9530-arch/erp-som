@@ -557,6 +557,10 @@ def som_web_home() -> HTMLResponse:
     let selectedBankLineIndex = null;
     let selectedBankLineIndexes = new Set();
     let selectedGenericFinanceIndexes = new Set();
+    let itpRows = [];
+    let selectedItpIndex = null;
+    let selectedItpIndexes = new Set();
+    let itpBiweeklyRows = [];
     let selectedPaidInvoiceIndexes = new Set();
     let disputeRows = [];
     let disputeHistoryRows = [];
@@ -1084,7 +1088,8 @@ def som_web_home() -> HTMLResponse:
         return;
       }
       if (block === "invoice-to-pay") {
-        ws.innerHTML = `<div class="card panel"><div class="panel-head"><h2>Invoice To Pay</h2><span class="muted">Carga manual solo con Buscar</span></div><div class="service-actions"><button onclick="loadGenericFinance('/invoice-to-pay/search?status=ALL','itpWorkspace')">Buscar</button><button class="secondary" onclick="renderFinancePlanning($('itpWorkspace'))">PLN / Planificación</button></div><div id="itpWorkspace" class="status">Presione Buscar para consultar obligaciones.</div></div>`;
+        ws.innerHTML = `<div class="card panel"><div id="itpWorkspace"></div></div>`;
+        renderItpWeb($("itpWorkspace"));
         return;
       }
       if (block === "planning") {
@@ -1131,6 +1136,444 @@ def som_web_home() -> HTMLResponse:
         const input = tr.querySelector("input.row-pick");
         if (input) input.checked = selectedGenericFinanceIndexes.has(i - 1);
       });
+    }
+    function renderItpWeb(target) {
+      target.innerHTML = `
+        <div class="panel-head">
+          <h2>Invoice To Pay</h2>
+          <span class="muted">Obligaciones, proveedores, cargas y pagos por consulta manual</span>
+        </div>
+        <div class="finance-filter-row compact">
+          <label>Tipo obligación<select id="itpObligationType"><option value="">Todos</option><option value="SURVEYOR">Surveyor</option><option value="SUPPLIER">Proveedor</option><option value="MANUAL">Manual</option></select></label>
+          <label>Beneficiario<input id="itpPayee" placeholder="Nombre beneficiario" /></label>
+          <label>Estado<select id="itpStatus"><option value="ALL">Todos</option><option>PENDING</option><option>PARTIAL</option><option>PAID</option></select></label>
+          <button onclick="loadItp()">Buscar</button>
+          <button class="secondary" onclick="clearItp()">Limpiar</button>
+        </div>
+        <div class="finance-filter-row compact">
+          <label>Factura desde<input id="itpIssueFrom" type="date" /></label>
+          <label>Factura hasta<input id="itpIssueTo" type="date" /></label>
+          <label>Vence desde<input id="itpDueFrom" type="date" /></label>
+          <label>Vence hasta<input id="itpDueTo" type="date" /></label>
+          <label>Pago desde<input id="itpPaymentFrom" type="date" /></label>
+          <label>Pago hasta<input id="itpPaymentTo" type="date" /></label>
+        </div>
+        <div class="finance-toolbar">
+          <button class="green" onclick="openItpManualForm()">Registrar obligación manual</button>
+          <button onclick="openItpUploadForm()">Cargar factura PDF / XML</button>
+          <button onclick="openItpBiweekly()">Obligaciones quincenales</button>
+          <button class="green" onclick="openItpPaymentForm()">Aplicar pago</button>
+          <button class="brown" onclick="deleteSelectedItp()">Eliminar</button>
+          <button class="secondary" onclick="downloadItpExcel()">Exportar Excel</button>
+          <button class="secondary" onclick="openItpPaymentReport()">Reporte pagos ITP / presupuesto</button>
+          <button class="secondary" onclick="renderFinancePlanning($('itpTable'))">PLN / Planificación</button>
+        </div>
+        <div id="itpKpis" class="grid kpis hidden"></div>
+        <div id="itpAlerts" class="status hidden"></div>
+        <div id="itpMsg" class="status hidden"></div>
+        <div id="itpTable" class="workspace"><div class="status">Configure filtros y presione Buscar para consultar ITP.</div></div>`;
+    }
+    function itpParams() {
+      const params = new URLSearchParams();
+      const pairs = [
+        ["obligation_type","itpObligationType"], ["payee","itpPayee"], ["status","itpStatus"],
+        ["issue_date_from","itpIssueFrom"], ["issue_date_to","itpIssueTo"],
+        ["due_date_from","itpDueFrom"], ["due_date_to","itpDueTo"],
+        ["payment_date_from","itpPaymentFrom"], ["payment_date_to","itpPaymentTo"]
+      ];
+      pairs.forEach(([key,id]) => {
+        const value = valueFrom(id);
+        if (value) params.set(key, value);
+      });
+      if (!params.has("status")) params.set("status", "ALL");
+      return params.toString();
+    }
+    async function loadItp() {
+      const msg = $("itpMsg");
+      const table = $("itpTable");
+      selectedItpIndex = null;
+      selectedItpIndexes = new Set();
+      msg.className = "status";
+      msg.textContent = "Consultando ITP...";
+      try {
+        const [payload, kpis] = await Promise.all([
+          getJSON(`/invoice-to-pay/search?${itpParams()}`),
+          getJSON("/invoice-to-pay/kpis").catch(() => null)
+        ]);
+        itpRows = rowsList(payload);
+        msg.className = "status hidden";
+        renderItpKpis(kpis);
+        renderItpTable();
+      } catch (err) {
+        itpRows = [];
+        table.innerHTML = "";
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    function renderItpKpis(kpis) {
+      const box = $("itpKpis");
+      if (!box || !kpis) return;
+      box.className = "grid kpis";
+      const cards = [
+        ["Pending Payables", kpis.pending],
+        ["Paid Amount", kpis.paid],
+        ["Avg Payment Days", kpis.dpo],
+        ["Overdue Amount", kpis.overdue_amount]
+      ];
+      box.innerHTML = cards.map(([label,value]) => `<div class="card kpi"><span>${esc(label)}</span><strong>${Number(value || 0).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:2})}</strong></div>`).join("");
+      const alerts = $("itpAlerts");
+      if (alerts) {
+        alerts.className = "status";
+        alerts.textContent = `Pagos próximos: ${Number(kpis.upcoming || 0)} · Pagos vencidos: ${Number(kpis.overdue || 0)}`;
+      }
+    }
+    function renderItpTable() {
+      const table = $("itpTable");
+      const cols = ["id","payee_name","obligation_type","referencia","issue_date","due_date","vessel","country","operation","currency","total","balance","last_payment_date","status","origin"];
+      if (!itpRows.length) {
+        table.innerHTML = '<div class="status">Sin obligaciones para esta consulta.</div>';
+        return;
+      }
+      table.innerHTML = `<div class="table-wrap"><table><thead><tr><th class="pick-col"></th>${cols.map(c => `<th>${esc(c.replace(/_/g," "))}</th>`).join("")}</tr></thead><tbody>${itpRows.map((row, idx) => {
+        const due = String(row.due_date || "").slice(0,10);
+        const overdue = ["PENDING","PARTIAL"].includes(String(row.status || "").toUpperCase()) && due && due < new Date().toISOString().slice(0,10);
+        const selected = selectedItpIndexes.has(idx);
+        return `<tr class="${selected ? "service-selected" : overdue ? "service-warning" : ""}" onclick="toggleItpRow(${idx})"><td class="pick-col"><input class="row-pick" type="checkbox" ${selected ? "checked" : ""} onclick="event.stopPropagation(); toggleItpRow(${idx}, this.checked)" /></td>${cols.map(c => `<td>${esc(["total","balance"].includes(c) ? Number(row[c] || 0).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:2}) : row[c])}</td>`).join("")}</tr>`;
+      }).join("")}</tbody></table></div>`;
+    }
+    function toggleItpRow(idx, checked=null) {
+      const next = checked === null ? !selectedItpIndexes.has(idx) : checked;
+      selectedItpIndex = setIndexSelection(selectedItpIndexes, idx, next);
+      renderItpTable();
+    }
+    function selectedItpRow() {
+      if (selectedItpIndex === null) selectedItpIndex = firstFromSet(selectedItpIndexes);
+      return selectedItpIndex === null ? null : itpRows[selectedItpIndex];
+    }
+    function requireItpRow() {
+      const row = selectedItpRow();
+      if (!row) alert("Seleccione primero una obligación ITP.");
+      return row;
+    }
+    function clearItp() {
+      ["itpObligationType","itpPayee","itpIssueFrom","itpIssueTo","itpDueFrom","itpDueTo","itpPaymentFrom","itpPaymentTo"].forEach(id => { if ($(id)) $(id).value = ""; });
+      if ($("itpStatus")) $("itpStatus").value = "ALL";
+      itpRows = [];
+      selectedItpIndex = null;
+      selectedItpIndexes = new Set();
+      $("itpTable").innerHTML = '<div class="status">Configure filtros y presione Buscar para consultar ITP.</div>';
+      $("itpMsg").className = "status hidden";
+      $("itpKpis").className = "grid kpis hidden";
+      $("itpAlerts").className = "status hidden";
+    }
+    function openItpManualForm() {
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal small">
+            <div class="modal-head"><h2>Registrar obligación manual</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+            <div class="form-grid">
+              <label>Beneficiario<input id="itpManualPayee" /></label>
+              <label>Tipo beneficiario<select id="itpManualPayeeType"><option>OTHER</option><option>SUPPLIER</option><option>SURVEYOR</option><option>TAX</option><option>CARD</option></select></label>
+              <label>Tipo obligación<input id="itpManualType" value="MANUAL" /></label>
+              <label>Moneda<select id="itpManualCurrency"><option>USD</option><option>CRC</option></select></label>
+              <label>Total<input id="itpManualTotal" type="number" step="0.01" /></label>
+              <label>Referencia<input id="itpManualReference" /></label>
+              <label class="wide">Notas<textarea id="itpManualNotes"></textarea></label>
+            </div>
+            <div class="md-actions"><button class="green" onclick="saveItpManual()">Guardar</button><button class="secondary" onclick="closeModal()">Cancelar</button></div>
+            <div id="itpManualMsg" class="status hidden"></div>
+          </div>
+        </div>`);
+    }
+    async function saveItpManual() {
+      const msg = $("itpManualMsg");
+      msg.className = "status";
+      msg.textContent = "Guardando...";
+      try {
+        const params = new URLSearchParams({
+          payee_name:valueFrom("itpManualPayee"),
+          payee_type:valueFrom("itpManualPayeeType") || "OTHER",
+          obligation_type:valueFrom("itpManualType") || "MANUAL",
+          total:String(Number(valueFrom("itpManualTotal") || 0)),
+          currency:valueFrom("itpManualCurrency") || "USD"
+        });
+        if (valueFrom("itpManualReference")) params.set("reference", valueFrom("itpManualReference"));
+        if (valueFrom("itpManualNotes")) params.set("notes", valueFrom("itpManualNotes"));
+        if (!valueFrom("itpManualPayee") || Number(valueFrom("itpManualTotal") || 0) <= 0) throw new Error("Beneficiario y total son requeridos.");
+        await postJSON(`/invoice-to-pay/manual?${params.toString()}`, {});
+        closeModal();
+        await loadItp();
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    function openItpUploadForm() {
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal small">
+            <div class="modal-head"><h2>Cargar factura PDF / XML</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+            <div class="form-grid">
+              <label>Tipo<select id="itpUploadType" onchange="toggleItpUploadType()"><option value="xml">XML</option><option value="pdf">PDF</option></select></label>
+              <label class="wide">Archivo<input id="itpUploadFile" type="file" accept=".xml,.pdf,application/pdf,text/xml,application/xml" /></label>
+              <label class="itpPdfOnly hidden">Referencia PDF<input id="itpPdfReference" /></label>
+              <label class="itpPdfOnly hidden">Fecha factura<input id="itpPdfIssue" type="date" /></label>
+              <label class="itpPdfOnly hidden">Fecha vencimiento<input id="itpPdfDue" type="date" /></label>
+            </div>
+            <div class="md-actions"><button onclick="submitItpUpload()">Cargar</button><button class="secondary" onclick="closeModal()">Cancelar</button></div>
+            <div id="itpUploadMsg" class="status hidden"></div>
+          </div>
+        </div>`);
+    }
+    function toggleItpUploadType() {
+      const isPdf = valueFrom("itpUploadType") === "pdf";
+      document.querySelectorAll(".itpPdfOnly").forEach(el => el.classList.toggle("hidden", !isPdf));
+    }
+    async function submitItpUpload() {
+      const msg = $("itpUploadMsg");
+      msg.className = "status";
+      msg.textContent = "Cargando...";
+      try {
+        const file = $("itpUploadFile")?.files?.[0];
+        if (!file) throw new Error("Seleccione un archivo.");
+        const fd = new FormData();
+        fd.append("file", file);
+        let path = "/invoice-to-pay/upload/xml";
+        if (valueFrom("itpUploadType") === "pdf") {
+          if (!valueFrom("itpPdfReference")) throw new Error("Referencia PDF requerida.");
+          fd.append("reference", valueFrom("itpPdfReference"));
+          if (valueFrom("itpPdfIssue")) fd.append("issue_date", valueFrom("itpPdfIssue"));
+          if (valueFrom("itpPdfDue")) fd.append("due_date", valueFrom("itpPdfDue"));
+          path = "/invoice-to-pay/upload/pdf";
+        }
+        await sendForm(path, fd);
+        closeModal();
+        await loadItp();
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    async function openItpPaymentForm() {
+      const row = requireItpRow();
+      if (!row) return;
+      if (String(row.status || "").toUpperCase() === "PAID" || Number(row.balance || 0) <= 0) return alert("La obligación ya está pagada.");
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal small">
+            <div class="modal-head"><h2>Aplicar pago ITP</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+            <div class="status">${esc(row.payee_name)} · Saldo ${esc(row.currency)} ${Number(row.balance || 0).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:2})}</div>
+            <div class="form-grid">
+              <label>Monto<input id="itpPayAmount" type="number" step="0.01" value="${esc(row.balance || "")}" /></label>
+              <label>Fecha pago<input id="itpPayDate" type="date" value="${new Date().toISOString().slice(0,10)}" /></label>
+              <label>Cuenta pago<select id="itpPayBank"><option value="">Cargando...</option></select></label>
+              <label>Método<select id="itpPayMethod"><option value="BANK">Banco</option><option value="CARD_3155">Tarjeta 3155</option><option value="HAZEL_CONTRIBUTION">Aporte Hazel</option></select></label>
+              <label>Comprobante<input id="itpPayReference" /></label>
+              <label>Últimos 4 tarjeta<input id="itpPayCardLast4" maxlength="4" /></label>
+            </div>
+            <div class="md-actions"><button class="green" onclick="submitItpPayment()">Aplicar</button><button class="secondary" onclick="closeModal()">Cancelar</button></div>
+            <div id="itpPayMsg" class="status hidden"></div>
+          </div>
+        </div>`);
+      await loadItpPaymentBanks();
+    }
+    async function loadItpPaymentBanks() {
+      const select = $("itpPayBank");
+      if (!select) return;
+      try {
+        const rows = rowsList(await getJSON("/accounting/bank-accounts"));
+        select.innerHTML = rows.map(row => {
+          const code = row.account_code || "";
+          const name = row.account_name || "";
+          return `<option value="${esc(code)}|${esc(name)}">${esc(code)} - ${esc(name)}</option>`;
+        }).join("") || '<option value="">Sin bancos disponibles</option>';
+      } catch {
+        select.innerHTML = '<option value="">Sin bancos disponibles</option>';
+      }
+    }
+    async function submitItpPayment() {
+      const row = requireItpRow();
+      if (!row) return;
+      const msg = $("itpPayMsg");
+      msg.className = "status";
+      msg.textContent = "Aplicando pago...";
+      try {
+        const [bankCode, bankName] = valueFrom("itpPayBank").split("|");
+        const amount = Number(valueFrom("itpPayAmount") || 0);
+        if (amount <= 0) throw new Error("Monto inválido.");
+        if (!valueFrom("itpPayReference")) throw new Error("Comprobante bancario requerido.");
+        const params = new URLSearchParams({
+          obligation_id:String(row.id),
+          amount:String(amount),
+          payment_date:valueFrom("itpPayDate") || new Date().toISOString().slice(0,10),
+          payment_reference:valueFrom("itpPayReference"),
+          payment_method:valueFrom("itpPayMethod") || "BANK"
+        });
+        if (bankCode) params.set("bank_account_code", bankCode);
+        if (bankName) {
+          params.set("bank_account_name", bankName);
+          params.set("bank_name", bankName);
+        }
+        if (valueFrom("itpPayCardLast4")) params.set("payment_card_last4", valueFrom("itpPayCardLast4"));
+        const result = await postJSON(`/invoice-to-pay/apply-payment?${params.toString()}`, {});
+        closeModal();
+        alert(`Pago aplicado. Nuevo saldo: ${Number(result.new_balance || 0).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:2})}${result.accounting_warning ? "\\nAdvertencia accounting: " + result.accounting_warning : ""}`);
+        await loadItp();
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    async function deleteSelectedItp() {
+      const row = requireItpRow();
+      if (!row) return;
+      if (!confirm(`¿Eliminar obligación ITP ${row.id} - ${row.referencia || row.payee_name}?`)) return;
+      try {
+        await sendJSON("DELETE", `/invoice-to-pay/${encodeURIComponent(row.id)}`);
+        await loadItp();
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+    function downloadItpExcel() {
+      if (!itpRows.length) return alert("No hay datos para exportar.");
+      const cols = ["id","payee_name","obligation_type","referencia","issue_date","due_date","vessel","country","operation","currency","total","balance","last_payment_date","status","origin"];
+      downloadExcelFile(`itp_${new Date().toISOString().slice(0,10)}.xls`, itpRows, cols, "Invoice To Pay");
+    }
+    function openItpPaymentReport() {
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal small">
+            <div class="modal-head"><h2>Reporte pagos ITP / presupuesto</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+            <div class="form-grid">
+              <label>Periodo<input id="itpRptPeriod" value="${new Date().toISOString().slice(0,7)}" placeholder="YYYY-MM" /></label>
+              <label>Meses<select id="itpRptMonths"><option>1</option><option>3</option><option>6</option><option>12</option><option>24</option><option>36</option></select></label>
+              <label>Estado<select id="itpRptStatus"><option>ALL</option><option>PENDING</option><option>PARTIAL</option><option>PAID</option></select></label>
+              <label>Desde<input id="itpRptFrom" type="date" /></label>
+              <label>Hasta<input id="itpRptTo" type="date" /></label>
+              <label>Tipo obligación<input id="itpRptType" value="ALL" /></label>
+              <label>Tipo beneficiario<input id="itpRptPayeeType" value="ALL" /></label>
+            </div>
+            <div class="md-actions"><button onclick="downloadItpPaymentReport()">Exportar Excel</button><button class="secondary" onclick="closeModal()">Cancelar</button></div>
+          </div>
+        </div>`);
+    }
+    function downloadItpPaymentReport() {
+      const params = new URLSearchParams({
+        period:valueFrom("itpRptPeriod") || new Date().toISOString().slice(0,7),
+        months:valueFrom("itpRptMonths") || "1",
+        status:valueFrom("itpRptStatus") || "ALL",
+        obligation_type:valueFrom("itpRptType") || "ALL",
+        payee_type:valueFrom("itpRptPayeeType") || "ALL"
+      });
+      if (valueFrom("itpRptFrom")) params.set("date_from", valueFrom("itpRptFrom"));
+      if (valueFrom("itpRptTo")) params.set("date_to", valueFrom("itpRptTo"));
+      window.open(`/invoice-to-pay/reports/payment-report.xlsx?${params.toString()}`, "_blank");
+    }
+    function openItpBiweekly() {
+      const period = new Date().toISOString().slice(0,7);
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal wide">
+            <div class="modal-head"><h2>Obligaciones quincenales</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+            <div class="finance-filter-row compact">
+              <label>Periodo<input id="itpBiPeriod" value="${period}" placeholder="YYYY-MM" /></label>
+              <label>Quincena<select id="itpBiFortnight"><option value="1">1</option><option value="2">2</option></select></label>
+              <button onclick="loadItpBiweekly(false)">Generar / buscar</button>
+              <button class="secondary" onclick="loadItpBiweekly(true)">Regenerar automático</button>
+              <button class="secondary" onclick="saveItpBiweeklyDraft()">Guardar borrador</button>
+              <button class="green" onclick="applyItpBiweekly()">Aplicar pagos y crear asientos</button>
+              <button class="secondary" onclick="exportItpBiweekly()">Exportar Excel</button>
+            </div>
+            <div id="itpBiMsg" class="status">Presione Generar / buscar para cargar obligaciones quincenales.</div>
+            <div id="itpBiTable" class="workspace"></div>
+          </div>
+        </div>`);
+    }
+    async function loadItpBiweekly(force=false) {
+      const msg = $("itpBiMsg");
+      const table = $("itpBiTable");
+      msg.className = "status";
+      msg.textContent = "Consultando obligaciones quincenales...";
+      try {
+        const params = new URLSearchParams({ period:valueFrom("itpBiPeriod"), fortnight:valueFrom("itpBiFortnight") || "1", force:String(!!force) });
+        const payload = await getJSON(`/invoice-to-pay/biweekly-obligations/preview?${params.toString()}`);
+        itpBiweeklyRows = rowsList(payload.rows || payload);
+        msg.className = "status";
+        msg.textContent = payload.source === "draft" ? "Borrador cargado. Revise pendientes antes de aplicar." : "Preview generado. Complete comprobante y cuenta contable antes de aplicar.";
+        renderItpBiweeklyTable();
+      } catch (err) {
+        itpBiweeklyRows = [];
+        table.innerHTML = "";
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    function renderItpBiweeklyTable() {
+      const table = $("itpBiTable");
+      if (!itpBiweeklyRows.length) {
+        table.innerHTML = '<div class="status">Sin líneas para esta quincena.</div>';
+        return;
+      }
+      const inputs = (idx,row) => `
+        <td><input data-bi="${idx}" data-field="category" value="${esc(row.category)}" /></td>
+        <td><input data-bi="${idx}" data-field="name" value="${esc(row.name)}" /></td>
+        <td><input data-bi="${idx}" data-field="amount" type="number" step="0.01" value="${esc(row.amount)}" /></td>
+        <td><select data-bi="${idx}" data-field="currency"><option${row.currency === "CRC" ? " selected" : ""}>CRC</option><option${row.currency === "USD" ? " selected" : ""}>USD</option></select></td>
+        <td><input data-bi="${idx}" data-field="due_date" type="date" value="${esc(String(row.due_date || "").slice(0,10))}" /></td>
+        <td><input data-bi="${idx}" data-field="bank_account" value="${esc(row.bank_account)}" /></td>
+        <td><input data-bi="${idx}" data-field="bank_accounting_code" value="${esc(row.bank_accounting_code)}" /></td>
+        <td><input data-bi="${idx}" data-field="bank_voucher" value="${esc(row.bank_voucher)}" /></td>
+        <td><select data-bi="${idx}" data-field="payment_method"><option value="BANK"${row.payment_method === "BANK" ? " selected" : ""}>Banco</option><option value="CARD_3155"${row.payment_method === "CARD_3155" ? " selected" : ""}>Tarjeta 3155</option><option value="HAZEL_CONTRIBUTION"${row.payment_method === "HAZEL_CONTRIBUTION" ? " selected" : ""}>Aporte Hazel</option></select></td>`;
+      table.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Rubro</th><th>Beneficiario</th><th>Monto</th><th>Moneda</th><th>Fecha pago</th><th>Cuenta destino / IBAN</th><th>Cuenta contable pago</th><th>Comprobante</th><th>Método</th><th>ITP ID</th><th>Fuente</th></tr></thead><tbody>${itpBiweeklyRows.map((row,idx) => `<tr>${inputs(idx,row)}<td>${esc(row.obligation_id || "")}</td><td>${esc(row.source || "")}</td></tr>`).join("")}</tbody></table></div>`;
+    }
+    function collectItpBiweeklyRows() {
+      const rows = itpBiweeklyRows.map(row => ({ ...row }));
+      document.querySelectorAll("[data-bi]").forEach(input => {
+        const idx = Number(input.dataset.bi);
+        const field = input.dataset.field;
+        if (!rows[idx]) return;
+        rows[idx][field] = field === "amount" ? Number(input.value || 0) : input.value;
+      });
+      itpBiweeklyRows = rows;
+      return rows;
+    }
+    async function saveItpBiweeklyDraft() {
+      const msg = $("itpBiMsg");
+      msg.className = "status";
+      msg.textContent = "Guardando borrador...";
+      try {
+        const result = await postJSON("/invoice-to-pay/biweekly-obligations/save-draft", { period:valueFrom("itpBiPeriod"), fortnight:Number(valueFrom("itpBiFortnight") || 1), rows:collectItpBiweeklyRows() });
+        msg.textContent = `Borrador guardado. Líneas: ${result.rows || result.saved || itpBiweeklyRows.length}`;
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    async function applyItpBiweekly() {
+      if (!confirm("Se aplicarán pagos con comprobante y cuenta contable, y se crearán los asientos correspondientes. ¿Continuar?")) return;
+      const msg = $("itpBiMsg");
+      msg.className = "status";
+      msg.textContent = "Aplicando pagos quincenales...";
+      try {
+        const result = await postJSON("/invoice-to-pay/biweekly-obligations/apply", { period:valueFrom("itpBiPeriod"), fortnight:Number(valueFrom("itpBiFortnight") || 1), rows:collectItpBiweeklyRows() });
+        msg.textContent = `Aplicado. Asientos: ${result.posted || 0}. Pagos ITP: ${result.applied || 0}. Pendientes: ${result.pending || 0}.`;
+        await loadItp();
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    async function exportItpBiweekly() {
+      try {
+        const payload = { period:valueFrom("itpBiPeriod"), fortnight:Number(valueFrom("itpBiFortnight") || 1), rows:collectItpBiweeklyRows() };
+        const ticket = await postJSON("/invoice-to-pay/biweekly-obligations/export-ticket", payload);
+        if (!ticket.ticket) throw new Error("No se pudo preparar exportación.");
+        window.open(`/invoice-to-pay/biweekly-obligations/export/${encodeURIComponent(ticket.ticket)}.xlsx`, "_blank");
+      } catch (err) {
+        alert(err.message);
+      }
     }
     function renderFinancePlanning(target) {
       const period = new Date().toISOString().slice(0,7);
