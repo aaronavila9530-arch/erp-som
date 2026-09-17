@@ -88,7 +88,41 @@ def _get_table_columns(conn, table_name: str) -> set:
 def _ensure_unified_draft_columns(conn) -> None:
     cur = conn.cursor()
     try:
-        for column in ("init_date", "final_date"):
+        draft_fields = [
+            "time_from", "time_to",
+            "draft_fwd_port", "draft_fwd_stb", "draft_fwd_marks",
+            "draft_mid_port", "draft_mid_stb", "draft_mid_marks",
+            "draft_aft_port", "draft_aft_stb", "draft_aft_marks",
+            "keel_correction_enabled", "keel_correction",
+            "sg", "lpp", "tpc_p", "tpc_s",
+            "ballast", "fresh_water", "fuel_oil", "diesel_oil", "lub_oil",
+            "slop", "swimming_pool", "others", "light_ship",
+            "historic_constant", "bl_figure",
+        ]
+        hydro_fields = []
+        for table_no in (1, 2, 3):
+            hydro_fields.extend([
+                f"hydro{table_no}_draft_1",
+                f"hydro{table_no}_disp_1",
+                f"hydro{table_no}_tpc_1",
+                f"hydro{table_no}_lcf_1",
+                f"hydro{table_no}_draft_2",
+                f"hydro{table_no}_disp_2",
+                f"hydro{table_no}_tpc_2",
+                f"hydro{table_no}_lcf_2",
+                f"hydro{table_no}_draft_mtc",
+                f"hydro{table_no}_mtc_p50_1",
+                f"hydro{table_no}_mtc_m50_1",
+                f"hydro{table_no}_draft_mtc_2",
+                f"hydro{table_no}_mtc_p50_2",
+                f"hydro{table_no}_mtc_m50_2",
+            ])
+        columns = ["init_date", "final_date"]
+        for prefix in ("init", "final"):
+            columns.extend(f"{prefix}_{field}" for field in draft_fields)
+            columns.extend(f"{prefix}_{field}" for field in hydro_fields)
+
+        for column in columns:
             cur.execute(
                 sql.SQL("ALTER TABLE draft_survey ADD COLUMN IF NOT EXISTS {column} TEXT").format(
                     column=sql.Identifier(column)

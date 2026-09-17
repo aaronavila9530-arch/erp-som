@@ -71,6 +71,7 @@ def _ensure_current_draft_form_columns(cur):
         "draft_fwd_port", "draft_fwd_stb", "draft_fwd_marks",
         "draft_mid_port", "draft_mid_stb", "draft_mid_marks",
         "draft_aft_port", "draft_aft_stb", "draft_aft_marks",
+        "keel_correction_enabled", "keel_correction",
         "sg", "lpp", "tpc_p", "tpc_s",
         "ballast", "fresh_water", "fuel_oil", "diesel_oil", "lub_oil",
         "slop", "swimming_pool", "others", "light_ship",
@@ -91,6 +92,7 @@ def _ensure_current_draft_form_columns(cur):
             f"hydro{table_no}_draft_mtc",
             f"hydro{table_no}_mtc_p50_1",
             f"hydro{table_no}_mtc_m50_1",
+            f"hydro{table_no}_draft_mtc_2",
             f"hydro{table_no}_mtc_p50_2",
             f"hydro{table_no}_mtc_m50_2",
         ])
