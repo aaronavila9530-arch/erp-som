@@ -8509,9 +8509,10 @@ def improve_truck_supervision_api(payload: dict):
 def approve_vessel_truck_supervision_api(report_id: int):
 
     try:
-        url = f"{BASE_URL}/vessel-truck-supervision/{report_id}/approve"
-
-        response = requests.post(url)
+        response = api_request(
+            "POST",
+            f"/vessel-truck-supervision/{report_id}/approve",
+        )
 
         if response.status_code != 200:
             return {
@@ -8537,8 +8538,10 @@ def get_vessel_truck_supervision_by_id_api(report_id: int):
     """
 
     try:
-        url = f"{BASE_URL}/vessel-truck-supervision/{report_id}"
-        response = requests.get(url)
+        response = api_request(
+            "GET",
+            f"/vessel-truck-supervision/{report_id}",
+        )
 
         if response.status_code != 200:
             return {
@@ -8563,10 +8566,9 @@ def generate_truck_presentation_pdf_api(report_id: int):
     """
 
     try:
-        url = f"{BASE_URL}/vessel-truck-supervision/{report_id}/presentation"
-
-        response = requests.get(
-            url,
+        response = api_request(
+            "GET",
+            f"/vessel-truck-supervision/{report_id}/presentation",
             stream=True
         )
 
@@ -8587,10 +8589,9 @@ def generate_truck_unified_pdf_api(report_id: int):
     """
 
     try:
-        url = f"{BASE_URL}/vessel-truck-supervision/{report_id}/unified"
-
-        response = requests.get(
-            url,
+        response = api_request(
+            "GET",
+            f"/vessel-truck-supervision/{report_id}/unified",
             stream=True
         )
 

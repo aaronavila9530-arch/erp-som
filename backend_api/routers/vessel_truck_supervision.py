@@ -34,6 +34,21 @@ def _ensure_truck_company_schema(cur):
     """)
 
 
+def _select_report_for_company(cur, report_id: int, selected_company: str):
+    cur.execute(
+        """
+        SELECT r.*
+        FROM vessel_truck_supervision_reports r
+        LEFT JOIN servicios s
+          ON s.num_informe = r.cert_no
+        WHERE r.id = %s
+          AND COALESCE(NULLIF(TRIM(s.company_code::text), ''), NULLIF(TRIM(r.company_code::text), ''), 'MSL-CR') = %s
+        """,
+        (report_id, selected_company),
+    )
+    return cur.fetchone()
+
+
 # =========================================================
 # FILTER SERVICIOS (CASCADE + FILTERS + DATA)
 # =========================================================
@@ -801,23 +816,20 @@ def reject_vessel_truck_supervision(
 @router.post("/{report_id}/approve")
 def approve_vessel_truck_supervision(
     report_id: int,
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
     conn=Depends(get_db)
 ):
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     try:
+        selected_company = company_code(x_company_code)
+        _ensure_truck_company_schema(cur)
 
         # =====================================================
         # 1️⃣ Obtener reporte
         # =====================================================
-        cur.execute("""
-            SELECT *
-            FROM vessel_truck_supervision_reports
-            WHERE id = %s
-        """, (report_id,))
-
-        report = cur.fetchone()
+        report = _select_report_for_company(cur, report_id, selected_company)
 
         if not report:
             raise HTTPException(
@@ -850,7 +862,8 @@ def approve_vessel_truck_supervision(
                 UPDATE servicios
                 SET status_informe = 'Approved'
                 WHERE num_informe = %s
-            """, (cert_no,))
+                  AND company_code = %s
+            """, (cert_no, selected_company))
 
         conn.commit()
 
@@ -862,6 +875,10 @@ def approve_vessel_truck_supervision(
             filename=f"{report.get('cert_no')}_Truck_Supervision_Report.pdf",
             media_type="application/pdf"
         )
+
+    except HTTPException:
+        conn.rollback()
+        raise
 
     except Exception as e:
         conn.rollback()
@@ -881,16 +898,18 @@ def approve_vessel_truck_supervision(
 # =========================================================
 
 @router.get("/{report_id}/presentation")
-def generate_truck_presentation(report_id: int, conn=Depends(get_db)):
+def generate_truck_presentation(
+    report_id: int,
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+    conn=Depends(get_db),
+):
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     try:
-        cur.execute(
-            "SELECT * FROM vessel_truck_supervision_reports WHERE id = %s",
-            (report_id,)
-        )
-        report = cur.fetchone()
+        selected_company = company_code(x_company_code)
+        _ensure_truck_company_schema(cur)
+        report = _select_report_for_company(cur, report_id, selected_company)
 
         if not report:
             raise HTTPException(status_code=404, detail="Report not found")
@@ -913,16 +932,18 @@ def generate_truck_presentation(report_id: int, conn=Depends(get_db)):
 # =========================================================
 
 @router.get("/{report_id}/unified")
-def generate_truck_unified(report_id: int, conn=Depends(get_db)):
+def generate_truck_unified(
+    report_id: int,
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+    conn=Depends(get_db),
+):
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     try:
-        cur.execute(
-            "SELECT * FROM vessel_truck_supervision_reports WHERE id = %s",
-            (report_id,)
-        )
-        report = cur.fetchone()
+        selected_company = company_code(x_company_code)
+        _ensure_truck_company_schema(cur)
+        report = _select_report_for_company(cur, report_id, selected_company)
 
         if not report:
             raise HTTPException(status_code=404, detail="Report not found")
