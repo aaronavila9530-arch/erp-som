@@ -788,12 +788,19 @@ def editar_servicio_api(consec, data):
         if resp.status_code != 200:
             try:
                 j = resp.json()
+                detail = j.get("detail") or j.get("error") or resp.text
                 return {
                     "status": "error",
-                    "error": j.get("detail") or j.get("error") or resp.text
+                    "status_code": resp.status_code,
+                    "detail": detail,
+                    "error": detail,
                 }
             except Exception:
-                return {"status": "error", "error": resp.text}
+                return {
+                    "status": "error",
+                    "status_code": resp.status_code,
+                    "error": resp.text,
+                }
 
         # 200 OK → JSON esperado
         return resp.json()

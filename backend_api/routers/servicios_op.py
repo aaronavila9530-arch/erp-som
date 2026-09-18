@@ -1013,6 +1013,8 @@ def editar_servicio(
         )
         return {"status": "ok", "msg": "Servicio actualizado"}
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

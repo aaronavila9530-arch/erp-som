@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, simpledialog
 
 from Modulos.Servicios.widgets.date_picker import DatePicker
 from Modulos.Servicios.widgets.time_picker import TimePicker
@@ -445,6 +445,26 @@ class PopupEditarServicio(tk.Toplevel):
 
         resp = editar_servicio_api(self.consec, payload)
 
+        if self._requires_credit_release(resp):
+            decision = resp.get("detail") or {}
+            if not self._confirm_credit_release(decision):
+                return
+            reason = simpledialog.askstring(
+                "Justificacion release",
+                "Indique la justificacion del release crediticio:",
+                parent=self,
+            )
+            if not str(reason or "").strip():
+                messagebox.showwarning(
+                    "Release requerido",
+                    "Debe indicar una justificacion para aprobar el release crediticio.",
+                    parent=self,
+                )
+                return
+            payload["credit_release_approved"] = True
+            payload["credit_release_reason"] = reason.strip()
+            resp = editar_servicio_api(self.consec, payload)
+
         if resp.get("status") == "ok":
             messagebox.showinfo("OK", "Servicio actualizado correctamente.")
             self.on_success()
@@ -453,6 +473,38 @@ class PopupEditarServicio(tk.Toplevel):
 
         err = resp.get("error") or resp.get("detail") or "Error desconocido"
         messagebox.showerror("Error", err)
+
+    def _requires_credit_release(self, resp):
+        if not isinstance(resp, dict) or resp.get("status_code") != 409:
+            return False
+        detail = resp.get("detail")
+        return isinstance(detail, dict) and bool(detail.get("requires_release"))
+
+    def _confirm_credit_release(self, decision):
+        alerts = decision.get("risk_alerts") or []
+        trend = decision.get("payment_trend") or {}
+        currency = decision.get("currency") or "USD"
+
+        def money(value):
+            try:
+                return f"{currency} {float(value or 0):,.2f}"
+            except Exception:
+                return f"{currency} 0.00"
+
+        msg = (
+            f"{decision.get('message') or 'El cliente requiere release crediticio.'}\n\n"
+            f"Limite: {money(decision.get('credit_limit'))}\n"
+            f"CxC pendiente: {money(decision.get('open_ar'))}\n"
+            f"CxC vencida: {money(decision.get('overdue_ar'))}\n"
+            f"Exposicion proyectada: {money(decision.get('projected_exposure'))}\n"
+            f"Exceso: {money(decision.get('over_amount'))}\n"
+            f"Payment trend: {trend.get('label') or trend.get('trend') or 'Sin datos'}\n"
+            f"Estado credito: {decision.get('estado_credito') or '-'} | "
+            f"Hold manual: {'Si' if decision.get('hold_manual') else 'No'}\n\n"
+            + ("\n".join(f"- {a}" for a in alerts) + "\n\n" if alerts else "")
+            + "Desea liberar y continuar con la actualizacion del servicio?"
+        )
+        return messagebox.askyesno("Credit Hold / Release", msg, parent=self)
 
     def _abrir_popup_surveyors(self, modo="view"):
         try:
