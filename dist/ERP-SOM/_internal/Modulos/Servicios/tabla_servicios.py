@@ -13,7 +13,7 @@ class TablaServiciosUI(BasePaginatedTable):
         # LISTA DE COLUMNAS (NO SE DIBUJAN AQUÍ)
         # ============================================================
         self.cols = [
-            "consec", "tipo", "estado", "credit_status", "credit_release_by", "credit_release_at", "num_informe",
+            "consec", "tipo", "estado", "num_informe",
             "buque_contenedor", "cliente", "contacto", "detalle",
             "continente", "pais", "puerto",
             "operacion", "surveyor", "honorarios", "costo_operativo",
@@ -21,7 +21,7 @@ class TablaServiciosUI(BasePaginatedTable):
             "fecha_fin", "hora_fin", "demoras", "duracion",
             "factura", "valor_factura", "fecha_factura",
             "terminos_pago", "fecha_vencimiento", "dias_vencido",
-            "razon_cancelacion", "comentario_cancelacion", "credit_decision"
+            "razon_cancelacion", "comentario_cancelacion"
         ]
 
         self.columnas_creadas = False

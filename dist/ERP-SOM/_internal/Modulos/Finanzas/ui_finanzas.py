@@ -61,6 +61,12 @@ class FinanzasUI(tk.Frame):
 
         ttk.Button(
             self.main_menu,
+            text="PLN / Planificación",
+            command=self.load_planning
+        ).pack(side="left", padx=5)
+
+        ttk.Button(
+            self.main_menu,
             text="Accounting",
             command=self.load_accounting
         ).pack(side="left", padx=5)
@@ -188,6 +194,17 @@ class FinanzasUI(tk.Frame):
             InvoiceToPayUI(self.section_container).pack(fill="both", expand=True)
 
         self._safe_lazy_load(_load, "Error al cargar Invoice To Pay")
+
+    def load_planning(self):
+        self._clear_submenu()
+        self._clear_section()
+        self.submenu_wrapper.pack_forget()
+
+        def _load():
+            from Modulos.Finanzas.sections.Planning.planning_ui import FinancePlanningUI
+            FinancePlanningUI(self.section_container).pack(fill="both", expand=True)
+
+        self._safe_lazy_load(_load, "Error al cargar PLN / Planificación")
 
     # ============================================================
     # INVOICING & BILLING

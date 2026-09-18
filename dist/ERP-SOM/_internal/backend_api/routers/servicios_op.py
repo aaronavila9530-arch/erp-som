@@ -487,10 +487,22 @@ def listar_servicios(
         params["year"] = str(year_actual)
 
     elif year is not None:
-        conditions.append(
-            "RIGHT(COALESCE(num_informe, ''), 4) = %(year)s"
-        )
+        conditions.append("""
+            (
+                (
+                    num_informe IS NOT NULL
+                    AND num_informe <> ''
+                    AND RIGHT(num_informe, 4) = %(year)s
+                )
+                OR
+                (
+                    (num_informe IS NULL OR num_informe = '')
+                    AND EXTRACT(YEAR FROM fecha_inicio) = %(year_int)s
+                )
+            )
+        """)
         params["year"] = str(year)
+        params["year_int"] = int(year)
 
     # -------------------------
     # STATUS

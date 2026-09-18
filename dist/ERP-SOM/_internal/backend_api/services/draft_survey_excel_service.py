@@ -266,6 +266,8 @@ class DraftSurveyExcelGenerator:
                 # FINAL â€” DEDUCTIONS
                 # =====================================================
 
+                "final_ballast": "AS18",
+                "final_fresh_water": "AS19",
                 "final_fuel_oil": "AS20",
                 "final_diesel_oil": "AS21",
                 "final_lub_oil": "AS22",
@@ -686,8 +688,8 @@ class DraftSurveyExcelGenerator:
                     "init"
                 )
 
+                _clear_block(11, ["A", "D", "G", "J", "M"])
                 if _has_items(ballast_initial):
-                    _clear_block(11, ["A", "D", "G", "J", "M"])
                     _fill_block(ballast_initial, 11, "A", "G", "J", "M", col_height="D")
 
                 # -------------------------------------------------
@@ -700,8 +702,8 @@ class DraftSurveyExcelGenerator:
                     "final"
                 )
 
+                _clear_block(11, ["T", "W", "Z", "AC", "AF"])
                 if _has_items(ballast_final):
-                    _clear_block(11, ["T", "W", "Z", "AC", "AF"])
                     _fill_block(ballast_final, 11, "T", "Z", "AC", "AF", col_height="W")
 
                 # -------------------------------------------------
@@ -714,8 +716,8 @@ class DraftSurveyExcelGenerator:
                     "init"
                 )
 
+                _clear_block(47, ["A", "D", "G", "J", "M"])
                 if _has_items(fw_initial):
-                    _clear_block(47, ["A", "D", "G", "J", "M"])
                     _fill_block(fw_initial, 47, "A", "G", "J", "M", col_height="D")
 
                 # -------------------------------------------------
@@ -728,8 +730,8 @@ class DraftSurveyExcelGenerator:
                     "final"
                 )
 
+                _clear_block(47, ["T", "W", "Z", "AC", "AF"])
                 if _has_items(fw_final):
-                    _clear_block(47, ["T", "W", "Z", "AC", "AF"])
                     _fill_block(fw_final, 47, "T", "Z", "AC", "AF", col_height="W")
 
         except Exception as e:
