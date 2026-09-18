@@ -5,7 +5,7 @@
 ; =========================================================
 
 #define MyAppName "ERP-SOM"
-#define MyAppVersion "1.7.34"
+#define MyAppVersion "1.7.35"
 #define MyAppPublisher "InnovaCore SRL"
 #define MyAppExeName "ERP-SOM.exe"
 #ifndef DistRoot
