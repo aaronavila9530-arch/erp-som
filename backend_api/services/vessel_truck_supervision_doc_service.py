@@ -1,5 +1,6 @@
 import os
 import tempfile
+from datetime import date, datetime
 from docx import Document
 try:
     from services.template_autofit import apply_docx_autofit
@@ -14,6 +15,30 @@ except ModuleNotFoundError:
 # ============================================================
 
 def generate_vessel_truck_supervision_doc(data: dict) -> str:
+    data = dict(data or {})
+
+    def _format_report_date(value):
+        if value in (None, ""):
+            return ""
+        if isinstance(value, datetime):
+            value = value.date()
+        if isinstance(value, date):
+            return value.strftime("%b %d %Y")
+        text = str(value).strip()
+        for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y", "%m/%d/%Y", "%b %d %Y", "%B %d %Y"):
+            try:
+                return datetime.strptime(text.replace(",", " "), fmt).strftime("%b %d %Y")
+            except ValueError:
+                continue
+        return text
+
+    for date_key in (
+        "report_date",
+        "arrival_date",
+        "inspection_date",
+        "supervision_completed_date",
+    ):
+        data[date_key] = _format_report_date(data.get(date_key))
 
     # ========================================================
     # LOAD TEMPLATE (RELATIVE PATH)

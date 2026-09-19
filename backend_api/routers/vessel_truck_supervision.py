@@ -221,9 +221,19 @@ def create_vessel_truck_supervision(
     def parse_date(value):
         if not value:
             return None
+        if hasattr(value, "date") and not isinstance(value, str):
+            return value.date()
+        if hasattr(value, "isoformat") and not isinstance(value, str):
+            return value
+        text = str(value).strip()
+        for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y", "%m/%d/%Y", "%b %d %Y", "%B %d %Y"):
+            try:
+                return datetime.strptime(text.replace(",", " "), fmt).date()
+            except ValueError:
+                continue
         try:
-            return datetime.strptime(value, "%d-%m-%Y").date()
-        except:
+            return datetime.fromisoformat(text[:10]).date()
+        except Exception:
             return None
 
     try:
