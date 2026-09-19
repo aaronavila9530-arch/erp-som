@@ -1,4 +1,5 @@
 import os
+import re
 import tempfile
 from datetime import date, datetime
 from docx import Document
@@ -32,13 +33,24 @@ def generate_vessel_truck_supervision_doc(data: dict) -> str:
                 continue
         return text
 
+    def _date_from_cert_no(value):
+        match = re.search(r"-(\d{2})(\d{2})-(\d{4})\b", str(value or ""))
+        if not match:
+            return ""
+        day, month, year = match.groups()
+        try:
+            return datetime(int(year), int(month), int(day)).strftime("%b %d %Y")
+        except ValueError:
+            return ""
+
+    cert_date = _date_from_cert_no(data.get("cert_no"))
     for date_key in (
         "report_date",
         "arrival_date",
         "inspection_date",
         "supervision_completed_date",
     ):
-        data[date_key] = _format_report_date(data.get(date_key))
+        data[date_key] = _format_report_date(data.get(date_key)) or cert_date
 
     # ========================================================
     # LOAD TEMPLATE (RELATIVE PATH)
@@ -51,7 +63,7 @@ def generate_vessel_truck_supervision_doc(data: dict) -> str:
             base_dir,
             "..",
             "templates",
-            "vessel_truck_supervision.docx"
+            "vessel_truck_supervision_aligned_dates.docx"
         )
     )
 
