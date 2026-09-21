@@ -558,6 +558,82 @@ def _build_trial_balance(rows, opening_rows=None):
     }
 
 
+def _build_financial_position(rows):
+    buckets = {
+        "activo_corriente": {},
+        "activo_no_corriente": {},
+        "pasivo_corriente": {},
+        "pasivo_no_corriente": {},
+        "patrimonio": {},
+    }
+    result_totals = {"ingresos": 0.0, "costos": 0.0, "gastos": 0.0}
+
+    def add(bucket, code, name, amount):
+        if abs(amount) < 0.005:
+            return
+        key = (str(code or "").strip(), str(name or "SIN NOMBRE").strip())
+        buckets[bucket][key] = buckets[bucket].get(key, 0.0) + amount
+
+    for row in rows or []:
+        code = str(row.get("account_code") or "").strip()
+        if not code:
+            continue
+        name = str(row.get("account_name") or "SIN NOMBRE").strip()
+        acc_norm = code.replace(".", "").replace("-", "")
+        acc_type = str(row.get("account_type") or "").strip().upper()
+        debit = float(row.get("debit") or 0)
+        credit = float(row.get("credit") or 0)
+
+        if acc_type == "ACTIVO" or acc_norm.startswith("1"):
+            add("activo_no_corriente" if acc_norm.startswith("12") else "activo_corriente", code, name, debit - credit)
+        elif acc_type == "PASIVO" or acc_norm.startswith("2"):
+            add("pasivo_no_corriente" if acc_norm.startswith("22") else "pasivo_corriente", code, name, credit - debit)
+        elif acc_type == "PATRIMONIO" or acc_norm.startswith("3"):
+            add("patrimonio", code, name, credit - debit)
+        elif acc_type == "INGRESO" or acc_norm.startswith("4"):
+            result_totals["ingresos"] += credit - debit
+        elif acc_type == "COSTO" or acc_norm.startswith("6"):
+            result_totals["costos"] += debit - credit
+        elif acc_type == "GASTO" or acc_norm.startswith("5"):
+            result_totals["gastos"] += debit - credit
+
+    def section_rows(bucket):
+        return [
+            {"account_code": code, "account_name": name, "amount": round(amount, 2)}
+            for (code, name), amount in sorted(buckets[bucket].items())
+            if abs(amount) >= 0.005
+        ]
+
+    total_activo_corriente = sum(buckets["activo_corriente"].values())
+    total_activo_no_corriente = sum(buckets["activo_no_corriente"].values())
+    total_pasivo_corriente = sum(buckets["pasivo_corriente"].values())
+    total_pasivo_no_corriente = sum(buckets["pasivo_no_corriente"].values())
+    total_patrimonio_base = sum(buckets["patrimonio"].values())
+    resultado_periodo = result_totals["ingresos"] - result_totals["costos"] - result_totals["gastos"]
+    total_patrimonio = total_patrimonio_base + resultado_periodo
+    total_activo = total_activo_corriente + total_activo_no_corriente
+    total_pasivo = total_pasivo_corriente + total_pasivo_no_corriente
+    total_pasivo_patrimonio = total_pasivo + total_patrimonio
+
+    return {
+        "activo_corriente": section_rows("activo_corriente"),
+        "activo_no_corriente": section_rows("activo_no_corriente"),
+        "pasivo_corriente": section_rows("pasivo_corriente"),
+        "pasivo_no_corriente": section_rows("pasivo_no_corriente"),
+        "patrimonio": section_rows("patrimonio"),
+        "total_activo_corriente": round(total_activo_corriente, 2),
+        "total_activo_no_corriente": round(total_activo_no_corriente, 2),
+        "total_activo": round(total_activo, 2),
+        "total_pasivo_corriente": round(total_pasivo_corriente, 2),
+        "total_pasivo_no_corriente": round(total_pasivo_no_corriente, 2),
+        "total_pasivo": round(total_pasivo, 2),
+        "resultado_periodo": round(resultado_periodo, 2),
+        "total_patrimonio": round(total_patrimonio, 2),
+        "total_pasivo_patrimonio": round(total_pasivo_patrimonio, 2),
+        "difference": round(total_activo - total_pasivo_patrimonio, 2),
+    }
+
+
 def _report_filename(extension: str, report: str | None, period: str | None, period_from: str | None, period_to: str | None):
     scope = period or (f"{period_from or 'inicio'}_{period_to or 'fin'}" if period_from or period_to else "todos")
     safe_report = (report or "ASIENTOS").lower().replace(" ", "_")
@@ -2490,6 +2566,78 @@ def download_accounting_report_excel(
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
+    if report_key == "ESF":
+        cutoff = period_to or period
+        esf_rows = _fetch_accounting_report_lines(
+            conn,
+            period_to=cutoff,
+            origin=origin,
+            account_code=None,
+            account_type=None,
+            company_code=company,
+        )
+        esf = _build_financial_position(esf_rows)
+        ws.title = "ESF"
+        ws.merge_cells("A1:C1")
+        ws["A1"] = f"{title} - {scope}"
+        ws["A1"].font = Font(bold=True, size=14)
+        ws["A1"].alignment = Alignment(horizontal="center")
+        ws.append([])
+        ws.append(["Sección", "Cuenta", "Monto"])
+        header_fill = PatternFill("solid", fgColor="003A75")
+        for cell in ws[3]:
+            cell.font = Font(bold=True, color="FFFFFF")
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal="center")
+
+        def write_section(section, rows_, total_label, total_value):
+            for item in rows_:
+                ws.append([section, f"{item['account_code']} - {item['account_name']}", item["amount"]])
+            ws.append([section, total_label, total_value])
+            for cell in ws[ws.max_row]:
+                cell.font = Font(bold=True)
+            ws.append([])
+
+        write_section("ACTIVO CORRIENTE", esf["activo_corriente"], "Total Activo Corriente", esf["total_activo_corriente"])
+        write_section("ACTIVO NO CORRIENTE", esf["activo_no_corriente"], "Total Activo No Corriente", esf["total_activo_no_corriente"])
+        ws.append(["ACTIVO", "TOTAL ACTIVO", esf["total_activo"]])
+        for cell in ws[ws.max_row]:
+            cell.font = Font(bold=True)
+        ws.append([])
+        write_section("PASIVO CORRIENTE", esf["pasivo_corriente"], "Total Pasivo Corriente", esf["total_pasivo_corriente"])
+        write_section("PASIVO NO CORRIENTE", esf["pasivo_no_corriente"], "Total Pasivo No Corriente", esf["total_pasivo_no_corriente"])
+        ws.append(["PASIVO", "TOTAL PASIVO", esf["total_pasivo"]])
+        for cell in ws[ws.max_row]:
+            cell.font = Font(bold=True)
+        ws.append([])
+        for item in esf["patrimonio"]:
+            ws.append(["PATRIMONIO", f"{item['account_code']} - {item['account_name']}", item["amount"]])
+        ws.append(["PATRIMONIO", "Resultado del periodo", esf["resultado_periodo"]])
+        ws.append(["PATRIMONIO", "TOTAL PATRIMONIO", esf["total_patrimonio"]])
+        ws.append(["CONTROL", "TOTAL PASIVO Y PATRIMONIO", esf["total_pasivo_patrimonio"]])
+        ws.append(["CONTROL", "Diferencia Activo - Pasivo - Patrimonio", esf["difference"]])
+        for row_idx in range(ws.max_row - 3, ws.max_row + 1):
+            for cell in ws[row_idx]:
+                cell.font = Font(bold=True)
+
+        ws.column_dimensions["A"].width = 24
+        ws.column_dimensions["B"].width = 52
+        ws.column_dimensions["C"].width = 18
+        for row in ws.iter_rows(min_row=4, min_col=3, max_col=3):
+            for cell in row:
+                cell.number_format = '#,##0.00'
+                cell.alignment = Alignment(horizontal="right")
+
+        tmp_dir = tempfile.mkdtemp(prefix="erp_som_accounting_")
+        filename = _report_filename("xlsx", report, period, period_from, period_to)
+        path = os.path.join(tmp_dir, filename)
+        wb.save(path)
+        return FileResponse(
+            path,
+            filename=filename,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
     ws.merge_cells("A1:K1")
     ws["A1"] = f"{title} - {scope} - Tipo: {type_label}"
     ws["A1"].font = Font(bold=True, size=14)
@@ -2631,6 +2779,59 @@ def download_accounting_report_pdf(
         doc.build([
             Paragraph(f"{title} - {scope}", styles["Title"]),
             Paragraph(f"Tipo de cuenta: {type_label}", styles["Normal"]),
+            Spacer(1, 12),
+            table
+        ])
+        return FileResponse(path, filename=filename, media_type="application/pdf")
+
+    if report_key == "ESF":
+        cutoff = period_to or period
+        esf_rows = _fetch_accounting_report_lines(
+            conn,
+            period_to=cutoff,
+            origin=origin,
+            account_code=None,
+            account_type=None,
+            company_code=company,
+        )
+        esf = _build_financial_position(esf_rows)
+        data = [["Sección", "Cuenta", "Monto"]]
+
+        def add_section(section, rows_, total_label, total_value):
+            for item in rows_:
+                data.append([section, f"{item['account_code']} - {item['account_name']}"[:70], f"{item['amount']:,.2f}"])
+            data.append([section, total_label, f"{total_value:,.2f}"])
+            data.append(["", "", ""])
+
+        add_section("ACTIVO CORRIENTE", esf["activo_corriente"], "Total Activo Corriente", esf["total_activo_corriente"])
+        add_section("ACTIVO NO CORRIENTE", esf["activo_no_corriente"], "Total Activo No Corriente", esf["total_activo_no_corriente"])
+        data.append(["ACTIVO", "TOTAL ACTIVO", f"{esf['total_activo']:,.2f}"])
+        data.append(["", "", ""])
+        add_section("PASIVO CORRIENTE", esf["pasivo_corriente"], "Total Pasivo Corriente", esf["total_pasivo_corriente"])
+        add_section("PASIVO NO CORRIENTE", esf["pasivo_no_corriente"], "Total Pasivo No Corriente", esf["total_pasivo_no_corriente"])
+        data.append(["PASIVO", "TOTAL PASIVO", f"{esf['total_pasivo']:,.2f}"])
+        data.append(["", "", ""])
+        for item in esf["patrimonio"]:
+            data.append(["PATRIMONIO", f"{item['account_code']} - {item['account_name']}"[:70], f"{item['amount']:,.2f}"])
+        data.append(["PATRIMONIO", "Resultado del periodo", f"{esf['resultado_periodo']:,.2f}"])
+        data.append(["PATRIMONIO", "TOTAL PATRIMONIO", f"{esf['total_patrimonio']:,.2f}"])
+        data.append(["CONTROL", "TOTAL PASIVO Y PATRIMONIO", f"{esf['total_pasivo_patrimonio']:,.2f}"])
+        data.append(["CONTROL", "Diferencia Activo - Pasivo - Patrimonio", f"{esf['difference']:,.2f}"])
+
+        table = Table(data, repeatRows=1, colWidths=[120, 420, 110])
+        table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#003A75")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, -1), 8),
+            ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#D7DEE8")),
+            ("ALIGN", (2, 1), (2, -1), "RIGHT"),
+            ("FONTNAME", (0, -4), (-1, -1), "Helvetica-Bold"),
+            ("BACKGROUND", (0, -4), (-1, -1), colors.HexColor("#EEF3F8"))
+        ]))
+        doc.build([
+            Paragraph(f"{title} - {scope}", styles["Title"]),
+            Paragraph("Incluye Activo, Pasivo y Patrimonio. El resultado se presenta en Patrimonio.", styles["Normal"]),
             Spacer(1, 12),
             table
         ])

@@ -122,8 +122,6 @@ class ExcelFilterCombobox(ttk.Combobox):
         try:
             self._set_values_internal(filtered)
             self._fit_width_to_values(all_values)
-            if filtered:
-                self._schedule_dropdown()
         except Exception:
             pass
 

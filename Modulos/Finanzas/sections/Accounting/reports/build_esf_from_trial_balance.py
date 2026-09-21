@@ -13,7 +13,8 @@ def build_esf_from_trial_balance(
     ✔ Clasificación contable CR
     ✔ Deriva fiscal_year y periodo desde period o created_at
     ✔ Soporta mes único, rango de meses o periodo fiscal
-    ✔ Incluye cuentas de resultado para lectura gerencial completa
+    ✔ Solo presenta Activo, Pasivo y Patrimonio
+    ✔ Lleva el resultado del periodo como una sola línea patrimonial
     ✔ Salida lista para Excel / PDF
     ✔ Totalmente blindado
     """
@@ -176,11 +177,12 @@ def build_esf_from_trial_balance(
     total_pasivo = total_pasivo_corriente + total_pasivo_no_corriente
 
     total_patrimonio = sum(patrimonio.values())
-    total_pasivo_patrimonio = total_pasivo + total_patrimonio
     total_ingresos = sum(ingresos.values())
     total_costos = sum(costos.values())
     total_gastos = sum(gastos.values())
     resultado_periodo = total_ingresos - total_costos - total_gastos
+    patrimonio_con_resultado = total_patrimonio + resultado_periodo
+    total_pasivo_patrimonio = total_pasivo + patrimonio_con_resultado
 
     # =====================================================
     # FORMATO FINAL
@@ -218,18 +220,16 @@ def build_esf_from_trial_balance(
         # PATRIMONIO
         "patrimonio": _fmt(patrimonio),
         "total_patrimonio": round(total_patrimonio, 2),
+        "resultado_periodo": round(resultado_periodo, 2),
+        "total_patrimonio_con_resultado": round(patrimonio_con_resultado, 2),
 
         # BALANCE
         "total_pasivo_patrimonio": round(total_pasivo_patrimonio, 2),
         "balance_ok": round(total_activo, 2) == round(total_pasivo_patrimonio, 2),
         "difference": round(total_activo - total_pasivo_patrimonio, 2),
 
-        # RESULTADO / P&L DETAIL
-        "ingresos": _fmt(ingresos),
+        # Totales de control. No se exportan como secciones del ESF.
         "total_ingresos": round(total_ingresos, 2),
-        "costos": _fmt(costos),
         "total_costos": round(total_costos, 2),
-        "gastos": _fmt(gastos),
         "total_gastos": round(total_gastos, 2),
-        "resultado_periodo": round(resultado_periodo, 2),
     }
