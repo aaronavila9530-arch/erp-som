@@ -323,19 +323,7 @@ def _report_title(report: str | None):
 
 
 def _account_type_case(alias: str = "l") -> str:
-    raw_case = f"""
-        UPPER(COALESCE(a.account_type,
-            CASE
-                WHEN {alias}.account_code LIKE '1%%' THEN 'ACTIVO'
-                WHEN {alias}.account_code LIKE '2%%' THEN 'PASIVO'
-                WHEN {alias}.account_code LIKE '3%%' THEN 'PATRIMONIO'
-                WHEN {alias}.account_code LIKE '4%%' THEN 'INGRESO'
-                WHEN {alias}.account_code LIKE '5%%' THEN 'GASTO'
-                WHEN {alias}.account_code LIKE '6%%' THEN 'COSTO'
-                ELSE 'SIN CLASIFICAR'
-            END
-        ))
-    """
+    raw_case = "UPPER(COALESCE(a.account_type, ''))"
     return f"""
         CASE
             WHEN {raw_case} IN ('ACTIVO', 'ASSET') THEN 'ACTIVO'
@@ -344,6 +332,13 @@ def _account_type_case(alias: str = "l") -> str:
             WHEN {raw_case} IN ('INGRESO', 'REVENUE', 'INCOME') THEN 'INGRESO'
             WHEN {raw_case} IN ('COSTO', 'COST') THEN 'COSTO'
             WHEN {raw_case} IN ('GASTO', 'EXPENSE') THEN 'GASTO'
+            WHEN {alias}.account_code LIKE '1%%' THEN 'ACTIVO'
+            WHEN {alias}.account_code LIKE '2%%' THEN 'PASIVO'
+            WHEN {alias}.account_code LIKE '3%%' THEN 'PATRIMONIO'
+            WHEN {alias}.account_code LIKE '4%%' THEN 'INGRESO'
+            WHEN {alias}.account_code LIKE '5%%' THEN 'GASTO'
+            WHEN {alias}.account_code LIKE '6%%' THEN 'COSTO'
+            WHEN {raw_case} = '' THEN 'SIN CLASIFICAR'
             ELSE {raw_case}
         END
     """

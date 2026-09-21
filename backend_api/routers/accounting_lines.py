@@ -42,19 +42,7 @@ def _account_type_values(value: str | None):
 
 
 def _account_type_case() -> str:
-    raw_case = """
-        UPPER(COALESCE(a.account_type,
-            CASE
-                WHEN al.account_code LIKE '1%%' THEN 'ACTIVO'
-                WHEN al.account_code LIKE '2%%' THEN 'PASIVO'
-                WHEN al.account_code LIKE '3%%' THEN 'PATRIMONIO'
-                WHEN al.account_code LIKE '4%%' THEN 'INGRESO'
-                WHEN al.account_code LIKE '5%%' THEN 'GASTO'
-                WHEN al.account_code LIKE '6%%' THEN 'COSTO'
-                ELSE 'SIN CLASIFICAR'
-            END
-        ))
-    """
+    raw_case = "UPPER(COALESCE(a.account_type, ''))"
     return f"""
         CASE
             WHEN {raw_case} IN ('ACTIVO', 'ASSET') THEN 'ACTIVO'
@@ -63,6 +51,13 @@ def _account_type_case() -> str:
             WHEN {raw_case} IN ('INGRESO', 'REVENUE', 'INCOME') THEN 'INGRESO'
             WHEN {raw_case} IN ('COSTO', 'COST') THEN 'COSTO'
             WHEN {raw_case} IN ('GASTO', 'EXPENSE') THEN 'GASTO'
+            WHEN al.account_code LIKE '1%%' THEN 'ACTIVO'
+            WHEN al.account_code LIKE '2%%' THEN 'PASIVO'
+            WHEN al.account_code LIKE '3%%' THEN 'PATRIMONIO'
+            WHEN al.account_code LIKE '4%%' THEN 'INGRESO'
+            WHEN al.account_code LIKE '5%%' THEN 'GASTO'
+            WHEN al.account_code LIKE '6%%' THEN 'COSTO'
+            WHEN {raw_case} = '' THEN 'SIN CLASIFICAR'
             ELSE {raw_case}
         END
     """
