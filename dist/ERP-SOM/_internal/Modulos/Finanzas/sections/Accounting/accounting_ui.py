@@ -200,82 +200,65 @@ class AccountingUI(tk.Frame):
             command=self._on_search
         ).grid(row=1, column=7, padx=10)
 
-        # ================= ACCIONES =================
+        # ================= ACCIONES COMPACTAS =================
+        ttk.Button(
+            filter_frame,
+            text="Analítico",
+            command=lambda: self._open_report("Analítico de cuenta")
+        ).grid(row=2, column=0, padx=(0, 8), pady=(8, 2), sticky="w")
+
         actions_btn = ttk.Menubutton(filter_frame, text="Acciones")
         actions_menu = tk.Menu(actions_btn, tearoff=0)
-
-        actions_menu.add_command(
-            label="Cierre mensual guiado",
-            command=self._open_closing_wizard
-        )
-
+        actions_menu.add_command(label="Nuevo asiento", command=self._open_manual_entry)
+        actions_menu.add_command(label="Ajustar asiento seleccionado", command=self._adjust_selected_entry)
+        actions_menu.add_command(label="Reversar asiento seleccionado", command=self._reverse_selected_entry)
         actions_menu.add_separator()
+        actions_menu.add_command(label="Cierre mensual guiado", command=self._open_closing_wizard)
+        actions_btn["menu"] = actions_menu
+        actions_btn.grid(row=2, column=1, padx=5, pady=(8, 2), sticky="w")
 
-        actions_menu.add_command(
-            label="Asiento manual",
-            command=self._open_manual_entry
-        )
+        reports_btn = ttk.Menubutton(filter_frame, text="Reportes")
+        reports_menu = tk.Menu(reports_btn, tearoff=0)
+        reports_menu.add_command(label="Asientos", command=lambda: self._open_report("Asientos"))
+        reports_menu.add_command(label="Analítico de cuenta", command=lambda: self._open_report("Analítico de cuenta"))
+        reports_menu.add_command(label="Detalle por tipo de cuenta", command=lambda: self._open_report("Detalle por tipo de cuenta"))
+        reports_menu.add_command(label="Libro Mayor", command=lambda: self._open_report("Libro Mayor"))
+        reports_menu.add_command(label="Balance de Comprobación", command=lambda: self._open_report("Balance de Comprobación"))
+        reports_menu.add_command(label="Estado de Situación Financiera", command=lambda: self._open_report("Estado de Situación Financiera"))
+        reports_menu.add_command(label="Estado de Resultados", command=lambda: self._open_report("Estado de Resultados"))
+        reports_menu.add_command(label="Flujo de Caja", command=lambda: self._open_report("Flujo de Caja"))
+        reports_menu.add_separator()
+        reports_menu.add_command(label="Estados financieros completos", command=self._open_complete_financial_statements)
+        reports_menu.add_command(label="Reporte financiero ejecutivo", command=self._open_monthly_financial_report)
+        reports_btn["menu"] = reports_menu
+        reports_btn.grid(row=2, column=2, padx=5, pady=(8, 2), sticky="w")
 
-        actions_menu.add_command(
-            label="Catálogo maestro de cuentas",
-            command=self._open_chart_of_accounts
-        )
+        tools_btn = ttk.Menubutton(filter_frame, text="Herramientas")
+        tools_menu = tk.Menu(tools_btn, tearoff=0)
+        tools_menu.add_command(label="Mi espacio contable", command=self._open_accountant_workspace)
+        tools_menu.add_command(label="Auxiliares contables", command=self._open_auxiliaries)
+        tools_menu.add_command(label="Catálogo maestro de cuentas", command=self._open_chart_of_accounts)
+        tools_menu.add_command(label="Activos fijos", command=self._open_fixed_assets)
+        tools_menu.add_command(label="Tarjetas corporativas", command=self._open_corporate_cards)
+        tools_menu.add_command(label="Inventarios", command=self._open_inventory)
+        tools_menu.add_separator()
+        tools_menu.add_command(label="Sincronizar asientos ERP", command=self._sync_accounting_entries)
+        tools_menu.add_command(label="Motor de contabilización", command=self._open_posting_rules)
+        tools_btn["menu"] = tools_menu
+        tools_btn.grid(row=2, column=3, padx=5, pady=(8, 2), sticky="w")
 
-        actions_menu.add_command(
-            label="Auxiliares contables",
-            command=self._open_auxiliaries
-        )
+        advanced_btn = ttk.Menubutton(filter_frame, text="Avanzado")
+        advanced_menu = tk.Menu(advanced_btn, tearoff=0)
+        advanced_menu.add_command(label="Alertas y validaciones", command=self._open_validation_alerts)
+        advanced_menu.add_command(label="Auditoría por usuario", command=self._open_finance_audit)
+        advanced_menu.add_command(label="Accounting avanzado", command=self._open_accounting_advanced)
+        advanced_menu.add_command(label="PORTIA contable", command=self._open_accounting_ai)
+        advanced_menu.add_command(label="Simulador fiscal multiempresa", command=self._open_tax_scenario_planner)
+        advanced_menu.add_separator()
+        advanced_menu.add_command(label="Centro fiscal Costa Rica", command=self._open_tax_center)
+        advanced_menu.add_command(label="Biblioteca legal Costa Rica", command=self._open_legal_library)
 
-        actions_menu.add_command(
-            label="Centro fiscal Costa Rica",
-            command=self._open_tax_center
-        )
-
-        actions_menu.add_command(
-            label="Biblioteca legal Costa Rica",
-            command=self._open_legal_library
-        )
-
-        actions_menu.add_command(
-            label="Mi espacio contable",
-            command=self._open_accountant_workspace
-        )
-
-        actions_menu.add_command(
-            label="Auditoria por usuario",
-            command=self._open_finance_audit
-        )
-
-        actions_menu.add_command(
-            label="Alertas y validaciones",
-            command=self._open_validation_alerts
-        )
-
-        actions_menu.add_command(
-            label="PORTIA contable",
-            command=self._open_accounting_ai
-        )
-
-        actions_menu.add_command(
-            label="Simulador fiscal multiempresa",
-            command=self._open_tax_scenario_planner
-        )
-
-
-        actions_menu.add_command(
-            label="✏️ Ajustar asiento",
-            command=self._adjust_selected_entry
-        )
-
-        actions_menu.add_command(
-            label="🔁 Reversar asiento",
-            command=self._reverse_selected_entry
-        )
-
-        actions_menu.add_separator()
-
-        # -------- Declaraciones --------
-        declarations_menu = tk.Menu(actions_menu, tearoff=0)
+        declarations_menu = tk.Menu(advanced_menu, tearoff=0)
 
         declarations_menu.add_command(
             label="Formulario TRIBU-CR 150 - Impuesto al Valor Agregado",
@@ -303,87 +286,9 @@ class AccountingUI(tk.Frame):
             )
         )
 
-        actions_menu.add_cascade(
-            label="Declaraciones",
-            menu=declarations_menu
-        )
-
-        # -------- Reportes --------
-        reports_menu = tk.Menu(actions_menu, tearoff=0)
-
-        reports_menu.add_command(
-            label="Asientos",
-            command=lambda: self._open_report("Asientos")
-        )
-        reports_menu.add_command(
-            label="Detalle por tipo de cuenta",
-            command=lambda: self._open_report("Detalle por tipo de cuenta")
-        )
-        reports_menu.add_command(
-            label="Libro Mayor",
-            command=lambda: self._open_report("Libro Mayor")
-        )
-        reports_menu.add_command(
-            label="Balance de Comprobación",
-            command=lambda: self._open_report("Balance de Comprobación")
-        )
-        reports_menu.add_command(
-            label="Estado de Situación Financiera",
-            command=lambda: self._open_report("Estado de Situación Financiera")
-        )
-        reports_menu.add_command(
-            label="Estado de Resultados",
-            command=lambda: self._open_report("Estado de Resultados")
-        )
-        reports_menu.add_command(
-            label="Flujo de Caja",
-            command=lambda: self._open_report("Flujo de Caja")
-        )
-        reports_menu.add_command(
-            label="Estados financieros completos",
-            command=self._open_complete_financial_statements
-        )
-        reports_menu.add_separator()
-        reports_menu.add_command(
-            label="Reporte financiero ejecutivo",
-            command=self._open_monthly_financial_report
-        )
-
-        actions_menu.add_cascade(
-            label="Reportes",
-            menu=reports_menu
-        )
-
-        final_actions_menu = tk.Menu(actions_btn, tearoff=0)
-        final_actions_menu.add_command(label="Mi espacio contable", command=self._open_accountant_workspace)
-        final_actions_menu.add_command(label="Asiento manual", command=self._open_manual_entry)
-        final_actions_menu.add_command(label="Sincronizar asientos ERP", command=self._sync_accounting_entries)
-        final_actions_menu.add_separator()
-        final_actions_menu.add_command(label="Auxiliares contables", command=self._open_auxiliaries)
-        final_actions_menu.add_command(label="Activos fijos", command=self._open_fixed_assets)
-        final_actions_menu.add_command(label="Tarjetas corporativas", command=self._open_corporate_cards)
-        final_actions_menu.add_command(label="Inventarios", command=self._open_inventory)
-        final_actions_menu.add_command(label="Centro fiscal Costa Rica", command=self._open_tax_center)
-        final_actions_menu.add_command(label="Biblioteca legal Costa Rica", command=self._open_legal_library)
-        final_actions_menu.add_command(label="Catalogo maestro de cuentas", command=self._open_chart_of_accounts)
-        final_actions_menu.add_command(label="Motor de contabilizacion", command=self._open_posting_rules)
-        final_actions_menu.add_command(label="Accounting avanzado", command=self._open_accounting_advanced)
-        final_actions_menu.add_separator()
-        final_actions_menu.add_command(label="Alertas y validaciones", command=self._open_validation_alerts)
-        final_actions_menu.add_command(label="Auditoria por usuario", command=self._open_finance_audit)
-        final_actions_menu.add_command(label="Cierre mensual guiado", command=self._open_closing_wizard)
-        final_actions_menu.add_command(label="PORTIA contable", command=self._open_accounting_ai)
-        final_actions_menu.add_command(label="Simulador fiscal multiempresa", command=self._open_tax_scenario_planner)
-        final_actions_menu.add_separator()
-        final_actions_menu.add_command(label="Ajustar asiento", command=self._adjust_selected_entry)
-        final_actions_menu.add_command(label="Reversar asiento", command=self._reverse_selected_entry)
-        final_actions_menu.add_separator()
-        final_actions_menu.add_cascade(label="Declaraciones", menu=declarations_menu)
-        final_actions_menu.add_cascade(label="Reportes", menu=reports_menu)
-        actions_menu = final_actions_menu
-
-        actions_btn["menu"] = actions_menu
-        actions_btn.grid(row=1, column=8, padx=5)
+        advanced_menu.add_cascade(label="Declaraciones", menu=declarations_menu)
+        advanced_btn["menu"] = advanced_menu
+        advanced_btn.grid(row=2, column=4, padx=5, pady=(8, 2), sticky="w")
 
 
         # ================= KPI =================
@@ -422,6 +327,7 @@ class AccountingUI(tk.Frame):
 
         report_map = {
             "Asientos": "ASIENTOS",
+            "Analítico de cuenta": "ANALITICO_CUENTA",
             "Detalle por tipo de cuenta": "DETALLE_TIPO",
             "Libro Mayor": "MAYOR",
             "Balance de Comprobación": "BC",

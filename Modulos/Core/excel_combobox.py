@@ -37,6 +37,7 @@ class ExcelFilterCombobox(ttk.Combobox):
         self._excel_filter_enabled = kwargs.pop("excel_filter", True)
         self._excel_internal_config = False
         self._excel_popup_after = None
+        self._excel_popdown_bound = False
         self._excel_last_filtered = []
         super().__init__(master, **kwargs)
         self._excel_all_values = _as_list(super().cget("values"))
@@ -78,6 +79,8 @@ class ExcelFilterCombobox(ttk.Combobox):
         self.bind("<FocusIn>", self._on_focus_in, add="+")
         self.bind("<FocusOut>", self._on_focus_out, add="+")
         self.bind("<KeyRelease>", self._on_key_release, add="+")
+        self.bind("<Button-1>", self._on_click, add="+")
+        self.bind("<Alt-Down>", self._open_and_filter, add="+")
         self.bind("<<ComboboxSelected>>", self._on_selected, add="+")
         self.bind("<Escape>", self._on_escape, add="+")
         self.bind("<Return>", self._on_return, add="+")
@@ -122,8 +125,24 @@ class ExcelFilterCombobox(ttk.Combobox):
         try:
             self._set_values_internal(filtered)
             self._fit_width_to_values(all_values)
+            self._schedule_dropdown()
         except Exception:
             pass
+
+    def _on_click(self, _event=None):
+        if self._excel_filter_enabled and not self._is_disabled():
+            self.after_idle(self._open_and_filter)
+
+    def _open_and_filter(self, _event=None):
+        if not self._excel_filter_enabled or self._is_disabled():
+            return None
+        typed = str(self.get() or "")
+        all_values = self._excel_all_values or _as_list(super().cget("values"))
+        filtered = self._filter_values(typed, all_values)
+        self._excel_last_filtered = filtered
+        self._set_values_internal(filtered)
+        self._post_dropdown()
+        return "break"
 
     def _on_return(self, _event=None):
         if not self._excel_filter_enabled or self._is_disabled():
@@ -218,9 +237,49 @@ class ExcelFilterCombobox(ttk.Combobox):
             if self.focus_get() != self or not self._excel_last_filtered:
                 return
             self.tk.call("ttk::combobox::Post", self._w)
+            self._bind_popdown_keys()
             self.icursor(tk.END)
+            self.focus_set()
         except Exception:
             pass
+
+    def _bind_popdown_keys(self):
+        if self._excel_popdown_bound:
+            return
+        try:
+            popdown = self.tk.call("ttk::combobox::PopdownWindow", self._w)
+            listbox = f"{popdown}.f.l"
+            command = self.register(self._on_popdown_keypress)
+            self.tk.call("bind", listbox, "<KeyPress>", f'if {{[{command} %K %A] eq "break"}} break')
+            self._excel_popdown_bound = True
+        except Exception:
+            pass
+
+    def _on_popdown_keypress(self, keysym, char):
+        if not self._excel_filter_enabled or self._is_disabled():
+            return ""
+        if keysym in {"Up", "Down", "Prior", "Next", "Home", "End", "Tab", "Return", "KP_Enter", "Escape"}:
+            return ""
+        try:
+            if keysym == "BackSpace":
+                current = str(self.get() or "")
+                self.delete(max(len(current) - 1, 0), tk.END)
+            elif keysym == "Delete":
+                self.delete(0, tk.END)
+            elif char and char.isprintable():
+                self.insert(tk.END, char)
+            else:
+                return ""
+            self.icursor(tk.END)
+            typed = str(self.get() or "")
+            all_values = self._excel_all_values or _as_list(super().cget("values"))
+            filtered = self._filter_values(typed, all_values)
+            self._excel_last_filtered = filtered
+            self._set_values_internal(filtered)
+            self.after_idle(self._post_dropdown)
+            return "break"
+        except Exception:
+            return ""
 
     def _fit_width_to_values(self, values=None):
         try:

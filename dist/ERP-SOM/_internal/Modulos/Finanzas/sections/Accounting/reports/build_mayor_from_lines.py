@@ -93,7 +93,7 @@ def build_mayor_from_lines(
             credit = 0.0
 
         accounts[f"{account_code} - {account_name}"].append({
-            "date": r.get("created_at"),
+            "date": r.get("entry_date") or r.get("created_at"),
             "entry_id": r.get("entry_id"),
             "detail": r.get("line_description"),
             "debit": debit,

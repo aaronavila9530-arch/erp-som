@@ -1185,6 +1185,18 @@ def sync_itp_to_accounting(conn):
                 VALUES (%s, %s, %s, %s, %s, %s)
             """, (entry_id, code, name, float(debit or 0), float(credit or 0), desc))
 
+        def _itp_document_detail(payee_name: str, reference: str | None, obligation_id: int | None) -> str:
+            payee = (payee_name or "").strip() or "N/A"
+            ref = (reference or "").strip()
+            if not ref:
+                return f"{payee} ITP {obligation_id}"
+            ref_upper = ref.upper()
+            if ref_upper.startswith(("FAC", "FACT", "FACTURA", "INV", "INVOICE")):
+                document = ref
+            else:
+                document = f"Fac{ref}"
+            return f"{payee} {document}"
+
         def _upsert_entry(origin: str, origin_id: int, entry_date: date, period: str, description: str) -> int:
             cur.execute("""
                 SELECT id
@@ -1219,6 +1231,27 @@ def sync_itp_to_accounting(conn):
             clauses = [
                 "origin IN ('ITP', 'ITP_PAYMENT')",
                 "entry_date > CURRENT_DATE",
+                "COALESCE(created_by, 'SYSTEM') = 'SYSTEM'",
+            ]
+            params = []
+            if origin_id is not None:
+                clauses.append("origin_id = %s")
+                params.append(origin_id)
+            if origin:
+                clauses.append("origin = %s")
+                params.append(origin)
+            where_clause = " AND ".join(clauses)
+            cur.execute(f"""
+                DELETE FROM accounting_lines
+                WHERE entry_id IN (
+                    SELECT id FROM accounting_entries WHERE {where_clause}
+                )
+            """, params)
+            cur.execute(f"DELETE FROM accounting_entries WHERE {where_clause}", params)
+
+        def _delete_system_entries(origin_id=None, origin=None):
+            clauses = [
+                "origin IN ('ITP', 'ITP_PAYMENT')",
                 "COALESCE(created_by, 'SYSTEM') = 'SYSTEM'",
             ]
             params = []
@@ -1395,7 +1428,31 @@ def sync_itp_to_accounting(conn):
             is_credit_note = (obligation_type == "SUPPLIER_CREDIT_NOTE")
             calc_total = abs(total_crc)
 
-            def _purchase_xml_tax_crc(reference):
+            def _purchase_xml_status(reference):
+                if not reference:
+                    return None
+                cur.execute("""
+                    SELECT status, hacienda_status
+                    FROM tax_electronic_documents
+                    WHERE direction='PURCHASE'
+                      AND (electronic_key=%s OR document_number=%s OR source_id=%s)
+                    ORDER BY
+                      CASE WHEN source_table='xml_upload' THEN 0 ELSE 1 END,
+                      updated_at DESC NULLS LAST,
+                      id DESC
+                    LIMIT 1
+                """, (str(reference), str(reference), str(obligation_id)))
+                return cur.fetchone()
+
+            tax_status = _purchase_xml_status(ob.get("reference"))
+            if tax_status and (
+                (tax_status.get("status") or "").upper() == "REJECTED"
+                or (tax_status.get("hacienda_status") or "").upper() == "REJECTED"
+            ):
+                _delete_system_entries(obligation_id)
+                continue
+
+            def _purchase_xml_tax_crc(reference, document_total_crc=None):
                 if not reference:
                     return None
                 cur.execute("""
@@ -1403,6 +1460,8 @@ def sync_itp_to_accounting(conn):
                     FROM tax_electronic_documents
                     WHERE direction='PURCHASE'
                       AND (electronic_key=%s OR document_number=%s)
+                      AND UPPER(COALESCE(status,'')) <> 'REJECTED'
+                      AND UPPER(COALESCE(hacienda_status,'')) <> 'REJECTED'
                       AND COALESCE(tax_amount,0) >= 0
                     ORDER BY
                       CASE WHEN COALESCE(tax_amount,0) > 0 THEN 0 ELSE 1 END,
@@ -1419,14 +1478,18 @@ def sync_itp_to_accounting(conn):
                 if doc_currency == "USD":
                     if rate <= 1:
                         rate = tc
-                    return round(tax_raw * rate, 2)
+                    converted = round(tax_raw * rate, 2)
+                    max_total = float(document_total_crc or 0)
+                    if max_total > 0 and converted > max_total and tax_raw <= max_total:
+                        return round(tax_raw, 2)
+                    return converted
                 return round(tax_raw, 2)
 
             # ------------------------------------------------------------
             # IVA SOLO PARA SUPPLIER
             # ------------------------------------------------------------
             if payee_type == "SUPPLIER":
-                xml_iva = _purchase_xml_tax_crc(ob.get("reference"))
+                xml_iva = _purchase_xml_tax_crc(ob.get("reference"), calc_total)
                 iva = min(round(abs(xml_iva or 0), 2), calc_total)
                 subtotal = round(calc_total - iva, 2)
             else:
@@ -1570,7 +1633,8 @@ def sync_itp_to_accounting(conn):
             # ============================================================
             # A) ASIENTO GASTO vs CxP  (origin='ITP')
             # ============================================================
-            detail_text = f"From ITP {payee_name}"
+            document_detail = _itp_document_detail(payee_name, current_reference, obligation_id)
+            detail_text = f"From ITP {document_detail}"
 
             # Signos contables (credit note invierte)
             expense_debit = 0 if is_credit_note else subtotal
@@ -1640,9 +1704,9 @@ def sync_itp_to_accounting(conn):
                     continue
                 payment_period = payment_date.strftime("%Y-%m")
                 payment_detail = (
-                    f"From ITP Payment by Hazel Barrantes to {payee_name}"
+                    f"From ITP Payment by Hazel Barrantes to {document_detail}"
                     if paid_by_hazel
-                    else (f"From ITP Payment by BAC card 3155 to {payee_name}" if paid_with_card else f"From ITP Payment done to {payee_name}")
+                    else (f"From ITP Payment by BAC card 3155 to {document_detail}" if paid_with_card else f"From ITP Payment done to {document_detail}")
                 )
 
                 if not bank_account_ok:

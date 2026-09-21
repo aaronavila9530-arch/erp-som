@@ -480,50 +480,157 @@ def _period_scope_label(period: str | None, period_from: str | None, period_to: 
     return "Todos"
 
 
-def _build_trial_balance(rows):
+def _build_trial_balance(rows, opening_rows=None):
     accounts = {}
     periods = []
-    for row in rows:
+    def apply_row(row, bucket):
         period = row.get("period")
-        if period:
+        if period and bucket == "movement":
             periods.append(str(period))
         code = str(row.get("account_code") or "").strip()
         if not code:
-            continue
+            return
         name = str(row.get("account_name") or "SIN NOMBRE").strip()
         acc_type = str(row.get("account_type") or "SIN CLASIFICAR").strip()
-        item = accounts.setdefault((code, name, acc_type), {"debit": 0.0, "credit": 0.0})
-        item["debit"] += float(row.get("debit") or 0)
-        item["credit"] += float(row.get("credit") or 0)
+        item = accounts.setdefault((code, name, acc_type), {
+            "opening_debit": 0.0,
+            "opening_credit": 0.0,
+            "debit": 0.0,
+            "credit": 0.0,
+        })
+        if bucket == "opening":
+            item["opening_debit"] += float(row.get("debit") or 0)
+            item["opening_credit"] += float(row.get("credit") or 0)
+        else:
+            item["debit"] += float(row.get("debit") or 0)
+            item["credit"] += float(row.get("credit") or 0)
+
+    for row in opening_rows or []:
+        apply_row(row, "opening")
+    for row in rows:
+        apply_row(row, "movement")
 
     rows_out = []
     total_debit = total_credit = total_saldo_deudor = total_saldo_acreedor = 0.0
+    total_opening_balance = total_closing_balance = total_saldo_neto = 0.0
     for (code, name, acc_type), values in sorted(accounts.items()):
+        credit_nature = str(acc_type).upper() in ("PASIVO", "PATRIMONIO", "INGRESO", "LIABILITY", "EQUITY", "REVENUE", "INCOME")
+        opening_raw = values["opening_debit"] - values["opening_credit"]
+        movement_raw = values["debit"] - values["credit"]
+        opening_balance = -opening_raw if credit_nature else opening_raw
+        closing_balance = -(opening_raw + movement_raw) if credit_nature else (opening_raw + movement_raw)
         debit = round(values["debit"], 2)
         credit = round(values["credit"], 2)
-        balance = round(debit - credit, 2)
+        balance = round(opening_raw + movement_raw, 2)
+        natural_alert = closing_balance < -0.005
         saldo_deudor = balance if balance > 0 else 0.0
         saldo_acreedor = abs(balance) if balance < 0 else 0.0
         total_debit += debit
         total_credit += credit
+        total_opening_balance += opening_balance
+        total_closing_balance += closing_balance
+        total_saldo_neto += balance
         total_saldo_deudor += saldo_deudor
         total_saldo_acreedor += saldo_acreedor
         rows_out.append({
             "account_code": code,
             "account_name": name,
             "account_type": acc_type,
+            "opening_balance": round(opening_balance, 2),
             "debit": debit,
             "credit": credit,
+            "saldo_neto": round(balance, 2),
             "saldo_deudor": round(saldo_deudor, 2),
             "saldo_acreedor": round(saldo_acreedor, 2),
+            "closing_balance": round(closing_balance, 2),
+            "balance_alert": "Saldo contrario a naturaleza" if natural_alert else "",
         })
     return {
         "period_label": f"{min(periods)} a {max(periods)}" if periods else "Todos",
         "rows": rows_out,
+        "total_opening_balance": round(total_opening_balance, 2),
         "total_debit": round(total_debit, 2),
         "total_credit": round(total_credit, 2),
+        "total_saldo_neto": round(total_saldo_neto, 2),
         "total_saldo_deudor": round(total_saldo_deudor, 2),
         "total_saldo_acreedor": round(total_saldo_acreedor, 2),
+        "total_closing_balance": round(total_closing_balance, 2),
+    }
+
+
+def _build_financial_position(rows):
+    buckets = {
+        "activo_corriente": {},
+        "activo_no_corriente": {},
+        "pasivo_corriente": {},
+        "pasivo_no_corriente": {},
+        "patrimonio": {},
+    }
+    result_totals = {"ingresos": 0.0, "costos": 0.0, "gastos": 0.0}
+
+    def add(bucket, code, name, amount):
+        if abs(amount) < 0.005:
+            return
+        key = (str(code or "").strip(), str(name or "SIN NOMBRE").strip())
+        buckets[bucket][key] = buckets[bucket].get(key, 0.0) + amount
+
+    for row in rows or []:
+        code = str(row.get("account_code") or "").strip()
+        if not code:
+            continue
+        name = str(row.get("account_name") or "SIN NOMBRE").strip()
+        acc_norm = code.replace(".", "").replace("-", "")
+        acc_type = str(row.get("account_type") or "").strip().upper()
+        debit = float(row.get("debit") or 0)
+        credit = float(row.get("credit") or 0)
+
+        if acc_type == "ACTIVO" or acc_norm.startswith("1"):
+            add("activo_no_corriente" if acc_norm.startswith("12") else "activo_corriente", code, name, debit - credit)
+        elif acc_type == "PASIVO" or acc_norm.startswith("2"):
+            add("pasivo_no_corriente" if acc_norm.startswith("22") else "pasivo_corriente", code, name, credit - debit)
+        elif acc_type == "PATRIMONIO" or acc_norm.startswith("3"):
+            add("patrimonio", code, name, credit - debit)
+        elif acc_type == "INGRESO" or acc_norm.startswith("4"):
+            result_totals["ingresos"] += credit - debit
+        elif acc_type == "COSTO" or acc_norm.startswith("6"):
+            result_totals["costos"] += debit - credit
+        elif acc_type == "GASTO" or acc_norm.startswith("5"):
+            result_totals["gastos"] += debit - credit
+
+    def section_rows(bucket):
+        return [
+            {"account_code": code, "account_name": name, "amount": round(amount, 2)}
+            for (code, name), amount in sorted(buckets[bucket].items())
+            if abs(amount) >= 0.005
+        ]
+
+    total_activo_corriente = sum(buckets["activo_corriente"].values())
+    total_activo_no_corriente = sum(buckets["activo_no_corriente"].values())
+    total_pasivo_corriente = sum(buckets["pasivo_corriente"].values())
+    total_pasivo_no_corriente = sum(buckets["pasivo_no_corriente"].values())
+    total_patrimonio_base = sum(buckets["patrimonio"].values())
+    resultado_periodo = result_totals["ingresos"] - result_totals["costos"] - result_totals["gastos"]
+    total_patrimonio = total_patrimonio_base + resultado_periodo
+    total_activo = total_activo_corriente + total_activo_no_corriente
+    total_pasivo = total_pasivo_corriente + total_pasivo_no_corriente
+    total_pasivo_patrimonio = total_pasivo + total_patrimonio
+
+    return {
+        "activo_corriente": section_rows("activo_corriente"),
+        "activo_no_corriente": section_rows("activo_no_corriente"),
+        "pasivo_corriente": section_rows("pasivo_corriente"),
+        "pasivo_no_corriente": section_rows("pasivo_no_corriente"),
+        "patrimonio": section_rows("patrimonio"),
+        "total_activo_corriente": round(total_activo_corriente, 2),
+        "total_activo_no_corriente": round(total_activo_no_corriente, 2),
+        "total_activo": round(total_activo, 2),
+        "total_pasivo_corriente": round(total_pasivo_corriente, 2),
+        "total_pasivo_no_corriente": round(total_pasivo_no_corriente, 2),
+        "total_pasivo": round(total_pasivo, 2),
+        "resultado_periodo": round(resultado_periodo, 2),
+        "total_patrimonio": round(total_patrimonio, 2),
+        "total_pasivo_patrimonio": round(total_pasivo_patrimonio, 2),
+        "difference": round(total_activo - total_pasivo_patrimonio, 2),
     }
 
 
@@ -1817,6 +1924,124 @@ def get_accounting_validation_alerts(
                 row,
             )
 
+        cur.execute(f"""
+            SELECT l.id, l.entry_id, e.period, e.entry_date, l.account_code, l.account_name, l.debit, l.credit
+            FROM accounting_lines l
+            JOIN accounting_entries e ON e.id = l.entry_id
+            {where}
+              {"AND" if where else "WHERE"} (
+                    COALESCE(l.debit,0) < 0
+                 OR COALESCE(l.credit,0) < 0
+                 OR BTRIM(COALESCE(l.account_code,'')) = ''
+              )
+            ORDER BY l.id DESC
+            LIMIT %s
+        """, [*params, limit])
+        for row in cur.fetchall():
+            add(
+                "critical",
+                "LINE_SIGN_OR_ACCOUNT_INVALID",
+                "Linea con signo/cuenta invalida",
+                f"Linea {row['id']} del asiento {row['entry_id']} tiene debito/credito negativo o cuenta vacia.",
+                "accounting_line",
+                row["id"],
+                row,
+            )
+
+        cur.execute(f"""
+            SELECT e.id, e.period, e.entry_date, e.origin, e.description
+            FROM accounting_entries e
+            {where}
+              {"AND" if where else "WHERE"} e.entry_date IS NOT NULL
+              AND e.period IS NOT NULL
+              AND e.period <> TO_CHAR(e.entry_date, 'YYYY-MM')
+            ORDER BY e.entry_date DESC, e.id DESC
+            LIMIT %s
+        """, [*params, limit])
+        for row in cur.fetchall():
+            add(
+                "warning",
+                "ENTRY_PERIOD_DATE_MISMATCH",
+                "Periodo no coincide con fecha",
+                f"Asiento {row['id']} tiene periodo {row['period']} pero fecha {row['entry_date']}.",
+                "accounting_entry",
+                row["id"],
+                row,
+            )
+
+        cur.execute(f"""
+            SELECT e.id, e.period, e.entry_date, e.origin, e.description
+            FROM accounting_entries e
+            {where}
+              {"AND" if where else "WHERE"} e.workflow_status = 'POSTED'
+              AND e.entry_date > CURRENT_DATE
+            ORDER BY e.entry_date DESC, e.id DESC
+            LIMIT %s
+        """, [*params, limit])
+        for row in cur.fetchall():
+            add(
+                "warning",
+                "POSTED_FUTURE_ENTRY",
+                "Asiento posteado con fecha futura",
+                f"Asiento {row['id']} esta POSTED con fecha futura {row['entry_date']}.",
+                "accounting_entry",
+                row["id"],
+                row,
+            )
+
+        cur.execute(f"""
+            WITH balances AS (
+                SELECT
+                    l.account_code,
+                    MAX(l.account_name) AS account_name,
+                    COALESCE(
+                        NULLIF(MAX(a.account_type), ''),
+                        CASE
+                            WHEN l.account_code LIKE '1%%' THEN 'ACTIVO'
+                            WHEN l.account_code LIKE '2%%' THEN 'PASIVO'
+                            WHEN l.account_code LIKE '3%%' THEN 'PATRIMONIO'
+                            WHEN l.account_code LIKE '4%%' THEN 'INGRESO'
+                            WHEN l.account_code LIKE '5%%' THEN 'GASTO'
+                            WHEN l.account_code LIKE '6%%' THEN 'COSTO'
+                            ELSE 'SIN CLASIFICAR'
+                        END
+                    ) AS account_type,
+                    COALESCE(SUM(l.debit),0) AS debit,
+                    COALESCE(SUM(l.credit),0) AS credit,
+                    ROUND((COALESCE(SUM(l.debit),0) - COALESCE(SUM(l.credit),0))::numeric, 2) AS signed_balance
+                FROM accounting_entries e
+                JOIN accounting_lines l ON l.entry_id = e.id
+                LEFT JOIN accounting_accounts a ON a.account_code = l.account_code
+                {where}
+                  {"AND" if where else "WHERE"} e.workflow_status = 'POSTED'
+                GROUP BY l.account_code
+            ),
+            natural AS (
+                SELECT *,
+                    CASE
+                        WHEN UPPER(account_type) IN ('PASIVO','PATRIMONIO','INGRESO','LIABILITY','EQUITY','REVENUE','INCOME')
+                            THEN -signed_balance
+                        ELSE signed_balance
+                    END AS natural_balance
+                FROM balances
+            )
+            SELECT *
+            FROM natural
+            WHERE natural_balance < -0.01
+            ORDER BY natural_balance ASC
+            LIMIT %s
+        """, [*params, limit])
+        for row in cur.fetchall():
+            add(
+                "warning",
+                "CONTRARY_NATURE_BALANCE",
+                "Saldo contrario a naturaleza de cuenta",
+                f"Cuenta {row['account_code']} {row['account_name']} ({row['account_type']}) tiene saldo natural {row['natural_balance']}.",
+                "accounting_account",
+                row["account_code"],
+                row,
+            )
+
         if company == "MSL-CR" and (not origin or origin in ("TODOS", "CASH_APP")):
             cur.execute("""
                 SELECT id, numero_documento, nombre_cliente, banco, bank_account_code, bank_account_name, fecha_pago
@@ -1965,10 +2190,13 @@ def get_accounting_validation_alerts(
                 )
 
         cur.execute(f"""
-            SELECT e.origin, e.origin_id, COUNT(*) AS count
+            SELECT e.origin, e.origin_id, COUNT(*) AS count,
+                   MIN(e.id) AS first_entry_id,
+                   MAX(e.id) AS last_entry_id
             FROM accounting_entries e
             {where}
-              {"AND" if where else "WHERE"} e.origin_id IS NOT NULL
+              {"AND" if where else "WHERE"} e.workflow_status = 'POSTED'
+              AND e.origin_id IS NOT NULL
             GROUP BY e.origin, e.origin_id
             HAVING COUNT(*) > 1
             ORDER BY COUNT(*) DESC
@@ -2267,12 +2495,24 @@ def download_accounting_report_excel(
     type_label = account_type if account_type and str(account_type).upper() != "TODOS" else "Todos los tipos"
 
     if report_key == "BC":
-        tb = _build_trial_balance(rows)
-        ws.merge_cells("A1:G1")
+        opening_cutoff = period or period_from
+        opening_rows = []
+        if opening_cutoff:
+            all_through_rows = _fetch_accounting_report_lines(
+                conn,
+                period_to=period_to or period,
+                origin=origin,
+                account_code=account_code,
+                account_type=account_type,
+                company_code=company,
+            )
+            opening_rows = [r for r in all_through_rows if str(r.get("period") or "") < opening_cutoff]
+        tb = _build_trial_balance(rows, opening_rows=opening_rows)
+        ws.merge_cells("A1:K1")
         ws["A1"] = f"{title} - {scope} - Tipo: {type_label}"
         ws["A1"].font = Font(bold=True, size=14)
         ws["A1"].alignment = Alignment(horizontal="center")
-        headers = ["Cuenta", "Nombre cuenta", "Tipo", "Debe", "Haber", "Saldo deudor", "Saldo acreedor"]
+        headers = ["Cuenta", "Nombre cuenta", "Tipo", "Saldo inicial", "Debe", "Haber", "Saldo neto", "Saldo deudor", "Saldo acreedor", "Saldo final", "Alerta"]
         ws.append([])
         ws.append(headers)
         header_fill = PatternFill("solid", fgColor="003A75")
@@ -2285,28 +2525,108 @@ def download_accounting_report_excel(
                 row["account_code"],
                 row["account_name"],
                 row["account_type"],
+                row.get("opening_balance", 0),
                 row["debit"],
                 row["credit"],
+                row.get("saldo_neto", 0),
                 row["saldo_deudor"],
                 row["saldo_acreedor"],
+                row.get("closing_balance", 0),
+                row.get("balance_alert", ""),
             ])
         ws.append([
             "TOTAL",
             "",
             "",
+            tb.get("total_opening_balance", 0),
             tb["total_debit"],
             tb["total_credit"],
+            tb.get("total_saldo_neto", 0),
             tb["total_saldo_deudor"],
             tb["total_saldo_acreedor"],
+            tb.get("total_closing_balance", 0),
+            "",
         ])
         for cell in ws[ws.max_row]:
             cell.font = Font(bold=True)
-        widths = [16, 38, 16, 16, 16, 18, 18]
+        widths = [16, 38, 16, 18, 16, 16, 18, 18, 18, 18, 32]
         for idx, width in enumerate(widths, start=1):
             ws.column_dimensions[chr(64 + idx)].width = width
-        for row in ws.iter_rows(min_row=4, min_col=4, max_col=7):
+        for row in ws.iter_rows(min_row=4, min_col=4, max_col=10):
             for cell in row:
                 cell.number_format = '#,##0.00'
+
+        tmp_dir = tempfile.mkdtemp(prefix="erp_som_accounting_")
+        filename = _report_filename("xlsx", report, period, period_from, period_to)
+        path = os.path.join(tmp_dir, filename)
+        wb.save(path)
+        return FileResponse(
+            path,
+            filename=filename,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
+    if report_key == "ESF":
+        cutoff = period_to or period
+        esf_rows = _fetch_accounting_report_lines(
+            conn,
+            period_to=cutoff,
+            origin=origin,
+            account_code=None,
+            account_type=None,
+            company_code=company,
+        )
+        esf = _build_financial_position(esf_rows)
+        ws.title = "ESF"
+        ws.merge_cells("A1:C1")
+        ws["A1"] = f"{title} - {scope}"
+        ws["A1"].font = Font(bold=True, size=14)
+        ws["A1"].alignment = Alignment(horizontal="center")
+        ws.append([])
+        ws.append(["Sección", "Cuenta", "Monto"])
+        header_fill = PatternFill("solid", fgColor="003A75")
+        for cell in ws[3]:
+            cell.font = Font(bold=True, color="FFFFFF")
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal="center")
+
+        def write_section(section, rows_, total_label, total_value):
+            for item in rows_:
+                ws.append([section, f"{item['account_code']} - {item['account_name']}", item["amount"]])
+            ws.append([section, total_label, total_value])
+            for cell in ws[ws.max_row]:
+                cell.font = Font(bold=True)
+            ws.append([])
+
+        write_section("ACTIVO CORRIENTE", esf["activo_corriente"], "Total Activo Corriente", esf["total_activo_corriente"])
+        write_section("ACTIVO NO CORRIENTE", esf["activo_no_corriente"], "Total Activo No Corriente", esf["total_activo_no_corriente"])
+        ws.append(["ACTIVO", "TOTAL ACTIVO", esf["total_activo"]])
+        for cell in ws[ws.max_row]:
+            cell.font = Font(bold=True)
+        ws.append([])
+        write_section("PASIVO CORRIENTE", esf["pasivo_corriente"], "Total Pasivo Corriente", esf["total_pasivo_corriente"])
+        write_section("PASIVO NO CORRIENTE", esf["pasivo_no_corriente"], "Total Pasivo No Corriente", esf["total_pasivo_no_corriente"])
+        ws.append(["PASIVO", "TOTAL PASIVO", esf["total_pasivo"]])
+        for cell in ws[ws.max_row]:
+            cell.font = Font(bold=True)
+        ws.append([])
+        for item in esf["patrimonio"]:
+            ws.append(["PATRIMONIO", f"{item['account_code']} - {item['account_name']}", item["amount"]])
+        ws.append(["PATRIMONIO", "Resultado del periodo", esf["resultado_periodo"]])
+        ws.append(["PATRIMONIO", "TOTAL PATRIMONIO", esf["total_patrimonio"]])
+        ws.append(["CONTROL", "TOTAL PASIVO Y PATRIMONIO", esf["total_pasivo_patrimonio"]])
+        ws.append(["CONTROL", "Diferencia Activo - Pasivo - Patrimonio", esf["difference"]])
+        for row_idx in range(ws.max_row - 3, ws.max_row + 1):
+            for cell in ws[row_idx]:
+                cell.font = Font(bold=True)
+
+        ws.column_dimensions["A"].width = 24
+        ws.column_dimensions["B"].width = 52
+        ws.column_dimensions["C"].width = 18
+        for row in ws.iter_rows(min_row=4, min_col=3, max_col=3):
+            for cell in row:
+                cell.number_format = '#,##0.00'
+                cell.alignment = Alignment(horizontal="right")
 
         tmp_dir = tempfile.mkdtemp(prefix="erp_som_accounting_")
         filename = _report_filename("xlsx", report, period, period_from, period_to)
@@ -2404,28 +2724,48 @@ def download_accounting_report_pdf(
     doc = SimpleDocTemplate(path, pagesize=landscape(letter), rightMargin=24, leftMargin=24, topMargin=24, bottomMargin=24)
 
     if report_key == "BC":
-        tb = _build_trial_balance(rows)
-        data = [["Cuenta", "Nombre", "Tipo", "Debe", "Haber", "Saldo deudor", "Saldo acreedor"]]
+        opening_cutoff = period or period_from
+        opening_rows = []
+        if opening_cutoff:
+            all_through_rows = _fetch_accounting_report_lines(
+                conn,
+                period_to=period_to or period,
+                origin=origin,
+                account_code=account_code,
+                account_type=account_type,
+                company_code=company,
+            )
+            opening_rows = [r for r in all_through_rows if str(r.get("period") or "") < opening_cutoff]
+        tb = _build_trial_balance(rows, opening_rows=opening_rows)
+        data = [["Cuenta", "Nombre", "Tipo", "Inicial", "Debe", "Haber", "Neto", "Deudor", "Acreedor", "Final", "Alerta"]]
         for row in tb["rows"]:
             data.append([
                 str(row["account_code"]),
-                str(row["account_name"])[:44],
+                str(row["account_name"])[:28],
                 str(row["account_type"]),
+                f"{float(row.get('opening_balance', 0)):,.2f}",
                 f"{float(row['debit']):,.2f}",
                 f"{float(row['credit']):,.2f}",
+                f"{float(row.get('saldo_neto', 0)):,.2f}",
                 f"{float(row['saldo_deudor']):,.2f}",
                 f"{float(row['saldo_acreedor']):,.2f}",
+                f"{float(row.get('closing_balance', 0)):,.2f}",
+                str(row.get("balance_alert") or ""),
             ])
         data.append([
             "TOTAL",
             "",
             "",
+            f"{tb.get('total_opening_balance', 0):,.2f}",
             f"{tb['total_debit']:,.2f}",
             f"{tb['total_credit']:,.2f}",
+            f"{tb.get('total_saldo_neto', 0):,.2f}",
             f"{tb['total_saldo_deudor']:,.2f}",
             f"{tb['total_saldo_acreedor']:,.2f}",
+            f"{tb.get('total_closing_balance', 0):,.2f}",
+            "",
         ])
-        table = Table(data, repeatRows=1, colWidths=[72, 230, 70, 78, 78, 88, 88])
+        table = Table(data, repeatRows=1, colWidths=[54, 132, 52, 60, 58, 58, 60, 60, 60, 60, 86])
         table.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#003A75")),
             ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
@@ -2439,6 +2779,59 @@ def download_accounting_report_pdf(
         doc.build([
             Paragraph(f"{title} - {scope}", styles["Title"]),
             Paragraph(f"Tipo de cuenta: {type_label}", styles["Normal"]),
+            Spacer(1, 12),
+            table
+        ])
+        return FileResponse(path, filename=filename, media_type="application/pdf")
+
+    if report_key == "ESF":
+        cutoff = period_to or period
+        esf_rows = _fetch_accounting_report_lines(
+            conn,
+            period_to=cutoff,
+            origin=origin,
+            account_code=None,
+            account_type=None,
+            company_code=company,
+        )
+        esf = _build_financial_position(esf_rows)
+        data = [["Sección", "Cuenta", "Monto"]]
+
+        def add_section(section, rows_, total_label, total_value):
+            for item in rows_:
+                data.append([section, f"{item['account_code']} - {item['account_name']}"[:70], f"{item['amount']:,.2f}"])
+            data.append([section, total_label, f"{total_value:,.2f}"])
+            data.append(["", "", ""])
+
+        add_section("ACTIVO CORRIENTE", esf["activo_corriente"], "Total Activo Corriente", esf["total_activo_corriente"])
+        add_section("ACTIVO NO CORRIENTE", esf["activo_no_corriente"], "Total Activo No Corriente", esf["total_activo_no_corriente"])
+        data.append(["ACTIVO", "TOTAL ACTIVO", f"{esf['total_activo']:,.2f}"])
+        data.append(["", "", ""])
+        add_section("PASIVO CORRIENTE", esf["pasivo_corriente"], "Total Pasivo Corriente", esf["total_pasivo_corriente"])
+        add_section("PASIVO NO CORRIENTE", esf["pasivo_no_corriente"], "Total Pasivo No Corriente", esf["total_pasivo_no_corriente"])
+        data.append(["PASIVO", "TOTAL PASIVO", f"{esf['total_pasivo']:,.2f}"])
+        data.append(["", "", ""])
+        for item in esf["patrimonio"]:
+            data.append(["PATRIMONIO", f"{item['account_code']} - {item['account_name']}"[:70], f"{item['amount']:,.2f}"])
+        data.append(["PATRIMONIO", "Resultado del periodo", f"{esf['resultado_periodo']:,.2f}"])
+        data.append(["PATRIMONIO", "TOTAL PATRIMONIO", f"{esf['total_patrimonio']:,.2f}"])
+        data.append(["CONTROL", "TOTAL PASIVO Y PATRIMONIO", f"{esf['total_pasivo_patrimonio']:,.2f}"])
+        data.append(["CONTROL", "Diferencia Activo - Pasivo - Patrimonio", f"{esf['difference']:,.2f}"])
+
+        table = Table(data, repeatRows=1, colWidths=[120, 420, 110])
+        table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#003A75")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, -1), 8),
+            ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#D7DEE8")),
+            ("ALIGN", (2, 1), (2, -1), "RIGHT"),
+            ("FONTNAME", (0, -4), (-1, -1), "Helvetica-Bold"),
+            ("BACKGROUND", (0, -4), (-1, -1), colors.HexColor("#EEF3F8"))
+        ]))
+        doc.build([
+            Paragraph(f"{title} - {scope}", styles["Title"]),
+            Paragraph("Incluye Activo, Pasivo y Patrimonio. El resultado se presenta en Patrimonio.", styles["Normal"]),
             Spacer(1, 12),
             table
         ])

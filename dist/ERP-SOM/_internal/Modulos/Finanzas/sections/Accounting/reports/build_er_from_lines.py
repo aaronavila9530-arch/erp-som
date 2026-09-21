@@ -14,13 +14,10 @@ def build_er_from_lines(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     - 4.x.x.x  → credit - debit
 
     COSTOS
-    - 5.1.x.x → debit - credit
+    - account_type COSTO o 6.x.x.x → debit - credit
 
     GASTOS OPERATIVOS
-    - 5.2.x.x → debit - credit
-
-    OTROS
-    - 6.x.x.x → debit - credit
+    - account_type GASTO o 5.x.x.x / 500-... → debit - credit
 
     IMPUESTO
     - 30% sobre utilidad antes de impuestos (si es positiva)
@@ -48,6 +45,7 @@ def build_er_from_lines(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
 
         account = str(r.get("account_code") or "").strip()
         name = str(r.get("account_name") or "SIN NOMBRE").strip()
+        account_type = str(r.get("account_type") or "").strip().upper()
 
         try:
             debit = float(r.get("debit") or 0)
@@ -62,8 +60,8 @@ def build_er_from_lines(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
         if not account:
             continue
 
-        # Normalizamos para soportar 5.1 / 5.1.01 / 51xx / etc.
-        acc_norm = account.replace(".", "")
+        # Normalizamos para soportar 5.1 / 5.1.01 / 51xx / 500-001 / etc.
+        acc_norm = account.replace(".", "").replace("-", "")
 
         # ---------------- INGRESOS (4xxx) ----------------
         if acc_norm.startswith("4"):
@@ -72,19 +70,19 @@ def build_er_from_lines(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
                 ingresos[f"{account} - {name}"] += monto
 
         # ---------------- COSTOS (5.1xx) ----------------
-        elif acc_norm.startswith("51"):
+        elif account_type in ("COSTO", "COST") or acc_norm.startswith("6"):
             monto = debit - credit
             if abs(monto) > 0.0001:
                 costos[f"{account} - {name}"] += monto
 
-        # ---------------- GASTOS OPERATIVOS (5.2xx) ----------------
-        elif acc_norm.startswith("52"):
+        # ---------------- GASTOS OPERATIVOS (5xxx / 500xxx) ----------------
+        elif account_type in ("GASTO", "EXPENSE") or acc_norm.startswith("5"):
             monto = debit - credit
             if abs(monto) > 0.0001:
                 gastos_operativos[f"{account} - {name}"] += monto
 
-        # ---------------- OTROS (6xxx) ----------------
-        elif acc_norm.startswith("6"):
+        # ---------------- OTROS ----------------
+        elif "OTRO" in account_type:
             monto = debit - credit
             if abs(monto) > 0.0001:
                 otros[f"{account} - {name}"] += monto

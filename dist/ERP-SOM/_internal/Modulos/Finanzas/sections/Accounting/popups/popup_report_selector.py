@@ -4,6 +4,7 @@ from datetime import datetime
 from collections import defaultdict
 
 from api_client import (
+    get_accounting_accounts_api,
     get_accounting_lines_api,
     get_accounting_periods_api,
     post_closing_tb_preview_api
@@ -15,6 +16,9 @@ from Modulos.Finanzas.sections.Accounting.reports.excel_mayor import export_mayo
 from Modulos.Finanzas.sections.Accounting.reports.excel_tb import export_tb_excel
 from Modulos.Finanzas.sections.Accounting.reports.excel_esf import export_esf_excel
 from Modulos.Finanzas.sections.Accounting.reports.excel_fc import export_fc_excel
+from Modulos.Finanzas.sections.Accounting.reports.excel_account_analytic import (
+    export_account_analytic_excel
+)
 
 # ✅ IMPORTS CORRECTOS (según tus funciones reales)
 from Modulos.Finanzas.sections.Accounting.reports.excel_er import export_er_excel_from_er
@@ -112,6 +116,8 @@ class PopupReportSelector(tk.Toplevel):
         self.period_to_year = tk.StringVar()
         self.period_to_month = tk.StringVar()
         self.account_type_var = tk.StringVar(value="TODOS")
+        self.account_var = tk.StringVar(value="")
+        self.account_map = {}
 
         # ==================================================
         # UI
@@ -217,7 +223,7 @@ class PopupReportSelector(tk.Toplevel):
                 periods[int(period[:4])].add(period[5:7])
                 continue
 
-            dt = self._safe_parse_iso(r.get("created_at"))
+            dt = self._safe_parse_iso(r.get("entry_date") or r.get("created_at"))
             if not dt:
                 continue
 
@@ -237,7 +243,7 @@ class PopupReportSelector(tk.Toplevel):
                 return int(period[:4]), int(period[5:7])
             except Exception:
                 return None
-        dt = self._safe_parse_iso(row.get("created_at"))
+        dt = self._safe_parse_iso(row.get("entry_date") or row.get("created_at"))
         if dt:
             return dt.year, dt.month
         return None
@@ -273,6 +279,15 @@ class PopupReportSelector(tk.Toplevel):
         }
         return account_type in aliases.get(selected, {selected})
 
+    def _line_matches_account(self, row, account_filter):
+        text = str(account_filter or "").strip().lower()
+        if not text or text == "todos":
+            return True
+        code = str(row.get("account_code") or "").strip().lower()
+        name = str(row.get("account_name") or "").strip().lower()
+        label = f"{code} - {name}"
+        return code == text or code.startswith(text) or text in name or text in label
+
     # ==================================================
     # UI
     # ==================================================
@@ -296,6 +311,7 @@ class PopupReportSelector(tk.Toplevel):
 
         reports = [
             ("Asientos (Libro Diario)", "ASIENTOS"),
+            ("Analítico de cuenta", "ANALITICO_CUENTA"),
             ("Detalle por tipo de cuenta", "DETALLE_TIPO"),
             ("Libro Mayor", "MAYOR"),
             ("Balance de Comprobación", "BC"),
@@ -419,6 +435,17 @@ class PopupReportSelector(tk.Toplevel):
             fg="#475569"
         ).grid(row=0, column=2, padx=10, sticky="w")
 
+        tk.Label(type_frame, text="Cuenta", bg="white").grid(row=1, column=0, padx=10, pady=(0, 6), sticky="w")
+        self.cmb_account = ttk.Combobox(
+            type_frame,
+            values=[],
+            width=42,
+            textvariable=self.account_var
+        )
+        self.cmb_account.grid(row=1, column=1, columnspan=2, padx=5, pady=(0, 6), sticky="w")
+        self.cmb_account.bind("<Button-1>", self._lazy_load_accounts, add="+")
+        self.cmb_account.bind("<FocusIn>", self._lazy_load_accounts, add="+")
+
         # =========================
         # FORMATO
         # =========================
@@ -461,6 +488,24 @@ class PopupReportSelector(tk.Toplevel):
 
         # estado inicial
         self._toggle_period_mode()
+
+    def _lazy_load_accounts(self, event=None):
+        if self.account_map:
+            return
+        try:
+            accounts = get_accounting_accounts_api(include_inactive=True)
+        except Exception:
+            accounts = []
+        labels = []
+        for acc in accounts or []:
+            code = str(acc.get("account_code") or "").strip()
+            name = str(acc.get("account_name") or "").strip()
+            if not code:
+                continue
+            label = f"{code} - {name}" if name else code
+            self.account_map[label] = code
+            labels.append(label)
+        self.cmb_account["values"] = sorted(labels, key=str.casefold)
 
     # ==================================================
     # EVENTS
@@ -525,6 +570,10 @@ class PopupReportSelector(tk.Toplevel):
         rows = []
         selected_type = (self.account_type_var.get() or "TODOS").strip()
         account_type_filter = None if selected_type in ("", "TODOS") else selected_type
+        account_text = (self.account_var.get() or "").strip()
+        account_code_filter = self.account_map.get(account_text)
+        if not account_code_filter and account_text:
+            account_code_filter = account_text.split(" - ", 1)[0].strip()
 
         # ==================================================
         # PERIODO / RANGO
@@ -548,7 +597,8 @@ class PopupReportSelector(tk.Toplevel):
             try:
                 rows = get_accounting_lines_api(
                     period=selected_period,
-                    account_type=account_type_filter
+                    account_type=account_type_filter,
+                    account_code=account_code_filter
                 )
             except Exception:
                 rows = []
@@ -557,10 +607,13 @@ class PopupReportSelector(tk.Toplevel):
                     r for r in self.all_lines
                     if self._line_period_tuple(r) == (year, month)
                     and self._line_matches_account_type(r)
+                    and self._line_matches_account(r, account_code_filter)
                 ]
 
             period_label_year = year
             period_label_month = month
+            period_from_label = selected_period
+            period_to_label = selected_period
 
         else:
             from_year = self.period_from_year.get()
@@ -593,7 +646,8 @@ class PopupReportSelector(tk.Toplevel):
                 rows = get_accounting_lines_api(
                     period_from=from_period,
                     period_to=to_period,
-                    account_type=account_type_filter
+                    account_type=account_type_filter,
+                    account_code=account_code_filter
                 )
             except Exception:
                 rows = []
@@ -602,12 +656,15 @@ class PopupReportSelector(tk.Toplevel):
                     r for r in self.all_lines
                     if self._line_period_tuple(r) and (fy, fm) <= self._line_period_tuple(r) <= (ty, tm)
                     and self._line_matches_account_type(r)
+                    and self._line_matches_account(r, account_code_filter)
                 ]
 
             period_label_year = ty
             period_label_month = tm
+            period_from_label = from_period
+            period_to_label = to_period
 
-        if not rows:
+        if not rows and self.report_var.get() != "ANALITICO_CUENTA":
             messagebox.showerror(
                 "Reporte",
                 "No hay datos para el periodo seleccionado."
@@ -621,6 +678,17 @@ class PopupReportSelector(tk.Toplevel):
         fmt = self.format_var.get()
 
         try:
+            if report == "ANALITICO_CUENTA":
+                if not account_code_filter:
+                    messagebox.showerror("Cuenta", "Seleccione o escriba la cuenta para generar el analítico.")
+                    return
+                export_account_analytic_excel(
+                    self.all_lines,
+                    period_from=period_from_label,
+                    period_to=period_to_label,
+                    account_filter=account_code_filter,
+                )
+
             if report == "ASIENTOS":
                 if fmt == "EXCEL":
                     export_diario_excel(
@@ -656,13 +724,26 @@ class PopupReportSelector(tk.Toplevel):
                     export_mayor_pdf(rows)
 
             elif report == "BC":
+                opening_rows = [
+                    r for r in self.all_lines
+                    if self._line_period_tuple(r) and f"{self._line_period_tuple(r)[0]}-{self._line_period_tuple(r)[1]:02d}" < period_from_label
+                    and self._line_matches_account_type(r)
+                    and self._line_matches_account(r, account_code_filter)
+                ]
                 if fmt == "EXCEL":
-                    export_tb_excel(rows)
+                    from Modulos.Finanzas.sections.Accounting.reports.build_tb_from_lines import build_tb_from_lines
+                    export_tb_excel(build_tb_from_lines(rows, opening_rows=opening_rows))
                 else:
-                    export_tb_pdf(rows)
+                    from Modulos.Finanzas.sections.Accounting.reports.build_tb_from_lines import build_tb_from_lines
+                    export_tb_pdf(build_tb_from_lines(rows, opening_rows=opening_rows))
 
             elif report == "ESF":
-                esf_data = build_esf_from_trial_balance(rows)
+                esf_rows = [
+                    r for r in self.all_lines
+                    if self._line_period_tuple(r) and f"{self._line_period_tuple(r)[0]}-{self._line_period_tuple(r)[1]:02d}" <= period_to_label
+                    and self._line_matches_account(r, account_code_filter)
+                ]
+                esf_data = build_esf_from_trial_balance(esf_rows)
                 if fmt == "EXCEL":
                     export_esf_excel_from_esf(esf_data)
                 else:
