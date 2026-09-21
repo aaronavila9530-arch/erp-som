@@ -19,6 +19,26 @@ router = APIRouter(
 logger = logging.getLogger(__name__)
 
 
+def _ensure_draft_word_presentation_columns(conn) -> None:
+    from psycopg2 import sql
+
+    columns = [
+        "word_vessel", "word_grt", "word_nrt", "word_survey_requested_by",
+        "word_port", "word_country", "word_commenced",
+        "word_commenced_date", "word_commenced_time",
+    ]
+    cur = conn.cursor()
+    try:
+        for column in columns:
+            cur.execute(
+                sql.SQL("ALTER TABLE draft_survey_word_report ADD COLUMN IF NOT EXISTS {column} TEXT").format(
+                    column=sql.Identifier(column)
+                )
+            )
+    finally:
+        cur.close()
+
+
 @router.get("/generate/{draft_report_number}")
 def generate_word_pdf(
     draft_report_number: str,
@@ -99,6 +119,7 @@ def generate_draft_survey_presentation(
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     try:
+        _ensure_draft_word_presentation_columns(conn)
 
         cur.execute("""
             SELECT
@@ -109,7 +130,10 @@ def generate_draft_survey_presentation(
                 word_survey_requested_by,
                 word_port,
                 word_country,
-                word_commenced
+                COALESCE(
+                    NULLIF(TRIM(word_commenced), ''),
+                    NULLIF(TRIM(CONCAT_WS(' ', word_commenced_date, word_commenced_time)), '')
+                ) AS word_commenced
             FROM draft_survey_word_report
             WHERE draft_report_number = %s
         """, (draft_report_number,))

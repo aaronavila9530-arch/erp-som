@@ -10,8 +10,8 @@ def build_tb_from_lines(
     Construye el BALANCE DE COMPROBACIÓN (TB)
     a partir de accounting_lines
 
-    ✔ Deriva fiscal_year y period desde created_at
-    ✔ Falla si hay mezcla de periodos
+    ✔ Deriva periodo desde period o created_at
+    ✔ Soporta mes único, rango de meses o periodo fiscal
     ✔ Agrupa por cuenta contable
     ✔ Calcula saldo deudor / acreedor
     ✔ Salida lista para Excel / PDF
@@ -28,12 +28,16 @@ def build_tb_from_lines(
         raise ValueError("No hay líneas contables para construir TB")
 
     # =====================================================
-    # DERIVAR Y VALIDAR PERIODO
+    # DERIVAR PERIODO / RANGO
     # =====================================================
-    fiscal_year = None
-    period = None
+    periods = set()
 
     for r in rows:
+        period_value = str(r.get("period") or "").strip()
+        if len(period_value) == 7 and period_value[4] == "-":
+            periods.add(period_value)
+            continue
+
         created_at = r.get("created_at")
         if not created_at:
             continue
@@ -46,35 +50,23 @@ def build_tb_from_lines(
             except Exception:
                 continue
 
-        fiscal_year = dt.year
-        period = dt.month
-        break
+        periods.add(f"{dt.year}-{dt.month:02d}")
 
-    if fiscal_year is None or period is None:
+    if not periods:
         raise ValueError(
-            "No se pudo determinar año y periodo fiscal desde created_at"
+            "No se pudo determinar periodo fiscal desde period o created_at"
         )
 
-    for r in rows:
-        created_at = r.get("created_at")
-        if not created_at:
-            continue
-
-        if isinstance(created_at, datetime):
-            dt = created_at
-        else:
-            try:
-                dt = datetime.fromisoformat(str(created_at))
-            except Exception:
-                continue
-
-        if dt.year != fiscal_year or dt.month != period:
-            raise ValueError(
-                "Las líneas contables contienen múltiples periodos. "
-                "El Balance de Comprobación debe construirse por un solo mes fiscal."
-            )
-
-    period_label = f"{period:02d}/{fiscal_year}"
+    sorted_periods = sorted(periods)
+    first_period = sorted_periods[0]
+    last_period = sorted_periods[-1]
+    fiscal_year = int(last_period[:4])
+    period = int(last_period[5:7])
+    period_label = (
+        first_period
+        if first_period == last_period
+        else f"{first_period} a {last_period}"
+    )
 
     # =====================================================
     # ACUMULADORES
@@ -91,6 +83,7 @@ def build_tb_from_lines(
 
         account_code = str(r.get("account_code") or "").strip()
         account_name = str(r.get("account_name") or "SIN NOMBRE").strip()
+        account_type = str(r.get("account_type") or "").strip()
 
         if not account_code:
             continue
@@ -108,6 +101,8 @@ def build_tb_from_lines(
         key = f"{account_code} - {account_name}"
         accounts[key]["debit"] += debit
         accounts[key]["credit"] += credit
+        if account_type:
+            accounts[key]["account_type"] = account_type
 
     # =====================================================
     # FORMATO FINAL
@@ -134,6 +129,7 @@ def build_tb_from_lines(
 
         rows_out.append({
             "account": acc,
+            "account_type": vals.get("account_type") or "",
             "debit": debit,
             "credit": credit,
             "saldo_deudor": round(saldo_deudor, 2),

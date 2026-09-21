@@ -71,6 +71,7 @@ def export_diario_pdf(rows: list[dict], fiscal_year: int, period: int):
         "Asiento",
         "Cuenta",
         "Nombre de la Cuenta",
+        "Tipo",
         "Debe",
         "Haber",
         "Detalle",
@@ -94,6 +95,7 @@ def export_diario_pdf(rows: list[dict], fiscal_year: int, period: int):
             r.get("entry_id"),
             r.get("account_code"),
             r.get("account_name"),
+            r.get("account_type", ""),
             f"{debe:,.2f}",
             f"{haber:,.2f}",
             r.get("line_description", ""),
@@ -104,6 +106,7 @@ def export_diario_pdf(rows: list[dict], fiscal_year: int, period: int):
     # TOTALES
     # =============================
     data.append([
+        "",
         "",
         "",
         "",
@@ -121,11 +124,12 @@ def export_diario_pdf(rows: list[dict], fiscal_year: int, period: int):
             70,   # Fecha
             55,   # Asiento
             65,   # Cuenta
-            150,  # Nombre
-            80,   # Debe
-            80,   # Haber
-            180,  # Detalle
-            90    # Origen
+            135,  # Nombre
+            60,   # Tipo
+            75,   # Debe
+            75,   # Haber
+            160,  # Detalle
+            80    # Origen
         ]
     )
 
@@ -135,8 +139,8 @@ def export_diario_pdf(rows: list[dict], fiscal_year: int, period: int):
         ("BACKGROUND", (0, 0), (-1, 0), colors.whitesmoke),
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
 
-        ("ALIGN", (4, 1), (5, -2), "RIGHT"),
-        ("ALIGN", (4, -1), (5, -1), "RIGHT"),
+        ("ALIGN", (5, 1), (6, -2), "RIGHT"),
+        ("ALIGN", (5, -1), (6, -1), "RIGHT"),
 
         ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
         ("BACKGROUND", (0, -1), (-1, -1), colors.whitesmoke),

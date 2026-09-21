@@ -48,6 +48,21 @@ router = APIRouter(
 
 MONEY_QUANT = Decimal("0.01")
 ENTRY_STATUSES = {"DRAFT", "IN_REVIEW", "APPROVED", "POSTED", "REVERSED"}
+ACCOUNT_TYPE_ALIASES = {
+    "ACTIVO": ("ACTIVO", "ASSET"),
+    "ASSET": ("ACTIVO", "ASSET"),
+    "PASIVO": ("PASIVO", "LIABILITY"),
+    "LIABILITY": ("PASIVO", "LIABILITY"),
+    "PATRIMONIO": ("PATRIMONIO", "EQUITY"),
+    "EQUITY": ("PATRIMONIO", "EQUITY"),
+    "INGRESO": ("INGRESO", "REVENUE", "INCOME"),
+    "REVENUE": ("INGRESO", "REVENUE", "INCOME"),
+    "INCOME": ("INGRESO", "REVENUE", "INCOME"),
+    "COSTO": ("COSTO", "COST"),
+    "COST": ("COSTO", "COST"),
+    "GASTO": ("GASTO", "EXPENSE"),
+    "EXPENSE": ("GASTO", "EXPENSE"),
+}
 
 
 def _company_code(value: str | None = None, header_value: str | None = None) -> str:
@@ -297,6 +312,7 @@ def _accounting_entry_stats(conn):
 def _report_title(report: str | None):
     titles = {
         "ASIENTOS": "Asientos contables",
+        "DETALLE_TIPO": "Detalle por tipo de cuenta",
         "MAYOR": "Mayor general",
         "BC": "Balance de comprobacion",
         "ESF": "Estado de situacion financiera",
@@ -305,6 +321,35 @@ def _report_title(report: str | None):
     }
     key = (report or "ASIENTOS").upper()
     return titles.get(key, key)
+
+
+def _account_type_case(alias: str = "l") -> str:
+    raw_case = "UPPER(COALESCE(a.account_type, ''))"
+    return f"""
+        CASE
+            WHEN {raw_case} IN ('ACTIVO', 'ASSET') THEN 'ACTIVO'
+            WHEN {raw_case} IN ('PASIVO', 'LIABILITY') THEN 'PASIVO'
+            WHEN {raw_case} IN ('PATRIMONIO', 'EQUITY') THEN 'PATRIMONIO'
+            WHEN {raw_case} IN ('INGRESO', 'REVENUE', 'INCOME') THEN 'INGRESO'
+            WHEN {raw_case} IN ('COSTO', 'COST') THEN 'COSTO'
+            WHEN {raw_case} IN ('GASTO', 'EXPENSE') THEN 'GASTO'
+            WHEN {alias}.account_code LIKE '1%%' THEN 'ACTIVO'
+            WHEN {alias}.account_code LIKE '2%%' THEN 'PASIVO'
+            WHEN {alias}.account_code LIKE '3%%' THEN 'PATRIMONIO'
+            WHEN {alias}.account_code LIKE '4%%' THEN 'INGRESO'
+            WHEN {alias}.account_code LIKE '5%%' THEN 'GASTO'
+            WHEN {alias}.account_code LIKE '6%%' THEN 'COSTO'
+            WHEN {raw_case} = '' THEN 'SIN CLASIFICAR'
+            ELSE {raw_case}
+        END
+    """
+
+
+def _account_type_values(value: str | None):
+    text = str(value or "").strip().upper()
+    if not text or text == "TODOS":
+        return None
+    return ACCOUNT_TYPE_ALIASES.get(text, (text,))
 
 
 def _append_account_filter(conditions, params, account_code: str | None):
@@ -361,18 +406,28 @@ def _append_origin_filter(conditions, params, origin: str | None):
     params.append(origin)
 
 
+def _append_account_type_filter(conditions, params, account_type: str | None):
+    values = _account_type_values(account_type)
+    if not values:
+        return
+    conditions.append(f"{_account_type_case('l')} = ANY(%s)")
+    params.append(list(values))
+
+
 def _fetch_accounting_report_lines(
     conn,
     period: str | None = None,
     period_from: str | None = None,
     period_to: str | None = None,
     origin: str | None = None,
-    account_code: str | None = None
+    account_code: str | None = None,
+    account_type: str | None = None,
+    company_code: str | None = None
 ):
     _ensure_accounting_professional_schema(conn)
     cur = conn.cursor(cursor_factory=RealDictCursor)
-    conditions = ["e.workflow_status = 'POSTED'"]
-    params = []
+    conditions = ["e.workflow_status = 'POSTED'", "e.company_code = %s"]
+    params = [_company_code(company_code)]
 
     if period:
         conditions.append("e.period = %s")
@@ -389,6 +444,7 @@ def _fetch_accounting_report_lines(
     _append_origin_filter(conditions, params, origin)
 
     _append_account_filter(conditions, params, account_code)
+    _append_account_type_filter(conditions, params, account_type)
 
     where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
@@ -402,16 +458,73 @@ def _fetch_accounting_report_lines(
             e.description AS entry_description,
             l.account_code,
             l.account_name,
+            {_account_type_case('l')} AS account_type,
             l.line_description,
             l.debit,
             l.credit
         FROM accounting_entries e
         JOIN accounting_lines l ON l.entry_id = e.id
+        LEFT JOIN accounting_accounts a ON a.account_code = l.account_code
         {where_clause}
         ORDER BY e.period DESC, e.entry_date DESC, e.id DESC, l.id ASC
     """, params)
 
     return cur.fetchall()
+
+
+def _period_scope_label(period: str | None, period_from: str | None, period_to: str | None):
+    if period:
+        return period
+    if period_from or period_to:
+        return f"{period_from or 'inicio'} a {period_to or 'fin'}"
+    return "Todos"
+
+
+def _build_trial_balance(rows):
+    accounts = {}
+    periods = []
+    for row in rows:
+        period = row.get("period")
+        if period:
+            periods.append(str(period))
+        code = str(row.get("account_code") or "").strip()
+        if not code:
+            continue
+        name = str(row.get("account_name") or "SIN NOMBRE").strip()
+        acc_type = str(row.get("account_type") or "SIN CLASIFICAR").strip()
+        item = accounts.setdefault((code, name, acc_type), {"debit": 0.0, "credit": 0.0})
+        item["debit"] += float(row.get("debit") or 0)
+        item["credit"] += float(row.get("credit") or 0)
+
+    rows_out = []
+    total_debit = total_credit = total_saldo_deudor = total_saldo_acreedor = 0.0
+    for (code, name, acc_type), values in sorted(accounts.items()):
+        debit = round(values["debit"], 2)
+        credit = round(values["credit"], 2)
+        balance = round(debit - credit, 2)
+        saldo_deudor = balance if balance > 0 else 0.0
+        saldo_acreedor = abs(balance) if balance < 0 else 0.0
+        total_debit += debit
+        total_credit += credit
+        total_saldo_deudor += saldo_deudor
+        total_saldo_acreedor += saldo_acreedor
+        rows_out.append({
+            "account_code": code,
+            "account_name": name,
+            "account_type": acc_type,
+            "debit": debit,
+            "credit": credit,
+            "saldo_deudor": round(saldo_deudor, 2),
+            "saldo_acreedor": round(saldo_acreedor, 2),
+        })
+    return {
+        "period_label": f"{min(periods)} a {max(periods)}" if periods else "Todos",
+        "rows": rows_out,
+        "total_debit": round(total_debit, 2),
+        "total_credit": round(total_credit, 2),
+        "total_saldo_deudor": round(total_saldo_deudor, 2),
+        "total_saldo_acreedor": round(total_saldo_acreedor, 2),
+    }
 
 
 def _report_filename(extension: str, report: str | None, period: str | None, period_from: str | None, period_to: str | None):
@@ -2137,21 +2250,80 @@ def download_accounting_report_excel(
     period_to: str | None = None,
     origin: str | None = None,
     account_code: str | None = None,
+    account_type: str | None = None,
+    company_code: str | None = None,
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
     conn=Depends(get_db)
 ):
-    rows = _fetch_accounting_report_lines(conn, period, period_from, period_to, origin, account_code)
+    company = _company_code(company_code, x_company_code)
+    rows = _fetch_accounting_report_lines(conn, period, period_from, period_to, origin, account_code, account_type, company)
     wb = Workbook()
     ws = wb.active
-    ws.title = "Accounting"
+    report_key = str(report or "ASIENTOS").upper()
+    ws.title = "Balance" if report_key == "BC" else "Accounting"
 
     title = _report_title(report)
-    scope = period or (f"{period_from or 'inicio'} a {period_to or 'fin'}" if period_from or period_to else "Todos")
-    ws.merge_cells("A1:J1")
-    ws["A1"] = f"{title} - {scope}"
+    scope = _period_scope_label(period, period_from, period_to)
+    type_label = account_type if account_type and str(account_type).upper() != "TODOS" else "Todos los tipos"
+
+    if report_key == "BC":
+        tb = _build_trial_balance(rows)
+        ws.merge_cells("A1:G1")
+        ws["A1"] = f"{title} - {scope} - Tipo: {type_label}"
+        ws["A1"].font = Font(bold=True, size=14)
+        ws["A1"].alignment = Alignment(horizontal="center")
+        headers = ["Cuenta", "Nombre cuenta", "Tipo", "Debe", "Haber", "Saldo deudor", "Saldo acreedor"]
+        ws.append([])
+        ws.append(headers)
+        header_fill = PatternFill("solid", fgColor="003A75")
+        for cell in ws[3]:
+            cell.font = Font(bold=True, color="FFFFFF")
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal="center")
+        for row in tb["rows"]:
+            ws.append([
+                row["account_code"],
+                row["account_name"],
+                row["account_type"],
+                row["debit"],
+                row["credit"],
+                row["saldo_deudor"],
+                row["saldo_acreedor"],
+            ])
+        ws.append([
+            "TOTAL",
+            "",
+            "",
+            tb["total_debit"],
+            tb["total_credit"],
+            tb["total_saldo_deudor"],
+            tb["total_saldo_acreedor"],
+        ])
+        for cell in ws[ws.max_row]:
+            cell.font = Font(bold=True)
+        widths = [16, 38, 16, 16, 16, 18, 18]
+        for idx, width in enumerate(widths, start=1):
+            ws.column_dimensions[chr(64 + idx)].width = width
+        for row in ws.iter_rows(min_row=4, min_col=4, max_col=7):
+            for cell in row:
+                cell.number_format = '#,##0.00'
+
+        tmp_dir = tempfile.mkdtemp(prefix="erp_som_accounting_")
+        filename = _report_filename("xlsx", report, period, period_from, period_to)
+        path = os.path.join(tmp_dir, filename)
+        wb.save(path)
+        return FileResponse(
+            path,
+            filename=filename,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
+    ws.merge_cells("A1:K1")
+    ws["A1"] = f"{title} - {scope} - Tipo: {type_label}"
     ws["A1"].font = Font(bold=True, size=14)
     ws["A1"].alignment = Alignment(horizontal="center")
 
-    headers = ["Fecha", "Asiento", "Periodo", "Origen", "Origen ID", "Cuenta", "Nombre cuenta", "Detalle", "Debe", "Haber"]
+    headers = ["Fecha", "Asiento", "Periodo", "Origen", "Origen ID", "Cuenta", "Nombre cuenta", "Tipo", "Detalle", "Debe", "Haber"]
     ws.append([])
     ws.append(headers)
     header_fill = PatternFill("solid", fgColor="003A75")
@@ -2175,20 +2347,21 @@ def download_accounting_report_excel(
             row.get("origin_id"),
             row.get("account_code"),
             row.get("account_name"),
+            row.get("account_type"),
             row.get("line_description") or row.get("entry_description"),
             debit,
             credit
         ])
 
-    ws.append(["", "", "", "", "", "", "", "Totales", total_debit, total_credit])
+    ws.append(["", "", "", "", "", "", "", "", "Totales", total_debit, total_credit])
     for cell in ws[ws.max_row]:
         cell.font = Font(bold=True)
 
-    widths = [14, 10, 12, 16, 14, 14, 28, 48, 14, 14]
+    widths = [14, 10, 12, 16, 14, 14, 28, 16, 48, 14, 14]
     for idx, width in enumerate(widths, start=1):
         ws.column_dimensions[chr(64 + idx)].width = width
 
-    for row in ws.iter_rows(min_row=4, min_col=9, max_col=10):
+    for row in ws.iter_rows(min_row=4, min_col=10, max_col=11):
         for cell in row:
             cell.number_format = '#,##0.00'
 
@@ -2212,17 +2385,64 @@ def download_accounting_report_pdf(
     period_to: str | None = None,
     origin: str | None = None,
     account_code: str | None = None,
+    account_type: str | None = None,
+    company_code: str | None = None,
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
     conn=Depends(get_db)
 ):
-    rows = _fetch_accounting_report_lines(conn, period, period_from, period_to, origin, account_code)
+    company = _company_code(company_code, x_company_code)
+    rows = _fetch_accounting_report_lines(conn, period, period_from, period_to, origin, account_code, account_type, company)
     tmp_dir = tempfile.mkdtemp(prefix="erp_som_accounting_")
     filename = _report_filename("pdf", report, period, period_from, period_to)
     path = os.path.join(tmp_dir, filename)
 
+    report_key = str(report or "ASIENTOS").upper()
     title = _report_title(report)
-    scope = period or (f"{period_from or 'inicio'} a {period_to or 'fin'}" if period_from or period_to else "Todos")
+    scope = _period_scope_label(period, period_from, period_to)
+    type_label = account_type if account_type and str(account_type).upper() != "TODOS" else "Todos los tipos"
     styles = getSampleStyleSheet()
     doc = SimpleDocTemplate(path, pagesize=landscape(letter), rightMargin=24, leftMargin=24, topMargin=24, bottomMargin=24)
+
+    if report_key == "BC":
+        tb = _build_trial_balance(rows)
+        data = [["Cuenta", "Nombre", "Tipo", "Debe", "Haber", "Saldo deudor", "Saldo acreedor"]]
+        for row in tb["rows"]:
+            data.append([
+                str(row["account_code"]),
+                str(row["account_name"])[:44],
+                str(row["account_type"]),
+                f"{float(row['debit']):,.2f}",
+                f"{float(row['credit']):,.2f}",
+                f"{float(row['saldo_deudor']):,.2f}",
+                f"{float(row['saldo_acreedor']):,.2f}",
+            ])
+        data.append([
+            "TOTAL",
+            "",
+            "",
+            f"{tb['total_debit']:,.2f}",
+            f"{tb['total_credit']:,.2f}",
+            f"{tb['total_saldo_deudor']:,.2f}",
+            f"{tb['total_saldo_acreedor']:,.2f}",
+        ])
+        table = Table(data, repeatRows=1, colWidths=[72, 230, 70, 78, 78, 88, 88])
+        table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#003A75")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, -1), 7),
+            ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#D7DEE8")),
+            ("ALIGN", (3, 1), (-1, -1), "RIGHT"),
+            ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+            ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#EEF3F8"))
+        ]))
+        doc.build([
+            Paragraph(f"{title} - {scope}", styles["Title"]),
+            Paragraph(f"Tipo de cuenta: {type_label}", styles["Normal"]),
+            Spacer(1, 12),
+            table
+        ])
+        return FileResponse(path, filename=filename, media_type="application/pdf")
 
     data = [["Fecha", "Asiento", "Periodo", "Origen", "Cuenta", "Detalle", "Debe", "Haber"]]
     total_debit = 0.0
@@ -2258,6 +2478,7 @@ def download_accounting_report_pdf(
 
     doc.build([
         Paragraph(f"{title} - {scope}", styles["Title"]),
+        Paragraph(f"Tipo de cuenta: {type_label}", styles["Normal"]),
         Spacer(1, 12),
         table
     ])

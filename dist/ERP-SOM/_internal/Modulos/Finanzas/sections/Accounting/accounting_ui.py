@@ -316,6 +316,10 @@ class AccountingUI(tk.Frame):
             command=lambda: self._open_report("Asientos")
         )
         reports_menu.add_command(
+            label="Detalle por tipo de cuenta",
+            command=lambda: self._open_report("Detalle por tipo de cuenta")
+        )
+        reports_menu.add_command(
             label="Libro Mayor",
             command=lambda: self._open_report("Libro Mayor")
         )
@@ -418,6 +422,7 @@ class AccountingUI(tk.Frame):
 
         report_map = {
             "Asientos": "ASIENTOS",
+            "Detalle por tipo de cuenta": "DETALLE_TIPO",
             "Libro Mayor": "MAYOR",
             "Balance de Comprobación": "BC",
             "Estado de Situación Financiera": "ESF",

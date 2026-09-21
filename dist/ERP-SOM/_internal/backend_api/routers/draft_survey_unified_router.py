@@ -88,6 +88,30 @@ def _get_table_columns(conn, table_name: str) -> set:
 def _ensure_unified_draft_columns(conn) -> None:
     cur = conn.cursor()
     try:
+        word_columns = [
+            "word_vessel", "word_grt", "word_nrt", "word_survey_requested_by",
+            "word_port", "word_country", "word_arrived_buoy_date",
+            "word_arrived_buoy_time", "word_nor_tendered_date",
+            "word_nor_tendered_time", "word_all_fast_date",
+            "word_all_fast_time", "word_initial_draft_date",
+            "word_initial_draft_time", "word_commenced_date",
+            "word_commenced_time", "word_completed_date", "word_completed_time",
+            "word_final_draft_date", "word_final_draft_time",
+            "word_goods_product", "word_product", "word_bl_figures",
+            "word_draft_figures", "word_difference", "word_percentage",
+            "word_mt", "word_metric_tons", "word_shore_scale",
+            "word_shore_bl", "word_shore_difference", "word_shore_percentage",
+            "word_holds", "word_master", "word_chief_officer",
+            "word_port_registry", "word_imo", "word_year", "word_name",
+            "word_on_behalf_of", "word_commenced",
+        ]
+        for column in word_columns:
+            cur.execute(
+                sql.SQL("ALTER TABLE draft_survey_word_report ADD COLUMN IF NOT EXISTS {column} TEXT").format(
+                    column=sql.Identifier(column)
+                )
+            )
+
         draft_fields = [
             "time_from", "time_to",
             "draft_fwd_port", "draft_fwd_stb", "draft_fwd_marks",
