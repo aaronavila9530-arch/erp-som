@@ -183,9 +183,15 @@ def generate_draft_survey_word_pdf(data: dict) -> str:
         text = paragraph.text or ""
         for key, label in time_sheet_labels.items():
             placeholder = f"{{{key}}}"
-            if placeholder not in text:
+            date_placeholder = f"{{{key}_date}}"
+            time_placeholder = f"{{{key}_time}}"
+            if (
+                placeholder not in text
+                and date_placeholder not in text
+                and time_placeholder not in text
+            ):
                 continue
-            value = safe(data.get(key))
+            value = _combine_date_time(key)
             try:
                 paragraph.paragraph_format.tab_stops.clear_all()
                 paragraph.paragraph_format.tab_stops.add_tab_stop(
@@ -194,7 +200,8 @@ def generate_draft_survey_word_pdf(data: dict) -> str:
                 )
             except Exception:
                 pass
-            set_paragraph_text(paragraph, f"{label}\t{value} LT.")
+            suffix = " LT." if value else ""
+            set_paragraph_text(paragraph, f"{label}\t{value}{suffix}")
             return True
         return False
 

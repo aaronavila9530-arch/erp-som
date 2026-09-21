@@ -389,7 +389,8 @@ def generate_grain_sampling_doc(data: dict) -> str:
         f"{data.get('cert_no', 'grain_sampling')}.docx"
     )
 
-    apply_mci_docx_branding(doc, data)
+    # El template de muestreo ya trae su encabezado institucional como imagen.
+    # No aplicar branding global aqui porque borra ese header del documento.
     apply_docx_autofit(doc)
     doc.save(output_path)
 
