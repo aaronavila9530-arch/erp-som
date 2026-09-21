@@ -2,7 +2,7 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from psycopg2.extras import Json, RealDictCursor
+from psycopg2.extras import Json, RealDictCursor, execute_values
 
 from database import get_db
 
@@ -149,6 +149,21 @@ def _next_inventory_code(cur):
 
 
 def _rebuild_schedule(cur, asset_id, purchase_date, value_crc, life_months):
+    cur.execute(
+        """
+        SELECT period, accounting_entry_id, status
+        FROM fixed_asset_depreciation_schedule
+        WHERE asset_id=%s
+        """,
+        (asset_id,),
+    )
+    existing_by_period = {
+        row["period"]: {
+            "accounting_entry_id": row.get("accounting_entry_id"),
+            "status": row.get("status"),
+        }
+        for row in (cur.fetchall() or [])
+    }
     cur.execute("DELETE FROM fixed_asset_depreciation_schedule WHERE asset_id=%s", (asset_id,))
     monthly = (value_crc / Decimal(life_months)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     accum = Decimal("0.00")
@@ -159,17 +174,27 @@ def _rebuild_schedule(cur, asset_id, purchase_date, value_crc, life_months):
         if accum > value_crc:
             accum = value_crc
         period = f"{y:04d}-{m:02d}"
+        existing = existing_by_period.get(period) or {}
+        entry_id = existing.get("accounting_entry_id")
+        status = "POSTED" if entry_id else (
+            existing.get("status")
+            or ("POSTED_BASE" if period < date.today().strftime("%Y-%m") else "SCHEDULED")
+        )
         cur.execute(
             """
             INSERT INTO fixed_asset_depreciation_schedule (
                 asset_id, period, depreciation_date, depreciation_amount_crc,
-                accumulated_depreciation_crc, book_value_crc, status
-            ) VALUES (%s,%s,%s,%s,%s,%s,%s)
+                accumulated_depreciation_crc, book_value_crc, status, accounting_entry_id
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
             ON CONFLICT(asset_id, period) DO UPDATE SET
                 depreciation_amount_crc=EXCLUDED.depreciation_amount_crc,
                 accumulated_depreciation_crc=EXCLUDED.accumulated_depreciation_crc,
                 book_value_crc=EXCLUDED.book_value_crc,
-                status=EXCLUDED.status
+                status=EXCLUDED.status,
+                accounting_entry_id=COALESCE(
+                    fixed_asset_depreciation_schedule.accounting_entry_id,
+                    EXCLUDED.accounting_entry_id
+                )
             """,
             (
                 asset_id,
@@ -178,9 +203,327 @@ def _rebuild_schedule(cur, asset_id, purchase_date, value_crc, life_months):
                 depreciation,
                 accum,
                 value_crc - accum,
-                "POSTED_BASE" if period < date.today().strftime("%Y-%m") else "SCHEDULED",
+                status,
+                entry_id,
             ),
         )
+
+
+def _account_name(cur, account_code: str, fallback: str) -> str:
+    cur.execute(
+        "SELECT account_name FROM accounting_accounts WHERE account_code=%s LIMIT 1",
+        (account_code,),
+    )
+    row = cur.fetchone() or {}
+    return row.get("account_name") or fallback
+
+
+def _period_is_valid(period: str) -> bool:
+    try:
+        datetime.strptime(f"{period}-01", "%Y-%m-%d")
+        return True
+    except Exception:
+        return False
+
+
+def _post_depreciation_schedule_rows(cur, period_to: str, asset_id: int | None = None, user: str = "SYSTEM"):
+    if not _period_is_valid(period_to):
+        raise HTTPException(400, "Periodo invalido. Use YYYY-MM.")
+
+    params = [period_to]
+    asset_filter = ""
+    if asset_id:
+        asset_filter = "AND fa.id = %s"
+        params.append(asset_id)
+
+    cur.execute(
+        f"""
+        SELECT
+            s.id AS schedule_id,
+            s.asset_id,
+            s.period,
+            s.depreciation_date,
+            s.depreciation_amount_crc,
+            s.accounting_entry_id,
+            fa.asset_code,
+            fa.description,
+            fa.status AS asset_status,
+            fa.accumulated_depreciation_account_code,
+            fa.depreciation_expense_account_code
+        FROM fixed_asset_depreciation_schedule s
+        JOIN fixed_assets fa ON fa.id = s.asset_id
+        WHERE s.period <= %s
+          AND COALESCE(s.depreciation_amount_crc, 0) > 0
+          AND s.accounting_entry_id IS NULL
+          AND COALESCE(fa.status, 'ACTIVE') = 'ACTIVE'
+          {asset_filter}
+        ORDER BY s.period, fa.asset_code, s.id
+        """,
+        params,
+    )
+    rows = cur.fetchall() or []
+
+    skipped = 0
+    total_amount = Decimal("0.00")
+    account_cache = {}
+    entry_values = []
+    line_context = {}
+
+    for row in rows:
+        amount = _money(row.get("depreciation_amount_crc"))
+        if amount <= 0:
+            skipped += 1
+            continue
+
+        expense_code = row.get("depreciation_expense_account_code")
+        accum_code = row.get("accumulated_depreciation_account_code")
+        if not expense_code or not accum_code:
+            skipped += 1
+            continue
+
+        for code, fallback in (
+            (expense_code, "Gasto por depreciacion"),
+            (accum_code, "Depreciacion acumulada"),
+        ):
+            if code not in account_cache:
+                account_cache[code] = _account_name(cur, code, fallback)
+
+        period = row["period"]
+        entry_date = row.get("depreciation_date") or _last_day(int(period[:4]), int(period[5:7]))
+        description = (
+            f"Depreciacion activo {row.get('asset_code')} - "
+            f"{row.get('description')} - {period}"
+        )
+        metadata = {
+            "asset_id": row["asset_id"],
+            "asset_code": row.get("asset_code"),
+            "schedule_id": row["schedule_id"],
+            "period": period,
+            "source": "fixed_assets",
+        }
+        entry_values.append(
+            (
+                entry_date,
+                period,
+                description,
+                row["schedule_id"],
+                user,
+                Json(metadata),
+                user,
+            )
+        )
+        line_context[row["schedule_id"]] = {
+            "expense_code": expense_code,
+            "expense_name": account_cache[expense_code],
+            "accum_code": accum_code,
+            "accum_name": account_cache[accum_code],
+            "amount": amount,
+            "description": description,
+        }
+        total_amount += amount
+
+    if not entry_values:
+        return {
+            "posted": 0,
+            "skipped": skipped,
+            "total_amount_crc": total_amount,
+            "period_to": period_to,
+        }
+
+    entry_rows = execute_values(
+        cur,
+        """
+        INSERT INTO accounting_entries (
+            entry_date, period, description, origin, origin_id, created_by,
+            workflow_status, company_code, currency_code, exchange_rate,
+            posting_rule_code, posting_metadata, posted_by, posted_at
+        ) VALUES %s
+        RETURNING id, origin_id
+        """,
+        entry_values,
+        template="""
+            (%s,%s,%s,'FIXED_ASSET_DEPRECIATION',%s,%s,
+             'POSTED','MSL-CR','CRC',1,
+             'FIXED_ASSET_MONTHLY_DEPRECIATION',%s,%s,NOW())
+        """,
+        page_size=max(1, len(entry_values)),
+        fetch=True,
+    )
+    entry_rows = entry_rows or []
+    entry_by_schedule = {row["origin_id"]: row["id"] for row in entry_rows}
+
+    line_values = []
+    update_values = []
+    for schedule_id, entry_id in entry_by_schedule.items():
+        ctx = line_context.get(schedule_id)
+        if not ctx:
+            continue
+        line_values.extend([
+            (
+                entry_id,
+                ctx["expense_code"],
+                ctx["expense_name"],
+                ctx["amount"],
+                Decimal("0.00"),
+                ctx["description"],
+            ),
+            (
+                entry_id,
+                ctx["accum_code"],
+                ctx["accum_name"],
+                Decimal("0.00"),
+                ctx["amount"],
+                ctx["description"],
+            ),
+        ])
+        update_values.append((schedule_id, entry_id))
+
+    if line_values:
+        execute_values(
+            cur,
+            """
+            INSERT INTO accounting_lines (
+                entry_id, account_code, account_name, debit, credit, line_description
+            ) VALUES %s
+            """,
+            line_values,
+            page_size=1000,
+        )
+
+    if update_values:
+        execute_values(
+            cur,
+            """
+            UPDATE fixed_asset_depreciation_schedule AS s
+            SET accounting_entry_id = v.entry_id,
+                status = 'POSTED'
+            FROM (VALUES %s) AS v(schedule_id, entry_id)
+            WHERE s.id = v.schedule_id
+            """,
+            update_values,
+            template="(%s,%s)",
+            page_size=1000,
+        )
+
+    return {
+        "posted": len(update_values),
+        "skipped": skipped,
+        "total_amount_crc": total_amount,
+        "period_to": period_to,
+    }
+
+
+def _post_capitalization_adjustment(cur, period: str, user: str = "SYSTEM"):
+    if not _period_is_valid(period):
+        raise HTTPException(400, "Periodo invalido. Use YYYY-MM.")
+
+    adjustment_code = "390-999-000-001"
+    adjustment_name = _account_name(cur, adjustment_code, "Ajustes de auditoria por conciliar")
+    y, m = int(period[:4]), int(period[5:7])
+    entry_date = _last_day(y, m)
+
+    cur.execute(
+        """
+        SELECT asset_account_code, COALESCE(SUM(value_crc), 0) AS asset_value
+        FROM fixed_assets
+        WHERE COALESCE(status, 'ACTIVE') = 'ACTIVE'
+          AND asset_account_code IS NOT NULL
+        GROUP BY asset_account_code
+        ORDER BY asset_account_code
+        """
+    )
+    asset_totals = cur.fetchall() or []
+
+    posted = 0
+    total_amount = Decimal("0.00")
+    details = []
+
+    for row in asset_totals:
+        account_code = row["asset_account_code"]
+        expected = _money(row.get("asset_value"))
+        if expected <= 0:
+            continue
+
+        cur.execute(
+            """
+            SELECT COALESCE(SUM(l.debit - l.credit), 0) AS gl_balance
+            FROM accounting_lines l
+            JOIN accounting_entries e ON e.id = l.entry_id
+            WHERE e.workflow_status = 'POSTED'
+              AND l.account_code = %s
+            """,
+            (account_code,),
+        )
+        gl_balance = _money((cur.fetchone() or {}).get("gl_balance"))
+        delta = (expected - gl_balance).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        if abs(delta) <= Decimal("0.01"):
+            continue
+
+        account_name = _account_name(cur, account_code, "Activo fijo")
+        description = f"Ajuste capitalizacion activos fijos {account_code} {period}"
+        metadata = {
+            "source": "fixed_assets",
+            "account_code": account_code,
+            "expected_crc": str(expected),
+            "gl_balance_crc": str(gl_balance),
+            "delta_crc": str(delta),
+            "period": period,
+        }
+        cur.execute(
+            """
+            INSERT INTO accounting_entries (
+                entry_date, period, description, origin, origin_id, created_by,
+                workflow_status, company_code, currency_code, exchange_rate,
+                posting_rule_code, posting_metadata, posted_by, posted_at
+            ) VALUES (
+                %s,%s,%s,'FIXED_ASSET_CAPITALIZE',NULL,%s,
+                'POSTED','MSL-CR','CRC',1,
+                'FIXED_ASSET_CAPITALIZATION_CATCHUP',%s,%s,NOW()
+            )
+            RETURNING id
+            """,
+            (entry_date, period, description, user, Json(metadata), user),
+        )
+        entry_id = cur.fetchone()["id"]
+
+        if delta > 0:
+            lines = [
+                (entry_id, account_code, account_name, delta, Decimal("0.00"), description),
+                (entry_id, adjustment_code, adjustment_name, Decimal("0.00"), delta, description),
+            ]
+        else:
+            amount = abs(delta)
+            lines = [
+                (entry_id, adjustment_code, adjustment_name, amount, Decimal("0.00"), description),
+                (entry_id, account_code, account_name, Decimal("0.00"), amount, description),
+            ]
+
+        execute_values(
+            cur,
+            """
+            INSERT INTO accounting_lines (
+                entry_id, account_code, account_name, debit, credit, line_description
+            ) VALUES %s
+            """,
+            lines,
+        )
+        posted += 1
+        total_amount += abs(delta)
+        details.append({
+            "account_code": account_code,
+            "account_name": account_name,
+            "expected_crc": expected,
+            "gl_balance_crc": gl_balance,
+            "delta_crc": delta,
+            "entry_id": entry_id,
+        })
+
+    return {
+        "posted": posted,
+        "total_amount_crc": total_amount,
+        "period": period,
+        "details": details,
+    }
 
 
 def _asset_values(cur, payload, existing=None):
@@ -284,6 +627,56 @@ def list_fixed_assets(
             params + [limit],
         )
         return {"summary": summary, "data": cur.fetchall()}
+
+
+@router.post("/depreciation/post")
+def post_fixed_asset_depreciation(payload: dict | None = None, db=Depends(get_db)):
+    payload = payload or {}
+    period_to = str(payload.get("period_to") or date.today().strftime("%Y-%m")).strip()
+    asset_id = payload.get("asset_id")
+    user = str(payload.get("user") or "SYSTEM").strip() or "SYSTEM"
+    with db.cursor(cursor_factory=RealDictCursor) as cur:
+        if not _table_exists(cur, "fixed_assets"):
+            raise HTTPException(400, "La tabla fixed_assets no existe.")
+        if not _table_exists(cur, "fixed_asset_depreciation_schedule"):
+            raise HTTPException(400, "La tabla fixed_asset_depreciation_schedule no existe.")
+        try:
+            result = _post_depreciation_schedule_rows(
+                cur,
+                period_to=period_to,
+                asset_id=int(asset_id) if asset_id else None,
+                user=user,
+            )
+            db.commit()
+            result["ok"] = True
+            return result
+        except HTTPException:
+            db.rollback()
+            raise
+        except Exception as exc:
+            db.rollback()
+            raise HTTPException(500, f"Error posteando depreciaciones: {exc}")
+
+
+@router.post("/capitalization/reconcile")
+def post_fixed_asset_capitalization_adjustment(payload: dict | None = None, db=Depends(get_db)):
+    payload = payload or {}
+    period = str(payload.get("period") or date.today().strftime("%Y-%m")).strip()
+    user = str(payload.get("user") or "SYSTEM").strip() or "SYSTEM"
+    with db.cursor(cursor_factory=RealDictCursor) as cur:
+        if not _table_exists(cur, "fixed_assets"):
+            raise HTTPException(400, "La tabla fixed_assets no existe.")
+        try:
+            result = _post_capitalization_adjustment(cur, period=period, user=user)
+            db.commit()
+            result["ok"] = True
+            return result
+        except HTTPException:
+            db.rollback()
+            raise
+        except Exception as exc:
+            db.rollback()
+            raise HTTPException(500, f"Error posteando capitalizacion de activos: {exc}")
 
 
 @router.get("/{asset_id}/schedule")

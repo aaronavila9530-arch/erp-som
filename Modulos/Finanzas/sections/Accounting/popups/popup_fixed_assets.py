@@ -6,8 +6,11 @@ from api_client import (
     disable_accounting_fixed_asset_api,
     get_accounting_fixed_asset_schedule_api,
     get_accounting_fixed_assets_api,
+    post_accounting_fixed_asset_capitalization_api,
+    post_accounting_fixed_asset_depreciation_api,
     update_accounting_fixed_asset_api,
 )
+from session_context import get_user
 
 
 class PopupFixedAssets(tk.Toplevel):
@@ -19,6 +22,7 @@ class PopupFixedAssets(tk.Toplevel):
         self.grab_set()
         self.search_var = tk.StringVar()
         self.status_var = tk.StringVar(value="ACTIVE")
+        self.depr_period_var = tk.StringVar(value=self._current_period())
         self.asset_rows = {}
         self.summary_vars = {
             "assets": tk.StringVar(value="0"),
@@ -50,6 +54,10 @@ class PopupFixedAssets(tk.Toplevel):
         ttk.Button(toolbar, text="+ Agregar activo", command=self._new_asset).pack(side="left", padx=(16, 4))
         ttk.Button(toolbar, text="Editar seleccionado", command=self._edit_asset).pack(side="left", padx=4)
         ttk.Button(toolbar, text="Inhabilitar", command=self._disable_asset).pack(side="left", padx=4)
+        ttk.Label(toolbar, text="Depreciar hasta").pack(side="left", padx=(16, 4))
+        ttk.Entry(toolbar, textvariable=self.depr_period_var, width=9).pack(side="left")
+        ttk.Button(toolbar, text="Postear depreciación", command=self._post_depreciation).pack(side="left", padx=6)
+        ttk.Button(toolbar, text="Capitalización faltante", command=self._post_capitalization).pack(side="left", padx=4)
         ttk.Button(toolbar, text="Cerrar", command=self.destroy).pack(side="right")
 
         summary = ttk.LabelFrame(self, text="Resumen de activos", padding=8)
@@ -139,6 +147,11 @@ class PopupFixedAssets(tk.Toplevel):
             return f"{float(value or 0):,.2f}"
         except Exception:
             return "0.00"
+
+    @staticmethod
+    def _current_period():
+        from datetime import date
+        return date.today().strftime("%Y-%m")
 
     def _load_assets(self):
         try:
@@ -248,6 +261,72 @@ class PopupFixedAssets(tk.Toplevel):
             except Exception:
                 self._disable_asset_direct(row["id"])
             self._load_assets()
+        except Exception as exc:
+            messagebox.showerror("Activos fijos", str(exc), parent=self)
+
+    def _post_depreciation(self):
+        period_to = self.depr_period_var.get().strip()
+        if not period_to:
+            messagebox.showwarning("Activos fijos", "Indique periodo hasta YYYY-MM.", parent=self)
+            return
+        if not messagebox.askyesno(
+            "Activos fijos",
+            f"Postear depreciaciones pendientes hasta {period_to}?\n\n"
+            "Se crearán asientos contables POSTED y se enlazarán al calendario.",
+            parent=self,
+        ):
+            return
+        try:
+            try:
+                result = post_accounting_fixed_asset_depreciation_api(
+                    period_to=period_to,
+                    user=get_user() or "ERP_USER",
+                )
+            except Exception:
+                result = self._post_depreciation_direct(period_to)
+            self._load_assets()
+            selected = self.assets_tree.selection()
+            if selected:
+                self._load_schedule()
+            messagebox.showinfo(
+                "Activos fijos",
+                "Depreciación posteada correctamente.\n\n"
+                f"Asientos creados: {result.get('posted', 0)}\n"
+                f"Saltadas: {result.get('skipped', 0)}\n"
+                f"Total CRC: {self._money(result.get('total_amount_crc'))}",
+                parent=self,
+            )
+        except Exception as exc:
+            messagebox.showerror("Activos fijos", str(exc), parent=self)
+
+    def _post_capitalization(self):
+        period = self.depr_period_var.get().strip()
+        if not period:
+            messagebox.showwarning("Activos fijos", "Indique periodo YYYY-MM.", parent=self)
+            return
+        if not messagebox.askyesno(
+            "Activos fijos",
+            f"Postear ajuste de capitalización faltante en {period}?\n\n"
+            "Se compara el módulo de activos contra el mayor y solo se postea el faltante neto.",
+            parent=self,
+        ):
+            return
+        try:
+            try:
+                result = post_accounting_fixed_asset_capitalization_api(
+                    period=period,
+                    user=get_user() or "ERP_USER",
+                )
+            except Exception:
+                result = self._post_capitalization_direct(period)
+            self._load_assets()
+            messagebox.showinfo(
+                "Activos fijos",
+                "Capitalización revisada correctamente.\n\n"
+                f"Asientos creados: {result.get('posted', 0)}\n"
+                f"Total CRC: {self._money(result.get('total_amount_crc'))}",
+                parent=self,
+            )
         except Exception as exc:
             messagebox.showerror("Activos fijos", str(exc), parent=self)
 
@@ -380,6 +459,44 @@ class PopupFixedAssets(tk.Toplevel):
                     (asset_id,),
                 )
                 return cur.fetchall()
+        finally:
+            conn.close()
+
+    def _post_depreciation_direct(self, period_to):
+        import os
+        import sys
+        sys.path.insert(0, os.path.join(os.getcwd(), "backend_api"))
+        from backend_api.database import connect
+        from backend_api.routers.fixed_assets import post_fixed_asset_depreciation
+
+        conn = connect()
+        try:
+            return post_fixed_asset_depreciation(
+                {
+                    "period_to": period_to,
+                    "user": get_user() or "ERP_USER",
+                },
+                db=conn,
+            )
+        finally:
+            conn.close()
+
+    def _post_capitalization_direct(self, period):
+        import os
+        import sys
+        sys.path.insert(0, os.path.join(os.getcwd(), "backend_api"))
+        from backend_api.database import connect
+        from backend_api.routers.fixed_assets import post_fixed_asset_capitalization_adjustment
+
+        conn = connect()
+        try:
+            return post_fixed_asset_capitalization_adjustment(
+                {
+                    "period": period,
+                    "user": get_user() or "ERP_USER",
+                },
+                db=conn,
+            )
         finally:
             conn.close()
 

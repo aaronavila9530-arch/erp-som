@@ -2168,6 +2168,40 @@ def disable_accounting_fixed_asset_api(asset_id):
     return r.json()
 
 
+def post_accounting_fixed_asset_depreciation_api(period_to=None, asset_id=None, user=None):
+    payload = {"company_code": get_company_code()}
+    if period_to:
+        payload["period_to"] = period_to
+    if asset_id:
+        payload["asset_id"] = asset_id
+    if user:
+        payload["user"] = user
+    r = api_request(
+        "POST",
+        f"{BASE_URL}/accounting/fixed-assets/depreciation/post",
+        json=payload,
+        timeout=120,
+    )
+    raise_for_status_with_detail(r)
+    return r.json()
+
+
+def post_accounting_fixed_asset_capitalization_api(period=None, user=None):
+    payload = {"company_code": get_company_code()}
+    if period:
+        payload["period"] = period
+    if user:
+        payload["user"] = user
+    r = api_request(
+        "POST",
+        f"{BASE_URL}/accounting/fixed-assets/capitalization/reconcile",
+        json=payload,
+        timeout=120,
+    )
+    raise_for_status_with_detail(r)
+    return r.json()
+
+
 def get_accounting_inventory_items_api(search=None, status="ACTIVE"):
     params = {"company_code": get_company_code()}
     if search:
