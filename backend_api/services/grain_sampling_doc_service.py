@@ -3,11 +3,12 @@ import tempfile
 import copy
 import re
 from docx import Document
+from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.text.paragraph import Paragraph
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-from docx.shared import Inches, Pt
+from docx.shared import Inches, Pt, RGBColor
 try:
     from services.template_autofit import apply_docx_autofit
     from services.document_branding import apply_mci_docx_branding
@@ -280,27 +281,40 @@ def generate_grain_sampling_doc(data: dict) -> str:
         for section in doc.sections:
             header = section.header
             _clear_header(header)
-            table = header.add_table(rows=1, cols=2, width=Inches(7.1))
+            usable_width = section.page_width - section.left_margin - section.right_margin
+            table = header.add_table(rows=1, cols=2, width=usable_width)
+            table.alignment = WD_TABLE_ALIGNMENT.CENTER
             _remove_table_borders(table)
+            logo_width = min(Inches(3.15), int(usable_width * 0.54))
+            cert_width = usable_width - logo_width
             try:
-                table.columns[0].width = Inches(2.7)
-                table.columns[1].width = Inches(4.4)
+                table.columns[0].width = logo_width
+                table.columns[1].width = cert_width
+                table.cell(0, 0).width = logo_width
+                table.cell(0, 1).width = cert_width
             except Exception:
                 pass
 
             logo_cell = table.cell(0, 0)
             cert_cell = table.cell(0, 1)
+            logo_cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.TOP
+            cert_cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.TOP
 
             logo_p = logo_cell.paragraphs[0]
             logo_p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+            logo_p.paragraph_format.space_before = Pt(0)
+            logo_p.paragraph_format.space_after = Pt(0)
             logo_run = logo_p.add_run()
-            logo_run.add_picture(header_image, width=Inches(2.35))
+            logo_run.add_picture(header_image, width=Inches(2.9))
 
             cert_p = cert_cell.paragraphs[0]
             cert_p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+            cert_p.paragraph_format.space_before = Pt(4)
+            cert_p.paragraph_format.space_after = Pt(0)
             cert_run = cert_p.add_run(cert_text)
-            cert_run.font.size = Pt(7.5)
+            cert_run.font.size = Pt(8.5)
             cert_run.font.bold = True
+            cert_run.font.color.rgb = RGBColor(0, 0, 0)
 
     def _apply_dynamic_narrative():
         sample_rows = _sample_rows()
