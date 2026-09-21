@@ -1,8 +1,12 @@
 import os
+import re
 import tempfile
 import subprocess
+from datetime import date, datetime
 from pathlib import Path
 from docx import Document
+from docx.enum.text import WD_TAB_ALIGNMENT
+from docx.shared import Inches
 try:
     from services.template_autofit import apply_docx_autofit
     from services.document_branding import apply_mci_docx_branding
@@ -16,6 +20,54 @@ except ModuleNotFoundError:
 # ============================================================
 
 def generate_draft_survey_word_pdf(data: dict) -> str:
+    data = dict(data or {})
+
+    def _format_report_date(value):
+        if value in (None, ""):
+            return ""
+        if isinstance(value, datetime):
+            value = value.date()
+        if isinstance(value, date):
+            return value.strftime("%b %d %Y")
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        for fmt in (
+            "%Y-%m-%d", "%Y/%m/%d", "%d-%m-%Y", "%d/%m/%Y",
+            "%m-%d-%Y", "%m/%d/%Y", "%b %d %Y", "%B %d %Y",
+            "%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S",
+        ):
+            try:
+                return datetime.strptime(text.replace(",", " "), fmt).strftime("%b %d %Y")
+            except ValueError:
+                continue
+        try:
+            return datetime.fromisoformat(text[:19].replace(" ", "T")).strftime("%b %d %Y")
+        except Exception:
+            return text
+
+    def _combine_date_time(prefix):
+        current = str(data.get(prefix) or "").strip()
+        if current and not current.startswith("{"):
+            return current
+        date_text = _format_report_date(data.get(f"{prefix}_date"))
+        time_text = str(data.get(f"{prefix}_time") or "").strip()
+        if not date_text:
+            return ""
+        if time_text and time_text not in {"00:00", "00:00:00"}:
+            return f"{date_text} {time_text[:5]}"
+        return date_text
+
+    for _key in (
+        "word_arrived_buoy",
+        "word_nor_tendered",
+        "word_all_fast",
+        "word_initial_draft",
+        "word_commenced",
+        "word_completed",
+        "word_final_draft",
+    ):
+        data[_key] = _combine_date_time(_key)
 
     # ========================================================
     # VALIDACIÓN
@@ -69,6 +121,77 @@ def generate_draft_survey_word_pdf(data: dict) -> str:
         for key, value in data.items()
     }
 
+    time_sheet_labels = {
+        "word_arrived_buoy": "Vessel Arrived at Sea buoy",
+        "word_nor_tendered": "N.O.R Tendered",
+        "word_all_fast": "All Fast",
+        "word_initial_draft": "Initial Draft Survey",
+        "word_commenced": "Commenced Discharge",
+        "word_completed": "Completed Discharge",
+        "word_final_draft": "Final Draft Survey",
+    }
+    quantity_labels = {
+        "word_draft_figures": ("Draft Survey Figure", "MT."),
+        "word_bl_figures": ("B/L Figures", "MT."),
+        "word_difference": ("Difference", "MT"),
+        "word_percentage": ("Percentage", "%"),
+        "word_shore_scale": ("Shore Scale Figures", "MT."),
+        "word_shore_bl": ("B/L Figures", "MT."),
+        "word_shore_difference": ("Difference", "MT"),
+        "word_shore_percentage": ("Percentage", "%"),
+    }
+
+    def set_paragraph_text(paragraph, text):
+        if paragraph.runs:
+            paragraph.runs[0].text = text
+            for run in paragraph.runs[1:]:
+                run.text = ""
+        else:
+            paragraph.add_run(text)
+
+    def align_time_sheet_paragraph(paragraph):
+        text = paragraph.text or ""
+        for key, label in time_sheet_labels.items():
+            placeholder = f"{{{key}}}"
+            if placeholder not in text:
+                continue
+            value = safe(data.get(key))
+            try:
+                paragraph.paragraph_format.tab_stops.clear_all()
+                paragraph.paragraph_format.tab_stops.add_tab_stop(
+                    Inches(3.65),
+                    WD_TAB_ALIGNMENT.LEFT,
+                )
+            except Exception:
+                pass
+            set_paragraph_text(paragraph, f"{label}\t{value} LT.")
+            return True
+        return False
+
+    def align_quantity_paragraph(paragraph):
+        text = paragraph.text or ""
+        for key, (label, unit) in quantity_labels.items():
+            placeholder = f"{{{key}}}"
+            if placeholder not in text:
+                continue
+            value = safe(data.get(key))
+            try:
+                paragraph.paragraph_format.tab_stops.clear_all()
+                paragraph.paragraph_format.tab_stops.add_tab_stop(
+                    Inches(2.95),
+                    WD_TAB_ALIGNMENT.LEFT,
+                )
+                paragraph.paragraph_format.tab_stops.add_tab_stop(
+                    Inches(4.25),
+                    WD_TAB_ALIGNMENT.LEFT,
+                )
+            except Exception:
+                pass
+            suffix = f" {unit}" if unit else ""
+            set_paragraph_text(paragraph, f"{label}\t{value}\t{suffix}".rstrip())
+            return True
+        return False
+
     # ========================================================
     # REPLACEMENT ENGINE (ANTI-RUN SPLIT + PRESERVE FORMAT)
     # ========================================================
@@ -79,6 +202,10 @@ def generate_draft_survey_word_pdf(data: dict) -> str:
             return
 
         try:
+            if align_time_sheet_paragraph(paragraph):
+                return
+            if align_quantity_paragraph(paragraph):
+                return
 
             full_text = "".join(run.text for run in paragraph.runs)
 
@@ -93,6 +220,8 @@ def generate_draft_survey_word_pdf(data: dict) -> str:
                         placeholder,
                         value
                     )
+
+            updated_text = re.sub(r"\{[^{}]+\}", "", updated_text)
 
             if updated_text == full_text:
                 return

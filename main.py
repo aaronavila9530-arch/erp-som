@@ -11,9 +11,11 @@ from tkinter import messagebox, ttk
 from datetime import datetime, timedelta
 
 from window_placement import install_same_monitor_policy
+from Modulos.Core.excel_combobox import install_excel_combobox
 
 # Every popup and native dialog follows the monitor where ERP-SOM is active.
 install_same_monitor_policy()
+install_excel_combobox()
 
 from resource_utils import resource_path
 from splash_screen import SplashScreen
