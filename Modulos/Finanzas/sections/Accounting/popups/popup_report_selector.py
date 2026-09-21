@@ -46,6 +46,7 @@ from Modulos.Finanzas.sections.Accounting.reports.pdf_tb import (
 )
 
 ALL_MONTHS = [f"{month:02d}" for month in range(1, 13)]
+ACCOUNT_TYPES = ["TODOS", "ACTIVO", "PASIVO", "PATRIMONIO", "INGRESO", "COSTO", "GASTO"]
 
 
 class PopupReportSelector(tk.Toplevel):
@@ -67,7 +68,7 @@ class PopupReportSelector(tk.Toplevel):
         self.ledger = ledger
 
         self.title("Reportes Contables")
-        self.geometry("520x420")
+        self.geometry("560x470")
         self.resizable(False, False)
         self.configure(bg="white")
 
@@ -110,6 +111,7 @@ class PopupReportSelector(tk.Toplevel):
         self.period_from_month = tk.StringVar()
         self.period_to_year = tk.StringVar()
         self.period_to_month = tk.StringVar()
+        self.account_type_var = tk.StringVar(value="TODOS")
 
         # ==================================================
         # UI
@@ -240,6 +242,37 @@ class PopupReportSelector(tk.Toplevel):
             return dt.year, dt.month
         return None
 
+    def _line_matches_account_type(self, row):
+        selected = (self.account_type_var.get() or "TODOS").strip().upper()
+        if selected in ("", "TODOS"):
+            return True
+
+        account_type = str(row.get("account_type") or "").strip().upper()
+        if not account_type:
+            code = str(row.get("account_code") or "").strip()
+            if code.startswith("1"):
+                account_type = "ACTIVO"
+            elif code.startswith("2"):
+                account_type = "PASIVO"
+            elif code.startswith("3"):
+                account_type = "PATRIMONIO"
+            elif code.startswith("4"):
+                account_type = "INGRESO"
+            elif code.startswith("5"):
+                account_type = "GASTO"
+            elif code.startswith("6"):
+                account_type = "COSTO"
+
+        aliases = {
+            "ACTIVO": {"ACTIVO", "ASSET"},
+            "PASIVO": {"PASIVO", "LIABILITY"},
+            "PATRIMONIO": {"PATRIMONIO", "EQUITY"},
+            "INGRESO": {"INGRESO", "REVENUE", "INCOME"},
+            "COSTO": {"COSTO", "COST"},
+            "GASTO": {"GASTO", "EXPENSE"},
+        }
+        return account_type in aliases.get(selected, {selected})
+
     # ==================================================
     # UI
     # ==================================================
@@ -364,6 +397,28 @@ class PopupReportSelector(tk.Toplevel):
         self.cmb_to_month.grid(row=3, column=2)
 
         # =========================
+        # TIPO DE CUENTA
+        # =========================
+        type_frame = tk.LabelFrame(self, text="Tipo de cuenta", bg="white", fg="black")
+        type_frame.pack(fill="x", padx=20, pady=5)
+
+        tk.Label(type_frame, text="Filtrar por", bg="white").grid(row=0, column=0, padx=10, sticky="w")
+        self.cmb_account_type = ttk.Combobox(
+            type_frame,
+            values=ACCOUNT_TYPES,
+            width=18,
+            state="readonly",
+            textvariable=self.account_type_var
+        )
+        self.cmb_account_type.grid(row=0, column=1, padx=5, pady=6, sticky="w")
+        tk.Label(
+            type_frame,
+            text="Útil para Balance de Comprobación por activo, pasivo, gasto, ingreso, etc.",
+            bg="white",
+            fg="#475569"
+        ).grid(row=0, column=2, padx=10, sticky="w")
+
+        # =========================
         # FORMATO
         # =========================
         format_frame = tk.LabelFrame(self, text="Formato", bg="white", fg="black")
@@ -467,6 +522,8 @@ class PopupReportSelector(tk.Toplevel):
     def _on_generate(self):
 
         rows = []
+        selected_type = (self.account_type_var.get() or "TODOS").strip()
+        account_type_filter = None if selected_type in ("", "TODOS") else selected_type
 
         # ==================================================
         # PERIODO / RANGO
@@ -488,13 +545,17 @@ class PopupReportSelector(tk.Toplevel):
 
             selected_period = f"{year}-{month:02d}"
             try:
-                rows = get_accounting_lines_api(period=selected_period)
+                rows = get_accounting_lines_api(
+                    period=selected_period,
+                    account_type=account_type_filter
+                )
             except Exception:
                 rows = []
             if not rows:
                 rows = [
                     r for r in self.all_lines
                     if self._line_period_tuple(r) == (year, month)
+                    and self._line_matches_account_type(r)
                 ]
 
             period_label_year = year
@@ -528,13 +589,18 @@ class PopupReportSelector(tk.Toplevel):
             from_period = f"{fy}-{fm:02d}"
             to_period = f"{ty}-{tm:02d}"
             try:
-                rows = get_accounting_lines_api(period_from=from_period, period_to=to_period)
+                rows = get_accounting_lines_api(
+                    period_from=from_period,
+                    period_to=to_period,
+                    account_type=account_type_filter
+                )
             except Exception:
                 rows = []
             if not rows:
                 rows = [
                     r for r in self.all_lines
                     if self._line_period_tuple(r) and (fy, fm) <= self._line_period_tuple(r) <= (ty, tm)
+                    and self._line_matches_account_type(r)
                 ]
 
             period_label_year = ty

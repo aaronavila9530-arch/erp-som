@@ -57,23 +57,24 @@ def export_tb_excel_from_lines(rows_or_built: Any):
     ws.title = "Balance de Comprobación"
 
     ws.column_dimensions["A"].width = 45
-    ws.column_dimensions["B"].width = 18
+    ws.column_dimensions["B"].width = 16
     ws.column_dimensions["C"].width = 18
     ws.column_dimensions["D"].width = 18
     ws.column_dimensions["E"].width = 18
+    ws.column_dimensions["F"].width = 18
 
     row = 1
 
     # ==================================================
     # ENCABEZADO
     # ==================================================
-    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=5)
+    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=6)
     ws.cell(row=row, column=1, value="BALANCE DE COMPROBACIÓN")
     ws.cell(row=row, column=1).font = Font(bold=True, size=14)
     ws.cell(row=row, column=1).alignment = Alignment(horizontal="center")
     row += 1
 
-    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=5)
+    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=6)
     ws.cell(
         row=row,
         column=1,
@@ -87,6 +88,7 @@ def export_tb_excel_from_lines(rows_or_built: Any):
     # ==================================================
     headers = [
         "Cuenta",
+        "Tipo",
         "Debe",
         "Haber",
         "Saldo Deudor",
@@ -94,7 +96,7 @@ def export_tb_excel_from_lines(rows_or_built: Any):
     ]
     ws.append(headers)
 
-    for col in range(1, 6):
+    for col in range(1, 7):
         cell = ws.cell(row=row, column=col)
         cell.font = Font(bold=True)
         cell.alignment = Alignment(horizontal="center")
@@ -107,21 +109,22 @@ def export_tb_excel_from_lines(rows_or_built: Any):
     for r in tb["rows"]:
         ws.append([
             r["account"],
+            r.get("account_type", ""),
             r["debit"],
             r["credit"],
             r["saldo_deudor"],
             r["saldo_acreedor"],
         ])
 
-        ws.cell(row=row, column=2).number_format = "#,##0.00"
         ws.cell(row=row, column=3).number_format = "#,##0.00"
         ws.cell(row=row, column=4).number_format = "#,##0.00"
         ws.cell(row=row, column=5).number_format = "#,##0.00"
+        ws.cell(row=row, column=6).number_format = "#,##0.00"
 
-        ws.cell(row=row, column=2).alignment = Alignment(horizontal="right")
         ws.cell(row=row, column=3).alignment = Alignment(horizontal="right")
         ws.cell(row=row, column=4).alignment = Alignment(horizontal="right")
         ws.cell(row=row, column=5).alignment = Alignment(horizontal="right")
+        ws.cell(row=row, column=6).alignment = Alignment(horizontal="right")
 
         row += 1
 
@@ -130,19 +133,20 @@ def export_tb_excel_from_lines(rows_or_built: Any):
     # ==================================================
     ws.append([
         "TOTAL",
+        "",
         tb["total_debit"],
         tb["total_credit"],
         tb["total_saldo_deudor"],
         tb["total_saldo_acreedor"],
     ])
 
-    for col in range(1, 6):
+    for col in range(1, 7):
         ws.cell(row=row, column=col).font = Font(bold=True)
 
     # ==================================================
     # BORDES (BLINDADO)
     # ==================================================
-    for r in ws.iter_rows(min_row=1, max_row=row, min_col=1, max_col=5):
+    for r in ws.iter_rows(min_row=1, max_row=row, min_col=1, max_col=6):
         for cell in r:
             if cell.value is not None:
                 try:

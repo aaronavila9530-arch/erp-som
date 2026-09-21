@@ -17,6 +17,56 @@ router = APIRouter(
     tags=["Accounting"]
 )
 
+ACCOUNT_TYPE_ALIASES = {
+    "ACTIVO": ("ACTIVO", "ASSET"),
+    "ASSET": ("ACTIVO", "ASSET"),
+    "PASIVO": ("PASIVO", "LIABILITY"),
+    "LIABILITY": ("PASIVO", "LIABILITY"),
+    "PATRIMONIO": ("PATRIMONIO", "EQUITY"),
+    "EQUITY": ("PATRIMONIO", "EQUITY"),
+    "INGRESO": ("INGRESO", "REVENUE", "INCOME"),
+    "REVENUE": ("INGRESO", "REVENUE", "INCOME"),
+    "INCOME": ("INGRESO", "REVENUE", "INCOME"),
+    "COSTO": ("COSTO", "COST"),
+    "COST": ("COSTO", "COST"),
+    "GASTO": ("GASTO", "EXPENSE"),
+    "EXPENSE": ("GASTO", "EXPENSE"),
+}
+
+
+def _account_type_values(value: str | None):
+    text = str(value or "").strip().upper()
+    if not text or text == "TODOS":
+        return None
+    return ACCOUNT_TYPE_ALIASES.get(text, (text,))
+
+
+def _account_type_case() -> str:
+    raw_case = """
+        UPPER(COALESCE(a.account_type,
+            CASE
+                WHEN al.account_code LIKE '1%%' THEN 'ACTIVO'
+                WHEN al.account_code LIKE '2%%' THEN 'PASIVO'
+                WHEN al.account_code LIKE '3%%' THEN 'PATRIMONIO'
+                WHEN al.account_code LIKE '4%%' THEN 'INGRESO'
+                WHEN al.account_code LIKE '5%%' THEN 'GASTO'
+                WHEN al.account_code LIKE '6%%' THEN 'COSTO'
+                ELSE 'SIN CLASIFICAR'
+            END
+        ))
+    """
+    return f"""
+        CASE
+            WHEN {raw_case} IN ('ACTIVO', 'ASSET') THEN 'ACTIVO'
+            WHEN {raw_case} IN ('PASIVO', 'LIABILITY') THEN 'PASIVO'
+            WHEN {raw_case} IN ('PATRIMONIO', 'EQUITY') THEN 'PATRIMONIO'
+            WHEN {raw_case} IN ('INGRESO', 'REVENUE', 'INCOME') THEN 'INGRESO'
+            WHEN {raw_case} IN ('COSTO', 'COST') THEN 'COSTO'
+            WHEN {raw_case} IN ('GASTO', 'EXPENSE') THEN 'GASTO'
+            ELSE {raw_case}
+        END
+    """
+
 # ============================================================
 # RBAC GUARD
 # ============================================================
@@ -39,6 +89,7 @@ def require_permission(module: str, action: str):
 @router.get("")
 def get_accounting_lines(
     account_code: str | None = Query(None),
+    account_type: str | None = Query(None),
     period: str | None = Query(None),
     period_from: str | None = Query(None),
     period_to: str | None = Query(None),
@@ -67,7 +118,7 @@ def get_accounting_lines(
         # ----------------------------------------------------
         # BASE QUERY
         # ----------------------------------------------------
-        sql = """
+        sql = f"""
             SELECT
                 al.id              AS line_id,
                 al.entry_id,
@@ -81,9 +132,11 @@ def get_accounting_lines(
                 al.debit,
                 al.credit,
                 al.line_description,
-                al.created_at
+                al.created_at,
+                {_account_type_case()} AS account_type
             FROM accounting_lines al
             JOIN accounting_entries ae ON ae.id = al.entry_id
+            LEFT JOIN accounting_accounts a ON a.account_code = al.account_code
         """
 
         filtros = []
@@ -112,6 +165,13 @@ def get_accounting_lines(
             if account_code:
                 filtros.append("al.account_code LIKE %s")
                 params.append(f"{account_code}%")
+
+        account_types = _account_type_values(account_type)
+        if account_types:
+            filtros.append(f"""
+                {_account_type_case()} = ANY(%s)
+            """)
+            params.append(list(account_types))
 
         # ----------------------------------------------------
         # WHERE DINÁMICO

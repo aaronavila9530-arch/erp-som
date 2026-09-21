@@ -1100,7 +1100,8 @@ def som_web_home() -> HTMLResponse:
         return;
       }
       if (block === "accounting") {
-        ws.innerHTML = `<div class="card panel"><div class="panel-head"><h2>Accounting</h2><span class="muted">Carga manual solo con Buscar</span></div><div class="service-actions"><button onclick="loadGenericFinance('/accounting/ledger','accountingWorkspace')">Buscar</button></div><div id="accountingWorkspace" class="status">Presione Buscar para consultar asientos.</div></div>`;
+        ws.innerHTML = `<div class="card panel"><div id="accountingWorkspace"></div></div>`;
+        renderAccountingWeb($("accountingWorkspace"));
       }
     }
     function orderCashWorkspace() {
@@ -1138,6 +1139,118 @@ def som_web_home() -> HTMLResponse:
         const input = tr.querySelector("input.row-pick");
         if (input) input.checked = selectedGenericFinanceIndexes.has(i - 1);
       });
+    }
+    function renderAccountingWeb(target) {
+      const thisPeriod = new Date().toISOString().slice(0,7);
+      target.innerHTML = `
+        <div class="panel-head">
+          <h2>Accounting</h2>
+          <span class="muted">Asientos, balance de comprobación y reportes por consulta manual</span>
+        </div>
+        <div class="finance-filter-row compact">
+          <label>Modo<select id="accMode" onchange="toggleAccountingMode()"><option value="SINGLE">Mes específico</option><option value="RANGE">Rango / periodo fiscal</option></select></label>
+          <label id="accPeriodLabel">Periodo<input id="accPeriod" type="month" value="${thisPeriod}" /></label>
+          <label id="accFromLabel" style="display:none">Desde<input id="accPeriodFrom" type="month" value="${thisPeriod}" /></label>
+          <label id="accToLabel" style="display:none">Hasta<input id="accPeriodTo" type="month" value="${thisPeriod}" /></label>
+          <label>Reporte<select id="accReport"><option value="BC">Balance de Comprobación</option><option value="ASIENTOS">Asientos</option><option value="MAYOR">Libro Mayor</option><option value="ESF">Estado de Situación Financiera</option><option value="ER">Estado de Resultados</option><option value="FC">Flujo de Caja</option></select></label>
+          <label>Tipo<select id="accAccountType"><option value="">Todos</option><option>ACTIVO</option><option>PASIVO</option><option>PATRIMONIO</option><option>INGRESO</option><option>COSTO</option><option>GASTO</option></select></label>
+        </div>
+        <div class="finance-filter-row compact">
+          <label>Cuenta<input id="accAccountCode" placeholder="Código opcional" /></label>
+          <label>Origen<select id="accOrigin"><option value="">Todos</option><option>ITP</option><option>ITP_PAYMENT</option><option>ITP_BIWEEKLY_PAYMENT</option><option>COLLECTIONS</option><option>INVOICING</option><option>MANUAL</option><option>CASH_APP</option></select></label>
+          <button onclick="loadAccountingWeb()">Buscar</button>
+          <button class="secondary" onclick="clearAccountingWeb()">Limpiar</button>
+          <button class="secondary" onclick="exportAccountingReport('xlsx')">Exportar Excel</button>
+          <button class="secondary" onclick="exportAccountingReport('pdf')">Exportar PDF</button>
+        </div>
+        <div id="accountingResult" class="status">Configure filtros y presione Buscar.</div>`;
+    }
+    function toggleAccountingMode() {
+      const range = valueFrom("accMode") === "RANGE";
+      $("accPeriodLabel").style.display = range ? "none" : "";
+      $("accFromLabel").style.display = range ? "" : "none";
+      $("accToLabel").style.display = range ? "" : "none";
+    }
+    function accountingParams() {
+      const params = new URLSearchParams();
+      const mode = valueFrom("accMode");
+      if (mode === "RANGE") {
+        const from = valueFrom("accPeriodFrom");
+        const to = valueFrom("accPeriodTo");
+        if (from) params.set("period_from", from);
+        if (to) params.set("period_to", to);
+      } else {
+        const period = valueFrom("accPeriod");
+        if (period) params.set("period", period);
+      }
+      const report = valueFrom("accReport") || "BC";
+      const type = valueFrom("accAccountType");
+      const account = valueFrom("accAccountCode");
+      const origin = valueFrom("accOrigin");
+      params.set("report", report);
+      if (type) params.set("account_type", type);
+      if (account) params.set("account_code", account);
+      if (origin) params.set("origin", origin);
+      params.set("company_code", selectedCompany());
+      return params;
+    }
+    async function loadAccountingWeb() {
+      const target = $("accountingResult");
+      target.className = "status";
+      target.textContent = "Consultando...";
+      try {
+        const params = accountingParams();
+        params.delete("report");
+        const payload = await getJSON(`/accounting-lines?${params.toString()}`);
+        const rows = rowsList(payload);
+        target.className = "";
+        if (!rows.length) {
+          target.innerHTML = '<div class="status">Sin datos para esta consulta.</div>';
+          return;
+        }
+        target.innerHTML = renderAccountingPreview(rows);
+      } catch (err) {
+        target.className = "status error";
+        target.textContent = err.message;
+      }
+    }
+    function renderAccountingPreview(rows) {
+      const report = valueFrom("accReport") || "BC";
+      if (report === "BC") return renderAccountingTrialBalance(rows);
+      return renderFinanceGenericTable(rows);
+    }
+    function renderAccountingTrialBalance(rows) {
+      const map = new Map();
+      rows.forEach(row => {
+        const code = String(row.account_code || "").trim();
+        if (!code) return;
+        const key = `${code}||${row.account_name || ""}||${row.account_type || ""}`;
+        const item = map.get(key) || {account_code:code, account_name:row.account_name || "", account_type:row.account_type || "", debit:0, credit:0};
+        item.debit += Number(row.debit || 0);
+        item.credit += Number(row.credit || 0);
+        map.set(key, item);
+      });
+      const out = [...map.values()].sort((a,b) => a.account_code.localeCompare(b.account_code)).map(row => {
+        const balance = row.debit - row.credit;
+        return {...row, saldo_deudor: balance > 0 ? balance : 0, saldo_acreedor: balance < 0 ? Math.abs(balance) : 0};
+      });
+      const totals = out.reduce((acc,row) => {
+        acc.debit += row.debit; acc.credit += row.credit; acc.saldo_deudor += row.saldo_deudor; acc.saldo_acreedor += row.saldo_acreedor;
+        return acc;
+      }, {debit:0, credit:0, saldo_deudor:0, saldo_acreedor:0});
+      const fmt = n => Number(n || 0).toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2});
+      return `<div class="table-wrap"><table><thead><tr><th>Cuenta</th><th>Nombre</th><th>Tipo</th><th>Debe</th><th>Haber</th><th>Saldo deudor</th><th>Saldo acreedor</th></tr></thead><tbody>
+        ${out.map(row => `<tr><td>${esc(row.account_code)}</td><td>${esc(row.account_name)}</td><td>${esc(row.account_type)}</td><td>${fmt(row.debit)}</td><td>${fmt(row.credit)}</td><td>${fmt(row.saldo_deudor)}</td><td>${fmt(row.saldo_acreedor)}</td></tr>`).join("")}
+        <tr class="total-row"><td colspan="3"><b>Total</b></td><td><b>${fmt(totals.debit)}</b></td><td><b>${fmt(totals.credit)}</b></td><td><b>${fmt(totals.saldo_deudor)}</b></td><td><b>${fmt(totals.saldo_acreedor)}</b></td></tr>
+      </tbody></table></div>`;
+    }
+    function clearAccountingWeb() {
+      renderAccountingWeb($("accountingWorkspace"));
+    }
+    function exportAccountingReport(ext) {
+      const params = accountingParams();
+      const path = ext === "pdf" ? "/accounting/reports/pdf" : "/accounting/reports/excel";
+      window.open(`${path}?${params.toString()}`, "_blank");
     }
     function renderItpWeb(target) {
       target.innerHTML = `

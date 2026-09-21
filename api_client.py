@@ -3603,7 +3603,7 @@ def get_closing_period_status(
     return r.json()
 
 
-def get_accounting_lines_api(period=None, period_from=None, period_to=None, account_code=None):
+def get_accounting_lines_api(period=None, period_from=None, period_to=None, account_code=None, account_type=None):
     params = {"company_code": get_company_code()}
     if period:
         params["period"] = period
@@ -3613,6 +3613,8 @@ def get_accounting_lines_api(period=None, period_from=None, period_to=None, acco
         params["period_to"] = period_to
     if account_code:
         params["account_code"] = account_code
+    if account_type:
+        params["account_type"] = account_type
 
     r = api_request(
         "GET",

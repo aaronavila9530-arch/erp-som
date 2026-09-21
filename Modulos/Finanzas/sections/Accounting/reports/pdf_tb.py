@@ -122,7 +122,7 @@ def export_tb_pdf_from_lines(rows_or_built: Any):
     def build_table(data: List[List[str]]):
         table = Table(
             data,
-            colWidths=[230, 80, 80, 80, 80],
+            colWidths=[205, 62, 72, 72, 72, 72],
             repeatRows=1
         )
 
@@ -131,7 +131,7 @@ def export_tb_pdf_from_lines(rows_or_built: Any):
             ("BACKGROUND", (0, 0), (-1, 0), colors.whitesmoke),
             ("FONT", (0, 0), (-1, 0), "Helvetica-Bold"),
             ("FONT", (0, 1), (-1, -1), "Helvetica"),
-            ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
+            ("ALIGN", (2, 1), (-1, -1), "RIGHT"),
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
             ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
             ("TOPPADDING", (0, 0), (-1, -1), 4),
@@ -143,12 +143,13 @@ def export_tb_pdf_from_lines(rows_or_built: Any):
     # TABLA
     # ==================================================
     table_data = [
-        ["Cuenta", "Debe", "Haber", "Saldo Deudor", "Saldo Acreedor"]
+        ["Cuenta", "Tipo", "Debe", "Haber", "Saldo Deudor", "Saldo Acreedor"]
     ]
 
     for r in tb["rows"]:
         table_data.append([
             str(r["account"]),
+            str(r.get("account_type") or ""),
             fmt_amount(r["debit"]),
             fmt_amount(r["credit"]),
             fmt_amount(r["saldo_deudor"]),
@@ -157,6 +158,7 @@ def export_tb_pdf_from_lines(rows_or_built: Any):
 
     table_data.append([
         "TOTAL",
+        "",
         fmt_amount(tb["total_debit"]),
         fmt_amount(tb["total_credit"]),
         fmt_amount(tb["total_saldo_deudor"]),
