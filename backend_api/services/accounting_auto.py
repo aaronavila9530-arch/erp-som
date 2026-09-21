@@ -1342,6 +1342,8 @@ def sync_itp_to_accounting(conn):
                 doc_currency = (row.get("currency_code") or "CRC").upper()
                 rate = float(row.get("exchange_rate") or 1)
                 if doc_currency == "USD":
+                    if rate <= 1:
+                        rate = tc
                     return round(tax_raw * rate, 2)
                 return round(tax_raw, 2)
 

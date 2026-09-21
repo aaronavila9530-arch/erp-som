@@ -312,6 +312,7 @@ def _accounting_entry_stats(conn):
 def _report_title(report: str | None):
     titles = {
         "ASIENTOS": "Asientos contables",
+        "DETALLE_TIPO": "Detalle por tipo de cuenta",
         "MAYOR": "Mayor general",
         "BC": "Balance de comprobacion",
         "ESF": "Estado de situacion financiera",

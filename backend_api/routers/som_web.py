@@ -1152,7 +1152,7 @@ def som_web_home() -> HTMLResponse:
           <label id="accPeriodLabel">Periodo<input id="accPeriod" type="month" value="${thisPeriod}" /></label>
           <label id="accFromLabel" style="display:none">Desde<input id="accPeriodFrom" type="month" value="${thisPeriod}" /></label>
           <label id="accToLabel" style="display:none">Hasta<input id="accPeriodTo" type="month" value="${thisPeriod}" /></label>
-          <label>Reporte<select id="accReport"><option value="BC">Balance de Comprobación</option><option value="ASIENTOS">Asientos</option><option value="MAYOR">Libro Mayor</option><option value="ESF">Estado de Situación Financiera</option><option value="ER">Estado de Resultados</option><option value="FC">Flujo de Caja</option></select></label>
+          <label>Reporte<select id="accReport"><option value="BC">Balance de Comprobación</option><option value="DETALLE_TIPO">Detalle por tipo de cuenta</option><option value="ASIENTOS">Asientos</option><option value="MAYOR">Libro Mayor</option><option value="ESF">Estado de Situación Financiera</option><option value="ER">Estado de Resultados</option><option value="FC">Flujo de Caja</option></select></label>
           <label>Tipo<select id="accAccountType"><option value="">Todos</option><option>ACTIVO</option><option>PASIVO</option><option>PATRIMONIO</option><option>INGRESO</option><option>COSTO</option><option>GASTO</option></select></label>
         </div>
         <div class="finance-filter-row compact">

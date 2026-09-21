@@ -296,6 +296,7 @@ class PopupReportSelector(tk.Toplevel):
 
         reports = [
             ("Asientos (Libro Diario)", "ASIENTOS"),
+            ("Detalle por tipo de cuenta", "DETALLE_TIPO"),
             ("Libro Mayor", "MAYOR"),
             ("Balance de Comprobación", "BC"),
             ("Estado de Situación Financiera", "ESF"),
@@ -621,6 +622,20 @@ class PopupReportSelector(tk.Toplevel):
 
         try:
             if report == "ASIENTOS":
+                if fmt == "EXCEL":
+                    export_diario_excel(
+                        rows,
+                        fiscal_year=period_label_year,
+                        period=period_label_month
+                    )
+                else:
+                    export_diario_pdf(
+                        rows,
+                        fiscal_year=period_label_year,
+                        period=period_label_month
+                    )
+
+            elif report == "DETALLE_TIPO":
                 if fmt == "EXCEL":
                     export_diario_excel(
                         rows,
