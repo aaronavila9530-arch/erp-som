@@ -6,7 +6,8 @@ from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.text.paragraph import Paragraph
 from docx.oxml import OxmlElement
-from docx.shared import Pt
+from docx.oxml.ns import qn
+from docx.shared import Inches, Pt
 try:
     from services.template_autofit import apply_docx_autofit
     from services.document_branding import apply_mci_docx_branding
@@ -249,6 +250,58 @@ def generate_grain_sampling_doc(data: dict) -> str:
                         for paragraph in cell.paragraphs:
                             normalize_paragraph(paragraph)
 
+    def _clear_header(header):
+        for child in list(header._element):
+            header._element.remove(child)
+
+    def _remove_table_borders(table):
+        tbl_pr = table._tbl.tblPr
+        borders = tbl_pr.first_child_found_in("w:tblBorders")
+        if borders is None:
+            borders = OxmlElement("w:tblBorders")
+            tbl_pr.append(borders)
+        for edge in ("top", "left", "bottom", "right", "insideH", "insideV"):
+            tag = f"w:{edge}"
+            node = borders.find(qn(tag))
+            if node is None:
+                node = OxmlElement(tag)
+                borders.append(node)
+            node.set(qn("w:val"), "nil")
+
+    def rebuild_header_image():
+        cert_no = _non_empty(data.get("cert_no"))
+        cert_text = f"CERT N° {cert_no}" if cert_no else "CERT N°"
+        header_image = os.path.abspath(
+            os.path.join(base_dir, "..", "assets", "header.png")
+        )
+        if not os.path.exists(header_image):
+            return
+
+        for section in doc.sections:
+            header = section.header
+            _clear_header(header)
+            table = header.add_table(rows=1, cols=2, width=Inches(7.1))
+            _remove_table_borders(table)
+            try:
+                table.columns[0].width = Inches(2.7)
+                table.columns[1].width = Inches(4.4)
+            except Exception:
+                pass
+
+            logo_cell = table.cell(0, 0)
+            cert_cell = table.cell(0, 1)
+
+            logo_p = logo_cell.paragraphs[0]
+            logo_p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+            logo_run = logo_p.add_run()
+            logo_run.add_picture(header_image, width=Inches(2.35))
+
+            cert_p = cert_cell.paragraphs[0]
+            cert_p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+            cert_run = cert_p.add_run(cert_text)
+            cert_run.font.size = Pt(7.5)
+            cert_run.font.bold = True
+
     def _apply_dynamic_narrative():
         sample_rows = _sample_rows()
         sampled_holds = holds_text or ", ".join(hold for _, hold in sample_rows)
@@ -385,7 +438,7 @@ def generate_grain_sampling_doc(data: dict) -> str:
                     for paragraph in cell.paragraphs:
                         replace_in_paragraph(paragraph, data)
 
-    normalize_certificate_header()
+    rebuild_header_image()
 
     # ========================================================
     # SAVE FILE
