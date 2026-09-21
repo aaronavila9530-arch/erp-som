@@ -11,7 +11,7 @@ def build_tb_from_lines(
     Construye el BALANCE DE COMPROBACIÓN (TB)
     a partir de accounting_lines
 
-    ✔ Deriva periodo desde period o created_at
+    ✔ Deriva periodo desde period, entry_date o created_at
     ✔ Soporta mes único, rango de meses o periodo fiscal
     ✔ Agrupa por cuenta contable
     ✔ Calcula saldo inicial, movimiento, saldo deudor / acreedor y saldo final
@@ -39,15 +39,15 @@ def build_tb_from_lines(
             periods.add(period_value)
             continue
 
-        created_at = r.get("created_at")
-        if not created_at:
+        date_value = r.get("entry_date") or r.get("created_at")
+        if not date_value:
             continue
 
-        if isinstance(created_at, datetime):
-            dt = created_at
+        if isinstance(date_value, datetime):
+            dt = date_value
         else:
             try:
-                dt = datetime.fromisoformat(str(created_at))
+                dt = datetime.fromisoformat(str(date_value).replace(" ", "T"))
             except Exception:
                 continue
 
@@ -55,7 +55,7 @@ def build_tb_from_lines(
 
     if not periods:
         raise ValueError(
-            "No se pudo determinar periodo fiscal desde period o created_at"
+            "No se pudo determinar periodo fiscal desde period, entry_date o created_at"
         )
 
     sorted_periods = sorted(periods)

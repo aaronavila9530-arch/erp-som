@@ -13,7 +13,7 @@ def export_diario_pdf(rows: list[dict], fiscal_year: int, period: int):
     ✔ NO usa company_code
     ✔ NO usa company_name
     ✔ Fiscal year y period vienen del POPUP
-    ✔ created_at es la fecha real por línea
+    ✔ entry_date es la fecha contable real por línea
     """
 
     if not rows:
@@ -82,7 +82,7 @@ def export_diario_pdf(rows: list[dict], fiscal_year: int, period: int):
     total_haber = 0.0
 
     for r in rows:
-        fecha = to_long_english_date(r.get("created_at"))
+        fecha = to_long_english_date(r.get("entry_date") or r.get("created_at"))
 
         debe = float(r.get("debit") or 0)
         haber = float(r.get("credit") or 0)

@@ -17,7 +17,7 @@ def export_diario_excel(rows: list[dict], fiscal_year: int, period: int):
     Reglas:
     - NO usa company_code / company_name
     - Fiscal year y period vienen del POPUP (no se calculan aquí)
-    - created_at es la fecha real por línea
+    - entry_date es la fecha contable real por línea
     """
 
     if not rows:
@@ -131,7 +131,7 @@ def export_diario_excel(rows: list[dict], fiscal_year: int, period: int):
             last_entry_id = entry_id
             first_entry = False
 
-        # created_at real
+        # Fecha contable real; created_at solo queda como respaldo tecnico.
         fecha = to_long_english_date(r.get("entry_date") or r.get("created_at"))
 
         ws.cell(row=row, column=1, value=fecha)

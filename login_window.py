@@ -5,6 +5,7 @@ import time
 import tkinter as tk
 from tkinter import ttk, messagebox
 
+from Modulos.Core.excel_combobox import install_excel_combobox
 from auth_api import login_usuario
 from api_client import set_user_role, get_version_info
 from companies import company_by_label, company_labels
@@ -18,6 +19,8 @@ from secure_credentials import (
     load_credentials,
     prompt_windows_identity,
 )
+
+install_excel_combobox()
 
 
 class LoginWindow(tk.Toplevel):

@@ -223,7 +223,7 @@ class PopupReportSelector(tk.Toplevel):
                 periods[int(period[:4])].add(period[5:7])
                 continue
 
-            dt = self._safe_parse_iso(r.get("created_at"))
+            dt = self._safe_parse_iso(r.get("entry_date") or r.get("created_at"))
             if not dt:
                 continue
 
@@ -243,7 +243,7 @@ class PopupReportSelector(tk.Toplevel):
                 return int(period[:4]), int(period[5:7])
             except Exception:
                 return None
-        dt = self._safe_parse_iso(row.get("created_at"))
+        dt = self._safe_parse_iso(row.get("entry_date") or row.get("created_at"))
         if dt:
             return dt.year, dt.month
         return None
