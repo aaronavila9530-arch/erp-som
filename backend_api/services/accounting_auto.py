@@ -1185,6 +1185,18 @@ def sync_itp_to_accounting(conn):
                 VALUES (%s, %s, %s, %s, %s, %s)
             """, (entry_id, code, name, float(debit or 0), float(credit or 0), desc))
 
+        def _itp_document_detail(payee_name: str, reference: str | None, obligation_id: int | None) -> str:
+            payee = (payee_name or "").strip() or "N/A"
+            ref = (reference or "").strip()
+            if not ref:
+                return f"{payee} ITP {obligation_id}"
+            ref_upper = ref.upper()
+            if ref_upper.startswith(("FAC", "FACT", "FACTURA", "INV", "INVOICE")):
+                document = ref
+            else:
+                document = f"Fac{ref}"
+            return f"{payee} {document}"
+
         def _upsert_entry(origin: str, origin_id: int, entry_date: date, period: str, description: str) -> int:
             cur.execute("""
                 SELECT id
@@ -1570,7 +1582,8 @@ def sync_itp_to_accounting(conn):
             # ============================================================
             # A) ASIENTO GASTO vs CxP  (origin='ITP')
             # ============================================================
-            detail_text = f"From ITP {payee_name}"
+            document_detail = _itp_document_detail(payee_name, current_reference, obligation_id)
+            detail_text = f"From ITP {document_detail}"
 
             # Signos contables (credit note invierte)
             expense_debit = 0 if is_credit_note else subtotal
@@ -1640,9 +1653,9 @@ def sync_itp_to_accounting(conn):
                     continue
                 payment_period = payment_date.strftime("%Y-%m")
                 payment_detail = (
-                    f"From ITP Payment by Hazel Barrantes to {payee_name}"
+                    f"From ITP Payment by Hazel Barrantes to {document_detail}"
                     if paid_by_hazel
-                    else (f"From ITP Payment by BAC card 3155 to {payee_name}" if paid_with_card else f"From ITP Payment done to {payee_name}")
+                    else (f"From ITP Payment by BAC card 3155 to {document_detail}" if paid_with_card else f"From ITP Payment done to {document_detail}")
                 )
 
                 if not bank_account_ok:

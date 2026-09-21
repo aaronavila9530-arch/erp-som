@@ -10,8 +10,8 @@ def build_fc_from_trial_balance(
     Construye el ESTADO DE FLUJO DE EFECTIVO (Método Indirecto)
     a partir de accounting_lines / trial balance.
 
-    ✔ Deriva fiscal_year y period desde created_at
-    ✔ Falla si hay mezcla de periodos
+    ✔ Deriva periodo desde period, entry_date o created_at
+    ✔ Soporta mes único, rango de meses o periodo fiscal
     ✔ Construcción 100% desde accounting_lines
     ✔ Salida lista para Excel / PDF
     ✔ Totalmente blindado
@@ -27,53 +27,49 @@ def build_fc_from_trial_balance(
         raise ValueError("No hay líneas contables para construir Flujo de Efectivo")
 
     # =====================================================
-    # DERIVAR Y VALIDAR PERIODO FISCAL
+    # DERIVAR PERIODO / RANGO
     # =====================================================
-    fiscal_year = None
-    period = None
+    periods = set()
 
-    for r in rows:
-        created_at = r.get("created_at")
-        if not created_at:
-            continue
+    def _row_period(row):
+        period_value = str(row.get("period") or "").strip()
+        if len(period_value) == 7 and period_value[4] == "-":
+            return period_value
 
-        if isinstance(created_at, datetime):
-            dt = created_at
+        date_value = row.get("entry_date") or row.get("created_at")
+        if not date_value:
+            return None
+        if isinstance(date_value, datetime):
+            dt = date_value
         else:
             try:
-                dt = datetime.fromisoformat(str(created_at))
+                dt = datetime.fromisoformat(str(date_value).replace(" ", "T"))
             except Exception:
-                continue
+                return None
+        return f"{dt.year}-{dt.month:02d}"
 
-        fiscal_year = dt.year
-        period = dt.month
-        break
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        period_value = _row_period(r)
+        if period_value:
+            periods.add(period_value)
 
-    if fiscal_year is None or period is None:
+    if not periods:
         raise ValueError(
-            "No se pudo determinar año y periodo fiscal desde created_at"
+            "No se pudo determinar periodo fiscal desde period, entry_date o created_at"
         )
 
-    for r in rows:
-        created_at = r.get("created_at")
-        if not created_at:
-            continue
-
-        if isinstance(created_at, datetime):
-            dt = created_at
-        else:
-            try:
-                dt = datetime.fromisoformat(str(created_at))
-            except Exception:
-                continue
-
-        if dt.year != fiscal_year or dt.month != period:
-            raise ValueError(
-                "Las líneas contables contienen múltiples periodos. "
-                "El Flujo de Efectivo debe construirse por un solo mes fiscal."
-            )
-
-    period_label = f"{period:02d}/{fiscal_year}"
+    sorted_periods = sorted(periods)
+    first_period = sorted_periods[0]
+    last_period = sorted_periods[-1]
+    fiscal_year = int(last_period[:4])
+    period = int(last_period[5:7])
+    period_label = (
+        first_period
+        if first_period == last_period
+        else f"{first_period} a {last_period}"
+    )
 
     # =====================================================
     # ACUMULADORES
@@ -103,7 +99,7 @@ def build_fc_from_trial_balance(
         if not account:
             continue
 
-        acc_norm = account.replace(".", "")
+        acc_norm = account.replace(".", "").replace("-", "")
         label = f"{account} - {name}"
 
         # =================================================

@@ -122,7 +122,7 @@ def export_tb_pdf_from_lines(rows_or_built: Any):
     def build_table(data: List[List[str]]):
         table = Table(
             data,
-            colWidths=[205, 62, 72, 72, 72, 72],
+            colWidths=[145, 50, 58, 56, 56, 58, 58, 58, 58, 78],
             repeatRows=1
         )
 
@@ -143,26 +143,34 @@ def export_tb_pdf_from_lines(rows_or_built: Any):
     # TABLA
     # ==================================================
     table_data = [
-        ["Cuenta", "Tipo", "Debe", "Haber", "Saldo Deudor", "Saldo Acreedor"]
+        ["Cuenta", "Tipo", "Inicial", "Debe", "Haber", "Neto", "Deudor", "Acreedor", "Final", "Alerta"]
     ]
 
     for r in tb["rows"]:
         table_data.append([
             str(r["account"]),
             str(r.get("account_type") or ""),
+            fmt_amount(r.get("opening_balance", 0)),
             fmt_amount(r["debit"]),
             fmt_amount(r["credit"]),
+            fmt_amount(r.get("saldo_neto", 0)),
             fmt_amount(r["saldo_deudor"]),
             fmt_amount(r["saldo_acreedor"]),
+            fmt_amount(r.get("closing_balance", 0)),
+            str(r.get("balance_alert") or ""),
         ])
 
     table_data.append([
         "TOTAL",
         "",
+        fmt_amount(tb.get("total_opening_balance", 0)),
         fmt_amount(tb["total_debit"]),
         fmt_amount(tb["total_credit"]),
+        fmt_amount(tb.get("total_saldo_neto", 0)),
         fmt_amount(tb["total_saldo_deudor"]),
         fmt_amount(tb["total_saldo_acreedor"]),
+        fmt_amount(tb.get("total_closing_balance", 0)),
+        "",
     ])
 
     elements.append(build_table(table_data))

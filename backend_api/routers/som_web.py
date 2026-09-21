@@ -419,6 +419,7 @@ def som_web_home() -> HTMLResponse:
     table { border-collapse:collapse; width:100%; min-width:850px; font-size:13px; }
     th,td { border-bottom:1px solid #e6edf4; padding:8px 10px; text-align:left; white-space:nowrap; }
     th { background:#f0f4f8; position:sticky; top:0; z-index:1; }
+    .warn-row td { background:#fff8e6; color:#6f4a00; }
     .bar-row { display:grid; grid-template-columns:130px 1fr auto; gap:9px; align-items:center; font-size:13px; margin-bottom:9px; }
     .track { height:13px; background:#e7eef6; border-radius:999px; overflow:hidden; }
     .fill { height:100%; background:linear-gradient(90deg,var(--blue),#029fcf); min-width:2px; }
@@ -1232,16 +1233,26 @@ def som_web_home() -> HTMLResponse:
       });
       const out = [...map.values()].sort((a,b) => a.account_code.localeCompare(b.account_code)).map(row => {
         const balance = row.debit - row.credit;
-        return {...row, saldo_deudor: balance > 0 ? balance : 0, saldo_acreedor: balance < 0 ? Math.abs(balance) : 0};
+        const type = String(row.account_type || "").toUpperCase();
+        const creditNature = ["PASIVO", "PATRIMONIO", "INGRESO", "LIABILITY", "EQUITY", "REVENUE", "INCOME"].includes(type) || /^[234]/.test(String(row.account_code || ""));
+        const naturalBalance = creditNature ? (row.credit - row.debit) : balance;
+        return {
+          ...row,
+          saldo_neto: balance,
+          saldo_natural: naturalBalance,
+          saldo_deudor: balance > 0 ? balance : 0,
+          saldo_acreedor: balance < 0 ? -balance : 0,
+          alerta: naturalBalance < -0.005 ? "Saldo contrario" : ""
+        };
       });
       const totals = out.reduce((acc,row) => {
-        acc.debit += row.debit; acc.credit += row.credit; acc.saldo_deudor += row.saldo_deudor; acc.saldo_acreedor += row.saldo_acreedor;
+        acc.debit += row.debit; acc.credit += row.credit; acc.saldo_neto += row.saldo_neto; acc.saldo_natural += row.saldo_natural; acc.saldo_deudor += row.saldo_deudor; acc.saldo_acreedor += row.saldo_acreedor;
         return acc;
-      }, {debit:0, credit:0, saldo_deudor:0, saldo_acreedor:0});
+      }, {debit:0, credit:0, saldo_neto:0, saldo_natural:0, saldo_deudor:0, saldo_acreedor:0});
       const fmt = n => Number(n || 0).toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2});
-      return `<div class="table-wrap"><table><thead><tr><th>Cuenta</th><th>Nombre</th><th>Tipo</th><th>Debe</th><th>Haber</th><th>Saldo deudor</th><th>Saldo acreedor</th></tr></thead><tbody>
-        ${out.map(row => `<tr><td>${esc(row.account_code)}</td><td>${esc(row.account_name)}</td><td>${esc(row.account_type)}</td><td>${fmt(row.debit)}</td><td>${fmt(row.credit)}</td><td>${fmt(row.saldo_deudor)}</td><td>${fmt(row.saldo_acreedor)}</td></tr>`).join("")}
-        <tr class="total-row"><td colspan="3"><b>Total</b></td><td><b>${fmt(totals.debit)}</b></td><td><b>${fmt(totals.credit)}</b></td><td><b>${fmt(totals.saldo_deudor)}</b></td><td><b>${fmt(totals.saldo_acreedor)}</b></td></tr>
+      return `<div class="table-wrap"><table><thead><tr><th>Cuenta</th><th>Nombre</th><th>Tipo</th><th>Debe</th><th>Haber</th><th>Saldo neto</th><th>Saldo natural</th><th>Saldo deudor</th><th>Saldo acreedor</th><th>Alerta</th></tr></thead><tbody>
+        ${out.map(row => `<tr class="${row.alerta ? "warn-row" : ""}"><td>${esc(row.account_code)}</td><td>${esc(row.account_name)}</td><td>${esc(row.account_type)}</td><td>${fmt(row.debit)}</td><td>${fmt(row.credit)}</td><td>${fmt(row.saldo_neto)}</td><td>${fmt(row.saldo_natural)}</td><td>${fmt(row.saldo_deudor)}</td><td>${fmt(row.saldo_acreedor)}</td><td>${esc(row.alerta)}</td></tr>`).join("")}
+        <tr class="total-row"><td colspan="3"><b>Total</b></td><td><b>${fmt(totals.debit)}</b></td><td><b>${fmt(totals.credit)}</b></td><td><b>${fmt(totals.saldo_neto)}</b></td><td><b>${fmt(totals.saldo_natural)}</b></td><td><b>${fmt(totals.saldo_deudor)}</b></td><td><b>${fmt(totals.saldo_acreedor)}</b></td><td></td></tr>
       </tbody></table></div>`;
     }
     function clearAccountingWeb() {

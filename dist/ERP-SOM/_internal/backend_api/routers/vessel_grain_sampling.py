@@ -21,9 +21,13 @@ def _ensure_grain_sampling_schema(conn):
     cur = conn.cursor()
     try:
         columns = []
-        for i in range(1, 6):
-            columns.append((f"hold{i}_hold", "TEXT"))
-        for i in range(4, 6):
+        for i in range(1, 11):
+            columns.extend([
+                (f"hold{i}_product", "TEXT"),
+                (f"hold{i}_hold", "TEXT"),
+                (f"hold{i}_tonnage", "TEXT"),
+            ])
+        for i in range(1, 11):
             columns.extend([
                 (f"sample{i}_hold", "TEXT"),
                 (f"sample{i}_proa_babor", "TEXT"),
@@ -46,6 +50,38 @@ def _ensure_grain_sampling_schema(conn):
         raise
     finally:
         cur.close()
+
+
+def _extra_grain_values(payload: dict):
+    values = {}
+    for i in range(6, 11):
+        values[f"hold{i}_product"] = payload.get(f"hold{i}_product")
+        values[f"hold{i}_hold"] = payload.get(f"hold{i}_hold")
+        values[f"hold{i}_tonnage"] = payload.get(f"hold{i}_tonnage")
+        values[f"sample{i}_hold"] = payload.get(f"sample{i}_hold")
+        values[f"sample{i}_proa_babor"] = payload.get(f"sample{i}_proa_babor")
+        values[f"sample{i}_proa_estribor"] = payload.get(f"sample{i}_proa_estribor")
+        values[f"sample{i}_centro"] = payload.get(f"sample{i}_centro")
+        values[f"sample{i}_popa_babor"] = payload.get(f"sample{i}_popa_babor")
+        values[f"sample{i}_popa_estribor"] = payload.get(f"sample{i}_popa_estribor")
+    return values
+
+
+def _persist_grain_extra_fields(cur, report_id: int, payload: dict):
+    values = _extra_grain_values(payload)
+    if not any(value not in ("", None) for value in values.values()):
+        return
+    assignments = ", ".join(f"{key} = %({key})s" for key in values)
+    values["id"] = report_id
+    cur.execute(
+        f"""
+            UPDATE vessel_grain_sampling_reports
+            SET {assignments},
+                updated_at = NOW()
+            WHERE id = %(id)s
+        """,
+        values,
+    )
 
 
 # ============================================================
@@ -111,6 +147,21 @@ def create_vessel_grain_sampling_report(
                 hold5_product,
                 hold5_hold,
                 hold5_tonnage,
+                hold6_product,
+                hold6_hold,
+                hold6_tonnage,
+                hold7_product,
+                hold7_hold,
+                hold7_tonnage,
+                hold8_product,
+                hold8_hold,
+                hold8_tonnage,
+                hold9_product,
+                hold9_hold,
+                hold9_tonnage,
+                hold10_product,
+                hold10_hold,
+                hold10_tonnage,
 
                 products_total,
 
@@ -149,6 +200,36 @@ def create_vessel_grain_sampling_report(
                 sample5_centro,
                 sample5_popa_babor,
                 sample5_popa_estribor,
+                sample6_hold,
+                sample6_proa_babor,
+                sample6_proa_estribor,
+                sample6_centro,
+                sample6_popa_babor,
+                sample6_popa_estribor,
+                sample7_hold,
+                sample7_proa_babor,
+                sample7_proa_estribor,
+                sample7_centro,
+                sample7_popa_babor,
+                sample7_popa_estribor,
+                sample8_hold,
+                sample8_proa_babor,
+                sample8_proa_estribor,
+                sample8_centro,
+                sample8_popa_babor,
+                sample8_popa_estribor,
+                sample9_hold,
+                sample9_proa_babor,
+                sample9_proa_estribor,
+                sample9_centro,
+                sample9_popa_babor,
+                sample9_popa_estribor,
+                sample10_hold,
+                sample10_proa_babor,
+                sample10_proa_estribor,
+                sample10_centro,
+                sample10_popa_babor,
+                sample10_popa_estribor,
 
                 supervision,
                 conclusion,
@@ -197,6 +278,21 @@ def create_vessel_grain_sampling_report(
                 %(hold5_product)s,
                 %(hold5_hold)s,
                 %(hold5_tonnage)s,
+                %(hold6_product)s,
+                %(hold6_hold)s,
+                %(hold6_tonnage)s,
+                %(hold7_product)s,
+                %(hold7_hold)s,
+                %(hold7_tonnage)s,
+                %(hold8_product)s,
+                %(hold8_hold)s,
+                %(hold8_tonnage)s,
+                %(hold9_product)s,
+                %(hold9_hold)s,
+                %(hold9_tonnage)s,
+                %(hold10_product)s,
+                %(hold10_hold)s,
+                %(hold10_tonnage)s,
 
                 %(products_total)s,
 
@@ -234,6 +330,36 @@ def create_vessel_grain_sampling_report(
                 %(sample5_centro)s,
                 %(sample5_popa_babor)s,
                 %(sample5_popa_estribor)s,
+                %(sample6_hold)s,
+                %(sample6_proa_babor)s,
+                %(sample6_proa_estribor)s,
+                %(sample6_centro)s,
+                %(sample6_popa_babor)s,
+                %(sample6_popa_estribor)s,
+                %(sample7_hold)s,
+                %(sample7_proa_babor)s,
+                %(sample7_proa_estribor)s,
+                %(sample7_centro)s,
+                %(sample7_popa_babor)s,
+                %(sample7_popa_estribor)s,
+                %(sample8_hold)s,
+                %(sample8_proa_babor)s,
+                %(sample8_proa_estribor)s,
+                %(sample8_centro)s,
+                %(sample8_popa_babor)s,
+                %(sample8_popa_estribor)s,
+                %(sample9_hold)s,
+                %(sample9_proa_babor)s,
+                %(sample9_proa_estribor)s,
+                %(sample9_centro)s,
+                %(sample9_popa_babor)s,
+                %(sample9_popa_estribor)s,
+                %(sample10_hold)s,
+                %(sample10_proa_babor)s,
+                %(sample10_proa_estribor)s,
+                %(sample10_centro)s,
+                %(sample10_popa_babor)s,
+                %(sample10_popa_estribor)s,
 
                 %(supervision)s,
                 %(conclusion)s,
@@ -327,6 +453,7 @@ def create_vessel_grain_sampling_report(
             "sample5_centro": safe("sample5_centro"),
             "sample5_popa_babor": safe("sample5_popa_babor"),
             "sample5_popa_estribor": safe("sample5_popa_estribor"),
+            **_extra_grain_values(payload),
 
             "supervision": safe("supervision"),
             "conclusion": safe("conclusion"),
@@ -337,6 +464,7 @@ def create_vessel_grain_sampling_report(
 
         row = cur.fetchone()
         new_id = row["id"]
+        _persist_grain_extra_fields(cur, new_id, payload)
 
         # UPDATE SERVICIOS
         cert_no = safe("cert_no")
@@ -383,6 +511,7 @@ def list_vessel_grain_sampling_reports(
         selected_company = company_code(x_company_code)
         cur.execute("""
             SELECT
+                r.*,
 
                 id,
 
@@ -667,6 +796,7 @@ def get_vessel_grain_sampling_report(
 
         cur.execute("""
             SELECT
+                r.*,
 
                 id,
                 created_at,
@@ -1000,6 +1130,7 @@ def update_vessel_grain_sampling_report(
                 detail="Grain sampling report not found"
             )
 
+        _persist_grain_extra_fields(cur, report_id, payload)
         conn.commit()
 
         return {

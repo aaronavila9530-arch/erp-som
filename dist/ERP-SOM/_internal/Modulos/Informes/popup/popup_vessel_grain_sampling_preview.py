@@ -131,7 +131,7 @@ class PopupVesselGrainSamplingPreview(tk.Toplevel):
             self._entry(grid, f.replace("_", " ").title(), f, i)
 
     # =========================================================
-    # PRODUCTS (5 FIJOS)
+    # PRODUCTS
     # =========================================================
     def _sec_products(self):
 
@@ -144,7 +144,7 @@ class PopupVesselGrainSamplingPreview(tk.Toplevel):
 
         self.hold_entries = []
 
-        for i in range(1, 6):
+        for i in range(1, 11):
             ttk.Label(frm, text=f"Hold {i} Product").grid(row=i, column=0, sticky="w", padx=6)
             prod = ttk.Entry(frm, width=25, state="readonly")
             prod.grid(row=i, column=1, padx=6)
@@ -178,7 +178,7 @@ class PopupVesselGrainSamplingPreview(tk.Toplevel):
             "popa_estribor"
         ]
 
-        for s in range(1, 6):
+        for s in range(1, 11):
 
             ttk.Label(frm, text=f"Sample {s}", font=("Segoe UI", 10, "bold")).grid(row=(s-1)*7, column=0, pady=(10,2))
 

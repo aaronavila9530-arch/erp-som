@@ -1,9 +1,12 @@
 import os
 import tempfile
 import copy
+import re
 from docx import Document
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.text.paragraph import Paragraph
 from docx.oxml import OxmlElement
+from docx.shared import Pt
 try:
     from services.template_autofit import apply_docx_autofit
     from services.document_branding import apply_mci_docx_branding
@@ -44,21 +47,21 @@ def generate_grain_sampling_doc(data: dict) -> str:
 
     def _product_rows():
         rows = []
-        for idx in range(1, 6):
+        for idx in range(1, 11):
             product = _non_empty(data.get(f"hold{idx}_product"))
-            hold = _non_empty(data.get(f"hold{idx}_hold")) or str(idx)
+            hold = _non_empty(data.get(f"hold{idx}_hold"))
             tonnage = _non_empty(data.get(f"hold{idx}_tonnage"))
             if product or tonnage:
                 rows.append({
                     "product": product,
-                    "hold": hold,
+                    "hold": hold or str(idx),
                     "tonnage": tonnage,
                 })
         return rows
 
     def _sample_rows():
         rows = []
-        for idx in range(1, 6):
+        for idx in range(1, 11):
             hold = _non_empty(data.get(f"sample{idx}_hold"))
             if not hold:
                 continue
@@ -164,6 +167,11 @@ def generate_grain_sampling_doc(data: dict) -> str:
                 )
                 modified = True
 
+        cleaned_text = re.sub(r"\{[^{}]+\}", "", full_text)
+        if cleaned_text != full_text:
+            full_text = cleaned_text
+            modified = True
+
         if not modified:
             return
 
@@ -210,6 +218,30 @@ def generate_grain_sampling_doc(data: dict) -> str:
         else:
             cell.text = value
 
+    def normalize_certificate_header():
+        cert_no = _non_empty(data.get("cert_no"))
+        cert_text = f"CERT N° {cert_no}" if cert_no else "CERT N°"
+        for section in doc.sections:
+            for paragraph in section.header.paragraphs:
+                if "CERT" not in (paragraph.text or "").upper():
+                    continue
+                set_paragraph_text(paragraph, cert_text)
+                paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+                for run in paragraph.runs:
+                    run.font.size = Pt(7.5)
+                    run.font.bold = True
+            for table in section.header.tables:
+                for row in table.rows:
+                    for cell in row.cells:
+                        for paragraph in cell.paragraphs:
+                            if "CERT" not in (paragraph.text or "").upper():
+                                continue
+                            set_paragraph_text(paragraph, cert_text)
+                            paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+                            for run in paragraph.runs:
+                                run.font.size = Pt(7.5)
+                                run.font.bold = True
+
     def _apply_dynamic_narrative():
         sample_rows = _sample_rows()
         sampled_holds = holds_text or ", ".join(hold for _, hold in sample_rows)
@@ -242,7 +274,7 @@ def generate_grain_sampling_doc(data: dict) -> str:
 
         if sample3_para:
             current = sample3_para
-            for idx in (4, 5):
+            for idx in range(4, 11):
                 hold = _non_empty(data.get(f"sample{idx}_hold"))
                 if not hold:
                     continue
@@ -264,10 +296,15 @@ def generate_grain_sampling_doc(data: dict) -> str:
         if "PRODUCTO" not in header or "BODEGA" not in header:
             return
 
-        while len(table.rows) < 7:
-            source = table.rows[-2]._tr
+        desired_rows = max(1, len(_product_rows())) + 2
+        while len(table.rows) < desired_rows:
+            source_index = 1 if len(table.rows) > 2 else max(0, len(table.rows) - 1)
+            source = table.rows[source_index]._tr
             new_row = copy.deepcopy(source)
             table.rows[-1]._tr.addprevious(new_row)
+
+        while len(table.rows) > desired_rows and len(table.rows) > 2:
+            table._tbl.remove(table.rows[-2]._tr)
 
     def _fill_product_table(table):
         if not table.rows:
@@ -278,15 +315,17 @@ def generate_grain_sampling_doc(data: dict) -> str:
 
         rows = _product_rows()
         _ensure_product_table_rows(table)
-        for idx in range(1, 6):
+        body_count = max(1, len(rows))
+        for idx in range(1, body_count + 1):
             row = table.rows[idx]
-            value = rows[idx - 1] if idx <= len(rows) else {"product": "", "hold": str(idx), "tonnage": ""}
+            value = rows[idx - 1] if idx <= len(rows) else {"product": "", "hold": "", "tonnage": ""}
             set_cell_text(row.cells[0], value["product"])
             set_cell_text(row.cells[1], value["hold"])
             set_cell_text(row.cells[2], value["tonnage"])
-        set_cell_text(table.rows[6].cells[0], "TOTAL")
-        set_cell_text(table.rows[6].cells[1], "-")
-        set_cell_text(table.rows[6].cells[2], data.get("products_total") or "")
+        total_row = table.rows[body_count + 1]
+        set_cell_text(total_row.cells[0], "TOTAL")
+        set_cell_text(total_row.cells[1], "-")
+        set_cell_text(total_row.cells[2], data.get("products_total") or "")
 
     _apply_dynamic_narrative()
 
@@ -338,6 +377,8 @@ def generate_grain_sampling_doc(data: dict) -> str:
                 for cell in row.cells:
                     for paragraph in cell.paragraphs:
                         replace_in_paragraph(paragraph, data)
+
+    normalize_certificate_header()
 
     # ========================================================
     # SAVE FILE

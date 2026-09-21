@@ -1,8 +1,10 @@
-import csv
 import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from datetime import date
+
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Font, PatternFill
 
 from api_client import (
     get_accounting_complete_financial_statements_api,
@@ -60,7 +62,7 @@ class PopupCompleteFinancialStatements(tk.Toplevel):
         self.cmb_to = ttk.Combobox(filters, textvariable=self.period_to, values=self.periods, width=10, state="readonly")
         self.cmb_to.grid(row=0, column=6, padx=4)
         ttk.Button(filters, text="Buscar", command=self.refresh).grid(row=0, column=7, padx=(18, 4))
-        ttk.Button(filters, text="Exportar pestana CSV", command=self.export_current_tab).grid(row=0, column=8, padx=4)
+        ttk.Button(filters, text="Exportar pestaña Excel", command=self.export_current_tab).grid(row=0, column=8, padx=4)
         ttk.Button(filters, text="Cerrar", command=self.destroy).grid(row=0, column=9, padx=(18, 4))
 
         self.summary = ttk.LabelFrame(self, text="Resumen ejecutivo", padding=8)
@@ -163,8 +165,8 @@ class PopupCompleteFinancialStatements(tk.Toplevel):
         self._render("income_statement", ("section", "account_code", "account_name", "balance"), self._income_rows())
         self._render("cash_flow", ("section", "account_code", "account_name", "cash_movement"), self.data.get("cash_flow", {}).get("rows", []))
         self._render("equity_changes", ("account_code", "account_name", "opening", "movement", "ending"), self.data.get("equity_changes", {}).get("rows", []))
-        self._render("trial_balance", ("account_code", "account_name", "period_debit", "period_credit", "debit_balance", "credit_balance"), self.data.get("trial_balance", {}).get("rows", []))
-        self._render("general_ledger", ("account_code", "account_name", "entry_date", "entry_id", "origin", "description", "debit", "credit", "running_balance"), self.data.get("general_ledger", {}).get("rows", []))
+        self._render("trial_balance", ("account_code", "account_name", "account_family", "period_debit", "period_credit", "period_signed_balance", "signed_balance", "natural_balance", "debit_balance", "credit_balance", "contrary_balance"), self.data.get("trial_balance", {}).get("rows", []))
+        self._render("general_ledger", ("account_code", "account_name", "entry_date", "entry_id", "origin", "description", "debit", "credit", "signed_movement", "natural_movement", "running_balance", "running_natural_balance", "contrary_balance"), self.data.get("general_ledger", {}).get("rows", []))
         self._render("journal", ("entry_date", "entry_id", "period", "origin", "description", "account_code", "account_name", "debit", "credit"), self.data.get("journal", {}).get("rows", []))
         self._render("aging_ar", ("entity_code", "entity_name", "document_number", "due_date", "days_due", "bucket", "currency_code", "open_amount"), self.data.get("aging_ar", {}).get("rows", []))
         self._render("aging_ap", ("entity_code", "entity_name", "document_number", "due_date", "days_due", "bucket", "currency_code", "open_amount"), self.data.get("aging_ap", {}).get("rows", []))
@@ -236,19 +238,30 @@ class PopupCompleteFinancialStatements(tk.Toplevel):
         tree = self.trees[key]
         path = filedialog.asksaveasfilename(
             parent=self,
-            title="Exportar CSV",
-            defaultextension=".csv",
-            filetypes=[("CSV", "*.csv")],
-            initialfile=f"{key}_{self.period.get() or self.period_from.get()}.csv",
+            title="Exportar Excel",
+            defaultextension=".xlsx",
+            filetypes=[("Excel", "*.xlsx")],
+            initialfile=f"{key}_{self.period.get() or self.period_from.get()}.xlsx",
         )
         if not path:
             return
-        with open(path, "w", newline="", encoding="utf-8-sig") as fh:
-            writer = csv.writer(fh)
-            writer.writerow(tree["columns"])
-            for item in tree.get_children():
-                writer.writerow(tree.item(item, "values"))
-        messagebox.showinfo("Estados financieros", "CSV exportado correctamente.", parent=self)
+        wb = Workbook()
+        ws = wb.active
+        ws.title = key[:31]
+        columns = list(tree["columns"])
+        ws.append([col.replace("_", " ").title() for col in columns])
+        fill = PatternFill("solid", fgColor="003A75")
+        for cell in ws[1]:
+            cell.font = Font(bold=True, color="FFFFFF")
+            cell.fill = fill
+            cell.alignment = Alignment(horizontal="center")
+        for item in tree.get_children():
+            ws.append(list(tree.item(item, "values")))
+        for idx, col in enumerate(columns, start=1):
+            max_len = max([len(str(ws.cell(row=r, column=idx).value or "")) for r in range(1, ws.max_row + 1)] + [10])
+            ws.column_dimensions[chr(64 + idx)].width = min(max_len + 2, 42)
+        wb.save(path)
+        messagebox.showinfo("Estados financieros", "Excel exportado correctamente.", parent=self)
 
     def _cell(self, value):
         if isinstance(value, float):

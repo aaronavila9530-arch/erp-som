@@ -83,6 +83,9 @@ def export_esf_pdf_from_esf(esf_or_rows: Any):
     pasivo_corriente = safe_list(esf["pasivo_corriente"])
     pasivo_no_corriente = safe_list(esf["pasivo_no_corriente"])
     patrimonio = safe_list(esf["patrimonio"])
+    ingresos = safe_list(esf.get("ingresos"))
+    costos = safe_list(esf.get("costos"))
+    gastos = safe_list(esf.get("gastos"))
 
     fiscal_year = int(esf["fiscal_year"])
     period_label = str(esf["period_label"])
@@ -252,6 +255,29 @@ def export_esf_pdf_from_esf(esf_or_rows: Any):
         esf["total_pasivo_patrimonio"],
         bold=True
     )
+
+    # ==================================================
+    # RESULTADO DEL PERIODO
+    # ==================================================
+    section("RESULTADO DEL PERIODO")
+
+    section("Ingresos")
+    for item in ingresos:
+        line(item.get("label", ""), item.get("amount", 0))
+    line("Total Ingresos", esf.get("total_ingresos", 0), bold=True)
+
+    section("Costos")
+    for item in costos:
+        line(item.get("label", ""), item.get("amount", 0))
+    line("Total Costos", esf.get("total_costos", 0), bold=True)
+
+    section("Gastos")
+    for item in gastos:
+        line(item.get("label", ""), item.get("amount", 0))
+    line("Total Gastos", esf.get("total_gastos", 0), bold=True)
+
+    section("RESULTADO NETO")
+    line("Resultado neto del periodo", esf.get("resultado_periodo", 0), bold=True)
 
     # ==================================================
     # BUILD

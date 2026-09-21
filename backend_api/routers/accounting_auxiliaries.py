@@ -278,7 +278,7 @@ def sync_auxiliaries(conn=Depends(get_db)):
                 FROM (
                     SELECT
                         CASE WHEN UPPER(COALESCE(payee_type,'')) IN ('EMPLOYEE','EMPLEADO') THEN 'EMPLOYEE' ELSE 'SUPPLIER' END AS entity_type,
-                        COALESCE(payee_id::text,payee_name,'PAYEE-'||id::text) AS entity_code,
+                        COALESCE(NULLIF(BTRIM(payee_name),''),NULLIF(payee_id::text,''),'PAYEE-'||id::text) AS entity_code,
                         COALESCE(payee_name,payee_id::text,'PAYEE-'||id::text) AS entity_name,
                         COALESCE(currency,'CRC') AS currency_code,
                         COALESCE(origin,'payment_obligations') AS source_table
@@ -295,17 +295,24 @@ def sync_auxiliaries(conn=Depends(get_db)):
                 )
                 SELECT e.id,'PAYABLE',COALESCE(p.reference,p.id::text),p.issue_date,p.due_date,
                        COALESCE(p.currency,'CRC'),COALESCE(p.total,0),COALESCE(p.balance,p.total,0),
-                       CASE WHEN COALESCE(p.balance,p.total,0)=0 THEN 'CLOSED' ELSE 'OPEN' END,
+                       CASE WHEN ABS(COALESCE(p.balance,p.total,0)) < 0.005 THEN 'CLOSED' ELSE 'OPEN' END,
                        'payment_obligations',p.id::text,
-                       jsonb_build_object('vessel',p.vessel,'operation',p.operation),'SYSTEM_SYNC'
+                       jsonb_build_object('vessel',p.vessel,'operation',p.operation,'payee_id',p.payee_id,'payee_type',p.payee_type,'itp_status',p.status),'SYSTEM_SYNC'
                 FROM payment_obligations p JOIN accounting_auxiliary_entities e ON
                   e.entity_type=CASE WHEN UPPER(COALESCE(p.payee_type,'')) IN ('EMPLOYEE','EMPLEADO') THEN 'EMPLOYEE' ELSE 'SUPPLIER' END
-                  AND e.entity_code=COALESCE(p.payee_id::text,p.payee_name,'PAYEE-'||p.id::text)
+                  AND e.entity_code=COALESCE(NULLIF(BTRIM(p.payee_name),''),NULLIF(p.payee_id::text,''),'PAYEE-'||p.id::text)
                 ON CONFLICT(source_table,source_id,document_type) DO UPDATE SET
                     entity_id=EXCLUDED.entity_id,document_number=EXCLUDED.document_number,
                     issue_date=EXCLUDED.issue_date,due_date=EXCLUDED.due_date,currency_code=EXCLUDED.currency_code,
                     original_amount=EXCLUDED.original_amount,open_amount=EXCLUDED.open_amount,
                     status=EXCLUDED.status,metadata=EXCLUDED.metadata,updated_at=NOW()
+            """)
+            cur.execute("""
+                UPDATE accounting_auxiliary_documents
+                   SET status = CASE WHEN ABS(COALESCE(open_amount,0)) < 0.005 THEN 'CLOSED' ELSE 'OPEN' END,
+                       updated_at = NOW()
+                 WHERE source_table IN ('collections','payment_obligations')
+                   AND status <> 'VOID'
             """)
 
             cur.execute("""
@@ -530,6 +537,7 @@ def _normal_doc_filter(include_closed: bool):
     return """
         AND (
              d.status='OPEN'
+          OR ABS(COALESCE(d.open_amount,0)) >= 0.005
           OR d.document_type IN ('BANK_MOVEMENT','TAX_MOVEMENT','RETENTION_MOVEMENT','ADVANCE_MOVEMENT')
         )
     """, []
@@ -580,18 +588,35 @@ def list_entities(
     conn=Depends(get_db),
 ):
     _ensure_schema(conn)
+    sync_auxiliaries(conn)
     conditions, params = ["e.active=TRUE"], []
     if entity_type:
         conditions.append("e.entity_type=%s"); params.append(entity_type.upper())
     if search:
-        conditions.append("(e.entity_code ILIKE %s OR e.entity_name ILIKE %s)"); params.extend([f"%{search}%", f"%{search}%"])
+        conditions.append("""(
+            e.entity_code ILIKE %s
+            OR e.entity_name ILIKE %s
+            OR EXISTS (
+                SELECT 1
+                FROM accounting_auxiliary_documents sd
+                WHERE sd.entity_id=e.id
+                  AND (
+                       sd.document_number ILIKE %s
+                    OR COALESCE(sd.reference,'') ILIKE %s
+                    OR COALESCE(sd.source_id,'') ILIKE %s
+                    OR COALESCE(sd.metadata::text,'') ILIKE %s
+                  )
+            )
+        )""")
+        params.extend([f"%{search}%"] * 6)
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        doc_filter = "" if include_closed else "AND d.status='OPEN'"
+        open_predicate = "(d.status='OPEN' OR ABS(COALESCE(d.open_amount,0)) >= 0.005)"
+        doc_filter = "" if include_closed else f"AND {open_predicate}"
         cur.execute(f"""
             SELECT e.*, COALESCE(e.control_account_code,s.control_account_code) effective_control_account,
-                   COUNT(d.id) FILTER (WHERE d.status='OPEN') open_document_count,
+                   COUNT(d.id) FILTER (WHERE {open_predicate}) open_document_count,
                    COUNT(d.id) document_count,
-                   COALESCE(SUM(d.open_amount) FILTER (WHERE d.status='OPEN'),0) open_balance
+                   COALESCE(SUM(d.open_amount) FILTER (WHERE {open_predicate}),0) open_balance
             FROM accounting_auxiliary_entities e
             LEFT JOIN accounting_auxiliary_settings s ON s.entity_type=e.entity_type
             LEFT JOIN accounting_auxiliary_documents d ON d.entity_id=e.id {doc_filter}
@@ -662,6 +687,7 @@ def update_entity(entity_id: int, payload: dict, conn=Depends(get_db)):
 @router.get("/entities/{entity_id}/documents")
 def list_entity_documents(entity_id: int, include_closed: bool = Query(False), conn=Depends(get_db)):
     _ensure_schema(conn)
+    sync_auxiliaries(conn)
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         closed_filter, extra = _normal_doc_filter(include_closed)
         cur.execute(f"""

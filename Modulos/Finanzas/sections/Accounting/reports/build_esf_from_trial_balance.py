@@ -118,12 +118,12 @@ def build_esf_from_trial_balance(
         if acc_norm.startswith("11"):
             monto = debit - credit
             if abs(monto) > 0.0001:
-                activo_corriente[label] += abs(monto)
+                activo_corriente[label] += monto
 
         elif acc_norm.startswith("12"):
             monto = debit - credit
             if abs(monto) > 0.0001:
-                activo_no_corriente[label] += abs(monto)
+                activo_no_corriente[label] += monto
 
         # =================================================
         # PASIVO
@@ -131,12 +131,12 @@ def build_esf_from_trial_balance(
         elif acc_norm.startswith("21"):
             monto = credit - debit
             if abs(monto) > 0.0001:
-                pasivo_corriente[label] += abs(monto)
+                pasivo_corriente[label] += monto
 
         elif acc_norm.startswith("22"):
             monto = credit - debit
             if abs(monto) > 0.0001:
-                pasivo_no_corriente[label] += abs(monto)
+                pasivo_no_corriente[label] += monto
 
         # =================================================
         # PATRIMONIO
@@ -144,7 +144,7 @@ def build_esf_from_trial_balance(
         elif acc_norm.startswith("3"):
             monto = credit - debit
             if abs(monto) > 0.0001:
-                patrimonio[label] += abs(monto)
+                patrimonio[label] += monto
 
         # =================================================
         # RESULTADO DEL PERIODO
@@ -152,17 +152,17 @@ def build_esf_from_trial_balance(
         elif acc_norm.startswith("4"):
             monto = credit - debit
             if abs(monto) > 0.0001:
-                ingresos[label] += abs(monto)
+                ingresos[label] += monto
 
         elif acc_norm.startswith("5"):
             monto = debit - credit
             if abs(monto) > 0.0001:
-                gastos[label] += abs(monto)
+                gastos[label] += monto
 
         elif acc_norm.startswith("6"):
             monto = debit - credit
             if abs(monto) > 0.0001:
-                costos[label] += abs(monto)
+                costos[label] += monto
 
     # =====================================================
     # TOTALES

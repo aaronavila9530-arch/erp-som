@@ -14,6 +14,8 @@ from Modulos.Informes.popup.popup_grain_service_selector import PopupGrainServic
 
 
 class GrainSamplingVesselForm(ttk.Frame):
+    MAX_HOLDS = 10
+    DEFAULT_ROWS = 5
 
     DEFAULT_LEGAL = (
         "EL PRESENTE INFORME SE EMITE EN BUENA FE SIN PERJUICIO Y EN BENEFICIO "
@@ -286,36 +288,51 @@ class GrainSamplingVesselForm(ttk.Frame):
         self.holds.grid(row=0, column=3, padx=5)
 
         # Tabla por bodega
-        table = ttk.Frame(frm)
-        table.grid(row=1, column=0, columnspan=4, pady=10)
+        self.hold_table = ttk.Frame(frm)
+        self.hold_table.grid(row=1, column=0, columnspan=4, pady=10, sticky="w")
 
         headers = ["PRODUCTO", "BODEGA", "TONELAJE (MT)"]
         for c, h in enumerate(headers):
             ttk.Label(
-                table,
+                self.hold_table,
                 text=h,
                 font=("Segoe UI", 9, "bold")
             ).grid(row=0, column=c, padx=5, pady=3)
 
         self.hold_rows = []
 
-        for r in range(5):
-            product_entry = ttk.Entry(table, width=25)
-            product_entry.grid(row=r + 1, column=0, padx=5)
-            product_entry.insert(0, "MAIZ AMARILLO")
+        for _ in range(self.DEFAULT_ROWS):
+            self._add_hold_row()
 
-            hold_entry = ttk.Entry(table, width=10)
-            hold_entry.grid(row=r + 1, column=1, padx=5)
-            hold_entry.insert(0, str(r + 1))
+        ttk.Button(
+            frm,
+            text="+ Agregar bodega",
+            command=self._add_hold_row
+        ).grid(row=2, column=0, sticky="w", padx=5, pady=(0, 8))
 
-            ton_entry = ttk.Entry(table, width=15)
-            ton_entry.grid(row=r + 1, column=2, padx=5)
+    def _add_hold_row(self):
+        if len(getattr(self, "hold_rows", [])) >= self.MAX_HOLDS:
+            messagebox.showinfo("Bodegas", f"Máximo {self.MAX_HOLDS} bodegas por informe.")
+            return
 
-            self.hold_rows.append({
-                "product": product_entry,
-                "hold": hold_entry,
-                "tonnage": ton_entry
-            })
+        row_index = len(self.hold_rows) + 1
+
+        product_entry = ttk.Entry(self.hold_table, width=25)
+        product_entry.grid(row=row_index, column=0, padx=5, pady=2)
+        product_entry.insert(0, "MAIZ AMARILLO")
+
+        hold_entry = ttk.Entry(self.hold_table, width=10)
+        hold_entry.grid(row=row_index, column=1, padx=5, pady=2)
+        hold_entry.insert(0, str(row_index))
+
+        ton_entry = ttk.Entry(self.hold_table, width=15)
+        ton_entry.grid(row=row_index, column=2, padx=5, pady=2)
+
+        self.hold_rows.append({
+            "product": product_entry,
+            "hold": hold_entry,
+            "tonnage": ton_entry
+        })
 
     # =========================================================
     # SAMPLING DETAILS (4.1 - 4.7 ESTRUCTURADO)
@@ -357,8 +374,8 @@ class GrainSamplingVesselForm(ttk.Frame):
         ).grid(row=4, column=0, columnspan=4, pady=(10, 5))
 
         self.sampling_points = []
-
-        positions = [
+        self.sampling_frame = frm
+        self.sampling_positions = [
             "Proa Babor",
             "Proa Estribor",
             "Centro",
@@ -366,25 +383,44 @@ class GrainSamplingVesselForm(ttk.Frame):
             "Popa Estribor"
         ]
 
-        for i in range(5):
-            row_base = 5 + (i * 6)
+        for _ in range(self.DEFAULT_ROWS):
+            self._add_sampling_point()
 
-            ttk.Label(frm, text=f"Bodega Nº").grid(row=row_base, column=0, sticky="w", padx=5)
-            hold_entry = ttk.Entry(frm, width=10)
-            hold_entry.grid(row=row_base, column=1, padx=5)
+        self.btn_add_sample = ttk.Button(
+            frm,
+            text="+ Agregar bodega muestreo",
+            command=self._add_sampling_point
+        )
+        self.btn_add_sample.grid(row=5 + (self.DEFAULT_ROWS * 6), column=0, sticky="w", padx=5, pady=(8, 4))
 
-            point_entries = {}
+    def _add_sampling_point(self):
+        if len(getattr(self, "sampling_points", [])) >= self.MAX_HOLDS:
+            messagebox.showinfo("Muestreo", f"Máximo {self.MAX_HOLDS} bodegas de muestreo por informe.")
+            return
 
-            for j, pos in enumerate(positions):
-                ttk.Label(frm, text=pos).grid(row=row_base + j + 1, column=0, sticky="e", padx=5)
-                entry = ttk.Entry(frm, width=5)
-                entry.grid(row=row_base + j + 1, column=1, sticky="w", padx=5)
-                point_entries[pos] = entry
+        row_base = 5 + (len(self.sampling_points) * 6)
+        if hasattr(self, "btn_add_sample"):
+            self.btn_add_sample.grid_forget()
 
-            self.sampling_points.append({
-                "hold": hold_entry,
-                "points": point_entries
-            })
+        ttk.Label(self.sampling_frame, text=f"Bodega Nº").grid(row=row_base, column=0, sticky="w", padx=5)
+        hold_entry = ttk.Entry(self.sampling_frame, width=10)
+        hold_entry.grid(row=row_base, column=1, padx=5)
+
+        point_entries = {}
+
+        for j, pos in enumerate(self.sampling_positions):
+            ttk.Label(self.sampling_frame, text=pos).grid(row=row_base + j + 1, column=0, sticky="e", padx=5)
+            entry = ttk.Entry(self.sampling_frame, width=5)
+            entry.grid(row=row_base + j + 1, column=1, sticky="w", padx=5)
+            point_entries[pos] = entry
+
+        self.sampling_points.append({
+            "hold": hold_entry,
+            "points": point_entries
+        })
+
+        if hasattr(self, "btn_add_sample"):
+            self.btn_add_sample.grid(row=5 + (len(self.sampling_points) * 6), column=0, sticky="w", padx=5, pady=(8, 4))
 
     # =========================================================
     # CONCLUSION
@@ -466,7 +502,7 @@ class GrainSamplingVesselForm(ttk.Frame):
                 "tonnage": row["tonnage"].get()
             })
 
-        while len(hold_values) < 5:
+        while len(hold_values) < self.MAX_HOLDS:
             hold_values.append({"product": None, "hold": None, "tonnage": None})
 
         sample_values = []
@@ -481,7 +517,7 @@ class GrainSamplingVesselForm(ttk.Frame):
                 "popa_estribor": sp["points"]["Popa Estribor"].get(),
             })
 
-        while len(sample_values) < 5:
+        while len(sample_values) < self.MAX_HOLDS:
             sample_values.append({
                 "hold": None,
                 "proa_babor": None,
@@ -574,6 +610,19 @@ class GrainSamplingVesselForm(ttk.Frame):
 
             "status": "Created"
         }
+
+        for idx, value in enumerate(hold_values[:self.MAX_HOLDS], start=1):
+            payload[f"hold{idx}_product"] = value["product"]
+            payload[f"hold{idx}_hold"] = value["hold"]
+            payload[f"hold{idx}_tonnage"] = value["tonnage"]
+
+        for idx, value in enumerate(sample_values[:self.MAX_HOLDS], start=1):
+            payload[f"sample{idx}_hold"] = value["hold"]
+            payload[f"sample{idx}_proa_babor"] = value["proa_babor"]
+            payload[f"sample{idx}_proa_estribor"] = value["proa_estribor"]
+            payload[f"sample{idx}_centro"] = value["centro"]
+            payload[f"sample{idx}_popa_babor"] = value["popa_babor"]
+            payload[f"sample{idx}_popa_estribor"] = value["popa_estribor"]
 
         try:
             result = create_vessel_grain_sampling_api(payload)

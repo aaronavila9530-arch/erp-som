@@ -3,12 +3,13 @@ from __future__ import annotations
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from psycopg2.extras import RealDictCursor
 
 from database import get_db
 from routers.accounting import _ensure_accounting_professional_schema
 from routers.accounting_tax import _ensure_schema as _ensure_tax_schema
+from services.tenanting import company_code as resolve_company_code
 
 
 router = APIRouter(
@@ -108,6 +109,10 @@ def _natural_balance(code, debit, credit):
     return debit - credit
 
 
+def _natural_delta(code, debit, credit):
+    return _natural_balance(code, debit, credit)
+
+
 def _line_dict(row, balance=None):
     return {
         "account_code": row.get("account_code"),
@@ -118,7 +123,7 @@ def _line_dict(row, balance=None):
     }
 
 
-def _fetch_account_totals(cur, where_sql, params):
+def _fetch_account_totals(cur, where_sql, params, company):
     cur.execute(f"""
         SELECT
             l.account_code,
@@ -128,17 +133,18 @@ def _fetch_account_totals(cur, where_sql, params):
         FROM accounting_entries e
         JOIN accounting_lines l ON l.entry_id = e.id
         WHERE e.workflow_status = 'POSTED'
+          AND e.company_code = %s
           AND e.entry_date <= CURRENT_DATE
           AND {where_sql}
         GROUP BY l.account_code
         ORDER BY l.account_code
-    """, params)
+    """, [company, *params])
     return cur.fetchall()
 
 
-def _build_trial_balance(cur, start, end):
-    movement = _fetch_account_totals(cur, "e.entry_date >= %s AND e.entry_date < %s", [start, end])
-    cumulative = _fetch_account_totals(cur, "e.entry_date < %s", [end])
+def _build_trial_balance(cur, start, end, company):
+    movement = _fetch_account_totals(cur, "e.entry_date >= %s AND e.entry_date < %s", [start, end], company)
+    cumulative = _fetch_account_totals(cur, "e.entry_date < %s", [end], company)
     movement_map = {row["account_code"]: row for row in movement}
     rows = []
     total_debit = Decimal("0")
@@ -147,9 +153,12 @@ def _build_trial_balance(cur, start, end):
     period_credit = Decimal("0")
     for row in cumulative:
         signed = _money(row["debit"]) - _money(row["credit"])
+        natural = _natural_balance(row["account_code"], row["debit"], row["credit"])
         debit_balance = signed if signed > 0 else Decimal("0")
         credit_balance = abs(signed) if signed < 0 else Decimal("0")
         movement_row = movement_map.get(row["account_code"], {})
+        movement_signed = _money(movement_row.get("debit")) - _money(movement_row.get("credit"))
+        movement_natural = _natural_balance(row["account_code"], movement_row.get("debit"), movement_row.get("credit"))
         period_debit += _money(movement_row.get("debit"))
         period_credit += _money(movement_row.get("credit"))
         total_debit += debit_balance
@@ -157,10 +166,16 @@ def _build_trial_balance(cur, start, end):
         rows.append({
             "account_code": row["account_code"],
             "account_name": row["account_name"],
+            "account_family": _account_family(row["account_code"]),
             "period_debit": _to_float(movement_row.get("debit")),
             "period_credit": _to_float(movement_row.get("credit")),
+            "period_signed_balance": _to_float(movement_signed),
+            "period_natural_balance": _to_float(movement_natural),
+            "signed_balance": _to_float(signed),
+            "natural_balance": _to_float(natural),
             "debit_balance": _to_float(debit_balance),
             "credit_balance": _to_float(credit_balance),
+            "contrary_balance": bool(natural < 0),
         })
     return {
         "rows": rows,
@@ -170,12 +185,13 @@ def _build_trial_balance(cur, start, end):
             "debit_balance": _to_float(total_debit),
             "credit_balance": _to_float(total_credit),
             "difference": _to_float(total_debit - total_credit),
+            "contrary_accounts": sum(1 for row in rows if row.get("contrary_balance")),
         },
     }
 
 
-def _build_balance_sheet(cur, end):
-    rows = _fetch_account_totals(cur, "e.entry_date < %s", [end])
+def _build_balance_sheet(cur, end, company):
+    rows = _fetch_account_totals(cur, "e.entry_date < %s", [end], company)
     sections = {"assets": [], "liabilities": [], "equity": []}
     totals = {"assets": Decimal("0"), "liabilities": Decimal("0"), "equity": Decimal("0"), "current_result": Decimal("0")}
     for row in rows:
@@ -205,8 +221,8 @@ def _build_balance_sheet(cur, end):
     }
 
 
-def _build_income_statement(cur, start, end):
-    rows = _fetch_account_totals(cur, "e.entry_date >= %s AND e.entry_date < %s", [start, end])
+def _build_income_statement(cur, start, end, company):
+    rows = _fetch_account_totals(cur, "e.entry_date >= %s AND e.entry_date < %s", [start, end], company)
     revenue, expenses = [], []
     total_revenue = Decimal("0")
     total_expenses = Decimal("0")
@@ -231,7 +247,7 @@ def _build_income_statement(cur, start, end):
     }
 
 
-def _build_cash_flow(cur, start, end):
+def _build_cash_flow(cur, start, end, company):
     cur.execute("""
         SELECT
             CASE
@@ -246,13 +262,14 @@ def _build_cash_flow(cur, start, end):
         FROM accounting_entries e
         JOIN accounting_lines l ON l.entry_id = e.id
         WHERE e.workflow_status = 'POSTED'
+          AND e.company_code = %s
           AND e.entry_date >= %s
           AND e.entry_date < %s
           AND e.entry_date <= CURRENT_DATE
           AND (l.account_code LIKE '1.1.02%%' OR LOWER(l.account_name) LIKE '%%banco%%' OR LOWER(l.account_name) LIKE '%%bank%%')
         GROUP BY section, l.account_code
         ORDER BY section, l.account_code
-    """, (start, end))
+    """, (company, start, end))
     rows = []
     totals = {}
     for row in cur.fetchall():
@@ -268,7 +285,7 @@ def _build_cash_flow(cur, start, end):
     }
 
 
-def _build_equity_changes(cur, start, end):
+def _build_equity_changes(cur, start, end, company):
     cur.execute("""
         SELECT l.account_code, MAX(l.account_name) AS account_name,
                COALESCE(SUM(CASE WHEN e.entry_date < %s THEN l.credit-l.debit ELSE 0 END),0) AS opening,
@@ -276,12 +293,13 @@ def _build_equity_changes(cur, start, end):
         FROM accounting_entries e
         JOIN accounting_lines l ON l.entry_id = e.id
         WHERE e.workflow_status='POSTED'
+          AND e.company_code = %s
           AND e.entry_date < %s
           AND e.entry_date <= CURRENT_DATE
           AND l.account_code LIKE '3%%'
         GROUP BY l.account_code
         ORDER BY l.account_code
-    """, (start, start, end, end))
+    """, (start, start, end, company, end))
     rows = []
     opening_total = Decimal("0")
     movement_total = Decimal("0")
@@ -297,7 +315,7 @@ def _build_equity_changes(cur, start, end):
             "movement": _to_float(movement),
             "ending": _to_float(opening + movement),
         })
-    income = _build_income_statement(cur, start, end)["totals"]["net_income"]
+    income = _build_income_statement(cur, start, end, company)["totals"]["net_income"]
     return {
         "rows": rows,
         "totals": {
@@ -309,41 +327,52 @@ def _build_equity_changes(cur, start, end):
     }
 
 
-def _build_journal(cur, start, end, limit):
+def _build_journal(cur, start, end, limit, company):
     cur.execute("""
         SELECT e.entry_date, e.id AS entry_id, e.period, e.origin, e.description,
                l.account_code, l.account_name, l.line_description, l.debit, l.credit
         FROM accounting_entries e
         JOIN accounting_lines l ON l.entry_id=e.id
         WHERE e.workflow_status='POSTED'
+          AND e.company_code = %s
           AND e.entry_date >= %s
           AND e.entry_date < %s
           AND e.entry_date <= CURRENT_DATE
         ORDER BY e.entry_date DESC, e.id DESC, l.id ASC
         LIMIT %s
-    """, (start, end, limit))
+    """, (company, start, end, limit))
     return {"rows": [_serialize_row(row) for row in cur.fetchall()]}
 
 
-def _build_general_ledger(cur, start, end, limit):
+def _build_general_ledger(cur, start, end, limit, company):
     cur.execute("""
         SELECT l.account_code, l.account_name, e.entry_date, e.id AS entry_id, e.origin,
                COALESCE(e.description,l.line_description) AS description, l.debit, l.credit
         FROM accounting_entries e
         JOIN accounting_lines l ON l.entry_id=e.id
         WHERE e.workflow_status='POSTED'
+          AND e.company_code = %s
           AND e.entry_date >= %s
           AND e.entry_date < %s
           AND e.entry_date <= CURRENT_DATE
         ORDER BY l.account_code, e.entry_date, e.id, l.id
         LIMIT %s
-    """, (start, end, limit))
+    """, (company, start, end, limit))
     rows = []
     running = {}
+    natural_running = {}
     for row in cur.fetchall():
         signed = _money(row["debit"]) - _money(row["credit"])
+        natural_signed = _natural_delta(row["account_code"], row["debit"], row["credit"])
         running[row["account_code"]] = running.get(row["account_code"], Decimal("0")) + signed
-        rows.append(_serialize_row(row) | {"running_balance": _to_float(running[row["account_code"]])})
+        natural_running[row["account_code"]] = natural_running.get(row["account_code"], Decimal("0")) + natural_signed
+        rows.append(_serialize_row(row) | {
+            "signed_movement": _to_float(signed),
+            "natural_movement": _to_float(natural_signed),
+            "running_balance": _to_float(running[row["account_code"]]),
+            "running_natural_balance": _to_float(natural_running[row["account_code"]]),
+            "contrary_balance": bool(natural_running[row["account_code"]] < 0),
+        })
     return {"rows": rows}
 
 
@@ -376,7 +405,7 @@ def _build_aging(cur, entity_type, as_of):
     return {"rows": rows, "buckets": {k: _to_float(v) for k, v in buckets.items()}, "total": _to_float(sum(buckets.values(), Decimal("0")))}
 
 
-def _build_tax_summary(cur, start, end):
+def _build_tax_summary(cur, start, end, company):
     _ensure_tax_schema(cur.connection)
     cur.execute("""
         SELECT direction,
@@ -385,10 +414,11 @@ def _build_tax_summary(cur, start, end):
                COALESCE(SUM(total),0) AS total,
                COUNT(*) AS documents
         FROM tax_electronic_documents
-        WHERE issue_datetime >= %s
+        WHERE company_code = %s
+          AND issue_datetime >= %s
           AND issue_datetime < %s
         GROUP BY direction
-    """, (start, end))
+    """, (company, start, end))
     docs = {row["direction"]: row for row in cur.fetchall()}
     sales_tax = _money((docs.get("SALE") or {}).get("tax"))
     purchase_tax = _money((docs.get("PURCHASE") or {}).get("tax"))
@@ -399,13 +429,14 @@ def _build_tax_summary(cur, start, end):
         FROM accounting_entries e
         JOIN accounting_lines l ON l.entry_id=e.id
         WHERE e.workflow_status='POSTED'
+          AND e.company_code = %s
           AND e.entry_date >= %s
           AND e.entry_date < %s
           AND e.entry_date <= CURRENT_DATE
           AND (LOWER(l.account_name) LIKE '%%iva%%' OR LOWER(l.account_name) LIKE '%%retenc%%' OR l.account_code LIKE '2.1.02%%' OR l.account_code LIKE '2.1.03%%' OR l.account_code='1.1.13.99')
         GROUP BY l.account_code
         ORDER BY l.account_code
-    """, (start, end))
+    """, (company, start, end))
     tax_lines = []
     iva_gl = Decimal("0")
     retentions = Decimal("0")
@@ -490,24 +521,27 @@ def complete_financial_statements(
     period_from: str | None = None,
     period_to: str | None = None,
     limit: int = Query(1000, ge=50, le=5000),
+    company_code: str | None = None,
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
     conn=Depends(get_db),
 ):
     _ensure_accounting_professional_schema(conn)
+    company = resolve_company_code(company_code, x_company_code)
     scope = _scope(period, period_from, period_to)
     start = scope["start"]
     end = scope["end"]
     as_of = scope["as_of"]
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        trial_balance = _build_trial_balance(cur, start, end)
-        balance_sheet = _build_balance_sheet(cur, end)
-        income_statement = _build_income_statement(cur, start, end)
-        cash_flow = _build_cash_flow(cur, start, end)
-        equity_changes = _build_equity_changes(cur, start, end)
-        journal = _build_journal(cur, start, end, limit)
-        general_ledger = _build_general_ledger(cur, start, end, limit)
+        trial_balance = _build_trial_balance(cur, start, end, company)
+        balance_sheet = _build_balance_sheet(cur, end, company)
+        income_statement = _build_income_statement(cur, start, end, company)
+        cash_flow = _build_cash_flow(cur, start, end, company)
+        equity_changes = _build_equity_changes(cur, start, end, company)
+        journal = _build_journal(cur, start, end, limit, company)
+        general_ledger = _build_general_ledger(cur, start, end, limit, company)
         aging_ar = _build_aging(cur, "CUSTOMER", as_of)
         aging_ap = _build_aging(cur, "SUPPLIER", as_of)
-        tax_summary = _build_tax_summary(cur, start, end)
+        tax_summary = _build_tax_summary(cur, start, end, company)
         profitability = _build_profitability(cur, start, end)
     return {
         "scope": {
@@ -518,6 +552,7 @@ def complete_financial_statements(
             "end_exclusive": end.isoformat(),
             "as_of": as_of.isoformat(),
             "basis": "POSTED accounting entries only; future entry dates excluded.",
+            "company_code": company,
         },
         "balance_sheet": balance_sheet,
         "income_statement": income_statement,

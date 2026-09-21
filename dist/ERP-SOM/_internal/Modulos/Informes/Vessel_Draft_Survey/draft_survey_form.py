@@ -1325,6 +1325,13 @@ class DraftSurveyForm(ttk.Frame):
                 except Exception:
                     hh, mm = "00", "00"
                 word_payload[f"{key}_time"] = f"{hh}:{mm}"
+                if dt_value:
+                    combined = dt_value.strftime("%b %d %Y")
+                    if f"{hh}:{mm}" not in {"00:00", "00:00:00"}:
+                        combined = f"{combined} {hh}:{mm}"
+                    word_payload[key] = combined
+                else:
+                    word_payload[key] = value
                 continue
 
             word_payload[key] = value
