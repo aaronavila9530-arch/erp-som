@@ -46,10 +46,40 @@ def generate_draft_survey_word_pdf(data: dict) -> str:
         except Exception:
             return text
 
+    def _format_report_datetime(value):
+        if value in (None, ""):
+            return ""
+        if isinstance(value, datetime):
+            return value.strftime("%b %d %Y %H:%M")
+        if isinstance(value, date):
+            return value.strftime("%b %d %Y")
+
+        text = str(value or "").strip()
+        if not text:
+            return ""
+
+        clean = re.sub(r"\s+LT\.?$", "", text, flags=re.IGNORECASE).strip()
+        normalized = clean.replace(",", " ")
+        for fmt in (
+            "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M",
+            "%Y/%m/%d %H:%M:%S", "%Y/%m/%d %H:%M",
+            "%d-%m-%Y %H:%M:%S", "%d-%m-%Y %H:%M",
+            "%d/%m/%Y %H:%M:%S", "%d/%m/%Y %H:%M",
+            "%m-%d-%Y %H:%M:%S", "%m-%d-%Y %H:%M",
+            "%m/%d/%Y %H:%M:%S", "%m/%d/%Y %H:%M",
+            "%b %d %Y %H:%M", "%B %d %Y %H:%M",
+        ):
+            try:
+                return datetime.strptime(normalized, fmt).strftime("%b %d %Y %H:%M")
+            except ValueError:
+                continue
+        formatted_date = _format_report_date(clean)
+        return formatted_date if formatted_date != clean else text
+
     def _combine_date_time(prefix):
         current = str(data.get(prefix) or "").strip()
         if current and not current.startswith("{"):
-            return current
+            return _format_report_datetime(current)
         date_text = _format_report_date(data.get(f"{prefix}_date"))
         time_text = str(data.get(f"{prefix}_time") or "").strip()
         if not date_text:
