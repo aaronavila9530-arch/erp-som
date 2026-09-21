@@ -765,6 +765,8 @@ def sync_cash_app_to_accounting(conn):
             """, (code, name, account_type, normal_balance, 4, parent_account, code))
 
         _ensure_posting_account("5.2.03", "Comisiones bancarias", "EXPENSE", "DEBIT", "5.2")
+        _ensure_posting_account("4.9.01", "Ganancia por diferencia cambiaria", "REVENUE", "CREDIT", "4.9")
+        _ensure_posting_account("5.9.01", "Perdida por diferencia cambiaria", "EXPENSE", "DEBIT", "5.9")
 
         # ============================================================
         # 0️⃣ TRAER TODOS LOS PAGOS CASH_APP
@@ -954,9 +956,53 @@ def sync_cash_app_to_accounting(conn):
 
             BANK_FEE_CODE = "5.2.03"
             BANK_FEE_NAME = "Comisiones bancarias"
+            FX_GAIN_CODE = "4.9.01"
+            FX_GAIN_NAME = "Ganancia por diferencia cambiaria"
+            FX_LOSS_CODE = "5.9.01"
+            FX_LOSS_NAME = "Perdida por diferencia cambiaria"
 
             AR_ACCOUNT_CODE = "1.1.04.01"
             AR_ACCOUNT_NAME = "Cuentas por cobrar comerciales"
+            ar_credit_crc = total_aplicado_crc
+            fx_difference_crc = 0.0
+
+            cur.execute("""
+                SELECT id, moneda, total, saldo_pendiente
+                FROM collections
+                WHERE LTRIM(COALESCE(numero_documento,''), '0') = LTRIM(%s, '0')
+                ORDER BY id
+                LIMIT 1
+            """, (numero,))
+            invoice_row = cur.fetchone()
+            invoice_closed = bool(
+                invoice_row
+                and (invoice_row.get("moneda") or "").upper() == "USD"
+                and round(float(invoice_row.get("saldo_pendiente") or 0), 2) == 0
+            )
+            if invoice_closed:
+                cur.execute("""
+                    SELECT COALESCE(SUM(COALESCE(l.debit,0)-COALESCE(l.credit,0)),0) AS balance
+                    FROM accounting_lines l
+                    JOIN accounting_entries en
+                      ON en.id = l.entry_id
+                     AND en.workflow_status = 'POSTED'
+                    LEFT JOIN cash_app ca
+                      ON en.origin = 'CASH_APP'
+                     AND ca.id = en.origin_id
+                    WHERE l.account_code = %s
+                      AND en.id <> %s
+                      AND (
+                            (en.origin = 'COLLECTIONS' AND en.origin_id::text = %s)
+                         OR (
+                              en.origin = 'CASH_APP'
+                          AND LTRIM(COALESCE(ca.numero_documento,''), '0') = LTRIM(%s, '0')
+                         )
+                      )
+                """, (AR_ACCOUNT_CODE, entry_id, str(invoice_row.get("id")), numero))
+                ar_open = round(float((cur.fetchone() or {}).get("balance") or 0), 2)
+                if ar_open > 0:
+                    ar_credit_crc = ar_open
+                    fx_difference_crc = round(ar_credit_crc - total_aplicado_crc, 2)
 
 
             # ========================================================
@@ -996,7 +1042,36 @@ def sync_cash_app_to_accounting(conn):
 
 
             # ========================================================
-            # 9️⃣ CxC (CRÉDITO TOTAL FACTURA)
+            # 9️⃣ DIFERENCIA CAMBIARIA AL CERRAR FACTURA USD
+            # ========================================================
+            if fx_difference_crc > 0:
+                cur.execute("""
+                    INSERT INTO accounting_lines
+                    (entry_id, account_code, account_name, debit, credit, line_description)
+                    VALUES (%s, %s, %s, %s, 0, %s)
+                """, (
+                    entry_id,
+                    FX_LOSS_CODE,
+                    FX_LOSS_NAME,
+                    fx_difference_crc,
+                    f"Diferencia cambiaria - {detail}"
+                ))
+            elif fx_difference_crc < 0:
+                cur.execute("""
+                    INSERT INTO accounting_lines
+                    (entry_id, account_code, account_name, debit, credit, line_description)
+                    VALUES (%s, %s, %s, 0, %s, %s)
+                """, (
+                    entry_id,
+                    FX_GAIN_CODE,
+                    FX_GAIN_NAME,
+                    abs(fx_difference_crc),
+                    f"Diferencia cambiaria - {detail}"
+                ))
+
+
+            # ========================================================
+            # 10️⃣ CxC (CRÉDITO QUE CIERRA EL DOCUMENTO EN MAYOR)
             # ========================================================
             cur.execute("""
                 INSERT INTO accounting_lines
@@ -1006,7 +1081,7 @@ def sync_cash_app_to_accounting(conn):
                 entry_id,
                 AR_ACCOUNT_CODE,
                 AR_ACCOUNT_NAME,
-                total_aplicado_crc,
+                ar_credit_crc,
                 detail
             ))
 

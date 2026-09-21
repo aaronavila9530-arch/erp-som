@@ -318,7 +318,7 @@ def sync_auxiliaries(conn=Depends(get_db)):
                 FROM cash_app ca
                 JOIN accounting_auxiliary_documents d
                   ON d.source_table='collections'
-                 AND d.document_number=ca.numero_documento
+                 AND LTRIM(d.document_number, '0') = LTRIM(ca.numero_documento, '0')
                  AND d.document_type='RECEIVABLE'
                 LEFT JOIN accounting_entries e
                   ON e.origin='CASH_APP'
@@ -524,13 +524,24 @@ def sync_auxiliaries(conn=Depends(get_db)):
         raise
 
 
+def _normal_doc_filter(include_closed: bool):
+    if include_closed:
+        return "", []
+    return """
+        AND (
+             d.status='OPEN'
+          OR d.document_type IN ('BANK_MOVEMENT','TAX_MOVEMENT','RETENTION_MOVEMENT','ADVANCE_MOVEMENT')
+        )
+    """, []
+
+
 @router.get("/settings")
 def list_settings(conn=Depends(get_db)):
     _ensure_schema(conn)
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute("""
             SELECT t.entity_type, s.control_account_code, a.account_name
-            FROM (SELECT UNNEST(ARRAY['CUSTOMER','SUPPLIER','BANK','EMPLOYEE','TAX','ASSET','ADVANCE','LOAN']) entity_type) t
+            FROM (SELECT UNNEST(ARRAY['CUSTOMER','SUPPLIER','BANK','EMPLOYEE','TAX','RETENTION','ASSET','ADVANCE','LOAN']) entity_type) t
             LEFT JOIN accounting_auxiliary_settings s ON s.entity_type=t.entity_type
             LEFT JOIN accounting_accounts a ON a.account_code=s.control_account_code
             ORDER BY t.entity_type
@@ -562,7 +573,12 @@ def update_setting(entity_type: str, payload: dict, conn=Depends(get_db)):
 
 
 @router.get("/entities")
-def list_entities(entity_type: str | None = Query(None), search: str | None = Query(None), conn=Depends(get_db)):
+def list_entities(
+    entity_type: str | None = Query(None),
+    search: str | None = Query(None),
+    include_closed: bool = Query(False),
+    conn=Depends(get_db),
+):
     _ensure_schema(conn)
     conditions, params = ["e.active=TRUE"], []
     if entity_type:
@@ -570,13 +586,15 @@ def list_entities(entity_type: str | None = Query(None), search: str | None = Qu
     if search:
         conditions.append("(e.entity_code ILIKE %s OR e.entity_name ILIKE %s)"); params.extend([f"%{search}%", f"%{search}%"])
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        doc_filter = "" if include_closed else "AND d.status='OPEN'"
         cur.execute(f"""
             SELECT e.*, COALESCE(e.control_account_code,s.control_account_code) effective_control_account,
+                   COUNT(d.id) FILTER (WHERE d.status='OPEN') open_document_count,
                    COUNT(d.id) document_count,
                    COALESCE(SUM(d.open_amount) FILTER (WHERE d.status='OPEN'),0) open_balance
             FROM accounting_auxiliary_entities e
             LEFT JOIN accounting_auxiliary_settings s ON s.entity_type=e.entity_type
-            LEFT JOIN accounting_auxiliary_documents d ON d.entity_id=e.id
+            LEFT JOIN accounting_auxiliary_documents d ON d.entity_id=e.id {doc_filter}
             WHERE {' AND '.join(conditions)}
             GROUP BY e.id,s.control_account_code
             ORDER BY e.entity_type,e.entity_name
@@ -603,17 +621,57 @@ def create_entity(payload: dict, conn=Depends(get_db)):
     return {"status": "ok", "entity": row}
 
 
+@router.put("/entities/{entity_id}")
+def update_entity(entity_id: int, payload: dict, conn=Depends(get_db)):
+    _ensure_schema(conn)
+    fields = []
+    params = []
+    for key in ("entity_code", "entity_name", "identification", "currency_code", "control_account_code"):
+        if key in payload:
+            value = payload.get(key)
+            if key in {"entity_code", "entity_name"} and not str(value or "").strip():
+                raise HTTPException(400, f"{key} is required")
+            fields.append(f"{key}=%s")
+            params.append(str(value).strip() if value is not None else None)
+    if "active" in payload:
+        fields.append("active=%s")
+        params.append(bool(payload.get("active")))
+    if not fields:
+        raise HTTPException(400, "No fields to update")
+    fields.append("updated_at=NOW()")
+    params.append(entity_id)
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(f"""
+                UPDATE accounting_auxiliary_entities
+                   SET {', '.join(fields)}
+                 WHERE id=%s
+                 RETURNING *
+            """, params)
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(404, "Auxiliary entity not found")
+        conn.commit()
+        return {"status": "ok", "entity": row}
+    except HTTPException:
+        conn.rollback(); raise
+    except Exception:
+        conn.rollback(); raise
+
+
 @router.get("/entities/{entity_id}/documents")
-def list_entity_documents(entity_id: int, conn=Depends(get_db)):
+def list_entity_documents(entity_id: int, include_closed: bool = Query(False), conn=Depends(get_db)):
     _ensure_schema(conn)
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        cur.execute("""
+        closed_filter, extra = _normal_doc_filter(include_closed)
+        cur.execute(f"""
             SELECT *, CASE
                 WHEN status='OPEN' AND due_date < CURRENT_DATE THEN CURRENT_DATE-due_date
                 ELSE 0 END AS days_overdue
             FROM accounting_auxiliary_documents WHERE entity_id=%s
+            {closed_filter}
             ORDER BY status, due_date NULLS LAST, issue_date DESC
-        """, (entity_id,))
+        """, [entity_id] + extra)
         return {"data": cur.fetchall()}
 
 
@@ -634,6 +692,109 @@ def create_entity_document(entity_id: int, payload: dict, conn=Depends(get_db)):
                          payload.get("reference"), payload.get("metadata"))
     conn.commit()
     return {"status": "ok"}
+
+
+@router.put("/documents/{document_id}")
+def update_document(document_id: int, payload: dict, conn=Depends(get_db)):
+    _ensure_schema(conn)
+    fields = []
+    params = []
+    for key in ("document_type", "document_number", "issue_date", "due_date", "currency_code", "reference"):
+        if key in payload:
+            value = payload.get(key)
+            if key in {"document_type", "document_number", "currency_code"} and not str(value or "").strip():
+                raise HTTPException(400, f"{key} is required")
+            fields.append(f"{key}=%s")
+            params.append(str(value).strip().upper() if key in {"document_type", "currency_code"} and value is not None else value)
+    if "original_amount" in payload:
+        fields.append("original_amount=%s")
+        params.append(_decimal(payload.get("original_amount"), "original_amount"))
+    if "open_amount" in payload:
+        fields.append("open_amount=%s")
+        params.append(_decimal(payload.get("open_amount"), "open_amount"))
+    if "status" in payload:
+        status = str(payload.get("status") or "").upper()
+        if status not in {"OPEN", "CLOSED", "POSTED", "VOID"}:
+            raise HTTPException(400, "Invalid status")
+        fields.append("status=%s")
+        params.append(status)
+    if not fields:
+        raise HTTPException(400, "No fields to update")
+    fields.append("updated_at=NOW()")
+    params.append(document_id)
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(f"""
+                UPDATE accounting_auxiliary_documents
+                   SET {', '.join(fields)}
+                 WHERE id=%s
+                 RETURNING *
+            """, params)
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(404, "Auxiliary document not found")
+            if Decimal(row["open_amount"] or 0) < 0:
+                raise HTTPException(400, "open_amount cannot be negative")
+            if Decimal(row["open_amount"] or 0) > Decimal(row["original_amount"] or 0):
+                raise HTTPException(400, "open_amount cannot exceed original_amount")
+        conn.commit()
+        return {"status": "ok", "document": row}
+    except HTTPException:
+        conn.rollback(); raise
+    except Exception:
+        conn.rollback(); raise
+
+
+@router.patch("/documents/bulk")
+def bulk_update_documents(payload: dict, conn=Depends(get_db)):
+    _ensure_schema(conn)
+    ids = payload.get("document_ids") or []
+    if not isinstance(ids, list) or not ids:
+        raise HTTPException(400, "document_ids is required")
+    clean_ids = [int(x) for x in ids]
+    status = payload.get("status")
+    open_amount = payload.get("open_amount")
+    if status is None and open_amount is None:
+        raise HTTPException(400, "Provide status or open_amount")
+    sets = []
+    params = []
+    if status is not None:
+        status = str(status or "").upper()
+        if status not in {"OPEN", "CLOSED", "VOID"}:
+            raise HTTPException(400, "Invalid status")
+        sets.append("status=%s")
+        params.append(status)
+        if status == "CLOSED" and open_amount is None:
+            sets.append("open_amount=0")
+    if open_amount is not None:
+        sets.append("open_amount=%s")
+        params.append(_decimal(open_amount, "open_amount"))
+    sets.append("updated_at=NOW()")
+    params.append(clean_ids)
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(f"""
+                UPDATE accounting_auxiliary_documents
+                   SET {', '.join(sets)}
+                 WHERE id = ANY(%s)
+                 RETURNING id, document_number, status, open_amount
+            """, params)
+            rows = cur.fetchall()
+            cur.execute("""
+                SELECT id, document_number, original_amount, open_amount
+                FROM accounting_auxiliary_documents
+                WHERE id = ANY(%s)
+                  AND COALESCE(open_amount,0) > COALESCE(original_amount,0)
+            """, (clean_ids,))
+            invalid = cur.fetchall()
+            if invalid:
+                raise HTTPException(400, f"Open amount exceeds original amount in {len(invalid)} document(s)")
+        conn.commit()
+        return {"status": "ok", "updated": len(rows), "documents": rows}
+    except HTTPException:
+        conn.rollback(); raise
+    except Exception:
+        conn.rollback(); raise
 
 
 @router.post("/documents/{document_id}/transactions")
@@ -786,6 +947,7 @@ def reconcile_auxiliaries(period: str | None = Query(None), conn=Depends(get_db)
 def reconcile_auxiliary_details(
     entity_type: str | None = Query(None),
     period: str | None = Query(None),
+    include_closed: bool = Query(False),
     conn=Depends(get_db),
 ):
     _ensure_schema(conn)
@@ -797,6 +959,7 @@ def reconcile_auxiliary_details(
     results = []
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         as_of = _period_as_of(period)
+        closed_filter, closed_params = _normal_doc_filter(include_closed)
         cur.execute(f"""
             SELECT d.*, e.entity_type, e.entity_code, e.entity_name,
                    COALESCE(e.control_account_code,s.control_account_code) AS control_account_code,
@@ -806,9 +969,10 @@ def reconcile_auxiliary_details(
             LEFT JOIN accounting_auxiliary_settings s ON s.entity_type=e.entity_type
             LEFT JOIN accounting_accounts a ON a.account_code=COALESCE(e.control_account_code,s.control_account_code)
             WHERE {' AND '.join(conditions)}
+            {closed_filter}
             ORDER BY e.entity_type,e.entity_name,d.document_type,d.issue_date DESC,d.id DESC
             LIMIT 1500
-        """, params)
+        """, params + closed_params)
         documents = cur.fetchall()
 
         for doc in documents:
@@ -830,7 +994,11 @@ def reconcile_auxiliary_details(
                           AND (%s IS NULL OR en.period<=%s)
                           AND (
                                 (en.origin='COLLECTIONS' AND en.origin_id::text=%s)
-                             OR (en.origin='CASH_APP' AND ca.numero_documento=%s)
+                             OR (
+                                  en.origin='CASH_APP'
+                              AND LTRIM(COALESCE(ca.numero_documento,''), '0') =
+                                  LTRIM(COALESCE(%s,''), '0')
+                             )
                           )
                     """, (account, account, period, period, source_id, doc.get("document_number")))
                     ledger_balance = cur.fetchone()["balance"]

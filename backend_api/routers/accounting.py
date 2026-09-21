@@ -2501,15 +2501,29 @@ def get_accounting_iva(
     - Siempre calcula el mes actual
     - Arrastra saldo a favor SOLO si existe en el mes anterior
     """
-
-    _ensure_accounting_professional_schema(conn)
     company = _company_code(company_code, x_company_code)
     cur = conn.cursor(cursor_factory=RealDictCursor)
+    errors = []
 
     try:
         start = datetime.strptime(period + "-01", "%Y-%m-%d").date()
         end = start.replace(year=start.year + 1, month=1) if start.month == 12 else start.replace(month=start.month + 1)
-        if company == "MSL-CR":
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Periodo invalido. Use formato YYYY-MM.")
+
+    try:
+        _ensure_accounting_professional_schema(conn)
+    except Exception as exc:
+        conn.rollback()
+        errors.append({"section": "schema", "error": str(exc)})
+
+    try:
+        cur.execute("SET LOCAL statement_timeout = '10000ms'")
+    except Exception:
+        conn.rollback()
+
+    try:
+        try:
             cur.execute("""
                 WITH tax_ranked AS (
                     SELECT d.*,
@@ -2528,24 +2542,10 @@ def get_accounting_iva(
                                    d.id DESC
                            ) AS tax_rank
                     FROM tax_electronic_documents d
-                    WHERE d.issue_datetime >= %s
+                    WHERE d.company_code = %s
+                      AND d.issue_datetime >= %s
                       AND d.issue_datetime < %s
                       AND COALESCE(d.issue_datetime::date, CURRENT_DATE) <= CURRENT_DATE
-                      AND (
-                          d.source_table IN ('hacienda_emitted_excel', 'hacienda_acceptance_excel')
-                          OR (
-                              d.direction = 'SALE'
-                              AND COALESCE(d.receiver_identification, '') IN ('3101065618', '3101660512')
-                          )
-                          OR (
-                              d.direction = 'PURCHASE'
-                              AND (
-                                  COALESCE(d.receiver_identification, '') = '3102920372'
-                                  OR UPPER(COALESCE(d.receiver_name, '')) LIKE '%%MSL%%'
-                                  OR UPPER(COALESCE(d.receiver_name, '')) LIKE '%%MARINE SURVEYORS%%'
-                              )
-                          )
-                      )
                 )
                 SELECT direction,
                        COALESCE(SUM(
@@ -2558,7 +2558,7 @@ def get_accounting_iva(
                 FROM tax_ranked
                 WHERE tax_rank = 1
                 GROUP BY direction
-            """, (start, end))
+            """, (company, start, end))
             rows = {r["direction"]: r for r in cur.fetchall()}
             iva_por_pagar = float(rows.get("SALE", {}).get("tax_crc") or 0)
             iva_credito = float(rows.get("PURCHASE", {}).get("tax_crc") or 0)
@@ -2569,41 +2569,50 @@ def get_accounting_iva(
                     "iva_credito": round(iva_credito, 2),
                     "saldo_favor_anterior": 0.0,
                     "iva_total": round(iva_por_pagar - iva_credito, 2),
-                    "source": "tax_electronic_documents"
+                    "source": "tax_electronic_documents",
+                    "errors": errors,
                 }
+        except Exception as exc:
+            conn.rollback()
+            errors.append({"section": "tax_electronic_documents", "error": str(exc)})
 
         # -------------------------------------------------
         # Helper: IVA por periodo (100% SQL SAFE)
         # -------------------------------------------------
         def iva_por_periodo(p):
-            cur.execute("""
-                SELECT
-                    SUM(
-                        CASE
-                            WHEN l.account_code IN ('2108', '2.1.02.03') -- IVA por pagar
-                            THEN COALESCE(l.credit,0) - COALESCE(l.debit,0)
-                            ELSE 0
-                        END
-                    ) AS iva_por_pagar,
+            try:
+                cur.execute("""
+                    SELECT
+                        SUM(
+                            CASE
+                                WHEN l.account_code IN ('2108', '2.1.02.03') -- IVA por pagar
+                                THEN COALESCE(l.credit,0) - COALESCE(l.debit,0)
+                                ELSE 0
+                            END
+                        ) AS iva_por_pagar,
 
-                    SUM(
-                        CASE
-                            WHEN l.account_code IN ('1131', '1.1.13.99') -- IVA credito fiscal
-                            THEN COALESCE(l.debit,0) - COALESCE(l.credit,0)
-                            ELSE 0
-                        END
-                    ) AS iva_credito
-                FROM accounting_lines l
-                JOIN accounting_entries e ON e.id = l.entry_id
-                WHERE e.period = %s
-                  AND e.company_code = %s
-            """, (p, company))
+                        SUM(
+                            CASE
+                                WHEN l.account_code IN ('1131', '1.1.13.99') -- IVA credito fiscal
+                                THEN COALESCE(l.debit,0) - COALESCE(l.credit,0)
+                                ELSE 0
+                            END
+                        ) AS iva_credito
+                    FROM accounting_lines l
+                    JOIN accounting_entries e ON e.id = l.entry_id
+                    WHERE e.period = %s
+                      AND e.company_code = %s
+                """, (p, company))
 
-            row = cur.fetchone() or {}
-            return (
-                float(row.get("iva_por_pagar") or 0),
-                float(row.get("iva_credito") or 0)
-            )
+                row = cur.fetchone() or {}
+                return (
+                    float(row.get("iva_por_pagar") or 0),
+                    float(row.get("iva_credito") or 0)
+                )
+            except Exception as exc:
+                conn.rollback()
+                errors.append({"section": f"accounting_lines:{p}", "error": str(exc)})
+                return 0.0, 0.0
 
         # -------------------------------------------------
         # 1️⃣ IVA DEL MES ACTUAL (SIEMPRE)
@@ -2639,8 +2648,19 @@ def get_accounting_iva(
             "iva_por_pagar": round(iva_por_pagar, 2),
             "iva_credito": round(iva_credito, 2),
             "saldo_favor_anterior": round(saldo_favor_anterior, 2),
-            "iva_total": round(iva_total, 2)
+            "iva_total": round(iva_total, 2),
+            "source": "accounting_lines",
+            "errors": errors,
         }
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=repr(e))
+        conn.rollback()
+        return {
+            "period": period,
+            "iva_por_pagar": 0.0,
+            "iva_credito": 0.0,
+            "saldo_favor_anterior": 0.0,
+            "iva_total": 0.0,
+            "source": "fallback",
+            "errors": [*errors, {"section": "iva", "error": str(e)}],
+        }

@@ -2910,10 +2910,11 @@ def sync_accounting_auxiliaries_api():
     return r.json()
 
 
-def get_accounting_auxiliary_entities_api(entity_type=None, search=None):
+def get_accounting_auxiliary_entities_api(entity_type=None, search=None, include_closed=False):
     params = {}
     if entity_type: params["entity_type"] = entity_type
     if search: params["search"] = search
+    if include_closed: params["include_closed"] = "true"
     r = api_request("GET", f"{BASE_URL}/accounting/auxiliaries/entities", params=params, timeout=30)
     r.raise_for_status()
     return r.json().get("data", [])
@@ -2925,14 +2926,35 @@ def create_accounting_auxiliary_entity_api(payload):
     return r.json()
 
 
-def get_accounting_auxiliary_documents_api(entity_id):
-    r = api_request("GET", f"{BASE_URL}/accounting/auxiliaries/entities/{entity_id}/documents", timeout=30)
+def update_accounting_auxiliary_entity_api(entity_id, payload):
+    r = api_request("PUT", f"{BASE_URL}/accounting/auxiliaries/entities/{entity_id}", json=payload, timeout=20)
+    r.raise_for_status()
+    return r.json()
+
+
+def get_accounting_auxiliary_documents_api(entity_id, include_closed=False):
+    params = {"include_closed": "true"} if include_closed else None
+    r = api_request("GET", f"{BASE_URL}/accounting/auxiliaries/entities/{entity_id}/documents", params=params, timeout=30)
     r.raise_for_status()
     return r.json().get("data", [])
 
 
 def create_accounting_auxiliary_document_api(entity_id, payload):
     r = api_request("POST", f"{BASE_URL}/accounting/auxiliaries/entities/{entity_id}/documents", json=payload, timeout=20)
+    r.raise_for_status()
+    return r.json()
+
+
+def update_accounting_auxiliary_document_api(document_id, payload):
+    r = api_request("PUT", f"{BASE_URL}/accounting/auxiliaries/documents/{document_id}", json=payload, timeout=20)
+    r.raise_for_status()
+    return r.json()
+
+
+def bulk_update_accounting_auxiliary_documents_api(document_ids, payload):
+    body = dict(payload or {})
+    body["document_ids"] = document_ids
+    r = api_request("PATCH", f"{BASE_URL}/accounting/auxiliaries/documents/bulk", json=body, timeout=30)
     r.raise_for_status()
     return r.json()
 
@@ -2959,12 +2981,14 @@ def get_accounting_auxiliary_reconciliation_api(period=None):
     return r.json().get("data", [])
 
 
-def get_accounting_auxiliary_reconciliation_details_api(entity_type=None, period=None):
+def get_accounting_auxiliary_reconciliation_details_api(entity_type=None, period=None, include_closed=False):
     params = {}
     if entity_type:
         params["entity_type"] = entity_type
     if period:
         params["period"] = period
+    if include_closed:
+        params["include_closed"] = "true"
     r = api_request(
         "GET",
         f"{BASE_URL}/accounting/auxiliaries/reconciliation/details",
@@ -3603,7 +3627,7 @@ def get_accounting_iva_api(period):
         params={"period": period, "company_code": get_company_code()},
         timeout=20
     )
-    r.raise_for_status()
+    raise_for_status_with_detail(r)
     return r.json()
 
 

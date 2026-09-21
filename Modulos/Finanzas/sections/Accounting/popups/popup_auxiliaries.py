@@ -1,9 +1,11 @@
 import tkinter as tk
 from datetime import date
-from tkinter import ttk, messagebox, simpledialog
+from pathlib import Path
+from tkinter import ttk, messagebox, simpledialog, filedialog
 
 from api_client import (
     apply_accounting_auxiliary_transaction_api,
+    bulk_update_accounting_auxiliary_documents_api,
     create_accounting_auxiliary_document_api,
     create_accounting_auxiliary_entity_api,
     get_accounting_accounts_api,
@@ -14,6 +16,8 @@ from api_client import (
     get_accounting_auxiliary_reconciliation_details_api,
     get_accounting_auxiliary_settings_api,
     sync_accounting_auxiliaries_api,
+    update_accounting_auxiliary_document_api,
+    update_accounting_auxiliary_entity_api,
     update_accounting_auxiliary_setting_api,
 )
 from session_context import get_user
@@ -33,6 +37,7 @@ class PopupAccountingAuxiliaries(tk.Toplevel):
         self.entity_type = tk.StringVar(value="CUSTOMER")
         self.search = tk.StringVar()
         self.mapping = tk.StringVar()
+        self.include_closed = tk.BooleanVar(value=False)
         self.accounts = []
         self.account_map = {}
         self.settings = {}
@@ -52,6 +57,8 @@ class PopupAccountingAuxiliaries(tk.Toplevel):
         search.pack(side="left")
         search.bind("<Return>", lambda _e: self._load_entities())
         ttk.Button(toolbar, text="Buscar", command=self._load_entities).pack(side="left", padx=4)
+        ttk.Checkbutton(toolbar, text="Incluir cerrados", variable=self.include_closed, command=self._refresh_all).pack(side="left", padx=10)
+        ttk.Button(toolbar, text="Exportar Excel", command=self._export_current_type).pack(side="left", padx=4)
         ttk.Button(toolbar, text="Sincronizar fuentes", command=self._sync).pack(side="right", padx=4)
         ttk.Button(toolbar, text="Nuevo auxiliar", command=self._new_entity).pack(side="right", padx=4)
 
@@ -78,7 +85,7 @@ class PopupAccountingAuxiliaries(tk.Toplevel):
         self._build_aging_tab()
 
     def _tree(self, parent, columns, headers, widths=None):
-        tree = ttk.Treeview(parent, columns=columns, show="headings")
+        tree = ttk.Treeview(parent, columns=columns, show="headings", selectmode="extended")
         for index, (col, header) in enumerate(zip(columns, headers)):
             tree.heading(col, text=header)
             tree.column(col, width=(widths or {}).get(col, 120))
@@ -100,7 +107,11 @@ class PopupAccountingAuxiliaries(tk.Toplevel):
         actions = ttk.Frame(self.entities_tab)
         actions.pack(fill="x", pady=4)
         ttk.Button(actions, text="Aplicar pago / movimiento", command=self._apply_transaction).pack(side="right", padx=5)
+        ttk.Button(actions, text="Cerrar seleccionados", command=lambda: self._bulk_document_status("CLOSED")).pack(side="right", padx=5)
+        ttk.Button(actions, text="Reabrir seleccionados", command=lambda: self._bulk_document_status("OPEN")).pack(side="right", padx=5)
+        ttk.Button(actions, text="Editar documento", command=self._edit_document).pack(side="right", padx=5)
         ttk.Button(actions, text="Agregar documento manual", command=self._new_document).pack(side="right")
+        ttk.Button(actions, text="Editar auxiliar", command=self._edit_entity).pack(side="right", padx=5)
         lower = ttk.LabelFrame(self.entities_tab, text="Documentos del auxiliar seleccionado", padding=5)
         lower.pack(fill="both", expand=True, pady=(2, 5))
         dcols = ("id", "number", "type", "issue", "due", "currency", "original", "open", "status", "overdue")
@@ -173,20 +184,24 @@ class PopupAccountingAuxiliaries(tk.Toplevel):
             messagebox.showerror("Auxiliares", str(exc))
 
     def _load_entities(self):
-        rows = get_accounting_auxiliary_entities_api(self.entity_type.get(), self.search.get().strip() or None)
+        rows = get_accounting_auxiliary_entities_api(
+            self.entity_type.get(),
+            self.search.get().strip() or None,
+            self.include_closed.get(),
+        )
         self.entities_tree.delete(*self.entities_tree.get_children())
         self.documents_tree.delete(*self.documents_tree.get_children())
         for row in rows:
             self.entities_tree.insert("", "end", values=(row["id"], row["entity_code"], row["entity_name"],
                 row["currency_code"], row.get("effective_control_account") or "SIN MAPEO",
-                row["document_count"], self._amount(row["open_balance"])))
+                row.get("open_document_count", row["document_count"]), self._amount(row["open_balance"])))
 
     def _load_documents(self):
         selected = self.entities_tree.selection()
         if not selected: return
         entity_id = self.entities_tree.item(selected[0], "values")[0]
         self.documents_tree.delete(*self.documents_tree.get_children())
-        for row in get_accounting_auxiliary_documents_api(entity_id):
+        for row in get_accounting_auxiliary_documents_api(entity_id, self.include_closed.get()):
             self.documents_tree.insert("", "end", values=(row["id"], row["document_number"], row["document_type"], row.get("issue_date") or "",
                 row.get("due_date") or "", row["currency_code"], self._amount(row["original_amount"]),
                 self._amount(row["open_amount"]), row["status"], row.get("days_overdue") or 0))
@@ -200,7 +215,9 @@ class PopupAccountingAuxiliaries(tk.Toplevel):
 
     def _load_detail_reconciliation(self):
         self.detail_recon_tree.delete(*self.detail_recon_tree.get_children())
-        rows = get_accounting_auxiliary_reconciliation_details_api(self.entity_type.get(), self.period)
+        rows = get_accounting_auxiliary_reconciliation_details_api(
+            self.entity_type.get(), self.period, self.include_closed.get()
+        )
         for row in rows:
             entity = f"{row.get('entity_code') or ''} - {row.get('entity_name') or ''}".strip(" -")
             self.detail_recon_tree.insert("", "end", values=(
@@ -267,6 +284,29 @@ class PopupAccountingAuxiliaries(tk.Toplevel):
             self._load_entities()
         except Exception as exc: messagebox.showerror("Nuevo auxiliar", str(exc))
 
+    def _edit_entity(self):
+        selected = self.entities_tree.selection()
+        if not selected:
+            messagebox.showwarning("Auxiliar", "Seleccione un auxiliar."); return
+        values = self.entities_tree.item(selected[0], "values")
+        entity_id, code, name, currency, account = values[0], values[1], values[2], values[3], values[4]
+        new_code = simpledialog.askstring("Editar auxiliar", "Código:", initialvalue=code, parent=self)
+        if not new_code: return
+        new_name = simpledialog.askstring("Editar auxiliar", "Nombre:", initialvalue=name, parent=self)
+        if not new_name: return
+        new_currency = simpledialog.askstring("Editar auxiliar", "Moneda:", initialvalue=currency, parent=self)
+        new_account = simpledialog.askstring("Editar auxiliar", "Cuenta control:", initialvalue="" if account == "SIN MAPEO" else account, parent=self)
+        try:
+            update_accounting_auxiliary_entity_api(entity_id, {
+                "entity_code": new_code,
+                "entity_name": new_name,
+                "currency_code": (new_currency or "CRC").upper(),
+                "control_account_code": new_account or None,
+            })
+            self._refresh_all()
+        except Exception as exc:
+            messagebox.showerror("Editar auxiliar", str(exc))
+
     def _new_document(self):
         selected = self.entities_tree.selection()
         if not selected:
@@ -283,6 +323,54 @@ class PopupAccountingAuxiliaries(tk.Toplevel):
             self._load_documents(); self._load_entities(); self._load_reconciliation(); self._load_detail_reconciliation(); self._load_aging()
         except Exception as exc: messagebox.showerror("Documento", str(exc))
 
+    def _edit_document(self):
+        selected = self.documents_tree.selection()
+        if not selected:
+            messagebox.showwarning("Documento", "Seleccione un documento."); return
+        if len(selected) > 1:
+            messagebox.showwarning("Documento", "Seleccione solo un documento para editar detalle."); return
+        values = self.documents_tree.item(selected[0], "values")
+        document_id = values[0]
+        number = simpledialog.askstring("Editar documento", "Número:", initialvalue=values[1], parent=self)
+        if not number: return
+        doc_type = simpledialog.askstring("Editar documento", "Tipo:", initialvalue=values[2], parent=self)
+        currency = simpledialog.askstring("Editar documento", "Moneda:", initialvalue=values[5], parent=self)
+        original = simpledialog.askstring("Editar documento", "Monto original:", initialvalue=str(values[6]).replace(",", ""), parent=self)
+        open_amount = simpledialog.askstring("Editar documento", "Saldo abierto:", initialvalue=str(values[7]).replace(",", ""), parent=self)
+        status = simpledialog.askstring("Editar documento", "Estado (OPEN/CLOSED/VOID):", initialvalue=values[8], parent=self)
+        try:
+            update_accounting_auxiliary_document_api(document_id, {
+                "document_number": number,
+                "document_type": (doc_type or "OTHER").upper(),
+                "currency_code": (currency or "CRC").upper(),
+                "original_amount": original,
+                "open_amount": open_amount,
+                "status": (status or "OPEN").upper(),
+            })
+            self._load_documents(); self._load_entities(); self._load_reconciliation(); self._load_detail_reconciliation(); self._load_aging()
+        except Exception as exc:
+            messagebox.showerror("Editar documento", str(exc))
+
+    def _bulk_document_status(self, status):
+        selected = self.documents_tree.selection()
+        if not selected:
+            messagebox.showwarning("Corrección masiva", "Seleccione uno o varios documentos."); return
+        ids = [self.documents_tree.item(iid, "values")[0] for iid in selected]
+        label = "cerrar" if status == "CLOSED" else "reabrir"
+        if not messagebox.askyesno("Corrección masiva", f"¿Desea {label} {len(ids)} documento(s)?", parent=self):
+            return
+        try:
+            payload = {"status": status}
+            if status == "OPEN":
+                amount = simpledialog.askstring("Reabrir documentos", "Saldo abierto para los documentos seleccionados:", parent=self)
+                if amount is None: return
+                payload["open_amount"] = amount
+            result = bulk_update_accounting_auxiliary_documents_api(ids, payload)
+            self._load_documents(); self._load_entities(); self._load_reconciliation(); self._load_detail_reconciliation(); self._load_aging()
+            messagebox.showinfo("Corrección masiva", f"Actualizados: {result.get('updated')}")
+        except Exception as exc:
+            messagebox.showerror("Corrección masiva", str(exc))
+
     def _apply_transaction(self):
         selected = self.documents_tree.selection()
         if not selected:
@@ -297,3 +385,94 @@ class PopupAccountingAuxiliaries(tk.Toplevel):
                 "amount": str(amount), "reference": reference, "user": get_user() or "unknown"})
             self._load_documents(); self._load_entities(); self._load_reconciliation(); self._load_detail_reconciliation(); self._load_aging()
         except Exception as exc: messagebox.showerror("Movimiento", str(exc))
+
+    def _export_current_type(self):
+        try:
+            from openpyxl import Workbook
+            from openpyxl.styles import Font, PatternFill, Alignment
+            from openpyxl.utils import get_column_letter
+        except Exception as exc:
+            messagebox.showerror("Exportar Excel", f"No se pudo cargar openpyxl:\n{exc}", parent=self)
+            return
+        typ = self.entity_type.get()
+        path = filedialog.asksaveasfilename(
+            parent=self,
+            title="Exportar auxiliar contable",
+            defaultextension=".xlsx",
+            initialfile=f"auxiliar_contable_{typ.lower()}_{date.today().isoformat()}.xlsx",
+            filetypes=[("Excel", "*.xlsx")],
+        )
+        if not path:
+            return
+        wb = Workbook()
+        wb.remove(wb.active)
+
+        def add_tree_sheet(title, tree):
+            ws = wb.create_sheet(title[:31])
+            headers = [tree.heading(col)["text"] for col in tree["columns"]]
+            ws.append(headers)
+            for cell in ws[1]:
+                cell.font = Font(bold=True, color="FFFFFF")
+                cell.fill = PatternFill("solid", fgColor="1F4E78")
+                cell.alignment = Alignment(horizontal="center")
+            for iid in tree.get_children():
+                ws.append(list(tree.item(iid, "values")))
+            for idx, header in enumerate(headers, start=1):
+                width = max(len(str(header)) + 2, 12)
+                for row in ws.iter_rows(min_row=2, min_col=idx, max_col=idx):
+                    width = max(width, min(len(str(row[0].value or "")) + 2, 45))
+                ws.column_dimensions[get_column_letter(idx)].width = width
+            ws.freeze_panes = "A2"
+
+        def add_rows_sheet(title, headers, rows):
+            ws = wb.create_sheet(title[:31])
+            ws.append(headers)
+            for cell in ws[1]:
+                cell.font = Font(bold=True, color="FFFFFF")
+                cell.fill = PatternFill("solid", fgColor="1F4E78")
+                cell.alignment = Alignment(horizontal="center")
+            for row in rows:
+                ws.append(row)
+            for idx, header in enumerate(headers, start=1):
+                width = max(len(str(header)) + 2, 12)
+                for row in ws.iter_rows(min_row=2, min_col=idx, max_col=idx):
+                    width = max(width, min(len(str(row[0].value or "")) + 2, 45))
+                ws.column_dimensions[get_column_letter(idx)].width = width
+            ws.freeze_panes = "A2"
+
+        doc_rows = []
+        for iid in self.entities_tree.get_children():
+            entity_values = self.entities_tree.item(iid, "values")
+            entity_id = entity_values[0]
+            entity_label = f"{entity_values[1]} - {entity_values[2]}"
+            for doc in get_accounting_auxiliary_documents_api(entity_id, self.include_closed.get()):
+                doc_rows.append([
+                    typ,
+                    entity_label,
+                    doc.get("id"),
+                    doc.get("document_number"),
+                    doc.get("document_type"),
+                    doc.get("issue_date"),
+                    doc.get("due_date"),
+                    doc.get("currency_code"),
+                    doc.get("original_amount"),
+                    doc.get("open_amount"),
+                    doc.get("status"),
+                    doc.get("source_table"),
+                    doc.get("source_id"),
+                ])
+
+        add_tree_sheet("Maestro", self.entities_tree)
+        add_rows_sheet("Documentos tipo", [
+            "Tipo", "Auxiliar", "ID", "Documento", "Clase", "Emision", "Vence",
+            "Moneda", "Original", "Saldo abierto", "Estado", "Fuente", "Fuente ID",
+        ], doc_rows)
+        add_tree_sheet("Documentos seleccion", self.documents_tree)
+        add_tree_sheet("Detalle vs mayor", self.detail_recon_tree)
+        add_tree_sheet("Conciliacion", self.recon_tree)
+        add_tree_sheet("Antiguedad", self.aging_tree)
+        try:
+            wb.save(path)
+            messagebox.showinfo("Exportar Excel", f"Archivo generado:\n{Path(path)}", parent=self)
+        except Exception as exc:
+            messagebox.showerror("Exportar Excel", str(exc), parent=self)

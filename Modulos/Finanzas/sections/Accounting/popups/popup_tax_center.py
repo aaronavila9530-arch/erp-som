@@ -32,7 +32,10 @@ class PopupTaxCenter(tk.Toplevel):
         top.pack(fill="x")
         ttk.Label(top, text="Periodo (AAAA-MM):").pack(side="left")
         ttk.Entry(top, textvariable=self.period, width=10).pack(side="left", padx=6)
+        ttk.Button(top, text="Mes anterior", command=lambda: self._shift_period(-1)).pack(side="left", padx=2)
+        ttk.Button(top, text="Mes siguiente", command=lambda: self._shift_period(1)).pack(side="left", padx=2)
         ttk.Button(top, text="Actualizar", command=self.refresh_all).pack(side="left", padx=4)
+        ttk.Button(top, text="Generar D-150 / IVA", command=self._open_d150).pack(side="left", padx=4)
         ttk.Button(top, text="Sincronizar ERP", command=self._sync).pack(side="left", padx=4)
         ttk.Button(top, text="Cargar XML venta", command=lambda: self._upload_xml("SALE")).pack(side="left", padx=4)
         ttk.Button(top, text="Cargar XML compra", command=lambda: self._upload_xml("PURCHASE")).pack(side="left", padx=4)
@@ -126,14 +129,63 @@ class PopupTaxCenter(tk.Toplevel):
         self.cabys_tree.pack(fill="both",expand=True)
 
     def refresh_all(self):
+        period = self.period.get().strip()
+        if not self._valid_period(period):
+            messagebox.showwarning("Centro fiscal", "Use un periodo valido en formato AAAA-MM.", parent=self)
+            return
+        self.status.set(f"Consultando registro fiscal {period}...")
+        errors = []
+        for label, fn in (
+            ("IVA", self._load_dashboard),
+            ("Libro ventas", lambda: self._load_book("SALE", self.sales_tree)),
+            ("Libro compras", lambda: self._load_book("PURCHASE", self.purchases_tree)),
+            ("Control documental", self._load_quality),
+            ("Obligaciones", self._load_obligations),
+            ("CAByS", self._load_cabys),
+        ):
+            try:
+                fn()
+            except Exception as exc:
+                errors.append(f"{label}: {exc}")
+        if errors:
+            self.status.set("Actualizado parcialmente. Revise secciones con error.")
+            messagebox.showwarning("Centro fiscal", "Algunas secciones no cargaron:\n\n" + "\n".join(errors[:6]), parent=self)
+        else:
+            self.status.set(f"Informacion fiscal actualizada para {period}")
+
+    @staticmethod
+    def _valid_period(period):
         try:
-            self.status.set("Consultando registro fiscal...")
-            self._load_dashboard(); self._load_book("SALE",self.sales_tree); self._load_book("PURCHASE",self.purchases_tree)
-            self._load_quality(); self._load_obligations(); self._load_cabys()
-            self.status.set("Informacion fiscal actualizada")
+            year, month = [int(part) for part in str(period or "").split("-")]
+            return 1 <= month <= 12 and 2000 <= year <= 2100
+        except Exception:
+            return False
+
+    def _shift_period(self, months):
+        try:
+            year, month = [int(part) for part in self.period.get().split("-")]
+            month += months
+            while month < 1:
+                year -= 1
+                month += 12
+            while month > 12:
+                year += 1
+                month -= 12
+            self.period.set(f"{year:04d}-{month:02d}")
+            self.refresh_all()
+        except Exception:
+            messagebox.showwarning("Centro fiscal", "Periodo invalido. Use AAAA-MM.", parent=self)
+
+    def _open_d150(self):
+        period = self.period.get().strip()
+        if not self._valid_period(period):
+            messagebox.showwarning("Formulario 150", "Use un periodo valido en formato AAAA-MM.", parent=self)
+            return
+        try:
+            from Modulos.Finanzas.sections.Accounting.popups.popup_d150 import PopupD150
+            PopupD150(self, period)
         except Exception as exc:
-            self.status.set("No se pudo actualizar")
-            messagebox.showerror("Centro fiscal",str(exc),parent=self)
+            messagebox.showerror("Formulario 150", f"No se pudo abrir/generar IVA {period}:\n{exc}", parent=self)
 
     def _load_dashboard(self):
         data=get_tax_iva_api(self.period.get()); fiscal=data["fiscal"]; accounting=data["accounting"]; diff=data["differences"]
@@ -142,11 +194,19 @@ class PopupTaxCenter(tk.Toplevel):
         for key,value in values.items(): self.kpis[key].set(self._format_iva_position(value, key))
         self.ready.set("LISTO PARA REVISION Y PRESENTACION" if data["ready_to_file"] else "NO PRESENTAR: existen diferencias o datos incompletos")
         q=data["quality"]
+        errors = data.get("errors") or []
+        error_text = ""
+        if errors:
+            error_text = "\n\nSecciones con error:\n" + "\n".join(
+                f"- {item.get('section')}: {item.get('error')}" for item in errors[:5]
+            )
         text=(f"XML faltantes: {q.get('missing_xml',0)}\nRespuestas de Hacienda pendientes: {q.get('pending_hacienda',0)}\n"
               f"Documentos sin detalle: {q.get('documents_without_lines',0)}\nLineas sin CAByS: {q.get('missing_cabys',0)}\n\n"
+              f"Facturas emitidas sin comprobante fiscal: {q.get('issued_invoices_without_tax_document',0)}\n\n"
               "Debito fiscal = IVA de ventas. Credito fiscal = IVA de compras. "
               "Si compras supera ventas, el resultado es credito a favor, no un IVA negativo. "
-              "La diferencia compara documentos fiscales contra cuentas contables de IVA antes de declarar.")
+              "La diferencia compara documentos fiscales contra cuentas contables de IVA antes de declarar."
+              f"{error_text}")
         self.quality_text.configure(state="normal"); self.quality_text.delete("1.0","end"); self.quality_text.insert("1.0",text); self.quality_text.configure(state="disabled")
     def _load_book(self,direction,tree):
         data=get_tax_book_api(direction,"ALL" if self.show_all_books.get() else self.period.get())

@@ -694,28 +694,7 @@ def _preferred_tax_documents_sql(where_sql: str) -> str:
 
 def _company_tax_scope_sql(company: str) -> str:
     safe_company = str(company or "MSL-CR").replace("'", "''")
-    company_filter = f"d.company_code = '{safe_company}'"
-    if company != "MSL-CR":
-        return company_filter
-    return f"""
-        (
-            {company_filter}
-            OR
-            d.source_table IN ('hacienda_emitted_excel', 'hacienda_acceptance_excel')
-            OR (
-                d.direction = 'SALE'
-                AND COALESCE(d.receiver_identification, '') IN ('3101065618', '3101660512')
-            )
-            OR (
-                d.direction = 'PURCHASE'
-                AND (
-                    COALESCE(d.receiver_identification, '') = '3102920372'
-                    OR UPPER(COALESCE(d.receiver_name, '')) LIKE '%%MSL%%'
-                    OR UPPER(COALESCE(d.receiver_name, '')) LIKE '%%MARINE SURVEYORS%%'
-                )
-            )
-        )
-    """
+    return f"d.company_code = '{safe_company}'"
 
 
 @router.get("/documents")
@@ -790,8 +769,13 @@ def tax_iva(
     conn=Depends(get_db),
 ):
     company = _company_code(company_code, x_company_code)
-    _ensure_schema(conn); start,end=_period_bounds(period)
+    start,end=_period_bounds(period)
+    try:
+        _ensure_schema(conn)
+    except Exception:
+        conn.rollback()
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("SET LOCAL statement_timeout = '10000ms'")
         amount_crc = """
             CASE
               WHEN UPPER(COALESCE(currency_code,'CRC')) IN ('CRC','COLON','COLONES')
@@ -799,56 +783,102 @@ def tax_iva(
               ELSE %s * COALESCE(NULLIF(exchange_rate,0),1)
             END
         """
-        cur.execute(f"""SELECT direction,
-          COALESCE(SUM({amount_crc % ('subtotal', 'subtotal')}),0) subtotal,
-          COALESCE(SUM({amount_crc % ('exempt_amount', 'exempt_amount')}),0) exempt,
-          COALESCE(SUM({amount_crc % ('tax_amount', 'tax_amount')}),0) tax,
-          COALESCE(SUM({amount_crc % ('total', 'total')}),0) total,
-          COUNT(*) documents,
-          COUNT(*) FILTER(WHERE xml_path IS NULL) missing_xml,COUNT(*) FILTER(WHERE hacienda_status='PENDING') pending_hacienda
-          FROM {_preferred_tax_documents_sql(f"{_company_tax_scope_sql(company)} AND d.issue_datetime >= %s AND d.issue_datetime < %s AND COALESCE(d.issue_datetime::date, CURRENT_DATE) <= CURRENT_DATE")} preferred
-          GROUP BY direction""",(start,end))
-        by_direction={r["direction"]:r for r in cur.fetchall()}
-        cur.execute("SELECT setting_key,setting_value FROM tax_settings WHERE setting_key IN ('IVA_DEBIT_ACCOUNT','IVA_CREDIT_ACCOUNT')")
-        settings={r["setting_key"]:r["setting_value"] for r in cur.fetchall()}
+        errors = []
+        try:
+            cur.execute(f"""SELECT direction,
+              COALESCE(SUM({amount_crc % ('subtotal', 'subtotal')}),0) subtotal,
+              COALESCE(SUM({amount_crc % ('exempt_amount', 'exempt_amount')}),0) exempt,
+              COALESCE(SUM({amount_crc % ('tax_amount', 'tax_amount')}),0) tax,
+              COALESCE(SUM({amount_crc % ('total', 'total')}),0) total,
+              COUNT(*) documents,
+              COUNT(*) FILTER(WHERE xml_path IS NULL) missing_xml,COUNT(*) FILTER(WHERE hacienda_status='PENDING') pending_hacienda
+              FROM {_preferred_tax_documents_sql(f"{_company_tax_scope_sql(company)} AND d.issue_datetime >= %s AND d.issue_datetime < %s AND COALESCE(d.issue_datetime::date, CURRENT_DATE) <= CURRENT_DATE")} preferred
+              GROUP BY direction""",(start,end))
+            by_direction={r["direction"]:r for r in cur.fetchall()}
+        except Exception as exc:
+            conn.rollback()
+            errors.append({"section": "documental", "error": str(exc)})
+            by_direction = {}
+        try:
+            cur.execute("SELECT setting_key,setting_value FROM tax_settings WHERE setting_key IN ('IVA_DEBIT_ACCOUNT','IVA_CREDIT_ACCOUNT')")
+            settings={r["setting_key"]:r["setting_value"] for r in cur.fetchall()}
+        except Exception as exc:
+            conn.rollback()
+            errors.append({"section": "settings", "error": str(exc)})
+            settings={}
         debit_codes = list(dict.fromkeys([settings.get("IVA_DEBIT_ACCOUNT","2108"), "2.1.02.03", "2108"]))
         credit_codes = list(dict.fromkeys([settings.get("IVA_CREDIT_ACCOUNT","1131"), "1.1.13.99", "1131"]))
-        cur.execute("""SELECT account_code,COALESCE(SUM(debit),0) debit,COALESCE(SUM(credit),0) credit
-          FROM accounting_lines l JOIN accounting_entries e ON e.id=l.entry_id
-            WHERE e.entry_date >= %s
-              AND e.entry_date < %s
-              AND e.company_code = %s
-              AND e.workflow_status='POSTED'
-            AND (account_code = ANY(%s) OR account_code = ANY(%s))
-            AND (
-              (e.origin='COLLECTIONS' AND EXISTS (
-                SELECT 1 FROM collections c
-                WHERE c.id=e.origin_id
-                  AND c.fecha_emision >= %s
-                  AND c.fecha_emision < %s
-              ))
-              OR
-              (e.origin='ITP' AND EXISTS (
-                SELECT 1 FROM payment_obligations p
-                WHERE p.id=e.origin_id
-                  AND p.issue_date >= %s
-                  AND p.issue_date < %s
-              ))
-              OR
-              (COALESCE(e.origin,'') NOT IN ('COLLECTIONS','ITP'))
-            )
-          GROUP BY account_code""",
-                    (start,end,company,debit_codes,credit_codes,start,end,start,end))
-        gl={r["account_code"]:r for r in cur.fetchall()}
-        cur.execute(f"""SELECT
-              COUNT(*) FILTER(WHERE NOT EXISTS(SELECT 1 FROM tax_document_lines x WHERE x.document_id=d.id)) documents_without_lines,
-              COALESCE(SUM((SELECT COUNT(*) FROM tax_document_lines l WHERE l.document_id=d.id AND COALESCE(l.cabys_code,'')='')),0) missing_cabys
-              FROM tax_electronic_documents d
-              WHERE {_company_tax_scope_sql(company)}
-                AND d.issue_datetime >= %s
-                AND d.issue_datetime < %s
-                AND COALESCE(d.issue_datetime::date, CURRENT_DATE) <= CURRENT_DATE""",(start,end))
-        quality=cur.fetchone()
+        try:
+            cur.execute("""SELECT account_code,COALESCE(SUM(debit),0) debit,COALESCE(SUM(credit),0) credit
+              FROM accounting_lines l JOIN accounting_entries e ON e.id=l.entry_id
+                WHERE e.entry_date >= %s
+                  AND e.entry_date < %s
+                  AND e.company_code = %s
+                  AND e.workflow_status='POSTED'
+                AND (account_code = ANY(%s) OR account_code = ANY(%s))
+                AND (
+                  (e.origin='COLLECTIONS' AND EXISTS (
+                    SELECT 1 FROM collections c
+                    WHERE c.id=e.origin_id
+                      AND c.fecha_emision >= %s
+                      AND c.fecha_emision < %s
+                  ))
+                  OR
+                  (e.origin='ITP' AND EXISTS (
+                    SELECT 1 FROM payment_obligations p
+                    WHERE p.id=e.origin_id
+                      AND p.issue_date >= %s
+                      AND p.issue_date < %s
+                  ))
+                  OR
+                  (COALESCE(e.origin,'') NOT IN ('COLLECTIONS','ITP'))
+                )
+              GROUP BY account_code""",
+                        (start,end,company,debit_codes,credit_codes,start,end,start,end))
+            gl={r["account_code"]:r for r in cur.fetchall()}
+        except Exception as exc:
+            conn.rollback()
+            errors.append({"section": "accounting", "error": str(exc)})
+            gl = {}
+        try:
+            cur.execute(f"""SELECT
+                  COUNT(*) FILTER(WHERE NOT EXISTS(SELECT 1 FROM tax_document_lines x WHERE x.document_id=d.id)) documents_without_lines,
+                  COALESCE(SUM((SELECT COUNT(*) FROM tax_document_lines l WHERE l.document_id=d.id AND COALESCE(l.cabys_code,'')='')),0) missing_cabys
+                  FROM tax_electronic_documents d
+                  WHERE {_company_tax_scope_sql(company)}
+                    AND d.issue_datetime >= %s
+                    AND d.issue_datetime < %s
+                    AND COALESCE(d.issue_datetime::date, CURRENT_DATE) <= CURRENT_DATE""",(start,end))
+            quality=cur.fetchone() or {}
+        except Exception as exc:
+            conn.rollback()
+            errors.append({"section": "quality", "error": str(exc)})
+            quality = {"documents_without_lines": 0, "missing_cabys": 0}
+        try:
+            cur.execute("""
+                SELECT COUNT(*) AS issued_invoices_without_tax_document
+                FROM invoicing i
+                WHERE i.company_code = %s
+                  AND i.fecha_emision >= %s
+                  AND i.fecha_emision < %s
+                  AND COALESCE(i.estado, '') <> 'ANULADA'
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM tax_electronic_documents d
+                      WHERE d.company_code = i.company_code
+                        AND d.direction = 'SALE'
+                        AND (
+                            NULLIF(d.document_number, '') = NULLIF(i.numero_documento, '')
+                            OR d.source_id = i.id::text
+                            OR d.source_id = i.factura_id::text
+                        )
+                  )
+            """, (company, start, end))
+            quality.update(cur.fetchone() or {})
+        except Exception as exc:
+            conn.rollback()
+            errors.append({"section": "invoicing_quality", "error": str(exc)})
+            quality.setdefault("issued_invoices_without_tax_document", 0)
     sales=by_direction.get("SALE",{}); purchases=by_direction.get("PURCHASE",{})
     debit=_money(sales.get("tax")); credit=_money(purchases.get("tax")); net=debit-credit
     debit_gl=sum((_money(gl.get(code,{}).get("credit"))-_money(gl.get(code,{}).get("debit")) for code in debit_codes), Decimal("0"))
@@ -859,7 +889,8 @@ def tax_iva(
       "differences":{"debit":float(debit-debit_gl),"credit":float(credit-credit_gl),"net":float(net-(debit_gl-credit_gl))},
       "quality":{"missing_xml":int(sales.get("missing_xml",0) or 0)+int(purchases.get("missing_xml",0) or 0),
       "pending_hacienda":int(sales.get("pending_hacienda",0) or 0)+int(purchases.get("pending_hacienda",0) or 0),**quality},
-      "ready_to_file": all(_money(x)==0 for x in (debit-debit_gl,credit-credit_gl)) and not any(int(quality.get(k,0) or 0)>0 for k in quality)}
+      "ready_to_file": not errors and all(_money(x)==0 for x in (debit-debit_gl,credit-credit_gl)) and not any(int(quality.get(k,0) or 0)>0 for k in quality),
+      "errors": errors}
 
 
 class CabysItem(BaseModel):

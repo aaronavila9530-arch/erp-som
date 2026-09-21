@@ -106,24 +106,35 @@ class PopupAccountingAdvanced(tk.Toplevel):
 
     def _worker(self):
         period = self.period.get().strip()
-        try:
-            data = {
-                "dashboard": get_accounting_advanced_dashboard_api(period),
-                "alerts": get_accounting_smart_alerts_api(period),
-                "tax": get_accounting_tax_deep_summary_api(period),
-                "fx": get_accounting_fx_revaluation_preview_api(period),
-                "budgets": get_accounting_budgets_api(period=period, date_from=self.date_from.get().strip() or None, date_to=self.date_to.get().strip() or None, purpose=self.purpose.get(), status=self.budget_status.get()),
-                "budget": get_accounting_budget_vs_actual_api(period),
-            }
-            self.after(0, self._apply, data)
-        except Exception as exc:
-            self.after(0, self._error, str(exc))
+        calls = {
+            "dashboard": lambda: get_accounting_advanced_dashboard_api(period),
+            "alerts": lambda: get_accounting_smart_alerts_api(period),
+            "tax": lambda: get_accounting_tax_deep_summary_api(period),
+            "fx": lambda: get_accounting_fx_revaluation_preview_api(period),
+            "budgets": lambda: get_accounting_budgets_api(
+                period=period,
+                date_from=self.date_from.get().strip() or None,
+                date_to=self.date_to.get().strip() or None,
+                purpose=self.purpose.get(),
+                status=self.budget_status.get(),
+            ),
+            "budget": lambda: get_accounting_budget_vs_actual_api(period),
+        }
+        data = {}
+        errors = {}
+        for key, call in calls.items():
+            try:
+                data[key] = call()
+            except Exception as exc:
+                errors[key] = str(exc)
+                data[key] = self._fallback_payload(key, period, str(exc))
+        self.after(0, self._apply, data, errors)
 
     def _error(self, message):
         self.status.set("Error")
         messagebox.showerror("Accounting avanzado", message, parent=self)
 
-    def _apply(self, data):
+    def _apply(self, data, errors=None):
         self.data = data
         self._fill_dashboard(data["dashboard"])
         self._fill_alerts(data["alerts"])
@@ -132,7 +143,30 @@ class PopupAccountingAdvanced(tk.Toplevel):
         self._fill_simple("budgets", data["budgets"].get("data", []))
         self._fill_simple("budget", data["budget"].get("data", []))
         self._fill_simple("portia", [])
-        self.status.set("Controles avanzados actualizados")
+        if errors:
+            failed = ", ".join(sorted(errors))
+            self.status.set(f"Actualizado con secciones degradadas: {failed}")
+        else:
+            self.status.set("Controles avanzados actualizados")
+
+    def _fallback_payload(self, key, period, error):
+        if key == "dashboard":
+            return {
+                "period": period,
+                "liquidity": {"banks": 0, "as_of": period},
+                "margin": {"revenue": 0, "expenses": 0, "profit": 0, "margin_pct": 0},
+                "overdue_ar": {"total": 0, "count": 0},
+                "upcoming_payments": {"total": 0, "count": 0},
+                "iva_estimated": {"net_tax": 0},
+                "error": error,
+            }
+        if key in {"alerts", "budgets", "budget"}:
+            return {"period": period, "data": [{"message": f"Seccion no disponible: {error}"}]}
+        if key == "tax":
+            return {"period": period, "iva": {"quality": {"estado": f"Seccion no disponible: {error}"}}, "retentions": {}}
+        if key == "fx":
+            return {"period": period, "rows": [{"entity_type": "Sin datos", "entity_name": error}]}
+        return {"period": period, "data": []}
 
     def _fill_dashboard(self, data):
         rows = []

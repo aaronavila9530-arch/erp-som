@@ -53,7 +53,6 @@ def _period_bounds(period: str):
 
 def _ensure_schema(conn):
     _ensure_accounting_professional_schema(conn)
-    _ensure_tax_schema(conn)
     with conn.cursor() as cur:
         ensure_finance_audit_schema(cur)
         for ddl in (
@@ -232,6 +231,19 @@ def _company_from_header(x_company_code: str | None = None) -> str:
     return normalize_company_code(header_value=x_company_code)
 
 
+def _safe_section(errors: list[dict], section: str, fn, default, conn=None):
+    try:
+        return fn()
+    except Exception as exc:
+        if conn is not None:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        errors.append({"section": section, "error": str(exc)})
+        return default
+
+
 def _budget_filters(
     company: str,
     period: str | None = None,
@@ -295,7 +307,6 @@ def historical_fx_rate(rate_date: date | None = None, conn=Depends(get_db)):
 
 @router.get("/fx/revaluation-preview")
 def fx_revaluation_preview(period: str, currency_code: str = "USD", conn=Depends(get_db)):
-    _ensure_schema(conn)
     start, end = _period_bounds(period)
     as_of = min(end - timedelta(days=1), date.today())
     currency_code = (currency_code or "USD").upper()
@@ -304,7 +315,6 @@ def fx_revaluation_preview(period: str, currency_code: str = "USD", conn=Depends
         try:
             from routers.accounting_auxiliaries import _ensure_schema as _ensure_aux_schema, sync_auxiliaries
             _ensure_aux_schema(conn)
-            sync_auxiliaries(conn)
         except Exception:
             conn.rollback()
         cur.execute("""
@@ -418,35 +428,77 @@ def post_fx_revaluation(
 
 @router.get("/tax/deep-summary")
 def tax_deep_summary(period: str, conn=Depends(get_db)):
-    _ensure_schema(conn)
     start, end = _period_bounds(period)
-    iva = tax_iva(period=period, conn=conn)
-    calendar = obligations(year=int(period[:4]), period=period, pending_only=True, conn=conn)
+    errors: list[dict] = []
+    iva = {"fiscal": {}, "accounting": {}, "differences": {}, "quality": {}, "ready_to_file": False}
+    calendar = {"data": []}
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        cur.execute("""
-            SELECT direction, hacienda_status, COUNT(*) documents,
-                   COALESCE(SUM(subtotal),0) subtotal,
-                   COALESCE(SUM(tax_amount),0) tax,
-                   COALESCE(SUM(total),0) total
-            FROM tax_electronic_documents
-            WHERE issue_datetime >= %s AND issue_datetime < %s
-            GROUP BY direction, hacienda_status
-            ORDER BY direction, hacienda_status
-        """, (start, end))
-        by_status = cur.fetchall()
-        cur.execute("""
-            SELECT COUNT(*) FILTER(WHERE LOWER(COALESCE(account_name,'')) LIKE '%%retenc%%' OR account_code LIKE '2.1.03%%') ret_line_count,
-                   COALESCE(SUM(CASE WHEN LOWER(COALESCE(account_name,'')) LIKE '%%retenc%%' OR account_code LIKE '2.1.03%%' THEN credit-debit ELSE 0 END),0) retention_balance
-            FROM accounting_lines l JOIN accounting_entries e ON e.id=l.entry_id
-            WHERE e.workflow_status='POSTED' AND e.entry_date >= %s AND e.entry_date < %s
-        """, (start, end))
-        retentions = cur.fetchone()
+        cur.execute("SET LOCAL statement_timeout = '5000ms'")
+        def documents_by_status():
+            cur.execute("""
+                SELECT direction, hacienda_status, COUNT(*) documents,
+                       COALESCE(SUM(subtotal),0) subtotal,
+                       COALESCE(SUM(tax_amount),0) tax,
+                       COALESCE(SUM(total),0) total
+                FROM tax_electronic_documents
+                WHERE issue_datetime >= %s AND issue_datetime < %s
+                GROUP BY direction, hacienda_status
+                ORDER BY direction, hacienda_status
+            """, (start, end))
+            return cur.fetchall()
+
+        def retention_rows():
+            cur.execute("""
+                SELECT COUNT(*) FILTER(WHERE LOWER(COALESCE(account_name,'')) LIKE '%%retenc%%' OR account_code LIKE '2.1.03%%') ret_line_count,
+                       COALESCE(SUM(CASE WHEN LOWER(COALESCE(account_name,'')) LIKE '%%retenc%%' OR account_code LIKE '2.1.03%%' THEN credit-debit ELSE 0 END),0) retention_balance
+                FROM accounting_lines l JOIN accounting_entries e ON e.id=l.entry_id
+                WHERE e.workflow_status='POSTED' AND e.entry_date >= %s AND e.entry_date < %s
+            """, (start, end))
+            return cur.fetchone() or {}
+
+        by_status = _safe_section(errors, "documents_by_status", documents_by_status, [], conn)
+        retentions = _safe_section(errors, "retentions", retention_rows, {}, conn)
+        totals = _safe_section(
+            errors,
+            "tax_totals",
+            lambda: (
+                cur.execute("""
+                    SELECT
+                        COALESCE(SUM(CASE WHEN direction='SALE' THEN tax_amount ELSE 0 END),0) sales_tax,
+                        COALESCE(SUM(CASE WHEN direction='PURCHASE' THEN tax_amount ELSE 0 END),0) purchase_tax,
+                        COALESCE(SUM(CASE WHEN direction='SALE' THEN total ELSE 0 END),0) sales_total,
+                        COALESCE(SUM(CASE WHEN direction='PURCHASE' THEN total ELSE 0 END),0) purchase_total
+                    FROM tax_electronic_documents
+                    WHERE issue_datetime >= %s AND issue_datetime < %s
+                """, (start, end)),
+                cur.fetchone() or {},
+            )[1],
+            {},
+            conn,
+        )
+        if totals:
+            sales_tax = _money(totals.get("sales_tax"))
+            purchase_tax = _money(totals.get("purchase_tax"))
+            iva = {
+                "fiscal": {
+                    "sales_tax": _to_float(sales_tax),
+                    "purchase_tax": _to_float(purchase_tax),
+                    "net_tax": _to_float(sales_tax - purchase_tax),
+                    "sales_total": _to_float(totals.get("sales_total")),
+                    "purchase_total": _to_float(totals.get("purchase_total")),
+                },
+                "accounting": {},
+                "differences": {},
+                "quality": {"mode": "Resumen rapido Accounting avanzado"},
+                "ready_to_file": False,
+            }
     return {
         "period": period,
         "iva": iva,
         "retentions": _serialize(retentions),
         "documents_by_status": [_serialize(row) for row in by_status],
         "fiscal_calendar": calendar,
+        "errors": errors,
         "controls": {
             "documental_vs_accounting_ready": bool(iva.get("ready_to_file")),
             "requires_review": not bool(iva.get("ready_to_file")),
@@ -581,35 +633,39 @@ def list_budgets(
     conn=Depends(get_db),
     x_company_code: str | None = Header(None, alias="X-Company-Code"),
 ):
-    _ensure_schema(conn)
     company = _company_from_header(x_company_code)
     filters, params = _budget_filters(company, period, date_from, date_to, purpose, status)
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        cur.execute(
-            f"""
-            SELECT b.*,
-                   COALESCE(a.account_name, b.account_code) AS account_name,
-                   COALESCE(c.contrib_amount, 0) AS contributed_amount,
-                   COALESCE(b.current_amount, 0) + COALESCE(c.contrib_amount, 0) AS progress_amount,
-                   CASE
-                     WHEN COALESCE(NULLIF(b.target_amount, 0), b.budget_amount, 0) = 0 THEN 0
-                     ELSE ROUND(((COALESCE(b.current_amount, 0) + COALESCE(c.contrib_amount, 0))
-                          / COALESCE(NULLIF(b.target_amount, 0), b.budget_amount, 1)) * 100, 2)
-                   END AS progress_pct
-            FROM accounting_budgets b
-            LEFT JOIN accounting_accounts a ON a.account_code=b.account_code
-            LEFT JOIN (
-                SELECT budget_id, SUM(amount) AS contrib_amount
-                FROM accounting_budget_contributions
-                WHERE company_code=%s
-                GROUP BY budget_id
-            ) c ON c.budget_id=b.id
-            WHERE {" AND ".join(filters)}
-            ORDER BY COALESCE(b.target_date, (b.period || '-01')::date), b.purpose, b.account_code
-            """,
-            [company] + params,
-        )
-        return {"data": [_serialize(row) for row in cur.fetchall()]}
+        try:
+            cur.execute("SET LOCAL statement_timeout = '5000ms'")
+            cur.execute(
+                f"""
+                SELECT b.*,
+                       COALESCE(a.account_name, b.account_code) AS account_name,
+                       COALESCE(c.contrib_amount, 0) AS contributed_amount,
+                       COALESCE(b.current_amount, 0) + COALESCE(c.contrib_amount, 0) AS progress_amount,
+                       CASE
+                         WHEN COALESCE(NULLIF(b.target_amount, 0), b.budget_amount, 0) = 0 THEN 0
+                         ELSE ROUND(((COALESCE(b.current_amount, 0) + COALESCE(c.contrib_amount, 0))
+                              / COALESCE(NULLIF(b.target_amount, 0), b.budget_amount, 1)) * 100, 2)
+                       END AS progress_pct
+                FROM accounting_budgets b
+                LEFT JOIN accounting_accounts a ON a.account_code=b.account_code
+                LEFT JOIN (
+                    SELECT budget_id, SUM(amount) AS contrib_amount
+                    FROM accounting_budget_contributions
+                    WHERE company_code=%s
+                    GROUP BY budget_id
+                ) c ON c.budget_id=b.id
+                WHERE {" AND ".join(filters)}
+                ORDER BY COALESCE(b.target_date, (b.period || '-01')::date), b.purpose, b.account_code
+                """,
+                [company] + params,
+            )
+            return {"data": [_serialize(row) for row in cur.fetchall()]}
+        except Exception as exc:
+            conn.rollback()
+            return {"data": [], "errors": [{"section": "budgets", "error": str(exc)}]}
 
 
 @router.put("/budget")
@@ -688,7 +744,6 @@ def delete_budget(
     x_role: str | None = Header(None, alias="X-Role"),
     x_user_role: str | None = Header(None, alias="X-User-Role"),
 ):
-    _ensure_schema(conn)
     company = _company_from_header(x_company_code)
     user, role = actor_from_headers(x_user, x_role, x_user_role)
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -713,7 +768,6 @@ def post_budget_contribution(
     x_role: str | None = Header(None, alias="X-Role"),
     x_user_role: str | None = Header(None, alias="X-User-Role"),
 ):
-    _ensure_schema(conn)
     company = _company_from_header(x_company_code)
     user, role = actor_from_headers(x_user, x_role, x_user_role)
     contribution_date = payload.get("contribution_date") or date.today().isoformat()
@@ -798,22 +852,27 @@ def budget_vs_actual(
     company = _company_from_header(x_company_code)
     start, end = _period_bounds(period)
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        cur.execute("""
-            SELECT b.period, b.account_code, COALESCE(a.account_name,b.account_code) account_name,
-                   b.cost_center_code, b.currency_code, b.budget_amount,
-                   COALESCE(SUM(l.debit-l.credit),0) actual_amount
-            FROM accounting_budgets b
-            LEFT JOIN accounting_accounts a ON a.account_code=b.account_code
-            LEFT JOIN accounting_lines l ON l.account_code=b.account_code
-            LEFT JOIN accounting_entries e ON e.id=l.entry_id AND e.workflow_status='POSTED' AND e.entry_date >= %s AND e.entry_date < %s AND e.company_code=%s
-            WHERE b.period=%s AND b.company_code=%s AND UPPER(COALESCE(b.purpose,'BUDGET'))='BUDGET'
-            GROUP BY b.period,b.account_code,a.account_name,b.cost_center_code,b.currency_code,b.budget_amount
-            ORDER BY b.account_code
-        """, (start, end, company, period, company))
-        rows = []
-        for row in cur.fetchall():
-            variance = _money(row["actual_amount"]) - _money(row["budget_amount"])
-            rows.append(_serialize(row) | {"variance": _to_float(variance), "variance_pct": float((variance / _money(row["budget_amount"]) * 100).quantize(MONEY)) if _money(row["budget_amount"]) else 0.0})
+        try:
+            cur.execute("SET LOCAL statement_timeout = '5000ms'")
+            cur.execute("""
+                SELECT b.period, b.account_code, COALESCE(a.account_name,b.account_code) account_name,
+                       b.cost_center_code, b.currency_code, b.budget_amount,
+                       COALESCE(SUM(l.debit-l.credit),0) actual_amount
+                FROM accounting_budgets b
+                LEFT JOIN accounting_accounts a ON a.account_code=b.account_code
+                LEFT JOIN accounting_lines l ON l.account_code=b.account_code
+                LEFT JOIN accounting_entries e ON e.id=l.entry_id AND e.workflow_status='POSTED' AND e.entry_date >= %s AND e.entry_date < %s AND e.company_code=%s
+                WHERE b.period=%s AND b.company_code=%s AND UPPER(COALESCE(b.purpose,'BUDGET'))='BUDGET'
+                GROUP BY b.period,b.account_code,a.account_name,b.cost_center_code,b.currency_code,b.budget_amount
+                ORDER BY b.account_code
+            """, (start, end, company, period, company))
+            rows = []
+            for row in cur.fetchall():
+                variance = _money(row["actual_amount"]) - _money(row["budget_amount"])
+                rows.append(_serialize(row) | {"variance": _to_float(variance), "variance_pct": float((variance / _money(row["budget_amount"]) * 100).quantize(MONEY)) if _money(row["budget_amount"]) else 0.0})
+        except Exception as exc:
+            conn.rollback()
+            return {"period": period, "data": [], "errors": [{"section": "budget_vs_actual", "error": str(exc)}]}
     return {"period": period, "data": rows}
 
 
@@ -923,52 +982,96 @@ def _smart_alerts(cur, period: str):
     alerts = []
     def add(severity, code, title, message, entity_type=None, entity_id=None, metadata=None):
         alerts.append({"severity": severity, "code": code, "title": title, "message": message, "entity_type": entity_type, "entity_id": str(entity_id) if entity_id is not None else None, "metadata": metadata or {}})
-    cur.execute("""
-        WITH current AS (
-            SELECT l.account_code, MAX(l.account_name) account_name, COALESCE(SUM(l.debit),0) amount
+    try:
+        cur.execute("""
+            WITH current AS (
+                SELECT l.account_code, MAX(l.account_name) account_name, COALESCE(SUM(l.debit),0) amount
+                FROM accounting_entries e JOIN accounting_lines l ON l.entry_id=e.id
+                WHERE e.workflow_status='POSTED' AND e.entry_date >= %s AND e.entry_date < %s AND l.account_code LIKE '5%%'
+                GROUP BY l.account_code
+            ), previous AS (
+                SELECT l.account_code, COALESCE(SUM(l.debit),0) amount
+                FROM accounting_entries e JOIN accounting_lines l ON l.entry_id=e.id
+                WHERE e.workflow_status='POSTED' AND e.entry_date >= %s AND e.entry_date < %s AND l.account_code LIKE '5%%'
+                GROUP BY l.account_code
+            )
+            SELECT c.account_code,c.account_name,c.amount current_amount,COALESCE(p.amount,0) previous_amount
+            FROM current c LEFT JOIN previous p ON p.account_code=c.account_code
+            WHERE c.amount > 0 AND (COALESCE(p.amount,0)=0 OR c.amount >= COALESCE(p.amount,0)*3)
+            ORDER BY c.amount DESC
+            LIMIT 25
+        """, (start, end, previous_start, start))
+        for row in cur.fetchall():
+            add("warning", "EXPENSE_SPIKE", "Gasto con aumento inusual", f"{row['account_code']} {row['account_name']} subio a {_to_float(row['current_amount']):,.2f} vs {_to_float(row['previous_amount']):,.2f}.", "account", row["account_code"], _serialize(row))
+    except Exception as exc:
+        try:
+            cur.connection.rollback()
+        except Exception:
+            pass
+        add("info", "ADVANCED_ALERTS_PARTIAL", "Alertas de gastos no disponibles", str(exc), "accounting", period)
+    try:
+        cur.execute("SELECT COUNT(*) count FROM tax_electronic_documents d WHERE d.issue_datetime >= %s AND d.issue_datetime < %s AND EXISTS(SELECT 1 FROM tax_document_lines l WHERE l.document_id=d.id AND COALESCE(l.cabys_code,'')='')", (start, end))
+        missing_cabys = int((cur.fetchone() or {}).get("count") or 0)
+        if missing_cabys:
+            add("critical", "XML_MISSING_CABYS", "XML sin CAByS", f"{missing_cabys} documentos tienen lineas sin CAByS.", "tax", period)
+    except Exception as exc:
+        try:
+            cur.connection.rollback()
+        except Exception:
+            pass
+        add("info", "TAX_ALERTS_PARTIAL", "Alertas fiscales no disponibles", str(exc), "tax", period)
+    try:
+        cur.execute("SELECT COUNT(*) count FROM bank_reconciliation_statement_lines l JOIN bank_reconciliation_statements s ON s.id=l.statement_id WHERE s.statement_period=%s AND l.match_status='OPEN'", (period,))
+        open_bank = int((cur.fetchone() or {}).get("count") or 0)
+        if open_bank:
+            add("critical", "BANK_NOT_RECONCILED", "Banco no conciliado", f"{open_bank} partidas bancarias siguen abiertas.", "bank_reconciliation", period)
+    except Exception as exc:
+        try:
+            cur.connection.rollback()
+        except Exception:
+            pass
+        add("info", "BANK_ALERTS_PARTIAL", "Alertas bancarias no disponibles", str(exc), "bank_reconciliation", period)
+    try:
+        cur.execute("""
+            SELECT e.id, e.origin, l.account_code, l.account_name, COUNT(*) OVER(PARTITION BY l.account_code) frequency
             FROM accounting_entries e JOIN accounting_lines l ON l.entry_id=e.id
-            WHERE e.workflow_status='POSTED' AND e.entry_date >= %s AND e.entry_date < %s AND l.account_code LIKE '5%%'
-            GROUP BY l.account_code
-        ), previous AS (
-            SELECT l.account_code, COALESCE(SUM(l.debit),0) amount
-            FROM accounting_entries e JOIN accounting_lines l ON l.entry_id=e.id
-            WHERE e.workflow_status='POSTED' AND e.entry_date >= %s AND e.entry_date < %s AND l.account_code LIKE '5%%'
-            GROUP BY l.account_code
-        )
-        SELECT c.account_code,c.account_name,c.amount current_amount,COALESCE(p.amount,0) previous_amount
-        FROM current c LEFT JOIN previous p ON p.account_code=c.account_code
-        WHERE c.amount > 0 AND (COALESCE(p.amount,0)=0 OR c.amount >= COALESCE(p.amount,0)*3)
-        ORDER BY c.amount DESC
-        LIMIT 25
-    """, (start, end, previous_start, start))
-    for row in cur.fetchall():
-        add("warning", "EXPENSE_SPIKE", "Gasto con aumento inusual", f"{row['account_code']} {row['account_name']} subio a {_to_float(row['current_amount']):,.2f} vs {_to_float(row['previous_amount']):,.2f}.", "account", row["account_code"], _serialize(row))
-    cur.execute("SELECT COUNT(*) count FROM tax_electronic_documents d WHERE d.issue_datetime >= %s AND d.issue_datetime < %s AND EXISTS(SELECT 1 FROM tax_document_lines l WHERE l.document_id=d.id AND COALESCE(l.cabys_code,'')='')", (start, end))
-    missing_cabys = int((cur.fetchone() or {}).get("count") or 0)
-    if missing_cabys:
-        add("critical", "XML_MISSING_CABYS", "XML sin CAByS", f"{missing_cabys} documentos tienen lineas sin CAByS.", "tax", period)
-    cur.execute("SELECT COUNT(*) count FROM bank_reconciliation_statement_lines l JOIN bank_reconciliation_statements s ON s.id=l.statement_id WHERE s.statement_period=%s AND l.match_status='OPEN'", (period,))
-    open_bank = int((cur.fetchone() or {}).get("count") or 0)
-    if open_bank:
-        add("critical", "BANK_NOT_RECONCILED", "Banco no conciliado", f"{open_bank} partidas bancarias siguen abiertas.", "bank_reconciliation", period)
-    cur.execute("""
-        SELECT e.id, e.origin, l.account_code, l.account_name, COUNT(*) OVER(PARTITION BY l.account_code) frequency
-        FROM accounting_entries e JOIN accounting_lines l ON l.entry_id=e.id
-        WHERE e.workflow_status='POSTED' AND e.entry_date >= %s AND e.entry_date < %s
-        ORDER BY frequency ASC, e.id DESC
-        LIMIT 20
-    """, (start, end))
-    for row in cur.fetchall():
-        if int(row["frequency"] or 0) <= 1:
-            add("info", "UNCOMMON_ACCOUNT_USAGE", "Cuenta poco comun", f"Asiento {row['id']} usa cuenta poco frecuente {row['account_code']} {row['account_name']}.", "accounting_entry", row["id"], _serialize(row))
+            WHERE e.workflow_status='POSTED' AND e.entry_date >= %s AND e.entry_date < %s
+            ORDER BY frequency ASC, e.id DESC
+            LIMIT 20
+        """, (start, end))
+        for row in cur.fetchall():
+            if int(row["frequency"] or 0) <= 1:
+                add("info", "UNCOMMON_ACCOUNT_USAGE", "Cuenta poco comun", f"Asiento {row['id']} usa cuenta poco frecuente {row['account_code']} {row['account_name']}.", "accounting_entry", row["id"], _serialize(row))
+    except Exception as exc:
+        try:
+            cur.connection.rollback()
+        except Exception:
+            pass
+        add("info", "ACCOUNT_USAGE_PARTIAL", "Frecuencia de cuentas no disponible", str(exc), "accounting", period)
     return alerts
 
 
 @router.get("/smart-alerts")
 def smart_alerts(period: str, conn=Depends(get_db)):
-    _ensure_schema(conn)
+    _valid_period(period)
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        alerts = _smart_alerts(cur, period)
+        try:
+            cur.execute("SET LOCAL statement_timeout = '5000ms'")
+            alerts = _smart_alerts(cur, period)
+        except Exception as exc:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            alerts = [{
+                "severity": "info",
+                "code": "SMART_ALERTS_UNAVAILABLE",
+                "title": "Alertas avanzadas no disponibles",
+                "message": str(exc),
+                "entity_type": "accounting",
+                "entity_id": period,
+                "metadata": {},
+            }]
     return {"period": period, "data": alerts, "counts": {level: sum(1 for a in alerts if a["severity"] == level) for level in ("critical", "warning", "info")}}
 
 
@@ -977,42 +1080,61 @@ def executive_dashboard(period: str, conn=Depends(get_db)):
     _ensure_schema(conn)
     start, end = _period_bounds(period)
     as_of = min(end - timedelta(days=1), date.today())
+    errors: list[dict] = []
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        cur.execute("""
-            SELECT COALESCE(SUM(CASE WHEN l.account_code LIKE '4%%' THEN l.credit-l.debit ELSE 0 END),0) revenue,
-                   COALESCE(SUM(CASE WHEN l.account_code LIKE '5%%' THEN l.debit-l.credit ELSE 0 END),0) expenses
-            FROM accounting_entries e JOIN accounting_lines l ON l.entry_id=e.id
-            WHERE e.workflow_status='POSTED' AND e.entry_date >= %s AND e.entry_date < %s AND e.entry_date <= CURRENT_DATE
-        """, (start, end))
-        ledger = cur.fetchone()
-        cur.execute("""
-            SELECT COALESCE(SUM(l.debit-l.credit),0) banks
-            FROM accounting_entries e JOIN accounting_lines l ON l.entry_id=e.id
-            WHERE e.workflow_status='POSTED'
-              AND e.entry_date <= %s
-              AND (l.account_code LIKE '1.1.02%%' OR LOWER(l.account_name) LIKE '%%banco%%')
-        """, (as_of,))
-        bank_row = cur.fetchone() or {"banks": 0}
-        cur.execute("SELECT COALESCE(SUM(saldo_pendiente),0) total, COUNT(*) count FROM collections WHERE COALESCE(saldo_pendiente,0)>0 AND fecha_vencimiento<CURRENT_DATE")
-        overdue_ar = cur.fetchone()
-        cur.execute("SELECT COALESCE(SUM(balance),0) total, COUNT(*) count FROM payment_obligations WHERE active=TRUE AND record_type='OBLIGATION' AND COALESCE(balance,0)>0 AND due_date BETWEEN CURRENT_DATE AND CURRENT_DATE+INTERVAL '15 days'")
-        upcoming_ap = cur.fetchone()
-        iva = tax_iva(period=period, conn=conn)
-        alerts = _smart_alerts(cur, period)
-        cur.execute("""
-            SELECT COALESCE(cliente,'SIN CLIENTE') client, COALESCE(SUM(honorarios),0) revenue
-            FROM servicios
-            WHERE COALESCE(fecha_inicio,fecha_fin,CURRENT_DATE) >= %s AND COALESCE(fecha_inicio,fecha_fin,CURRENT_DATE) < %s
-            GROUP BY cliente ORDER BY revenue DESC LIMIT 10
-        """, (start, end))
-        top_clients = cur.fetchall()
-        cur.execute("""
-            SELECT l.account_code, MAX(l.account_name) account_name, COALESCE(SUM(l.debit),0) amount
-            FROM accounting_entries e JOIN accounting_lines l ON l.entry_id=e.id
-            WHERE e.workflow_status='POSTED' AND e.entry_date >= %s AND e.entry_date < %s AND l.account_code LIKE '5%%'
-            GROUP BY l.account_code ORDER BY amount DESC LIMIT 10
-        """, (start, end))
-        top_expenses = cur.fetchall()
+        def ledger_totals():
+            cur.execute("""
+                SELECT COALESCE(SUM(CASE WHEN l.account_code LIKE '4%%' THEN l.credit-l.debit ELSE 0 END),0) revenue,
+                       COALESCE(SUM(CASE WHEN l.account_code LIKE '5%%' THEN l.debit-l.credit ELSE 0 END),0) expenses
+                FROM accounting_entries e JOIN accounting_lines l ON l.entry_id=e.id
+                WHERE e.workflow_status='POSTED' AND e.entry_date >= %s AND e.entry_date < %s AND e.entry_date <= CURRENT_DATE
+            """, (start, end))
+            return cur.fetchone() or {"revenue": 0, "expenses": 0}
+
+        def banks():
+            cur.execute("""
+                SELECT COALESCE(SUM(l.debit-l.credit),0) banks
+                FROM accounting_entries e JOIN accounting_lines l ON l.entry_id=e.id
+                WHERE e.workflow_status='POSTED'
+                  AND e.entry_date <= %s
+                  AND (l.account_code LIKE '1.1.02%%' OR LOWER(l.account_name) LIKE '%%banco%%')
+            """, (as_of,))
+            return cur.fetchone() or {"banks": 0}
+
+        def receivables():
+            cur.execute("SELECT COALESCE(SUM(saldo_pendiente),0) total, COUNT(*) count FROM collections WHERE COALESCE(saldo_pendiente,0)>0 AND fecha_vencimiento<CURRENT_DATE")
+            return cur.fetchone() or {"total": 0, "count": 0}
+
+        def payables():
+            cur.execute("SELECT COALESCE(SUM(balance),0) total, COUNT(*) count FROM payment_obligations WHERE active=TRUE AND record_type='OBLIGATION' AND COALESCE(balance,0)>0 AND due_date BETWEEN CURRENT_DATE AND CURRENT_DATE+INTERVAL '15 days'")
+            return cur.fetchone() or {"total": 0, "count": 0}
+
+        def clients():
+            cur.execute("""
+                SELECT COALESCE(cliente,'SIN CLIENTE') client, COALESCE(SUM(honorarios),0) revenue
+                FROM servicios
+                WHERE COALESCE(fecha_inicio,fecha_fin,CURRENT_DATE) >= %s AND COALESCE(fecha_inicio,fecha_fin,CURRENT_DATE) < %s
+                GROUP BY cliente ORDER BY revenue DESC LIMIT 10
+            """, (start, end))
+            return cur.fetchall()
+
+        def expenses_by_account():
+            cur.execute("""
+                SELECT l.account_code, MAX(l.account_name) account_name, COALESCE(SUM(l.debit),0) amount
+                FROM accounting_entries e JOIN accounting_lines l ON l.entry_id=e.id
+                WHERE e.workflow_status='POSTED' AND e.entry_date >= %s AND e.entry_date < %s AND l.account_code LIKE '5%%'
+                GROUP BY l.account_code ORDER BY amount DESC LIMIT 10
+            """, (start, end))
+            return cur.fetchall()
+
+        ledger = _safe_section(errors, "ledger", ledger_totals, {"revenue": 0, "expenses": 0}, conn)
+        bank_row = _safe_section(errors, "banks", banks, {"banks": 0}, conn)
+        overdue_ar = _safe_section(errors, "overdue_ar", receivables, {"total": 0, "count": 0}, conn)
+        upcoming_ap = _safe_section(errors, "upcoming_payments", payables, {"total": 0, "count": 0}, conn)
+        iva = _safe_section(errors, "iva", lambda: tax_iva(period=period, conn=conn), {"fiscal": {}}, conn)
+        alerts = _safe_section(errors, "alerts", lambda: _smart_alerts(cur, period), [], conn)
+        top_clients = _safe_section(errors, "top_clients", clients, [], conn)
+        top_expenses = _safe_section(errors, "top_expenses", expenses_by_account, [], conn)
     revenue = _money(ledger["revenue"])
     expenses = _money(ledger["expenses"])
     return {
@@ -1026,6 +1148,7 @@ def executive_dashboard(period: str, conn=Depends(get_db)):
         "top_clients": [_serialize(row) for row in top_clients],
         "top_expenses": [_serialize(row) for row in top_expenses],
         "alerts": {"critical": sum(1 for a in alerts if a["severity"] == "critical"), "warning": sum(1 for a in alerts if a["severity"] == "warning"), "info": sum(1 for a in alerts if a["severity"] == "info")},
+        "errors": errors,
     }
 
 
