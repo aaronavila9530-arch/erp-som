@@ -221,26 +221,33 @@ def generate_grain_sampling_doc(data: dict) -> str:
     def normalize_certificate_header():
         cert_no = _non_empty(data.get("cert_no"))
         cert_text = f"CERT N° {cert_no}" if cert_no else "CERT N°"
-        for section in doc.sections:
-            for paragraph in section.header.paragraphs:
-                if "CERT" not in (paragraph.text or "").upper():
-                    continue
-                set_paragraph_text(paragraph, cert_text)
-                paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+
+        def normalize_paragraph(paragraph):
+            if "CERT" not in (paragraph.text or "").upper():
+                return
+            has_image = bool(paragraph._element.xpath(".//w:drawing"))
+            if has_image:
+                replace_in_paragraph(paragraph, {"cert_no": cert_no})
                 for run in paragraph.runs:
+                    if not run.text:
+                        continue
                     run.font.size = Pt(7.5)
                     run.font.bold = True
+                return
+            set_paragraph_text(paragraph, cert_text)
+            paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+            for run in paragraph.runs:
+                run.font.size = Pt(7.5)
+                run.font.bold = True
+
+        for section in doc.sections:
+            for paragraph in section.header.paragraphs:
+                normalize_paragraph(paragraph)
             for table in section.header.tables:
                 for row in table.rows:
                     for cell in row.cells:
                         for paragraph in cell.paragraphs:
-                            if "CERT" not in (paragraph.text or "").upper():
-                                continue
-                            set_paragraph_text(paragraph, cert_text)
-                            paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-                            for run in paragraph.runs:
-                                run.font.size = Pt(7.5)
-                                run.font.bold = True
+                            normalize_paragraph(paragraph)
 
     def _apply_dynamic_narrative():
         sample_rows = _sample_rows()

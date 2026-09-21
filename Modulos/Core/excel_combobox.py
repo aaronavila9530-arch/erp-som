@@ -37,6 +37,7 @@ class ExcelFilterCombobox(ttk.Combobox):
         self._excel_filter_enabled = kwargs.pop("excel_filter", True)
         self._excel_internal_config = False
         self._excel_popup_after = None
+        self._excel_reposition_after = None
         self._excel_popup = None
         self._excel_popup_listbox = None
         self._excel_last_filtered = []
@@ -88,6 +89,8 @@ class ExcelFilterCombobox(ttk.Combobox):
         self.bind("<Return>", self._on_return, add="+")
         self.bind("<KP_Enter>", self._on_return, add="+")
         self.bind("<Control-a>", self._select_all, add="+")
+        self.bind("<Configure>", self._on_geometry_change, add="+")
+        self.bind("<Destroy>", self._on_destroy, add="+")
 
     def _on_focus_in(self, _event=None):
         try:
@@ -132,9 +135,18 @@ class ExcelFilterCombobox(ttk.Combobox):
         if self._excel_filter_enabled and not self._is_disabled():
             self.focus_set()
             self.icursor(tk.END)
-            self.after_idle(self._open_and_filter)
+            self.after_idle(self._open_all_values)
             return "break"
         return None
+
+    def _open_all_values(self, _event=None):
+        if not self._excel_filter_enabled or self._is_disabled():
+            return None
+        all_values = self._excel_all_values or _as_list(super().cget("values"))
+        self._excel_last_filtered = all_values
+        self._set_values_internal(all_values)
+        self._show_popup()
+        return "break"
 
     def _open_and_filter(self, _event=None):
         if not self._excel_filter_enabled or self._is_disabled():
@@ -236,6 +248,15 @@ class ExcelFilterCombobox(ttk.Combobox):
             pass
         self._excel_popup_after = None
 
+    def _cancel_reposition(self):
+        if not self._excel_reposition_after:
+            return
+        try:
+            self.after_cancel(self._excel_reposition_after)
+        except Exception:
+            pass
+        self._excel_reposition_after = None
+
     def _post_dropdown(self):
         self._excel_popup_after = None
         try:
@@ -283,22 +304,81 @@ class ExcelFilterCombobox(ttk.Combobox):
                 listbox.activate(0)
 
             self.update_idletasks()
-            x = self.winfo_rootx()
-            y = self.winfo_rooty() + self.winfo_height()
-            width = max(self.winfo_width(), 180)
-            visible_rows = min(max(len(values), 1), 10)
-            row_height = 22
-            height = (visible_rows * row_height) + 4
-            self._excel_popup.geometry(f"{width}x{height}+{x}+{y}")
+            self._position_popup()
             self._excel_popup.deiconify()
             self._excel_popup.lift()
+            self._schedule_reposition()
         except Exception:
             pass
 
+    def _position_popup(self):
+        if self._excel_popup is None or not self._excel_popup.winfo_exists():
+            return False
+        if not self.winfo_exists() or not self.winfo_ismapped():
+            self._hide_popup()
+            return False
+
+        values = self._excel_last_filtered or []
+        visible_rows = min(max(len(values), 1), 10)
+        row_height = 22
+        width = max(self.winfo_width(), 180)
+        height = (visible_rows * row_height) + 4
+        x = self.winfo_rootx()
+        y = self.winfo_rooty() + self.winfo_height()
+
+        try:
+            screen_h = self.winfo_screenheight()
+            if y + height > screen_h - 8:
+                y = max(0, self.winfo_rooty() - height)
+        except Exception:
+            pass
+
+        self._excel_popup.geometry(f"{width}x{height}+{x}+{y}")
+        return True
+
+    def _schedule_reposition(self):
+        self._cancel_reposition()
+        try:
+            self._excel_reposition_after = self.after(120, self._sync_popup_position)
+        except Exception:
+            self._excel_reposition_after = None
+
+    def _sync_popup_position(self):
+        self._excel_reposition_after = None
+        try:
+            if self._excel_popup is None or not self._excel_popup.winfo_viewable():
+                return
+            focus = self.focus_get()
+            if focus not in {self, self._excel_popup_listbox}:
+                self._hide_popup()
+                return
+            if not self._position_popup():
+                return
+            self._schedule_reposition()
+        except Exception:
+            self._hide_popup()
+
     def _hide_popup(self):
+        self._cancel_reposition()
         try:
             if self._excel_popup is not None and self._excel_popup.winfo_exists():
                 self._excel_popup.withdraw()
+        except Exception:
+            pass
+
+    def _on_geometry_change(self, _event=None):
+        try:
+            if self._excel_popup is not None and self._excel_popup.winfo_viewable():
+                self.after_idle(self._position_popup)
+        except Exception:
+            pass
+
+    def _on_destroy(self, _event=None):
+        self._cancel_popup()
+        self._cancel_reposition()
+        try:
+            if self._excel_popup is not None and self._excel_popup.winfo_exists():
+                self._excel_popup.destroy()
         except Exception:
             pass
 

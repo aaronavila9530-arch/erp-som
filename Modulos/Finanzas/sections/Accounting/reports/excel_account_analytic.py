@@ -34,6 +34,20 @@ def _num(value: Any) -> float:
         return 0.0
 
 
+def _iter_periods(period_from: str, period_to: str):
+    try:
+        year, month = [int(part) for part in str(period_from).split("-", 1)]
+        end_year, end_month = [int(part) for part in str(period_to).split("-", 1)]
+    except Exception:
+        return
+    while (year, month) <= (end_year, end_month):
+        yield f"{year}-{month:02d}"
+        month += 1
+        if month > 12:
+            year += 1
+            month = 1
+
+
 def _account_type(row: Dict[str, Any]) -> str:
     raw = str(row.get("account_type") or "").strip().upper()
     code = str(row.get("account_code") or "").strip()
@@ -108,9 +122,33 @@ def build_account_analytic(
 
     running = opening_balance
     detail = []
+    monthly_rows = []
     total_debit = 0.0
     total_credit = 0.0
-    for row in sorted(movement_rows, key=lambda r: (_date_sort_value(r), r.get("entry_id") or 0, r.get("line_id") or 0)):
+    movement_by_period = {}
+    sorted_movement_rows = sorted(movement_rows, key=lambda r: (_date_sort_value(r), r.get("entry_id") or 0, r.get("line_id") or 0))
+    for row in sorted_movement_rows:
+        movement_by_period.setdefault(_period(row), []).append(row)
+
+    for period in _iter_periods(period_from, period_to) or []:
+        period_rows = movement_by_period.get(period, [])
+        period_opening = running
+        period_debit = sum(_num(row.get("debit")) for row in period_rows)
+        period_credit = sum(_num(row.get("credit")) for row in period_rows)
+        for row in period_rows:
+            running += _normal_delta(row, credit_nature)
+        if period_rows:
+            monthly_rows.append({
+                "period": period,
+                "opening_balance": round(period_opening, 2),
+                "debit": round(period_debit, 2),
+                "credit": round(period_credit, 2),
+                "closing_balance": round(running, 2),
+                "movements": len(period_rows),
+            })
+
+    running = opening_balance
+    for row in sorted_movement_rows:
         debit = _num(row.get("debit"))
         credit = _num(row.get("credit"))
         running += _normal_delta(row, credit_nature)
@@ -136,6 +174,7 @@ def build_account_analytic(
         "total_debit": round(total_debit, 2),
         "total_credit": round(total_credit, 2),
         "closing_balance": round(running, 2),
+        "months": monthly_rows,
         "rows": detail,
     }
 
@@ -168,6 +207,7 @@ def export_account_analytic_excel(analytic_or_rows: Any, period_from: str | None
     ws.merge_cells("A2:H2")
     ws["A2"] = f"{analytic.get('account_code')} - {analytic.get('account_name')} | {analytic.get('period_label')}"
     ws["A2"].alignment = Alignment(horizontal="center")
+    fill = PatternFill("solid", fgColor="003A75")
 
     summary = [
         ("Tipo", analytic.get("account_type")),
@@ -185,10 +225,33 @@ def export_account_analytic_excel(analytic_or_rows: Any, period_from: str | None
         row += 1
 
     row += 1
+    ws.cell(row=row, column=1, value="RESUMEN MENSUAL").font = Font(bold=True)
+    row += 1
+    month_headers = ["Periodo", "Saldo inicial", "Debe", "Haber", "Saldo final", "Movimientos"]
+    for col, value in enumerate(month_headers, start=1):
+        cell = ws.cell(row=row, column=col, value=value)
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = fill
+        cell.alignment = Alignment(horizontal="center")
+    row += 1
+    for item in analytic.get("months") or []:
+        ws.cell(row=row, column=1, value=item.get("period"))
+        ws.cell(row=row, column=2, value=item.get("opening_balance", 0))
+        ws.cell(row=row, column=3, value=item.get("debit", 0))
+        ws.cell(row=row, column=4, value=item.get("credit", 0))
+        ws.cell(row=row, column=5, value=item.get("closing_balance", 0))
+        ws.cell(row=row, column=6, value=item.get("movements", 0))
+        for col in range(2, 6):
+            ws.cell(row=row, column=col).number_format = "#,##0.00"
+            ws.cell(row=row, column=col).alignment = Alignment(horizontal="right")
+        row += 1
+
+    row += 1
+    ws.cell(row=row, column=1, value="DETALLE DE MOVIMIENTOS").font = Font(bold=True)
+    row += 1
     headers = ["Fecha", "Periodo", "Asiento", "Origen", "Detalle", "Debe", "Haber", "Saldo"]
     ws.append(headers)
     header_row = row
-    fill = PatternFill("solid", fgColor="003A75")
     for col in range(1, 9):
         cell = ws.cell(row=header_row, column=col)
         cell.font = Font(bold=True, color="FFFFFF")
