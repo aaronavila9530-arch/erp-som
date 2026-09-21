@@ -3,8 +3,10 @@ import tempfile
 import copy
 import re
 from docx import Document
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.text.paragraph import Paragraph
 from docx.oxml import OxmlElement
+from docx.shared import Pt
 try:
     from services.template_autofit import apply_docx_autofit
     from services.document_branding import apply_mci_docx_branding
@@ -216,6 +218,30 @@ def generate_grain_sampling_doc(data: dict) -> str:
         else:
             cell.text = value
 
+    def normalize_certificate_header():
+        cert_no = _non_empty(data.get("cert_no"))
+        cert_text = f"CERT N° {cert_no}" if cert_no else "CERT N°"
+        for section in doc.sections:
+            for paragraph in section.header.paragraphs:
+                if "CERT" not in (paragraph.text or "").upper():
+                    continue
+                set_paragraph_text(paragraph, cert_text)
+                paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+                for run in paragraph.runs:
+                    run.font.size = Pt(7.5)
+                    run.font.bold = True
+            for table in section.header.tables:
+                for row in table.rows:
+                    for cell in row.cells:
+                        for paragraph in cell.paragraphs:
+                            if "CERT" not in (paragraph.text or "").upper():
+                                continue
+                            set_paragraph_text(paragraph, cert_text)
+                            paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+                            for run in paragraph.runs:
+                                run.font.size = Pt(7.5)
+                                run.font.bold = True
+
     def _apply_dynamic_narrative():
         sample_rows = _sample_rows()
         sampled_holds = holds_text or ", ".join(hold for _, hold in sample_rows)
@@ -351,6 +377,8 @@ def generate_grain_sampling_doc(data: dict) -> str:
                 for cell in row.cells:
                     for paragraph in cell.paragraphs:
                         replace_in_paragraph(paragraph, data)
+
+    normalize_certificate_header()
 
     # ========================================================
     # SAVE FILE

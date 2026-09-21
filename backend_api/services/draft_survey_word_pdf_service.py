@@ -5,8 +5,8 @@ import subprocess
 from datetime import date, datetime
 from pathlib import Path
 from docx import Document
-from docx.enum.text import WD_TAB_ALIGNMENT
-from docx.shared import Inches
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_TAB_ALIGNMENT
+from docx.shared import Inches, Pt
 try:
     from services.template_autofit import apply_docx_autofit
     from services.document_branding import apply_mci_docx_branding
@@ -192,6 +192,29 @@ def generate_draft_survey_word_pdf(data: dict) -> str:
             return True
         return False
 
+    def normalize_certificate_header():
+        cert_text = f"CERT N° {draft_report_number}"
+        for section in doc.sections:
+            for paragraph in section.header.paragraphs:
+                if "CERT" not in (paragraph.text or "").upper():
+                    continue
+                set_paragraph_text(paragraph, cert_text)
+                paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+                for run in paragraph.runs:
+                    run.font.size = Pt(7.5)
+                    run.font.bold = True
+            for table in section.header.tables:
+                for row in table.rows:
+                    for cell in row.cells:
+                        for paragraph in cell.paragraphs:
+                            if "CERT" not in (paragraph.text or "").upper():
+                                continue
+                            set_paragraph_text(paragraph, cert_text)
+                            paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+                            for run in paragraph.runs:
+                                run.font.size = Pt(7.5)
+                                run.font.bold = True
+
     # ========================================================
     # REPLACEMENT ENGINE (ANTI-RUN SPLIT + PRESERVE FORMAT)
     # ========================================================
@@ -288,6 +311,8 @@ def generate_draft_survey_word_pdf(data: dict) -> str:
                 for cell in row.cells:
                     for paragraph in cell.paragraphs:
                         replace_in_paragraph(paragraph)
+
+    normalize_certificate_header()
 
     # ========================================================
     # SAVE TEMP DOCX
