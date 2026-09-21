@@ -15,7 +15,7 @@ from Modulos.Informes.popup.popup_grain_service_selector import PopupGrainServic
 
 class GrainSamplingVesselForm(ttk.Frame):
     MAX_HOLDS = 10
-    DEFAULT_ROWS = 5
+    DEFAULT_ROWS = 1
 
     DEFAULT_LEGAL = (
         "EL PRESENTE INFORME SE EMITE EN BUENA FE SIN PERJUICIO Y EN BENEFICIO "

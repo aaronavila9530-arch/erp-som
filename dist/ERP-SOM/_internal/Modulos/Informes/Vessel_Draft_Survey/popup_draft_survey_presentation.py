@@ -18,8 +18,9 @@ class PopupDraftSurveyPresentation(tk.Toplevel):
         self.report_data = None
 
         self.title("Generate Draft Survey Presentation")
-        self.geometry("450x670")
-        self.resizable(False, False)
+        self.geometry("760x780")
+        self.minsize(680, 620)
+        self.resizable(True, True)
         self.grab_set()
 
         self.pdf_files = []
@@ -35,7 +36,7 @@ class PopupDraftSurveyPresentation(tk.Toplevel):
         container = ttk.Frame(self)
         container.pack(fill="both", expand=True)
 
-        canvas = tk.Canvas(container)
+        canvas = tk.Canvas(container, highlightthickness=0)
         canvas.pack(side="left", fill="both", expand=True)
 
         scrollbar = ttk.Scrollbar(container, orient="vertical", command=canvas.yview)
@@ -44,11 +45,15 @@ class PopupDraftSurveyPresentation(tk.Toplevel):
         canvas.configure(yscrollcommand=scrollbar.set)
 
         self.frame = ttk.Frame(canvas, padding=20)
-        canvas.create_window((0, 0), window=self.frame, anchor="nw")
+        self._canvas_window = canvas.create_window((0, 0), window=self.frame, anchor="nw")
 
         self.frame.bind(
             "<Configure>",
             lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        canvas.bind(
+            "<Configure>",
+            lambda e: canvas.itemconfigure(self._canvas_window, width=e.width)
         )
 
         # ================= SCROLL CON MOUSE =================
@@ -96,7 +101,7 @@ class PopupDraftSurveyPresentation(tk.Toplevel):
         list_frame = ttk.Frame(frame)
         list_frame.pack(fill="both", expand=True)
 
-        self.listbox = tk.Listbox(list_frame, height=6)
+        self.listbox = tk.Listbox(list_frame, height=10)
         self.listbox.pack(side="left", fill="both", expand=True)
 
         scrollbar_list = ttk.Scrollbar(

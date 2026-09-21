@@ -6,7 +6,7 @@ from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.text.paragraph import Paragraph
 from docx.oxml import OxmlElement
-from docx.shared import Pt
+from docx.shared import Inches, Pt, RGBColor
 try:
     from services.template_autofit import apply_docx_autofit
     from services.document_branding import apply_mci_docx_branding
@@ -221,26 +221,80 @@ def generate_grain_sampling_doc(data: dict) -> str:
     def normalize_certificate_header():
         cert_no = _non_empty(data.get("cert_no"))
         cert_text = f"CERT N° {cert_no}" if cert_no else "CERT N°"
-        for section in doc.sections:
-            for paragraph in section.header.paragraphs:
-                if "CERT" not in (paragraph.text or "").upper():
-                    continue
-                set_paragraph_text(paragraph, cert_text)
-                paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+
+        def normalize_paragraph(paragraph):
+            if "CERT" not in (paragraph.text or "").upper():
+                return
+            has_image = bool(paragraph._element.xpath(".//w:drawing"))
+            if has_image:
+                replace_in_paragraph(paragraph, {"cert_no": cert_no})
                 for run in paragraph.runs:
+                    if not run.text:
+                        continue
                     run.font.size = Pt(7.5)
                     run.font.bold = True
+                return
+            set_paragraph_text(paragraph, cert_text)
+            paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+            for run in paragraph.runs:
+                run.font.size = Pt(7.5)
+                run.font.bold = True
+
+        for section in doc.sections:
+            for paragraph in section.header.paragraphs:
+                normalize_paragraph(paragraph)
             for table in section.header.tables:
                 for row in table.rows:
                     for cell in row.cells:
                         for paragraph in cell.paragraphs:
-                            if "CERT" not in (paragraph.text or "").upper():
-                                continue
-                            set_paragraph_text(paragraph, cert_text)
-                            paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-                            for run in paragraph.runs:
-                                run.font.size = Pt(7.5)
-                                run.font.bold = True
+                            normalize_paragraph(paragraph)
+
+    def _clear_header(header):
+        for child in list(header._element):
+            header._element.remove(child)
+
+    def _remove_table_borders(table):
+        tbl_pr = table._tbl.tblPr
+        borders = tbl_pr.first_child_found_in("w:tblBorders")
+        if borders is None:
+            borders = OxmlElement("w:tblBorders")
+            tbl_pr.append(borders)
+        for edge in ("top", "left", "bottom", "right", "insideH", "insideV"):
+            tag = f"w:{edge}"
+            node = borders.find(qn(tag))
+            if node is None:
+                node = OxmlElement(tag)
+                borders.append(node)
+            node.set(qn("w:val"), "nil")
+
+    def rebuild_header_image():
+        cert_no = _non_empty(data.get("cert_no"))
+        cert_text = f"CERT N° {cert_no}" if cert_no else "CERT N°"
+        header_image = os.path.abspath(
+            os.path.join(base_dir, "..", "assets", "header.png")
+        )
+        if not os.path.exists(header_image):
+            return
+
+        for section in doc.sections:
+            header = section.header
+            _clear_header(header)
+
+            cert_p = header.add_paragraph()
+            cert_p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+            cert_p.paragraph_format.space_before = Pt(0)
+            cert_p.paragraph_format.space_after = Pt(0)
+            cert_run = cert_p.add_run(cert_text)
+            cert_run.font.size = Pt(8.5)
+            cert_run.font.bold = True
+            cert_run.font.color.rgb = RGBColor(0, 0, 0)
+
+            logo_p = header.add_paragraph()
+            logo_p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+            logo_p.paragraph_format.space_before = Pt(0)
+            logo_p.paragraph_format.space_after = Pt(0)
+            logo_run = logo_p.add_run()
+            logo_run.add_picture(header_image, width=Inches(2.9))
 
     def _apply_dynamic_narrative():
         sample_rows = _sample_rows()
@@ -378,7 +432,7 @@ def generate_grain_sampling_doc(data: dict) -> str:
                     for paragraph in cell.paragraphs:
                         replace_in_paragraph(paragraph, data)
 
-    normalize_certificate_header()
+    rebuild_header_image()
 
     # ========================================================
     # SAVE FILE
@@ -389,7 +443,8 @@ def generate_grain_sampling_doc(data: dict) -> str:
         f"{data.get('cert_no', 'grain_sampling')}.docx"
     )
 
-    apply_mci_docx_branding(doc, data)
+    # El template de muestreo ya trae su encabezado institucional como imagen.
+    # No aplicar branding global aqui porque borra ese header del documento.
     apply_docx_autofit(doc)
     doc.save(output_path)
 

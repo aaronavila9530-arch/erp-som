@@ -46,10 +46,40 @@ def generate_draft_survey_word_pdf(data: dict) -> str:
         except Exception:
             return text
 
+    def _format_report_datetime(value):
+        if value in (None, ""):
+            return ""
+        if isinstance(value, datetime):
+            return value.strftime("%b %d %Y %H:%M")
+        if isinstance(value, date):
+            return value.strftime("%b %d %Y")
+
+        text = str(value or "").strip()
+        if not text:
+            return ""
+
+        clean = re.sub(r"\s+LT\.?$", "", text, flags=re.IGNORECASE).strip()
+        normalized = clean.replace(",", " ")
+        for fmt in (
+            "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M",
+            "%Y/%m/%d %H:%M:%S", "%Y/%m/%d %H:%M",
+            "%d-%m-%Y %H:%M:%S", "%d-%m-%Y %H:%M",
+            "%d/%m/%Y %H:%M:%S", "%d/%m/%Y %H:%M",
+            "%m-%d-%Y %H:%M:%S", "%m-%d-%Y %H:%M",
+            "%m/%d/%Y %H:%M:%S", "%m/%d/%Y %H:%M",
+            "%b %d %Y %H:%M", "%B %d %Y %H:%M",
+        ):
+            try:
+                return datetime.strptime(normalized, fmt).strftime("%b %d %Y %H:%M")
+            except ValueError:
+                continue
+        formatted_date = _format_report_date(clean)
+        return formatted_date if formatted_date != clean else text
+
     def _combine_date_time(prefix):
         current = str(data.get(prefix) or "").strip()
         if current and not current.startswith("{"):
-            return current
+            return _format_report_datetime(current)
         date_text = _format_report_date(data.get(f"{prefix}_date"))
         time_text = str(data.get(f"{prefix}_time") or "").strip()
         if not date_text:
@@ -153,9 +183,15 @@ def generate_draft_survey_word_pdf(data: dict) -> str:
         text = paragraph.text or ""
         for key, label in time_sheet_labels.items():
             placeholder = f"{{{key}}}"
-            if placeholder not in text:
+            date_placeholder = f"{{{key}_date}}"
+            time_placeholder = f"{{{key}_time}}"
+            if (
+                placeholder not in text
+                and date_placeholder not in text
+                and time_placeholder not in text
+            ):
                 continue
-            value = safe(data.get(key))
+            value = _combine_date_time(key)
             try:
                 paragraph.paragraph_format.tab_stops.clear_all()
                 paragraph.paragraph_format.tab_stops.add_tab_stop(
@@ -164,7 +200,8 @@ def generate_draft_survey_word_pdf(data: dict) -> str:
                 )
             except Exception:
                 pass
-            set_paragraph_text(paragraph, f"{label}\t{value} LT.")
+            suffix = " LT." if value else ""
+            set_paragraph_text(paragraph, f"{label}\t{value}{suffix}")
             return True
         return False
 

@@ -3,6 +3,9 @@ import tempfile
 import subprocess
 from typing import Dict
 from docx import Document
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml import OxmlElement
+from docx.shared import Pt, RGBColor
 try:
     from services.template_autofit import apply_docx_autofit
     from services.document_branding import apply_mci_docx_branding
@@ -83,6 +86,22 @@ def _replace_in_tables(tables, placeholders: Dict[str, str]):
                     _replace_in_tables(cell.tables, placeholders)
 
 
+def _prepend_header_cert(doc, cert_no: str):
+    cert_text = f"CERT N° {cert_no}" if cert_no else "CERT N°"
+    for section in doc.sections:
+        header = section.header
+        new_p = OxmlElement("w:p")
+        header._element.insert(0, new_p)
+        cert_p = header.paragraphs[0]
+        cert_p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        cert_p.paragraph_format.space_before = Pt(0)
+        cert_p.paragraph_format.space_after = Pt(0)
+        cert_run = cert_p.add_run(cert_text)
+        cert_run.font.size = Pt(8.5)
+        cert_run.font.bold = True
+        cert_run.font.color.rgb = RGBColor(0, 0, 0)
+
+
 # =====================================================
 # MAIN — GENERATE PDF USING LIBREOFFICE (HEADLESS)
 # =====================================================
@@ -135,7 +154,9 @@ def generate_vessel_presentation_doc(data: dict) -> str:
     # -------------------------------------------------
     fd, temp_docx = tempfile.mkstemp(suffix=".docx")
     os.close(fd)
-    apply_mci_docx_branding(doc, data)
+    # Presentation grain template already carries its own header/body images.
+    # Do not apply global branding here because it removes those template images.
+    _prepend_header_cert(doc, str(data.get("cert_no") or ""))
     apply_docx_autofit(doc)
     doc.save(temp_docx)
 
