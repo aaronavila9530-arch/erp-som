@@ -1,5 +1,7 @@
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, filedialog
+from openpyxl import Workbook
+from openpyxl.styles import Font, Alignment
 
 from api_client import (
     create_accounting_account_api,
@@ -65,6 +67,7 @@ class PopupChartOfAccounts(tk.Toplevel):
         ttk.Button(checks, text="Nueva", command=self._clear).pack(side="left", padx=20)
         ttk.Button(checks, text="Guardar", command=self._save).pack(side="left", padx=5)
         ttk.Checkbutton(checks, text="Mostrar inactivas", variable=self.show_inactive, command=self._load).pack(side="left", padx=12)
+        ttk.Button(checks, text="Exportar Excel", command=self._export_excel).pack(side="left", padx=5)
         ttk.Button(checks, text="Bloquear/Sanear plan", command=self._harden_chart).pack(side="left", padx=5)
 
         columns = ("code", "name", "type", "nature", "level", "posting", "third", "cost", "active", "locked")
@@ -163,6 +166,61 @@ class PopupChartOfAccounts(tk.Toplevel):
             )
         except Exception as exc:
             messagebox.showerror("Plan contable", str(exc), parent=self)
+
+    def _export_excel(self):
+        try:
+            accounts = self.accounts or get_accounting_accounts_api(include_inactive=self.show_inactive.get())
+            if not accounts:
+                messagebox.showwarning("Catálogo", "No hay cuentas para exportar.", parent=self)
+                return
+
+            file_path = filedialog.asksaveasfilename(
+                parent=self,
+                title="Guardar Catálogo Contable",
+                defaultextension=".xlsx",
+                filetypes=[("Excel", "*.xlsx")],
+                initialfile="catalogo_contable.xlsx",
+            )
+            if not file_path:
+                return
+
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "Catalogo Contable"
+            headers = [
+                "Código", "Nombre", "Tipo", "Naturaleza", "Nivel",
+                "Cuenta padre", "Moneda", "Acepta movimientos",
+                "Exige tercero", "Exige centro costo", "Activa", "Bloqueada",
+            ]
+            ws.append(headers)
+            for cell in ws[1]:
+                cell.font = Font(bold=True)
+                cell.alignment = Alignment(horizontal="center")
+
+            for account in accounts:
+                ws.append([
+                    account.get("account_code"),
+                    account.get("account_name"),
+                    account.get("account_type"),
+                    account.get("normal_balance"),
+                    account.get("account_level"),
+                    account.get("parent_account"),
+                    account.get("currency_code"),
+                    "Sí" if account.get("accepts_posting") else "No",
+                    "Sí" if account.get("requires_third_party") else "No",
+                    "Sí" if account.get("requires_cost_center") else "No",
+                    "Sí" if account.get("active") else "No",
+                    "Sí" if account.get("locked") else "No",
+                ])
+
+            widths = [18, 42, 16, 16, 10, 18, 12, 20, 16, 20, 10, 12]
+            for index, width in enumerate(widths, start=1):
+                ws.column_dimensions[chr(64 + index)].width = width
+
+            wb.save(file_path)
+            messagebox.showinfo("Catálogo", "Catálogo contable exportado correctamente.", parent=self)
+        except Exception as exc:
+            messagebox.showerror("Catálogo", str(exc), parent=self)
 
     def _clear(self):
         self.selected_code = None

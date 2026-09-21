@@ -11,8 +11,9 @@ def build_esf_from_trial_balance(
     a partir de accounting_lines / trial balance.
 
     ✔ Clasificación contable CR
-    ✔ Deriva fiscal_year y period desde created_at
-    ✔ Falla si hay mezcla de periodos
+    ✔ Deriva fiscal_year y periodo desde period o created_at
+    ✔ Soporta mes único, rango de meses o periodo fiscal
+    ✔ Incluye cuentas de resultado para lectura gerencial completa
     ✔ Salida lista para Excel / PDF
     ✔ Totalmente blindado
     """
@@ -27,58 +28,50 @@ def build_esf_from_trial_balance(
         raise ValueError("No hay líneas contables para construir ESF")
 
     # =====================================================
-    # DERIVAR Y VALIDAR PERIODO FISCAL
+    # DERIVAR PERIODO / RANGO
     # =====================================================
-    fiscal_year = None
-    period = None
+    periods = set()
 
-    for r in rows:
-        if not isinstance(r, dict):
-            continue
+    def _row_period(row):
+        period_value = str(row.get("period") or "").strip()
+        if len(period_value) == 7 and period_value[4] == "-":
+            return period_value
 
-        created_at = r.get("created_at")
+        created_at = row.get("entry_date") or row.get("created_at")
         if not created_at:
-            continue
+            return None
 
-        # created_at puede ser str o datetime
         if isinstance(created_at, datetime):
             dt = created_at
         else:
             try:
-                dt = datetime.fromisoformat(str(created_at))
+                dt = datetime.fromisoformat(str(created_at).replace(" ", "T"))
             except Exception:
-                continue
+                return None
 
-        fiscal_year = dt.year
-        period = dt.month
-        break
+        return f"{dt.year}-{dt.month:02d}"
 
-    if fiscal_year is None or period is None:
+    for r in rows:
+        if isinstance(r, dict):
+            period_value = _row_period(r)
+            if period_value:
+                periods.add(period_value)
+
+    if not periods:
         raise ValueError(
-            "No se pudo determinar año y periodo fiscal desde created_at"
+            "No se pudo determinar periodo fiscal desde period, entry_date o created_at"
         )
 
-    # Validar que TODAS las líneas pertenezcan al mismo periodo
-    for r in rows:
-        created_at = r.get("created_at")
-        if not created_at:
-            continue
-
-        if isinstance(created_at, datetime):
-            dt = created_at
-        else:
-            try:
-                dt = datetime.fromisoformat(str(created_at))
-            except Exception:
-                continue
-
-        if dt.year != fiscal_year or dt.month != period:
-            raise ValueError(
-                "Las líneas contables contienen múltiples periodos. "
-                "ESF debe construirse por un solo mes fiscal."
-            )
-
-    period_label = f"{period:02d}/{fiscal_year}"
+    sorted_periods = sorted(periods)
+    first_period = sorted_periods[0]
+    last_period = sorted_periods[-1]
+    fiscal_year = int(last_period[:4])
+    period = int(last_period[5:7])
+    period_label = (
+        first_period
+        if first_period == last_period
+        else f"{first_period} a {last_period}"
+    )
 
     # =====================================================
     # ACUMULADORES
@@ -88,6 +81,9 @@ def build_esf_from_trial_balance(
     pasivo_corriente = defaultdict(float)
     pasivo_no_corriente = defaultdict(float)
     patrimonio = defaultdict(float)
+    ingresos = defaultdict(float)
+    costos = defaultdict(float)
+    gastos = defaultdict(float)
 
     # =====================================================
     # PROCESAMIENTO DE LÍNEAS
@@ -113,7 +109,7 @@ def build_esf_from_trial_balance(
         if not account:
             continue
 
-        acc_norm = account.replace(".", "")
+        acc_norm = account.replace(".", "").replace("-", "")
         label = f"{account} - {name}"
 
         # =================================================
@@ -150,6 +146,24 @@ def build_esf_from_trial_balance(
             if abs(monto) > 0.0001:
                 patrimonio[label] += abs(monto)
 
+        # =================================================
+        # RESULTADO DEL PERIODO
+        # =================================================
+        elif acc_norm.startswith("4"):
+            monto = credit - debit
+            if abs(monto) > 0.0001:
+                ingresos[label] += abs(monto)
+
+        elif acc_norm.startswith("5"):
+            monto = debit - credit
+            if abs(monto) > 0.0001:
+                gastos[label] += abs(monto)
+
+        elif acc_norm.startswith("6"):
+            monto = debit - credit
+            if abs(monto) > 0.0001:
+                costos[label] += abs(monto)
+
     # =====================================================
     # TOTALES
     # =====================================================
@@ -163,6 +177,10 @@ def build_esf_from_trial_balance(
 
     total_patrimonio = sum(patrimonio.values())
     total_pasivo_patrimonio = total_pasivo + total_patrimonio
+    total_ingresos = sum(ingresos.values())
+    total_costos = sum(costos.values())
+    total_gastos = sum(gastos.values())
+    resultado_periodo = total_ingresos - total_costos - total_gastos
 
     # =====================================================
     # FORMATO FINAL
@@ -205,4 +223,13 @@ def build_esf_from_trial_balance(
         "total_pasivo_patrimonio": round(total_pasivo_patrimonio, 2),
         "balance_ok": round(total_activo, 2) == round(total_pasivo_patrimonio, 2),
         "difference": round(total_activo - total_pasivo_patrimonio, 2),
+
+        # RESULTADO / P&L DETAIL
+        "ingresos": _fmt(ingresos),
+        "total_ingresos": round(total_ingresos, 2),
+        "costos": _fmt(costos),
+        "total_costos": round(total_costos, 2),
+        "gastos": _fmt(gastos),
+        "total_gastos": round(total_gastos, 2),
+        "resultado_periodo": round(resultado_periodo, 2),
     }

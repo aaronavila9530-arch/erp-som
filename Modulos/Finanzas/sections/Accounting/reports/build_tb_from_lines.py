@@ -79,11 +79,39 @@ def build_tb_from_lines(
     # =====================================================
     # PROCESAMIENTO
     # =====================================================
+    def _infer_account_type(code: str, current: str) -> str:
+        text = str(current or "").strip().upper()
+        aliases = {
+            "ASSET": "ACTIVO",
+            "LIABILITY": "PASIVO",
+            "EQUITY": "PATRIMONIO",
+            "REVENUE": "INGRESO",
+            "INCOME": "INGRESO",
+            "COST": "COSTO",
+            "EXPENSE": "GASTO",
+        }
+        if text:
+            return aliases.get(text, text)
+        clean = str(code or "").strip()
+        if clean.startswith("1"):
+            return "ACTIVO"
+        if clean.startswith("2"):
+            return "PASIVO"
+        if clean.startswith("3"):
+            return "PATRIMONIO"
+        if clean.startswith("4"):
+            return "INGRESO"
+        if clean.startswith("5"):
+            return "GASTO"
+        if clean.startswith("6"):
+            return "COSTO"
+        return ""
+
     for r in rows:
 
         account_code = str(r.get("account_code") or "").strip()
         account_name = str(r.get("account_name") or "SIN NOMBRE").strip()
-        account_type = str(r.get("account_type") or "").strip()
+        account_type = _infer_account_type(account_code, r.get("account_type"))
 
         if not account_code:
             continue
