@@ -154,7 +154,8 @@ def generate_vessel_presentation_doc(data: dict) -> str:
     # -------------------------------------------------
     fd, temp_docx = tempfile.mkstemp(suffix=".docx")
     os.close(fd)
-    apply_mci_docx_branding(doc, data)
+    # Presentation grain template already carries its own header/body images.
+    # Do not apply global branding here because it removes those template images.
     _prepend_header_cert(doc, str(data.get("cert_no") or ""))
     apply_docx_autofit(doc)
     doc.save(temp_docx)

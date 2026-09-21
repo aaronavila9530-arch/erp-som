@@ -615,6 +615,8 @@ class MainApp(tk.Frame):
             )
 
     def _check_pending_report_alerts(self):
+        if str(self.rol or "").strip().lower() == "accounting":
+            return
         total = 0
         try:
             resp = api_client.get_status_informes_api(status="Pending")
