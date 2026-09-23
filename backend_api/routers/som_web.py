@@ -1233,7 +1233,7 @@ def som_web_home() -> HTMLResponse:
         <div class="finance-filter-row compact">
           <button onclick="runAccountingOutlookSync(false)">Revisar Outlook/BAC ahora</button>
           <button class="secondary" onclick="runAccountingOutlookSync(true)">Cargar tarjetas 2025-2026 y contabilizar</button>
-          <span id="accOutlookStatus" class="muted">Usa el mismo motor local de escritorio para XML, Notificaciones BAC y tarjetas.</span>
+          <span id="accOutlookStatus" class="muted">La automatización principal corre en backend con Gmail autorizado; Outlook queda solo como revisión manual local.</span>
         </div>
         <div id="accountingResult" class="status">Configure filtros y presione Buscar.</div>`;
     }
@@ -1349,7 +1349,7 @@ def som_web_home() -> HTMLResponse:
     async function runAccountingOutlookSync(historyOnly) {
       const status = $("accOutlookStatus");
       status.className = "muted";
-      status.textContent = historyOnly ? "Cargando historial BAC 2025-2026..." : "Revisando Outlook/BAC local...";
+      status.textContent = historyOnly ? "Cargando historial BAC 2025-2026..." : "Revisando Outlook/BAC local manual...";
       try {
         const result = historyOnly
           ? await postJSON("/accounting/outlook-local/corporate-card-history", {})

@@ -969,6 +969,22 @@ def import_statement_pdf(
 ):
     company = company_code(header_value=x_company_code)
     raw = file.file.read()
+    return import_statement_pdf_bytes(
+        conn=conn,
+        raw=raw,
+        filename=file.filename,
+        company=company,
+        imported_by=x_user or "SYSTEM",
+    )
+
+
+def import_statement_pdf_bytes(
+    conn,
+    raw: bytes,
+    filename: str | None,
+    company: str = "MSL-CR",
+    imported_by: str = "SYSTEM",
+) -> dict[str, Any]:
     digest = sha256(raw).hexdigest()
     parsed = parse_bac_statement(raw)
     if not parsed.get("card_last4") and not parsed.get("transactions") and _money(parsed.get("cash_payment_crc")) == 0 and _money(parsed.get("cash_payment_usd")) == 0:
@@ -1000,7 +1016,7 @@ def import_statement_pdf(
         """, (
             company, parsed.get("card_last4"), parsed.get("statement_period"), parsed.get("cutoff_date"),
             parsed.get("payment_due_date"), parsed.get("cash_payment_crc"), parsed.get("cash_payment_usd"),
-            file.filename, digest, parsed.get("raw_text"), Json(_json_safe(parsed)), x_user or "SYSTEM",
+            filename, digest, parsed.get("raw_text"), Json(_json_safe(parsed)), imported_by,
         ))
         statement = cur.fetchone()
         inserted = 0

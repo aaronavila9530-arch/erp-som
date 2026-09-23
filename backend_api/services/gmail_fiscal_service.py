@@ -11,6 +11,7 @@ import threading
 import time
 import zipfile
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal, InvalidOperation
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from urllib.parse import urlencode
@@ -21,6 +22,11 @@ from psycopg2.extras import Json, RealDictCursor
 
 from database import get_conn, release_conn
 from routers.accounting_tax import _ensure_purchase_obligation, _ensure_schema as ensure_tax_schema, _local, _parse_xml, _save_document
+from routers.corporate_cards import (
+    BacNotificationRequest,
+    import_bac_notification,
+    import_statement_pdf_bytes,
+)
 
 
 GMAIL_API = "https://gmail.googleapis.com/gmail/v1/users/me"
@@ -28,6 +34,10 @@ GOOGLE_AUTH = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN = "https://oauth2.googleapis.com/token"
 SCOPES = "https://www.googleapis.com/auth/gmail.modify"
 ACCOUNT = os.getenv("GMAIL_ACCOUNT", "gastos@mslogisticsgroup.com")
+DEFAULT_SEARCH_QUERY = (
+    '(has:attachment (filename:xml OR filename:zip OR filename:pdf) '
+    'OR from:baccredomatic.com OR subject:BAC OR subject:"Notificación BAC") newer_than:730d'
+)
 MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024
 MAX_ZIP_MEMBERS = 50
 _SCHEMA_READY = False
@@ -48,7 +58,7 @@ def ensure_schema(conn):
                 scopes TEXT,
                 auto_enabled BOOLEAN NOT NULL DEFAULT FALSE,
                 interval_minutes INTEGER NOT NULL DEFAULT 10,
-                search_query TEXT NOT NULL DEFAULT 'has:attachment (filename:xml OR filename:zip) newer_than:365d',
+                search_query TEXT NOT NULL DEFAULT '(has:attachment (filename:xml OR filename:zip OR filename:pdf) OR from:baccredomatic.com OR subject:BAC OR subject:"Notificación BAC") newer_than:730d',
                 last_sync_at TIMESTAMPTZ,
                 next_sync_at TIMESTAMPTZ,
                 last_error TEXT,
@@ -121,6 +131,16 @@ def ensure_schema(conn):
         cur.execute("ALTER TABLE gmail_fiscal_attachments ADD COLUMN IF NOT EXISTS content BYTEA")
         cur.execute("""INSERT INTO gmail_fiscal_connections(account_email) VALUES(%s)
           ON CONFLICT(account_email) DO NOTHING""", (ACCOUNT,))
+        cur.execute(
+            """
+            UPDATE gmail_fiscal_connections
+               SET search_query=%s,
+                   updated_at=NOW()
+             WHERE account_email=%s
+               AND search_query='has:attachment (filename:xml OR filename:zip) newer_than:365d'
+            """,
+            (DEFAULT_SEARCH_QUERY, ACCOUNT),
+        )
     conn.commit()
     _SCHEMA_READY = True
 
@@ -207,6 +227,16 @@ def _headers(payload):
     return {item.get("name","").lower():item.get("value","") for item in payload.get("headers",[])}
 
 
+def _norm_text(value):
+    import unicodedata
+    text = str(value or "").replace("\ufffc", " ").replace("\u0000", " ")
+    text = "".join(
+        char for char in unicodedata.normalize("NFKD", text)
+        if not unicodedata.combining(char)
+    )
+    return re.sub(r"[^A-Z0-9]+", " ", text.upper()).strip()
+
+
 def _walk_parts(payload):
     for part in payload.get("parts",[]) or []:
         yield part
@@ -226,6 +256,197 @@ def _attachment_bytes(token, message_id, part):
         return b""
     data=_api(token,"GET",f"/messages/{message_id}/attachments/{attachment_id}")
     return _decode_b64(data.get("data", ""))
+
+
+def _message_body_text(payload):
+    chunks = []
+    candidates = [payload, *_walk_parts(payload)]
+    for part in candidates:
+        mime = str(part.get("mimeType") or "").lower()
+        if mime not in {"text/plain", "text/html"}:
+            continue
+        data = ((part.get("body") or {}).get("data") or "").strip()
+        if not data:
+            continue
+        try:
+            text = _decode_b64(data).decode("utf-8", errors="replace")
+        except Exception:
+            continue
+        if mime == "text/html":
+            text = re.sub(r"(?is)<(script|style).*?>.*?</\1>", " ", text)
+            text = re.sub(r"(?s)<[^>]+>", " ", text)
+        chunks.append(text)
+    text = "\n".join(chunks)
+    text = text.replace("&nbsp;", " ").replace("&amp;", "&")
+    return re.sub(r"[ \t\r\f\v]+", " ", text)
+
+
+def _parse_bac_money(text):
+    pattern = re.compile(
+        r"(?:monto\s+de|por\s+un\s+monto\s+de)\s*"
+        r"(?P<amount>[0-9][0-9.,]*)\s*"
+        r"(?P<currency>USD|CRC|COLONES|COLON|₡|\$)?",
+        re.IGNORECASE,
+    )
+    match = pattern.search(text or "")
+    if not match:
+        return None
+    raw = match.group("amount").strip()
+    currency = (match.group("currency") or "CRC").upper()
+    if currency in {"COLONES", "COLON", "₡"}:
+        currency = "CRC"
+    elif currency == "$":
+        currency = "USD"
+    if "," in raw and "." in raw:
+        raw = raw.replace(",", "")
+    elif "," in raw:
+        parts = raw.split(",")
+        raw = "".join(parts[:-1]) + "." + parts[-1] if len(parts[-1]) == 2 else raw.replace(",", "")
+    try:
+        return Decimal(raw), currency
+    except (InvalidOperation, ValueError):
+        return None
+
+
+def _parse_bac_date(text, fallback_date):
+    months = {
+        "jan": 1, "ene": 1, "feb": 2, "mar": 3, "apr": 4, "abr": 4,
+        "may": 5, "jun": 6, "jul": 7, "aug": 8, "ago": 8, "sep": 9,
+        "set": 9, "oct": 10, "nov": 11, "dec": 12, "dic": 12,
+    }
+    match = re.search(r"\b([A-Za-z]{3})\s+(\d{1,2}),\s*(\d{4})\b", text or "", re.IGNORECASE)
+    if match:
+        month = months.get(match.group(1).lower())
+        if month:
+            try:
+                return datetime(int(match.group(3)), month, int(match.group(2))).date()
+            except ValueError:
+                pass
+    match = re.search(r"\b(\d{1,2})[-/](\d{1,2})[-/](\d{4})\b", text or "")
+    if match:
+        day, month, year = (int(match.group(1)), int(match.group(2)), int(match.group(3)))
+        try:
+            return datetime(year, month, day).date()
+        except ValueError:
+            pass
+    return fallback_date
+
+
+def _field_after_label(text, label):
+    pattern = re.compile(
+        rf"{label}\s*:\s*(.+?)(?=\s+(?:Ciudad y pa[ií]s|Fecha|MASTER|VISA|Autorizaci[oó]n|Referencia|Tipo de Transacci[oó]n|Monto)\s*:|$)",
+        re.IGNORECASE | re.DOTALL,
+    )
+    match = pattern.search(text or "")
+    return re.sub(r"\s+", " ", match.group(1)).strip() if match else ""
+
+
+def _parse_bac_card_notification(text, subject, account, message_id, folder, received_date):
+    normalized = _norm_text(f"{subject}\n{text}")
+    if "MONTO" not in normalized:
+        return None
+    if "TRANSFERENCIA LOCAL" in normalized or "REALIZO UNA TRANSFERENCIA" in normalized:
+        return None
+    if "TIPO DE TRANSACCION" not in normalized and "NOTIFICACION DE TRANSACCION" not in normalized:
+        return None
+    money = _parse_bac_money(text)
+    if not money:
+        amount_match = re.search(r"\b(CRC|USD|COLONES|COLON|₡|\$)\s*([0-9][0-9.,]*)", text or "", re.IGNORECASE)
+        if not amount_match:
+            return None
+        money = _parse_bac_money(f"monto de {amount_match.group(2)} {amount_match.group(1)}")
+    if not money:
+        return None
+    amount, currency = money
+    merchant = _field_after_label(text, r"Comercio") or subject
+    card_match = re.search(r"\b(?:MASTER|VISA)\s*:\s*\*+(\d{4})", text or "", re.IGNORECASE)
+    auth_match = re.search(r"Autorizaci[oó]n\s*:\s*([0-9A-Za-z-]+)", text or "", re.IGNORECASE)
+    ref_match = re.search(r"Referencia\s*:\s*([0-9A-Za-z-]+)", text or "", re.IGNORECASE)
+    holder_match = re.search(r"Hola\s+(.+?)(?:\n|A continuaci[oó]n)", text or "", re.IGNORECASE | re.DOTALL)
+    if not merchant and not ref_match and not auth_match:
+        return None
+    return {
+        "company_code": "MSL-CR",
+        "mailbox": account,
+        "folder": folder,
+        "message_id": message_id,
+        "subject": subject,
+        "merchant": merchant,
+        "transaction_date": _parse_bac_date(text, received_date),
+        "currency": currency,
+        "amount": amount,
+        "card_last4": card_match.group(1) if card_match else None,
+        "authorization": auth_match.group(1).strip() if auth_match else None,
+        "reference": ref_match.group(1).strip() if ref_match else None,
+        "holder_name": re.sub(r"\s+", " ", holder_match.group(1)).strip() if holder_match else "",
+        "allow_closed_period": True,
+    }
+
+
+def _parse_bac_partner_transfer(text, subject, account, message_id, folder, received_date):
+    normalized = _norm_text(f"{subject}\n{text}")
+    if "BAC" not in normalized or "TRANSFERENCIA" not in normalized:
+        return None
+    partner_map = (
+        ("DIANA VERONICA QUIROS BENAMBOURG", "DIANA VERONICA QUIROS BENAMBOURG"),
+        ("PABEL GONZALO PENA BARRETO", "PABEL GONZALO PEÑA BARRETO"),
+    )
+    partner_name = None
+    for needle, label in partner_map:
+        if needle in normalized:
+            partner_name = label
+            break
+    if not partner_name:
+        estimated = re.search(r"Estimad[oa]\(a\)\s+(.+?)\s*:", text or "", re.IGNORECASE | re.DOTALL)
+        if estimated:
+            partner_name = re.sub(r"\s+", " ", estimated.group(1)).strip()
+    if not partner_name:
+        return None
+    money = _parse_bac_money(text)
+    if not money:
+        return None
+    amount, currency = money
+    ref_match = re.search(r"(?:numero|n[uú]mero)\s+de\s+referencia\s+(?:es\s+)?([0-9A-Za-z-]+)", text, re.IGNORECASE)
+    if not ref_match:
+        ref_match = re.search(r"\breferencia\s+(?:es\s+)?([0-9A-Za-z-]+)", text, re.IGNORECASE)
+    if not ref_match:
+        return None
+    concept_match = re.search(r'"([^"]+)"', text or "")
+    return {
+        "company_code": "MSL-CR",
+        "mailbox": account,
+        "folder": folder,
+        "message_id": message_id,
+        "subject": subject,
+        "partner_name": partner_name,
+        "transfer_date": _parse_bac_date(text, received_date).isoformat(),
+        "amount": str(amount),
+        "currency": currency,
+        "reference": ref_match.group(1).strip(),
+        "concept": concept_match.group(1).strip() if concept_match else "",
+        "allow_closed_period": True,
+    }
+
+
+def _process_bac_card_notification(conn, payload):
+    request = BacNotificationRequest(**payload)
+    return import_bac_notification(request, conn=conn)
+
+
+def _process_bac_partner_transfer(payload):
+    from api_client import post_bac_partner_transfer_api
+    return post_bac_partner_transfer_api(payload)
+
+
+def _looks_like_card_statement(filename, subject):
+    text = _norm_text(f"{filename} {subject}")
+    return str(filename or "").lower().endswith(".pdf") and (
+        "ESTADOCTA" in text
+        or "ESTADO DE CUENTA" in text
+        or "TARJETA DE CREDITO" in text
+        or "BACCREDOMATIC" in text
+        or " BAC " in f" {text} "
+    )
 
 
 def _xml_members(filename, content):
@@ -301,6 +522,41 @@ def _process_xml(cur, message_db_id, filename, content, gmail_attachment_id):
     return status,tax_id
 
 
+def _process_card_statement_pdf(conn, cur, message_db_id, filename, content, gmail_attachment_id):
+    digest = hashlib.sha256(content).hexdigest()
+    cur.execute(
+        "SELECT id,status FROM gmail_fiscal_attachments WHERE message_id=%s AND content_hash=%s AND filename=%s",
+        (message_db_id, digest, filename),
+    )
+    existing = cur.fetchone()
+    if existing:
+        return existing["status"], None
+    try:
+        response = import_statement_pdf_bytes(
+            conn=conn,
+            raw=content,
+            filename=filename,
+            company="MSL-CR",
+            imported_by="GMAIL_AUTOMATION",
+        )
+        if response.get("status") == "exists":
+            status = "DUPLICATE"
+            error = "Estado BAC ya importado"
+        else:
+            status = "IMPORTED"
+            statement = response.get("statement") or {}
+            error = f"Estado BAC {statement.get('statement_period') or ''} importado"
+    except Exception as exc:
+        status = "REVIEW"
+        error = str(exc)
+    cur.execute(
+        """INSERT INTO gmail_fiscal_attachments(message_id,gmail_attachment_id,filename,mime_type,content_hash,size_bytes,status,error_detail,content)
+           VALUES(%s,%s,%s,'application/pdf',%s,%s,%s,%s,%s)""",
+        (message_db_id, gmail_attachment_id, filename, digest, len(content), status, error, content),
+    )
+    return status, error
+
+
 def _labels(token):
     current=_api(token,"GET","/labels").get("labels",[]); by_name={x["name"]:x["id"] for x in current}
     result={}
@@ -323,20 +579,100 @@ def sync_mailbox(conn, triggered_by="SCHEDULER", max_messages=50):
             token=_access_token(decrypt_token(config["encrypted_refresh_token"])); labels=_labels(token)
             query=config["search_query"]+" -label:ERP-SOM/Procesado -label:ERP-SOM/Revisar -label:ERP-SOM/Duplicado"
             listed=_api(token,"GET","/messages",params={"q":query,"maxResults":min(max_messages,100)}).get("messages",[])
-            summary={"messages":0,"xml":0,"imported":0,"duplicates":0,"review":0}
+            summary={
+                "messages":0,
+                "xml":0,
+                "imported":0,
+                "duplicates":0,
+                "review":0,
+                "card_pdfs":0,
+                "card_imported":0,
+                "card_duplicates":0,
+                "bac_card_messages":0,
+                "bac_card_posted":0,
+                "bac_card_matched":0,
+                "bac_partner_messages":0,
+                "bac_partner_imported":0,
+            }
             for item in listed:
                 msg=_api(token,"GET",f"/messages/{item['id']}",params={"format":"full"}); payload=msg.get("payload") or {}; hdr=_headers(payload)
                 received=parsedate_to_datetime(hdr["date"]) if hdr.get("date") else None
+                received_date=(received.date() if received else datetime.now(timezone.utc).date())
+                subject=hdr.get("subject")
                 cur.execute("""INSERT INTO gmail_fiscal_messages(account_email,gmail_message_id,gmail_thread_id,sender,subject,received_at)
                   VALUES(%s,%s,%s,%s,%s,%s) ON CONFLICT(account_email,gmail_message_id) DO UPDATE SET updated_at=NOW() RETURNING id""",
-                            (ACCOUNT,item["id"],msg.get("threadId"),hdr.get("from"),hdr.get("subject"),received)); message_db_id=cur.fetchone()["id"]
-                attachments=xml_count=imported=duplicates=errors=0; error_details=[]
+                            (ACCOUNT,item["id"],msg.get("threadId"),hdr.get("from"),subject,received)); message_db_id=cur.fetchone()["id"]
+                attachments=xml_count=imported=duplicates=errors=card_pdfs=bac_card_notifications=bac_partner_notifications=0; error_details=[]
+                body_text=_message_body_text(payload)
+                bac_payload=_parse_bac_card_notification(
+                    body_text,
+                    subject or "",
+                    ACCOUNT,
+                    item["id"],
+                    "Gmail/BAC",
+                    received_date,
+                )
+                if bac_payload:
+                    try:
+                        result=_process_bac_card_notification(conn,bac_payload)
+                        bac_card_notifications+=1
+                        status_value=str(result.get("status") or "").upper()
+                        if result.get("posted") or status_value=="POSTED":
+                            summary["bac_card_posted"]+=1
+                        elif status_value in {"MATCHED","SEMI_REQUIRED"}:
+                            summary["bac_card_matched"]+=1
+                        imported+=1
+                    except Exception as exc:
+                        errors+=1
+                        error_details.append(f"Notificacion BAC: {exc}")
+                else:
+                    partner_payload=_parse_bac_partner_transfer(
+                        body_text,
+                        subject or "",
+                        ACCOUNT,
+                        item["id"],
+                        "Gmail/BAC",
+                        received_date,
+                    )
+                    if partner_payload:
+                        try:
+                            _process_bac_partner_transfer(partner_payload)
+                            bac_partner_notifications+=1
+                            summary["bac_partner_messages"]+=1
+                            summary["bac_partner_imported"]+=1
+                            imported+=1
+                        except Exception as exc:
+                            errors+=1
+                            error_details.append(f"Transferencia BAC socios: {exc}")
                 for part in _walk_parts(payload):
                     filename=part.get("filename") or ""
-                    if not filename.lower().endswith((".xml",".zip")): continue
+                    if not filename.lower().endswith((".xml",".zip",".pdf")): continue
                     attachments+=1
                     try:
                         raw=_attachment_bytes(token,item["id"],part)
+                        if _looks_like_card_statement(filename, subject or ""):
+                            card_pdfs+=1
+                            status, detail = _process_card_statement_pdf(
+                                conn,
+                                cur,
+                                message_db_id,
+                                filename,
+                                raw,
+                                (part.get("body") or {}).get("attachmentId"),
+                            )
+                            if status == "IMPORTED":
+                                imported+=1
+                                summary["card_imported"]+=1
+                            elif status == "DUPLICATE":
+                                duplicates+=1
+                                summary["card_duplicates"]+=1
+                            else:
+                                errors+=1
+                                if detail:
+                                    error_details.append(f"{filename}: {detail}")
+                            continue
+                        if filename.lower().endswith(".pdf"):
+                            continue
                         members=_xml_members(filename,raw)
                         if not members:
                             errors+=1; error_details.append(f"{filename}: no contiene archivos XML")
@@ -357,7 +693,13 @@ def sync_mailbox(conn, triggered_by="SCHEDULER", max_messages=50):
                 cur.execute("""UPDATE gmail_fiscal_messages SET status=%s,attachment_count=%s,xml_count=%s,imported_count=%s,
                   duplicate_count=%s,error_count=%s,error_detail=%s,processed_at=NOW(),updated_at=NOW() WHERE id=%s""",
                             (status,attachments,xml_count,imported,duplicates,errors,"\n".join(error_details) or None,message_db_id))
-                summary["messages"]+=1; summary["xml"]+=xml_count; summary["imported"]+=imported; summary["duplicates"]+=duplicates; summary["review"]+=errors
+                summary["messages"]+=1
+                summary["xml"]+=xml_count
+                summary["imported"]+=imported
+                summary["duplicates"]+=duplicates
+                summary["review"]+=errors
+                summary["card_pdfs"]+=card_pdfs
+                summary["bac_card_messages"]+=bac_card_notifications
                 conn.commit()
             cur.execute("""UPDATE gmail_fiscal_connections SET status='CONNECTED',last_sync_at=NOW(),next_sync_at=NOW()+(interval_minutes||' minutes')::interval,
               last_error=NULL,updated_at=NOW() WHERE account_email=%s""",(ACCOUNT,))
