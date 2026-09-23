@@ -16,6 +16,32 @@ def _tokens(value) -> set[str]:
     return {token for token in _norm(value).split() if len(token) >= 3}
 
 
+SURVEYOR_ALIASES = {
+    "MAGALLY BARQUERO": (
+        "MAGALLY BARQUERO",
+        "SHARON OROCU",
+        "OROCU BARQUERO SHARON STACEY",
+        "SHARON STACEY BARQUERO SANCHEZ",
+        "SHARON STACEY BARQUERO",
+    ),
+}
+
+
+def _identity_keys(value) -> set[str]:
+    text = _norm(value)
+    tokens = _tokens(value)
+    keys = {text} if text else set()
+    for canonical, aliases in SURVEYOR_ALIASES.items():
+        for alias in aliases:
+            alias_text = _norm(alias)
+            alias_tokens = _tokens(alias)
+            if not alias_text:
+                continue
+            if alias_text in text or text in alias_text or (alias_tokens and alias_tokens <= tokens):
+                keys.add(_norm(canonical))
+    return keys
+
+
 def _as_date(value):
     if isinstance(value, datetime):
         return value.date()
@@ -51,7 +77,8 @@ def reconcile_surveyor_invoice_obligations(
     This function prevents both from staying open.
     """
     issuer_tokens = _tokens(issuer_name)
-    if not issuer_tokens:
+    issuer_keys = _identity_keys(issuer_name)
+    if not issuer_tokens and not issuer_keys:
         return []
 
     invoice_date = _as_date(issue_date)
@@ -60,15 +87,14 @@ def reconcile_surveyor_invoice_obligations(
 
     cur.execute(
         """
-        SELECT id, payee_name, issue_date, due_date, total, balance, service_id, reference
+        SELECT id, payee_name, issue_date, due_date, total, balance, service_id, reference, status
         FROM payment_obligations
         WHERE company_code=%s
           AND COALESCE(active, TRUE)=TRUE
           AND origin='SERVICIOS'
           AND payee_type='SURVEYOR'
           AND obligation_type='SURVEYOR_FEE'
-          AND status IN ('PENDING','PARTIAL')
-          AND COALESCE(balance,0) > 0
+          AND status IN ('PENDING','PARTIAL','PAID')
           AND COALESCE(issue_date, due_date, %s::date)
                 BETWEEN (%s::date - (%s || ' days')::interval)
                     AND (%s::date + (%s || ' days')::interval)
@@ -79,7 +105,14 @@ def reconcile_surveyor_invoice_obligations(
     matched_ids: list[int] = []
     for row in cur.fetchall() or []:
         payee_tokens = _tokens(row.get("payee_name"))
-        if not payee_tokens:
+        payee_keys = _identity_keys(row.get("payee_name"))
+        if not payee_tokens and not payee_keys:
+            continue
+        alias_match = bool(issuer_keys & payee_keys)
+        if row.get("status") == "PAID" and not alias_match:
+            continue
+        if alias_match:
+            matched_ids.append(int(row["id"]))
             continue
         overlap = issuer_tokens & payee_tokens
         short_name_match = len(overlap) >= 1 and min(len(issuer_tokens), len(payee_tokens)) == 1
