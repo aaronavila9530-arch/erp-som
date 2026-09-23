@@ -85,6 +85,7 @@ def require_permission(module: str, action: str):
 def get_accounting_lines(
     account_code: str | None = Query(None),
     account_type: str | None = Query(None),
+    origin: str | None = Query(None),
     period: str | None = Query(None),
     period_from: str | None = Query(None),
     period_to: str | None = Query(None),
@@ -149,6 +150,15 @@ def get_accounting_lines(
         if period_to:
             filtros.append("ae.period <= %s")
             params.append(period_to)
+        if origin:
+            origin_value = origin.strip().upper()
+            if origin_value and origin_value != "TODOS":
+                if origin_value == "ITP":
+                    filtros.append("ae.origin = ANY(%s)")
+                    params.append(["ITP", "ITP_PAYMENT", "ITP_BIWEEKLY_PAYMENT"])
+                else:
+                    filtros.append("ae.origin = %s")
+                    params.append(origin_value)
 
         # ----------------------------------------------------
         # FILTRO CUENTA (jerárquico)

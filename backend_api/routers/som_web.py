@@ -393,6 +393,35 @@ def som_web_home() -> HTMLResponse:
     .finance-filter-row button { justify-self:start; min-width:92px; padding:0 16px; }
     .finance-toolbar { display:flex; flex-wrap:wrap; gap:8px; margin:8px 0 12px; }
     .finance-toolbar button { height:34px; }
+    .accounting-shell { display:grid; gap:12px; }
+    .accounting-hero { display:grid; grid-template-columns:minmax(280px,1fr) repeat(4,minmax(150px,220px)); gap:10px; align-items:stretch; }
+    .accounting-title { padding:14px; border:1px solid #d7e1ec; border-radius:8px; background:#fff; }
+    .accounting-title h2 { margin:0; font-size:26px; line-height:1.1; }
+    .accounting-title p { margin:6px 0 0; color:#607089; }
+    .accounting-kpi { padding:12px; border:1px solid #d7e1ec; border-radius:8px; background:#f8fbfe; }
+    .accounting-kpi span { display:block; color:#64748b; font-size:11px; font-weight:800; letter-spacing:.04em; text-transform:uppercase; }
+    .accounting-kpi strong { display:block; margin-top:6px; color:#0f172a; font-size:21px; }
+    .accounting-grid { display:grid; grid-template-columns:280px minmax(0,1fr); gap:12px; align-items:start; }
+    .accounting-side { display:grid; gap:10px; align-content:start; }
+    .accounting-box { border:1px solid #d7e1ec; border-radius:8px; background:#fff; padding:10px; }
+    .accounting-box h3 { margin:0 0 8px; font-size:12px; color:#334155; font-weight:800; letter-spacing:.04em; text-transform:uppercase; }
+    .accounting-actions { display:grid; gap:7px; }
+    .accounting-actions button { width:100%; min-height:34px; justify-content:flex-start; text-align:left; background:#fff; color:var(--ink); border:1px solid #cfd9e5; }
+    .accounting-actions button.primary { background:var(--blue); color:white; border-color:var(--blue); }
+    .accounting-actions button.green { background:var(--green); color:white; border-color:var(--green); }
+    .accounting-actions button.brown { background:var(--brown); color:white; border-color:var(--brown); }
+    .accounting-filters { display:grid; grid-template-columns:150px repeat(6,minmax(130px,1fr)) repeat(4,max-content); gap:9px; align-items:end; padding:10px; border:1px solid #d7e1ec; border-radius:8px; background:#fff; }
+    .accounting-filters label { display:grid; gap:5px; color:#475569; font-size:12px; font-weight:700; text-transform:uppercase; }
+    .accounting-filters input,.accounting-filters select { min-width:0; height:34px; }
+    .accounting-work { min-width:0; display:grid; gap:10px; }
+    .accounting-work .table-wrap { max-height:620px; }
+    .accounting-banner { border:1px solid #d7e1ec; border-radius:8px; background:#fff; padding:10px 12px; color:#52637a; }
+    .accounting-alerts { display:grid; gap:8px; }
+    .accounting-alert-item { border:1px solid #e5edf6; border-left:4px solid #f59e0b; border-radius:7px; padding:8px 10px; background:#fff; }
+    .accounting-alert-item.critical { border-left-color:#b42318; background:#fff7f6; }
+    .accounting-alert-item.warning { border-left-color:#b7791f; background:#fffaf0; }
+    .accounting-entry-lines { display:grid; gap:8px; }
+    .accounting-entry-line { display:grid; grid-template-columns:minmax(170px,1.2fr) minmax(180px,1.4fr) 110px 110px 34px; gap:8px; align-items:end; }
     .service-selected { background:#eaf6ff; }
     .pick-col { width:42px; min-width:42px; text-align:center; }
     .row-pick { appearance:none; -webkit-appearance:none; width:20px; height:20px; border:1.5px solid #8b95a5; border-radius:50%; background:#fff; display:inline-grid; place-content:center; margin:0; vertical-align:middle; cursor:pointer; }
@@ -497,6 +526,7 @@ def som_web_home() -> HTMLResponse:
       .itp-bi-header,.itp-bi-controls,.itp-bi-body,.itp-bi-summary { grid-template-columns:1fr; }
       .itp-bi-totals { grid-template-columns:1fr; }
       .finance-filter-row,.finance-filter-row.compact { grid-template-columns:1fr; }
+      .accounting-hero,.accounting-grid,.accounting-filters,.accounting-entry-line { grid-template-columns:1fr; }
       .surveyor-line { grid-template-columns:1fr; }
       aside { min-height:auto; }
       header { flex-direction:column; }
@@ -621,6 +651,9 @@ def som_web_home() -> HTMLResponse:
     let selectedBankLineIndex = null;
     let selectedBankLineIndexes = new Set();
     let selectedGenericFinanceIndexes = new Set();
+    let accountingRows = [];
+    let selectedAccountingEntryId = null;
+    let accountingAccounts = [];
     let itpRows = [];
     let selectedItpIndex = null;
     let selectedItpIndexes = new Set();
@@ -1210,32 +1243,92 @@ def som_web_home() -> HTMLResponse:
     function renderAccountingWeb(target) {
       const thisPeriod = new Date().toISOString().slice(0,7);
       target.innerHTML = `
-        <div class="panel-head">
-          <h2>Accounting</h2>
-          <span class="muted">Asientos, balance de comprobación y reportes por consulta manual</span>
-        </div>
-        <div class="finance-filter-row compact">
-          <label>Modo<select id="accMode" onchange="toggleAccountingMode()"><option value="SINGLE">Mes específico</option><option value="RANGE">Rango / periodo fiscal</option></select></label>
-          <label id="accPeriodLabel">Periodo<input id="accPeriod" type="month" value="${thisPeriod}" /></label>
-          <label id="accFromLabel" style="display:none">Desde<input id="accPeriodFrom" type="month" value="${thisPeriod}" /></label>
-          <label id="accToLabel" style="display:none">Hasta<input id="accPeriodTo" type="month" value="${thisPeriod}" /></label>
-          <label>Reporte<select id="accReport"><option value="BC">Balance de Comprobación</option><option value="DETALLE_TIPO">Detalle por tipo de cuenta</option><option value="ASIENTOS">Asientos</option><option value="MAYOR">Libro Mayor</option><option value="ESF">Estado de Situación Financiera</option><option value="ER">Estado de Resultados</option><option value="FC">Flujo de Caja</option></select></label>
-          <label>Tipo<select id="accAccountType"><option value="">Todos</option><option>ACTIVO</option><option>PASIVO</option><option>PATRIMONIO</option><option>INGRESO</option><option>COSTO</option><option>GASTO</option></select></label>
-        </div>
-        <div class="finance-filter-row compact">
-          <label>Cuenta<input id="accAccountCode" placeholder="Código opcional" /></label>
-          <label>Origen<select id="accOrigin"><option value="">Todos</option><option>ITP</option><option>ITP_PAYMENT</option><option>ITP_BIWEEKLY_PAYMENT</option><option>COLLECTIONS</option><option>INVOICING</option><option>MANUAL</option><option>CASH_APP</option></select></label>
-          <button onclick="loadAccountingWeb()">Buscar</button>
-          <button class="secondary" onclick="clearAccountingWeb()">Limpiar</button>
-          <button class="secondary" onclick="exportAccountingReport('xlsx')">Exportar Excel</button>
-          <button class="secondary" onclick="exportAccountingReport('pdf')">Exportar PDF</button>
-        </div>
-        <div class="finance-filter-row compact">
-          <button onclick="runAccountingOutlookSync(false)">Revisar Outlook/BAC ahora</button>
-          <button class="secondary" onclick="runAccountingOutlookSync(true)">Cargar tarjetas 2025-2026 y contabilizar</button>
-          <span id="accOutlookStatus" class="muted">La automatización principal corre en backend con Gmail autorizado; Outlook queda solo como revisión manual local.</span>
-        </div>
-        <div id="accountingResult" class="status">Configure filtros y presione Buscar.</div>`;
+        <div class="accounting-shell">
+          <div class="accounting-hero">
+            <div class="accounting-title">
+              <h2>Accounting</h2>
+              <p>Centro contable web: asientos, cierres, reportes, auxiliares, fiscal, tarjetas y automatizaciones.</p>
+            </div>
+            <div class="accounting-kpi"><span>Debe periodo</span><strong id="accKpiDebit">-</strong></div>
+            <div class="accounting-kpi"><span>Haber periodo</span><strong id="accKpiCredit">-</strong></div>
+            <div class="accounting-kpi"><span>IVA neto</span><strong id="accKpiIva">-</strong></div>
+            <div class="accounting-kpi"><span>Salud cierre</span><strong id="accKpiHealth">-</strong></div>
+          </div>
+          <div class="accounting-filters">
+            <label>Modo<select id="accMode" onchange="toggleAccountingMode()"><option value="SINGLE">Periodo</option><option value="RANGE">Rango</option></select></label>
+            <label id="accPeriodLabel">Periodo<input id="accPeriod" type="month" value="${thisPeriod}" onchange="refreshAccountingDashboard()" /></label>
+            <label id="accFromLabel" style="display:none">Desde<input id="accPeriodFrom" type="month" value="${thisPeriod}" /></label>
+            <label id="accToLabel" style="display:none">Hasta<input id="accPeriodTo" type="month" value="${thisPeriod}" /></label>
+            <label>Reporte<select id="accReport"><option value="ASIENTOS">Asientos</option><option value="ANALITICO_CUENTA">Analítico de cuenta</option><option value="DETALLE_TIPO">Detalle por tipo de cuenta</option><option value="MAYOR">Libro Mayor</option><option value="BC">Balance de Comprobación</option><option value="ESF">Estado de Situación Financiera</option><option value="ER">Estado de Resultados</option><option value="FC">Flujo de Caja</option></select></label>
+            <label>Tipo<select id="accAccountType"><option value="">Todos</option><option>ACTIVO</option><option>PASIVO</option><option>PATRIMONIO</option><option>INGRESO</option><option>COSTO</option><option>GASTO</option></select></label>
+            <label>Cuenta<input id="accAccountCode" list="accAccountList" placeholder="Código o nombre" /><datalist id="accAccountList"></datalist></label>
+            <label>Origen<select id="accOrigin"><option value="">Todos</option><option>ITP</option><option>ITP_PAYMENT</option><option>ITP_BIWEEKLY_PAYMENT</option><option>COLLECTIONS</option><option>INVOICING</option><option>MANUAL</option><option>CASH_APP</option><option>REVERSAL</option><option>CORP_CARD</option><option>CORP_CARD_SETTLEMENT</option></select></label>
+            <button onclick="loadAccountingWeb()">Buscar</button>
+            <button class="secondary" onclick="clearAccountingWeb()">Limpiar</button>
+            <button class="secondary" onclick="exportAccountingReport('xlsx')">Excel</button>
+            <button class="secondary" onclick="exportAccountingReport('pdf')">PDF</button>
+          </div>
+          <div class="accounting-grid">
+            <aside class="accounting-side">
+              <div class="accounting-box"><h3>Acciones</h3><div class="accounting-actions">
+                <button class="primary" onclick="openAccountingManualEntry()">Nuevo asiento</button>
+                <button onclick="openAccountingEntryEditor()">Ajustar asiento seleccionado</button>
+                <button onclick="transitionAccountingEntry('submit')">Enviar a revisión</button>
+                <button onclick="transitionAccountingEntry('approve')">Aprobar</button>
+                <button onclick="transitionAccountingEntry('post')">Contabilizar</button>
+                <button class="brown" onclick="reverseAccountingEntry()">Reversar asiento</button>
+                <button class="green" onclick="openAccountingGuidedClose()">Cierre mensual guiado</button>
+              </div></div>
+              <div class="accounting-box"><h3>Reportes</h3><div class="accounting-actions">
+                ${accountingReportButtons()}
+                <button onclick="loadAccountingCompleteStatements()">Estados financieros completos</button>
+                <button onclick="loadAccountingExecutive()">Reporte financiero ejecutivo</button>
+              </div></div>
+              <div class="accounting-box"><h3>Herramientas</h3><div class="accounting-actions">
+                <button onclick="loadAccountingWorkspace()">Mi espacio contable</button>
+                <button onclick="loadAccountingAuxiliaries()">Auxiliares contables</button>
+                <button onclick="loadAccountingAccounts()">Catálogo maestro de cuentas</button>
+                <button onclick="loadAccountingFixedAssets()">Activos fijos</button>
+                <button onclick="loadAccountingCards()">Tarjetas corporativas</button>
+                <button onclick="loadAccountingInventory()">Inventarios</button>
+                <button onclick="runAccountingSyncAll()">Sincronizar asientos ERP</button>
+                <button onclick="loadAccountingPostingRules()">Motor de contabilización</button>
+              </div></div>
+              <div class="accounting-box"><h3>Avanzado / Fiscal</h3><div class="accounting-actions">
+                <button onclick="loadAccountingAlerts()">Alertas y validaciones</button>
+                <button onclick="loadAccountingAudit()">Auditoría por usuario</button>
+                <button onclick="loadAccountingAdvancedDashboard()">Accounting avanzado</button>
+                <button onclick="runPortiaAccounting()">PORTIA contable</button>
+                <button onclick="loadTaxScenarioPlanner()">Simulador fiscal multiempresa</button>
+                <button onclick="loadAccountingTaxCenter()">Centro fiscal Costa Rica</button>
+                <button onclick="loadAccountingLegalLibrary()">Biblioteca legal Costa Rica</button>
+                <button onclick="openTaxDeclaration('IVA')">Formulario TRIBU-CR 150 IVA</button>
+                <button onclick="openTaxDeclaration('ISU')">102 Impuesto sobre utilidades ISU PJ</button>
+                <button disabled>D-101 pendiente</button>
+                <button disabled>D-270 pendiente</button>
+              </div></div>
+              <div class="accounting-box"><h3>Automatizaciones</h3><div class="accounting-actions">
+                <button class="green" onclick="runGmailFiscalSync()">Gmail fiscal backend ahora</button>
+                <button onclick="loadGmailFiscalStatus()">Estado Gmail backend</button>
+                <button onclick="runAccountingOutlookSync(false)">Revisar Outlook/BAC local</button>
+                <button onclick="runAccountingOutlookSync(true)">Cargar tarjetas 2025-2026</button>
+              </div><div id="accOutlookStatus" class="accounting-banner">Gmail autorizado corre en backend; Outlook local es revisión manual.</div></div>
+            </aside>
+            <main class="accounting-work">
+              <div id="accSelection" class="accounting-banner">Seleccione un asiento desde la tabla para ajustar, aprobar, contabilizar o reversar.</div>
+              <div id="accountingResult" class="status">Configure filtros y presione Buscar.</div>
+            </main>
+          </div>
+        </div>`;
+      initAccountingWeb();
+    }
+    function accountingReportButtons() {
+      const reports = [["ASIENTOS","Asientos"],["ANALITICO_CUENTA","Analítico de cuenta"],["DETALLE_TIPO","Detalle por tipo de cuenta"],["MAYOR","Libro Mayor"],["BC","Balance de Comprobación"],["ESF","Estado de Situación Financiera"],["ER","Estado de Resultados"],["FC","Flujo de Caja"]];
+      return reports.map(([code,label]) => `<button onclick="selectAccountingReport('${code}')">${label}</button>`).join("");
+    }
+    async function initAccountingWeb() {
+      selectedAccountingEntryId = null;
+      await Promise.allSettled([loadAccountingAccountOptions(), refreshAccountingDashboard()]);
     }
     function toggleAccountingMode() {
       const range = valueFrom("accMode") === "RANGE";
@@ -1266,6 +1359,25 @@ def som_web_home() -> HTMLResponse:
       params.set("company_code", selectedCompany());
       return params;
     }
+    function accountingPeriodValue() {
+      return valueFrom("accMode") === "RANGE" ? (valueFrom("accPeriodTo") || valueFrom("accPeriodFrom") || valueFrom("accPeriod")) : valueFrom("accPeriod");
+    }
+    function accountingResolveAccount(raw) {
+      const text = String(raw || "").trim();
+      if (!text) return "";
+      const exact = accountingAccounts.find(a => text === `${a.account_code} ${a.account_name}` || text === `${a.account_code} - ${a.account_name}` || text === a.account_code);
+      if (exact) return exact.account_code;
+      const found = accountingAccounts.find(a => String(a.account_code || "").includes(text) || String(a.account_name || "").toLowerCase().includes(text.toLowerCase()));
+      return found ? found.account_code : text;
+    }
+    async function loadAccountingAccountOptions() {
+      try {
+        const payload = await getJSON("/accounting/accounts");
+        accountingAccounts = rowsList(payload);
+        const list = $("accAccountList");
+        if (list) list.innerHTML = accountingAccounts.map(a => `<option value="${esc(a.account_code)}">${esc(a.account_code)} - ${esc(a.account_name)}</option>`).join("");
+      } catch {}
+    }
     async function loadAccountingWeb() {
       const target = $("accountingResult");
       target.className = "status";
@@ -1273,8 +1385,10 @@ def som_web_home() -> HTMLResponse:
       try {
         const params = accountingParams();
         params.delete("report");
+        if (params.has("account_code")) params.set("account_code", accountingResolveAccount(params.get("account_code")));
         const payload = await getJSON(`/accounting-lines?${params.toString()}`);
         const rows = rowsList(payload);
+        accountingRows = rows;
         target.className = "";
         if (!rows.length) {
           target.innerHTML = '<div class="status">Sin datos para esta consulta.</div>';
@@ -1289,7 +1403,23 @@ def som_web_home() -> HTMLResponse:
     function renderAccountingPreview(rows) {
       const report = valueFrom("accReport") || "BC";
       if (report === "BC") return renderAccountingTrialBalance(rows);
-      return renderFinanceGenericTable(rows);
+      return renderAccountingLines(rows);
+    }
+    function renderAccountingLines(rows) {
+      const cols = ["entry_date","entry_id","period","origin","workflow_status","account_code","account_name","account_type","line_description","debit","credit"];
+      const fmt = n => Number(n || 0).toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2});
+      return `<div class="table-wrap"><table><thead><tr><th class="pick-col"></th>${cols.map(c => `<th>${esc(c.replace(/_/g," "))}</th>`).join("")}</tr></thead><tbody>${rows.slice(0,1000).map((row, idx) => {
+        const selected = selectedAccountingEntryId && String(row.entry_id) === String(selectedAccountingEntryId);
+        return `<tr class="${selected ? "service-selected" : ""}" onclick="selectAccountingEntry(${idx})"><td class="pick-col"><input class="row-pick" type="radio" name="accPick" ${selected ? "checked" : ""} onclick="event.stopPropagation(); selectAccountingEntry(${idx})" /></td>${cols.map(c => `<td>${esc(["debit","credit"].includes(c) ? fmt(row[c]) : row[c])}</td>`).join("")}</tr>`;
+      }).join("")}</tbody></table></div>`;
+    }
+    function selectAccountingEntry(index) {
+      const row = accountingRows[index];
+      selectedAccountingEntryId = row?.entry_id || null;
+      const banner = $("accSelection");
+      if (banner) banner.textContent = selectedAccountingEntryId ? `Asiento seleccionado: ${selectedAccountingEntryId} · ${row.entry_date || ""} · ${row.origin || ""} · ${row.workflow_status || ""}` : "Seleccione un asiento desde la tabla.";
+      const target = $("accountingResult");
+      if (target && accountingRows.length) target.innerHTML = renderAccountingPreview(accountingRows);
     }
     function renderAccountingTrialBalance(rows) {
       const map = new Map();
@@ -1329,10 +1459,242 @@ def som_web_home() -> HTMLResponse:
     function clearAccountingWeb() {
       renderAccountingWeb($("accountingWorkspace"));
     }
+    function selectAccountingReport(code) {
+      if ($("accReport")) $("accReport").value = code;
+      loadAccountingWeb();
+    }
     function exportAccountingReport(ext) {
       const params = accountingParams();
+      if (params.has("account_code")) params.set("account_code", accountingResolveAccount(params.get("account_code")));
       const path = ext === "pdf" ? "/accounting/reports/pdf" : "/accounting/reports/excel";
       window.open(`${path}?${params.toString()}`, "_blank");
+    }
+    function fmtAccMoney(value) {
+      return Number(value || 0).toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2});
+    }
+    async function refreshAccountingDashboard() {
+      const period = accountingPeriodValue() || new Date().toISOString().slice(0,7);
+      try {
+        const [dashboard, iva, fx] = await Promise.all([
+          getJSON(`/accounting/workspace/dashboard?period=${encodeURIComponent(period)}&company_code=${encodeURIComponent(selectedCompany())}`).catch(() => null),
+          getJSON(`/accounting/iva?period=${encodeURIComponent(period)}&company_code=${encodeURIComponent(selectedCompany())}`).catch(() => null),
+          getJSON("/accounting/advanced/fx/rate").catch(() => null)
+        ]);
+        if (dashboard?.kpis) {
+          $("accKpiDebit").textContent = fmtAccMoney(dashboard.kpis.debit);
+          $("accKpiCredit").textContent = fmtAccMoney(dashboard.kpis.credit);
+          $("accKpiHealth").textContent = `${dashboard.health_score ?? "-"}%`;
+        }
+        if (iva) $("accKpiIva").textContent = fmtAccMoney(iva.iva_total ?? iva?.fiscal?.net_tax);
+        const status = $("accOutlookStatus");
+        if (status && fx) status.textContent = `TC BCCR ${fmtAccMoney(fx.rate || fx.exchange_rate)} al ${fx.date || fx.rate_date || ""}. Gmail backend sigue activo; Outlook local es manual.`;
+      } catch {}
+    }
+    function requireAccountingEntryId() {
+      if (!selectedAccountingEntryId) alert("Seleccione primero una línea del asiento.");
+      return selectedAccountingEntryId;
+    }
+    function openAccountingManualEntry() {
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal">
+            <div class="modal-head"><h2>Nuevo asiento contable</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+            <div class="form-grid">
+              <label>Fecha<input id="accNewDate" type="date" value="${new Date().toISOString().slice(0,10)}" /></label>
+              <label>Moneda<select id="accNewCurrency"><option>CRC</option><option>USD</option></select></label>
+              <label>Tipo cambio<input id="accNewFx" type="number" step="0.000001" value="1" /></label>
+              <label class="wide">Descripción<input id="accNewDesc" placeholder="Detalle del asiento" /></label>
+            </div>
+            <div class="accounting-entry-lines" id="accNewLines"></div>
+            <div class="md-actions"><button onclick="addAccountingEntryLine('accNewLines')">Agregar línea</button><button class="green" onclick="saveAccountingManualEntry()">Guardar borrador</button><button class="secondary" onclick="closeModal()">Cancelar</button></div>
+            <div id="accNewMsg" class="status hidden"></div>
+          </div>
+        </div>`);
+      addAccountingEntryLine("accNewLines", {debit:"0", credit:"0"});
+      addAccountingEntryLine("accNewLines", {debit:"0", credit:"0"});
+    }
+    function accountOptions(selected="") {
+      return accountingAccounts.map(a => `<option value="${esc(a.account_code)}"${String(a.account_code) === String(selected) ? " selected" : ""}>${esc(a.account_code)} - ${esc(a.account_name)}</option>`).join("");
+    }
+    function addAccountingEntryLine(containerId, line={}) {
+      const box = $(containerId);
+      const idx = box.querySelectorAll(".accounting-entry-line").length;
+      box.insertAdjacentHTML("beforeend", `<div class="accounting-entry-line">
+        <label>Cuenta<select data-field="account_code">${accountOptions(line.account_code || "")}</select></label>
+        <label>Detalle<input data-field="line_description" value="${esc(line.line_description || "")}" /></label>
+        <label>Debe<input data-field="debit" type="number" step="0.01" value="${esc(line.debit || 0)}" /></label>
+        <label>Haber<input data-field="credit" type="number" step="0.01" value="${esc(line.credit || 0)}" /></label>
+        <button class="secondary" onclick="this.closest('.accounting-entry-line').remove()">×</button>
+      </div>`);
+    }
+    function collectAccountingEntryLines(containerId, includeIds=false) {
+      return [...$(containerId).querySelectorAll(".accounting-entry-line")].map(el => ({
+        line_id: includeIds ? Number(el.dataset.lineId || 0) || undefined : undefined,
+        account_code: el.querySelector('[data-field="account_code"]').value,
+        line_description: el.querySelector('[data-field="line_description"]').value,
+        debit: Number(el.querySelector('[data-field="debit"]').value || 0),
+        credit: Number(el.querySelector('[data-field="credit"]').value || 0)
+      }));
+    }
+    async function saveAccountingManualEntry() {
+      const msg = $("accNewMsg");
+      msg.className = "status"; msg.textContent = "Guardando...";
+      try {
+        const payload = { entry_date:valueFrom("accNewDate"), description:valueFrom("accNewDesc"), currency_code:valueFrom("accNewCurrency") || "CRC", exchange_rate:Number(valueFrom("accNewFx") || 1), company_code:selectedCompany(), lines:collectAccountingEntryLines("accNewLines") };
+        const result = await postJSON("/accounting/manual-entry", payload);
+        closeModal();
+        alert(`Asiento borrador creado: ${result.entry_id}`);
+        await loadAccountingWeb();
+      } catch (err) { msg.className = "status error"; msg.textContent = err.message; }
+    }
+    async function openAccountingEntryEditor() {
+      const id = requireAccountingEntryId();
+      if (!id) return;
+      try {
+        const entry = await getJSON(`/accounting/entry/${id}?company_code=${encodeURIComponent(selectedCompany())}`);
+        document.body.insertAdjacentHTML("beforeend", `
+          <div class="modal-backdrop" id="svcModal">
+            <div class="modal">
+              <div class="modal-head"><h2>Ajustar asiento ${esc(id)}</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+              <div class="form-grid">
+                <label>Fecha<input id="accEditDate" value="${esc(entry.entry_date || "")}" disabled /></label>
+                <label>Estado<input value="${esc(entry.workflow_status || "")}" disabled /></label>
+                <label class="wide">Descripción<input id="accEditDesc" value="${esc(entry.description || "")}" /></label>
+              </div>
+              <div class="accounting-entry-lines" id="accEditLines"></div>
+              <div class="md-actions"><button class="green" onclick="saveAccountingEntryEdit(${Number(id)}, ${Number(entry.version || 1)})">Guardar ajuste</button><button class="secondary" onclick="closeModal()">Cancelar</button></div>
+              <div id="accEditMsg" class="status hidden"></div>
+            </div>
+          </div>`);
+        (entry.lines || []).forEach(line => {
+          addAccountingEntryLine("accEditLines", line);
+          $("accEditLines").lastElementChild.dataset.lineId = line.line_id;
+        });
+      } catch (err) { alert(err.message); }
+    }
+    async function saveAccountingEntryEdit(entryId, version) {
+      const msg = $("accEditMsg");
+      msg.className = "status"; msg.textContent = "Guardando...";
+      try {
+        await sendJSON("PUT", `/accounting/entry/${entryId}`, { description:valueFrom("accEditDesc"), expected_version:version, lines:collectAccountingEntryLines("accEditLines", true) });
+        closeModal();
+        await loadAccountingWeb();
+      } catch (err) { msg.className = "status error"; msg.textContent = err.message; }
+    }
+    async function transitionAccountingEntry(action) {
+      const id = requireAccountingEntryId();
+      if (!id) return;
+      const labels = {submit:"enviar a revisión", approve:"aprobar", post:"contabilizar"};
+      if (!confirm(`¿Desea ${labels[action]} el asiento ${id}?`)) return;
+      try {
+        await postJSON(`/accounting/entry/${id}/${action}`, { user:session?.usuario || "WEB_USER", role:session?.rol || "" });
+        await loadAccountingWeb();
+      } catch (err) { alert(err.message); }
+    }
+    async function reverseAccountingEntry() {
+      const id = requireAccountingEntryId();
+      if (!id || !confirm(`¿Reversar asiento ${id}?`)) return;
+      try {
+        const result = await postJSON(`/accounting/reverse/${id}`, {});
+        alert(`Reverso creado: ${result.reversal_entry_id}`);
+        await loadAccountingWeb();
+      } catch (err) { alert(err.message); }
+    }
+    async function accountingLoadEndpoint(title, path, render=null) {
+      const target = $("accountingResult");
+      target.className = "status"; target.textContent = `Cargando ${title}...`;
+      try {
+        const payload = await getJSON(path);
+        target.className = "";
+        target.innerHTML = `<div class="section-head"><h3>${esc(title)}</h3></div>${render ? render(payload) : renderFinanceGenericTable(rowsList(payload))}`;
+      } catch (err) { target.className = "status error"; target.textContent = err.message; }
+    }
+    function loadAccountingWorkspace() { accountingLoadEndpoint("Mi espacio contable", `/accounting/workspace/dashboard?period=${encodeURIComponent(accountingPeriodValue())}&company_code=${encodeURIComponent(selectedCompany())}`, renderAccountingDashboardPayload); }
+    function renderAccountingDashboardPayload(payload) {
+      const rows = [
+        ...(payload.work_items || []).map(x => ({tipo:"Trabajo", prioridad:x.priority, titulo:x.title, cantidad:x.count, accion:x.action})),
+        ...(payload.recent_entries || []).map(x => ({tipo:"Asiento reciente", prioridad:x.workflow_status, titulo:x.description, cantidad:x.id, accion:x.origin}))
+      ];
+      return renderFinanceGenericTable(rows);
+    }
+    function loadAccountingAuxiliaries() { accountingLoadEndpoint("Auxiliares contables", `/accounting/auxiliaries/reconciliation/details?period=${encodeURIComponent(accountingPeriodValue())}&include_closed=true`); }
+    function loadAccountingAccounts() { accountingLoadEndpoint("Catálogo maestro de cuentas", "/accounting/accounts?include_inactive=true"); }
+    function loadAccountingPostingRules() { accountingLoadEndpoint("Motor de contabilización", "/accounting/posting-rules?include_inactive=true"); }
+    function loadAccountingFixedAssets() { accountingLoadEndpoint("Activos fijos", "/accounting/fixed-assets"); }
+    function loadAccountingInventory() { accountingLoadEndpoint("Inventarios", "/accounting/fixed-assets/inventory/items"); }
+    function loadAccountingCards() { accountingLoadEndpoint("Tarjetas corporativas", "/accounting/corporate-cards/statements"); }
+    function loadAccountingAlerts() { accountingLoadEndpoint("Alertas y validaciones", `/accounting/validation-alerts?period=${encodeURIComponent(accountingPeriodValue())}&company_code=${encodeURIComponent(selectedCompany())}`, payload => renderFinanceGenericTable(payload.alerts || payload.data || [])); }
+    function loadAccountingAudit() { accountingLoadEndpoint("Auditoría por usuario", "/accounting/audit?module=accounting&limit=300"); }
+    function loadAccountingAdvancedDashboard() { accountingLoadEndpoint("Accounting avanzado", `/accounting/advanced/executive-dashboard?period=${encodeURIComponent(accountingPeriodValue())}`, renderAccountingAdvancedPayload); }
+    function renderAccountingAdvancedPayload(payload) {
+      const rows = [
+        {seccion:"Liquidez", valor:payload?.liquidity?.banks, detalle:payload?.liquidity?.as_of},
+        {seccion:"Ingresos", valor:payload?.margin?.revenue, detalle:"Periodo"},
+        {seccion:"Gastos", valor:payload?.margin?.expenses, detalle:"Periodo"},
+        {seccion:"Utilidad", valor:payload?.margin?.profit, detalle:`Margen ${payload?.margin?.margin_pct || 0}%`},
+        {seccion:"CxC vencida", valor:payload?.overdue_ar?.total, detalle:payload?.overdue_ar?.count},
+        {seccion:"Pagos próximos", valor:payload?.upcoming_payments?.total, detalle:payload?.upcoming_payments?.count}
+      ];
+      return renderFinanceGenericTable(rows);
+    }
+    async function runPortiaAccounting() {
+      const target = $("accountingResult");
+      target.className = "status"; target.textContent = "PORTIA revisando Accounting...";
+      try {
+        const payload = await postJSON("/accounting/advanced/portia/review", { period:accountingPeriodValue(), language:"ES" });
+        target.className = "";
+        target.innerHTML = `<div class="accounting-banner" style="white-space:pre-wrap">${esc(payload.commentary || "")}</div>`;
+      } catch (err) { target.className = "status error"; target.textContent = err.message; }
+    }
+    function loadTaxScenarioPlanner() { accountingLoadEndpoint("Simulador fiscal multiempresa", "/accounting/tax-scenarios/history"); }
+    function loadAccountingTaxCenter() { accountingLoadEndpoint("Centro fiscal Costa Rica", `/accounting/tax/iva?period=${encodeURIComponent(accountingPeriodValue())}&company_code=${encodeURIComponent(selectedCompany())}`, payload => renderFinanceGenericTable([{seccion:"Fiscal", ...payload.fiscal}, {seccion:"Contable", ...payload.accounting}, {seccion:"Diferencias", ...payload.differences}, {seccion:"Calidad", ...payload.quality}])); }
+    function loadAccountingLegalLibrary() { accountingLoadEndpoint("Biblioteca legal Costa Rica", "/accounting/legal-library"); }
+    function openTaxDeclaration(type) {
+      if (type === "IVA") loadAccountingTaxCenter();
+      else loadTaxScenarioPlanner();
+    }
+    function loadAccountingCompleteStatements() { accountingLoadEndpoint("Estados financieros completos", `/accounting/financial-statements/complete?${accountingParams().toString()}`, renderAccountingCompletePayload); }
+    function renderAccountingCompletePayload(payload) {
+      const rows = [];
+      Object.entries(payload || {}).forEach(([section, value]) => {
+        if (Array.isArray(value)) value.forEach(item => rows.push({section, ...item}));
+        else if (value && typeof value === "object") rows.push({section, resumen:JSON.stringify(value).slice(0,900)});
+      });
+      return renderFinanceGenericTable(rows);
+    }
+    function loadAccountingExecutive() { loadAccountingAdvancedDashboard(); }
+    async function runAccountingSyncAll() {
+      const target = $("accountingResult");
+      target.className = "status"; target.textContent = "Sincronizando ERP hacia Accounting...";
+      try {
+        const payload = await postJSON("/accounting/sync/all", { user:session?.usuario || "WEB_USER", company_code:selectedCompany() });
+        target.className = "";
+        target.innerHTML = renderFinanceGenericTable(Object.entries(payload).map(([seccion, valor]) => ({seccion, valor: typeof valor === "object" ? JSON.stringify(valor) : valor})));
+        await refreshAccountingDashboard();
+      } catch (err) { target.className = "status error"; target.textContent = err.message; }
+    }
+    function openAccountingGuidedClose() { accountingLoadEndpoint("Cierre mensual guiado", `/accounting/workspace/guided-close?period=${encodeURIComponent(accountingPeriodValue())}&company_code=${encodeURIComponent(selectedCompany())}`, renderAccountingClosePayload); }
+    function renderAccountingClosePayload(payload) {
+      const checklist = payload.checklist || payload.data || [];
+      const summary = payload.summary || {};
+      return `<div class="grid kpis"><div class="card kpi"><span>Estado</span><strong>${esc(payload?.period_control?.status || "-")}</strong></div><div class="card kpi"><span>Listo para cierre</span><strong>${payload.ready_to_close ? "Sí" : "No"}</strong></div><div class="card kpi"><span>Diferencia</span><strong>${fmtAccMoney(summary.difference)}</strong></div><div class="card kpi"><span>Alertas críticas</span><strong>${esc(summary.critical_alerts || 0)}</strong></div></div>${renderFinanceGenericTable(checklist)}`;
+    }
+    async function runGmailFiscalSync() {
+      const status = $("accOutlookStatus");
+      status.className = "accounting-banner"; status.textContent = "Ejecutando sincronización Gmail fiscal en backend...";
+      try {
+        const payload = await postJSON(`/accounting/tax/gmail/sync?max_messages=100&account_email=${encodeURIComponent("contabilidad@mslogisticsgroup.com")}`, {});
+        status.textContent = `Gmail backend: ${payload.imported || 0} importados, ${payload.errors || 0} errores.`;
+      } catch (err) { status.className = "accounting-banner error"; status.textContent = err.message; }
+    }
+    async function loadGmailFiscalStatus() {
+      const status = $("accOutlookStatus");
+      status.className = "accounting-banner"; status.textContent = "Consultando estado Gmail backend...";
+      try {
+        const payload = await getJSON(`/accounting/tax/gmail/status?account_email=${encodeURIComponent("contabilidad@mslogisticsgroup.com")}`);
+        const connection = payload.connection || {};
+        status.textContent = `Gmail backend: ${connection.authorized ? "conectado" : "sin conexión"} · automatización ${connection.auto_enabled ? "activa" : "inactiva"} · última sync ${connection.last_sync_at || "-"}`;
+      } catch (err) { status.className = "accounting-banner error"; status.textContent = err.message; }
     }
     function summarizeAccountingOutlook(result) {
       const history = result.card_history || {};

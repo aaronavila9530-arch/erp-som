@@ -347,6 +347,7 @@ def _accounting_entry_stats(conn):
 def _report_title(report: str | None):
     titles = {
         "ASIENTOS": "Asientos contables",
+        "ANALITICO_CUENTA": "Analitico de cuenta",
         "DETALLE_TIPO": "Detalle por tipo de cuenta",
         "MAYOR": "Mayor general",
         "BC": "Balance de comprobacion",
@@ -513,6 +514,96 @@ def _period_scope_label(period: str | None, period_from: str | None, period_to: 
     if period_from or period_to:
         return f"{period_from or 'inicio'} a {period_to or 'fin'}"
     return "Todos"
+
+
+def _iter_periods(period_from: str, period_to: str):
+    try:
+        year, month = [int(part) for part in str(period_from).split("-", 1)]
+        end_year, end_month = [int(part) for part in str(period_to).split("-", 1)]
+    except Exception:
+        return
+    while (year, month) <= (end_year, end_month):
+        yield f"{year}-{month:02d}"
+        month += 1
+        if month > 12:
+            year += 1
+            month = 1
+
+
+def _normal_balance_delta(row, credit_nature: bool) -> float:
+    debit = float(row.get("debit") or 0)
+    credit = float(row.get("credit") or 0)
+    return credit - debit if credit_nature else debit - credit
+
+
+def _build_account_analytic(rows, period_from: str | None, period_to: str | None, account_code: str | None):
+    if not account_code:
+        raise HTTPException(400, "account_code is required for ANALITICO_CUENTA")
+    periods = sorted({str(row.get("period") or "") for row in rows if row.get("period")})
+    if not periods:
+        raise HTTPException(404, "No hay movimientos para la cuenta seleccionada")
+    start_period = period_from or periods[0]
+    end_period = period_to or periods[-1]
+    movement_rows = [row for row in rows if start_period <= str(row.get("period") or "") <= end_period]
+    opening_rows = [row for row in rows if str(row.get("period") or "") < start_period]
+    if not movement_rows and not opening_rows:
+        raise HTTPException(404, "No hay saldo ni movimientos para el rango seleccionado")
+    sample = movement_rows[0] if movement_rows else opening_rows[0]
+    acc_type = str(sample.get("account_type") or "").upper()
+    credit_nature = acc_type in ("PASIVO", "PATRIMONIO", "INGRESO", "LIABILITY", "EQUITY", "REVENUE", "INCOME")
+    running = sum(_normal_balance_delta(row, credit_nature) for row in opening_rows)
+    opening_balance = running
+    total_debit = total_credit = 0.0
+    movement_by_period = {}
+    for row in sorted(movement_rows, key=lambda item: (str(item.get("entry_date") or ""), int(item.get("entry_id") or 0))):
+        movement_by_period.setdefault(str(row.get("period") or ""), []).append(row)
+    months = []
+    for item_period in _iter_periods(start_period, end_period) or []:
+        period_rows = movement_by_period.get(item_period, [])
+        period_opening = running
+        period_debit = sum(float(row.get("debit") or 0) for row in period_rows)
+        period_credit = sum(float(row.get("credit") or 0) for row in period_rows)
+        for row in period_rows:
+            running += _normal_balance_delta(row, credit_nature)
+        if period_rows:
+            months.append({
+                "period": item_period,
+                "opening_balance": round(period_opening, 2),
+                "debit": round(period_debit, 2),
+                "credit": round(period_credit, 2),
+                "closing_balance": round(running, 2),
+                "movements": len(period_rows),
+            })
+    running = opening_balance
+    detail = []
+    for row in sorted(movement_rows, key=lambda item: (str(item.get("entry_date") or ""), int(item.get("entry_id") or 0))):
+        debit = float(row.get("debit") or 0)
+        credit = float(row.get("credit") or 0)
+        running += _normal_balance_delta(row, credit_nature)
+        total_debit += debit
+        total_credit += credit
+        detail.append({
+            "date": row.get("entry_date"),
+            "period": row.get("period"),
+            "entry_id": row.get("entry_id"),
+            "origin": row.get("origin"),
+            "description": row.get("line_description") or row.get("entry_description"),
+            "debit": round(debit, 2),
+            "credit": round(credit, 2),
+            "balance": round(running, 2),
+        })
+    return {
+        "account_code": sample.get("account_code"),
+        "account_name": sample.get("account_name"),
+        "account_type": acc_type,
+        "period_label": start_period if start_period == end_period else f"{start_period} a {end_period}",
+        "opening_balance": round(opening_balance, 2),
+        "total_debit": round(total_debit, 2),
+        "total_credit": round(total_credit, 2),
+        "closing_balance": round(running, 2),
+        "months": months,
+        "rows": detail,
+    }
 
 
 def _build_trial_balance(rows, opening_rows=None):
@@ -2529,6 +2620,104 @@ def download_accounting_report_excel(
     scope = _period_scope_label(period, period_from, period_to)
     type_label = account_type if account_type and str(account_type).upper() != "TODOS" else "Todos los tipos"
 
+    if report_key == "ANALITICO_CUENTA":
+        start_period = period_from or period
+        end_period = period_to or period
+        analytic_source = _fetch_accounting_report_lines(
+            conn,
+            period_to=end_period,
+            origin=origin,
+            account_code=account_code,
+            account_type=account_type,
+            company_code=company,
+        )
+        analytic = _build_account_analytic(analytic_source, start_period, end_period, account_code)
+        ws.title = "Analitico"
+        ws.merge_cells("A1:H1")
+        ws["A1"] = "ANALITICO DE CUENTA"
+        ws["A1"].font = Font(bold=True, size=14)
+        ws["A1"].alignment = Alignment(horizontal="center")
+        ws.merge_cells("A2:H2")
+        ws["A2"] = f"{analytic['account_code']} - {analytic['account_name']} | {analytic['period_label']}"
+        ws["A2"].alignment = Alignment(horizontal="center")
+        summary = [
+            ("Tipo", analytic.get("account_type")),
+            ("Saldo inicial", analytic.get("opening_balance")),
+            ("Debe periodo", analytic.get("total_debit")),
+            ("Haber periodo", analytic.get("total_credit")),
+            ("Saldo final", analytic.get("closing_balance")),
+        ]
+        row_idx = 4
+        for label, value in summary:
+            ws.cell(row=row_idx, column=1, value=label).font = Font(bold=True)
+            ws.cell(row=row_idx, column=2, value=value)
+            if isinstance(value, (int, float)):
+                ws.cell(row=row_idx, column=2).number_format = "#,##0.00"
+            row_idx += 1
+        row_idx += 1
+        ws.cell(row=row_idx, column=1, value="RESUMEN MENSUAL").font = Font(bold=True)
+        row_idx += 1
+        fill = PatternFill("solid", fgColor="003A75")
+        month_headers = ["Periodo", "Saldo inicial", "Debe", "Haber", "Saldo final", "Movimientos"]
+        for col, value in enumerate(month_headers, start=1):
+            cell = ws.cell(row=row_idx, column=col, value=value)
+            cell.font = Font(bold=True, color="FFFFFF")
+            cell.fill = fill
+            cell.alignment = Alignment(horizontal="center")
+        row_idx += 1
+        for item in analytic.get("months") or []:
+            ws.cell(row=row_idx, column=1, value=item.get("period"))
+            ws.cell(row=row_idx, column=2, value=item.get("opening_balance"))
+            ws.cell(row=row_idx, column=3, value=item.get("debit"))
+            ws.cell(row=row_idx, column=4, value=item.get("credit"))
+            ws.cell(row=row_idx, column=5, value=item.get("closing_balance"))
+            ws.cell(row=row_idx, column=6, value=item.get("movements"))
+            for col in range(2, 6):
+                ws.cell(row=row_idx, column=col).number_format = "#,##0.00"
+                ws.cell(row=row_idx, column=col).alignment = Alignment(horizontal="right")
+            row_idx += 1
+        row_idx += 1
+        ws.cell(row=row_idx, column=1, value="DETALLE DE MOVIMIENTOS").font = Font(bold=True)
+        row_idx += 1
+        headers = ["Fecha", "Periodo", "Asiento", "Origen", "Detalle", "Debe", "Haber", "Saldo"]
+        for col, value in enumerate(headers, start=1):
+            cell = ws.cell(row=row_idx, column=col, value=value)
+            cell.font = Font(bold=True, color="FFFFFF")
+            cell.fill = fill
+            cell.alignment = Alignment(horizontal="center")
+        row_idx += 1
+        for item in analytic.get("rows") or []:
+            ws.append([
+                item.get("date"),
+                item.get("period"),
+                item.get("entry_id"),
+                item.get("origin"),
+                item.get("description"),
+                item.get("debit"),
+                item.get("credit"),
+                item.get("balance"),
+            ])
+            for col in range(6, 9):
+                ws.cell(row=row_idx, column=col).number_format = "#,##0.00"
+                ws.cell(row=row_idx, column=col).alignment = Alignment(horizontal="right")
+            row_idx += 1
+        ws.append(["", "", "", "", "TOTALES", analytic.get("total_debit"), analytic.get("total_credit"), analytic.get("closing_balance")])
+        for cell in ws[ws.max_row]:
+            cell.font = Font(bold=True)
+        for col in range(6, 9):
+            ws.cell(row=ws.max_row, column=col).number_format = "#,##0.00"
+        for col_letter, width in zip("ABCDEFGH", [14, 12, 12, 16, 52, 16, 16, 18]):
+            ws.column_dimensions[col_letter].width = width
+        tmp_dir = tempfile.mkdtemp(prefix="erp_som_accounting_")
+        filename = _report_filename("xlsx", report, period, period_from, period_to)
+        path = os.path.join(tmp_dir, filename)
+        wb.save(path)
+        return FileResponse(
+            path,
+            filename=filename,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
     if report_key == "BC":
         opening_cutoff = period or period_from
         opening_rows = []
@@ -2757,6 +2946,82 @@ def download_accounting_report_pdf(
     type_label = account_type if account_type and str(account_type).upper() != "TODOS" else "Todos los tipos"
     styles = getSampleStyleSheet()
     doc = SimpleDocTemplate(path, pagesize=landscape(letter), rightMargin=24, leftMargin=24, topMargin=24, bottomMargin=24)
+
+    if report_key == "ANALITICO_CUENTA":
+        start_period = period_from or period
+        end_period = period_to or period
+        analytic_source = _fetch_accounting_report_lines(
+            conn,
+            period_to=end_period,
+            origin=origin,
+            account_code=account_code,
+            account_type=account_type,
+            company_code=company,
+        )
+        analytic = _build_account_analytic(analytic_source, start_period, end_period, account_code)
+        summary = [
+            ["Cuenta", f"{analytic['account_code']} - {analytic['account_name']}"],
+            ["Periodo", analytic["period_label"]],
+            ["Tipo", analytic.get("account_type") or ""],
+            ["Saldo inicial", f"{analytic.get('opening_balance', 0):,.2f}"],
+            ["Debe periodo", f"{analytic.get('total_debit', 0):,.2f}"],
+            ["Haber periodo", f"{analytic.get('total_credit', 0):,.2f}"],
+            ["Saldo final", f"{analytic.get('closing_balance', 0):,.2f}"],
+        ]
+        month_data = [["Periodo", "Inicial", "Debe", "Haber", "Final", "Mov."]]
+        for item in analytic.get("months") or []:
+            month_data.append([
+                item.get("period"),
+                f"{item.get('opening_balance', 0):,.2f}",
+                f"{item.get('debit', 0):,.2f}",
+                f"{item.get('credit', 0):,.2f}",
+                f"{item.get('closing_balance', 0):,.2f}",
+                str(item.get("movements") or 0),
+            ])
+        detail = [["Fecha", "Periodo", "Asiento", "Origen", "Detalle", "Debe", "Haber", "Saldo"]]
+        for item in analytic.get("rows") or []:
+            detail.append([
+                str(item.get("date") or ""),
+                str(item.get("period") or ""),
+                str(item.get("entry_id") or ""),
+                str(item.get("origin") or ""),
+                str(item.get("description") or "")[:75],
+                f"{item.get('debit', 0):,.2f}",
+                f"{item.get('credit', 0):,.2f}",
+                f"{item.get('balance', 0):,.2f}",
+            ])
+        summary_table = Table(summary, colWidths=[110, 520])
+        month_table = Table(month_data, repeatRows=1, colWidths=[80, 90, 90, 90, 90, 50])
+        detail_table = Table(detail, repeatRows=1, colWidths=[60, 58, 48, 70, 270, 70, 70, 70])
+        for table in (summary_table, month_table, detail_table):
+            table.setStyle(TableStyle([
+                ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#D7DEE8")),
+                ("FONTSIZE", (0, 0), (-1, -1), 7),
+                ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+            ]))
+        month_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#003A75")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ]))
+        detail_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#003A75")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("ALIGN", (5, 1), (-1, -1), "RIGHT"),
+        ]))
+        doc.build([
+            Paragraph(f"{title} - {analytic['period_label']}", styles["Title"]),
+            Spacer(1, 8),
+            summary_table,
+            Spacer(1, 12),
+            Paragraph("Resumen mensual", styles["Heading3"]),
+            month_table,
+            Spacer(1, 12),
+            Paragraph("Detalle de movimientos", styles["Heading3"]),
+            detail_table,
+        ])
+        return FileResponse(path, filename=filename, media_type="application/pdf")
 
     if report_key == "BC":
         opening_cutoff = period or period_from
