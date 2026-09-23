@@ -18,7 +18,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20260923-biweekly-obligations-v4"
+_ASSET_VERSION = "20260923-biweekly-obligations-v5"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Servicios, facturación, CxC e informes desde agosto en adelante."},
@@ -412,6 +412,7 @@ def som_web_home() -> HTMLResponse:
     .itp-bi-eyebrow { margin:0 0 4px; color:#005da8; font-size:11px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; }
     .itp-bi-header h2 { margin:0; font-size:24px; line-height:1.08; letter-spacing:0; }
     .itp-bi-subtitle { margin:6px 0 0; color:#607089; font-size:13px; }
+    .itp-bi-company { display:inline-flex; align-items:center; margin-top:8px; min-height:26px; border:1px solid #b8d5f1; border-radius:999px; padding:3px 10px; background:#edf7ff; color:#005da8; font-size:12px; font-weight:800; }
     .itp-bi-close { height:38px; padding:0 18px; border-radius:8px; border:1px solid #cfd9e5; background:#fff; color:#122033; }
     .itp-bi-totals { display:grid; grid-template-columns:repeat(3,minmax(120px,1fr)); gap:10px; text-align:left; }
     .itp-bi-totals strong,.itp-bi-totals span { display:block; min-height:58px; border:1px solid #d7e1ec; border-radius:9px; background:#f8fbfe; padding:9px 12px; color:#0f172a; font-size:20px; font-weight:800; }
@@ -1671,6 +1672,7 @@ def som_web_home() -> HTMLResponse:
                 <p class="itp-bi-eyebrow">Invoice to Pay</p>
                 <h2>Obligaciones quincenales</h2>
                 <p class="itp-bi-subtitle">Generación, borrador, pagos y asientos contables por quincena.</p>
+                <div id="itpBiCompany" class="itp-bi-company">Empresa: ${esc(selectedCompany())}</div>
               </div>
               <div id="itpBiTotals" class="itp-bi-totals"><strong>CRC 0.00</strong><strong>USD 0.00</strong><span>0 lineas</span></div>
               <button class="itp-bi-close" onclick="closeModal()">Cerrar</button>
@@ -1762,14 +1764,20 @@ def som_web_home() -> HTMLResponse:
     async function loadItpBiweekly(force=false) {
       const msg = $("itpBiMsg");
       const table = $("itpBiTable");
+      const company = selectedCompany();
+      if ($("itpBiCompany")) $("itpBiCompany").textContent = `Empresa: ${company}`;
       msg.className = "status";
-      msg.textContent = "Consultando obligaciones quincenales...";
+      msg.textContent = `Consultando obligaciones quincenales para ${company}...`;
       try {
-        const params = new URLSearchParams({ period:valueFrom("itpBiPeriod"), fortnight:valueFrom("itpBiFortnight") || "1", force:String(!!force) });
-        const payload = await getJSON(`/invoice-to-pay/biweekly-obligations/preview?${params.toString()}`);
+        const params = new URLSearchParams({ period:valueFrom("itpBiPeriod"), fortnight:valueFrom("itpBiFortnight") || "1", force:String(!!force), company:company, _:String(Date.now()) });
+        const payload = await getJSON(`/invoice-to-pay/biweekly-obligations/preview?${params.toString()}`, { "Cache-Control":"no-cache" });
         itpBiweeklyRows = rowsList(payload.rows || payload).map(row => normalizeItpBiPaymentRow({ ...row }));
         msg.className = "status";
-        msg.textContent = payload.source === "draft" ? "Borrador cargado. Revise pendientes antes de aplicar." : "Preview generado. Complete comprobante y cuenta contable antes de aplicar.";
+        const loadedCompany = payload.company_code || company;
+        if ($("itpBiCompany")) $("itpBiCompany").textContent = `Empresa: ${loadedCompany}`;
+        msg.textContent = payload.source === "draft"
+          ? `Borrador cargado para ${loadedCompany}. Filas: ${itpBiweeklyRows.length}. Revise pendientes antes de aplicar.`
+          : `Preview generado para ${loadedCompany}. Filas: ${itpBiweeklyRows.length}. Complete comprobante y cuenta contable antes de aplicar.`;
         renderItpBiweeklyTable();
       } catch (err) {
         itpBiweeklyRows = [];
