@@ -913,6 +913,15 @@ def editar_servicio(
             "fecha_factura": row[0][18],
             "fecha_vencimiento": row[0][19],
         }
+
+        def _payload_or_current(key):
+            if key not in data:
+                return current[key]
+            value = data.get(key)
+            if key in {"continente", "pais", "puerto", "operacion"} and not str(value or "").strip():
+                return current[key]
+            return value
+
         effective_fecha_inicio = data["fecha_inicio"] if "fecha_inicio" in data else current["fecha_inicio"]
         num_actualizado = _num_informe_con_fecha(row[0][0], effective_fecha_inicio)
 
@@ -957,25 +966,25 @@ def editar_servicio(
         """
 
         params = {
-            "tipo": data["tipo"] if "tipo" in data else current["tipo"],
-            "buque_contenedor": data["buque_contenedor"] if "buque_contenedor" in data else current["buque_contenedor"],
-            "cliente": data["cliente"] if "cliente" in data else current["cliente"],
-            "contacto": data["contacto"] if "contacto" in data else current["contacto"],
-            "detalle": data["detalle"] if "detalle" in data else current["detalle"],
-            "continente": data["continente"] if "continente" in data else current["continente"],
-            "pais": data["pais"] if "pais" in data else current["pais"],
-            "puerto": data["puerto"] if "puerto" in data else current["puerto"],
-            "operacion": data["operacion"] if "operacion" in data else current["operacion"],
-            "surveyor": data["surveyor"] if "surveyor" in data else current["surveyor"],
-            "honorarios": data["honorarios"] if "honorarios" in data else current["honorarios"],
-            "costo_operativo": data["costo_operativo"] if "costo_operativo" in data else current["costo_operativo"],
-            "costo_tarjetas": data["costo_tarjetas"] if "costo_tarjetas" in data else current["costo_tarjetas"],
-            "fecha_inicio": data["fecha_inicio"] if "fecha_inicio" in data else current["fecha_inicio"],
-            "hora_inicio": data["hora_inicio"] if "hora_inicio" in data else current["hora_inicio"],
-            "fecha_fin": data["fecha_fin"] if "fecha_fin" in data else current["fecha_fin"],
-            "hora_fin": data["hora_fin"] if "hora_fin" in data else current["hora_fin"],
-            "fecha_factura": data["fecha_factura"] if "fecha_factura" in data else current["fecha_factura"],
-            "fecha_vencimiento": data["fecha_vencimiento"] if "fecha_vencimiento" in data else current["fecha_vencimiento"],
+            "tipo": _payload_or_current("tipo"),
+            "buque_contenedor": _payload_or_current("buque_contenedor"),
+            "cliente": _payload_or_current("cliente"),
+            "contacto": _payload_or_current("contacto"),
+            "detalle": _payload_or_current("detalle"),
+            "continente": _payload_or_current("continente"),
+            "pais": _payload_or_current("pais"),
+            "puerto": _payload_or_current("puerto"),
+            "operacion": _payload_or_current("operacion"),
+            "surveyor": _payload_or_current("surveyor"),
+            "honorarios": _payload_or_current("honorarios"),
+            "costo_operativo": _payload_or_current("costo_operativo"),
+            "costo_tarjetas": _payload_or_current("costo_tarjetas"),
+            "fecha_inicio": _payload_or_current("fecha_inicio"),
+            "hora_inicio": _payload_or_current("hora_inicio"),
+            "fecha_fin": _payload_or_current("fecha_fin"),
+            "hora_fin": _payload_or_current("hora_fin"),
+            "fecha_factura": _payload_or_current("fecha_factura"),
+            "fecha_vencimiento": _payload_or_current("fecha_vencimiento"),
             "num_informe": num_actualizado,
             "consec": consec,
             "company_code": company

@@ -36,6 +36,7 @@ class PopupEditarServicio(tk.Toplevel):
             return
 
         self.pais_actual = (data.get("pais") or "").strip()
+        self._original_data = data
         self.surveyor_resumen_actual = (data.get("surveyor") or "").strip()
         self.honorarios_total_actual = data.get("honorarios", "")
 
@@ -175,7 +176,7 @@ class PopupEditarServicio(tk.Toplevel):
         hora_row = tk.Frame(ejecucion)
         hora_row.grid(row=2, column=3, sticky="w", padx=(0, 12), pady=6)
         self.hora_ini = ttk.Entry(hora_row, width=10)
-        self.hora_ini.insert(0, data.get("hora_inicio", ""))
+        self.hora_ini.insert(0, self._format_time(data.get("hora_inicio", "")))
         self.hora_ini.pack(side="left")
 
         ttk.Button(
@@ -201,7 +202,7 @@ class PopupEditarServicio(tk.Toplevel):
         hora_fin_row = tk.Frame(ejecucion)
         hora_fin_row.grid(row=4, column=3, sticky="w", padx=(0, 12), pady=6)
         self.hora_fin = ttk.Entry(hora_fin_row, width=10)
-        self.hora_fin.insert(0, data.get("hora_fin", ""))
+        self.hora_fin.insert(0, self._format_time(data.get("hora_fin", "")))
         self.hora_fin.pack(side="left")
 
         ttk.Button(
@@ -308,6 +309,21 @@ class PopupEditarServicio(tk.Toplevel):
         combo.config(values=clean_values)
         combo.set(current)
 
+    def _format_time(self, value):
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        parts = text.split(":")
+        if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
+            return f"{int(parts[0]):02d}:{int(parts[1]):02d}"
+        return text
+
+    def _combo_value_or_original(self, key, combo):
+        value = (combo.get() or "").strip()
+        if value:
+            return value
+        return str(self._original_data.get(key) or "").strip()
+
     def _load_edit_catalogs(self, data):
         try:
             clientes = self._normalize_name_list(get_clientes_api())
@@ -411,8 +427,9 @@ class PopupEditarServicio(tk.Toplevel):
 
         surveyor = (self.surveyor.get() or "").strip()
         pais = (self.cmb_pais.get() or "").strip()
+        pais_efectivo = pais or self._combo_value_or_original("pais", self.cmb_pais)
         permitir_tarjeta = (
-            pais.lower() != "costa rica"
+            pais_efectivo.lower() != "costa rica"
             and "pabel pena barreto" in surveyor.lower().replace("ñ", "n")
         )
 
@@ -421,15 +438,15 @@ class PopupEditarServicio(tk.Toplevel):
             "buque_contenedor": self.buque_contenedor.get().strip(),
             "contacto": self.contacto.get().strip(),
             "detalle": self.detalle.get("1.0", "end-1c").strip(),
-            "continente": self.cmb_continente.get().strip(),
-            "pais": pais,
-            "puerto": self.cmb_puerto.get().strip(),
-            "operacion": self.cmb_operacion.get().strip(),
+            "continente": self._combo_value_or_original("continente", self.cmb_continente),
+            "pais": pais_efectivo,
+            "puerto": self._combo_value_or_original("puerto", self.cmb_puerto),
+            "operacion": self._combo_value_or_original("operacion", self.cmb_operacion),
             "surveyor": surveyor,
             "honorarios": _to_float_or_none(self.honorarios.get()),
             "costo_operativo": _to_float_or_none(self.costo.get()),
             "fecha_inicio": to_db_date(self.fecha_ini.get().strip()),
-            "hora_inicio": self.hora_ini.get().strip(),
+            "hora_inicio": self._format_time(self.hora_ini.get()),
             "costo_tarjetas": (
                 _to_float_or_none(self.costo_tarjetas.get()) if permitir_tarjeta else None
             ),
@@ -437,7 +454,7 @@ class PopupEditarServicio(tk.Toplevel):
         if self.fecha_fin.get().strip():
             payload["fecha_fin"] = to_db_date(self.fecha_fin.get().strip())
         if self.hora_fin.get().strip():
-            payload["hora_fin"] = self.hora_fin.get().strip()
+            payload["hora_fin"] = self._format_time(self.hora_fin.get())
         if self.fecha_factura.get().strip():
             payload["fecha_factura"] = to_db_date(self.fecha_factura.get().strip())
         if self.fecha_vencimiento.get().strip():
