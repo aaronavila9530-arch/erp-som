@@ -18,7 +18,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20260923-biweekly-obligations-v2"
+_ASSET_VERSION = "20260923-biweekly-obligations-v3"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Servicios, facturación, CxC e informes desde agosto en adelante."},
@@ -407,16 +407,19 @@ def som_web_home() -> HTMLResponse:
     .modal-backdrop { position:fixed; inset:0; z-index:20; background:rgba(5,18,32,.44); display:flex; align-items:center; justify-content:center; padding:22px; }
     .modal { width:min(1120px,96vw); max-height:92vh; overflow:auto; background:#fff; border:1px solid var(--line); border-radius:9px; box-shadow:0 26px 90px rgba(0,0,0,.24); padding:16px; }
     .modal.small { width:min(560px,94vw); }
-    .modal.itp-biweekly-modal { width:min(1760px,98vw); height:min(920px,95vh); max-height:95vh; display:flex; flex-direction:column; gap:12px; overflow:hidden; background:#f8fafc; border-radius:12px; padding:18px; color:#122033; }
-    .itp-bi-header { display:grid; grid-template-columns:minmax(260px,1fr) auto; gap:18px; align-items:start; padding-bottom:10px; border-bottom:1px solid #dbe4ef; }
-    .itp-bi-header h2 { font-size:24px; line-height:1.1; letter-spacing:0; }
-    .itp-bi-totals { min-width:440px; display:grid; grid-template-columns:repeat(3,minmax(120px,1fr)); gap:10px; text-align:left; }
-    .itp-bi-totals strong,.itp-bi-totals span { display:block; min-height:58px; border:1px solid #d7e1ec; border-radius:8px; background:white; padding:10px 12px; box-shadow:0 8px 18px rgba(15,31,53,.06); color:#0f172a; font-size:20px; font-weight:800; }
-    .itp-bi-totals strong::before,.itp-bi-totals span::before { display:block; margin-bottom:5px; color:#64748b; font-size:11px; font-weight:700; text-transform:uppercase; }
+    .modal.itp-biweekly-modal { width:min(1760px,98vw); height:min(920px,95vh); max-height:95vh; display:flex; flex-direction:column; gap:12px; overflow:hidden; background:#eef3f8; border:1px solid #cbd8e6; border-radius:12px; padding:16px; color:#122033; }
+    .itp-bi-header { display:grid; grid-template-columns:minmax(320px,1fr) minmax(440px,660px) auto; gap:16px; align-items:center; padding:12px 14px; border:1px solid #d5e0ec; border-radius:10px; background:#fff; box-shadow:0 10px 24px rgba(15,31,53,.07); }
+    .itp-bi-eyebrow { margin:0 0 4px; color:#005da8; font-size:11px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; }
+    .itp-bi-header h2 { margin:0; font-size:25px; line-height:1.08; letter-spacing:0; }
+    .itp-bi-subtitle { margin:6px 0 0; color:#607089; font-size:13px; }
+    .itp-bi-close { height:38px; padding:0 18px; border-radius:8px; border:1px solid #cfd9e5; background:#fff; color:#122033; }
+    .itp-bi-totals { display:grid; grid-template-columns:repeat(3,minmax(120px,1fr)); gap:10px; text-align:left; }
+    .itp-bi-totals strong,.itp-bi-totals span { display:block; min-height:62px; border:1px solid #d7e1ec; border-radius:9px; background:#f8fbfe; padding:10px 12px; color:#0f172a; font-size:21px; font-weight:800; }
+    .itp-bi-totals strong::before,.itp-bi-totals span::before { display:block; margin-bottom:5px; color:#64748b; font-size:11px; font-weight:800; letter-spacing:.04em; text-transform:uppercase; }
     .itp-bi-totals strong:nth-child(1)::before { content:"Total CRC"; }
     .itp-bi-totals strong:nth-child(2)::before { content:"Total USD"; }
     .itp-bi-totals span::before { content:"Lineas"; }
-    .itp-bi-controls { display:grid; grid-template-columns:150px 140px repeat(5,max-content); align-items:end; gap:10px; padding:12px; border:1px solid #d7e1ec; border-radius:10px; background:white; box-shadow:0 10px 24px rgba(15,31,53,.06); }
+    .itp-bi-controls { display:grid; grid-template-columns:150px 140px repeat(4,max-content); align-items:end; gap:10px; padding:12px; border:1px solid #d7e1ec; border-radius:10px; background:white; box-shadow:0 10px 24px rgba(15,31,53,.06); }
     .itp-bi-controls label { display:grid; gap:5px; font-size:12px; font-weight:700; color:#475569; text-transform:uppercase; }
     .itp-bi-controls input,.itp-bi-controls select { width:100%; min-width:0; height:36px; border-radius:7px; padding:0 10px; }
     .itp-bi-controls .period-input { width:100%; }
@@ -424,10 +427,16 @@ def som_web_home() -> HTMLResponse:
     .itp-bi-controls button,.itp-bi-tools button { height:36px; border-radius:7px; background:#fff; color:#122033; border:1px solid #cfd9e5; }
     .itp-bi-controls button:first-of-type { background:#005da8; color:white; border-color:#005da8; }
     .itp-bi-controls button.green { background:#00703c; color:white; border-color:#00703c; }
-    .itp-bi-tools-title { margin:0; font-size:13px; font-weight:800; color:#334155; text-transform:uppercase; }
-    .itp-bi-tools { display:flex; flex-wrap:wrap; gap:8px; padding:10px 12px; border:1px solid #d7e1ec; border-radius:10px; background:#eef4f9; }
-    .itp-bi-instruction { color:#7f1d1d; font-weight:700; padding:9px 12px; border:1px solid #f4c7c7; border-radius:8px; background:#fff3f3; }
-    .itp-biweekly-modal .status { border-radius:8px; padding:9px 12px; }
+    .itp-bi-body { flex:1; min-height:0; display:grid; grid-template-columns:270px minmax(0,1fr); gap:12px; }
+    .itp-bi-actions { display:flex; flex-direction:column; gap:10px; min-height:0; }
+    .itp-bi-tools-title { margin:0; font-size:12px; font-weight:800; color:#334155; letter-spacing:.04em; text-transform:uppercase; }
+    .itp-bi-tools { display:grid; grid-template-columns:1fr 1fr; gap:8px; padding:12px; border:1px solid #d7e1ec; border-radius:10px; background:#fff; box-shadow:0 10px 24px rgba(15,31,53,.06); }
+    .itp-bi-tools button { width:100%; }
+    .itp-bi-tools .wide { grid-column:1 / -1; }
+    .itp-bi-instruction { color:#7f1d1d; font-weight:700; line-height:1.35; padding:11px 12px; border:1px solid #f4c7c7; border-radius:9px; background:#fff7f7; }
+    .itp-biweekly-modal .status { border-radius:9px; padding:11px 12px; border:1px solid #d8e3ef; background:#fff; color:#52637a; line-height:1.35; }
+    .itp-biweekly-modal .status.error { border-color:#fac5bd; background:#fff4f2; color:#b42318; }
+    .itp-bi-main { min-width:0; min-height:0; display:flex; flex-direction:column; gap:12px; }
     .itp-bi-table { flex:1; min-height:280px; overflow:hidden; }
     .itp-bi-table .table-wrap { height:100%; max-height:none; background:#fff; border-radius:10px; border-color:#d7e1ec; box-shadow:0 10px 24px rgba(15,31,53,.06); }
     .itp-bi-table table { min-width:1880px; font-size:13px; }
@@ -468,6 +477,8 @@ def som_web_home() -> HTMLResponse:
       .hero-logo img { width:min(88%,520px); height:250px; }
       .form-grid { grid-template-columns:1fr; }
       .filters.service-filters { grid-template-columns:1fr; }
+      .itp-bi-header,.itp-bi-controls,.itp-bi-body,.itp-bi-summary { grid-template-columns:1fr; }
+      .itp-bi-totals { grid-template-columns:1fr; }
       .finance-filter-row,.finance-filter-row.compact { grid-template-columns:1fr; }
       .surveyor-line { grid-template-columns:1fr; }
       aside { min-height:auto; }
@@ -1640,33 +1651,43 @@ def som_web_home() -> HTMLResponse:
         <div class="modal-backdrop" id="svcModal">
           <div class="modal itp-biweekly-modal">
             <div class="itp-bi-header">
-              <h2>Obligaciones quincenales</h2>
+              <div>
+                <p class="itp-bi-eyebrow">Invoice to Pay</p>
+                <h2>Obligaciones quincenales</h2>
+                <p class="itp-bi-subtitle">Generación, borrador, pagos y asientos contables por quincena.</p>
+              </div>
               <div id="itpBiTotals" class="itp-bi-totals"><strong>CRC 0.00</strong><strong>USD 0.00</strong><span>0 lineas</span></div>
+              <button class="itp-bi-close" onclick="closeModal()">Cerrar</button>
             </div>
             <div class="itp-bi-controls">
               <label>Periodo <input class="period-input" id="itpBiPeriod" value="${period}" placeholder="YYYY-MM" /></label>
               <label>Quincena <select class="fortnight-input" id="itpBiFortnight"><option value="1"${fortnight === "1" ? " selected" : ""}>1</option><option value="2"${fortnight === "2" ? " selected" : ""}>2</option></select></label>
-              <button onclick="loadItpBiweekly(true)">Generar automatico</button>
+              <button onclick="loadItpBiweekly(true)">Generar automático</button>
               <button onclick="saveItpBiweeklyDraft()">Guardar borrador</button>
               <button onclick="exportItpBiweekly()">Exportar Excel</button>
               <button class="green" onclick="applyItpBiweekly()">Aplicar pagos y crear asientos</button>
-              <button onclick="closeModal()">Cerrar</button>
             </div>
-            <div class="itp-bi-tools-title">Agregar / ajustar lineas</div>
-            <div class="itp-bi-tools">
-              <button onclick="addItpBiweeklyLine('Planilla')">+ Planilla</button>
-              <button onclick="addItpBiweeklyLine('CCSS')">+ CCSS</button>
-              <button onclick="addItpBiweeklyLine('Surveyors')">+ Surveyors</button>
-              <button onclick="addItpBiweeklyLine('Viaticos')">+ Viaticos</button>
-              <button onclick="addItpBiweeklyLine('Telefonia')">+ Telefonia</button>
-              <button onclick="addItpBiweeklyLine('Otros')">+ Otros</button>
-              <button onclick="editSelectedItpBiweeklyLine()">Editar linea</button>
-              <button onclick="deleteSelectedItpBiweeklyLine()">Quitar linea</button>
+            <div class="itp-bi-body">
+              <aside class="itp-bi-actions">
+                <div class="itp-bi-tools">
+                  <div class="itp-bi-tools-title wide">Agregar / ajustar lineas</div>
+                  <button onclick="addItpBiweeklyLine('Planilla')">+ Planilla</button>
+                  <button onclick="addItpBiweeklyLine('CCSS')">+ CCSS</button>
+                  <button onclick="addItpBiweeklyLine('Surveyors')">+ Surveyors</button>
+                  <button onclick="addItpBiweeklyLine('Viaticos')">+ Viaticos</button>
+                  <button onclick="addItpBiweeklyLine('Telefonia')">+ Telefonia</button>
+                  <button onclick="addItpBiweeklyLine('Otros')">+ Otros</button>
+                  <button class="wide" onclick="editSelectedItpBiweeklyLine()">Editar linea seleccionada</button>
+                  <button class="wide" onclick="deleteSelectedItpBiweeklyLine()">Quitar linea seleccionada</button>
+                </div>
+                <div class="itp-bi-instruction">Para aplicar una línea pagada: comprobante, fecha y cuenta contable. Las demás quedan pendientes en borrador y se arrastran a la siguiente quincena.</div>
+                <div id="itpBiMsg" class="status">Presione Generar automático para cargar obligaciones quincenales.</div>
+              </aside>
+              <section class="itp-bi-main">
+                <div id="itpBiTable" class="itp-bi-table"></div>
+                <div id="itpBiSummary" class="itp-bi-summary"></div>
+              </section>
             </div>
-            <div class="itp-bi-instruction">Para aplicar una linea pagada: comprobante, fecha y cuenta contable. Las demas quedan pendientes en borrador.</div>
-            <div id="itpBiMsg" class="status">Presione Generar automatico para cargar obligaciones quincenales.</div>
-            <div id="itpBiTable" class="itp-bi-table"></div>
-            <div id="itpBiSummary" class="itp-bi-summary"></div>
           </div>
         </div>`);
       itpBiweeklyRows = [];
@@ -1737,8 +1758,9 @@ def som_web_home() -> HTMLResponse:
       } catch (err) {
         itpBiweeklyRows = [];
         table.innerHTML = "";
+        renderItpBiweeklySummary();
         msg.className = "status error";
-        msg.textContent = err.message;
+        msg.innerHTML = `<strong>No se pudo generar el preview.</strong><br>${esc(err.message || "Revise el periodo, la quincena o intente nuevamente.")}`;
       }
     }
     function itpBiOptions(values, selected) {
