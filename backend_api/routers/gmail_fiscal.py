@@ -21,6 +21,7 @@ router=APIRouter(prefix="/accounting/tax/gmail",tags=["Gmail Fiscal Inbox"])
 
 class OAuthStart(BaseModel):
     user:str="ERP_USER"
+    account_email:str|None=None
 
 
 class AutomationUpdate(BaseModel):
@@ -28,26 +29,41 @@ class AutomationUpdate(BaseModel):
     interval_minutes:int=Field(default=10,ge=5,le=1440)
     search_query:str|None=None
     user:str="ERP_USER"
+    account_email:str|None=None
+
+
+def _account(value: str | None = None) -> str:
+    return str(value or ACCOUNT).strip().lower()
 
 
 @router.get("/status")
-def connection_status(conn=Depends(get_db)):
+def connection_status(account_email:str|None=None,conn=Depends(get_db)):
     ensure_schema(conn)
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        cur.execute("""SELECT account_email,status,scopes,auto_enabled,interval_minutes,search_query,last_sync_at,
+        if account_email:
+            cur.execute("""SELECT account_email,status,scopes,auto_enabled,interval_minutes,search_query,last_sync_at,
           next_sync_at,last_error,connected_by,connected_at,updated_at,
-          encrypted_refresh_token IS NOT NULL authorized FROM gmail_fiscal_connections WHERE account_email=%s""",(ACCOUNT,))
-        row=cur.fetchone()
-        cur.execute("""SELECT status,COUNT(*) count FROM gmail_fiscal_messages WHERE account_email=%s GROUP BY status""",(ACCOUNT,))
-        counts={r["status"]:r["count"] for r in cur.fetchall()}
-    return {"connection":row,"oauth_configured":oauth_configured(),"message_counts":counts}
+          encrypted_refresh_token IS NOT NULL authorized FROM gmail_fiscal_connections WHERE account_email=%s""",(_account(account_email),))
+            rows=[cur.fetchone()]
+        else:
+            cur.execute("""SELECT account_email,status,scopes,auto_enabled,interval_minutes,search_query,last_sync_at,
+          next_sync_at,last_error,connected_by,connected_at,updated_at,
+          encrypted_refresh_token IS NOT NULL authorized FROM gmail_fiscal_connections ORDER BY account_email""")
+            rows=cur.fetchall()
+        accounts=[row for row in rows if row]
+        counts={}
+        for row in accounts:
+            cur.execute("""SELECT status,COUNT(*) count FROM gmail_fiscal_messages WHERE account_email=%s GROUP BY status""",(row["account_email"],))
+            counts[row["account_email"]]={r["status"]:r["count"] for r in cur.fetchall()}
+    return {"connection":accounts[0] if len(accounts)==1 else None,"connections":accounts,"oauth_configured":oauth_configured(),"message_counts":counts}
 
 
 @router.post("/oauth/start")
 def oauth_start(payload:OAuthStart,conn=Depends(get_db)):
-    try: url=create_oauth_url(conn,payload.user)
+    account = _account(payload.account_email)
+    try: url=create_oauth_url(conn,payload.user,account_email=account)
     except Exception as exc: raise HTTPException(409,str(exc))
-    return {"authorization_url":url,"expires_in_minutes":15,"account":ACCOUNT}
+    return {"authorization_url":url,"expires_in_minutes":15,"account":account}
 
 
 @router.get("/oauth/callback",response_class=HTMLResponse)
@@ -61,31 +77,32 @@ def oauth_callback(state:str|None=None,code:str|None=None,error:str|None=None,co
 
 @router.put("/automation")
 def update_automation(payload:AutomationUpdate,conn=Depends(get_db)):
+    account = _account(payload.account_email)
     ensure_schema(conn)
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         if payload.enabled:
-            cur.execute("SELECT encrypted_refresh_token FROM gmail_fiscal_connections WHERE account_email=%s",(ACCOUNT,))
+            cur.execute("SELECT encrypted_refresh_token FROM gmail_fiscal_connections WHERE account_email=%s",(account,))
             current=cur.fetchone()
             if not current or not current.get("encrypted_refresh_token"):
                 raise HTTPException(409,"Autorice la cuenta Gmail antes de activar la revisión automática")
         cur.execute("""UPDATE gmail_fiscal_connections SET auto_enabled=%s,interval_minutes=%s,
           search_query=COALESCE(%s,search_query),next_sync_at=CASE WHEN %s THEN NOW() ELSE NULL END,updated_at=NOW()
           WHERE account_email=%s RETURNING account_email,status,auto_enabled,interval_minutes,search_query,next_sync_at""",
-                    (payload.enabled,payload.interval_minutes,payload.search_query,payload.enabled,ACCOUNT)); row=cur.fetchone()
+                    (payload.enabled,payload.interval_minutes,payload.search_query,payload.enabled,account)); row=cur.fetchone()
         cur.execute("INSERT INTO gmail_fiscal_audit(account_email,action,detail,performed_by) VALUES(%s,'AUTOMATION_UPDATED',jsonb_build_object('enabled',%s,'interval',%s),%s)",
-                    (ACCOUNT,payload.enabled,payload.interval_minutes,payload.user))
+                    (account,payload.enabled,payload.interval_minutes,payload.user))
     conn.commit(); return row
 
 
 @router.post("/sync")
-def run_sync(max_messages:int=Query(50,ge=1,le=100),user:str="ERP_USER",conn=Depends(get_db)):
-    try: return sync_mailbox(conn,triggered_by=user,max_messages=max_messages)
+def run_sync(max_messages:int=Query(50,ge=1,le=100),user:str="ERP_USER",account_email:str|None=None,conn=Depends(get_db)):
+    try: return sync_mailbox(conn,triggered_by=user,max_messages=max_messages,account_email=_account(account_email))
     except Exception as exc: raise HTTPException(409,str(exc))
 
 
 @router.get("/messages")
-def list_messages(status:str|None=None,limit:int=Query(100,ge=1,le=500),conn=Depends(get_db)):
-    ensure_schema(conn); where=["account_email=%s"]; params=[ACCOUNT]
+def list_messages(status:str|None=None,account_email:str|None=None,limit:int=Query(100,ge=1,le=500),conn=Depends(get_db)):
+    ensure_schema(conn); where=["account_email=%s"]; params=[_account(account_email)]
     if status: where.append("status=%s"); params.append(status.upper())
     params.append(limit)
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -104,12 +121,13 @@ def message_attachments(message_id:int,conn=Depends(get_db)):
 
 
 @router.delete("/connection")
-def disconnect(user:str="ERP_USER",conn=Depends(get_db)):
+def disconnect(user:str="ERP_USER",account_email:str|None=None,conn=Depends(get_db)):
+    account = _account(account_email)
     ensure_schema(conn)
     with conn.cursor() as cur:
         cur.execute("""UPDATE gmail_fiscal_connections SET encrypted_refresh_token=NULL,status='PENDING_AUTH',auto_enabled=FALSE,
-          next_sync_at=NULL,last_error=NULL,updated_at=NOW() WHERE account_email=%s""",(ACCOUNT,))
-        cur.execute("INSERT INTO gmail_fiscal_audit(account_email,action,performed_by) VALUES(%s,'DISCONNECTED',%s)",(ACCOUNT,user))
+          next_sync_at=NULL,last_error=NULL,updated_at=NOW() WHERE account_email=%s""",(account,))
+        cur.execute("INSERT INTO gmail_fiscal_audit(account_email,action,performed_by) VALUES(%s,'DISCONNECTED',%s)",(account,user))
     conn.commit(); return {"message":"Conexión local eliminada; revoque también el acceso en Google si corresponde"}
 
 

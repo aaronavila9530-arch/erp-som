@@ -3113,30 +3113,46 @@ def search_tax_cabys_api(search=""):
     return r.json().get("data", [])
 
 
-def get_gmail_fiscal_status_api():
-    r=api_request("GET",f"{BASE_URL}/accounting/tax/gmail/status",timeout=30)
+def get_gmail_fiscal_status_api(account_email=None):
+    params={"account_email":account_email} if account_email else None
+    r=api_request("GET",f"{BASE_URL}/accounting/tax/gmail/status",params=params,timeout=30)
     raise_for_status_with_detail(r); return r.json()
 
 
-def start_gmail_fiscal_oauth_api(user):
-    r=api_request("POST",f"{BASE_URL}/accounting/tax/gmail/oauth/start",json={"user":user},timeout=30)
+def start_gmail_fiscal_oauth_api(user, account_email=None):
+    payload={"user":user}
+    if account_email:
+        payload["account_email"]=account_email
+    r=api_request("POST",f"{BASE_URL}/accounting/tax/gmail/oauth/start",json=payload,timeout=30)
     raise_for_status_with_detail(r); return r.json()
 
 
-def update_gmail_fiscal_automation_api(enabled,interval_minutes,user):
+def update_gmail_fiscal_automation_api(enabled,interval_minutes,user, account_email=None):
+    payload={"enabled":enabled,"interval_minutes":interval_minutes,"user":user}
+    if account_email:
+        payload["account_email"]=account_email
     r=api_request("PUT",f"{BASE_URL}/accounting/tax/gmail/automation",
-                  json={"enabled":enabled,"interval_minutes":interval_minutes,"user":user},timeout=30)
+                  json=payload,timeout=30)
     raise_for_status_with_detail(r); return r.json()
 
 
-def sync_gmail_fiscal_api(user,max_messages=50):
+def sync_gmail_fiscal_api(user,max_messages=50, account_email=None):
+    params={"user":user,"max_messages":max_messages}
+    if account_email:
+        params["account_email"]=account_email
     r=api_request("POST",f"{BASE_URL}/accounting/tax/gmail/sync",
-                  params={"user":user,"max_messages":max_messages},timeout=180)
+                  params=params,timeout=180)
     raise_for_status_with_detail(r); return r.json()
 
 
-def get_gmail_fiscal_messages_api(status=None):
-    params={"status":status} if status else None
+def get_gmail_fiscal_messages_api(status=None, account_email=None):
+    params={}
+    if status:
+        params["status"]=status
+    if account_email:
+        params["account_email"]=account_email
+    if not params:
+        params=None
     r=api_request("GET",f"{BASE_URL}/accounting/tax/gmail/messages",params=params,timeout=45)
     raise_for_status_with_detail(r); return r.json()
 

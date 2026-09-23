@@ -19,6 +19,7 @@ class PopupGmailFiscal(tk.Toplevel):
         self.title("Bandeja fiscal de correo")
         self.geometry("1120x650"); self.minsize(940,560)
         self.connection=tk.StringVar(value="Consultando…")
+        self.account=tk.StringVar(value="contabilidad@mslogisticsgroup.com")
         self.last_sync=tk.StringVar(value="Nunca")
         self.auto=tk.BooleanVar(value=False)
         self.interval=tk.IntVar(value=10)
@@ -29,7 +30,15 @@ class PopupGmailFiscal(tk.Toplevel):
 
     def _build(self):
         info=ttk.LabelFrame(self,text="Conexión Gmail",padding=10); info.pack(fill="x",padx=10,pady=10)
-        ttk.Label(info,text="Cuenta:").grid(row=0,column=0,sticky="w"); ttk.Label(info,text="gastos@mslogisticsgroup.com",font=("Segoe UI",10,"bold")).grid(row=0,column=1,sticky="w",padx=5)
+        ttk.Label(info,text="Cuenta:").grid(row=0,column=0,sticky="w")
+        account_combo=ttk.Combobox(
+            info,
+            textvariable=self.account,
+            values=("contabilidad@mslogisticsgroup.com","operations@xtravon.com","gastos@mslogisticsgroup.com"),
+            width=34,
+        )
+        account_combo.grid(row=0,column=1,sticky="w",padx=5)
+        account_combo.bind("<<ComboboxSelected>>",lambda _e:self.refresh())
         ttk.Label(info,text="Estado:").grid(row=1,column=0,sticky="w"); ttk.Label(info,textvariable=self.connection).grid(row=1,column=1,sticky="w",padx=5)
         ttk.Label(info,text="Última revisión:").grid(row=2,column=0,sticky="w"); ttk.Label(info,textvariable=self.last_sync).grid(row=2,column=1,sticky="w",padx=5)
         ttk.Button(info,text="Autorizar con Google",command=self._authorize).grid(row=0,column=3,rowspan=2,padx=10)
@@ -61,7 +70,8 @@ class PopupGmailFiscal(tk.Toplevel):
 
     def _refresh_worker(self):
         try:
-            status=get_gmail_fiscal_status_api(); messages=get_gmail_fiscal_messages_api(None if self.filter.get()=="TODOS" else self.filter.get())
+            account=self.account.get().strip()
+            status=get_gmail_fiscal_status_api(account); messages=get_gmail_fiscal_messages_api(None if self.filter.get()=="TODOS" else self.filter.get(),account)
             self.after(0,self._apply_refresh,status,messages)
         except Exception as exc:self.after(0,self._error,str(exc))
 
@@ -84,13 +94,14 @@ class PopupGmailFiscal(tk.Toplevel):
 
     def _authorize(self):
         try:
-            data=start_gmail_fiscal_oauth_api(get_user() or "unknown"); webbrowser.open(data["authorization_url"])
-            messagebox.showinfo("Autorizar Gmail","Se abrió Google en el navegador. Inicie sesión con gastos@mslogisticsgroup.com y regrese aquí al finalizar.",parent=self)
+            account=self.account.get().strip()
+            data=start_gmail_fiscal_oauth_api(get_user() or "unknown",account); webbrowser.open(data["authorization_url"])
+            messagebox.showinfo("Autorizar Gmail",f"Se abrió Google en el navegador. Inicie sesión con {account} y regrese aquí al finalizar.",parent=self)
         except Exception as exc:messagebox.showerror("Autorizar Gmail",str(exc),parent=self)
 
     def _save_automation(self):
         try:
-            update_gmail_fiscal_automation_api(self.auto.get(),int(self.interval.get()),get_user() or "unknown")
+            update_gmail_fiscal_automation_api(self.auto.get(),int(self.interval.get()),get_user() or "unknown",self.account.get().strip())
             self.footer.set("Programación automática actualizada")
         except Exception as exc:messagebox.showerror("Automatización",str(exc),parent=self)
 
@@ -101,7 +112,7 @@ class PopupGmailFiscal(tk.Toplevel):
 
     def _sync_worker(self):
         try:
-            result=sync_gmail_fiscal_api(get_user() or "unknown"); self.after(0,self._sync_done,result)
+            result=sync_gmail_fiscal_api(get_user() or "unknown",account_email=self.account.get().strip()); self.after(0,self._sync_done,result)
         except Exception as exc:self.after(0,self._error,str(exc))
 
     def _sync_done(self,result):

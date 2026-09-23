@@ -7,6 +7,7 @@ import json
 import os
 import re
 import secrets
+import sys
 import threading
 import time
 import zipfile
@@ -42,6 +43,86 @@ MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024
 MAX_ZIP_MEMBERS = 50
 _SCHEMA_READY = False
 _SCHEDULER_STARTED = False
+
+
+def _configured_account_profiles() -> list[dict[str, object]]:
+    raw = os.getenv("GMAIL_ACCOUNT_PROFILES", "").strip()
+    profiles: list[dict[str, object]] = []
+    if raw:
+        try:
+            data = json.loads(raw)
+            if isinstance(data, dict):
+                data = [data]
+            for item in data or []:
+                if not isinstance(item, dict):
+                    continue
+                email = str(item.get("account_email") or item.get("email") or "").strip().lower()
+                if not email:
+                    continue
+                profiles.append({
+                    "account_email": email,
+                    "company_code": str(item.get("company_code") or "MSL-CR").strip().upper(),
+                    "process_bac": bool(item.get("process_bac", True)),
+                    "process_tax": bool(item.get("process_tax", True)),
+                })
+        except Exception:
+            profiles = []
+    if not profiles:
+        raw_accounts = os.getenv("GMAIL_ACCOUNTS", "").strip()
+        for chunk in [part.strip() for part in raw_accounts.split(",") if part.strip()]:
+            email, _, company = chunk.partition(":")
+            profiles.append({
+                "account_email": email.strip().lower(),
+                "company_code": (company or "MSL-CR").strip().upper(),
+                "process_bac": True,
+                "process_tax": True,
+            })
+    if not profiles:
+        profiles.extend([
+            {
+                "account_email": ACCOUNT.strip().lower(),
+                "company_code": os.getenv("GMAIL_COMPANY_CODE", "MSL-CR").strip().upper(),
+                "process_bac": True,
+                "process_tax": True,
+            },
+            {
+                "account_email": "contabilidad@mslogisticsgroup.com",
+                "company_code": "MSL-CR",
+                "process_bac": True,
+                "process_tax": True,
+            },
+            {
+                "account_email": "operations@xtravon.com",
+                "company_code": "MCI-CR",
+                "process_bac": True,
+                "process_tax": True,
+            },
+        ])
+    seen = set()
+    unique: list[dict[str, object]] = []
+    for profile in profiles:
+        email = str(profile.get("account_email") or "").strip().lower()
+        if not email or email in seen:
+            continue
+        seen.add(email)
+        unique.append({**profile, "account_email": email})
+    return unique
+
+
+def _account_profile(account_email: str | None = None) -> dict[str, object]:
+    profiles = _configured_account_profiles()
+    wanted = str(account_email or "").strip().lower()
+    if wanted:
+        for profile in profiles:
+            if profile["account_email"] == wanted:
+                return profile
+        return {
+            "account_email": wanted,
+            "company_code": "MSL-CR",
+            "process_bac": True,
+            "process_tax": True,
+        }
+    return profiles[0]
 
 
 def ensure_schema(conn):
@@ -129,18 +210,19 @@ def ensure_schema(conn):
             )
         """)
         cur.execute("ALTER TABLE gmail_fiscal_attachments ADD COLUMN IF NOT EXISTS content BYTEA")
-        cur.execute("""INSERT INTO gmail_fiscal_connections(account_email) VALUES(%s)
-          ON CONFLICT(account_email) DO NOTHING""", (ACCOUNT,))
-        cur.execute(
-            """
-            UPDATE gmail_fiscal_connections
-               SET search_query=%s,
-                   updated_at=NOW()
-             WHERE account_email=%s
-               AND search_query='has:attachment (filename:xml OR filename:zip) newer_than:365d'
-            """,
-            (DEFAULT_SEARCH_QUERY, ACCOUNT),
-        )
+        for profile in _configured_account_profiles():
+            cur.execute("""INSERT INTO gmail_fiscal_connections(account_email) VALUES(%s)
+              ON CONFLICT(account_email) DO NOTHING""", (profile["account_email"],))
+            cur.execute(
+                """
+                UPDATE gmail_fiscal_connections
+                   SET search_query=%s,
+                       updated_at=NOW()
+                 WHERE account_email=%s
+                   AND search_query='has:attachment (filename:xml OR filename:zip) newer_than:365d'
+                """,
+                (DEFAULT_SEARCH_QUERY, profile["account_email"]),
+            )
     conn.commit()
     _SCHEMA_READY = True
 
@@ -170,19 +252,21 @@ def oauth_configured():
     return bool(os.getenv("GOOGLE_CLIENT_ID") and os.getenv("GOOGLE_CLIENT_SECRET") and os.getenv("GOOGLE_REDIRECT_URI") and os.getenv("CREDENTIAL_ENCRYPTION_KEY"))
 
 
-def create_oauth_url(conn, requested_by: str):
+def create_oauth_url(conn, requested_by: str, account_email: str | None = None):
     ensure_schema(conn)
     if not oauth_configured():
         raise RuntimeError("Faltan GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI o CREDENTIAL_ENCRYPTION_KEY")
+    profile = _account_profile(account_email)
+    target_account = str(profile["account_email"])
     state = secrets.token_urlsafe(40)
     with conn.cursor() as cur:
         cur.execute("DELETE FROM gmail_fiscal_oauth_states WHERE expires_at<NOW() OR consumed_at IS NOT NULL")
         cur.execute("INSERT INTO gmail_fiscal_oauth_states(state,account_email,requested_by,expires_at) VALUES(%s,%s,%s,NOW()+INTERVAL '15 minutes')",
-                    (state, ACCOUNT, requested_by))
+                    (state, target_account, requested_by))
     conn.commit()
     params = {"client_id":os.getenv("GOOGLE_CLIENT_ID"),"redirect_uri":os.getenv("GOOGLE_REDIRECT_URI"),
               "response_type":"code","scope":SCOPES,"access_type":"offline","prompt":"consent",
-              "include_granted_scopes":"true","login_hint":ACCOUNT,"state":state}
+              "include_granted_scopes":"true","login_hint":target_account,"state":state}
     return GOOGLE_AUTH + "?" + urlencode(params)
 
 
@@ -341,7 +425,7 @@ def _field_after_label(text, label):
     return re.sub(r"\s+", " ", match.group(1)).strip() if match else ""
 
 
-def _parse_bac_card_notification(text, subject, account, message_id, folder, received_date):
+def _parse_bac_card_notification(text, subject, account, message_id, folder, received_date, company_code="MSL-CR"):
     normalized = _norm_text(f"{subject}\n{text}")
     if "MONTO" not in normalized:
         return None
@@ -366,7 +450,7 @@ def _parse_bac_card_notification(text, subject, account, message_id, folder, rec
     if not merchant and not ref_match and not auth_match:
         return None
     return {
-        "company_code": "MSL-CR",
+        "company_code": company_code,
         "mailbox": account,
         "folder": folder,
         "message_id": message_id,
@@ -383,7 +467,7 @@ def _parse_bac_card_notification(text, subject, account, message_id, folder, rec
     }
 
 
-def _parse_bac_partner_transfer(text, subject, account, message_id, folder, received_date):
+def _parse_bac_partner_transfer(text, subject, account, message_id, folder, received_date, company_code="MSL-CR"):
     normalized = _norm_text(f"{subject}\n{text}")
     if "BAC" not in normalized or "TRANSFERENCIA" not in normalized:
         return None
@@ -413,7 +497,7 @@ def _parse_bac_partner_transfer(text, subject, account, message_id, folder, rece
         return None
     concept_match = re.search(r'"([^"]+)"', text or "")
     return {
-        "company_code": "MSL-CR",
+        "company_code": company_code,
         "mailbox": account,
         "folder": folder,
         "message_id": message_id,
@@ -434,6 +518,9 @@ def _process_bac_card_notification(conn, payload):
 
 
 def _process_bac_partner_transfer(payload):
+    root = Path(__file__).resolve().parents[2]
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
     from api_client import post_bac_partner_transfer_api
     return post_bac_partner_transfer_api(payload)
 
@@ -489,7 +576,7 @@ def _store_path(kind, digest, filename, content):
     path=folder/f"{digest[:12]}_{safe}"; path.write_bytes(content); return str(path)
 
 
-def _process_xml(cur, message_db_id, filename, content, gmail_attachment_id):
+def _process_xml(cur, message_db_id, filename, content, gmail_attachment_id, company_code="MSL-CR"):
     digest=hashlib.sha256(content).hexdigest()
     cur.execute("SELECT id,status,tax_document_id FROM gmail_fiscal_attachments WHERE message_id=%s AND content_hash=%s AND filename=%s",
                 (message_db_id,digest,filename)); existing=cur.fetchone()
@@ -498,7 +585,7 @@ def _process_xml(cur, message_db_id, filename, content, gmail_attachment_id):
     response=_response_data(content)
     if response:
         path=_store_path("responses",digest,filename,content)
-        cur.execute("SELECT id FROM tax_electronic_documents WHERE electronic_key=%s ORDER BY id DESC LIMIT 1",(response.get("key"),)); doc=cur.fetchone()
+        cur.execute("SELECT id FROM tax_electronic_documents WHERE company_code=%s AND electronic_key=%s ORDER BY id DESC LIMIT 1",(company_code,response.get("key"),)); doc=cur.fetchone()
         if not doc:
             status="REVIEW"; tax_id=None; error="Respuesta de Hacienda sin comprobante asociado"
         else:
@@ -507,14 +594,14 @@ def _process_xml(cur, message_db_id, filename, content, gmail_attachment_id):
                         (hacienda,response.get("detail"),path,content,hacienda,doc["id"])); status="IMPORTED"; tax_id=doc["id"]; error=None
     else:
         data=_parse_xml(content); key=data.get("electronic_key")
-        cur.execute("SELECT id FROM tax_electronic_documents WHERE direction='PURCHASE' AND (xml_hash=%s OR (electronic_key=%s AND %s IS NOT NULL)) ORDER BY id LIMIT 1",
-                    (digest,key,key)); doc=cur.fetchone()
+        cur.execute("SELECT id FROM tax_electronic_documents WHERE company_code=%s AND direction='PURCHASE' AND (xml_hash=%s OR (electronic_key=%s AND %s IS NOT NULL)) ORDER BY id LIMIT 1",
+                    (company_code,digest,key,key)); doc=cur.fetchone()
         if doc:
             status="DUPLICATE"; tax_id=doc["id"]; error="XML ya registrado"
         else:
             path=_store_path("xml",digest,filename,content)
-            tax_id=_save_document(cur,"PURCHASE",data,xml_hash=digest,xml_path=path,xml_content=content,source_table="gmail_attachment",source_id=digest,user="GMAIL_AUTOMATION")
-            _ensure_purchase_obligation(cur,data,path)
+            tax_id=_save_document(cur,"PURCHASE",data,xml_hash=digest,xml_path=path,xml_content=content,source_table="gmail_attachment",source_id=digest,user="GMAIL_AUTOMATION",company_code=company_code)
+            _ensure_purchase_obligation(cur,data,path,company_code=company_code)
             status="IMPORTED"; error=None
     cur.execute("""INSERT INTO gmail_fiscal_attachments(message_id,gmail_attachment_id,filename,mime_type,content_hash,size_bytes,status,tax_document_id,error_detail,stored_path,content)
       VALUES(%s,%s,%s,'application/xml',%s,%s,%s,%s,%s,%s,%s)""",
@@ -522,7 +609,7 @@ def _process_xml(cur, message_db_id, filename, content, gmail_attachment_id):
     return status,tax_id
 
 
-def _process_card_statement_pdf(conn, cur, message_db_id, filename, content, gmail_attachment_id):
+def _process_card_statement_pdf(conn, cur, message_db_id, filename, content, gmail_attachment_id, company_code="MSL-CR"):
     digest = hashlib.sha256(content).hexdigest()
     cur.execute(
         "SELECT id,status FROM gmail_fiscal_attachments WHERE message_id=%s AND content_hash=%s AND filename=%s",
@@ -536,7 +623,7 @@ def _process_card_statement_pdf(conn, cur, message_db_id, filename, content, gma
             conn=conn,
             raw=content,
             filename=filename,
-            company="MSL-CR",
+            company=company_code,
             imported_by="GMAIL_AUTOMATION",
         )
         if response.get("status") == "exists":
@@ -568,13 +655,18 @@ def _labels(token):
     return result
 
 
-def sync_mailbox(conn, triggered_by="SCHEDULER", max_messages=50):
+def sync_mailbox(conn, triggered_by="SCHEDULER", max_messages=50, account_email: str | None = None):
     ensure_schema(conn)
+    profile = _account_profile(account_email)
+    target_account = str(profile["account_email"])
+    target_company = str(profile.get("company_code") or "MSL-CR").upper()
+    process_bac = bool(profile.get("process_bac", True))
+    process_tax = bool(profile.get("process_tax", True))
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        cur.execute("SELECT pg_try_advisory_lock(hashtext(%s)) locked",(f"gmail-fiscal:{ACCOUNT}",)); locked=cur.fetchone()["locked"]
+        cur.execute("SELECT pg_try_advisory_lock(hashtext(%s)) locked",(f"gmail-fiscal:{target_account}",)); locked=cur.fetchone()["locked"]
         if not locked: return {"status":"busy","message":"Ya existe una sincronización en curso"}
         try:
-            cur.execute("SELECT * FROM gmail_fiscal_connections WHERE account_email=%s",(ACCOUNT,)); config=cur.fetchone()
+            cur.execute("SELECT * FROM gmail_fiscal_connections WHERE account_email=%s",(target_account,)); config=cur.fetchone()
             if not config or not config.get("encrypted_refresh_token"): raise RuntimeError("La cuenta Gmail todavía no ha sido autorizada")
             token=_access_token(decrypt_token(config["encrypted_refresh_token"])); labels=_labels(token)
             query=config["search_query"]+" -label:ERP-SOM/Procesado -label:ERP-SOM/Revisar -label:ERP-SOM/Duplicado"
@@ -601,17 +693,18 @@ def sync_mailbox(conn, triggered_by="SCHEDULER", max_messages=50):
                 subject=hdr.get("subject")
                 cur.execute("""INSERT INTO gmail_fiscal_messages(account_email,gmail_message_id,gmail_thread_id,sender,subject,received_at)
                   VALUES(%s,%s,%s,%s,%s,%s) ON CONFLICT(account_email,gmail_message_id) DO UPDATE SET updated_at=NOW() RETURNING id""",
-                            (ACCOUNT,item["id"],msg.get("threadId"),hdr.get("from"),subject,received)); message_db_id=cur.fetchone()["id"]
+                            (target_account,item["id"],msg.get("threadId"),hdr.get("from"),subject,received)); message_db_id=cur.fetchone()["id"]
                 attachments=xml_count=imported=duplicates=errors=card_pdfs=bac_card_notifications=bac_partner_notifications=0; error_details=[]
                 body_text=_message_body_text(payload)
                 bac_payload=_parse_bac_card_notification(
                     body_text,
                     subject or "",
-                    ACCOUNT,
+                    target_account,
                     item["id"],
                     "Gmail/BAC",
                     received_date,
-                )
+                    target_company,
+                ) if process_bac else None
                 if bac_payload:
                     try:
                         result=_process_bac_card_notification(conn,bac_payload)
@@ -629,11 +722,12 @@ def sync_mailbox(conn, triggered_by="SCHEDULER", max_messages=50):
                     partner_payload=_parse_bac_partner_transfer(
                         body_text,
                         subject or "",
-                        ACCOUNT,
+                        target_account,
                         item["id"],
                         "Gmail/BAC",
                         received_date,
-                    )
+                        target_company,
+                    ) if process_bac else None
                     if partner_payload:
                         try:
                             _process_bac_partner_transfer(partner_payload)
@@ -650,7 +744,7 @@ def sync_mailbox(conn, triggered_by="SCHEDULER", max_messages=50):
                     attachments+=1
                     try:
                         raw=_attachment_bytes(token,item["id"],part)
-                        if _looks_like_card_statement(filename, subject or ""):
+                        if process_bac and _looks_like_card_statement(filename, subject or ""):
                             card_pdfs+=1
                             status, detail = _process_card_statement_pdf(
                                 conn,
@@ -659,6 +753,7 @@ def sync_mailbox(conn, triggered_by="SCHEDULER", max_messages=50):
                                 filename,
                                 raw,
                                 (part.get("body") or {}).get("attachmentId"),
+                                target_company,
                             )
                             if status == "IMPORTED":
                                 imported+=1
@@ -671,7 +766,7 @@ def sync_mailbox(conn, triggered_by="SCHEDULER", max_messages=50):
                                 if detail:
                                     error_details.append(f"{filename}: {detail}")
                             continue
-                        if filename.lower().endswith(".pdf"):
+                        if filename.lower().endswith(".pdf") or not process_tax:
                             continue
                         members=_xml_members(filename,raw)
                         if not members:
@@ -679,7 +774,7 @@ def sync_mailbox(conn, triggered_by="SCHEDULER", max_messages=50):
                         for inner_name,xml in members:
                             xml_count+=1
                             try:
-                                status,_=_process_xml(cur,message_db_id,inner_name,xml,(part.get("body") or {}).get("attachmentId"))
+                                status,_=_process_xml(cur,message_db_id,inner_name,xml,(part.get("body") or {}).get("attachmentId"),target_company)
                                 if status=="IMPORTED": imported+=1
                                 elif status=="DUPLICATE": duplicates+=1
                                 else: errors+=1
@@ -702,15 +797,15 @@ def sync_mailbox(conn, triggered_by="SCHEDULER", max_messages=50):
                 summary["bac_card_messages"]+=bac_card_notifications
                 conn.commit()
             cur.execute("""UPDATE gmail_fiscal_connections SET status='CONNECTED',last_sync_at=NOW(),next_sync_at=NOW()+(interval_minutes||' minutes')::interval,
-              last_error=NULL,updated_at=NOW() WHERE account_email=%s""",(ACCOUNT,))
-            cur.execute("INSERT INTO gmail_fiscal_audit(account_email,action,detail,performed_by) VALUES(%s,'SYNC',%s,%s)",(ACCOUNT,Json(summary),triggered_by)); conn.commit()
-            return {"status":"ok",**summary}
+              last_error=NULL,updated_at=NOW() WHERE account_email=%s""",(target_account,))
+            cur.execute("INSERT INTO gmail_fiscal_audit(account_email,action,detail,performed_by) VALUES(%s,'SYNC',%s,%s)",(target_account,Json(summary),triggered_by)); conn.commit()
+            return {"status":"ok","account_email":target_account,"company_code":target_company,**summary}
         except Exception as exc:
             conn.rollback()
-            cur.execute("UPDATE gmail_fiscal_connections SET last_error=%s,updated_at=NOW() WHERE account_email=%s",(str(exc),ACCOUNT)); conn.commit()
+            cur.execute("UPDATE gmail_fiscal_connections SET last_error=%s,updated_at=NOW() WHERE account_email=%s",(str(exc),target_account)); conn.commit()
             raise
         finally:
-            cur.execute("SELECT pg_advisory_unlock(hashtext(%s))",(f"gmail-fiscal:{ACCOUNT}",)); conn.commit()
+            cur.execute("SELECT pg_advisory_unlock(hashtext(%s))",(f"gmail-fiscal:{target_account}",)); conn.commit()
 
 
 def _scheduler_loop():
@@ -720,9 +815,17 @@ def _scheduler_loop():
         try:
             conn=get_conn(); ensure_schema(conn)
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute("SELECT auto_enabled,status,next_sync_at FROM gmail_fiscal_connections WHERE account_email=%s",(ACCOUNT,)); cfg=cur.fetchone()
-            if cfg and cfg["auto_enabled"] and cfg["status"]=="CONNECTED" and (not cfg["next_sync_at"] or cfg["next_sync_at"]<=datetime.now(timezone.utc)):
-                sync_mailbox(conn)
+                cur.execute("""
+                    SELECT account_email, auto_enabled, status, next_sync_at
+                    FROM gmail_fiscal_connections
+                    WHERE auto_enabled=TRUE
+                      AND status='CONNECTED'
+                      AND (next_sync_at IS NULL OR next_sync_at <= NOW())
+                    ORDER BY account_email
+                """)
+                due = cur.fetchall() or []
+            for cfg in due:
+                sync_mailbox(conn, account_email=cfg["account_email"])
         except Exception as exc:
             print(f"Gmail fiscal scheduler: {exc}")
         finally:

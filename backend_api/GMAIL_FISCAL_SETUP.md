@@ -16,6 +16,7 @@ La integración usa OAuth 2.0 y corre en el backend. No utiliza ni almacena la c
 
 ```text
 GMAIL_ACCOUNT=contabilidad@mslogisticsgroup.com
+GMAIL_ACCOUNT_PROFILES=[{"account_email":"contabilidad@mslogisticsgroup.com","company_code":"MSL-CR","process_tax":true,"process_bac":true},{"account_email":"operations@xtravon.com","company_code":"MCI-CR","process_tax":true,"process_bac":true}]
 GOOGLE_CLIENT_ID=<cliente OAuth>
 GOOGLE_CLIENT_SECRET=<secreto OAuth>
 GOOGLE_REDIRECT_URI=https://api-som-fastapi-production-e66d.up.railway.app/accounting/tax/gmail/oauth/callback
@@ -40,6 +41,8 @@ No guardar estos valores en Git, capturas, documentos compartidos ni conversacio
 6. Revisar resultados antes de activar la programación automática.
 
 El backend valida que Google haya autorizado exactamente la cuenta configurada. Una cuenta diferente será rechazada.
+
+Si existen varios buzones, cada cuenta en `GMAIL_ACCOUNT_PROFILES` se autoriza por separado. El scheduler recorre todas las conexiones activas y aplica cada correo a su `company_code`, sin usar Outlook, COM, sesión de Windows ni la computadora del usuario.
 
 ## Automatización en backend
 
