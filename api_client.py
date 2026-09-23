@@ -2667,6 +2667,8 @@ def _corporate_cards_local_call(action: str, *args, **kwargs):
             return cards.post_settlement(int(args[0]), cards.SettlementRequest(**(args[1] or {})), conn=conn)
         if action == "post_history":
             return cards.post_history(cards.HistoryPostRequest(**(args[0] or {})), x_company_code=company, conn=conn)
+        if action == "bac_notification":
+            return cards.import_bac_notification(cards.BacNotificationRequest(**(args[0] or {})), x_company_code=company, conn=conn)
         raise ValueError(f"Accion local de tarjetas no soportada: {action}")
     finally:
         release_conn(conn)
@@ -2902,6 +2904,26 @@ def post_corporate_card_history_api(payload: dict | None = None):
     except Exception as exc:
         if _is_missing_desktop_session(exc):
             return _corporate_cards_local_call("post_history", payload or {})
+        raise
+
+
+def post_corporate_card_bac_notification_api(payload: dict):
+    try:
+        r = api_request(
+            "POST",
+            f"{BASE_URL}/accounting/corporate-cards/bac-notifications/import",
+            json=payload,
+            timeout=90,
+        )
+        raise_for_status_with_detail(r)
+        return r.json()
+    except requests.exceptions.HTTPError as exc:
+        if _is_api_not_found(exc):
+            return _corporate_cards_local_call("bac_notification", payload)
+        raise
+    except Exception as exc:
+        if _is_missing_desktop_session(exc):
+            return _corporate_cards_local_call("bac_notification", payload)
         raise
 
 

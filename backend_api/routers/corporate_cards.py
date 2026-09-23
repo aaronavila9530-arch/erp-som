@@ -73,6 +73,22 @@ class MatchRequest(BaseModel):
     obligation_id: int
 
 
+class BacNotificationRequest(BaseModel):
+    company_code: str | None = None
+    mailbox: str | None = None
+    folder: str | None = None
+    message_id: str | None = None
+    subject: str | None = None
+    merchant: str | None = None
+    transaction_date: date
+    currency: str
+    amount: float
+    card_last4: str | None = None
+    authorization: str | None = None
+    reference: str | None = None
+    holder_name: str | None = None
+
+
 class SettlementRequest(BaseModel):
     payment_date: date | None = None
     bank_account_code: str
@@ -362,6 +378,41 @@ def ensure_schema(cur):
         )
     """)
     cur.execute("""
+        CREATE TABLE IF NOT EXISTS corporate_card_bac_notifications (
+            id BIGSERIAL PRIMARY KEY,
+            company_code VARCHAR(30) NOT NULL DEFAULT 'MSL-CR',
+            mailbox TEXT,
+            folder TEXT,
+            message_id TEXT,
+            subject TEXT,
+            merchant TEXT,
+            transaction_date DATE NOT NULL,
+            currency VARCHAR(3) NOT NULL DEFAULT 'CRC',
+            amount NUMERIC(18,2) NOT NULL DEFAULT 0,
+            card_last4 VARCHAR(8),
+            authorization_code TEXT,
+            reference TEXT,
+            holder_name TEXT,
+            matched_transaction_id BIGINT,
+            matched_obligation_id BIGINT,
+            status VARCHAR(30) NOT NULL DEFAULT 'IMPORTED',
+            created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+        )
+    """)
+    cur.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS ux_corp_card_bac_notification_identity
+        ON corporate_card_bac_notifications(
+            company_code,
+            COALESCE(reference,''),
+            COALESCE(authorization_code,''),
+            COALESCE(card_last4,''),
+            transaction_date,
+            currency,
+            amount
+        )
+    """)
+    cur.execute("""
         CREATE UNIQUE INDEX IF NOT EXISTS ux_corp_card_settlement_statement
         ON corporate_card_settlements(statement_id)
     """)
@@ -404,6 +455,7 @@ def ensure_schema(cur):
         """, (last4, holder, user_key))
     cur.execute("CREATE INDEX IF NOT EXISTS idx_corp_card_tx_statement ON corporate_card_transactions(statement_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_corp_card_tx_company_date ON corporate_card_transactions(company_code, transaction_date)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_corp_card_bac_company_date ON corporate_card_bac_notifications(company_code, transaction_date)")
 
 
 def _statement_row(row):
@@ -422,6 +474,125 @@ def _json_safe(value: Any) -> Any:
     if isinstance(value, dict):
         return {key: _json_safe(item) for key, item in value.items()}
     return value
+
+
+def _norm_text(value: Any) -> str:
+    return re.sub(r"[^A-Z0-9]+", " ", str(value or "").upper()).strip()
+
+
+def _overlap_score(left: str, right: str) -> int:
+    left_tokens = {token for token in _norm_text(left).split() if len(token) >= 3}
+    right_tokens = {token for token in _norm_text(right).split() if len(token) >= 3}
+    if not left_tokens or not right_tokens:
+        return 0
+    overlap = left_tokens & right_tokens
+    if not overlap:
+        return 0
+    return min(25, len(overlap) * 8)
+
+
+def _date_delta_days(left: Any, right: Any) -> int | None:
+    if not left or not right:
+        return None
+    try:
+        return abs((left - right).days)
+    except Exception:
+        return None
+
+
+def _score_candidate(
+    *,
+    tx: dict[str, Any],
+    name: str | None,
+    currency: str | None,
+    total: Any,
+    issue_date: Any,
+    status: str | None,
+    paid_with_card: bool = False,
+    reference: str | None = None,
+) -> tuple[int, Decimal]:
+    amount = _money(tx.get("amount_original"))
+    candidate_total = _money(total)
+    amount_delta = abs(candidate_total - amount)
+    desc = f"{tx.get('description') or ''} {tx.get('merchant') or ''}"
+    score = 0
+    if (currency or "").upper() == (tx.get("currency") or "").upper():
+        score += 20
+    if amount_delta <= Decimal("2.00"):
+        score += 45
+    elif amount_delta <= Decimal("500.00"):
+        score += 15
+    days = _date_delta_days(issue_date, tx.get("transaction_date"))
+    if days is not None:
+        if days <= 3:
+            score += 20
+        elif days <= 20:
+            score += 12
+        elif days <= 45:
+            score += 5
+    score += _overlap_score(desc, name or "")
+    if reference and str(reference).strip() and str(tx.get("reference") or "").strip() == str(reference).strip():
+        score += 25
+    if (status or "").upper() in {"PENDING", "PARTIAL", "PENDIENTE"}:
+        score += 10
+    if paid_with_card:
+        score -= 100
+    return score, amount_delta
+
+
+def _tax_documents_available(cur) -> bool:
+    cur.execute("SELECT to_regclass('public.tax_electronic_documents') AS table_name")
+    row = cur.fetchone()
+    return bool(row and row.get("table_name"))
+
+
+def _ensure_obligation_from_tax_doc(cur, company: str, tax_doc_id: int) -> int:
+    cur.execute("""
+        SELECT * FROM tax_electronic_documents
+        WHERE id=%s AND company_code=%s AND direction='PURCHASE'
+    """, (tax_doc_id, company))
+    doc = cur.fetchone()
+    if not doc:
+        raise HTTPException(404, "Factura electronica no existe")
+    reference = doc.get("electronic_key") or doc.get("document_number") or f"TAXDOC-{tax_doc_id}"
+    cur.execute("""
+        SELECT id FROM payment_obligations
+        WHERE company_code=%s AND active=TRUE AND reference=%s
+        ORDER BY id DESC
+        LIMIT 1
+    """, (company, reference))
+    existing = cur.fetchone()
+    if existing:
+        return int(existing["id"])
+    issue_date = doc.get("issue_datetime")
+    if isinstance(issue_date, datetime):
+        issue_date = issue_date.date()
+    obligation_type = "SUPPLIER_CREDIT_NOTE" if "CREDIT" in str(doc.get("document_type") or "").upper() else "SUPPLIER_INVOICE"
+    cur.execute("""
+        INSERT INTO payment_obligations(
+            company_code, record_type, payee_type, payee_name, obligation_type,
+            reference, issue_date, due_date, currency, total, balance, status,
+            origin, notes, active, created_at, updated_at
+        ) VALUES(
+            %s, 'PAYABLE', 'SUPPLIER', %s, %s,
+            %s, %s, COALESCE(%s, CURRENT_DATE), %s, %s, %s, 'PENDING',
+            'HACIENDA_XML', %s, TRUE, NOW(), NOW()
+        )
+        RETURNING id
+    """, (
+        company,
+        doc.get("issuer_name") or "Proveedor factura electronica",
+        obligation_type,
+        reference,
+        issue_date,
+        issue_date,
+        doc.get("currency_code") or "CRC",
+        _money(doc.get("total")),
+        _money(doc.get("total")),
+        f"Creada automaticamente desde factura electronica para pago con tarjeta BAC. Documento {doc.get('document_number') or reference}",
+    ))
+    row = cur.fetchone()
+    return int(row["id"])
 
 
 def _post_entry(
@@ -709,8 +880,14 @@ def import_statement_pdf(
                 None, None,
             ))
             inserted += cur.rowcount
+        auto_result = _auto_match_statement(cur, int(statement["id"]), post_matched=True)
         conn.commit()
-        return {"status": "ok", "statement": _statement_row(statement), "transactions_inserted": inserted}
+        return {
+            "status": "ok",
+            "statement": _statement_row(statement),
+            "transactions_inserted": inserted,
+            "auto_match": auto_result,
+        }
 
 
 @router.get("/statements")
@@ -752,21 +929,10 @@ def _match_candidates(cur, tx_id: int) -> list[dict[str, Any]]:
     if not tx:
         raise HTTPException(404, "Movimiento de tarjeta no existe")
     amount = _money(tx["amount_original"])
-    desc = (tx.get("description") or "").upper()
+    tx_dict = dict(tx)
     cur.execute("""
         SELECT id, payee_name, reference, issue_date, due_date, currency, total, balance, status,
-               obligation_type, payee_type, notes,
-               ABS(COALESCE(total,0)-%s) AS amount_delta,
-               CASE
-                 WHEN UPPER(COALESCE(payee_name,'')) <> '' AND %s LIKE '%%' || UPPER(payee_name) || '%%' THEN 30
-                 ELSE 0
-               END
-               + CASE WHEN currency=%s THEN 20 ELSE 0 END
-               + CASE WHEN ABS(COALESCE(total,0)-%s) <= 2 THEN 40 ELSE 0 END
-               + CASE WHEN ABS(COALESCE(total,0)-%s) <= 500 THEN 15 ELSE 0 END
-               + CASE WHEN issue_date BETWEEN (%s::date - INTERVAL '20 days') AND (%s::date + INTERVAL '20 days') THEN 15 ELSE 0 END
-               + CASE WHEN status IN ('PENDING','PARTIAL') THEN 10 ELSE 0 END
-               + CASE WHEN COALESCE(paid_with_card, FALSE) THEN -100 ELSE 0 END AS score
+               obligation_type, payee_type, notes, COALESCE(paid_with_card, FALSE) AS paid_with_card
         FROM payment_obligations
         WHERE active=TRUE
           AND status IN ('PENDING','PARTIAL')
@@ -777,23 +943,316 @@ def _match_candidates(cur, tx_id: int) -> list[dict[str, Any]]:
               OR issue_date BETWEEN (%s::date - INTERVAL '45 days') AND (%s::date + INTERVAL '45 days')
               OR UPPER(COALESCE(payee_name,'')) <> '' AND %s LIKE '%%' || UPPER(payee_name) || '%%'
           )
-        ORDER BY score DESC, amount_delta ASC, issue_date DESC NULLS LAST, id DESC
         LIMIT 50
     """, (
-        amount,
-        desc,
-        tx["currency"],
-        amount,
-        amount,
-        tx["transaction_date"],
-        tx["transaction_date"],
         tx["currency"],
         amount,
         tx["transaction_date"],
         tx["transaction_date"],
-        desc,
+        _norm_text(f"{tx.get('description') or ''} {tx.get('merchant') or ''}"),
     ))
-    return [dict(row) for row in cur.fetchall()]
+    candidates: list[dict[str, Any]] = []
+    for row in cur.fetchall() or []:
+        candidate = dict(row)
+        score, amount_delta = _score_candidate(
+            tx=tx_dict,
+            name=candidate.get("payee_name"),
+            currency=candidate.get("currency"),
+            total=candidate.get("total"),
+            issue_date=candidate.get("issue_date"),
+            status=candidate.get("status"),
+            paid_with_card=bool(candidate.get("paid_with_card")),
+            reference=candidate.get("reference"),
+        )
+        candidate.update({
+            "source_type": "ITP",
+            "obligation_id": candidate["id"],
+            "tax_document_id": None,
+            "company_code": tx["company_code"],
+            "score": score,
+            "amount_delta": amount_delta,
+        })
+        candidates.append(candidate)
+
+    if _tax_documents_available(cur):
+        cur.execute("""
+            SELECT d.id, d.issuer_name AS payee_name,
+                   COALESCE(d.electronic_key, d.document_number) AS reference,
+                   d.issue_datetime::date AS issue_date,
+                   d.issue_datetime::date AS due_date,
+                   d.currency_code AS currency,
+                   d.total, d.total AS balance,
+                   d.status, d.document_type AS obligation_type,
+                   'SUPPLIER' AS payee_type,
+                   d.hacienda_status AS notes
+            FROM tax_electronic_documents d
+            WHERE d.company_code=%s
+              AND d.direction='PURCHASE'
+              AND COALESCE(d.total,0) > 0
+              AND d.currency_code=%s
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM payment_obligations po
+                  WHERE po.company_code=d.company_code
+                    AND po.active=TRUE
+                    AND po.reference IN (d.electronic_key, d.document_number)
+              )
+              AND (
+                  ABS(COALESCE(d.total,0)-%s) <= 500
+                  OR d.issue_datetime::date BETWEEN (%s::date - INTERVAL '45 days') AND (%s::date + INTERVAL '45 days')
+                  OR UPPER(COALESCE(d.issuer_name,'')) <> '' AND %s LIKE '%%' || UPPER(d.issuer_name) || '%%'
+              )
+            LIMIT 50
+        """, (
+            tx["company_code"],
+            tx["currency"],
+            amount,
+            tx["transaction_date"],
+            tx["transaction_date"],
+            _norm_text(f"{tx.get('description') or ''} {tx.get('merchant') or ''}"),
+        ))
+        for row in cur.fetchall() or []:
+            candidate = dict(row)
+            score, amount_delta = _score_candidate(
+                tx=tx_dict,
+                name=candidate.get("payee_name"),
+                currency=candidate.get("currency"),
+                total=candidate.get("total"),
+                issue_date=candidate.get("issue_date"),
+                status="PENDING",
+                reference=candidate.get("reference"),
+            )
+            candidate.update({
+                "source_type": "TAX_DOC",
+                "obligation_id": None,
+                "tax_document_id": candidate["id"],
+                "company_code": tx["company_code"],
+                "score": score,
+                "amount_delta": amount_delta,
+            })
+            candidates.append(candidate)
+
+    candidates.sort(
+        key=lambda item: (
+            -int(item.get("score") or 0),
+            _money(item.get("amount_delta")),
+            item.get("issue_date") or date.min,
+            int(item.get("id") or 0),
+        )
+    )
+    return candidates[:50]
+
+
+def _resolve_candidate_obligation(cur, company: str, candidate: dict[str, Any]) -> int:
+    if candidate.get("source_type") == "TAX_DOC":
+        return _ensure_obligation_from_tax_doc(cur, company, int(candidate["tax_document_id"]))
+    return int(candidate.get("obligation_id") or candidate["id"])
+
+
+def _auto_match_statement(cur, statement_id: int, post_matched: bool = True) -> dict[str, Any]:
+    matched = 0
+    posted = 0
+    blocked: list[dict[str, Any]] = []
+    cur.execute("""
+        SELECT id FROM corporate_card_transactions
+        WHERE statement_id=%s AND transaction_type='PURCHASE' AND match_status='UNMATCHED'
+        ORDER BY transaction_date, id
+    """, (statement_id,))
+    ids = [row["id"] for row in cur.fetchall()]
+    for tx_id in ids:
+        candidates = _match_candidates(cur, tx_id)
+        if not candidates:
+            continue
+        best = candidates[0]
+        if int(best.get("score") or 0) < 60:
+            continue
+        if len(candidates) > 1 and int(best.get("score") or 0) == int(candidates[1].get("score") or 0):
+            continue
+        obligation_id = _resolve_candidate_obligation(cur, best.get("company_code") or "MSL-CR", best)
+        cur.execute("""
+            UPDATE corporate_card_transactions
+            SET matched_obligation_id=%s, match_status='MATCHED_ITP', deductible_status='DEDUCTIBLE', requires_invoice=FALSE
+            WHERE id=%s
+            RETURNING *
+        """, (obligation_id, tx_id))
+        tx = cur.fetchone()
+        matched += 1
+        if post_matched and tx:
+            try:
+                if _post_card_transaction(cur, dict(tx)):
+                    posted += 1
+            except HTTPException as exc:
+                blocked.append({"transaction_id": tx_id, "reason": str(exc.detail)})
+    return {"matched": matched, "posted": posted, "blocked": blocked}
+
+
+def _find_or_create_notification_transaction(cur, payload: BacNotificationRequest, company: str) -> dict[str, Any]:
+    reference = (payload.reference or payload.authorization or "").strip() or None
+    amount = _money(payload.amount)
+    currency = (payload.currency or "CRC").upper()
+    merchant = (payload.merchant or payload.subject or "Notificacion BAC").strip()
+    cur.execute("""
+        SELECT *
+        FROM corporate_card_transactions
+        WHERE company_code=%s
+          AND transaction_type='PURCHASE'
+          AND currency=%s
+          AND ABS(COALESCE(amount_original,0)-%s) <= 2
+          AND transaction_date BETWEEN (%s::date - INTERVAL '3 days') AND (%s::date + INTERVAL '3 days')
+          AND (%s IS NULL OR card_last4=%s)
+          AND (
+              %s IS NULL
+              OR reference=%s
+              OR %s ILIKE '%%' || COALESCE(reference,'') || '%%'
+              OR COALESCE(description,'') ILIKE '%%' || %s || '%%'
+              OR COALESCE(merchant,'') ILIKE '%%' || %s || '%%'
+          )
+        ORDER BY
+          CASE WHEN reference=%s THEN 0 ELSE 1 END,
+          ABS(COALESCE(amount_original,0)-%s),
+          id DESC
+        LIMIT 1
+    """, (
+        company,
+        currency,
+        amount,
+        payload.transaction_date,
+        payload.transaction_date,
+        payload.card_last4,
+        payload.card_last4,
+        reference,
+        reference,
+        reference,
+        merchant,
+        merchant,
+        reference,
+        amount,
+    ))
+    existing = cur.fetchone()
+    if existing:
+        return dict(existing)
+    cur.execute("""
+        INSERT INTO corporate_card_transactions(
+            statement_id, company_code, card_last4, user_name, transaction_type,
+            reference, transaction_date, description, merchant, currency,
+            amount_original, amount_crc, fiscal_category, deductible_status,
+            requires_invoice, notes
+        ) VALUES(
+            NULL, %s, %s, %s, 'PURCHASE',
+            %s, %s, %s, %s, %s,
+            %s, %s, 'SIN_CLASIFICAR', 'PENDING_REVIEW',
+            TRUE, %s
+        )
+        RETURNING *
+    """, (
+        company,
+        payload.card_last4,
+        payload.holder_name,
+        reference,
+        payload.transaction_date,
+        merchant,
+        merchant,
+        currency,
+        amount,
+        amount if currency == "CRC" else Decimal("0.00"),
+        f"Creado desde notificacion BAC autorizacion {payload.authorization or ''} referencia {payload.reference or ''}".strip(),
+    ))
+    return dict(cur.fetchone())
+
+
+@router.post("/bac-notifications/import")
+def import_bac_notification(
+    payload: BacNotificationRequest,
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+    conn=Depends(get_db),
+):
+    company = company_code(payload.company_code, header_value=x_company_code)
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        ensure_schema(cur)
+        amount = _money(payload.amount)
+        currency = (payload.currency or "CRC").upper()
+        cur.execute("""
+            INSERT INTO corporate_card_bac_notifications(
+                company_code, mailbox, folder, message_id, subject, merchant,
+                transaction_date, currency, amount, card_last4, authorization_code,
+                reference, holder_name
+            ) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            ON CONFLICT(
+                company_code,
+                (COALESCE(reference,'')),
+                (COALESCE(authorization_code,'')),
+                (COALESCE(card_last4,'')),
+                transaction_date,
+                currency,
+                amount
+            ) DO UPDATE SET
+                mailbox=EXCLUDED.mailbox,
+                folder=EXCLUDED.folder,
+                message_id=EXCLUDED.message_id,
+                subject=EXCLUDED.subject,
+                merchant=EXCLUDED.merchant,
+                holder_name=EXCLUDED.holder_name,
+                updated_at=NOW()
+            RETURNING *
+        """, (
+            company,
+            payload.mailbox,
+            payload.folder,
+            payload.message_id,
+            payload.subject,
+            payload.merchant,
+            payload.transaction_date,
+            currency,
+            amount,
+            payload.card_last4,
+            payload.authorization,
+            payload.reference,
+            payload.holder_name,
+        ))
+        notification = cur.fetchone()
+        tx = _find_or_create_notification_transaction(cur, payload, company)
+        candidates = _match_candidates(cur, int(tx["id"]))
+        posted = False
+        status = "SEMI_REQUIRED"
+        blocked_reason = None
+        obligation_id = tx.get("matched_obligation_id")
+        if not obligation_id and candidates:
+            best = candidates[0]
+            if int(best.get("score") or 0) >= 60 and not (
+                len(candidates) > 1 and int(best.get("score") or 0) == int(candidates[1].get("score") or 0)
+            ):
+                obligation_id = _resolve_candidate_obligation(cur, company, best)
+                cur.execute("""
+                    UPDATE corporate_card_transactions
+                    SET matched_obligation_id=%s, match_status='MATCHED_ITP',
+                        deductible_status='DEDUCTIBLE', requires_invoice=FALSE
+                    WHERE id=%s
+                    RETURNING *
+                """, (obligation_id, tx["id"]))
+                tx = dict(cur.fetchone())
+        if obligation_id:
+            status = "MATCHED"
+            try:
+                posted = bool(_post_card_transaction(cur, dict(tx)))
+                if posted:
+                    status = "POSTED"
+            except HTTPException as exc:
+                blocked_reason = str(exc.detail)
+        cur.execute("""
+            UPDATE corporate_card_bac_notifications
+            SET matched_transaction_id=%s, matched_obligation_id=%s, status=%s, updated_at=NOW()
+            WHERE id=%s
+        """, (tx["id"], obligation_id, status, notification["id"]))
+        conn.commit()
+        return {
+            "status": status,
+            "notification_id": notification["id"],
+            "transaction_id": tx["id"],
+            "matched_obligation_id": obligation_id,
+            "posted": posted,
+            "blocked_reason": blocked_reason,
+            "candidates": candidates[:10],
+        }
 
 
 @router.get("/transactions/{transaction_id}/match-candidates")
@@ -805,32 +1264,11 @@ def match_candidates(transaction_id: int, conn=Depends(get_db)):
 
 @router.post("/statements/{statement_id}/auto-match")
 def auto_match(statement_id: int, conn=Depends(get_db)):
-    matched = 0
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         ensure_schema(cur)
-        cur.execute("""
-            SELECT id FROM corporate_card_transactions
-            WHERE statement_id=%s AND transaction_type='PURCHASE' AND match_status='UNMATCHED'
-            ORDER BY transaction_date, id
-        """, (statement_id,))
-        ids = [row["id"] for row in cur.fetchall()]
-        for tx_id in ids:
-            candidates = _match_candidates(cur, tx_id)
-            if not candidates:
-                continue
-            best = candidates[0]
-            if int(best.get("score") or 0) < 60:
-                continue
-            if len(candidates) > 1 and int(best.get("score") or 0) == int(candidates[1].get("score") or 0):
-                continue
-            cur.execute("""
-                UPDATE corporate_card_transactions
-                SET matched_obligation_id=%s, match_status='MATCHED_ITP', deductible_status='DEDUCTIBLE', requires_invoice=FALSE
-                WHERE id=%s
-            """, (best["id"], tx_id))
-            matched += 1
+        result = _auto_match_statement(cur, statement_id, post_matched=True)
         conn.commit()
-    return {"status": "ok", "matched": matched}
+    return {"status": "ok", **result}
 
 
 @router.post("/transactions/{transaction_id}/match-itp")

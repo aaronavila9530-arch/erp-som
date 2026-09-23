@@ -16,6 +16,7 @@ from pathlib import Path
 
 from api_client import (
     post_bac_partner_transfer_api,
+    post_corporate_card_bac_notification_api,
     post_corporate_card_history_api,
     post_corporate_card_statement_pdf_api,
     upload_tax_response_auto_api,
@@ -424,6 +425,84 @@ def _parse_bac_money(text):
     return amount, currency
 
 
+def _parse_bac_card_date(text, fallback_date):
+    months={
+        "jan":1,"ene":1,"feb":2,"mar":3,"apr":4,"abr":4,"may":5,"jun":6,
+        "jul":7,"aug":8,"ago":8,"sep":9,"set":9,"oct":10,"nov":11,"dec":12,"dic":12,
+    }
+    match=re.search(r"\b([A-Za-z]{3})\s+(\d{1,2}),\s*(\d{4})\b", text or "", re.IGNORECASE)
+    if match:
+        month=months.get(match.group(1).lower())
+        if month:
+            try:
+                return date(int(match.group(3)),month,int(match.group(2)))
+            except ValueError:
+                pass
+    match=re.search(r"\b(\d{1,2})[-/](\d{1,2})[-/](\d{4})\b", text or "")
+    if match:
+        day,month,year=(int(match.group(1)),int(match.group(2)),int(match.group(3)))
+        try:
+            return date(year,month,day)
+        except ValueError:
+            pass
+    return fallback_date
+
+
+def _field_after_label(text, label):
+    pattern=re.compile(
+        rf"{label}\s*:\s*(.+?)(?=\s+(?:Ciudad y pa[ií]s|Fecha|MASTER|VISA|Autorizaci[oó]n|Referencia|Tipo de Transacci[oó]n|Monto)\s*:|$)",
+        re.IGNORECASE | re.DOTALL,
+    )
+    match=pattern.search(text or "")
+    if not match:
+        return ""
+    return re.sub(r"\s+"," ",match.group(1)).strip()
+
+
+def _parse_bac_card_transaction(message, account, folder_name):
+    text=_message_text(message)
+    normalized=_normalized(text)
+    if "monto" not in normalized:
+        return None
+    if "transferencia local" in normalized or "realizo una transferencia" in normalized:
+        return None
+    if "tipo de transaccion" not in normalized and "notificacion de transaccion" not in normalized:
+        return None
+    merchant=_field_after_label(text,r"Comercio")
+    money=_parse_bac_money(text)
+    if not money:
+        amount_match=re.search(r"\b(CRC|USD|COLONES|COLON|₡|\$)\s*([0-9][0-9.,]*)", text or "", re.IGNORECASE)
+        if not amount_match:
+            return None
+        raw=f"{amount_match.group(2)} {amount_match.group(1)}"
+        money=_parse_bac_money(f"monto de {raw}")
+    if not money:
+        return None
+    amount,currency=money
+    card_match=re.search(r"\b(?:MASTER|VISA)\s*:\s*\*+(\d{4})", text or "", re.IGNORECASE)
+    auth_match=re.search(r"Autorizaci[oó]n\s*:\s*([0-9A-Za-z-]+)", text or "", re.IGNORECASE)
+    ref_match=re.search(r"Referencia\s*:\s*([0-9A-Za-z-]+)", text or "", re.IGNORECASE)
+    holder_match=re.search(r"Hola\s+(.+?)(?:\n|A continuaci[oó]n)", text or "", re.IGNORECASE | re.DOTALL)
+    tx_date=_parse_bac_card_date(text,_message_date(message))
+    if not merchant and not ref_match and not auth_match:
+        return None
+    return {
+        "company_code":"MSL-CR",
+        "mailbox":account,
+        "folder":folder_name,
+        "message_id":str(getattr(message,"EntryID","") or ""),
+        "subject":str(getattr(message,"Subject","") or ""),
+        "merchant":merchant or str(getattr(message,"Subject","") or ""),
+        "transaction_date":tx_date.isoformat(),
+        "currency":currency,
+        "amount":str(amount),
+        "card_last4":card_match.group(1) if card_match else None,
+        "authorization":auth_match.group(1).strip() if auth_match else None,
+        "reference":ref_match.group(1).strip() if ref_match else None,
+        "holder_name":re.sub(r"\s+"," ",holder_match.group(1)).strip() if holder_match else "",
+    }
+
+
 def _parse_bac_partner_transfer(message, account, folder_name):
     text=_message_text(message)
     normalized=_normalized(text)
@@ -476,6 +555,44 @@ def _scan_bac_partner_transfer_folder(folder,state,summary,account,folder_name,l
             break
         scanned+=1
         message=items.Item(index)
+        card_parsed=_parse_bac_card_transaction(message,account,folder_name)
+        if card_parsed:
+            key=hashlib.sha256(
+                f"BAC_CARD|{account}|{card_parsed.get('reference')}|{card_parsed.get('authorization')}|{card_parsed.get('card_last4')}|{card_parsed['transaction_date']}|{card_parsed['amount']}|{card_parsed['currency']}".encode("utf-8")
+            ).hexdigest()
+            if state.get(key,{}).get("status") in {"POSTED","MATCHED","DUPLICATE"}:
+                continue
+            imported_messages+=1
+            summary["bac_card_messages"]+=1
+            try:
+                response=post_corporate_card_bac_notification_api(card_parsed)
+                status=response.get("status") or "IMPORTED"
+                if response.get("posted"):
+                    summary["bac_card_posted"]+=1
+                elif status in {"MATCHED","SEMI_REQUIRED"}:
+                    summary["bac_card_matched"]+=1
+                detail=f"Movimiento {response.get('transaction_id')} obligacion {response.get('matched_obligation_id') or '-'}"
+                if response.get("blocked_reason"):
+                    detail+=f" | {response.get('blocked_reason')}"
+                state[key]={"status":status,"updated_at":str(getattr(message,"ReceivedTime","") or ""),"reference":card_parsed.get("reference")}
+            except Exception as exc:
+                status="ERROR"
+                detail=str(exc)
+                summary["bac_card_errors"]+=1
+                summary["errors"]+=1
+                state[key]={"status":"ERROR","updated_at":str(getattr(message,"ReceivedTime","") or ""),"reference":card_parsed.get("reference")}
+            summary["results"].append({
+                "received": str(getattr(message,"ReceivedTime","") or ""),
+                "subject": card_parsed.get("subject") or "Notificacion BAC tarjeta",
+                "filename": card_parsed.get("reference") or card_parsed.get("authorization") or card_parsed.get("merchant"),
+                "status": status,
+                "detail": detail,
+                "company_code": card_parsed["company_code"],
+                "account": account,
+                "type": "BAC_CARD_NOTIFICATION",
+            })
+            _save_state(state)
+            continue
         parsed=_parse_bac_partner_transfer(message,account,folder_name)
         if not parsed:
             continue
@@ -630,6 +747,7 @@ def scan_and_import(max_messages=None,progress=None, process_corporate_cards=Non
         "status":"ok","messages":0,"attachments":0,"xml":0,"imported":0,"duplicates":0,"errors":0,
         "card_pdfs":0,"card_imported":0,"card_duplicates":0,"card_errors":0,
         "bac_partner_messages":0,"bac_partner_imported":0,"bac_partner_errors":0,
+        "bac_card_messages":0,"bac_card_posted":0,"bac_card_matched":0,"bac_card_errors":0,
         "results":results
     }
     _update_runtime_status(last_started_at=time.strftime("%Y-%m-%d %H:%M:%S"),last_error=None)

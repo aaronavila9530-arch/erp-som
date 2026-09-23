@@ -335,7 +335,14 @@ class PopupCorporateCards(tk.Toplevel):
             return
         try:
             result = post_corporate_card_statement_pdf_api(path)
-            messagebox.showinfo("Tarjetas corporativas", f"PDF importado. Movimientos nuevos: {result.get('transactions_inserted', 0)}")
+            auto = result.get("auto_match") or {}
+            messagebox.showinfo(
+                "Tarjetas corporativas",
+                "PDF importado.\n"
+                f"Movimientos nuevos: {result.get('transactions_inserted', 0)}\n"
+                f"Cruces encontrados: {auto.get('matched', 0)}\n"
+                f"Pagos aplicados: {auto.get('posted', 0)}",
+            )
             self.selected_statement_id = None
             self._load()
         except Exception as exc:
@@ -347,7 +354,12 @@ class PopupCorporateCards(tk.Toplevel):
         try:
             result = post_corporate_card_auto_match_api(self.selected_statement_id)
             self._load_transactions(self.selected_statement_id)
-            messagebox.showinfo("Auto cruce ITP", f"Cruces aplicados: {result.get('matched', 0)}")
+            messagebox.showinfo(
+                "Auto cruce ITP",
+                f"Cruces encontrados: {result.get('matched', 0)}\n"
+                f"Pagos aplicados: {result.get('posted', 0)}\n"
+                f"Bloqueados por periodo/cierre: {len(result.get('blocked') or [])}",
+            )
         except Exception as exc:
             messagebox.showerror("Auto cruce ITP", str(exc))
 
