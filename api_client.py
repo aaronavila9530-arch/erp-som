@@ -4766,6 +4766,14 @@ def _ensure_local_biweekly_schema(cur):
     cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS paid_with_card BOOLEAN NOT NULL DEFAULT FALSE")
     cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS card_paid_at DATE")
     cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS card_holder_name TEXT")
+    cur.execute("""
+        INSERT INTO accounting_accounts(account_code, account_name, account_type, normal_balance, account_level, parent_account, accepts_posting, active)
+        VALUES
+          ('500-001-001-063', 'Servicios básicos', 'GASTO', 'DEBIT', 5, '500-001-001', TRUE, TRUE),
+          ('500-001-001-062', 'Gastos por supermercado', 'GASTO', 'DEBIT', 5, '500-001-001', TRUE, TRUE)
+        ON CONFLICT(account_code) DO UPDATE
+        SET account_name=EXCLUDED.account_name, accepts_posting=TRUE, active=TRUE
+    """)
 
 
 def _local_load_biweekly_draft(cur, company: str, period: str, fortnight: int):
@@ -5034,8 +5042,8 @@ def _local_biweekly_obligations_apply(payload: dict) -> dict:
             "Tarjetas de credito": ("2.1.02.10", "Tarjeta corporativa BAC por pagar"),
             "Telefonia": ("500-001-001-023", "Telefonos"),
             "Viaticos": ("500-001-001-044", "Viaticos"),
-            "Alquiler": ("500-001-001-045", "Alquileres"),
-            "Internet": ("500-001-001-006", "Servicios Profesionales"),
+            "Alquiler": ("5.1.05", "Gastos por alquiler"),
+            "Internet": ("500-001-001-063", "Servicios básicos"),
             "Surveyors": ("2.1.01.01", "Cuentas por pagar-comerciales"),
         }
         return mapping.get(category, ("5.4", "Otros gastos"))

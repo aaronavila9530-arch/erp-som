@@ -14,6 +14,7 @@ if str(BACKEND) not in sys.path:
 
 from database import get_conn, release_conn  # noqa: E402
 from routers.corporate_cards import (  # noqa: E402
+    apply_card_merchant_classification,
     _json_safe,
     ensure_schema,
     parse_bac_statement,
@@ -75,6 +76,7 @@ def import_file(cur, path: Path, company: str) -> tuple[str, str]:
     statement_id = cur.fetchone()["id"]
     inserted = 0
     for tx in parsed.get("transactions") or []:
+        classified = apply_card_merchant_classification(tx)
         cur.execute("""
             INSERT INTO corporate_card_transactions(
                 statement_id, company_code, card_last4, user_name, transaction_type,
@@ -84,11 +86,14 @@ def import_file(cur, path: Path, company: str) -> tuple[str, str]:
             ) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             ON CONFLICT(statement_id, reference, transaction_date, amount_original, currency) DO NOTHING
         """, (
-            statement_id, company, tx.get("card_last4"), tx.get("user_name"), tx.get("transaction_type"),
-            tx.get("reference"), tx.get("transaction_date"), tx.get("description"), tx.get("merchant"),
-            tx.get("currency"), tx.get("amount_original"), tx.get("amount_crc"),
-            "SIN_CLASIFICAR", "PENDING_REVIEW", tx.get("transaction_type") == "PURCHASE",
-            None, None,
+            statement_id, company, classified.get("card_last4"), classified.get("user_name"), classified.get("transaction_type"),
+            classified.get("reference"), classified.get("transaction_date"), classified.get("description"), classified.get("merchant"),
+            classified.get("currency"), classified.get("amount_original"), classified.get("amount_crc"),
+            classified.get("fiscal_category") or "SIN_CLASIFICAR",
+            classified.get("deductible_status") or "PENDING_REVIEW",
+            bool(classified.get("requires_invoice", classified.get("transaction_type") == "PURCHASE")),
+            classified.get("expense_account_code"),
+            classified.get("expense_account_name"),
         ))
         inserted += cur.rowcount
     return "IMPORTED", f"{path.name}: {period} tarjeta {parsed.get('card_last4')} movimientos {inserted}"

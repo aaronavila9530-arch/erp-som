@@ -27,11 +27,14 @@ def _fmt_money(value):
 
 EXPENSE_PRESETS = [
     ("Alimentacion", "550-001-000-050", "Alimentación", "DEDUCTIBLE"),
+    ("Supermercado", "500-001-001-062", "Gastos por supermercado", "DEDUCTIBLE"),
     ("Transporte", "500-001-001-050", "Transporte", "DEDUCTIBLE"),
     ("Combustible", "500-001-001-042", "Combustible", "DEDUCTIBLE"),
     ("Telefonos", "500-001-001-023", "Teléfonos", "DEDUCTIBLE"),
     ("Hospedaje", "500-001-001-043", "Hospedaje", "DEDUCTIBLE"),
     ("Viaticos", "500-001-001-044", "Viáticos", "DEDUCTIBLE"),
+    ("Alquiler", "5.1.05", "Gastos por alquiler", "DEDUCTIBLE"),
+    ("Servicios basicos", "500-001-001-063", "Servicios básicos", "DEDUCTIBLE"),
     ("Pasajes avion", "500-001-001-054", "Pasajes de avión", "DEDUCTIBLE"),
     ("Oficina", "500-001-001-036", "Papeleria y Utiles de Oficina", "DEDUCTIBLE"),
     ("Mantenimiento vehiculo", "500-001-001-038", "Mant. y Reparación Vehículos", "DEDUCTIBLE"),

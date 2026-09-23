@@ -6,6 +6,7 @@ from hashlib import sha256
 from io import BytesIO
 import calendar
 import re
+import unicodedata
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, UploadFile, File
@@ -29,18 +30,75 @@ PENDING_CARD_CODE = "1.1.99.10"
 PENDING_CARD_NAME = "Cargos tarjeta pendientes de clasificar"
 SUPPLIER_AP_CODE = "2.1.01.01"
 SUPPLIER_AP_NAME = "Cuentas por pagar-comerciales"
+SUPERMARKET_EXPENSE_CODE = "500-001-001-062"
+SUPERMARKET_EXPENSE_NAME = "Gastos por supermercado"
+BASIC_SERVICES_EXPENSE_CODE = "500-001-001-063"
+BASIC_SERVICES_EXPENSE_NAME = "Servicios básicos"
+RENT_EXPENSE_CODE = "5.1.05"
+RENT_EXPENSE_NAME = "Gastos por alquiler"
 CARD_EXPENSE_ACCOUNTS = [
     ("550-001-000-050", "Alimentación"),
+    (SUPERMARKET_EXPENSE_CODE, SUPERMARKET_EXPENSE_NAME),
     ("500-001-001-050", "Transporte"),
     ("500-001-001-042", "Combustible"),
     ("500-001-001-023", "Teléfonos"),
     ("500-001-001-043", "Hospedaje"),
     ("500-001-001-044", "Viáticos"),
+    (RENT_EXPENSE_CODE, RENT_EXPENSE_NAME),
+    (BASIC_SERVICES_EXPENSE_CODE, BASIC_SERVICES_EXPENSE_NAME),
     ("500-001-001-054", "Pasajes de avión"),
     ("500-001-001-036", "Papeleria y Utiles de Oficina"),
     ("500-001-001-038", "Mant. y Reparación Vehículos"),
     ("550-001-000-059", "Gastos Médicos"),
     ("500-001-001-006", "Servicios Profesionales"),
+]
+
+CARD_MERCHANT_EXPENSE_RULES = [
+    {
+        "category": "Supermercado",
+        "account_code": SUPERMARKET_EXPENSE_CODE,
+        "account_name": SUPERMARKET_EXPENSE_NAME,
+        "needles": [
+            "AMPM", "AM PM", "PRISMAR", "AUTOMERCADO", "AUTO MERCADO",
+            "CORPORACION DE SUPERMERCADOS UNIDOS", "SUPERMERCADOS UNIDOS",
+            "MAS X MENOS", "MASXMENOS", "PALI", "VINDI", "WALMART",
+        ],
+    },
+    {
+        "category": "Alimentacion",
+        "account_code": "550-001-000-050",
+        "account_name": "Alimentación",
+        "needles": [
+            "NINA CAFE", "ROSTIPOLLOS", "LA CASONA DEL MAIZ", "CAFE KIVU",
+            "SODA SAZON COLOMBIANO", "GRUPO NIMAX", "SERVICIOS DE PASTELERIA",
+            "INVERSIONES GRANDES AMIGOS", "FENT COSTA RICA",
+            "RESTAURANTE TIPICO DE FRAIJANES", "RESTAURANTE", "SODA ", "CAFE ",
+            "CAFETERIA", "PASTELERIA", "PIZZA", "POLLO", "COMIDA",
+        ],
+    },
+    {
+        "category": "Combustible",
+        "account_code": "500-001-001-042",
+        "account_name": "Combustible",
+        "needles": [
+            "GRUPO POJI", "ESTACION DE SERVICIO SAN GERARDO",
+            "ESTACION DE SERVICIO EUSSE", "BARRANCA", "ESTACION DE SERVICIO ZURQUI",
+            "MI GAS RADIAL COYOL", "PETROLEOS DELTA", "PETRÓLEOS DELTA",
+            "GASOLINERA", "ESTACION DE SERVICIO", "SERVICENTRO", "COMBUSTIBLE",
+        ],
+    },
+    {
+        "category": "Alquiler",
+        "account_code": RENT_EXPENSE_CODE,
+        "account_name": RENT_EXPENSE_NAME,
+        "needles": ["PRIME PROPERTIES", "PRIME PROPERTY"],
+    },
+    {
+        "category": "Servicios basicos",
+        "account_code": BASIC_SERVICES_EXPENSE_CODE,
+        "account_name": BASIC_SERVICES_EXPENSE_NAME,
+        "needles": ["AMERICAN DATA", "AMERICAN DATA NETWORK", "DATA NETWORK"],
+    },
 ]
 
 
@@ -124,6 +182,48 @@ def _parse_money(text: str | None) -> Decimal:
     if raw.endswith("-"):
         raw = "-" + raw[:-1]
     return _money(raw)
+
+
+def _merchant_norm(value: Any) -> str:
+    text = str(value or "")
+    text = text.replace("\ufffc", " ").replace("\u0000", " ")
+    text = "".join(
+        char for char in unicodedata.normalize("NFKD", text)
+        if not unicodedata.combining(char)
+    )
+    return re.sub(r"[^A-Z0-9]+", " ", text.upper()).strip()
+
+
+def classify_card_merchant(*values: Any) -> dict[str, str] | None:
+    haystack = _merchant_norm(" ".join(str(value or "") for value in values))
+    if not haystack:
+        return None
+    padded = f" {haystack} "
+    for rule in CARD_MERCHANT_EXPENSE_RULES:
+        for needle in rule["needles"]:
+            normalized_needle = _merchant_norm(needle)
+            if normalized_needle and normalized_needle in padded:
+                return {
+                    "fiscal_category": rule["category"],
+                    "deductible_status": "DEDUCTIBLE",
+                    "requires_invoice": False,
+                    "expense_account_code": rule["account_code"],
+                    "expense_account_name": rule["account_name"],
+                }
+    return None
+
+
+def apply_card_merchant_classification(tx: dict[str, Any]) -> dict[str, Any]:
+    classified = classify_card_merchant(tx.get("merchant"), tx.get("description"), tx.get("notes"))
+    if not classified:
+        return tx
+    tx = dict(tx)
+    tx["fiscal_category"] = tx.get("fiscal_category") or classified["fiscal_category"]
+    tx["deductible_status"] = classified["deductible_status"]
+    tx["requires_invoice"] = False
+    tx["expense_account_code"] = classified["expense_account_code"]
+    tx["expense_account_name"] = classified["expense_account_name"]
+    return tx
 
 
 def _parse_date(text: str | None) -> date | None:
@@ -727,6 +827,7 @@ def _settlement_lines(bank_code: str, bank_name: str, description: str, amount_c
 
 
 def _post_card_transaction(cur, tx: dict[str, Any], force_closed_period: bool = False) -> int | None:
+    tx = apply_card_merchant_classification(tx)
     tx_date = tx.get("transaction_date")
     if not tx_date:
         return None
@@ -786,6 +887,23 @@ def _post_card_transaction(cur, tx: dict[str, Any], force_closed_period: bool = 
         deductible = fiscal_status != "NON_DEDUCTIBLE"
         account_code = tx.get("expense_account_code") or (DEFAULT_EXPENSE_CODE if deductible else DEFAULT_NON_DEDUCTIBLE_CODE)
         account_name = tx.get("expense_account_name") or (DEFAULT_EXPENSE_NAME if deductible else DEFAULT_NON_DEDUCTIBLE_NAME)
+        if tx.get("expense_account_code") or tx.get("fiscal_category"):
+            cur.execute("""
+                UPDATE corporate_card_transactions
+                SET fiscal_category=COALESCE(%s, fiscal_category),
+                    deductible_status=%s,
+                    requires_invoice=%s,
+                    expense_account_code=%s,
+                    expense_account_name=%s
+                WHERE id=%s
+            """, (
+                tx.get("fiscal_category"),
+                tx.get("deductible_status") or fiscal_status,
+                bool(tx.get("requires_invoice")),
+                account_code,
+                account_name,
+                tx["id"],
+            ))
         entry_id = _post_entry(cur, tx["company_code"], tx_date, description, "CORP_CARD_EXPENSE", tx["id"], [
             {"account_code": account_code, "account_name": account_name, "debit": amount_crc, "credit": 0, "description": description},
             {"account_code": CARD_PAYABLE_CODE, "account_name": CARD_PAYABLE_NAME, "debit": 0, "credit": amount_crc, "description": description},
@@ -864,6 +982,7 @@ def import_statement_pdf(
         statement = cur.fetchone()
         inserted = 0
         for tx in parsed.get("transactions") or []:
+            classified = apply_card_merchant_classification(tx)
             cur.execute("""
                 INSERT INTO corporate_card_transactions(
                     statement_id, company_code, card_last4, user_name, transaction_type,
@@ -873,11 +992,14 @@ def import_statement_pdf(
                 ) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 ON CONFLICT(statement_id, reference, transaction_date, amount_original, currency) DO NOTHING
             """, (
-                statement["id"], company, tx.get("card_last4"), tx.get("user_name"), tx.get("transaction_type"),
-                tx.get("reference"), tx.get("transaction_date"), tx.get("description"), tx.get("merchant"),
-                tx.get("currency"), tx.get("amount_original"), tx.get("amount_crc"),
-                "SIN_CLASIFICAR", "PENDING_REVIEW", tx.get("transaction_type") == "PURCHASE",
-                None, None,
+                statement["id"], company, classified.get("card_last4"), classified.get("user_name"), classified.get("transaction_type"),
+                classified.get("reference"), classified.get("transaction_date"), classified.get("description"), classified.get("merchant"),
+                classified.get("currency"), classified.get("amount_original"), classified.get("amount_crc"),
+                classified.get("fiscal_category") or "SIN_CLASIFICAR",
+                classified.get("deductible_status") or "PENDING_REVIEW",
+                bool(classified.get("requires_invoice", classified.get("transaction_type") == "PURCHASE")),
+                classified.get("expense_account_code"),
+                classified.get("expense_account_name"),
             ))
             inserted += cur.rowcount
         auto_result = _auto_match_statement(cur, int(statement["id"]), post_matched=True)
@@ -1131,17 +1253,22 @@ def _find_or_create_notification_transaction(cur, payload: BacNotificationReques
     existing = cur.fetchone()
     if existing:
         return dict(existing)
+    classified = apply_card_merchant_classification({
+        "merchant": merchant,
+        "description": merchant,
+        "transaction_type": "PURCHASE",
+    })
     cur.execute("""
         INSERT INTO corporate_card_transactions(
             statement_id, company_code, card_last4, user_name, transaction_type,
             reference, transaction_date, description, merchant, currency,
             amount_original, amount_crc, fiscal_category, deductible_status,
-            requires_invoice, notes
+            requires_invoice, expense_account_code, expense_account_name, notes
         ) VALUES(
             NULL, %s, %s, %s, 'PURCHASE',
             %s, %s, %s, %s, %s,
-            %s, %s, 'SIN_CLASIFICAR', 'PENDING_REVIEW',
-            TRUE, %s
+            %s, %s, %s, %s,
+            %s, %s, %s, %s
         )
         RETURNING *
     """, (
@@ -1155,6 +1282,11 @@ def _find_or_create_notification_transaction(cur, payload: BacNotificationReques
         currency,
         amount,
         amount if currency == "CRC" else Decimal("0.00"),
+        classified.get("fiscal_category") or "SIN_CLASIFICAR",
+        classified.get("deductible_status") or "PENDING_REVIEW",
+        bool(classified.get("requires_invoice", True)),
+        classified.get("expense_account_code"),
+        classified.get("expense_account_name"),
         f"Creado desde notificacion BAC autorizacion {payload.authorization or ''} referencia {payload.reference or ''}".strip(),
     ))
     return dict(cur.fetchone())
