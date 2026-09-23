@@ -4826,15 +4826,15 @@ def _local_load_biweekly_carryover_drafts(cur, company: str, period: str, fortni
         FROM itp_biweekly_payment_batches b
         JOIN itp_biweekly_payment_lines l ON l.batch_id = b.id
         WHERE b.company_code=%s
-          AND b.status='DRAFT'
           AND (b.period < %s OR (b.period=%s AND b.fortnight < %s))
           AND COALESCE(l.amount,0) > 0
+          AND NULLIF(TRIM(COALESCE(l.bank_voucher, '')), '') IS NULL
           AND NOT EXISTS (
               SELECT 1
               FROM itp_biweekly_payment_batches pb
               JOIN itp_biweekly_payment_lines pl ON pl.batch_id = pb.id
               WHERE pb.company_code = b.company_code
-                AND pb.status <> 'DRAFT'
+                AND NULLIF(TRIM(COALESCE(pl.bank_voucher, '')), '') IS NOT NULL
                 AND (
                     (l.obligation_id IS NOT NULL AND pl.obligation_id = l.obligation_id)
                     OR (
