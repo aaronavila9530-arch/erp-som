@@ -18,7 +18,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20260923-accounting-outlook-v1"
+_ASSET_VERSION = "20260923-accounting-web-desktop-v2"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Servicios, facturación, CxC e informes desde agosto en adelante."},
@@ -393,15 +393,21 @@ def som_web_home() -> HTMLResponse:
     .finance-filter-row button { justify-self:start; min-width:92px; padding:0 16px; }
     .finance-toolbar { display:flex; flex-wrap:wrap; gap:8px; margin:8px 0 12px; }
     .finance-toolbar button { height:34px; }
-    .accounting-shell { display:grid; gap:12px; }
-    .accounting-hero { display:grid; grid-template-columns:minmax(280px,1fr) repeat(4,minmax(150px,220px)); gap:10px; align-items:stretch; }
+    .accounting-shell { display:grid; gap:10px; }
+    .accounting-hero { display:grid; grid-template-columns:repeat(4,minmax(150px,1fr)); gap:10px; align-items:stretch; }
     .accounting-title { padding:14px; border:1px solid #d7e1ec; border-radius:8px; background:#fff; }
     .accounting-title h2 { margin:0; font-size:26px; line-height:1.1; }
     .accounting-title p { margin:6px 0 0; color:#607089; }
     .accounting-kpi { padding:12px; border:1px solid #d7e1ec; border-radius:8px; background:#f8fbfe; }
     .accounting-kpi span { display:block; color:#64748b; font-size:11px; font-weight:800; letter-spacing:.04em; text-transform:uppercase; }
     .accounting-kpi strong { display:block; margin-top:6px; color:#0f172a; font-size:21px; }
-    .accounting-grid { display:grid; grid-template-columns:280px minmax(0,1fr); gap:12px; align-items:start; }
+    .accounting-company { display:inline-flex; align-items:center; min-height:25px; margin-top:7px; border:1px solid #b8d5f1; border-radius:999px; padding:3px 10px; background:#edf7ff; color:#005da8; font-size:12px; font-weight:800; }
+    .accounting-topline { display:grid; grid-template-columns:minmax(420px,1fr) minmax(360px,520px); gap:10px; align-items:stretch; }
+    .accounting-tc { display:grid; grid-template-columns:minmax(100px,1fr) minmax(120px,1fr) max-content; gap:8px; align-items:end; padding:10px; border:1px solid #d7e1ec; border-radius:8px; background:#fff; }
+    .accounting-tc h3,.accounting-filter-box h3 { grid-column:1/-1; margin:0 0 2px; font-size:13px; color:#334155; font-weight:800; }
+    .accounting-tc label,.accounting-filter-box label { display:grid; gap:4px; color:#475569; font-size:12px; font-weight:700; }
+    .accounting-tc input { height:32px; }
+    .accounting-grid { display:grid; grid-template-columns:1fr; gap:10px; align-items:start; }
     .accounting-side { display:grid; gap:10px; align-content:start; }
     .accounting-box { border:1px solid #d7e1ec; border-radius:8px; background:#fff; padding:10px; }
     .accounting-box h3 { margin:0 0 8px; font-size:12px; color:#334155; font-weight:800; letter-spacing:.04em; text-transform:uppercase; }
@@ -410,9 +416,23 @@ def som_web_home() -> HTMLResponse:
     .accounting-actions button.primary { background:var(--blue); color:white; border-color:var(--blue); }
     .accounting-actions button.green { background:var(--green); color:white; border-color:var(--green); }
     .accounting-actions button.brown { background:var(--brown); color:white; border-color:var(--brown); }
-    .accounting-filters { display:grid; grid-template-columns:150px repeat(6,minmax(130px,1fr)) repeat(4,max-content); gap:9px; align-items:end; padding:10px; border:1px solid #d7e1ec; border-radius:8px; background:#fff; }
+    .accounting-filter-box { padding:10px; border:1px solid #d7e1ec; border-radius:8px; background:#fff; }
+    .accounting-filters { display:grid; grid-template-columns:150px repeat(6,minmax(130px,1fr)) repeat(2,max-content); gap:9px; align-items:end; }
     .accounting-filters label { display:grid; gap:5px; color:#475569; font-size:12px; font-weight:700; text-transform:uppercase; }
     .accounting-filters input,.accounting-filters select { min-width:0; height:34px; }
+    .accounting-radio { display:flex; gap:10px; align-items:center; height:34px; border:1px solid #d7e1ec; border-radius:7px; padding:0 9px; background:#f8fbfe; }
+    .accounting-radio label { display:flex; grid-auto-flow:column; gap:6px; align-items:center; text-transform:none; font-weight:700; color:#334155; }
+    .accounting-radio input { width:14px; height:14px; }
+    .accounting-toolbar { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:10px; padding-top:10px; border-top:1px solid #edf2f7; }
+    .accounting-toolbar button,.accounting-menu summary { height:34px; border:1px solid #cfd9e5; border-radius:7px; padding:0 12px; background:#fff; color:#122033; display:inline-flex; align-items:center; cursor:pointer; font-weight:600; }
+    .accounting-toolbar button.primary { background:var(--blue); color:#fff; border-color:var(--blue); }
+    .accounting-menu { position:relative; }
+    .accounting-menu summary { list-style:none; }
+    .accounting-menu summary::-webkit-details-marker { display:none; }
+    .accounting-menu[open] summary { border-color:#8ab8e5; background:#edf7ff; color:#005da8; }
+    .accounting-menu-panel { position:absolute; z-index:12; top:39px; left:0; min-width:255px; display:grid; gap:4px; padding:8px; border:1px solid #cfd9e5; border-radius:8px; background:#fff; box-shadow:0 18px 42px rgba(15,31,53,.18); }
+    .accounting-menu-panel button { justify-content:flex-start; width:100%; text-align:left; border:0; background:#fff; color:#122033; }
+    .accounting-menu-panel button:hover { background:#edf7ff; }
     .accounting-work { min-width:0; display:grid; gap:10px; }
     .accounting-work .table-wrap { max-height:620px; }
     .accounting-banner { border:1px solid #d7e1ec; border-radius:8px; background:#fff; padding:10px 12px; color:#52637a; }
@@ -526,7 +546,7 @@ def som_web_home() -> HTMLResponse:
       .itp-bi-header,.itp-bi-controls,.itp-bi-body,.itp-bi-summary { grid-template-columns:1fr; }
       .itp-bi-totals { grid-template-columns:1fr; }
       .finance-filter-row,.finance-filter-row.compact { grid-template-columns:1fr; }
-      .accounting-hero,.accounting-grid,.accounting-filters,.accounting-entry-line { grid-template-columns:1fr; }
+      .accounting-hero,.accounting-grid,.accounting-filters,.accounting-entry-line,.accounting-topline,.accounting-tc { grid-template-columns:1fr; }
       .surveyor-line { grid-template-columns:1fr; }
       aside { min-height:auto; }
       header { flex-direction:column; }
@@ -1244,77 +1264,56 @@ def som_web_home() -> HTMLResponse:
       const thisPeriod = new Date().toISOString().slice(0,7);
       target.innerHTML = `
         <div class="accounting-shell">
-          <div class="accounting-hero">
+          <div class="accounting-topline">
             <div class="accounting-title">
               <h2>Accounting</h2>
-              <p>Centro contable web: asientos, cierres, reportes, auxiliares, fiscal, tarjetas y automatizaciones.</p>
+              <p>Asientos, balance de comprobación, reportes, automatizaciones y control fiscal.</p>
+              <span class="accounting-company">Empresa activa: ${esc(selectedCompany())}</span>
             </div>
+            <div class="accounting-tc">
+              <h3>Tipo de Cambio BCCR</h3>
+              <label>TC<input id="accTcRate" readonly placeholder="-" /></label>
+              <label>Fecha<input id="accTcDate" readonly placeholder="-" /></label>
+              <button onclick="fetchAccountingTc()">Buscar TC</button>
+            </div>
+          </div>
+          <div class="accounting-hero">
             <div class="accounting-kpi"><span>Debe periodo</span><strong id="accKpiDebit">-</strong></div>
             <div class="accounting-kpi"><span>Haber periodo</span><strong id="accKpiCredit">-</strong></div>
             <div class="accounting-kpi"><span>IVA neto</span><strong id="accKpiIva">-</strong></div>
             <div class="accounting-kpi"><span>Salud cierre</span><strong id="accKpiHealth">-</strong></div>
           </div>
-          <div class="accounting-filters">
-            <label>Modo<select id="accMode" onchange="toggleAccountingMode()"><option value="SINGLE">Periodo</option><option value="RANGE">Rango</option></select></label>
-            <label id="accPeriodLabel">Periodo<input id="accPeriod" type="month" value="${thisPeriod}" onchange="refreshAccountingDashboard()" /></label>
-            <label id="accFromLabel" style="display:none">Desde<input id="accPeriodFrom" type="month" value="${thisPeriod}" /></label>
-            <label id="accToLabel" style="display:none">Hasta<input id="accPeriodTo" type="month" value="${thisPeriod}" /></label>
-            <label>Reporte<select id="accReport"><option value="ASIENTOS">Asientos</option><option value="ANALITICO_CUENTA">Analítico de cuenta</option><option value="DETALLE_TIPO">Detalle por tipo de cuenta</option><option value="MAYOR">Libro Mayor</option><option value="BC">Balance de Comprobación</option><option value="ESF">Estado de Situación Financiera</option><option value="ER">Estado de Resultados</option><option value="FC">Flujo de Caja</option></select></label>
-            <label>Tipo<select id="accAccountType"><option value="">Todos</option><option>ACTIVO</option><option>PASIVO</option><option>PATRIMONIO</option><option>INGRESO</option><option>COSTO</option><option>GASTO</option></select></label>
-            <label>Cuenta<input id="accAccountCode" list="accAccountList" placeholder="Código o nombre" /><datalist id="accAccountList"></datalist></label>
-            <label>Origen<select id="accOrigin"><option value="">Todos</option><option>ITP</option><option>ITP_PAYMENT</option><option>ITP_BIWEEKLY_PAYMENT</option><option>COLLECTIONS</option><option>INVOICING</option><option>MANUAL</option><option>CASH_APP</option><option>REVERSAL</option><option>CORP_CARD</option><option>CORP_CARD_SETTLEMENT</option></select></label>
-            <button onclick="loadAccountingWeb()">Buscar</button>
-            <button class="secondary" onclick="clearAccountingWeb()">Limpiar</button>
-            <button class="secondary" onclick="exportAccountingReport('xlsx')">Excel</button>
-            <button class="secondary" onclick="exportAccountingReport('pdf')">PDF</button>
+          <div class="accounting-filter-box">
+            <h3>Filtros contables</h3>
+            <div class="accounting-filters">
+              <div class="accounting-radio">
+                <label><input name="accModeRadio" type="radio" value="SINGLE" checked onchange="setAccountingMode('SINGLE')" /> Periodo</label>
+                <label><input name="accModeRadio" type="radio" value="RANGE" onchange="setAccountingMode('RANGE')" /> Rango</label>
+              </div>
+              <input id="accMode" type="hidden" value="SINGLE" />
+              <label id="accPeriodLabel">Periodo<input id="accPeriod" type="month" value="${thisPeriod}" onchange="refreshAccountingDashboard()" /></label>
+              <label id="accFromLabel" style="display:none">Desde<input id="accPeriodFrom" type="month" value="${thisPeriod}" /></label>
+              <label id="accToLabel" style="display:none">Hasta<input id="accPeriodTo" type="month" value="${thisPeriod}" /></label>
+              <label>Origen<select id="accOrigin"><option value="">TODOS</option><option>ITP</option><option>ITP_PAYMENT</option><option>ITP_BIWEEKLY_PAYMENT</option><option>COLLECTIONS</option><option>INVOICING</option><option>MANUAL</option><option>CASH_APP</option><option>REVERSAL</option><option>CORP_CARD</option><option>CORP_CARD_SETTLEMENT</option></select></label>
+              <label>Cuenta<input id="accAccountCode" list="accAccountList" placeholder="TODOS" /><datalist id="accAccountList"></datalist></label>
+              <label>Tipo<select id="accAccountType"><option value="">TODOS</option><option>ACTIVO</option><option>PASIVO</option><option>PATRIMONIO</option><option>INGRESO</option><option>COSTO</option><option>GASTO</option></select></label>
+              <label>Reporte<select id="accReport"><option value="ASIENTOS">Asientos</option><option value="ANALITICO_CUENTA">Analítico de cuenta</option><option value="DETALLE_TIPO">Detalle por tipo de cuenta</option><option value="MAYOR">Libro Mayor</option><option value="BC">Balance de Comprobación</option><option value="ESF">Estado de Situación Financiera</option><option value="ER">Estado de Resultados</option><option value="FC">Flujo de Caja</option></select></label>
+              <button onclick="loadAccountingWeb()">Buscar</button>
+              <button class="secondary" onclick="clearAccountingWeb()">Limpiar</button>
+            </div>
+            <div class="accounting-toolbar">
+              <button class="primary" onclick="selectAccountingReport('ANALITICO_CUENTA')">Analítico</button>
+              ${accountingMenu("Acciones", [["Nuevo asiento","openAccountingManualEntry()"],["Ajustar asiento seleccionado","openAccountingEntryEditor()"],["Enviar a revisión","transitionAccountingEntry('submit')"],["Aprobar","transitionAccountingEntry('approve')"],["Contabilizar","transitionAccountingEntry('post')"],["Reversar asiento seleccionado","reverseAccountingEntry()"],["Cierre mensual guiado","openAccountingGuidedClose()"]])}
+              ${accountingMenu("Reportes", [["Asientos","selectAccountingReport('ASIENTOS')"],["Analítico de cuenta","selectAccountingReport('ANALITICO_CUENTA')"],["Detalle por tipo de cuenta","selectAccountingReport('DETALLE_TIPO')"],["Libro Mayor","selectAccountingReport('MAYOR')"],["Balance de Comprobación","selectAccountingReport('BC')"],["Estado de Situación Financiera","selectAccountingReport('ESF')"],["Estado de Resultados","selectAccountingReport('ER')"],["Flujo de Caja","selectAccountingReport('FC')"],["Estados financieros completos","loadAccountingCompleteStatements()"],["Reporte financiero ejecutivo","loadAccountingExecutive()"]])}
+              ${accountingMenu("Herramientas", [["Mi espacio contable","loadAccountingWorkspace()"],["Auxiliares contables","loadAccountingAuxiliaries()"],["Catálogo maestro de cuentas","loadAccountingAccounts()"],["Activos fijos","loadAccountingFixedAssets()"],["Tarjetas corporativas","loadAccountingCards()"],["Inventarios","loadAccountingInventory()"],["Sincronizar asientos ERP","runAccountingSyncAll()"],["Motor de contabilización","loadAccountingPostingRules()"]])}
+              ${accountingMenu("Avanzado", [["Alertas y validaciones","loadAccountingAlerts()"],["Auditoría por usuario","loadAccountingAudit()"],["Accounting avanzado","loadAccountingAdvancedDashboard()"],["PORTIA contable","runPortiaAccounting()"],["Simulador fiscal multiempresa","loadTaxScenarioPlanner()"],["Centro fiscal Costa Rica","loadAccountingTaxCenter()"],["Biblioteca legal Costa Rica","loadAccountingLegalLibrary()"],["TRIBU-CR 150 IVA","openTaxDeclaration('IVA')"],["102 Impuesto sobre utilidades","openTaxDeclaration('ISU')"]])}
+              <button onclick="exportAccountingReport('xlsx')">Exportar Excel</button>
+              <button onclick="exportAccountingReport('pdf')">Exportar PDF</button>
+            </div>
           </div>
           <div class="accounting-grid">
-            <aside class="accounting-side">
-              <div class="accounting-box"><h3>Acciones</h3><div class="accounting-actions">
-                <button class="primary" onclick="openAccountingManualEntry()">Nuevo asiento</button>
-                <button onclick="openAccountingEntryEditor()">Ajustar asiento seleccionado</button>
-                <button onclick="transitionAccountingEntry('submit')">Enviar a revisión</button>
-                <button onclick="transitionAccountingEntry('approve')">Aprobar</button>
-                <button onclick="transitionAccountingEntry('post')">Contabilizar</button>
-                <button class="brown" onclick="reverseAccountingEntry()">Reversar asiento</button>
-                <button class="green" onclick="openAccountingGuidedClose()">Cierre mensual guiado</button>
-              </div></div>
-              <div class="accounting-box"><h3>Reportes</h3><div class="accounting-actions">
-                ${accountingReportButtons()}
-                <button onclick="loadAccountingCompleteStatements()">Estados financieros completos</button>
-                <button onclick="loadAccountingExecutive()">Reporte financiero ejecutivo</button>
-              </div></div>
-              <div class="accounting-box"><h3>Herramientas</h3><div class="accounting-actions">
-                <button onclick="loadAccountingWorkspace()">Mi espacio contable</button>
-                <button onclick="loadAccountingAuxiliaries()">Auxiliares contables</button>
-                <button onclick="loadAccountingAccounts()">Catálogo maestro de cuentas</button>
-                <button onclick="loadAccountingFixedAssets()">Activos fijos</button>
-                <button onclick="loadAccountingCards()">Tarjetas corporativas</button>
-                <button onclick="loadAccountingInventory()">Inventarios</button>
-                <button onclick="runAccountingSyncAll()">Sincronizar asientos ERP</button>
-                <button onclick="loadAccountingPostingRules()">Motor de contabilización</button>
-              </div></div>
-              <div class="accounting-box"><h3>Avanzado / Fiscal</h3><div class="accounting-actions">
-                <button onclick="loadAccountingAlerts()">Alertas y validaciones</button>
-                <button onclick="loadAccountingAudit()">Auditoría por usuario</button>
-                <button onclick="loadAccountingAdvancedDashboard()">Accounting avanzado</button>
-                <button onclick="runPortiaAccounting()">PORTIA contable</button>
-                <button onclick="loadTaxScenarioPlanner()">Simulador fiscal multiempresa</button>
-                <button onclick="loadAccountingTaxCenter()">Centro fiscal Costa Rica</button>
-                <button onclick="loadAccountingLegalLibrary()">Biblioteca legal Costa Rica</button>
-                <button onclick="openTaxDeclaration('IVA')">Formulario TRIBU-CR 150 IVA</button>
-                <button onclick="openTaxDeclaration('ISU')">102 Impuesto sobre utilidades ISU PJ</button>
-                <button disabled>D-101 pendiente</button>
-                <button disabled>D-270 pendiente</button>
-              </div></div>
-              <div class="accounting-box"><h3>Automatizaciones</h3><div class="accounting-actions">
-                <button class="green" onclick="runGmailFiscalSync()">Gmail fiscal backend ahora</button>
-                <button onclick="loadGmailFiscalStatus()">Estado Gmail backend</button>
-                <button onclick="runAccountingOutlookSync(false)">Revisar Outlook/BAC local</button>
-                <button onclick="runAccountingOutlookSync(true)">Cargar tarjetas 2025-2026</button>
-              </div><div id="accOutlookStatus" class="accounting-banner">Gmail autorizado corre en backend; Outlook local es revisión manual.</div></div>
-            </aside>
             <main class="accounting-work">
+              <div id="accAutomationStatus" class="accounting-banner">Automático: BAC/Gmail cada 15 min; estados de tarjeta se procesan desde PDF recibido y se contabilizan el día 3 del mes.</div>
               <div id="accSelection" class="accounting-banner">Seleccione un asiento desde la tabla para ajustar, aprobar, contabilizar o reversar.</div>
               <div id="accountingResult" class="status">Configure filtros y presione Buscar.</div>
             </main>
@@ -1322,13 +1321,24 @@ def som_web_home() -> HTMLResponse:
         </div>`;
       initAccountingWeb();
     }
+    function accountingMenu(label, items) {
+      return `<details class="accounting-menu"><summary>${esc(label)}</summary><div class="accounting-menu-panel">${items.map(([text, action]) => `<button onclick="${action}; closeAccountingMenus()">${esc(text)}</button>`).join("")}</div></details>`;
+    }
+    function closeAccountingMenus() {
+      document.querySelectorAll(".accounting-menu[open]").forEach(menu => menu.removeAttribute("open"));
+    }
     function accountingReportButtons() {
       const reports = [["ASIENTOS","Asientos"],["ANALITICO_CUENTA","Analítico de cuenta"],["DETALLE_TIPO","Detalle por tipo de cuenta"],["MAYOR","Libro Mayor"],["BC","Balance de Comprobación"],["ESF","Estado de Situación Financiera"],["ER","Estado de Resultados"],["FC","Flujo de Caja"]];
       return reports.map(([code,label]) => `<button onclick="selectAccountingReport('${code}')">${label}</button>`).join("");
     }
     async function initAccountingWeb() {
       selectedAccountingEntryId = null;
-      await Promise.allSettled([loadAccountingAccountOptions(), refreshAccountingDashboard()]);
+      await Promise.allSettled([loadAccountingAccountOptions(), refreshAccountingDashboard(), ensureAccountingBackendAutomation()]);
+    }
+    function setAccountingMode(mode) {
+      if ($("accMode")) $("accMode").value = mode;
+      document.querySelectorAll("input[name='accModeRadio']").forEach(r => { r.checked = r.value === mode; });
+      toggleAccountingMode();
     }
     function toggleAccountingMode() {
       const range = valueFrom("accMode") === "RANGE";
@@ -1486,9 +1496,48 @@ def som_web_home() -> HTMLResponse:
           $("accKpiHealth").textContent = `${dashboard.health_score ?? "-"}%`;
         }
         if (iva) $("accKpiIva").textContent = fmtAccMoney(iva.iva_total ?? iva?.fiscal?.net_tax);
-        const status = $("accOutlookStatus");
-        if (status && fx) status.textContent = `TC BCCR ${fmtAccMoney(fx.rate || fx.exchange_rate)} al ${fx.date || fx.rate_date || ""}. Gmail backend sigue activo; Outlook local es manual.`;
+        applyAccountingTc(fx);
       } catch {}
+    }
+    function applyAccountingTc(fx) {
+      if (!fx) return;
+      const rate = fx.rate || fx.exchange_rate;
+      const date = fx.date || fx.rate_date || "";
+      if ($("accTcRate")) $("accTcRate").value = rate ? fmtAccMoney(rate) : "";
+      if ($("accTcDate")) $("accTcDate").value = date || "";
+    }
+    async function fetchAccountingTc() {
+      const target = $("accAutomationStatus");
+      try {
+        const fx = await getJSON("/accounting/advanced/fx/rate");
+        applyAccountingTc(fx);
+        if (target) target.textContent = `TC BCCR actualizado: ${fmtAccMoney(fx.rate || fx.exchange_rate)} al ${fx.date || fx.rate_date || ""}. BAC/Gmail sigue en revisión automática cada 15 min.`;
+      } catch (err) {
+        if (target) target.textContent = `No se pudo consultar TC BCCR: ${err.message}`;
+      }
+    }
+    async function ensureAccountingBackendAutomation() {
+      const target = $("accAutomationStatus");
+      if (!target) return;
+      const account = "contabilidad@mslogisticsgroup.com";
+      try {
+        const current = await getJSON(`/accounting/tax/gmail/status?account_email=${encodeURIComponent(account)}`);
+        let connection = current?.connection || {};
+        if (!connection.auto_enabled || Number(connection.interval_minutes || 0) !== 15) {
+          const payload = {account_email: account, enabled: true, interval_minutes: 15, user: (session?.usuario || "SOM_WEB")};
+          connection = await sendJSON("PUT", "/accounting/tax/gmail/automation", payload);
+        }
+        const next = connection?.next_sync_at ? ` Próxima revisión: ${new Date(connection.next_sync_at).toLocaleString()}.` : "";
+        target.textContent = `Automático activo: BAC/Gmail ${account} cada ${connection?.interval_minutes || 15} min. Los PDF de tarjetas recibidos por correo se importan y contabilizan; el cierre histórico queda programado para el día 3 de cada mes.${next}`;
+      } catch (err) {
+        try {
+          const status = await getJSON(`/accounting/tax/gmail/status?account_email=${encodeURIComponent(account)}`);
+          const auto = status?.connection?.auto_enabled ? `activo cada ${status.connection.interval_minutes || 15} min` : "pendiente de activar";
+          target.textContent = `Automatización BAC/Gmail ${auto}. Tarjetas se procesan desde PDF recibido; no se usan botones manuales en Accounting Web. ${status?.connection?.last_error || err.message || ""}`;
+        } catch {
+          target.textContent = `Automático esperado: BAC/Gmail cada 15 min y tarjetas desde PDF recibido. No se pudo leer estado backend: ${err.message}`;
+        }
+      }
     }
     function requireAccountingEntryId() {
       if (!selectedAccountingEntryId) alert("Seleccione primero una línea del asiento.");

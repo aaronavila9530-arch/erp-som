@@ -25,8 +25,10 @@ from database import get_conn, release_conn
 from routers.accounting_tax import _ensure_purchase_obligation, _ensure_schema as ensure_tax_schema, _local, _parse_xml, _save_document
 from routers.corporate_cards import (
     BacNotificationRequest,
+    HistoryPostRequest,
     import_bac_notification,
     import_statement_pdf_bytes,
+    post_history as post_corporate_card_history,
 )
 
 
@@ -43,6 +45,7 @@ MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024
 MAX_ZIP_MEMBERS = 50
 _SCHEMA_READY = False
 _SCHEDULER_STARTED = False
+_CARD_HISTORY_POSTED_MONTH: str | None = None
 
 
 def _configured_account_profiles() -> list[dict[str, object]]:
@@ -808,6 +811,28 @@ def sync_mailbox(conn, triggered_by="SCHEDULER", max_messages=50, account_email:
             cur.execute("SELECT pg_advisory_unlock(hashtext(%s))",(f"gmail-fiscal:{target_account}",)); conn.commit()
 
 
+def _run_monthly_card_history_if_due(conn):
+    global _CARD_HISTORY_POSTED_MONTH
+    today = datetime.now().date()
+    if today.day != 3:
+        return
+    marker = today.strftime("%Y-%m")
+    if _CARD_HISTORY_POSTED_MONTH == marker:
+        return
+    payload = HistoryPostRequest(
+        years=[today.year - 1, today.year],
+        settle_previous=True,
+        leave_latest_pending=True,
+        latest_pending_per_card=True,
+        force_closed_periods=True,
+    )
+    try:
+        post_corporate_card_history(payload=payload, x_company_code=None, conn=conn)
+        _CARD_HISTORY_POSTED_MONTH = marker
+    except Exception as exc:
+        print(f"Corporate card monthly scheduler: {exc}")
+
+
 def _scheduler_loop():
     while True:
         time.sleep(60)
@@ -826,6 +851,7 @@ def _scheduler_loop():
                 due = cur.fetchall() or []
             for cfg in due:
                 sync_mailbox(conn, account_email=cfg["account_email"])
+            _run_monthly_card_history_if_due(conn)
         except Exception as exc:
             print(f"Gmail fiscal scheduler: {exc}")
         finally:
