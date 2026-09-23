@@ -72,6 +72,7 @@ class PopupOutlookFiscal(tk.Toplevel):
                 "interval_minutes":int(self.interval.get()),
                 "batch_size":int(self.batch.get()),
                 "process_corporate_cards":self.cards.get(),
+                "post_corporate_card_history":self.cards.get(),
                 "account":self.account.get().strip() or "gastos@mslogisticsgroup.com",
                 "folder":self.folder.get().strip() or "xml gastos electrónicos/FE recibidas",
             })
@@ -95,7 +96,7 @@ class PopupOutlookFiscal(tk.Toplevel):
             if getattr(self,"_card_history",False):
                 result=scan_corporate_card_history()
             else:
-                result=scan_and_import(max_messages=self._current_batch)
+                result=scan_and_import(max_messages=self._current_batch, post_corporate_card_history=self.cards.get())
             self.after(0,self._scan_done,result)
         except Exception as exc:self.after(0,self._error,str(exc))
 

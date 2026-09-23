@@ -73,6 +73,7 @@ def load_config():
         "bac_partner_folder": BAC_PARTNER_FOLDER,
         "batch_size": 50,
         "process_corporate_cards": True,
+        "post_corporate_card_history": True,
         "corporate_card_years": [2025, 2026],
     }
     try:
@@ -127,7 +128,10 @@ def start_background_sync():
                 if config.get("enabled") and elapsed>=min(interval,STARTUP_SYNC_DELAY_SECONDS):
                     last_run=time.time()
                     try:
-                        scan_and_import(max_messages=int(config.get("batch_size") or 50))
+                        scan_and_import(
+                            max_messages=int(config.get("batch_size") or 50),
+                            post_corporate_card_history=bool(config.get("post_corporate_card_history", True)),
+                        )
                     except Exception as exc:
                         print(f"Outlook fiscal automatico: {exc}")
             except Exception as exc:
@@ -751,13 +755,15 @@ def _xml_kind(path):
     return "HACIENDA" if root in {"MensajeHacienda","RespuestaHacienda"} else "DOCUMENT"
 
 
-def scan_and_import(max_messages=None,progress=None, process_corporate_cards=None, post_corporate_card_history=False):
+def scan_and_import(max_messages=None,progress=None, process_corporate_cards=None, post_corporate_card_history=None):
     if not _scan_lock.acquire(blocking=False): return {"status":"busy","message":"Ya existe una revisión de Outlook en curso","results":[]}
     import pythoncom
     import win32com.client
     config=load_config(); limit=int(max_messages or config.get("batch_size",50)); state=_load_state(); results=[]
     if process_corporate_cards is None:
         process_corporate_cards=bool(config.get("process_corporate_cards",True))
+    if post_corporate_card_history is None:
+        post_corporate_card_history=bool(config.get("post_corporate_card_history",True))
     summary={
         "status":"ok","messages":0,"attachments":0,"xml":0,"imported":0,"duplicates":0,"errors":0,
         "card_pdfs":0,"card_imported":0,"card_duplicates":0,"card_errors":0,
@@ -874,6 +880,8 @@ def scan_and_import(max_messages=None,progress=None, process_corporate_cards=Non
                     "years": config.get("corporate_card_years") or [2025,2026],
                     "settle_previous": True,
                     "leave_latest_pending": True,
+                    "latest_pending_per_card": True,
+                    "force_closed_periods": True,
                 })
                 summary["card_history"]=history
             except Exception as exc:

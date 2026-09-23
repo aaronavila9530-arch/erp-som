@@ -18,7 +18,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20260923-biweekly-obligations-v6"
+_ASSET_VERSION = "20260923-accounting-outlook-v1"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Servicios, facturación, CxC e informes desde agosto en adelante."},
@@ -1230,6 +1230,11 @@ def som_web_home() -> HTMLResponse:
           <button class="secondary" onclick="exportAccountingReport('xlsx')">Exportar Excel</button>
           <button class="secondary" onclick="exportAccountingReport('pdf')">Exportar PDF</button>
         </div>
+        <div class="finance-filter-row compact">
+          <button onclick="runAccountingOutlookSync(false)">Revisar Outlook/BAC ahora</button>
+          <button class="secondary" onclick="runAccountingOutlookSync(true)">Cargar tarjetas 2025-2026 y contabilizar</button>
+          <span id="accOutlookStatus" class="muted">Usa el mismo motor local de escritorio para XML, Notificaciones BAC y tarjetas.</span>
+        </div>
         <div id="accountingResult" class="status">Configure filtros y presione Buscar.</div>`;
     }
     function toggleAccountingMode() {
@@ -1328,6 +1333,33 @@ def som_web_home() -> HTMLResponse:
       const params = accountingParams();
       const path = ext === "pdf" ? "/accounting/reports/pdf" : "/accounting/reports/excel";
       window.open(`${path}?${params.toString()}`, "_blank");
+    }
+    function summarizeAccountingOutlook(result) {
+      const history = result.card_history || {};
+      const parts = [
+        `Correos ${result.messages || 0}`,
+        `XML ${result.imported || 0}`,
+        `PDF BAC ${result.card_imported || 0}`,
+        `BAC pagos ${result.bac_partner_imported || 0}`,
+        `Tarjetas pagadas ${history.settlements || 0}`,
+        `Errores ${result.errors || 0}`
+      ];
+      return parts.join(" · ");
+    }
+    async function runAccountingOutlookSync(historyOnly) {
+      const status = $("accOutlookStatus");
+      status.className = "muted";
+      status.textContent = historyOnly ? "Cargando historial BAC 2025-2026..." : "Revisando Outlook/BAC local...";
+      try {
+        const result = historyOnly
+          ? await postJSON("/accounting/outlook-local/corporate-card-history", {})
+          : await postJSON("/accounting/outlook-local/scan", { max_messages:100, process_corporate_cards:true, post_corporate_card_history:true });
+        status.className = "muted";
+        status.textContent = summarizeAccountingOutlook(result);
+      } catch (err) {
+        status.className = "error";
+        status.textContent = err.message;
+      }
     }
     function renderItpWeb(target) {
       target.innerHTML = `

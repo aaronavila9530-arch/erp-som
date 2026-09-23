@@ -1,5 +1,6 @@
 from fastapi import (
     APIRouter,
+    Body,
     Depends,
     HTTPException,
     Header,
@@ -63,6 +64,40 @@ ACCOUNT_TYPE_ALIASES = {
     "GASTO": ("GASTO", "EXPENSE"),
     "EXPENSE": ("GASTO", "EXPENSE"),
 }
+
+
+def _compact_outlook_result(result: dict) -> dict:
+    payload = {k: v for k, v in (result or {}).items() if k != "results"}
+    rows = (result or {}).get("results") or []
+    payload["results"] = rows[-50:]
+    payload["results_total"] = len(rows)
+    return payload
+
+
+@router.post("/outlook-local/scan")
+def scan_accounting_outlook_local(payload: dict | None = Body(default=None)):
+    data = payload or {}
+    try:
+        from Modulos.Finanzas.sections.Accounting.outlook_fiscal_importer import scan_and_import
+
+        result = scan_and_import(
+            max_messages=int(data.get("max_messages") or 100),
+            process_corporate_cards=bool(data.get("process_corporate_cards", True)),
+            post_corporate_card_history=bool(data.get("post_corporate_card_history", True)),
+        )
+        return _compact_outlook_result(result)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"No se pudo revisar Outlook local: {exc}")
+
+
+@router.post("/outlook-local/corporate-card-history")
+def scan_accounting_corporate_card_history():
+    try:
+        from Modulos.Finanzas.sections.Accounting.outlook_fiscal_importer import scan_corporate_card_history
+
+        return _compact_outlook_result(scan_corporate_card_history())
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"No se pudo cargar historial de tarjetas BAC: {exc}")
 
 
 def _company_code(value: str | None = None, header_value: str | None = None) -> str:

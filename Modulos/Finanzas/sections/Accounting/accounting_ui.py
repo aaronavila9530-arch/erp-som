@@ -971,7 +971,10 @@ class AccountingUI(tk.Frame):
                 self._outlook_last_auto_run = time.time()
                 def worker():
                     try:
-                        scan_and_import(max_messages=int(config.get("batch_size", 50)))
+                        scan_and_import(
+                            max_messages=int(config.get("batch_size", 50)),
+                            post_corporate_card_history=bool(config.get("post_corporate_card_history", True)),
+                        )
                     except Exception as exc:
                         print(f"Outlook fiscal automático: {exc}")
                     finally:
