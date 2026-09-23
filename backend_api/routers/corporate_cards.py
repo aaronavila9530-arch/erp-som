@@ -145,6 +145,7 @@ class BacNotificationRequest(BaseModel):
     authorization: str | None = None
     reference: str | None = None
     holder_name: str | None = None
+    allow_closed_period: bool = False
 
 
 class SettlementRequest(BaseModel):
@@ -556,6 +557,10 @@ def ensure_schema(cur):
     cur.execute("CREATE INDEX IF NOT EXISTS idx_corp_card_tx_statement ON corporate_card_transactions(statement_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_corp_card_tx_company_date ON corporate_card_transactions(company_code, transaction_date)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_corp_card_bac_company_date ON corporate_card_bac_notifications(company_code, transaction_date)")
+    # Schema bootstrap mixes DDL plus seed rows and is called from read and write
+    # paths. Commit it immediately so long-running card posting does not deadlock
+    # against idle setup transactions holding relation locks.
+    cur.connection.commit()
 
 
 def _statement_row(row):
@@ -1365,7 +1370,11 @@ def import_bac_notification(
         if obligation_id:
             status = "MATCHED"
             try:
-                posted = bool(_post_card_transaction(cur, dict(tx)))
+                posted = bool(_post_card_transaction(
+                    cur,
+                    dict(tx),
+                    force_closed_period=bool(payload.allow_closed_period),
+                ))
                 if posted:
                     status = "POSTED"
             except HTTPException as exc:
@@ -1746,7 +1755,7 @@ def post_history(
                         settled += 1
             elif statement["id"] in latest_ids:
                 latest_pending.append(statement)
-                if not closed_purchase_periods:
+                if payload.force_closed_periods or not closed_purchase_periods:
                     cur.execute("""
                         UPDATE corporate_card_statements
                         SET status='POSTED_PENDING_PAYMENT'

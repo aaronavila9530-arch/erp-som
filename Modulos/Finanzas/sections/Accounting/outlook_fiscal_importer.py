@@ -718,7 +718,13 @@ def scan_corporate_card_history(progress=None):
                     summary["card_errors"]+=1; summary["errors"]+=1
                     results.append({"received":"","subject":"Tarjetas corporativas","filename":account,"status":"ERROR","detail":str(exc)})
         try:
-            summary["card_history"]=post_corporate_card_history_api({"years":sorted(years),"settle_previous":True,"leave_latest_pending":True})
+            summary["card_history"]=post_corporate_card_history_api({
+                "years":sorted(years),
+                "settle_previous":True,
+                "leave_latest_pending":True,
+                "latest_pending_per_card":True,
+                "force_closed_periods":True,
+            })
         except Exception as exc:
             summary["card_errors"]+=1; summary["errors"]+=1
             results.append({"received":"","subject":"Tarjetas corporativas","filename":"historial","status":"ERROR","detail":str(exc)})
