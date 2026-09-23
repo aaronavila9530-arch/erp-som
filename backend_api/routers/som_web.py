@@ -369,6 +369,29 @@ def som_web_home() -> HTMLResponse:
     .home-card:nth-child(2) { border-top-color:var(--green); }
     .home-card:nth-child(3) { border-top-color:var(--amber); }
     .home-card:nth-child(4) { border-top-color:#029fcf; }
+    .home-command { display:grid; gap:14px; }
+    .home-hero { display:grid; grid-template-columns:minmax(320px,1fr) minmax(260px,420px); gap:14px; align-items:stretch; }
+    .home-hero-main { padding:18px; border-left:4px solid var(--blue); background:#fff; }
+    .home-hero-main h2 { font-size:28px; margin:0 0 7px; }
+    .home-hero-main p { margin:0; color:#607086; line-height:1.45; }
+    .home-role-panel { padding:14px; display:grid; gap:8px; background:#f8fbfe; }
+    .home-role-panel strong { font-size:20px; }
+    .home-badge-row { display:flex; flex-wrap:wrap; gap:7px; margin-top:10px; }
+    .home-badge-row span { min-height:26px; display:inline-flex; align-items:center; border:1px solid #cfe0f2; border-radius:999px; padding:3px 10px; background:#edf7ff; color:#005da8; font-size:12px; font-weight:800; }
+    .home-work-grid { display:grid; grid-template-columns:repeat(4,minmax(190px,1fr)); gap:12px; }
+    .home-work-card { min-height:154px; padding:15px; cursor:pointer; border-top:4px solid var(--blue); display:flex; flex-direction:column; justify-content:space-between; gap:12px; transition:transform .12s ease, box-shadow .12s ease; }
+    .home-work-card:hover { transform:translateY(-2px); box-shadow:0 16px 36px rgba(15,31,53,.14); }
+    .home-work-card h3 { margin:0; font-size:18px; }
+    .home-work-card p { margin:6px 0 0; color:#607086; line-height:1.35; }
+    .home-work-card button { align-self:flex-start; height:32px; background:#fff; color:#005da8; border:1px solid #b8d5f1; }
+    .home-work-card.finance { border-top-color:#00703c; }
+    .home-work-card.reports { border-top-color:#029fcf; }
+    .home-work-card.people { border-top-color:#8a5cf6; }
+    .home-work-card.admin { border-top-color:#b42318; }
+    .home-insight-grid { display:grid; grid-template-columns:1.4fr .9fr; gap:12px; }
+    .home-automation-list { display:grid; gap:8px; }
+    .home-automation-list div { display:flex; justify-content:space-between; gap:12px; border-bottom:1px solid #edf2f7; padding:7px 0; }
+    .home-automation-list strong { color:#122033; }
     .md-actions { display:flex; flex-wrap:wrap; gap:10px; margin:12px 0 14px; }
     .filters { display:flex; flex-wrap:wrap; gap:10px; align-items:center; padding:12px; margin-bottom:12px; }
     .filters.service-filters { display:grid; grid-template-columns:1.4fr repeat(4,minmax(130px,1fr)) auto auto; align-items:end; }
@@ -545,7 +568,7 @@ def som_web_home() -> HTMLResponse:
     .error { color:var(--red); }
     .hidden { display:none !important; }
     @media(max-width:980px) {
-      .login,.app,.kpis,.kpi-grid,.home-grid,.view-grid,.grid.two { grid-template-columns:1fr; }
+      .login,.app,.kpis,.kpi-grid,.home-grid,.home-hero,.home-work-grid,.home-insight-grid,.view-grid,.grid.two { grid-template-columns:1fr; }
       .login-card { max-width:none; padding:34px 24px; }
       .hero-logo { min-height:300px; padding:22px; }
       .hero-logo img { width:min(88%,520px); height:250px; }
@@ -1153,16 +1176,53 @@ def som_web_home() -> HTMLResponse:
       }
     }
     function renderHome() {
+      const allowed = catalog.modules.filter(m => m.code !== "dashboard" && canView(m.code));
+      const role = String(session?.rol || "").toLowerCase();
+      const cards = [
+        {code:"servicios", cls:"ops", title:"Servicios", text:"Operaciones activas, edición, cierre, costos y trazabilidad de servicios.", cta:"Abrir servicios"},
+        {code:"finanzas", cls:"finance", title:"Finanzas", text:"Billing, Collections, bancos, ITP, Accounting, reportes y automatizaciones.", cta:"Abrir finanzas"},
+        {code:"informes", cls:"reports", title:"Informes", text:"Draft, bunker, condition, certificados, revisiones y documentos pendientes.", cta:"Abrir informes"},
+        {code:"comercial", cls:"ops", title:"Comercial", text:"Cotizaciones, precios, clientes, puertos y análisis comercial.", cta:"Abrir comercial"},
+        {code:"hhrre", cls:"people", title:"HHRR", text:"Horas, vacaciones, payroll, colillas, red médica y calculadora salarial.", cta:"Abrir HHRR"},
+        {code:"master_data", cls:"admin", title:"Master Data", text:"Catálogos base, clientes, proveedores, bancos y estructura operativa.", cta:"Abrir master data"},
+        {code:"admin_users", cls:"admin", title:"Admin", text:"Usuarios, permisos, roles, auditoría y gobierno del ERP.", cta:"Abrir admin"},
+        {code:"qa_som", cls:"people", title:"Q&A SOM", text:"Manual vivo del ERP, soporte guiado y conocimiento operativo.", cta:"Abrir Q&A"}
+      ].filter(card => allowed.some(m => m.code === card.code));
+      const badgeText = allowed.map(m => m.title).slice(0, 6).map(label => `<span>${esc(label)}</span>`).join("") || "<span>Sin módulos asignados</span>";
+      const automationRows = [
+        ["BAC / Gmail fiscal", canView("finanzas") ? "Automático cada 15 min" : "No visible para este rol"],
+        ["Tarjetas corporativas", canView("finanzas") ? "PDF recibido + cierre día 3" : "No visible para este rol"],
+        ["Alertas operativas", canView("informes") || canView("servicios") ? "Pendientes y revisiones" : "Filtrado por permisos"],
+        ["Seguridad", "Vista limitada por rol/permisos"]
+      ];
       $("content").innerHTML = `
-        <div class="grid home-grid">
-          <div class="card home-card" onclick="selectModule('servicios')"><h2>Servicios</h2><p class="muted">Operaciones activas, edición y cierre.</p></div>
-          <div class="card home-card" onclick="selectModule('finanzas')"><h2>Facturación</h2><p class="muted">Billing, Collections, ITP y Accounting.</p></div>
-          <div class="card home-card" onclick="selectModule('finanzas')"><h2>CxC</h2><p class="muted">Saldos, aging, pagos y estados de cuenta.</p></div>
-          <div class="card home-card" onclick="selectModule('informes')"><h2>Informes</h2><p class="muted">Draft, bunker, condition y certificados.</p></div>
-        </div>
-        <div class="card panel workspace">
-          <div class="panel-head"><h2>Movimiento desde agosto</h2><span class="muted">${$("year").value}</span></div>
-          <div id="homeChart" class="status">Cargando...</div>
+        <div class="home-command">
+          <div class="home-hero">
+            <div class="card home-hero-main">
+              <h2>Centro de control SOM</h2>
+              <p>Vista inicial personalizada para ${esc(session?.usuario || "usuario")}. Solo aparecen módulos y señales que tu rol puede consultar o ejecutar.</p>
+              <div class="home-badge-row">${badgeText}</div>
+            </div>
+            <div class="card home-role-panel">
+              <span class="muted">Sesión</span>
+              <strong>${esc(session?.usuario || "-")}</strong>
+              <span>${esc((session?.rol || role || "user").toUpperCase())} · ${esc(selectedCompany())}</span>
+              <button onclick="refreshSummary()">Actualizar centro</button>
+            </div>
+          </div>
+          <div class="home-work-grid">
+            ${cards.map(card => `<div class="card home-work-card ${card.cls}" onclick="selectModule('${card.code}')"><div><h3>${esc(card.title)}</h3><p>${esc(card.text)}</p></div><button>${esc(card.cta)}</button></div>`).join("") || '<div class="status">Este usuario no tiene módulos visibles configurados.</div>'}
+          </div>
+          <div class="home-insight-grid">
+            <div class="card panel">
+              <div class="panel-head"><h2>Movimiento del año</h2><span class="muted">${$("year").value}</span></div>
+              <div id="homeChart" class="status">Cargando...</div>
+            </div>
+            <div class="card panel">
+              <div class="panel-head"><h2>Automatizaciones</h2><span class="muted">según permisos</span></div>
+              <div class="home-automation-list">${automationRows.map(([label, value]) => `<div><strong>${esc(label)}</strong><span class="muted">${esc(value)}</span></div>`).join("")}</div>
+            </div>
+          </div>
         </div>`;
     }
     function renderHomeChart(rows) {

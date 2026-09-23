@@ -265,7 +265,11 @@ class MainApp(tk.Frame):
             from Modulos.Dashboards.dashboards_home_ui import DashboardsHomeUI
 
             DashboardsHomeUI(
-                parent=self.content
+                parent=self.content,
+                usuario=self.usuario,
+                rol=self.rol,
+                can_access=lambda module_code: self._has_permission(module_code, "view"),
+                open_module=self.cambiar_modulo,
             ).pack(
                 fill="both",
                 expand=True
