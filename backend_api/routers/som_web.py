@@ -407,33 +407,38 @@ def som_web_home() -> HTMLResponse:
     .modal-backdrop { position:fixed; inset:0; z-index:20; background:rgba(5,18,32,.44); display:flex; align-items:center; justify-content:center; padding:22px; }
     .modal { width:min(1120px,96vw); max-height:92vh; overflow:auto; background:#fff; border:1px solid var(--line); border-radius:9px; box-shadow:0 26px 90px rgba(0,0,0,.24); padding:16px; }
     .modal.small { width:min(560px,94vw); }
-    .modal.itp-biweekly-modal { width:min(1900px,99vw); height:min(940px,96vh); max-height:96vh; display:flex; flex-direction:column; gap:8px; overflow:hidden; background:#d9d8d2; border-radius:0; padding:14px; color:#111827; }
-    .itp-bi-header { display:grid; grid-template-columns:1fr auto; gap:18px; align-items:start; }
-    .itp-bi-header h2 { font-size:25px; line-height:1.1; }
-    .itp-bi-totals { min-width:150px; text-align:right; display:grid; gap:8px; font-size:18px; font-weight:700; }
-    .itp-bi-totals span { font-size:14px; font-weight:500; }
-    .itp-bi-controls { display:flex; flex-wrap:wrap; align-items:end; gap:10px; }
-    .itp-bi-controls label { display:grid; grid-template-columns:auto auto; align-items:center; gap:7px; font-size:14px; color:#111827; }
-    .itp-bi-controls input,.itp-bi-controls select { width:auto; min-width:82px; height:32px; border-radius:0; padding:0 8px; }
-    .itp-bi-controls .period-input { width:90px; }
-    .itp-bi-controls .fortnight-input { width:58px; }
-    .itp-bi-controls button,.itp-bi-tools button { height:38px; border-radius:0; background:#e8e6df; color:#111827; border:1px solid #a7a39a; }
+    .modal.itp-biweekly-modal { width:min(1760px,98vw); height:min(920px,95vh); max-height:95vh; display:flex; flex-direction:column; gap:12px; overflow:hidden; background:#f8fafc; border-radius:12px; padding:18px; color:#122033; }
+    .itp-bi-header { display:grid; grid-template-columns:minmax(260px,1fr) auto; gap:18px; align-items:start; padding-bottom:10px; border-bottom:1px solid #dbe4ef; }
+    .itp-bi-header h2 { font-size:24px; line-height:1.1; letter-spacing:0; }
+    .itp-bi-totals { min-width:440px; display:grid; grid-template-columns:repeat(3,minmax(120px,1fr)); gap:10px; text-align:left; }
+    .itp-bi-totals strong,.itp-bi-totals span { display:block; min-height:58px; border:1px solid #d7e1ec; border-radius:8px; background:white; padding:10px 12px; box-shadow:0 8px 18px rgba(15,31,53,.06); color:#0f172a; font-size:20px; font-weight:800; }
+    .itp-bi-totals strong::before,.itp-bi-totals span::before { display:block; margin-bottom:5px; color:#64748b; font-size:11px; font-weight:700; text-transform:uppercase; }
+    .itp-bi-totals strong:nth-child(1)::before { content:"Total CRC"; }
+    .itp-bi-totals strong:nth-child(2)::before { content:"Total USD"; }
+    .itp-bi-totals span::before { content:"Lineas"; }
+    .itp-bi-controls { display:grid; grid-template-columns:150px 140px repeat(5,max-content); align-items:end; gap:10px; padding:12px; border:1px solid #d7e1ec; border-radius:10px; background:white; box-shadow:0 10px 24px rgba(15,31,53,.06); }
+    .itp-bi-controls label { display:grid; gap:5px; font-size:12px; font-weight:700; color:#475569; text-transform:uppercase; }
+    .itp-bi-controls input,.itp-bi-controls select { width:100%; min-width:0; height:36px; border-radius:7px; padding:0 10px; }
+    .itp-bi-controls .period-input { width:100%; }
+    .itp-bi-controls .fortnight-input { width:100%; }
+    .itp-bi-controls button,.itp-bi-tools button { height:36px; border-radius:7px; background:#fff; color:#122033; border:1px solid #cfd9e5; }
+    .itp-bi-controls button:first-of-type { background:#005da8; color:white; border-color:#005da8; }
     .itp-bi-controls button.green { background:#00703c; color:white; border-color:#00703c; }
-    .itp-bi-tools-title { margin-top:2px; font-size:14px; font-weight:500; }
-    .itp-bi-tools { display:flex; flex-wrap:wrap; gap:10px; padding:8px 6px; border:1px solid #bbb7ad; border-left:0; border-right:0; }
-    .itp-bi-instruction { color:#7f1d1d; font-weight:700; padding:2px 6px; }
-    .itp-biweekly-modal .status { border-radius:0; padding:6px 8px; }
-    .itp-bi-table { flex:1; min-height:260px; overflow:hidden; }
-    .itp-bi-table .table-wrap { height:100%; max-height:none; background:#fff; border-radius:0; border-color:#aaa69e; }
+    .itp-bi-tools-title { margin:0; font-size:13px; font-weight:800; color:#334155; text-transform:uppercase; }
+    .itp-bi-tools { display:flex; flex-wrap:wrap; gap:8px; padding:10px 12px; border:1px solid #d7e1ec; border-radius:10px; background:#eef4f9; }
+    .itp-bi-instruction { color:#7f1d1d; font-weight:700; padding:9px 12px; border:1px solid #f4c7c7; border-radius:8px; background:#fff3f3; }
+    .itp-biweekly-modal .status { border-radius:8px; padding:9px 12px; }
+    .itp-bi-table { flex:1; min-height:280px; overflow:hidden; }
+    .itp-bi-table .table-wrap { height:100%; max-height:none; background:#fff; border-radius:10px; border-color:#d7e1ec; box-shadow:0 10px 24px rgba(15,31,53,.06); }
     .itp-bi-table table { min-width:1880px; font-size:13px; }
-    .itp-bi-table th,.itp-bi-table td { border:1px solid #b7b4ac; border-top:0; padding:4px 6px; }
-    .itp-bi-table th { background:#d7d5cf; color:#111827; }
-    .itp-bi-table input,.itp-bi-table select { height:28px; border-radius:0; padding:0 6px; }
-    .itp-bi-selected td { outline:2px solid #4f6f88; outline-offset:-2px; background:#d9e7f3 !important; }
-    .itp-bi-summary { display:grid; grid-template-columns:1fr 1fr; gap:12px; min-height:172px; }
-    .itp-bi-summary h3 { margin:0 0 4px; font-size:14px; font-weight:500; }
-    .itp-bi-summary .table-wrap { height:142px; max-height:none; border-radius:0; background:white; border-color:#aaa69e; }
-    .itp-bi-summary th,.itp-bi-summary td { border:1px solid #b7b4ac; border-top:0; padding:5px 7px; }
+    .itp-bi-table th,.itp-bi-table td { border-bottom:1px solid #e7edf4; padding:7px 8px; }
+    .itp-bi-table th { background:#edf4fb; color:#334155; font-size:12px; text-transform:uppercase; }
+    .itp-bi-table input,.itp-bi-table select { height:30px; border-radius:6px; padding:0 7px; }
+    .itp-bi-selected td { outline:2px solid #005da8; outline-offset:-2px; background:#e9f4ff !important; }
+    .itp-bi-summary { display:grid; grid-template-columns:1fr 1fr; gap:12px; min-height:166px; }
+    .itp-bi-summary h3 { margin:0 0 6px; font-size:13px; font-weight:800; color:#334155; text-transform:uppercase; }
+    .itp-bi-summary .table-wrap { height:136px; max-height:none; border-radius:10px; background:white; border-color:#d7e1ec; }
+    .itp-bi-summary th,.itp-bi-summary td { border-bottom:1px solid #e7edf4; padding:6px 8px; }
     .modal-head { display:flex; justify-content:space-between; gap:12px; align-items:center; margin-bottom:14px; }
     .surveyors-box { border:1px solid var(--line); border-radius:8px; padding:10px; background:#fbfdff; }
     .surveyor-line { display:grid; grid-template-columns:minmax(220px,1fr) 140px 34px; gap:8px; align-items:center; margin-top:8px; }

@@ -4330,6 +4330,18 @@ def _fortnight_window(period: str, fortnight: int) -> tuple[date, date]:
     return date(year, month, 16), next_month - timedelta(days=1)
 
 
+def _coerce_biweekly_date(value, fallback: date) -> date:
+    if isinstance(value, date):
+        return value
+    text = str(value or "").strip()
+    if not text:
+        return fallback
+    try:
+        return datetime.strptime(text[:10], "%Y-%m-%d").date()
+    except Exception:
+        return fallback
+
+
 def _local_biweekly_obligations_preview(period: str, fortnight: int = 1, force: bool = False) -> dict:
     import sys
     from pathlib import Path
@@ -4445,23 +4457,51 @@ def _local_biweekly_obligations_preview(period: str, fortnight: int = 1, force: 
             "payment_card_last4": "",
         }
 
+    def row_key(item):
+        obligation_id = item.get("obligation_id")
+        if obligation_id:
+            return ("ITP", int(obligation_id))
+        return (
+            "MANUAL",
+            str(item.get("category") or "").strip().upper(),
+            str(item.get("name") or "").strip().upper(),
+            str(item.get("currency") or "CRC").strip().upper(),
+            str(m(item.get("amount"))),
+            str(item.get("reference") or "").strip().upper(),
+        )
+
+    def append_unique(target, seen, item):
+        key = row_key(item)
+        if key in seen:
+            return
+        seen.add(key)
+        target.append(item)
+
     company = get_company_code() or "MSL-CR"
     conn = get_conn()
     rows = []
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             _ensure_local_biweekly_schema(cur)
+            carryover_rows = _local_load_biweekly_carryover_drafts(cur, company, period, fortnight)
             if not force:
                 draft = _local_load_biweekly_draft(cur, company, period, fortnight)
                 if draft:
+                    merged_rows = []
+                    merged_seen = set()
+                    for item in carryover_rows + draft["rows"]:
+                        append_unique(merged_rows, merged_seen, item)
                     return {
                         "period": period,
                         "fortnight": int(fortnight or 1),
                         "company_code": company,
                         "source": "draft",
                         "batch_id": draft["batch_id"],
-                        "rows": draft["rows"],
+                        "rows": merged_rows,
                     }
+            seen_rows = set()
+            for item in carryover_rows:
+                append_unique(rows, seen_rows, item)
             cur.execute("""
                 SELECT
                     nombre,
@@ -4487,7 +4527,7 @@ def _local_biweekly_obligations_preview(period: str, fortnight: int = 1, force: 
             """, (company,))
             for emp in cur.fetchall() or []:
                 amount, payroll_notes = employee_biweekly_pay(cur, emp)
-                rows.append(row(
+                append_unique(rows, seen_rows, row(
                     "Planilla",
                     employee_full_name(emp),
                     amount,
@@ -4556,14 +4596,14 @@ def _local_biweekly_obligations_preview(period: str, fortnight: int = 1, force: 
                     taxes = {r["direction"]: m(r["tax_crc"]) for r in cur.fetchall() or []}
                     iva_amount = m(taxes.get("SALE", Decimal("0")) - taxes.get("PURCHASE", Decimal("0")))
                     if iva_amount > 0:
-                        rows.append(row("IVA", f"IVA por pagar {prev_period}", iva_amount, "CRC", default_crc_bank, "ACCOUNTING_TAX", "IVA venta menos IVA compra del mes anterior.", f"{period}-15"))
+                        append_unique(rows, seen_rows, row("IVA", f"IVA por pagar {prev_period}", iva_amount, "CRC", default_crc_bank, "ACCOUNTING_TAX", "IVA venta menos IVA compra del mes anterior.", f"{period}-15"))
                 except Exception as exc:
                     conn.rollback()
-                    rows.append(row("IVA", f"Revisar IVA mes anterior {prev_period}", 0, "CRC", default_crc_bank, "REVISION", str(exc), f"{period}-15"))
+                    append_unique(rows, seen_rows, row("IVA", f"Revisar IVA mes anterior {prev_period}", 0, "CRC", default_crc_bank, "REVISION", str(exc), f"{period}-15"))
 
-                rows.append(row("CCSS", "CCSS por pagar", 0, "CRC", default_crc_bank, "MANUAL", "Completar monto confirmado por CCSS.", f"{period}-15"))
-                rows.append(row("Telefonia", "Manfred Bolanos Barrantes", 7000, "CRC", default_crc_bank, "AUTO_FIXED", "Apoyo celular primera quincena.", f"{period}-15"))
-                rows.append(row("Telefonia", "Erasmo Gomez Gomez", 7000, "CRC", default_crc_bank, "AUTO_FIXED", "Apoyo celular primera quincena.", f"{period}-15"))
+                append_unique(rows, seen_rows, row("CCSS", "CCSS por pagar", 0, "CRC", default_crc_bank, "MANUAL", "Completar monto confirmado por CCSS.", f"{period}-15"))
+                append_unique(rows, seen_rows, row("Telefonia", "Manfred Bolanos Barrantes", 7000, "CRC", default_crc_bank, "AUTO_FIXED", "Apoyo celular primera quincena.", f"{period}-15"))
+                append_unique(rows, seen_rows, row("Telefonia", "Erasmo Gomez Gomez", 7000, "CRC", default_crc_bank, "AUTO_FIXED", "Apoyo celular primera quincena.", f"{period}-15"))
 
                 try:
                     cur.execute("""
@@ -4596,7 +4636,7 @@ def _local_biweekly_obligations_preview(period: str, fortnight: int = 1, force: 
                     """, (prev_period, company, prev_period, start, end))
                     statements = cur.fetchall() or []
                     if not statements:
-                        rows.append(row("Tarjetas de credito", f"Faltan estados BAC {prev_period}", 0, "CRC", "BAC", "REVISION", "Importar estados BAC del mes anterior para calcular tarjetas.", f"{period}-15"))
+                        append_unique(rows, seen_rows, row("Tarjetas de credito", f"Faltan estados BAC {prev_period}", 0, "CRC", "BAC", "REVISION", "Importar estados BAC del mes anterior para calcular tarjetas.", f"{period}-15"))
                     card_labels = {"3155": "Aaron", "1951": "Diana", "1936": "Diana", "1969": "Pabel", "1944": "Pabel", "3148": "ITP"}
                     for st in statements:
                         last4 = str(st.get("card_last4") or "").strip()
@@ -4604,12 +4644,12 @@ def _local_biweekly_obligations_preview(period: str, fortnight: int = 1, force: 
                         crc = m(st.get("cash_payment_crc"))
                         usd = m(st.get("cash_payment_usd"))
                         if crc > 0:
-                            rows.append(row("Tarjetas de credito", f"BAC {label} contado CRC {st.get('statement_period') or ''}", crc, "CRC", "BAC", "CORP_CARD", f"Tarjeta {last4}", f"{period}-15"))
+                            append_unique(rows, seen_rows, row("Tarjetas de credito", f"BAC {label} contado CRC {st.get('statement_period') or ''}", crc, "CRC", "BAC", "CORP_CARD", f"Tarjeta {last4}", f"{period}-15"))
                         if usd > 0:
-                            rows.append(row("Tarjetas de credito", f"BAC {label} contado USD {st.get('statement_period') or ''}", usd, "USD", "BAC", "CORP_CARD", f"Tarjeta {last4}. Convertir/pagar segun banco.", f"{period}-15"))
+                            append_unique(rows, seen_rows, row("Tarjetas de credito", f"BAC {label} contado USD {st.get('statement_period') or ''}", usd, "USD", "BAC", "CORP_CARD", f"Tarjeta {last4}. Convertir/pagar segun banco.", f"{period}-15"))
                 except Exception as exc:
                     conn.rollback()
-                    rows.append(row("Tarjetas de credito", "Revisar estados BAC", 0, "CRC", "BAC", "REVISION", str(exc), f"{period}-15"))
+                    append_unique(rows, seen_rows, row("Tarjetas de credito", "Revisar estados BAC", 0, "CRC", "BAC", "REVISION", str(exc), f"{period}-15"))
 
             cur.execute("""
                 SELECT id, payee_name, obligation_type, reference, currency, balance, issue_date, due_date,
@@ -4623,14 +4663,8 @@ def _local_biweekly_obligations_preview(period: str, fortnight: int = 1, force: 
             due_start, due_end = _fortnight_window(period, fortnight)
             for ob in cur.fetchall() or []:
                 due_date = ob.get("due_date")
-                if not due_date:
-                    due_date = ob.get("issue_date")
-                if not due_date:
-                    due_date = due_start
-                if int(fortnight or 1) == 1:
-                    if due_date > due_end:
-                        continue
-                elif due_date < due_start or due_date > due_end:
+                due_date = _coerce_biweekly_date(ob.get("due_date") or ob.get("issue_date"), due_start)
+                if due_date > due_end:
                     continue
                 haystack = " ".join(str(ob.get(k) or "") for k in ("payee_name", "obligation_type", "notes", "reference")).lower()
                 if "alquiler" in haystack or "rent" in haystack or "prime properties" in haystack:
@@ -4643,7 +4677,7 @@ def _local_biweekly_obligations_preview(period: str, fortnight: int = 1, force: 
                     category = "Proveedores"
                 else:
                     continue
-                rows.append(row(
+                append_unique(rows, seen_rows, row(
                     category,
                     ob.get("payee_name") or ob.get("reference") or category,
                     ob.get("balance"),
@@ -4763,6 +4797,68 @@ def _local_load_biweekly_draft(cur, company: str, period: str, fortnight: int):
         item["balance"] = float(m_draft(item.get("balance") or item.get("amount")))
         rows.append(item)
     return {"batch_id": batch_id, "rows": rows}
+
+
+def _local_load_biweekly_carryover_drafts(cur, company: str, period: str, fortnight: int):
+    from decimal import Decimal, ROUND_HALF_UP
+
+    def m_draft(value):
+        return Decimal(str(value or 0).replace(",", "")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+    cur.execute("""
+        SELECT
+            l.category,
+            l.beneficiary AS name,
+            l.amount,
+            l.currency,
+            l.destination_account AS bank_account,
+            l.bank_accounting_code,
+            l.bank_accounting_name,
+            l.bank_voucher,
+            l.payment_date AS due_date,
+            l.obligation_id,
+            l.reference,
+            l.amount AS balance,
+            COALESCE(NULLIF(l.source, ''), 'DRAFT') AS source,
+            CONCAT_WS(' | ', NULLIF(l.notes, ''), 'Arrastrado desde ', b.period, ' Q', b.fortnight) AS notes,
+            COALESCE(l.payment_method, 'BANK') AS payment_method,
+            l.payment_card_last4
+        FROM itp_biweekly_payment_batches b
+        JOIN itp_biweekly_payment_lines l ON l.batch_id = b.id
+        WHERE b.company_code=%s
+          AND b.status='DRAFT'
+          AND (b.period < %s OR (b.period=%s AND b.fortnight < %s))
+          AND COALESCE(l.amount,0) > 0
+          AND NOT EXISTS (
+              SELECT 1
+              FROM itp_biweekly_payment_batches pb
+              JOIN itp_biweekly_payment_lines pl ON pl.batch_id = pb.id
+              WHERE pb.company_code = b.company_code
+                AND pb.status <> 'DRAFT'
+                AND (
+                    (l.obligation_id IS NOT NULL AND pl.obligation_id = l.obligation_id)
+                    OR (
+                        l.obligation_id IS NULL
+                        AND pl.obligation_id IS NULL
+                        AND pl.category = l.category
+                        AND pl.beneficiary = l.beneficiary
+                        AND pl.amount = l.amount
+                        AND pl.currency = l.currency
+                        AND COALESCE(pl.reference,'') = COALESCE(l.reference,'')
+                    )
+                )
+          )
+        ORDER BY b.period, b.fortnight, l.id
+    """, (company, period, period, int(fortnight or 1)))
+    rows = []
+    for line in cur.fetchall() or []:
+        item = dict(line)
+        if item.get("due_date") is not None:
+            item["due_date"] = str(item["due_date"])
+        item["amount"] = float(m_draft(item.get("amount")))
+        item["balance"] = float(m_draft(item.get("balance") or item.get("amount")))
+        rows.append(item)
+    return rows
 
 
 def _local_biweekly_obligations_save_draft(payload: dict) -> dict:
