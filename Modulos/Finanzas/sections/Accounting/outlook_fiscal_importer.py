@@ -518,6 +518,15 @@ def _parse_bac_partner_transfer(message, account, folder_name):
             partner_name=label
             break
     if not partner_name:
+        estimated=re.search(r"Estimad[oa]\(a\)\s+(.+?)\s*:", text or "", re.IGNORECASE | re.DOTALL)
+        if estimated:
+            partner_name=re.sub(r"\s+"," ",estimated.group(1)).strip()
+    if not partner_name:
+        subject=str(getattr(message,"Subject","") or "")
+        subject_match=re.search(r"transacci[oó]n\s+(.+?)\s+\d{1,2}[-/]\d{1,2}[-/]\d{4}", subject, re.IGNORECASE)
+        if subject_match:
+            partner_name=re.sub(r"\s+"," ",subject_match.group(1)).strip()
+    if not partner_name:
         return None
     money=_parse_bac_money(text)
     if not money:

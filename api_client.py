@@ -5276,6 +5276,7 @@ def post_itp_biweekly_obligations_apply_api(payload: dict):
 def post_bac_partner_transfer_api(payload: dict):
     import sys
     import hashlib
+    import re
     from pathlib import Path
     from decimal import Decimal, ROUND_HALF_UP
     from datetime import date
@@ -5368,6 +5369,64 @@ def post_bac_partner_transfer_api(payload: dict):
             raise ValueError(f"Cuenta contable no posteable: {code}")
         return row["account_code"], row["account_name"]
 
+    def norm(value):
+        return re.sub(r"[^A-Z0-9]+", " ", str(value or "").upper()).strip()
+
+    def overlap_score(left, right):
+        left_tokens = {token for token in norm(left).split() if len(token) >= 3}
+        right_tokens = {token for token in norm(right).split() if len(token) >= 3}
+        if not left_tokens or not right_tokens:
+            return 0
+        return min(35, len(left_tokens & right_tokens) * 10)
+
+    def date_delta(left, right):
+        try:
+            return abs((left - right).days)
+        except Exception:
+            return 999
+
+    def find_obligation(cur, company_code, payee, ref, value_date, curr, value):
+        tolerance = Decimal("0.05") if curr == "USD" else Decimal("2.00")
+        cur.execute("""
+            SELECT id, payee_name, reference, issue_date, due_date, currency, total, balance, status
+            FROM payment_obligations
+            WHERE company_code=%s
+              AND active=TRUE
+              AND record_type='OBLIGATION'
+              AND status IN ('PENDING','PARTIAL')
+              AND COALESCE(balance,0) > 0
+              AND currency=%s
+              AND ABS(COALESCE(balance,0)-%s) <= %s
+              AND COALESCE(issue_date, due_date, %s::date)
+                    BETWEEN (%s::date - INTERVAL '60 days') AND (%s::date + INTERVAL '15 days')
+            FOR UPDATE
+        """, (company_code, curr, value, tolerance, value_date, value_date, value_date))
+        candidates = []
+        ref_norm = norm(ref)
+        payee_norm = norm(payee)
+        for row in cur.fetchall() or []:
+            candidate = dict(row)
+            score = 55
+            score += max(
+                overlap_score(payee_norm, candidate.get("payee_name")),
+                overlap_score(ref_norm, candidate.get("reference")),
+            )
+            if date_delta(value_date, candidate.get("issue_date")) <= 3:
+                score += 15
+            elif date_delta(value_date, candidate.get("due_date")) <= 3:
+                score += 8
+            candidate["score"] = score
+            candidates.append(candidate)
+        candidates.sort(key=lambda item: (-int(item.get("score") or 0), int(item.get("id") or 0)))
+        if not candidates:
+            return None, []
+        best = candidates[0]
+        if int(best.get("score") or 0) < 55:
+            return None, candidates
+        if len(candidates) > 1 and int(best.get("score") or 0) == int(candidates[1].get("score") or 0):
+            return None, candidates
+        return best, candidates
+
     company = str(payload.get("company_code") or get_company_code() or "MSL-CR").strip().upper()
     partner = required_text("partner_name", "beneficiario")
     reference = required_text("reference", "referencia")
@@ -5404,6 +5463,109 @@ def post_bac_partner_transfer_api(payload: dict):
             bank_code, bank_name = account(cur, bank_code)
             rate = exchange_rate(cur, transfer_date) if currency == "USD" else Decimal("1.00")
             amount_crc = (amount * rate).quantize(money, rounding=ROUND_HALF_UP)
+            matched_obligation, candidates = find_obligation(cur, company, partner, reference, transfer_date, currency, amount)
+            if matched_obligation:
+                origin = "BAC_SUPPLIER_TRANSFER"
+                origin_id = int(matched_obligation["id"])
+                description = f"BAC pago proveedor {matched_obligation['payee_name']} Ref {reference}"
+                cur.execute("""
+                    SELECT id FROM accounting_entries
+                    WHERE company_code=%s
+                      AND origin=%s
+                      AND origin_id=%s
+                      AND COALESCE(reversed, FALSE)=FALSE
+                    LIMIT 1
+                """, (company, origin, origin_id))
+                existing = cur.fetchone()
+                metadata = Json({
+                    "source": "outlook_bac_notifications",
+                    "mailbox": payload.get("mailbox"),
+                    "folder": payload.get("folder"),
+                    "message_id": payload.get("message_id"),
+                    "reference": reference,
+                    "original_amount": str(amount),
+                    "original_currency": currency,
+                    "payee_name": partner,
+                    "matched_obligation_id": matched_obligation["id"],
+                    "match_score": matched_obligation.get("score"),
+                    "allow_closed_period": allow_closed_period,
+                    "source_key": source_key,
+                })
+                if existing:
+                    entry_id = existing["id"]
+                    cur.execute("""
+                        UPDATE accounting_entries
+                           SET entry_date=%s,
+                               period=%s,
+                               description=%s,
+                               currency_code=%s,
+                               exchange_rate=%s,
+                               workflow_status='POSTED',
+                               posting_rule_code=%s,
+                               posting_metadata=%s,
+                               updated_at=NOW()
+                         WHERE id=%s
+                    """, (transfer_date, period, description, currency, rate, origin, metadata, entry_id))
+                    cur.execute("DELETE FROM accounting_lines WHERE entry_id=%s", (entry_id,))
+                    status = "UPDATED_PAYMENT"
+                else:
+                    cur.execute("""
+                        INSERT INTO accounting_entries (
+                            company_code, entry_date, period, description, origin, origin_id,
+                            created_by, workflow_status, currency_code, exchange_rate,
+                            posting_rule_code, posting_metadata, posted_by, posted_at
+                        )
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,'POSTED',%s,%s,%s,%s,%s,NOW())
+                        RETURNING id
+                    """, (
+                        company, transfer_date, period, description, origin, origin_id,
+                        "OUTLOOK_BAC", currency, rate, origin, metadata, "OUTLOOK_BAC",
+                    ))
+                    entry_id = cur.fetchone()["id"]
+                    status = "IMPORTED_PAYMENT"
+                line_detail = (
+                    f"{matched_obligation['payee_name']} Ref {reference} {currency} {amount:,.2f}"
+                    + (f" TC {rate:,.6f}" if currency == "USD" else "")
+                )
+                cur.execute("""
+                    INSERT INTO accounting_lines(entry_id, account_code, account_name, debit, credit, line_description)
+                    VALUES
+                        (%s,'2.1.01.01','Cuentas por pagar-comerciales',%s,0,%s),
+                        (%s,%s,%s,0,%s,%s)
+                """, (
+                    entry_id, amount_crc, line_detail,
+                    entry_id, bank_code, bank_name, amount_crc, line_detail,
+                ))
+                cur.execute("""
+                    UPDATE payment_obligations
+                       SET balance=0,
+                           status='PAID',
+                           last_payment_date=%s,
+                           payment_bank_account_code=%s,
+                           payment_bank_account_name=%s,
+                           payment_method='BAC_TRANSFER',
+                           notes=CONCAT_WS(E'\n', NULLIF(notes,''), %s),
+                           updated_at=NOW()
+                     WHERE id=%s
+                """, (
+                    transfer_date,
+                    bank_code,
+                    bank_name,
+                    f"Pago aplicado automaticamente desde Notificaciones BAC. Ref {reference}.",
+                    matched_obligation["id"],
+                ))
+                conn.commit()
+                return {
+                    "status": status,
+                    "entry_id": entry_id,
+                    "period": period,
+                    "amount_crc": float(amount_crc),
+                    "exchange_rate": float(rate),
+                    "reference": reference,
+                    "matched_obligation_id": matched_obligation["id"],
+                    "match_score": matched_obligation.get("score"),
+                }
+
             description = f"BAC transferencia socio {partner} Ref {reference}"
 
             cur.execute("""

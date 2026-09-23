@@ -401,11 +401,14 @@ def _ensure_purchase_obligation(cur, data, xml_path, company_code="MSL-CR"):
     due=issue+timedelta(days=30)
     is_credit=data.get("document_type") in {"NC","NCE"}
     total=-(abs(data.get("total") or 0)) if is_credit else data.get("total") or 0
+    balance=0 if is_credit else total
+    status="PAID" if is_credit else "PENDING"
+    notes="Nota de crédito importada desde correo fiscal; no representa pago pendiente." if is_credit else "Importado automáticamente desde correo fiscal"
     cur.execute("""INSERT INTO payment_obligations(company_code,record_type,payee_type,payee_name,obligation_type,reference,
       issue_date,due_date,country,currency,total,balance,status,origin,file_xml,active,notes,created_at,updated_at)
-      VALUES(%s,'OBLIGATION','SUPPLIER',%s,%s,%s,%s,%s,'Costa Rica',%s,%s,%s,'PENDING','EMAIL',%s,TRUE,%s,NOW(),NOW()) RETURNING id""",
+      VALUES(%s,'OBLIGATION','SUPPLIER',%s,%s,%s,%s,%s,'Costa Rica',%s,%s,%s,%s,'EMAIL',%s,TRUE,%s,NOW(),NOW()) RETURNING id""",
                 (company,data.get("issuer_name") or "PROVEEDOR POR VALIDAR","SUPPLIER_CREDIT_NOTE" if is_credit else "SUPPLIER_INVOICE",
-                 reference,issue,due,data.get("currency_code") or "CRC",total,total,xml_path,"Importado automáticamente desde correo fiscal"))
+                 reference,issue,due,data.get("currency_code") or "CRC",total,balance,status,xml_path,notes))
     return cur.fetchone()["id"]
 
 
