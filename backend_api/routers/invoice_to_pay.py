@@ -29,6 +29,7 @@ from services.employee_payee_rules import (
     deactivate_employee_itp_obligations,
     is_employee_payee,
 )
+from services.itp_surveyor_reconciliation import reconcile_surveyor_invoice_obligations
 from services.tenanting import company_code as normalize_company_code
 from routers.hr_ot_log import _employee_hours_policy
 
@@ -522,6 +523,137 @@ def _sync_servicios_to_itp(cur, company_code: str):
     - Respeta pagos parciales recalculando balance
     """
 
+    cur.execute("SELECT to_regclass('public.servicio_surveyors_flat') AS table_name")
+    has_flat_surveyors = bool((cur.fetchone() or {}).get("table_name"))
+
+    if has_flat_surveyors:
+        flat_select = """
+            SELECT s.consec, s.buque_contenedor, s.pais, s.operacion, s.fecha_fin, s.detalle,
+                   CASE WHEN LOWER(TRIM(COALESCE(s.pais, ''))) = 'costa rica' THEN 'CRC' ELSE 'USD' END AS currency,
+                   v.orden, v.surveyor_nombre, v.honorario
+            FROM servicios s
+            JOIN servicio_surveyors_flat f ON f.servicio_consec = s.consec
+            CROSS JOIN LATERAL (VALUES
+                (1, f.surveyor_1, f.honorario_1),
+                (2, f.surveyor_2, f.honorario_2),
+                (3, f.surveyor_3, f.honorario_3),
+                (4, f.surveyor_4, f.honorario_4),
+                (5, f.surveyor_5, f.honorario_5),
+                (6, f.surveyor_6, f.honorario_6),
+                (7, f.surveyor_7, f.honorario_7),
+                (8, f.surveyor_8, f.honorario_8),
+                (9, f.surveyor_9, f.honorario_9),
+                (10, f.surveyor_10, f.honorario_10)
+            ) AS v(orden, surveyor_nombre, honorario)
+            WHERE COALESCE(s.company_code, 'MSL-CR') = %s
+              AND NULLIF(TRIM(COALESCE(v.surveyor_nombre, '')), '') IS NOT NULL
+              AND COALESCE(v.honorario, 0) > 0
+              AND s.fecha_fin IS NOT NULL
+        """
+        cur.execute(f"""
+            INSERT INTO payment_obligations (
+                company_code, record_type, payee_type, payee_name, obligation_type,
+                reference, vessel, country, operation, service_id, issue_date, due_date,
+                currency, total, balance, status, origin, notes, created_at
+            )
+            SELECT
+                %s, 'OBLIGATION', 'SURVEYOR', fr.surveyor_nombre, 'SURVEYOR_FEE',
+                CONCAT(fr.consec::text, '-', fr.orden::text),
+                fr.buque_contenedor, fr.pais, fr.operacion, fr.consec,
+                fr.fecha_fin, (fr.fecha_fin + INTERVAL '15 days'), fr.currency,
+                fr.honorario, fr.honorario, 'PENDING', 'SERVICIOS', fr.detalle, NOW()
+            FROM ({flat_select}) fr
+            WHERE NOT EXISTS (
+                SELECT 1 FROM payment_obligations po
+                WHERE po.company_code=%s
+                  AND po.origin='SERVICIOS'
+                  AND po.obligation_type='SURVEYOR_FEE'
+                  AND po.service_id=fr.consec
+                  AND po.reference=CONCAT(fr.consec::text, '-', fr.orden::text)
+            )
+        """, (company_code, company_code, company_code))
+
+        cur.execute(f"""
+            UPDATE payment_obligations po
+               SET total=fr.honorario,
+                   balance=GREATEST(fr.honorario - (po.total - po.balance), 0),
+                   payee_name=fr.surveyor_nombre,
+                   vessel=COALESCE(fr.buque_contenedor, po.vessel),
+                   country=COALESCE(fr.pais, po.country),
+                   operation=COALESCE(fr.operacion, po.operation),
+                   currency=fr.currency,
+                   issue_date=COALESCE(fr.fecha_fin, po.issue_date),
+                   due_date=COALESCE((fr.fecha_fin + INTERVAL '15 days'), po.due_date),
+                   notes=COALESCE(fr.detalle, po.notes),
+                   updated_at=NOW()
+            FROM ({flat_select}) fr
+            WHERE po.company_code=%s
+              AND po.origin='SERVICIOS'
+              AND po.obligation_type='SURVEYOR_FEE'
+              AND po.service_id=fr.consec
+              AND po.reference=CONCAT(fr.consec::text, '-', fr.orden::text)
+              AND po.status IN ('PENDING','PARTIAL')
+              AND (
+                    po.total IS DISTINCT FROM fr.honorario
+                 OR po.payee_name IS DISTINCT FROM fr.surveyor_nombre
+                 OR po.currency IS DISTINCT FROM fr.currency
+              )
+        """, (company_code, company_code))
+
+        cur.execute("""
+            UPDATE payment_obligations po
+               SET balance=0,
+                   status='REPLACED',
+                   active=FALSE,
+                   notes=TRIM(BOTH E'\n' FROM CONCAT_WS(E'\n', NULLIF(po.notes,''), 'Reemplazada por desglose individual de surveyors del servicio.')),
+                   updated_at=NOW()
+            WHERE po.company_code=%s
+              AND po.origin='SERVICIOS'
+              AND po.obligation_type='SURVEYOR_FEE'
+              AND po.status IN ('PENDING','PARTIAL')
+              AND po.reference = po.service_id::text
+              AND EXISTS (
+                  SELECT 1
+                  FROM servicio_surveyors_flat f
+                  WHERE f.servicio_consec=po.service_id
+                    AND COALESCE(f.cantidad_surveyors, 0) > 0
+              )
+        """, (company_code,))
+
+        cur.execute("""
+            UPDATE payment_obligations po
+               SET balance=0,
+                   status='REPLACED',
+                   active=FALSE,
+                   notes=TRIM(BOTH E'\n' FROM CONCAT_WS(E'\n', NULLIF(po.notes,''), 'Reemplazada por cambio en desglose individual de surveyors.')),
+                   updated_at=NOW()
+            WHERE po.company_code=%s
+              AND po.origin='SERVICIOS'
+              AND po.obligation_type='SURVEYOR_FEE'
+              AND po.status IN ('PENDING','PARTIAL')
+              AND po.reference LIKE po.service_id::text || '-%%'
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM servicio_surveyors_flat f
+                  CROSS JOIN LATERAL (VALUES
+                      (1, f.surveyor_1, f.honorario_1),
+                      (2, f.surveyor_2, f.honorario_2),
+                      (3, f.surveyor_3, f.honorario_3),
+                      (4, f.surveyor_4, f.honorario_4),
+                      (5, f.surveyor_5, f.honorario_5),
+                      (6, f.surveyor_6, f.honorario_6),
+                      (7, f.surveyor_7, f.honorario_7),
+                      (8, f.surveyor_8, f.honorario_8),
+                      (9, f.surveyor_9, f.honorario_9),
+                      (10, f.surveyor_10, f.honorario_10)
+                  ) AS v(orden, surveyor_nombre, honorario)
+                  WHERE f.servicio_consec=po.service_id
+                    AND po.reference=CONCAT(f.servicio_consec::text, '-', v.orden::text)
+                    AND NULLIF(TRIM(COALESCE(v.surveyor_nombre, '')), '') IS NOT NULL
+                    AND COALESCE(v.honorario, 0) > 0
+              )
+        """, (company_code,))
+
     # ============================================================
     # 1️⃣ INSERTAR HONORARIOS (SURVEYOR_FEE)
     # ============================================================
@@ -560,7 +692,7 @@ def _sync_servicios_to_itp(cur, company_code: str):
             s.consec,
             s.fecha_fin,
             (s.fecha_fin + INTERVAL '15 days'),
-            'USD',
+            CASE WHEN LOWER(TRIM(COALESCE(s.pais, ''))) = 'costa rica' THEN 'CRC' ELSE 'USD' END,
             s.honorarios,
             s.honorarios,
             'PENDING',
@@ -575,6 +707,15 @@ def _sync_servicios_to_itp(cur, company_code: str):
             AND s.honorarios IS NOT NULL
             AND s.honorarios > 0
             AND s.fecha_fin IS NOT NULL
+            AND (
+                %s = FALSE
+                OR NOT EXISTS (
+                    SELECT 1
+                    FROM servicio_surveyors_flat f
+                    WHERE f.servicio_consec=s.consec
+                      AND COALESCE(f.cantidad_surveyors, 0) > 0
+                )
+            )
             AND NOT EXISTS (
                 SELECT 1
                 FROM payment_obligations po
@@ -583,7 +724,7 @@ def _sync_servicios_to_itp(cur, company_code: str):
                   AND po.obligation_type = 'SURVEYOR_FEE'
                   AND po.company_code = %s
             )
-    """, (company_code, company_code, company_code))
+    """, (company_code, company_code, has_flat_surveyors, company_code))
 
     # ============================================================
     # 2️⃣ INSERTAR COSTO TARJETAS (CARD_PROCESSING)
@@ -662,6 +803,7 @@ def _sync_servicios_to_itp(cur, company_code: str):
             vessel = COALESCE(s.buque_contenedor, po.vessel),
             country = COALESCE(s.pais, po.country),
             operation = COALESCE(s.operacion, po.operation),
+            currency = CASE WHEN LOWER(TRIM(COALESCE(s.pais, ''))) = 'costa rica' THEN 'CRC' ELSE 'USD' END,
             issue_date = COALESCE(s.fecha_fin, po.issue_date),
             due_date = COALESCE((s.fecha_fin + INTERVAL '15 days'), po.due_date),
             notes = COALESCE(s.detalle, po.notes),
@@ -676,8 +818,20 @@ def _sync_servicios_to_itp(cur, company_code: str):
             AND s.honorarios IS NOT NULL
             AND s.honorarios > 0
             AND po.status IN ('PENDING', 'PARTIAL')
-            AND po.total IS DISTINCT FROM s.honorarios
-    """, (company_code, company_code))
+            AND (
+                po.total IS DISTINCT FROM s.honorarios
+                OR po.currency IS DISTINCT FROM CASE WHEN LOWER(TRIM(COALESCE(s.pais, ''))) = 'costa rica' THEN 'CRC' ELSE 'USD' END
+            )
+            AND (
+                %s = FALSE
+                OR NOT EXISTS (
+                    SELECT 1
+                    FROM servicio_surveyors_flat f
+                    WHERE f.servicio_consec=s.consec
+                      AND COALESCE(f.cantidad_surveyors, 0) > 0
+                )
+            )
+    """, (company_code, company_code, has_flat_surveyors))
 
     # ============================================================
     # 4️⃣ ACTUALIZAR COSTO TARJETAS MODIFICADO
@@ -2254,6 +2408,7 @@ def upload_invoice_xml(
                 NOW(),
                 NOW()
             )
+            RETURNING id
         """, (
             company,
             emisor,
@@ -2267,6 +2422,15 @@ def upload_invoice_xml(
             filepath,
             f"Documento cargado por XML ({clave})"
         ))
+        obligation_id = cur.fetchone()["id"]
+        replaced_ids = reconcile_surveyor_invoice_obligations(
+            cur,
+            company,
+            emisor,
+            issue_date,
+            reference=clave,
+            invoice_obligation_id=obligation_id,
+        )
 
         conn.commit()
 
@@ -2283,7 +2447,8 @@ def upload_invoice_xml(
         "reference": clave,
         "supplier": emisor,
         "total": total,
-        "currency": moneda
+        "currency": moneda,
+        "replaced_service_obligations": replaced_ids
     }
 
 

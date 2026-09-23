@@ -17,6 +17,7 @@ from pydantic import BaseModel
 
 from database import get_db
 from services.employee_payee_rules import is_employee_payee
+from services.itp_surveyor_reconciliation import reconcile_surveyor_invoice_obligations
 from services.tenanting import company_code as normalize_company_code
 
 
@@ -409,7 +410,17 @@ def _ensure_purchase_obligation(cur, data, xml_path, company_code="MSL-CR"):
       VALUES(%s,'OBLIGATION','SUPPLIER',%s,%s,%s,%s,%s,'Costa Rica',%s,%s,%s,%s,'EMAIL',%s,TRUE,%s,NOW(),NOW()) RETURNING id""",
                 (company,data.get("issuer_name") or "PROVEEDOR POR VALIDAR","SUPPLIER_CREDIT_NOTE" if is_credit else "SUPPLIER_INVOICE",
                  reference,issue,due,data.get("currency_code") or "CRC",total,balance,status,xml_path,notes))
-    return cur.fetchone()["id"]
+    obligation_id = cur.fetchone()["id"]
+    if not is_credit:
+        reconcile_surveyor_invoice_obligations(
+            cur,
+            company,
+            data.get("issuer_name"),
+            issue,
+            reference=reference,
+            invoice_obligation_id=obligation_id,
+        )
+    return obligation_id
 
 
 @router.post("/sync")

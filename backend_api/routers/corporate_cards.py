@@ -14,6 +14,7 @@ from psycopg2.extras import Json, RealDictCursor
 from pydantic import BaseModel
 
 from database import get_db
+from services.itp_surveyor_reconciliation import reconcile_surveyor_invoice_obligations
 from services.tenanting import company_code
 
 
@@ -704,7 +705,17 @@ def _ensure_obligation_from_tax_doc(cur, company: str, tax_doc_id: int) -> int:
         f"Creada automaticamente desde factura electronica para pago con tarjeta BAC. Documento {doc.get('document_number') or reference}",
     ))
     row = cur.fetchone()
-    return int(row["id"])
+    obligation_id = int(row["id"])
+    if "CREDIT" not in str(doc.get("document_type") or "").upper():
+        reconcile_surveyor_invoice_obligations(
+            cur,
+            company,
+            doc.get("issuer_name"),
+            issue_date,
+            reference=reference,
+            invoice_obligation_id=obligation_id,
+        )
+    return obligation_id
 
 
 def _post_entry(
