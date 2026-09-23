@@ -355,7 +355,9 @@ def som_web_home() -> HTMLResponse:
     .muted { color:var(--muted); }
     .toolbar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
     .grid { display:grid; gap:12px; }
+    .grid.two { grid-template-columns:repeat(2,minmax(0,1fr)); }
     .kpis { grid-template-columns:repeat(4,minmax(0,1fr)); }
+    .kpi-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin:12px 0; }
     .card { background:var(--panel); border:1px solid var(--line); border-radius:8px; box-shadow:var(--shadow); }
     .kpi { padding:14px; min-height:96px; }
     .kpi span { display:block; color:var(--muted); font-size:12px; text-transform:uppercase; }
@@ -405,6 +407,33 @@ def som_web_home() -> HTMLResponse:
     .modal-backdrop { position:fixed; inset:0; z-index:20; background:rgba(5,18,32,.44); display:flex; align-items:center; justify-content:center; padding:22px; }
     .modal { width:min(1120px,96vw); max-height:92vh; overflow:auto; background:#fff; border:1px solid var(--line); border-radius:9px; box-shadow:0 26px 90px rgba(0,0,0,.24); padding:16px; }
     .modal.small { width:min(560px,94vw); }
+    .modal.itp-biweekly-modal { width:min(1900px,99vw); height:min(940px,96vh); max-height:96vh; display:flex; flex-direction:column; gap:8px; overflow:hidden; background:#d9d8d2; border-radius:0; padding:14px; color:#111827; }
+    .itp-bi-header { display:grid; grid-template-columns:1fr auto; gap:18px; align-items:start; }
+    .itp-bi-header h2 { font-size:25px; line-height:1.1; }
+    .itp-bi-totals { min-width:150px; text-align:right; display:grid; gap:8px; font-size:18px; font-weight:700; }
+    .itp-bi-totals span { font-size:14px; font-weight:500; }
+    .itp-bi-controls { display:flex; flex-wrap:wrap; align-items:end; gap:10px; }
+    .itp-bi-controls label { display:grid; grid-template-columns:auto auto; align-items:center; gap:7px; font-size:14px; color:#111827; }
+    .itp-bi-controls input,.itp-bi-controls select { width:auto; min-width:82px; height:32px; border-radius:0; padding:0 8px; }
+    .itp-bi-controls .period-input { width:90px; }
+    .itp-bi-controls .fortnight-input { width:58px; }
+    .itp-bi-controls button,.itp-bi-tools button { height:38px; border-radius:0; background:#e8e6df; color:#111827; border:1px solid #a7a39a; }
+    .itp-bi-controls button.green { background:#00703c; color:white; border-color:#00703c; }
+    .itp-bi-tools-title { margin-top:2px; font-size:14px; font-weight:500; }
+    .itp-bi-tools { display:flex; flex-wrap:wrap; gap:10px; padding:8px 6px; border:1px solid #bbb7ad; border-left:0; border-right:0; }
+    .itp-bi-instruction { color:#7f1d1d; font-weight:700; padding:2px 6px; }
+    .itp-biweekly-modal .status { border-radius:0; padding:6px 8px; }
+    .itp-bi-table { flex:1; min-height:260px; overflow:hidden; }
+    .itp-bi-table .table-wrap { height:100%; max-height:none; background:#fff; border-radius:0; border-color:#aaa69e; }
+    .itp-bi-table table { min-width:1880px; font-size:13px; }
+    .itp-bi-table th,.itp-bi-table td { border:1px solid #b7b4ac; border-top:0; padding:4px 6px; }
+    .itp-bi-table th { background:#d7d5cf; color:#111827; }
+    .itp-bi-table input,.itp-bi-table select { height:28px; border-radius:0; padding:0 6px; }
+    .itp-bi-selected td { outline:2px solid #4f6f88; outline-offset:-2px; background:#d9e7f3 !important; }
+    .itp-bi-summary { display:grid; grid-template-columns:1fr 1fr; gap:12px; min-height:172px; }
+    .itp-bi-summary h3 { margin:0 0 4px; font-size:14px; font-weight:500; }
+    .itp-bi-summary .table-wrap { height:142px; max-height:none; border-radius:0; background:white; border-color:#aaa69e; }
+    .itp-bi-summary th,.itp-bi-summary td { border:1px solid #b7b4ac; border-top:0; padding:5px 7px; }
     .modal-head { display:flex; justify-content:space-between; gap:12px; align-items:center; margin-bottom:14px; }
     .surveyors-box { border:1px solid var(--line); border-radius:8px; padding:10px; background:#fbfdff; }
     .surveyor-line { display:grid; grid-template-columns:minmax(220px,1fr) 140px 34px; gap:8px; align-items:center; margin-top:8px; }
@@ -420,6 +449,7 @@ def som_web_home() -> HTMLResponse:
     th,td { border-bottom:1px solid #e6edf4; padding:8px 10px; text-align:left; white-space:nowrap; }
     th { background:#f0f4f8; position:sticky; top:0; z-index:1; }
     .warn-row td { background:#fff8e6; color:#6f4a00; }
+    .ok-row td { background:#eefbf3; color:#175f36; }
     .bar-row { display:grid; grid-template-columns:130px 1fr auto; gap:9px; align-items:center; font-size:13px; margin-bottom:9px; }
     .track { height:13px; background:#e7eef6; border-radius:999px; overflow:hidden; }
     .fill { height:100%; background:linear-gradient(90deg,var(--blue),#029fcf); min-width:2px; }
@@ -427,7 +457,7 @@ def som_web_home() -> HTMLResponse:
     .error { color:var(--red); }
     .hidden { display:none !important; }
     @media(max-width:980px) {
-      .login,.app,.kpis,.home-grid,.view-grid { grid-template-columns:1fr; }
+      .login,.app,.kpis,.kpi-grid,.home-grid,.view-grid,.grid.two { grid-template-columns:1fr; }
       .login-card { max-width:none; padding:34px 24px; }
       .hero-logo { min-height:300px; padding:22px; }
       .hero-logo img { width:min(88%,520px); height:250px; }
@@ -562,6 +592,7 @@ def som_web_home() -> HTMLResponse:
     let selectedItpIndex = null;
     let selectedItpIndexes = new Set();
     let itpBiweeklyRows = [];
+    let selectedItpBiweeklyIndex = null;
     let selectedPaidInvoiceIndexes = new Set();
     let disputeRows = [];
     let disputeHistoryRows = [];
@@ -1599,23 +1630,92 @@ def som_web_home() -> HTMLResponse:
     }
     function openItpBiweekly() {
       const period = new Date().toISOString().slice(0,7);
+      const fortnight = new Date().getDate() <= 15 ? "1" : "2";
       document.body.insertAdjacentHTML("beforeend", `
         <div class="modal-backdrop" id="svcModal">
-          <div class="modal wide">
-            <div class="modal-head"><h2>Obligaciones quincenales</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
-            <div class="finance-filter-row compact">
-              <label>Periodo<input id="itpBiPeriod" value="${period}" placeholder="YYYY-MM" /></label>
-              <label>Quincena<select id="itpBiFortnight"><option value="1">1</option><option value="2">2</option></select></label>
-              <button onclick="loadItpBiweekly(false)">Generar / buscar</button>
-              <button class="secondary" onclick="loadItpBiweekly(true)">Regenerar automático</button>
-              <button class="secondary" onclick="saveItpBiweeklyDraft()">Guardar borrador</button>
-              <button class="green" onclick="applyItpBiweekly()">Aplicar pagos y crear asientos</button>
-              <button class="secondary" onclick="exportItpBiweekly()">Exportar Excel</button>
+          <div class="modal itp-biweekly-modal">
+            <div class="itp-bi-header">
+              <h2>Obligaciones quincenales</h2>
+              <div id="itpBiTotals" class="itp-bi-totals"><strong>CRC 0.00</strong><strong>USD 0.00</strong><span>0 lineas</span></div>
             </div>
-            <div id="itpBiMsg" class="status">Presione Generar / buscar para cargar obligaciones quincenales.</div>
-            <div id="itpBiTable" class="workspace"></div>
+            <div class="itp-bi-controls">
+              <label>Periodo <input class="period-input" id="itpBiPeriod" value="${period}" placeholder="YYYY-MM" /></label>
+              <label>Quincena <select class="fortnight-input" id="itpBiFortnight"><option value="1"${fortnight === "1" ? " selected" : ""}>1</option><option value="2"${fortnight === "2" ? " selected" : ""}>2</option></select></label>
+              <button onclick="loadItpBiweekly(true)">Generar automatico</button>
+              <button onclick="saveItpBiweeklyDraft()">Guardar borrador</button>
+              <button onclick="exportItpBiweekly()">Exportar Excel</button>
+              <button class="green" onclick="applyItpBiweekly()">Aplicar pagos y crear asientos</button>
+              <button onclick="closeModal()">Cerrar</button>
+            </div>
+            <div class="itp-bi-tools-title">Agregar / ajustar lineas</div>
+            <div class="itp-bi-tools">
+              <button onclick="addItpBiweeklyLine('Planilla')">+ Planilla</button>
+              <button onclick="addItpBiweeklyLine('CCSS')">+ CCSS</button>
+              <button onclick="addItpBiweeklyLine('Surveyors')">+ Surveyors</button>
+              <button onclick="addItpBiweeklyLine('Viaticos')">+ Viaticos</button>
+              <button onclick="addItpBiweeklyLine('Telefonia')">+ Telefonia</button>
+              <button onclick="addItpBiweeklyLine('Otros')">+ Otros</button>
+              <button onclick="editSelectedItpBiweeklyLine()">Editar linea</button>
+              <button onclick="deleteSelectedItpBiweeklyLine()">Quitar linea</button>
+            </div>
+            <div class="itp-bi-instruction">Para aplicar una linea pagada: comprobante, fecha y cuenta contable. Las demas quedan pendientes en borrador.</div>
+            <div id="itpBiMsg" class="status">Presione Generar automatico para cargar obligaciones quincenales.</div>
+            <div id="itpBiTable" class="itp-bi-table"></div>
+            <div id="itpBiSummary" class="itp-bi-summary"></div>
           </div>
         </div>`);
+      itpBiweeklyRows = [];
+      selectedItpBiweeklyIndex = null;
+      renderItpBiweeklyTable();
+    }
+    const ITP_BI_CATEGORIES = ["Planilla","CCSS","IVA","Surveyors","Viaticos","Tarjetas de credito","Alquiler","Internet","Telefonia","Proveedores","Otros"];
+    const ITP_BI_BANK_ACCOUNTS = [
+      ["1.1.02.02.01","Banco BAC San Jose CRC"],
+      ["1.1.02.02.02","Banco BAC San Jose USD"],
+      ["1.1.02.04.01","Banco de Costa Rica USD"],
+      ["2.1.02.10","Tarjeta corporativa BAC por pagar"],
+      ["3.1.99","Aportes de terceros - Hazel Barrantes"]
+    ];
+    const ITP_BI_PAYMENT_METHODS = [
+      ["BANK","Banco"],
+      ["CARD_BAC_3155","Tarjeta empresarial BAC 3155"],
+      ["THIRD_PARTY_HAZEL","Pagado por Hazel Barrantes"]
+    ];
+    function itpBiPaymentLabel(row) {
+      const method = String(row.payment_method || "").toUpperCase();
+      if (method === "CARD_BAC_3155" || String(row.payment_card_last4 || "") === "3155") return "Tarjeta empresarial BAC 3155";
+      if (method === "THIRD_PARTY_HAZEL") return "Pagado por Hazel Barrantes";
+      return "Banco";
+    }
+    function normalizeItpBiPaymentRow(row) {
+      row.payment_method = String(row.payment_method || "BANK").toUpperCase();
+      if (row.payment_method === "CARD_3155") row.payment_method = "CARD_BAC_3155";
+      if (row.payment_method === "HAZEL_CONTRIBUTION") row.payment_method = "THIRD_PARTY_HAZEL";
+      if (row.payment_method === "CARD_BAC_3155") {
+        row.payment_card_last4 = "3155";
+        row.bank_accounting_code = "2.1.02.10";
+        row.bank_accounting_name = "Tarjeta corporativa BAC por pagar";
+        if (!row.bank_account) row.bank_account = "BAC";
+      } else if (row.payment_method === "THIRD_PARTY_HAZEL") {
+        row.payment_card_last4 = "";
+        row.bank_accounting_code = "3.1.99";
+        row.bank_accounting_name = "Aportes de terceros - Hazel Barrantes";
+        row.bank_account = "Hazel Barrantes";
+      } else {
+        row.payment_method = "BANK";
+        row.payment_card_last4 = "";
+      }
+      return row;
+    }
+    function itpBiReady(row) {
+      return Number(row.amount || 0) > 0
+        && String(row.bank_accounting_code || "").trim()
+        && String(row.bank_voucher || "").trim()
+        && String(row.due_date || "").trim();
+    }
+    function itpBiStatus(row) {
+      if (String(row.payment_status || "").trim()) return row.payment_status;
+      return itpBiReady(row) ? "Listo" : "Pendiente";
     }
     async function loadItpBiweekly(force=false) {
       const msg = $("itpBiMsg");
@@ -1625,7 +1725,7 @@ def som_web_home() -> HTMLResponse:
       try {
         const params = new URLSearchParams({ period:valueFrom("itpBiPeriod"), fortnight:valueFrom("itpBiFortnight") || "1", force:String(!!force) });
         const payload = await getJSON(`/invoice-to-pay/biweekly-obligations/preview?${params.toString()}`);
-        itpBiweeklyRows = rowsList(payload.rows || payload);
+        itpBiweeklyRows = rowsList(payload.rows || payload).map(row => normalizeItpBiPaymentRow({ ...row }));
         msg.className = "status";
         msg.textContent = payload.source === "draft" ? "Borrador cargado. Revise pendientes antes de aplicar." : "Preview generado. Complete comprobante y cuenta contable antes de aplicar.";
         renderItpBiweeklyTable();
@@ -1636,23 +1736,90 @@ def som_web_home() -> HTMLResponse:
         msg.textContent = err.message;
       }
     }
+    function itpBiOptions(values, selected) {
+      return values.map(item => {
+        const value = Array.isArray(item) ? item[0] : item;
+        const label = Array.isArray(item) ? item[1] : item;
+        return `<option value="${esc(value)}"${String(value) === String(selected || "") ? " selected" : ""}>${esc(label)}</option>`;
+      }).join("");
+    }
+    function itpBiMoney(value) {
+      return Number(value || 0).toLocaleString("en-US", { minimumFractionDigits:2, maximumFractionDigits:2 });
+    }
+    function renderItpBiweeklySummary() {
+      const target = $("itpBiSummary");
+      if (!target) return;
+      const byCategory = {};
+      const byDestination = {};
+      let crc = 0, usd = 0, ready = 0, pending = 0;
+      itpBiweeklyRows.forEach(row => {
+        const amount = Number(row.amount || 0);
+        const currency = row.currency || "CRC";
+        const catKey = `${row.category || "Otros"}|${currency}`;
+        const destLabel = itpBiPaymentLabel(row) === "Banco" ? (row.bank_account || "Sin cuenta") : itpBiPaymentLabel(row);
+        const destKey = `${destLabel}|${currency}`;
+        byCategory[catKey] = (byCategory[catKey] || 0) + amount;
+        byDestination[destKey] = (byDestination[destKey] || 0) + amount;
+        if (currency === "USD") usd += amount; else crc += amount;
+        if (amount > 0 && itpBiReady(row)) ready += 1;
+        if (amount > 0 && !itpBiReady(row)) pending += 1;
+      });
+      const totals = $("itpBiTotals");
+      if (totals) {
+        totals.innerHTML = `<strong>CRC ${itpBiMoney(crc)}</strong><strong>USD ${itpBiMoney(usd)}</strong><span>${itpBiweeklyRows.length} lineas</span>`;
+      }
+      const summaryTable = (title, data) => `<div><h3>${esc(title)}</h3><div class="table-wrap"><table><thead><tr><th>Concepto</th><th>Moneda</th><th>Total</th></tr></thead><tbody>${Object.keys(data).sort().map(k => {
+        const [label, currency] = k.split("|");
+        return `<tr><td>${esc(label)}</td><td>${esc(currency)}</td><td style="text-align:right">${itpBiMoney(data[k])}</td></tr>`;
+      }).join("")}</tbody></table></div></div>`;
+      target.innerHTML = `${summaryTable("Resumen por rubro", byCategory)}${summaryTable("Resumen por cuenta / destino", byDestination)}`;
+    }
     function renderItpBiweeklyTable() {
       const table = $("itpBiTable");
-      if (!itpBiweeklyRows.length) {
-        table.innerHTML = '<div class="status">Sin líneas para esta quincena.</div>';
-        return;
-      }
-      const inputs = (idx,row) => `
-        <td><input data-bi="${idx}" data-field="category" value="${esc(row.category)}" /></td>
-        <td><input data-bi="${idx}" data-field="name" value="${esc(row.name)}" /></td>
-        <td><input data-bi="${idx}" data-field="amount" type="number" step="0.01" value="${esc(row.amount)}" /></td>
-        <td><select data-bi="${idx}" data-field="currency"><option${row.currency === "CRC" ? " selected" : ""}>CRC</option><option${row.currency === "USD" ? " selected" : ""}>USD</option></select></td>
-        <td><input data-bi="${idx}" data-field="due_date" type="date" value="${esc(String(row.due_date || "").slice(0,10))}" /></td>
-        <td><input data-bi="${idx}" data-field="bank_account" value="${esc(row.bank_account)}" /></td>
-        <td><input data-bi="${idx}" data-field="bank_accounting_code" value="${esc(row.bank_accounting_code)}" /></td>
-        <td><input data-bi="${idx}" data-field="bank_voucher" value="${esc(row.bank_voucher)}" /></td>
-        <td><select data-bi="${idx}" data-field="payment_method"><option value="BANK"${row.payment_method === "BANK" ? " selected" : ""}>Banco</option><option value="CARD_3155"${row.payment_method === "CARD_3155" ? " selected" : ""}>Tarjeta 3155</option><option value="HAZEL_CONTRIBUTION"${row.payment_method === "HAZEL_CONTRIBUTION" ? " selected" : ""}>Aporte Hazel</option></select></td>`;
-      table.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Rubro</th><th>Beneficiario</th><th>Monto</th><th>Moneda</th><th>Fecha pago</th><th>Cuenta destino / IBAN</th><th>Cuenta contable pago</th><th>Comprobante</th><th>Método</th><th>ITP ID</th><th>Fuente</th></tr></thead><tbody>${itpBiweeklyRows.map((row,idx) => `<tr>${inputs(idx,row)}<td>${esc(row.obligation_id || "")}</td><td>${esc(row.source || "")}</td></tr>`).join("")}</tbody></table></div>`;
+      renderItpBiweeklySummary();
+      if (!table) return;
+      const inputs = (idx,row) => {
+        const status = itpBiStatus(row);
+        const classes = [];
+        if (status === "Pagado") classes.push("ok-row");
+        if (status === "Pendiente") classes.push("warn-row");
+        if (idx === selectedItpBiweeklyIndex) classes.push("itp-bi-selected");
+        return `<tr class="${classes.join(" ")}" onclick="selectItpBiweeklyLine(${idx})">
+          <td><select data-bi="${idx}" data-field="category" onclick="event.stopPropagation()" onfocus="selectedItpBiweeklyIndex=${idx}">${itpBiOptions(ITP_BI_CATEGORIES, row.category || "Otros")}</select></td>
+          <td><input data-bi="${idx}" data-field="name" value="${esc(row.name || "")}" onclick="event.stopPropagation()" onfocus="selectedItpBiweeklyIndex=${idx}" /></td>
+          <td><input data-bi="${idx}" data-field="amount" type="number" step="0.01" value="${esc(row.amount || 0)}" onclick="event.stopPropagation()" onfocus="selectedItpBiweeklyIndex=${idx}" /></td>
+          <td><select data-bi="${idx}" data-field="currency" onclick="event.stopPropagation()" onfocus="selectedItpBiweeklyIndex=${idx}"><option${row.currency === "CRC" ? " selected" : ""}>CRC</option><option${row.currency === "USD" ? " selected" : ""}>USD</option></select></td>
+          <td>${esc(status)}</td>
+          <td><select data-bi="${idx}" data-field="payment_method" onclick="event.stopPropagation()" onfocus="selectedItpBiweeklyIndex=${idx}" onchange="syncItpBiweeklyPaymentMethod(${idx})">${itpBiOptions(ITP_BI_PAYMENT_METHODS, row.payment_method || "BANK")}</select></td>
+          <td><input data-bi="${idx}" data-field="bank_account" value="${esc(row.bank_account || "")}" onclick="event.stopPropagation()" onfocus="selectedItpBiweeklyIndex=${idx}" /></td>
+          <td><select data-bi="${idx}" data-field="bank_accounting_code" onclick="event.stopPropagation()" onfocus="selectedItpBiweeklyIndex=${idx}">${itpBiOptions(ITP_BI_BANK_ACCOUNTS, row.bank_accounting_code || "1.1.02.02.01")}</select></td>
+          <td><input data-bi="${idx}" data-field="bank_voucher" value="${esc(row.bank_voucher || "")}" onclick="event.stopPropagation()" onfocus="selectedItpBiweeklyIndex=${idx}" /></td>
+          <td><input data-bi="${idx}" data-field="due_date" type="date" value="${esc(String(row.due_date || "").slice(0,10))}" onclick="event.stopPropagation()" onfocus="selectedItpBiweeklyIndex=${idx}" /></td>
+          <td>${esc(row.obligation_id || "")}</td>
+          <td><input data-bi="${idx}" data-field="reference" value="${esc(row.reference || "")}" onclick="event.stopPropagation()" onfocus="selectedItpBiweeklyIndex=${idx}" /></td>
+          <td style="text-align:right">${esc(row.obligation_id ? itpBiMoney(row.balance || row.amount || 0) : "")}</td>
+          <td>${esc(row.source || "")}</td>
+          <td><input data-bi="${idx}" data-field="notes" value="${esc(row.notes || "")}" onclick="event.stopPropagation()" onfocus="selectedItpBiweeklyIndex=${idx}" /></td>
+          <td><button class="brown" onclick="event.stopPropagation(); deleteItpBiweeklyLine(${idx})">Quitar</button></td>
+        </tr>`;
+      };
+      table.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Rubro</th><th>Nombre / beneficiario</th><th>Monto</th><th>Moneda</th><th>Estado</th><th>Tipo pago</th><th>Cuenta destino / IBAN</th><th>Cuenta contable pago</th><th>Comprobante</th><th>Fecha pago</th><th>ITP ID</th><th>Referencia</th><th>Saldo ITP</th><th>Fuente</th><th>Notas</th><th>Accion</th></tr></thead><tbody>${itpBiweeklyRows.map((row,idx) => inputs(idx,row)).join("")}</tbody></table></div>`;
+    }
+    function selectItpBiweeklyLine(idx) {
+      if (idx < 0 || idx >= itpBiweeklyRows.length) return;
+      selectedItpBiweeklyIndex = idx;
+      renderItpBiweeklyTable();
+    }
+    function editSelectedItpBiweeklyLine() {
+      collectItpBiweeklyRows();
+      if (selectedItpBiweeklyIndex === null || !itpBiweeklyRows[selectedItpBiweeklyIndex]) return alert("Seleccione una linea primero.");
+      renderItpBiweeklyTable();
+      const input = document.querySelector(`[data-bi="${selectedItpBiweeklyIndex}"][data-field="name"]`);
+      if (input) input.focus();
+    }
+    function deleteSelectedItpBiweeklyLine() {
+      if (selectedItpBiweeklyIndex === null || !itpBiweeklyRows[selectedItpBiweeklyIndex]) return alert("Seleccione una linea primero.");
+      deleteItpBiweeklyLine(selectedItpBiweeklyIndex);
     }
     function collectItpBiweeklyRows() {
       const rows = itpBiweeklyRows.map(row => ({ ...row }));
@@ -1660,10 +1827,36 @@ def som_web_home() -> HTMLResponse:
         const idx = Number(input.dataset.bi);
         const field = input.dataset.field;
         if (!rows[idx]) return;
-        rows[idx][field] = field === "amount" ? Number(input.value || 0) : input.value;
+        rows[idx][field] = ["amount","balance"].includes(field) ? Number(input.value || 0) : input.value;
       });
-      itpBiweeklyRows = rows;
+      itpBiweeklyRows = rows.map(row => normalizeItpBiPaymentRow(row));
       return rows;
+    }
+    function syncItpBiweeklyPaymentMethod(idx) {
+      collectItpBiweeklyRows();
+      if (!itpBiweeklyRows[idx]) return;
+      normalizeItpBiPaymentRow(itpBiweeklyRows[idx]);
+      renderItpBiweeklyTable();
+    }
+    function addItpBiweeklyLine(category="Otros") {
+      const period = valueFrom("itpBiPeriod") || new Date().toISOString().slice(0,7);
+      const fortnight = Number(valueFrom("itpBiFortnight") || 1);
+      const [year, month] = period.split("-").map(Number);
+      const lastDay = new Date(year, month, 0).getDate();
+      const due = `${period}-${String(fortnight === 1 ? 15 : lastDay).padStart(2, "0")}`;
+      itpBiweeklyRows.push(normalizeItpBiPaymentRow({
+        category, name:"", amount:0, currency:"CRC", bank_account:"", due_date:due,
+        source:"MANUAL", notes:"", obligation_id:null, reference:"", balance:0,
+        bank_accounting_code:"1.1.02.02.01", bank_accounting_name:"Banco BAC San Jose CRC",
+        bank_voucher:"", payment_method:"BANK", payment_card_last4:""
+      }));
+      renderItpBiweeklyTable();
+    }
+    function deleteItpBiweeklyLine(idx) {
+      collectItpBiweeklyRows();
+      itpBiweeklyRows.splice(idx, 1);
+      selectedItpBiweeklyIndex = itpBiweeklyRows.length ? Math.min(idx, itpBiweeklyRows.length - 1) : null;
+      renderItpBiweeklyTable();
     }
     async function saveItpBiweeklyDraft() {
       const msg = $("itpBiMsg");
@@ -1678,13 +1871,19 @@ def som_web_home() -> HTMLResponse:
       }
     }
     async function applyItpBiweekly() {
-      if (!confirm("Se aplicarán pagos con comprobante y cuenta contable, y se crearán los asientos correspondientes. ¿Continuar?")) return;
+      const rows = collectItpBiweeklyRows();
+      const ready = rows.filter(itpBiReady);
+      const pending = rows.filter(row => Number(row.amount || 0) > 0 && !itpBiReady(row));
+      if (!ready.length) return alert("No hay líneas listas para aplicar. Complete comprobante, fecha y cuenta contable en al menos una línea.");
+      if (!confirm(`Se aplicarán solo las líneas listas y las demás quedarán en borrador.\\n\\nListas: ${ready.length}\\nPendientes: ${pending.length}\\n\\n¿Continuar?`)) return;
       const msg = $("itpBiMsg");
       msg.className = "status";
       msg.textContent = "Aplicando pagos quincenales...";
       try {
-        const result = await postJSON("/invoice-to-pay/biweekly-obligations/apply", { period:valueFrom("itpBiPeriod"), fortnight:Number(valueFrom("itpBiFortnight") || 1), rows:collectItpBiweeklyRows() });
+        const result = await postJSON("/invoice-to-pay/biweekly-obligations/apply", { period:valueFrom("itpBiPeriod"), fortnight:Number(valueFrom("itpBiFortnight") || 1), rows });
         msg.textContent = `Aplicado. Asientos: ${result.posted || 0}. Pagos ITP: ${result.applied || 0}. Pendientes: ${result.pending || 0}.`;
+        itpBiweeklyRows.forEach(row => { row.payment_status = itpBiReady(row) ? "Pagado" : "Pendiente"; });
+        renderItpBiweeklyTable();
         await loadItp();
       } catch (err) {
         msg.className = "status error";

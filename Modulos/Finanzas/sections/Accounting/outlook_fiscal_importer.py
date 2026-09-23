@@ -3,15 +3,19 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import tempfile
 import threading
 import time
 import unicodedata
 import zipfile
 import xml.etree.ElementTree as ET
+from datetime import date
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 from api_client import (
+    post_bac_partner_transfer_api,
     post_corporate_card_history_api,
     post_corporate_card_statement_pdf_api,
     upload_tax_response_auto_api,
@@ -22,6 +26,7 @@ from api_client import (
 ACCOUNT="gastos@mslogisticsgroup.com"
 MCI_ACCOUNT="operations@xtravon.com"
 CARD_ACCOUNT="contabilidad@mslogisticsgroup.com"
+BAC_PARTNER_FOLDER="Notificaciones BAC"
 SAFE_DEFAULT_FOLDER="xml gastos electronicos"
 DEFAULT_FOLDER="xml gastos electrónicos"
 DEFAULT_RECEIVED_SUBFOLDER="FE recibidas"
@@ -62,6 +67,9 @@ def load_config():
         "folder": f"{SAFE_DEFAULT_FOLDER}/{DEFAULT_RECEIVED_SUBFOLDER}",
         "fiscal_mailboxes": DEFAULT_FISCAL_MAILBOXES,
         "card_account": CARD_ACCOUNT,
+        "process_bac_partner_transfers": True,
+        "bac_partner_account": CARD_ACCOUNT,
+        "bac_partner_folder": BAC_PARTNER_FOLDER,
         "batch_size": 50,
         "process_corporate_cards": True,
         "corporate_card_years": [2025, 2026],
@@ -349,6 +357,160 @@ def _message_year(message):
         return None
 
 
+def _message_date(message):
+    try:
+        received=getattr(message,"ReceivedTime")
+        if hasattr(received,"date"):
+            return received.date()
+    except Exception:
+        pass
+    return date.today()
+
+
+def _message_text(message):
+    parts=[]
+    for attr in ("Subject","Body","HTMLBody"):
+        try:
+            value=str(getattr(message,attr,"") or "")
+        except Exception:
+            value=""
+        if not value:
+            continue
+        if attr=="HTMLBody":
+            value=re.sub(r"(?is)<(script|style).*?>.*?</\1>"," ",value)
+            value=re.sub(r"(?s)<[^>]+>"," ",value)
+        parts.append(value)
+    text="\n".join(parts)
+    text=text.replace("&nbsp;"," ").replace("&amp;","&")
+    return re.sub(r"[ \t\r\f\v]+"," ",text)
+
+
+def _parse_bac_transfer_date(text, fallback_date):
+    match=re.search(r"\b(\d{1,2})[-/](\d{1,2})[-/](\d{4})\b", text or "")
+    if not match:
+        return fallback_date
+    day,month,year=(int(match.group(1)),int(match.group(2)),int(match.group(3)))
+    try:
+        return date(year,month,day)
+    except ValueError:
+        return fallback_date
+
+
+def _parse_bac_money(text):
+    pattern=re.compile(
+        r"(?:monto\s+de|por\s+un\s+monto\s+de)\s*"
+        r"(?P<amount>[0-9][0-9.,]*)\s*"
+        r"(?P<currency>USD|CRC|COLONES|COLON|₡|\$)?",
+        re.IGNORECASE,
+    )
+    match=pattern.search(text or "")
+    if not match:
+        return None
+    raw=match.group("amount").strip()
+    currency=(match.group("currency") or "CRC").upper()
+    if currency in {"COLONES","COLON","₡"}:
+        currency="CRC"
+    elif currency=="$":
+        currency="USD"
+    if "," in raw and "." in raw:
+        raw=raw.replace(",","")
+    elif "," in raw:
+        parts=raw.split(",")
+        raw="".join(parts[:-1])+"."+parts[-1] if len(parts[-1])==2 else raw.replace(",","")
+    try:
+        amount=Decimal(raw)
+    except (InvalidOperation, ValueError):
+        return None
+    return amount, currency
+
+
+def _parse_bac_partner_transfer(message, account, folder_name):
+    text=_message_text(message)
+    normalized=_normalized(text)
+    if "bac" not in normalized or "transferencia" not in normalized:
+        return None
+    partner_map={
+        "DIANA": ("diana veronica quiros benambourg", "DIANA VERONICA QUIROS BENAMBOURG"),
+        "PABEL": ("pabel gonzalo pena barreto", "PABEL GONZALO PEÑA BARRETO"),
+    }
+    partner_name=None
+    for _,(needle,label) in partner_map.items():
+        if needle in normalized:
+            partner_name=label
+            break
+    if not partner_name:
+        return None
+    money=_parse_bac_money(text)
+    if not money:
+        return None
+    amount,currency=money
+    ref_match=re.search(r"(?:numero|n[uú]mero)\s+de\s+referencia\s+(?:es\s+)?([0-9A-Za-z-]+)", text, re.IGNORECASE)
+    if not ref_match:
+        ref_match=re.search(r"\breferencia\s+(?:es\s+)?([0-9A-Za-z-]+)", text, re.IGNORECASE)
+    if not ref_match:
+        return None
+    transfer_date=_parse_bac_transfer_date(text,_message_date(message))
+    concept_match=re.search(r'"([^"]+)"', text)
+    return {
+        "company_code": "MSL-CR",
+        "mailbox": account,
+        "folder": folder_name,
+        "message_id": str(getattr(message,"EntryID","") or ""),
+        "subject": str(getattr(message,"Subject","") or ""),
+        "partner_name": partner_name,
+        "transfer_date": transfer_date.isoformat(),
+        "amount": str(amount),
+        "currency": currency,
+        "reference": ref_match.group(1).strip(),
+        "concept": concept_match.group(1).strip() if concept_match else "",
+        "allow_closed_period": True,
+    }
+
+
+def _scan_bac_partner_transfer_folder(folder,state,summary,account,folder_name,limit):
+    items=folder.Items; items.Sort("[ReceivedTime]",True)
+    scanned=0
+    imported_messages=0
+    for index in range(1,items.Count+1):
+        if imported_messages>=limit or scanned>=5000:
+            break
+        scanned+=1
+        message=items.Item(index)
+        parsed=_parse_bac_partner_transfer(message,account,folder_name)
+        if not parsed:
+            continue
+        key=hashlib.sha256(
+            f"BAC_PARTNER|{account}|{parsed['reference']}|{parsed['partner_name']}|{parsed['amount']}|{parsed['currency']}".encode("utf-8")
+        ).hexdigest()
+        if state.get(key,{}).get("status") in {"IMPORTED","UPDATED","DUPLICATE"}:
+            continue
+        imported_messages+=1
+        summary["bac_partner_messages"]+=1
+        try:
+            response=post_bac_partner_transfer_api(parsed)
+            status=response.get("status") or "IMPORTED"
+            detail=f"Asiento {response.get('entry_id')} CRC {response.get('amount_crc')}"
+            summary["bac_partner_imported"]+=1
+            state[key]={"status":status,"updated_at":str(getattr(message,"ReceivedTime","") or ""),"reference":parsed["reference"]}
+        except Exception as exc:
+            status="ERROR"
+            detail=str(exc)
+            summary["bac_partner_errors"]+=1
+            summary["errors"]+=1
+            state[key]={"status":"ERROR","updated_at":str(getattr(message,"ReceivedTime","") or ""),"reference":parsed["reference"]}
+        summary["results"].append({
+            "received": str(getattr(message,"ReceivedTime","") or ""),
+            "subject": parsed.get("subject") or "Notificacion BAC",
+            "filename": parsed["reference"],
+            "status": status,
+            "detail": detail,
+            "company_code": parsed["company_code"],
+            "account": account,
+            "type": "BAC_PARTNER_TRANSFER",
+        })
+        _save_state(state)
+
+
 def _scan_card_folder(folder,temp_dir,state,summary,years):
     items=folder.Items; items.Sort("[ReceivedTime]",True)
     scanned=0
@@ -466,7 +628,9 @@ def scan_and_import(max_messages=None,progress=None, process_corporate_cards=Non
         process_corporate_cards=bool(config.get("process_corporate_cards",True))
     summary={
         "status":"ok","messages":0,"attachments":0,"xml":0,"imported":0,"duplicates":0,"errors":0,
-        "card_pdfs":0,"card_imported":0,"card_duplicates":0,"card_errors":0,"results":results
+        "card_pdfs":0,"card_imported":0,"card_duplicates":0,"card_errors":0,
+        "bac_partner_messages":0,"bac_partner_imported":0,"bac_partner_errors":0,
+        "results":results
     }
     _update_runtime_status(last_started_at=time.strftime("%Y-%m-%d %H:%M:%S"),last_error=None)
     pythoncom.CoInitialize()
@@ -543,6 +707,34 @@ def scan_and_import(max_messages=None,progress=None, process_corporate_cards=Non
                     if progress: progress(dict(summary))
                 summary["store"]=str(store); summary["folder"]=str(folder.Name)
                 summary["last_mailbox"]={"company_code":company_code,"account":account,"folder":str(folder.Name)}
+            if config.get("process_bac_partner_transfers",True):
+                bac_account=str(config.get("bac_partner_account") or CARD_ACCOUNT).strip()
+                bac_folder_name=str(config.get("bac_partner_folder") or BAC_PARTNER_FOLDER).strip()
+                try:
+                    bac_store,bac_folder=_find_folder(namespace,bac_account,bac_folder_name)
+                    _scan_bac_partner_transfer_folder(
+                        bac_folder,
+                        state,
+                        summary,
+                        bac_account,
+                        str(getattr(bac_folder,"FolderPath",bac_folder_name)),
+                        limit,
+                    )
+                    summary["bac_partner_store"]=str(bac_store)
+                    summary["bac_partner_folder"]=str(bac_folder.Name)
+                    if progress: progress(dict(summary))
+                except Exception as exc:
+                    summary["bac_partner_errors"]+=1
+                    summary["errors"]+=1
+                    results.append({
+                        "received":"",
+                        "subject":"Notificaciones BAC socios",
+                        "filename":bac_account,
+                        "status":"ERROR",
+                        "detail":str(exc),
+                        "company_code":"MSL-CR",
+                        "account":bac_account,
+                    })
         if post_corporate_card_history and process_corporate_cards:
             try:
                 history=post_corporate_card_history_api({

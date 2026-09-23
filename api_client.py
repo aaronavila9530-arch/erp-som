@@ -1,4 +1,5 @@
 import requests
+import calendar
 from requests.adapters import HTTPAdapter
 from typing import Optional, Any
 from datetime import datetime, date, timedelta
@@ -5127,6 +5128,240 @@ def _local_biweekly_obligations_apply(payload: dict) -> dict:
 
 def post_itp_biweekly_obligations_apply_api(payload: dict):
     return _local_biweekly_obligations_apply(payload)
+
+
+def post_bac_partner_transfer_api(payload: dict):
+    import sys
+    import hashlib
+    from pathlib import Path
+    from decimal import Decimal, ROUND_HALF_UP
+    from datetime import date
+
+    backend_dir = Path(__file__).resolve().parent / "backend_api"
+    if str(backend_dir) not in sys.path:
+        sys.path.insert(0, str(backend_dir))
+
+    from database import get_conn, release_conn
+    from psycopg2.extras import Json, RealDictCursor
+
+    money = Decimal("0.01")
+
+    def m(value):
+        return Decimal(str(value or 0).replace(",", "")).quantize(money, rounding=ROUND_HALF_UP)
+
+    def required_text(key, label):
+        text = str(payload.get(key) or "").strip()
+        if not text:
+            raise ValueError(f"Falta {label}")
+        return text
+
+    def parse_date(value):
+        text = required_text("transfer_date", "fecha")
+        return date.fromisoformat(text)
+
+    def exchange_rate(cur, value_date):
+        cur.execute("""
+            SELECT rate
+            FROM exchange_rate
+            WHERE rate_date <= %s
+            ORDER BY rate_date DESC
+            LIMIT 1
+        """, (value_date,))
+        row = cur.fetchone()
+        if not row:
+            raise ValueError(f"No existe tipo de cambio BCCR para {value_date}")
+        return m(row.get("rate"))
+
+    def ensure_account(cur, code, name, account_type, normal_balance, parent_account, level=4):
+        cur.execute("""
+            INSERT INTO accounting_accounts (
+                account_code, account_name, account_type, normal_balance, account_level,
+                parent_account, accepts_posting, active, created_by, updated_by
+            )
+            VALUES (%s,%s,%s,%s,%s,%s,TRUE,TRUE,'BAC_PARTNER_TRANSFER','BAC_PARTNER_TRANSFER')
+            ON CONFLICT (account_code) DO UPDATE SET
+                account_name = EXCLUDED.account_name,
+                account_type = EXCLUDED.account_type,
+                normal_balance = EXCLUDED.normal_balance,
+                account_level = EXCLUDED.account_level,
+                parent_account = EXCLUDED.parent_account,
+                accepts_posting = TRUE,
+                active = TRUE,
+                updated_by = 'BAC_PARTNER_TRANSFER',
+                updated_at = NOW()
+        """, (code, name, account_type, normal_balance, level, parent_account))
+        cur.execute("SELECT id FROM accounting_ledger WHERE account_code=%s LIMIT 1", (code,))
+        if cur.fetchone():
+            cur.execute("""
+                UPDATE accounting_ledger
+                   SET account_name=%s,
+                       account_type=%s,
+                       parent_account=%s,
+                       account_level=%s,
+                       active=TRUE,
+                       source_module='BAC_PARTNER_TRANSFER'
+                 WHERE account_code=%s
+            """, (name, account_type, parent_account, level, code))
+        else:
+            cur.execute("""
+                INSERT INTO accounting_ledger (
+                    account_code, account_name, account_level, account_type,
+                    parent_account, description, active, source_module
+                )
+                VALUES (%s,%s,%s,%s,%s,%s,TRUE,'BAC_PARTNER_TRANSFER')
+            """, (code, name, level, account_type, parent_account, name))
+
+    def account(cur, code):
+        cur.execute("""
+            SELECT account_code, account_name
+            FROM accounting_accounts
+            WHERE account_code=%s
+              AND COALESCE(active, TRUE)=TRUE
+              AND COALESCE(accepts_posting, FALSE)=TRUE
+            LIMIT 1
+        """, (code,))
+        row = cur.fetchone()
+        if not row:
+            raise ValueError(f"Cuenta contable no posteable: {code}")
+        return row["account_code"], row["account_name"]
+
+    company = str(payload.get("company_code") or get_company_code() or "MSL-CR").strip().upper()
+    partner = required_text("partner_name", "beneficiario")
+    reference = required_text("reference", "referencia")
+    currency = required_text("currency", "moneda").upper()
+    transfer_date = parse_date(payload.get("transfer_date"))
+    amount = m(payload.get("amount"))
+    allow_closed_period = bool(payload.get("allow_closed_period"))
+    if amount <= 0:
+        raise ValueError("Monto debe ser mayor que cero")
+    if currency not in {"CRC", "USD"}:
+        raise ValueError(f"Moneda no soportada: {currency}")
+
+    expense_code = "5.4.04"
+    expense_name = "Gastos por representacion socios"
+    bank_code = "1.1.02.02.02" if currency == "USD" else "1.1.02.02.01"
+    origin = "BAC_PARTNER_TRANSFER"
+    source_key = "|".join([reference, transfer_date.isoformat(), str(amount), currency, partner])
+    origin_id = int(hashlib.sha256(source_key.encode("utf-8")).hexdigest()[:8], 16) % 2147483647
+    period = transfer_date.strftime("%Y-%m")
+
+    conn = get_conn()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT status FROM accounting_period_controls
+                WHERE company_code=%s AND period=%s
+            """, (company, period))
+            control = cur.fetchone()
+            if control and control.get("status") == "CLOSED":
+                if not allow_closed_period:
+                    raise ValueError(f"El periodo contable {period} esta cerrado")
+
+            ensure_account(cur, expense_code, expense_name, "EXPENSE", "DEBIT", "5.4", 3)
+            bank_code, bank_name = account(cur, bank_code)
+            rate = exchange_rate(cur, transfer_date) if currency == "USD" else Decimal("1.00")
+            amount_crc = (amount * rate).quantize(money, rounding=ROUND_HALF_UP)
+            description = f"BAC transferencia socio {partner} Ref {reference}"
+
+            cur.execute("""
+                SELECT id FROM accounting_entries
+                WHERE company_code=%s
+                  AND origin=%s
+                  AND origin_id=%s
+                  AND COALESCE(reversed, FALSE)=FALSE
+                LIMIT 1
+            """, (company, origin, origin_id))
+            existing = cur.fetchone()
+            if existing:
+                entry_id = existing["id"]
+                cur.execute("""
+                    UPDATE accounting_entries
+                       SET entry_date=%s,
+                           period=%s,
+                           description=%s,
+                           currency_code=%s,
+                           exchange_rate=%s,
+                           workflow_status='POSTED',
+                           posting_rule_code=%s,
+                           posting_metadata=%s,
+                           updated_at=NOW()
+                     WHERE id=%s
+                """, (
+                    transfer_date, period, description, currency, rate, origin,
+                    Json({
+                        "source": "outlook_bac_notifications",
+                        "mailbox": payload.get("mailbox"),
+                        "folder": payload.get("folder"),
+                        "message_id": payload.get("message_id"),
+                        "reference": reference,
+                        "original_amount": str(amount),
+                        "original_currency": currency,
+                        "partner_name": partner,
+                        "concept": payload.get("concept") or "",
+                        "allow_closed_period": allow_closed_period,
+                        "source_key": source_key,
+                    }),
+                    entry_id,
+                ))
+                cur.execute("DELETE FROM accounting_lines WHERE entry_id=%s", (entry_id,))
+                status = "UPDATED"
+            else:
+                cur.execute("""
+                    INSERT INTO accounting_entries (
+                        company_code, entry_date, period, description, origin, origin_id,
+                        created_by, workflow_status, currency_code, exchange_rate,
+                        posting_rule_code, posting_metadata, posted_by, posted_at
+                    )
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,'POSTED',%s,%s,%s,%s,%s,NOW())
+                    RETURNING id
+                """, (
+                    company, transfer_date, period, description, origin, origin_id,
+                    "OUTLOOK_BAC", currency, rate, origin,
+                    Json({
+                        "source": "outlook_bac_notifications",
+                        "mailbox": payload.get("mailbox"),
+                        "folder": payload.get("folder"),
+                        "message_id": payload.get("message_id"),
+                        "reference": reference,
+                        "original_amount": str(amount),
+                        "original_currency": currency,
+                        "partner_name": partner,
+                        "concept": payload.get("concept") or "",
+                        "allow_closed_period": allow_closed_period,
+                        "source_key": source_key,
+                    }),
+                    "OUTLOOK_BAC",
+                ))
+                entry_id = cur.fetchone()["id"]
+                status = "IMPORTED"
+
+            line_detail = (
+                f"{partner} Ref {reference} {currency} {amount:,.2f}"
+                + (f" TC {rate:,.6f}" if currency == "USD" else "")
+            )
+            cur.execute("""
+                INSERT INTO accounting_lines(entry_id, account_code, account_name, debit, credit, line_description)
+                VALUES
+                    (%s,%s,%s,%s,0,%s),
+                    (%s,%s,%s,0,%s,%s)
+            """, (
+                entry_id, expense_code, expense_name, amount_crc, line_detail,
+                entry_id, bank_code, bank_name, amount_crc, line_detail,
+            ))
+            conn.commit()
+            return {
+                "status": status,
+                "entry_id": entry_id,
+                "period": period,
+                "amount_crc": float(amount_crc),
+                "exchange_rate": float(rate),
+                "reference": reference,
+            }
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        release_conn(conn)
 
 
 def hr_create_event(data: dict):
