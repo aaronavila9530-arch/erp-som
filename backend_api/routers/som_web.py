@@ -18,7 +18,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20260923-accounting-web-desktop-v2"
+_ASSET_VERSION = "20260923-accounting-reconis-v3"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Servicios, facturación, CxC e informes desde agosto en adelante."},
@@ -436,6 +436,14 @@ def som_web_home() -> HTMLResponse:
     .accounting-work { min-width:0; display:grid; gap:10px; }
     .accounting-work .table-wrap { max-height:620px; }
     .accounting-banner { border:1px solid #d7e1ec; border-radius:8px; background:#fff; padding:10px 12px; color:#52637a; }
+    .accounting-entry-summary { cursor:pointer; }
+    .accounting-entry-summary:hover { background:#edf7ff; }
+    .accounting-entry-summary td { font-weight:700; }
+    .accounting-entry-lines-row td { background:#fbfdff; padding:0; }
+    .accounting-entry-lines-box { padding:9px 10px 12px; border-top:1px solid #dbe5f0; }
+    .accounting-entry-lines-box table { width:100%; border-collapse:collapse; }
+    .accounting-entry-lines-box th,.accounting-entry-lines-box td { padding:6px 8px; border-bottom:1px solid #edf2f7; font-weight:400; }
+    .accounting-entry-toggle { display:inline-flex; align-items:center; justify-content:center; width:24px; height:24px; border:1px solid #cfd9e5; border-radius:6px; background:#fff; color:#005da8; font-weight:900; }
     .accounting-alerts { display:grid; gap:8px; }
     .accounting-alert-item { border:1px solid #e5edf6; border-left:4px solid #f59e0b; border-radius:7px; padding:8px 10px; background:#fff; }
     .accounting-alert-item.critical { border-left-color:#b42318; background:#fff7f6; }
@@ -673,6 +681,7 @@ def som_web_home() -> HTMLResponse:
     let selectedGenericFinanceIndexes = new Set();
     let accountingRows = [];
     let selectedAccountingEntryId = null;
+    let expandedAccountingEntryIds = new Set();
     let accountingAccounts = [];
     let itpRows = [];
     let selectedItpIndex = null;
@@ -1394,9 +1403,16 @@ def som_web_home() -> HTMLResponse:
       target.textContent = "Consultando...";
       try {
         const params = accountingParams();
-        params.delete("report");
+        const report = String(params.get("report") || "ASIENTOS").toUpperCase();
         if (params.has("account_code")) params.set("account_code", accountingResolveAccount(params.get("account_code")));
-        const payload = await getJSON(`/accounting-lines?${params.toString()}`);
+        let payload;
+        if (report === "ASIENTOS") {
+          params.delete("report");
+          payload = await getJSON(`/accounting/ledger?${params.toString()}`);
+        } else {
+          params.delete("report");
+          payload = await getJSON(`/accounting-lines?${params.toString()}`);
+        }
         const rows = rowsList(payload);
         accountingRows = rows;
         target.className = "";
@@ -1412,8 +1428,42 @@ def som_web_home() -> HTMLResponse:
     }
     function renderAccountingPreview(rows) {
       const report = valueFrom("accReport") || "BC";
+      if (report === "ASIENTOS") return renderAccountingEntryGroups(rows);
       if (report === "BC") return renderAccountingTrialBalance(rows);
       return renderAccountingLines(rows);
+    }
+    function renderAccountingEntryGroups(rows) {
+      const fmt = n => Number(n || 0).toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2});
+      const totals = entry => (entry.lines || []).reduce((acc,line) => {
+        acc.debit += Number(line.debit || 0);
+        acc.credit += Number(line.credit || 0);
+        return acc;
+      }, {debit:0, credit:0});
+      return `<div class="table-wrap"><table><thead><tr><th></th><th>Fecha</th><th>Asiento</th><th>Periodo</th><th>Origen</th><th>Estado</th><th>Descripción</th><th>Debe</th><th>Haber</th><th>Diferencia</th></tr></thead><tbody>${rows.slice(0,500).map((entry, idx) => {
+        const id = String(entry.entry_id || "");
+        const open = expandedAccountingEntryIds.has(id);
+        const selected = selectedAccountingEntryId && String(selectedAccountingEntryId) === id;
+        const total = totals(entry);
+        const diff = total.debit - total.credit;
+        const lineRows = open ? `<tr class="accounting-entry-lines-row"><td colspan="10"><div class="accounting-entry-lines-box">${renderAccountingEntryLineTable(entry.lines || [], fmt)}</div></td></tr>` : "";
+        return `<tr class="accounting-entry-summary ${selected ? "service-selected" : ""}" onclick="toggleAccountingEntryGroup(${idx})"><td><span class="accounting-entry-toggle">${open ? "-" : "+"}</span></td><td>${esc(entry.entry_date || "")}</td><td>${esc(entry.entry_id || "")}</td><td>${esc(entry.period || "")}</td><td>${esc(entry.origin || "")}</td><td>${esc(entry.workflow_status || "")}</td><td>${esc(entry.description || "")}</td><td>${fmt(total.debit)}</td><td>${fmt(total.credit)}</td><td>${fmt(diff)}</td></tr>${lineRows}`;
+      }).join("")}</tbody></table></div>`;
+    }
+    function renderAccountingEntryLineTable(lines, fmt) {
+      if (!lines.length) return '<div class="status">Este asiento no tiene líneas.</div>';
+      return `<table><thead><tr><th>Línea</th><th>Cuenta</th><th>Nombre</th><th>Detalle</th><th>Debe</th><th>Haber</th></tr></thead><tbody>${lines.map(line => `<tr><td>${esc(line.line_id || "")}</td><td>${esc(line.account_code || "")}</td><td>${esc(line.account_name || "")}</td><td>${esc(line.line_description || "")}</td><td>${fmt(line.debit)}</td><td>${fmt(line.credit)}</td></tr>`).join("")}</tbody></table>`;
+    }
+    function toggleAccountingEntryGroup(index) {
+      const entry = accountingRows[index];
+      if (!entry) return;
+      const id = String(entry.entry_id || "");
+      selectedAccountingEntryId = entry.entry_id || null;
+      if (expandedAccountingEntryIds.has(id)) expandedAccountingEntryIds.delete(id);
+      else expandedAccountingEntryIds.add(id);
+      const banner = $("accSelection");
+      if (banner) banner.textContent = selectedAccountingEntryId ? `Asiento seleccionado: ${selectedAccountingEntryId} · ${entry.entry_date || ""} · ${entry.origin || ""} · ${entry.workflow_status || ""}` : "Seleccione un asiento desde la tabla.";
+      const target = $("accountingResult");
+      if (target) target.innerHTML = renderAccountingEntryGroups(accountingRows);
     }
     function renderAccountingLines(rows) {
       const cols = ["entry_date","entry_id","period","origin","workflow_status","account_code","account_name","account_type","line_description","debit","credit"];
