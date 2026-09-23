@@ -30,17 +30,17 @@ PENDING_CARD_CODE = "1.1.99.10"
 PENDING_CARD_NAME = "Cargos tarjeta pendientes de clasificar"
 SUPPLIER_AP_CODE = "2.1.01.01"
 SUPPLIER_AP_NAME = "Cuentas por pagar-comerciales"
-SUPERMARKET_EXPENSE_CODE = "500-001-001-062"
+SUPERMARKET_EXPENSE_CODE = "5.1.13"
 SUPERMARKET_EXPENSE_NAME = "Gastos por supermercado"
-BASIC_SERVICES_EXPENSE_CODE = "500-001-001-063"
+BASIC_SERVICES_EXPENSE_CODE = "5.1.03"
 BASIC_SERVICES_EXPENSE_NAME = "Servicios básicos"
 RENT_EXPENSE_CODE = "5.1.05"
 RENT_EXPENSE_NAME = "Gastos por alquiler"
 CARD_EXPENSE_ACCOUNTS = [
-    ("550-001-000-050", "Alimentación"),
+    ("5.1.14", "Gastos por alimentación"),
     (SUPERMARKET_EXPENSE_CODE, SUPERMARKET_EXPENSE_NAME),
     ("500-001-001-050", "Transporte"),
-    ("500-001-001-042", "Combustible"),
+    ("5.1.08", "Gastos por combustible"),
     ("500-001-001-023", "Teléfonos"),
     ("500-001-001-043", "Hospedaje"),
     ("500-001-001-044", "Viáticos"),
@@ -66,8 +66,8 @@ CARD_MERCHANT_EXPENSE_RULES = [
     },
     {
         "category": "Alimentacion",
-        "account_code": "550-001-000-050",
-        "account_name": "Alimentación",
+        "account_code": "5.1.14",
+        "account_name": "Gastos por alimentación",
         "needles": [
             "NINA CAFE", "ROSTIPOLLOS", "LA CASONA DEL MAIZ", "CAFE KIVU",
             "SODA SAZON COLOMBIANO", "GRUPO NIMAX", "SERVICIOS DE PASTELERIA",
@@ -78,8 +78,8 @@ CARD_MERCHANT_EXPENSE_RULES = [
     },
     {
         "category": "Combustible",
-        "account_code": "500-001-001-042",
-        "account_name": "Combustible",
+        "account_code": "5.1.08",
+        "account_name": "Gastos por combustible",
         "needles": [
             "GRUPO POJI", "ESTACION DE SERVICIO SAN GERARDO",
             "ESTACION DE SERVICIO EUSSE", "BARRANCA", "ESTACION DE SERVICIO ZURQUI",
@@ -537,12 +537,19 @@ def ensure_schema(cur):
         PENDING_CARD_NAME,
     ))
     for code, name in CARD_EXPENSE_ACCOUNTS:
+        parent = "5.1" if str(code).startswith("5.1.") else "5"
+        level = 3 if str(code).startswith("5.1.") else 5
         cur.execute("""
             INSERT INTO accounting_accounts(account_code, account_name, account_type, normal_balance, account_level, parent_account, accepts_posting, active)
-            VALUES(%s, %s, 'GASTO', 'DEBIT', 3, '5', TRUE, TRUE)
+            VALUES(%s, %s, 'EXPENSE', 'DEBIT', %s, %s, TRUE, TRUE)
             ON CONFLICT (account_code) DO UPDATE
-            SET account_name=EXCLUDED.account_name, accepts_posting=TRUE, active=TRUE
-        """, (code, name))
+            SET account_name=EXCLUDED.account_name,
+                account_type=EXCLUDED.account_type,
+                account_level=EXCLUDED.account_level,
+                parent_account=EXCLUDED.parent_account,
+                accepts_posting=TRUE,
+                active=TRUE
+        """, (code, name, level, parent))
     for holder, last4, user_key in (
         ("AARON", "3155", "aaron01"),
         ("DIANA", "3156", "diana"),

@@ -14930,9 +14930,11 @@ const ACCOUNTING_MOBILE_ACTIONS = [
 ];
 
 const CARD_EXPENSE_ACCOUNT_OPTIONS = [
-  "550-001-000-050 - Alimentacion",
+  "5.1.14 - Gastos por alimentacion",
+  "5.1.13 - Gastos por supermercado",
   "500-001-001-050 - Transporte",
-  "500-001-001-042 - Combustible",
+  "5.1.08 - Gastos por combustible",
+  "5.1.03 - Servicios basicos",
   "500-001-001-023 - Telefonos",
   "500-001-001-043 - Hospedaje",
   "500-001-001-044 - Viaticos",

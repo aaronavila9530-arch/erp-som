@@ -270,8 +270,9 @@ def _ensure_biweekly_schema(cur):
     cur.execute("""
         INSERT INTO accounting_accounts(account_code, account_name, account_type, normal_balance, account_level, parent_account, accepts_posting, active)
         VALUES
-          ('500-001-001-063', 'Servicios básicos', 'GASTO', 'DEBIT', 5, '500-001-001', TRUE, TRUE),
-          ('500-001-001-062', 'Gastos por supermercado', 'GASTO', 'DEBIT', 5, '500-001-001', TRUE, TRUE)
+          ('5.1.03', 'Servicios básicos', 'EXPENSE', 'DEBIT', 3, '5.1', TRUE, TRUE),
+          ('5.1.13', 'Gastos por supermercado', 'EXPENSE', 'DEBIT', 3, '5.1', TRUE, TRUE),
+          ('5.1.14', 'Gastos por alimentación', 'EXPENSE', 'DEBIT', 3, '5.1', TRUE, TRUE)
         ON CONFLICT(account_code) DO UPDATE
         SET account_name=EXCLUDED.account_name, accepts_posting=TRUE, active=TRUE
     """)
@@ -486,7 +487,7 @@ def _debit_account_for(category: str):
         "Telefonia": ("500-001-001-023", "Telefonos"),
         "Viaticos": ("500-001-001-044", "Viaticos"),
         "Alquiler": ("5.1.05", "Gastos por alquiler"),
-        "Internet": ("500-001-001-063", "Servicios básicos"),
+        "Internet": ("5.1.03", "Servicios básicos"),
         "Surveyors": ("2.1.01.01", "Cuentas por pagar-comerciales"),
     }
     return mapping.get(category, ("5.4", "Otros gastos"))
