@@ -71,6 +71,7 @@ class PopupObligacionesQuincenales(tk.Toplevel):
         self.total_var = tk.StringVar(value="CRC 0.00")
         self.total_usd_var = tk.StringVar(value="USD 0.00")
         self.count_var = tk.StringVar(value="0 lineas")
+        self.suppressed_keys = set()
         self._build_ui()
         self._load_preview()
         self.lift()
@@ -82,7 +83,7 @@ class PopupObligacionesQuincenales(tk.Toplevel):
 
         header = ttk.Frame(self, padding=(10, 8))
         header.grid(row=0, column=0, sticky="ew")
-        header.columnconfigure(9, weight=1)
+        header.columnconfigure(10, weight=1)
         ttk.Label(header, text="Obligaciones quincenales", font=("Segoe UI", 15, "bold")).grid(row=0, column=0, columnspan=2, sticky="w")
         ttk.Label(header, text="Periodo").grid(row=1, column=0, sticky="w", pady=(8, 0))
         ttk.Entry(header, textvariable=self.period_var, width=10).grid(row=1, column=1, sticky="w", padx=(4, 14), pady=(8, 0))
@@ -92,17 +93,18 @@ class PopupObligacionesQuincenales(tk.Toplevel):
         ttk.Button(header, text="Guardar borrador", command=self._save_draft).grid(row=1, column=5, padx=4, pady=(8, 0))
         ttk.Button(header, text="Exportar Excel", command=self._export_excel).grid(row=1, column=6, padx=4, pady=(8, 0))
         ttk.Button(header, text="Aplicar pagos y crear asientos", command=self._save_and_post).grid(row=1, column=7, padx=4, pady=(8, 0))
-        ttk.Button(header, text="Cerrar", command=self.destroy).grid(row=1, column=8, padx=4, pady=(8, 0))
-        ttk.Label(header, textvariable=self.total_var, font=("Segoe UI", 12, "bold")).grid(row=0, column=9, sticky="e")
-        ttk.Label(header, textvariable=self.total_usd_var, font=("Segoe UI", 11, "bold")).grid(row=1, column=9, sticky="e", padx=(0, 90))
-        ttk.Label(header, textvariable=self.count_var).grid(row=1, column=9, sticky="e")
+        ttk.Button(header, text="Aplicar seleccion", command=self._save_and_post_selected).grid(row=1, column=8, padx=4, pady=(8, 0))
+        ttk.Button(header, text="Cerrar", command=self.destroy).grid(row=1, column=9, padx=4, pady=(8, 0))
+        ttk.Label(header, textvariable=self.total_var, font=("Segoe UI", 12, "bold")).grid(row=0, column=10, sticky="e")
+        ttk.Label(header, textvariable=self.total_usd_var, font=("Segoe UI", 11, "bold")).grid(row=1, column=10, sticky="e", padx=(0, 90))
+        ttk.Label(header, textvariable=self.count_var).grid(row=1, column=10, sticky="e")
 
         tools = ttk.LabelFrame(self, text="Agregar / ajustar lineas")
         tools.grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 8))
         for idx, category in enumerate(["Planilla", "CCSS", "Surveyors", "Viaticos", "Telefonia", "Otros"]):
             ttk.Button(tools, text=f"+ {category}", command=lambda c=category: self._add_line(c)).grid(row=0, column=idx, padx=4, pady=6)
         ttk.Button(tools, text="Editar linea", command=self._edit_selected).grid(row=0, column=7, padx=(18, 4), pady=6)
-        ttk.Button(tools, text="Quitar linea", command=self._delete_selected).grid(row=0, column=8, padx=4, pady=6)
+        ttk.Button(tools, text="Quitar linea(s)", command=self._delete_selected).grid(row=0, column=8, padx=4, pady=6)
         ttk.Label(
             tools,
             text="Para aplicar una linea pagada: comprobante, fecha y cuenta contable. Las demas quedan pendientes en borrador.",
@@ -119,7 +121,7 @@ class PopupObligacionesQuincenales(tk.Toplevel):
         pane.add(detail, weight=4)
 
         columns = ("category", "name", "amount", "currency", "payment_status", "payment_method", "bank_account", "bank_accounting_code", "bank_voucher", "due_date", "obligation_id", "reference", "balance", "source", "notes")
-        self.tree = ttk.Treeview(detail, columns=columns, show="headings", height=17)
+        self.tree = ttk.Treeview(detail, columns=columns, show="headings", selectmode="extended", height=17)
         labels = {
             "category": "Rubro",
             "name": "Nombre / beneficiario",
@@ -208,10 +210,44 @@ class PopupObligacionesQuincenales(tk.Toplevel):
             else:
                 self.geometry("1220x760")
 
+    def _row_key(self, row):
+        if row.get("obligation_id"):
+            return ("ITP", int(row.get("obligation_id")))
+        return (
+            "MANUAL",
+            str(row.get("category") or "").strip().upper(),
+            str(row.get("name") or "").strip().upper(),
+            str(row.get("currency") or "CRC").strip().upper(),
+            f"{self._money(row.get('amount')):.2f}",
+            str(row.get("reference") or "").strip().upper(),
+        )
+
+    def _row_key_text(self, row):
+        return "|".join(str(part) for part in self._row_key(row))
+
+    def _merge_generated_rows(self, generated, current):
+        merged = []
+        seen = set()
+        for row in current or []:
+            key = self._row_key(row)
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(row)
+        for row in generated or []:
+            key = self._row_key(row)
+            if key in seen or key in self.suppressed_keys:
+                continue
+            seen.add(key)
+            merged.append(row)
+        return merged
+
     def _load_preview(self, force=False):
         try:
+            current_rows = list(self.rows) if force else []
             data = get_itp_biweekly_obligations_preview_api(self.period_var.get().strip(), int(self.fortnight_var.get() or 1), force=force)
-            self.rows = data.get("rows") or []
+            generated = data.get("rows") or []
+            self.rows = self._merge_generated_rows(generated, current_rows) if force else generated
             self._render()
         except Exception as exc:
             messagebox.showerror("Obligaciones quincenales", f"No se pudo generar preview:\n{exc}", parent=self)
@@ -285,11 +321,14 @@ class PopupObligacionesQuincenales(tk.Toplevel):
             self._render()
 
     def _delete_selected(self):
-        selected = self.tree.focus()
+        selected = self.tree.selection()
         if not selected:
             return
-        idx = int(selected)
-        del self.rows[idx]
+        indexes = sorted((int(item) for item in selected), reverse=True)
+        for idx in indexes:
+            if 0 <= idx < len(self.rows):
+                self.suppressed_keys.add(self._row_key(self.rows[idx]))
+                del self.rows[idx]
         self._render()
 
     def _line_dialog(self, initial):
@@ -507,9 +546,27 @@ class PopupObligacionesQuincenales(tk.Toplevel):
             parent=self,
         )
 
-    def _save_and_post(self):
-        ready = [row for row in self.rows if self._ready_to_apply(row)]
-        pending = [row for row in self.rows if self._money(row.get("amount")) > 0 and not self._ready_to_apply(row)]
+    def _selected_rows_for_apply(self):
+        selected = self.tree.selection()
+        rows = []
+        for item in selected:
+            idx = int(item)
+            if 0 <= idx < len(self.rows):
+                rows.append(self.rows[idx])
+        return rows
+
+    def _save_and_post_selected(self):
+        selected_rows = self._selected_rows_for_apply()
+        if not selected_rows:
+            messagebox.showwarning("Aplicar seleccion", "Selecciona una o varias lineas.", parent=self)
+            return
+        self._save_and_post(rows_to_apply=selected_rows, selected_only=True)
+
+    def _save_and_post(self, rows_to_apply=None, selected_only=False):
+        target_rows = rows_to_apply or self.rows
+        apply_keys = [self._row_key_text(row) for row in target_rows] if selected_only else []
+        ready = [row for row in target_rows if self._ready_to_apply(row)]
+        pending = [row for row in target_rows if self._money(row.get("amount")) > 0 and not self._ready_to_apply(row)]
         if not ready:
             messagebox.showwarning(
                 "Aplicar pagos y crear asientos",
@@ -517,10 +574,11 @@ class PopupObligacionesQuincenales(tk.Toplevel):
                 parent=self,
             )
             return
-        total_crc = sum(self._money(row.get("amount")) for row in self.rows if (row.get("currency") or "CRC") == "CRC")
+        total_crc = sum(self._money(row.get("amount")) for row in target_rows if (row.get("currency") or "CRC") == "CRC")
+        scope = "seleccionadas" if selected_only else "visibles"
         ok = messagebox.askyesno(
             "Aplicar pagos y crear asientos",
-            "Se aplicaran solo las lineas con comprobante, fecha y cuenta contable; las demas quedaran pendientes en borrador.\n\n"
+            f"Se aplicaran solo las lineas {scope} que tengan comprobante, fecha y cuenta contable; las demas quedaran pendientes en pantalla/borrador.\n\n"
             f"Lineas listas: {len(ready):,}\n"
             f"Lineas pendientes: {len(pending):,}\n"
             f"Total CRC visible: {total_crc:,.2f}\n\nContinuar?",
@@ -532,6 +590,7 @@ class PopupObligacionesQuincenales(tk.Toplevel):
             "period": self.period_var.get().strip(),
             "fortnight": int(self.fortnight_var.get() or 1),
             "rows": self.rows,
+            "apply_keys": apply_keys,
         })
         if result.get("status") == "error":
             messagebox.showerror("Aplicar pagos y crear asientos", result.get("error") or "No se pudo guardar.", parent=self)
@@ -541,8 +600,12 @@ class PopupObligacionesQuincenales(tk.Toplevel):
                 f"Proceso aplicado.\nBatch: {result.get('batch_id')}\nLineas pagadas: {result.get('saved')}\nAsientos: {result.get('posted')}\nPagos ITP: {result.get('applied')}\nPendientes en borrador: {result.get('pending', 0)}",
                 parent=self,
             )
+            applied_keys = {self._row_key(row) for row in ready}
             for row in self.rows:
-                row["payment_status"] = "Pagado" if self._ready_to_apply(row) else "Pendiente"
+                if self._row_key(row) in applied_keys:
+                    row["payment_status"] = "Pagado"
+                elif self._money(row.get("amount")) > 0 and not self._ready_to_apply(row):
+                    row["payment_status"] = "Pendiente"
             self._render()
 
     def _summary_data(self, key):

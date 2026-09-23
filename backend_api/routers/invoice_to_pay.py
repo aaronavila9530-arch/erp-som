@@ -210,6 +210,10 @@ def _biweekly_row_key(row: dict) -> tuple:
     )
 
 
+def _biweekly_row_key_text(row: dict) -> str:
+    return "|".join(str(part) for part in _biweekly_row_key(row))
+
+
 def _append_unique_biweekly_row(rows: list[dict], seen: set, row: dict) -> None:
     key = _biweekly_row_key(row)
     if key in seen:
@@ -1237,6 +1241,8 @@ def biweekly_obligations_apply(
     user = x_user or "SYSTEM"
     period = str(payload.get("period") or "").strip()
     rows = payload.get("rows") or []
+    apply_keys_raw = payload.get("apply_keys") or []
+    apply_keys = {str(key) for key in apply_keys_raw if str(key or "").strip()}
     if not period or not isinstance(rows, list):
         raise HTTPException(status_code=400, detail="Periodo y lineas son obligatorios")
     cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -1283,6 +1289,10 @@ def biweekly_obligations_apply(
                 elif is_card_payment:
                     bank_code = CARD_PAYABLE_CODE
                 if amount <= 0:
+                    continue
+                if apply_keys and _biweekly_row_key_text(item) not in apply_keys:
+                    pending_rows.append(item)
+                    pending += 1
                     continue
                 missing = []
                 if not category:

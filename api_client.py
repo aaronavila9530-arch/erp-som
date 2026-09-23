@@ -4985,6 +4985,18 @@ def _local_biweekly_obligations_apply(payload: dict) -> dict:
     def m(value):
         return Decimal(str(value or 0).replace(",", "")).quantize(money, rounding=ROUND_HALF_UP)
 
+    def row_key_text(row):
+        if row.get("obligation_id"):
+            return f"ITP|{int(row.get('obligation_id'))}"
+        return "|".join([
+            "MANUAL",
+            str(row.get("category") or "").strip().upper(),
+            str(row.get("name") or "").strip().upper(),
+            str(row.get("currency") or "CRC").strip().upper(),
+            f"{m(row.get('amount')):.2f}",
+            str(row.get("reference") or "").strip().upper(),
+        ])
+
     def require(value, label):
         text = str(value or "").strip()
         if not text:
@@ -5033,6 +5045,7 @@ def _local_biweekly_obligations_apply(payload: dict) -> dict:
     period = require(payload.get("period"), "periodo")
     fortnight = int(payload.get("fortnight") or 1)
     rows = payload.get("rows") or []
+    apply_keys = {str(key) for key in (payload.get("apply_keys") or []) if str(key or "").strip()}
     conn = get_conn()
     applied = 0
     posted = 0
@@ -5076,6 +5089,10 @@ def _local_biweekly_obligations_apply(payload: dict) -> dict:
                     elif is_card:
                         bank_code = "2.1.02.10"
                     if amount <= 0:
+                        continue
+                    if apply_keys and row_key_text(row) not in apply_keys:
+                        pending_rows.append(row)
+                        pending += 1
                         continue
                     missing = []
                     if not category:

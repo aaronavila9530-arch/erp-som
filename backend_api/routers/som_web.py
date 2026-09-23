@@ -18,7 +18,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20260923-biweekly-obligations-v5"
+_ASSET_VERSION = "20260923-biweekly-obligations-v6"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Servicios, facturación, CxC e informes desde agosto en adelante."},
@@ -626,6 +626,8 @@ def som_web_home() -> HTMLResponse:
     let selectedItpIndexes = new Set();
     let itpBiweeklyRows = [];
     let selectedItpBiweeklyIndex = null;
+    let itpBiweeklyChecked = new Set();
+    let itpBiweeklySuppressed = new Set();
     let selectedPaidInvoiceIndexes = new Set();
     let disputeRows = [];
     let disputeHistoryRows = [];
@@ -1684,6 +1686,7 @@ def som_web_home() -> HTMLResponse:
               <button onclick="saveItpBiweeklyDraft()">Guardar borrador</button>
               <button onclick="exportItpBiweekly()">Exportar Excel</button>
               <button class="green" onclick="applyItpBiweekly()">Aplicar pagos y crear asientos</button>
+              <button class="secondary" onclick="applySelectedItpBiweekly()">Aplicar seleccionadas</button>
             </div>
             <div class="itp-bi-body">
               <aside class="itp-bi-actions">
@@ -1697,6 +1700,7 @@ def som_web_home() -> HTMLResponse:
                   <button onclick="addItpBiweeklyLine('Otros')">+ Otros</button>
                   <button class="wide" onclick="editSelectedItpBiweeklyLine()">Editar linea seleccionada</button>
                   <button class="wide" onclick="deleteSelectedItpBiweeklyLine()">Quitar linea seleccionada</button>
+                  <button class="wide" onclick="deleteCheckedItpBiweeklyLines()">Quitar marcadas</button>
                 </div>
                 <div class="itp-bi-instruction">Para aplicar una línea pagada: comprobante, fecha y cuenta contable. Las demás quedan pendientes en borrador y se arrastran a la siguiente quincena.</div>
                 <div id="itpBiMsg" class="status">Presione Generar automático para cargar obligaciones quincenales.</div>
@@ -1710,6 +1714,8 @@ def som_web_home() -> HTMLResponse:
         </div>`);
       itpBiweeklyRows = [];
       selectedItpBiweeklyIndex = null;
+      itpBiweeklyChecked = new Set();
+      itpBiweeklySuppressed = new Set();
       renderItpBiweeklyTable();
     }
     const ITP_BI_CATEGORIES = ["Planilla","CCSS","IVA","Surveyors","Viaticos","Tarjetas de credito","Alquiler","Internet","Telefonia","Proveedores","Otros"];
@@ -1761,23 +1767,56 @@ def som_web_home() -> HTMLResponse:
       if (String(row.payment_status || "").trim()) return row.payment_status;
       return itpBiReady(row) ? "Listo" : "Pendiente";
     }
+    function itpBiRowKey(row) {
+      if (row && row.obligation_id) return `ITP|${row.obligation_id}`;
+      return [
+        "MANUAL",
+        String(row.category || "").trim().toUpperCase(),
+        String(row.name || "").trim().toUpperCase(),
+        String(row.currency || "CRC").trim().toUpperCase(),
+        String(Number(row.amount || 0).toFixed(2)),
+        String(row.reference || "").trim().toUpperCase()
+      ].join("|");
+    }
+    function mergeItpBiweeklyGenerated(generatedRows, currentRows) {
+      const merged = [];
+      const seen = new Set();
+      (currentRows || []).forEach(row => {
+        const normalized = normalizeItpBiPaymentRow({ ...row });
+        const key = itpBiRowKey(normalized);
+        if (seen.has(key)) return;
+        seen.add(key);
+        merged.push(normalized);
+      });
+      (generatedRows || []).forEach(row => {
+        const normalized = normalizeItpBiPaymentRow({ ...row });
+        const key = itpBiRowKey(normalized);
+        if (seen.has(key) || itpBiweeklySuppressed.has(key)) return;
+        seen.add(key);
+        merged.push(normalized);
+      });
+      return merged;
+    }
     async function loadItpBiweekly(force=false) {
       const msg = $("itpBiMsg");
       const table = $("itpBiTable");
       const company = selectedCompany();
+      const currentRows = force ? collectItpBiweeklyRows() : [];
       if ($("itpBiCompany")) $("itpBiCompany").textContent = `Empresa: ${company}`;
       msg.className = "status";
       msg.textContent = `Consultando obligaciones quincenales para ${company}...`;
       try {
         const params = new URLSearchParams({ period:valueFrom("itpBiPeriod"), fortnight:valueFrom("itpBiFortnight") || "1", force:String(!!force), company:company, _:String(Date.now()) });
         const payload = await getJSON(`/invoice-to-pay/biweekly-obligations/preview?${params.toString()}`, { "Cache-Control":"no-cache" });
-        itpBiweeklyRows = rowsList(payload.rows || payload).map(row => normalizeItpBiPaymentRow({ ...row }));
+        const generated = rowsList(payload.rows || payload).map(row => normalizeItpBiPaymentRow({ ...row }));
+        itpBiweeklyRows = force ? mergeItpBiweeklyGenerated(generated, currentRows) : generated;
+        itpBiweeklyChecked = new Set();
         msg.className = "status";
         const loadedCompany = payload.company_code || company;
         if ($("itpBiCompany")) $("itpBiCompany").textContent = `Empresa: ${loadedCompany}`;
         msg.textContent = payload.source === "draft"
           ? `Borrador cargado para ${loadedCompany}. Filas: ${itpBiweeklyRows.length}. Revise pendientes antes de aplicar.`
-          : `Preview generado para ${loadedCompany}. Filas: ${itpBiweeklyRows.length}. Complete comprobante y cuenta contable antes de aplicar.`;
+          : `Preview generado para ${loadedCompany}. Filas: ${itpBiweeklyRows.length}. Las lineas quitadas en pantalla no se reabren al regenerar.`;
         renderItpBiweeklyTable();
       } catch (err) {
         itpBiweeklyRows = [];
@@ -1836,6 +1875,7 @@ def som_web_home() -> HTMLResponse:
         if (status === "Pendiente") classes.push("warn-row");
         if (idx === selectedItpBiweeklyIndex) classes.push("itp-bi-selected");
         return `<tr class="${classes.join(" ")}" onclick="selectItpBiweeklyLine(${idx})">
+          <td><input type="checkbox" data-bi-check="${idx}" ${itpBiweeklyChecked.has(idx) ? "checked" : ""} onclick="event.stopPropagation(); toggleItpBiweeklyChecked(${idx}, this.checked)" /></td>
           <td><select data-bi="${idx}" data-field="category" onclick="event.stopPropagation()" onfocus="selectedItpBiweeklyIndex=${idx}">${itpBiOptions(ITP_BI_CATEGORIES, row.category || "Otros")}</select></td>
           <td><input data-bi="${idx}" data-field="name" value="${esc(row.name || "")}" onclick="event.stopPropagation()" onfocus="selectedItpBiweeklyIndex=${idx}" /></td>
           <td><input data-bi="${idx}" data-field="amount" type="number" step="0.01" value="${esc(row.amount || 0)}" onclick="event.stopPropagation()" onfocus="selectedItpBiweeklyIndex=${idx}" /></td>
@@ -1854,7 +1894,16 @@ def som_web_home() -> HTMLResponse:
           <td><button class="brown" onclick="event.stopPropagation(); deleteItpBiweeklyLine(${idx})">Quitar</button></td>
         </tr>`;
       };
-      table.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Rubro</th><th>Nombre / beneficiario</th><th>Monto</th><th>Moneda</th><th>Estado</th><th>Tipo pago</th><th>Cuenta destino / IBAN</th><th>Cuenta contable pago</th><th>Comprobante</th><th>Fecha pago</th><th>ITP ID</th><th>Referencia</th><th>Saldo ITP</th><th>Fuente</th><th>Notas</th><th>Accion</th></tr></thead><tbody>${itpBiweeklyRows.map((row,idx) => inputs(idx,row)).join("")}</tbody></table></div>`;
+      table.innerHTML = `<div class="table-wrap"><table><thead><tr><th><input type="checkbox" onclick="toggleAllItpBiweeklyChecked(this.checked)" /></th><th>Rubro</th><th>Nombre / beneficiario</th><th>Monto</th><th>Moneda</th><th>Estado</th><th>Tipo pago</th><th>Cuenta destino / IBAN</th><th>Cuenta contable pago</th><th>Comprobante</th><th>Fecha pago</th><th>ITP ID</th><th>Referencia</th><th>Saldo ITP</th><th>Fuente</th><th>Notas</th><th>Accion</th></tr></thead><tbody>${itpBiweeklyRows.map((row,idx) => inputs(idx,row)).join("")}</tbody></table></div>`;
+    }
+    function toggleItpBiweeklyChecked(idx, checked) {
+      if (checked) itpBiweeklyChecked.add(idx); else itpBiweeklyChecked.delete(idx);
+    }
+    function toggleAllItpBiweeklyChecked(checked) {
+      collectItpBiweeklyRows();
+      itpBiweeklyChecked = new Set();
+      if (checked) itpBiweeklyRows.forEach((_row, idx) => itpBiweeklyChecked.add(idx));
+      renderItpBiweeklyTable();
     }
     function selectItpBiweeklyLine(idx) {
       if (idx < 0 || idx >= itpBiweeklyRows.length) return;
@@ -1871,6 +1920,19 @@ def som_web_home() -> HTMLResponse:
     function deleteSelectedItpBiweeklyLine() {
       if (selectedItpBiweeklyIndex === null || !itpBiweeklyRows[selectedItpBiweeklyIndex]) return alert("Seleccione una linea primero.");
       deleteItpBiweeklyLine(selectedItpBiweeklyIndex);
+    }
+    function checkedItpBiweeklyRows() {
+      collectItpBiweeklyRows();
+      return Array.from(itpBiweeklyChecked).sort((a,b) => a - b).filter(idx => itpBiweeklyRows[idx]);
+    }
+    function deleteCheckedItpBiweeklyLines() {
+      const indexes = checkedItpBiweeklyRows();
+      if (!indexes.length) return alert("Marque una o varias lineas primero.");
+      indexes.forEach(idx => itpBiweeklySuppressed.add(itpBiRowKey(itpBiweeklyRows[idx])));
+      itpBiweeklyRows = itpBiweeklyRows.filter((_row, idx) => !itpBiweeklyChecked.has(idx));
+      itpBiweeklyChecked = new Set();
+      selectedItpBiweeklyIndex = null;
+      renderItpBiweeklyTable();
     }
     function collectItpBiweeklyRows() {
       const rows = itpBiweeklyRows.map(row => ({ ...row }));
@@ -1905,7 +1967,9 @@ def som_web_home() -> HTMLResponse:
     }
     function deleteItpBiweeklyLine(idx) {
       collectItpBiweeklyRows();
+      if (itpBiweeklyRows[idx]) itpBiweeklySuppressed.add(itpBiRowKey(itpBiweeklyRows[idx]));
       itpBiweeklyRows.splice(idx, 1);
+      itpBiweeklyChecked = new Set(Array.from(itpBiweeklyChecked).filter(i => i !== idx).map(i => i > idx ? i - 1 : i));
       selectedItpBiweeklyIndex = itpBiweeklyRows.length ? Math.min(idx, itpBiweeklyRows.length - 1) : null;
       renderItpBiweeklyTable();
     }
@@ -1923,17 +1987,35 @@ def som_web_home() -> HTMLResponse:
     }
     async function applyItpBiweekly() {
       const rows = collectItpBiweeklyRows();
-      const ready = rows.filter(itpBiReady);
-      const pending = rows.filter(row => Number(row.amount || 0) > 0 && !itpBiReady(row));
+      await applyItpBiweeklyRows(rows);
+    }
+    async function applySelectedItpBiweekly() {
+      const indexes = checkedItpBiweeklyRows();
+      if (!indexes.length) return alert("Marque una o varias lineas para aplicar.");
+      const keys = indexes.map(idx => itpBiRowKey(itpBiweeklyRows[idx]));
+      await applyItpBiweeklyRows(itpBiweeklyRows, keys);
+    }
+    async function applyItpBiweeklyRows(rows, applyKeys=null) {
+      const keySet = applyKeys ? new Set(applyKeys) : null;
+      const targetRows = keySet ? rows.filter(row => keySet.has(itpBiRowKey(row))) : rows;
+      const ready = targetRows.filter(itpBiReady);
+      const pending = targetRows.filter(row => Number(row.amount || 0) > 0 && !itpBiReady(row));
       if (!ready.length) return alert("No hay líneas listas para aplicar. Complete comprobante, fecha y cuenta contable en al menos una línea.");
       if (!confirm(`Se aplicarán solo las líneas listas y las demás quedarán en borrador.\\n\\nListas: ${ready.length}\\nPendientes: ${pending.length}\\n\\n¿Continuar?`)) return;
       const msg = $("itpBiMsg");
       msg.className = "status";
       msg.textContent = "Aplicando pagos quincenales...";
       try {
-        const result = await postJSON("/invoice-to-pay/biweekly-obligations/apply", { period:valueFrom("itpBiPeriod"), fortnight:Number(valueFrom("itpBiFortnight") || 1), rows });
+        const payload = { period:valueFrom("itpBiPeriod"), fortnight:Number(valueFrom("itpBiFortnight") || 1), rows };
+        if (applyKeys) payload.apply_keys = applyKeys;
+        const result = await postJSON("/invoice-to-pay/biweekly-obligations/apply", payload);
         msg.textContent = `Aplicado. Asientos: ${result.posted || 0}. Pagos ITP: ${result.applied || 0}. Pendientes: ${result.pending || 0}.`;
-        itpBiweeklyRows.forEach(row => { row.payment_status = itpBiReady(row) ? "Pagado" : "Pendiente"; });
+        const appliedKeys = new Set(ready.map(itpBiRowKey));
+        itpBiweeklyRows.forEach(row => {
+          if (appliedKeys.has(itpBiRowKey(row))) row.payment_status = "Pagado";
+          else if (Number(row.amount || 0) > 0 && !itpBiReady(row)) row.payment_status = "Pendiente";
+        });
+        itpBiweeklyChecked = new Set();
         renderItpBiweeklyTable();
         await loadItp();
       } catch (err) {
