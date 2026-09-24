@@ -25,6 +25,7 @@ from database import get_db
 from rbac_service import has_permission
 from services.finance_audit import actor_from_headers, audit_event, row_to_dict
 from services.accounting_bank_rules import external_surveyor_settlement, resolve_itp_bank
+from services.accounting_auto import display_itp_invoice_reference
 from services.employee_payee_rules import (
     deactivate_employee_itp_obligations,
     is_employee_payee,
@@ -68,6 +69,7 @@ def _ensure_company_column(cur):
     cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS payment_method TEXT NOT NULL DEFAULT 'BANK'")
     cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS payment_card_last4 TEXT")
     cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS payment_reference TEXT")
+    cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS electronic_key TEXT")
     cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS payment_bank TEXT")
     cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS payment_bank_account_code TEXT")
     cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS payment_bank_account_name TEXT")
@@ -998,7 +1000,12 @@ def search_invoice_to_pay(
 
     try:
         cur.execute(sql, [CARD_3155_METHOD] + params)
-        rows = cur.fetchall()
+        rows = []
+        for row in cur.fetchall() or []:
+            item = dict(row)
+            if str(item.get("origin") or "").upper() != "SERVICIOS":
+                item["referencia"] = display_itp_invoice_reference(item.get("referencia"))
+            rows.append(item)
     except Exception as e:
         raise HTTPException(
             status_code=500,
@@ -2285,6 +2292,7 @@ def upload_invoice_xml(
         ])
         if not clave:
             raise ValueError("XML sin Clave")
+        invoice_reference = display_itp_invoice_reference(clave)
 
         # ------------------------------------------------------------
         # FECHA EMISIÓN
@@ -2372,6 +2380,7 @@ def upload_invoice_xml(
                 payee_name,
                 obligation_type,
                 reference,
+                electronic_key,
                 issue_date,
                 due_date,
                 country,
@@ -2396,6 +2405,7 @@ def upload_invoice_xml(
                 %s,
                 %s,
                 %s,
+                %s,
                 'Costa Rica',
                 %s,
                 %s,
@@ -2413,6 +2423,7 @@ def upload_invoice_xml(
             company,
             emisor,
             obligation_type,
+            invoice_reference,
             clave,
             issue_date,
             due_date,
@@ -2420,7 +2431,7 @@ def upload_invoice_xml(
             total,
             total,
             filepath,
-            f"Documento cargado por XML ({clave})"
+            f"Documento cargado por XML ({invoice_reference}) | Clave electrónica: {clave}"
         ))
         obligation_id = cur.fetchone()["id"]
         replaced_ids = reconcile_surveyor_invoice_obligations(
@@ -2428,7 +2439,7 @@ def upload_invoice_xml(
             company,
             emisor,
             issue_date,
-            reference=clave,
+            reference=invoice_reference,
             invoice_obligation_id=obligation_id,
         )
 
@@ -2444,7 +2455,8 @@ def upload_invoice_xml(
     return {
         "message": "XML procesado correctamente",
         "type": obligation_type,
-        "reference": clave,
+        "reference": invoice_reference,
+        "electronic_key": clave,
         "supplier": emisor,
         "total": total,
         "currency": moneda,

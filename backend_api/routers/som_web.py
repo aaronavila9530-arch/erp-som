@@ -18,7 +18,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20260924-action-center-v1"
+_ASSET_VERSION = "20260924-itp-invoice-layout-v1"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -493,6 +493,7 @@ def som_web_home() -> HTMLResponse:
       --amber:#a66700; --red:#b42318; --shadow:0 12px 30px rgba(15,31,53,.10);
     }
     * { box-sizing:border-box; }
+    html,body { max-width:100%; overflow-x:hidden; }
     body { margin:0; font-family:Inter,Segoe UI,Roboto,Arial,sans-serif; color:var(--ink); background:#eef3f8; }
     button,input,select { font:inherit; }
     button { border:0; background:var(--blue); color:#fff; border-radius:7px; height:38px; padding:0 13px; cursor:pointer; }
@@ -513,7 +514,7 @@ def som_web_home() -> HTMLResponse:
     .hero-logo { min-height:100vh; background:#073659; display:flex; align-items:center; justify-content:center; padding:32px; overflow:hidden; }
     .hero-logo img { width:min(82%,780px); height:min(82vh,780px); object-fit:contain; object-position:center; background:white; border-radius:12px; padding:0; box-shadow:0 24px 70px rgba(0,0,0,.18); }
     .qr { max-width:220px; border:1px solid var(--line); border-radius:8px; padding:8px; background:white; }
-    .app { min-height:100vh; display:grid; grid-template-columns:280px 1fr; }
+    .app { min-height:100vh; display:grid; grid-template-columns:280px minmax(0,1fr); max-width:100vw; overflow:hidden; }
     aside { background:var(--nav); color:white; padding:18px 16px; display:flex; flex-direction:column; gap:14px; }
     .brand { display:flex; gap:12px; align-items:center; padding:6px; }
     .brand img { width:50px; height:50px; object-fit:contain; background:white; border-radius:8px; padding:5px; }
@@ -523,7 +524,7 @@ def som_web_home() -> HTMLResponse:
     .nav button { text-align:left; background:transparent; color:#dce8f4; border:1px solid rgba(255,255,255,.09); }
     .nav button.active,.nav button:hover { background:rgba(255,255,255,.1); }
     .side-foot { margin-top:auto; display:grid; gap:8px; }
-    main { padding:20px 20px 30px; min-width:0; }
+    main { padding:20px 20px 30px; min-width:0; max-width:100%; overflow:hidden; }
     header { display:flex; justify-content:space-between; gap:16px; align-items:flex-start; margin-bottom:14px; }
     h1 { margin:0; font-size:25px; letter-spacing:0; }
     h2 { margin:0; font-size:17px; }
@@ -615,7 +616,7 @@ def som_web_home() -> HTMLResponse:
     .finance-filter-row button { justify-self:start; min-width:92px; padding:0 16px; }
     .finance-toolbar { display:flex; flex-wrap:wrap; gap:8px; margin:8px 0 12px; }
     .finance-toolbar button { height:34px; }
-    .accounting-shell { display:grid; gap:10px; }
+    .accounting-shell { display:grid; gap:10px; min-width:0; max-width:100%; overflow:hidden; }
     .accounting-hero { display:grid; grid-template-columns:repeat(3,minmax(150px,1fr)); gap:10px; align-items:stretch; }
     .accounting-title { padding:14px; border:1px solid #d7e1ec; border-radius:8px; background:#fff; }
     .accounting-title h2 { margin:0; font-size:26px; line-height:1.1; }
@@ -624,12 +625,12 @@ def som_web_home() -> HTMLResponse:
     .accounting-kpi span { display:block; color:#64748b; font-size:11px; font-weight:800; letter-spacing:.04em; text-transform:uppercase; }
     .accounting-kpi strong { display:block; margin-top:6px; color:#0f172a; font-size:21px; }
     .accounting-company { display:inline-flex; align-items:center; min-height:25px; margin-top:7px; border:1px solid #b8d5f1; border-radius:999px; padding:3px 10px; background:#edf7ff; color:#005da8; font-size:12px; font-weight:800; }
-    .accounting-topline { display:grid; grid-template-columns:minmax(300px,1fr) minmax(320px,520px); gap:10px; align-items:stretch; }
+    .accounting-topline { display:grid; grid-template-columns:minmax(0,1fr) minmax(300px,520px); gap:10px; align-items:stretch; min-width:0; }
     .accounting-tc { display:grid; grid-template-columns:minmax(80px,1fr) minmax(115px,1fr) max-content; gap:8px; align-items:end; padding:10px; border:1px solid #d7e1ec; border-radius:8px; background:#fff; }
     .accounting-tc h3,.accounting-filter-box h3 { grid-column:1/-1; margin:0 0 2px; font-size:13px; color:#334155; font-weight:800; }
     .accounting-tc label,.accounting-filter-box label { display:grid; gap:4px; color:#475569; font-size:12px; font-weight:700; }
     .accounting-tc input { height:32px; }
-    .accounting-grid { display:grid; grid-template-columns:1fr; gap:10px; align-items:start; }
+    .accounting-grid { display:grid; grid-template-columns:minmax(0,1fr); gap:10px; align-items:start; min-width:0; max-width:100%; }
     .accounting-side { display:grid; gap:10px; align-content:start; }
     .accounting-box { border:1px solid #d7e1ec; border-radius:8px; background:#fff; padding:10px; }
     .accounting-box h3 { margin:0 0 8px; font-size:12px; color:#334155; font-weight:800; letter-spacing:.04em; text-transform:uppercase; }
@@ -638,8 +639,8 @@ def som_web_home() -> HTMLResponse:
     .accounting-actions button.primary { background:var(--blue); color:white; border-color:var(--blue); }
     .accounting-actions button.green { background:var(--green); color:white; border-color:var(--green); }
     .accounting-actions button.brown { background:var(--brown); color:white; border-color:var(--brown); }
-    .accounting-filter-box { padding:10px; border:1px solid #d7e1ec; border-radius:8px; background:#fff; }
-    .accounting-filters { display:grid; grid-template-columns:150px repeat(3,minmax(135px,1fr)) minmax(180px,1.1fr) minmax(165px,1fr) repeat(2,max-content); gap:9px; align-items:end; }
+    .accounting-filter-box { padding:10px; border:1px solid #d7e1ec; border-radius:8px; background:#fff; min-width:0; max-width:100%; overflow:hidden; }
+    .accounting-filters { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:9px; align-items:end; min-width:0; max-width:100%; }
     .accounting-filters label { display:grid; gap:5px; color:#475569; font-size:12px; font-weight:700; text-transform:uppercase; }
     .accounting-filters input,.accounting-filters select { min-width:0; height:34px; }
     .accounting-radio { display:flex; gap:10px; align-items:center; height:34px; border:1px solid #d7e1ec; border-radius:7px; padding:0 9px; background:#f8fbfe; }
@@ -655,8 +656,9 @@ def som_web_home() -> HTMLResponse:
     .accounting-menu-panel { position:absolute; z-index:12; top:39px; left:0; min-width:255px; display:grid; gap:4px; padding:8px; border:1px solid #cfd9e5; border-radius:8px; background:#fff; box-shadow:0 18px 42px rgba(15,31,53,.18); }
     .accounting-menu-panel button { justify-content:flex-start; width:100%; text-align:left; border:0; background:#fff; color:#122033; }
     .accounting-menu-panel button:hover { background:#edf7ff; }
-    .accounting-work { min-width:0; display:grid; gap:10px; }
-    .accounting-work .table-wrap { max-height:620px; }
+    .accounting-work { min-width:0; max-width:100%; display:grid; gap:10px; overflow:hidden; }
+    .accounting-work .table-wrap { max-height:620px; width:100%; max-width:100%; overflow:auto; }
+    .accounting-work table { width:max-content; min-width:100%; }
     .accounting-banner { border:1px solid #d7e1ec; border-radius:8px; background:#fff; padding:10px 12px; color:#52637a; }
     .accounting-entry-summary { cursor:pointer; }
     .accounting-entry-summary:hover { background:#edf7ff; }
@@ -760,8 +762,8 @@ def som_web_home() -> HTMLResponse:
     .view-card { padding:15px; cursor:pointer; min-height:86px; border-top:3px solid var(--blue); }
     .view-card:hover { outline:2px solid rgba(0,93,168,.18); }
     .master-empty { margin-top:12px; }
-    .workspace { margin-top:12px; }
-    .table-wrap { overflow:auto; border:1px solid var(--line); border-radius:8px; max-height:520px; }
+    .workspace { margin-top:12px; min-width:0; max-width:100%; }
+    .table-wrap { overflow:auto; border:1px solid var(--line); border-radius:8px; max-height:520px; max-width:100%; }
     table { border-collapse:collapse; width:100%; min-width:850px; font-size:13px; }
     th,td { border-bottom:1px solid #e6edf4; padding:8px 10px; text-align:left; white-space:nowrap; }
     th { background:#f0f4f8; position:sticky; top:0; z-index:1; }
