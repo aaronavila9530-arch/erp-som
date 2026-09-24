@@ -848,7 +848,26 @@ def som_web_home() -> HTMLResponse:
     .finance-filter-row button { justify-self:start; min-width:92px; padding:0 16px; }
     .finance-toolbar { display:flex; flex-wrap:wrap; gap:8px; margin:8px 0 12px; }
     .finance-toolbar button { height:34px; }
-    .accounting-shell { display:grid; gap:10px; min-width:0; max-width:100%; overflow:hidden; }
+    .pln-shell { display:grid; gap:12px; min-width:0; }
+    .pln-hero { display:grid; grid-template-columns:minmax(0,1.2fr) minmax(300px,.8fr); gap:12px; align-items:stretch; }
+    .pln-title { padding:15px; border:1px solid #d7e1ec; border-radius:8px; background:#fff; }
+    .pln-title h2 { margin:0; font-size:24px; }
+    .pln-title p { margin:6px 0 0; color:#607086; line-height:1.4; }
+    .pln-scenario { padding:12px; border:1px solid #d7e1ec; border-radius:8px; background:#f8fbfe; display:grid; gap:8px; }
+    .pln-scenario h3 { margin:0; font-size:14px; }
+    .pln-scenario-grid { display:grid; grid-template-columns:repeat(3,minmax(90px,1fr)); gap:8px; align-items:end; }
+    .pln-scenario-grid label { display:grid; gap:4px; font-size:12px; color:#475569; font-weight:700; }
+    .pln-scenario-result { border:1px solid #d7e1ec; border-radius:8px; background:white; padding:9px 10px; color:#122033; }
+    .pln-kpi-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:10px; }
+    .pln-kpi { border:1px solid #d7e1ec; border-radius:8px; background:#fff; padding:12px; min-width:0; }
+    .pln-kpi span { display:block; color:#64748b; font-size:11px; font-weight:800; text-transform:uppercase; }
+    .pln-kpi strong { display:block; margin-top:6px; font-size:21px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .pln-sections { display:grid; grid-template-columns:repeat(auto-fit,minmax(360px,1fr)); gap:12px; align-items:start; }
+    .pln-section { border:1px solid #d7e1ec; border-radius:8px; background:#fff; padding:10px; min-width:0; }
+    .pln-section summary { cursor:pointer; font-weight:800; color:#122033; }
+    .pln-section .table-wrap { margin-top:8px; max-height:300px; overflow:auto; scrollbar-gutter:stable both-edges; }
+    .pln-section table { width:max-content; min-width:100%; }
+    .accounting-shell { display:grid; gap:10px; min-width:0; max-width:100%; overflow:visible; }
     .accounting-hero { display:grid; grid-template-columns:repeat(3,minmax(150px,1fr)); gap:10px; align-items:stretch; }
     .accounting-title { padding:14px; border:1px solid #d7e1ec; border-radius:8px; background:#fff; }
     .accounting-title h2 { margin:0; font-size:26px; line-height:1.1; }
@@ -888,15 +907,15 @@ def som_web_home() -> HTMLResponse:
     .accounting-menu-panel { position:absolute; z-index:12; top:39px; left:0; min-width:255px; display:grid; gap:4px; padding:8px; border:1px solid #cfd9e5; border-radius:8px; background:#fff; box-shadow:0 18px 42px rgba(15,31,53,.18); }
     .accounting-menu-panel button { justify-content:flex-start; width:100%; text-align:left; border:0; background:#fff; color:#122033; }
     .accounting-menu-panel button:hover { background:#edf7ff; }
-    .accounting-work { min-width:0; max-width:100%; display:grid; gap:10px; overflow:hidden; }
-    .accounting-work .table-wrap { max-height:620px; width:100%; max-width:100%; overflow:auto; }
+    .accounting-work { min-width:0; max-width:100%; display:grid; gap:10px; overflow:visible; }
+    .accounting-work .table-wrap { max-height:620px; width:100%; max-width:calc(100vw - 340px); overflow:auto; scrollbar-gutter:stable both-edges; }
     .accounting-work table { width:max-content; min-width:100%; }
     .accounting-banner { border:1px solid #d7e1ec; border-radius:8px; background:#fff; padding:10px 12px; color:#52637a; }
     .accounting-entry-summary { cursor:pointer; }
     .accounting-entry-summary:hover { background:#edf7ff; }
     .accounting-entry-summary td { font-weight:700; }
-    .accounting-entry-lines-row > td { background:#fbfdff; padding:0; max-width:0; overflow:hidden; }
-    .accounting-entry-lines-box { padding:9px 10px 12px; border-top:1px solid #dbe5f0; max-width:min(100%, calc(100vw - 340px)); overflow:auto; }
+    .accounting-entry-lines-row > td { background:#fbfdff; padding:0; max-width:none; overflow:visible; }
+    .accounting-entry-lines-box { padding:9px 10px 12px; border-top:1px solid #dbe5f0; width:100%; max-width:calc(100vw - 370px); overflow:auto; scrollbar-gutter:stable both-edges; }
     .accounting-entry-lines-box table { width:max-content; min-width:100%; border-collapse:collapse; }
     .accounting-entry-lines-box th,.accounting-entry-lines-box td { padding:6px 8px; border-bottom:1px solid #edf2f7; font-weight:400; }
     .accounting-entry-lines-box th:nth-child(3),.accounting-entry-lines-box td:nth-child(3) { min-width:320px; max-width:760px; white-space:normal; overflow-wrap:anywhere; }
@@ -3327,16 +3346,34 @@ def som_web_home() -> HTMLResponse:
     function renderFinancePlanning(target) {
       const period = new Date().toISOString().slice(0,7);
       target.innerHTML = `
-        <div class="panel-head"><h2>PLN / Planificación financiera</h2><span class="muted">Planificación, ITP, gastos, pagos, accounting, metas, proyectos y ahorros</span></div>
-        <div class="finance-filter-row compact">
-          <label>Periodo<input id="plnPeriod" value="${esc(period)}" placeholder="YYYY-MM" /></label>
-          <label>Meses<select id="plnMonths"><option>1</option><option>2</option><option>3</option><option selected>4</option><option>6</option><option>12</option></select></label>
-          <button onclick="loadFinancePlanning()">Buscar</button>
-          <button class="green" onclick="openPlanningProjectForm()">Agregar proyecto</button>
-          <button class="secondary" onclick="renderFinancePlanning($('planningWorkspace') || $('itpWorkspace'))">Limpiar</button>
+        <div class="pln-shell">
+          <div class="pln-hero">
+            <div class="pln-title">
+              <h2>PLN / Planificación financiera</h2>
+              <p>Planifica caja, obligaciones, gastos, metas, proyectos, ahorros y escenarios desde una misma vista.</p>
+            </div>
+            <div class="pln-scenario">
+              <h3>Comparador rápido</h3>
+              <div class="pln-scenario-grid">
+                <label>Ingreso %<input id="plnScenarioRevenue" type="number" step="1" value="0" /></label>
+                <label>Gasto %<input id="plnScenarioExpense" type="number" step="1" value="0" /></label>
+                <label>Ahorro extra<input id="plnScenarioSaving" type="number" step="0.01" value="0" /></label>
+              </div>
+              <button class="secondary" onclick="calculatePlanningScenario()">Comparar escenario</button>
+              <div id="plnScenarioResult" class="pln-scenario-result">Cargue PLN para comparar contra el periodo.</div>
+            </div>
+          </div>
+          <div class="finance-filter-row compact">
+            <label>Periodo<input id="plnPeriod" value="${esc(period)}" placeholder="YYYY-MM" /></label>
+            <label>Meses<select id="plnMonths"><option>1</option><option>2</option><option>3</option><option selected>4</option><option>6</option><option>12</option></select></label>
+            <button onclick="loadFinancePlanning()">Buscar</button>
+            <button class="green" onclick="openPlanningProjectForm()">Agregar proyecto</button>
+            <button class="secondary" onclick="renderFinancePlanning($('planningWorkspace') || $('itpWorkspace'))">Limpiar</button>
+          </div>
         </div>
         <div id="planningMsg" class="status">Presione Buscar para consultar PLN.</div>
         <div id="planningResult" class="workspace"></div>`;
+      setTimeout(loadFinancePlanning, 0);
     }
     async function loadFinancePlanning() {
       const msg = $("planningMsg");
@@ -3367,8 +3404,13 @@ def som_web_home() -> HTMLResponse:
         ["Ahorro mensual", money(totals.monthly_savings || 0)]
       ];
       const profitability = payload.profitability || {};
+      const revenue = Number(profitability.revenue || 0);
+      const expenses = Number(profitability.expenses || 0);
+      const profit = Number(profitability.profit || 0);
       return `
-        <div class="grid kpis">${cards.map(([label,value]) => `<div class="card kpi"><span>${esc(label)}</span><strong>${esc(value)}</strong></div>`).join("")}</div>
+        <div id="plnScenarioBase" data-revenue="${esc(revenue)}" data-expenses="${esc(expenses)}" data-profit="${esc(profit)}" data-savings="${esc(totals.monthly_savings || 0)}"></div>
+        <div class="pln-kpi-grid">${cards.map(([label,value]) => `<div class="pln-kpi"><span>${esc(label)}</span><strong title="${esc(value)}">${esc(value)}</strong></div>`).join("")}</div>
+        <div class="pln-sections">
         ${renderPlanningSection("Rentabilidad empresa", [
           {metric:"Ingresos", value:money(profitability.revenue || 0)},
           {metric:"Gastos", value:money(profitability.expenses || 0)},
@@ -3384,11 +3426,28 @@ def som_web_home() -> HTMLResponse:
         ${renderPlanningSection("Proyectos", payload.projects || [], ["id","name","client_name","status","priority","target_date","currency_code","expected_revenue","expected_cost","expected_profit","expected_margin_pct","monthly_savings"])}
         ${renderPlanningSection("Cronograma", payload.project_schedule || [], ["due_date","concept","direction","currency_code","amount","status","project_id"])}
         ${renderPlanningSection("Ahorro mensual", payload.monthly_plan || [], ["month","currency_code","planned_inflow","planned_outflow","planned_saving"])}
+        </div>
         <div class="status">${(payload.decision_notes || []).map(esc).join("<br>")}</div>`;
     }
     function renderPlanningSection(title, rows, cols) {
-      if (!rows.length) return `<h3>${esc(title)}</h3><div class="status">Sin datos.</div>`;
-      return `<h3>${esc(title)}</h3><div class="table-wrap"><table><thead><tr><th class="pick-col"></th>${cols.map(c => `<th>${esc(c.replace(/_/g," "))}</th>`).join("")}<th>Acción</th></tr></thead><tbody>${rows.slice(0,120).map((row,idx) => `<tr><td class="pick-col"><input class="row-pick" type="checkbox" /></td>${cols.map(c => `<td>${esc(["amount","balance","total","target_amount","progress_amount","actual_amount","total_honorarios","total_gastos","precio","utilidad","expected_revenue","expected_cost","expected_profit","monthly_savings","planned_inflow","planned_outflow","planned_saving"].includes(c) ? money(row[c]) : row[c])}</td>`).join("")}<td>${title === "Proyectos" ? `<button onclick='openPlanningProjectForm(${JSON.stringify(row).replace(/'/g, "&#39;")})'>Editar</button><button class="brown" onclick="deletePlanningProject(${Number(row.id || 0)})">Eliminar</button>` : ""}</td></tr>`).join("")}</tbody></table></div>`;
+      if (!rows.length) return `<details class="pln-section" open><summary>${esc(title)}</summary><div class="status">Sin datos.</div></details>`;
+      return `<details class="pln-section" open><summary>${esc(title)} · ${rows.length}</summary><div class="table-wrap"><table><thead><tr><th class="pick-col"></th>${cols.map(c => `<th>${esc(c.replace(/_/g," "))}</th>`).join("")}<th>Acción</th></tr></thead><tbody>${rows.slice(0,120).map((row,idx) => `<tr><td class="pick-col"><input class="row-pick" type="checkbox" /></td>${cols.map(c => `<td>${esc(["amount","balance","total","target_amount","progress_amount","actual_amount","total_honorarios","total_gastos","precio","utilidad","expected_revenue","expected_cost","expected_profit","monthly_savings","planned_inflow","planned_outflow","planned_saving"].includes(c) ? money(row[c]) : row[c])}</td>`).join("")}<td>${title === "Proyectos" ? `<button onclick='openPlanningProjectForm(${JSON.stringify(row).replace(/'/g, "&#39;")})'>Editar</button><button class="brown" onclick="deletePlanningProject(${Number(row.id || 0)})">Eliminar</button>` : ""}</td></tr>`).join("")}</tbody></table></div></details>`;
+    }
+    function calculatePlanningScenario() {
+      const base = $("plnScenarioBase");
+      const out = $("plnScenarioResult");
+      if (!base || !out) return;
+      const revenue = Number(base.dataset.revenue || 0);
+      const expenses = Number(base.dataset.expenses || 0);
+      const savings = Number(base.dataset.savings || 0);
+      const revenuePct = Number(valueFrom("plnScenarioRevenue") || 0) / 100;
+      const expensePct = Number(valueFrom("plnScenarioExpense") || 0) / 100;
+      const extraSaving = Number(valueFrom("plnScenarioSaving") || 0);
+      const scenarioRevenue = revenue * (1 + revenuePct);
+      const scenarioExpenses = expenses * (1 + expensePct);
+      const scenarioProfit = scenarioRevenue - scenarioExpenses;
+      const margin = scenarioRevenue ? (scenarioProfit / scenarioRevenue * 100) : 0;
+      out.innerHTML = `<strong>Escenario:</strong> utilidad ${money(scenarioProfit)} · margen ${margin.toFixed(2)}% · ahorro mensual ${money(savings + extraSaving)}`;
     }
     function openPlanningProjectForm(project={}) {
       document.body.insertAdjacentHTML("beforeend", `

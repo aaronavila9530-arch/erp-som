@@ -17,25 +17,52 @@ class FinancePlanningUI(tk.Frame):
         self.period = tk.StringVar(value=period or date.today().strftime("%Y-%m"))
         self.months = tk.StringVar(value="4")
         self.status = tk.StringVar(value="Presione Buscar para consultar PLN.")
+        self.scenario_revenue = tk.StringVar(value="0")
+        self.scenario_expense = tk.StringVar(value="0")
+        self.scenario_saving = tk.StringVar(value="0")
+        self.scenario_result = tk.StringVar(value="Cargue PLN para comparar contra el periodo.")
+        self.last_payload = {}
         self.trees = {}
         self._build()
 
     def _build(self):
         header = tk.Frame(self, bg="white")
         header.pack(fill="x", padx=12, pady=(8, 4))
-        tk.Label(header, text="PLN / Planificación financiera", bg="white", font=("Segoe UI", 14, "bold")).pack(side="left")
-        ttk.Label(header, text="Periodo").pack(side="left", padx=(20, 4))
-        ttk.Entry(header, textvariable=self.period, width=10).pack(side="left")
-        ttk.Label(header, text="Meses").pack(side="left", padx=(12, 4))
-        ttk.Combobox(header, textvariable=self.months, values=("1", "2", "3", "4", "6", "12"), width=5, state="readonly").pack(side="left")
-        ttk.Button(header, text="Buscar", command=self.search).pack(side="left", padx=8)
-        ttk.Button(header, text="Agregar proyecto", command=self._new_project).pack(side="left", padx=4)
-        ttk.Button(header, text="Modificar proyecto", command=self._edit_project).pack(side="left", padx=4)
-        ttk.Button(header, text="Eliminar proyecto", command=self._delete_project).pack(side="left", padx=4)
+        title = tk.Frame(header, bg="white")
+        title.pack(side="left", fill="x", expand=True)
+        tk.Label(title, text="PLN / Planificación financiera", bg="white", font=("Segoe UI", 16, "bold")).pack(anchor="w")
+        tk.Label(
+            title,
+            text="Planificación de caja, obligaciones, gastos, metas, proyectos, ahorros y escenarios.",
+            bg="white",
+            fg="#607086",
+        ).pack(anchor="w")
+        controls = ttk.Frame(header)
+        controls.pack(side="right")
+        ttk.Label(controls, text="Periodo").grid(row=0, column=0, padx=(0, 4))
+        ttk.Entry(controls, textvariable=self.period, width=10).grid(row=0, column=1, padx=(0, 10))
+        ttk.Label(controls, text="Meses").grid(row=0, column=2, padx=(0, 4))
+        ttk.Combobox(controls, textvariable=self.months, values=("1", "2", "3", "4", "6", "12"), width=5, state="readonly").grid(row=0, column=3, padx=(0, 10))
+        ttk.Button(controls, text="Buscar", command=self.search).grid(row=0, column=4, padx=4)
+        ttk.Button(controls, text="Agregar proyecto", command=self._new_project).grid(row=0, column=5, padx=4)
+        ttk.Button(controls, text="Modificar", command=self._edit_project).grid(row=0, column=6, padx=4)
+        ttk.Button(controls, text="Eliminar", command=self._delete_project).grid(row=0, column=7, padx=4)
         ttk.Label(self, textvariable=self.status, background="white", foreground="#475467").pack(anchor="w", padx=14)
 
         self.kpis = tk.Frame(self, bg="white")
         self.kpis.pack(fill="x", padx=12, pady=8)
+
+        scenario = ttk.LabelFrame(self, text="Comparador rápido")
+        scenario.pack(fill="x", padx=12, pady=(0, 8))
+        ttk.Label(scenario, text="Ingreso %").grid(row=0, column=0, padx=8, pady=8, sticky="w")
+        ttk.Entry(scenario, textvariable=self.scenario_revenue, width=8).grid(row=0, column=1, padx=(0, 12), pady=8)
+        ttk.Label(scenario, text="Gasto %").grid(row=0, column=2, padx=8, pady=8, sticky="w")
+        ttk.Entry(scenario, textvariable=self.scenario_expense, width=8).grid(row=0, column=3, padx=(0, 12), pady=8)
+        ttk.Label(scenario, text="Ahorro extra").grid(row=0, column=4, padx=8, pady=8, sticky="w")
+        ttk.Entry(scenario, textvariable=self.scenario_saving, width=12).grid(row=0, column=5, padx=(0, 12), pady=8)
+        ttk.Button(scenario, text="Comparar escenario", command=self._calculate_scenario).grid(row=0, column=6, padx=8, pady=8)
+        ttk.Label(scenario, textvariable=self.scenario_result, foreground="#334155").grid(row=0, column=7, padx=8, pady=8, sticky="w")
+        scenario.columnconfigure(7, weight=1)
 
         self.tabs = ttk.Notebook(self)
         self.tabs.pack(fill="both", expand=True, padx=12, pady=(0, 12))
@@ -49,6 +76,7 @@ class FinancePlanningUI(tk.Frame):
         self._add_tree("project_schedule", "Cronograma", ("due_date", "concept", "direction", "currency_code", "amount", "status", "project_id"))
         self._add_tree("monthly_plan", "Ahorro mensual", ("month", "currency_code", "planned_inflow", "planned_outflow", "planned_saving"))
         self._add_tree("alerts", "Alertas", ("severity", "code", "message"))
+        self.search()
 
     def _add_tree(self, key, title, columns):
         frame = ttk.Frame(self.tabs, padding=5)
@@ -83,6 +111,7 @@ class FinancePlanningUI(tk.Frame):
         messagebox.showerror("PLN / Planificación", message, parent=self)
 
     def _apply(self, payload):
+        self.last_payload = payload or {}
         totals = payload.get("totals") or {}
         self._render_kpis(totals, payload)
         profitability = payload.get("profitability") or {}
@@ -102,6 +131,7 @@ class FinancePlanningUI(tk.Frame):
             for row in rows:
                 tree.insert("", "end", values=[self._cell((row or {}).get(col)) for col in columns])
         self.status.set(f"PLN actualizado al {payload.get('as_of')} | horizonte {payload.get('horizon_months')} meses.")
+        self._calculate_scenario()
 
     def _render_kpis(self, totals, payload):
         for widget in self.kpis.winfo_children():
@@ -132,6 +162,28 @@ class FinancePlanningUI(tk.Frame):
             return f"{float(value or 0):,.2f}"
         except Exception:
             return "0.00"
+
+    def _calculate_scenario(self):
+        payload = self.last_payload or {}
+        profitability = payload.get("profitability") or {}
+        totals = payload.get("totals") or {}
+        try:
+            revenue = float(profitability.get("revenue") or 0)
+            expenses = float(profitability.get("expenses") or 0)
+            savings = float(totals.get("monthly_savings") or 0)
+            revenue_pct = float(self.scenario_revenue.get() or 0) / 100
+            expense_pct = float(self.scenario_expense.get() or 0) / 100
+            extra_saving = float(self.scenario_saving.get() or 0)
+        except Exception:
+            self.scenario_result.set("Revise los porcentajes del escenario.")
+            return
+        scenario_revenue = revenue * (1 + revenue_pct)
+        scenario_expenses = expenses * (1 + expense_pct)
+        scenario_profit = scenario_revenue - scenario_expenses
+        margin = (scenario_profit / scenario_revenue * 100) if scenario_revenue else 0
+        self.scenario_result.set(
+            f"Utilidad {self._money(scenario_profit)} · margen {margin:.2f}% · ahorro mensual {self._money(savings + extra_saving)}"
+        )
 
     def _selected_project(self):
         tree = self.trees.get("projects")
