@@ -4092,6 +4092,32 @@ def api_request(method: str, url: str, **kwargs):
     )
 
 
+def get_som_summary_api(anio: int | None = None, modules: list[str] | None = None):
+    headers = {}
+    if modules is not None:
+        headers["X-Modules"] = ",".join(str(item).strip() for item in modules if str(item).strip())
+    response = api_request(
+        "GET",
+        "/som/summary",
+        params={"anio": anio or datetime.now().year},
+        headers=headers,
+        timeout=45,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+def get_som_action_center_api(anio: int | None = None):
+    response = api_request(
+        "GET",
+        "/som/action-center",
+        params={"anio": anio or datetime.now().year},
+        timeout=45,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
 def unlock_masterdata_bank_accounts_api(totp_code: str, company_code: str | None = None, company_name: str | None = None):
     headers = {}
     if company_code:

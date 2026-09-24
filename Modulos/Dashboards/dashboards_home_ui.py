@@ -1,5 +1,8 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
+from datetime import datetime
+
+import api_client
 
 try:
     from session_context import get_company_code
@@ -90,6 +93,8 @@ class DashboardsHomeUI(ttk.Frame):
     def _build_ui(self):
         self.configure(style="Home.TFrame")
         self._configure_styles()
+        self.summary = {}
+        self.actions_payload = {}
 
         container = ttk.Frame(self, style="Home.TFrame")
         container.pack(fill="both", expand=True, padx=22, pady=18)
@@ -117,23 +122,43 @@ class DashboardsHomeUI(ttk.Frame):
             style="Muted.TLabel",
         ).pack(anchor="w")
 
-        allowed = self._allowed_modules()
-        badges = ttk.Frame(container, style="Home.TFrame")
-        badges.pack(fill="x", pady=(0, 14))
-        for item in allowed[:8]:
-            ttk.Label(badges, text=item["label"], style="Badge.TLabel").pack(side="left", padx=(0, 7), pady=2)
-        if not allowed:
-            ttk.Label(badges, text="Sin módulos visibles configurados", style="Muted.TLabel").pack(anchor="w")
+        self.kpi_frame = ttk.Frame(container, style="Home.TFrame")
+        self.kpi_frame.pack(fill="x", pady=(0, 14))
 
-        grid = ttk.Frame(container, style="Home.TFrame")
-        grid.pack(fill="x")
-        for idx, item in enumerate(allowed):
-            self._card(grid, item, idx // 4, idx % 4)
+        body = ttk.Frame(container, style="Home.TFrame")
+        body.pack(fill="both", expand=True)
+        body.grid_columnconfigure(0, weight=2)
+        body.grid_columnconfigure(1, weight=1)
+        body.grid_rowconfigure(0, weight=1)
 
-        insight = ttk.Frame(container, style="Home.TFrame")
-        insight.pack(fill="both", expand=True, pady=(14, 0))
-        self._automation_panel(insight).pack(side="left", fill="both", expand=True, padx=(0, 10))
-        self._help_panel(insight).pack(side="right", fill="both", expand=True)
+        left = ttk.Frame(body, style="Home.TFrame")
+        left.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+        right = ttk.Frame(body, style="Home.TFrame")
+        right.grid(row=0, column=1, sticky="nsew")
+
+        command = ttk.Frame(left, style="Hero.TFrame", padding=16)
+        command.pack(fill="x", pady=(0, 12))
+        ttk.Label(command, text="Centro de control SOM", style="SectionTitle.TLabel").pack(anchor="w")
+        ttk.Label(
+            command,
+            text="Pendientes reales, indicadores y alertas filtradas por rol, permisos y empresa.",
+            style="HeroText.TLabel",
+            wraplength=760,
+        ).pack(anchor="w", pady=(4, 10))
+        self.task_summary = ttk.Frame(command, style="Hero.TFrame")
+        self.task_summary.pack(fill="x")
+
+        tasks = ttk.LabelFrame(left, text="Pendientes y aprobaciones")
+        tasks.pack(fill="both", expand=True)
+        self.tasks_frame = ttk.Frame(tasks)
+        self.tasks_frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+        self.exec_frame = ttk.LabelFrame(right, text="Vista ejecutiva")
+        self.exec_frame.pack(fill="both", expand=True)
+        self.exec_body = ttk.Frame(self.exec_frame)
+        self.exec_body.pack(fill="both", expand=True, padx=10, pady=10)
+
+        self._load_live_home()
 
     def _configure_styles(self):
         style = ttk.Style(self)
@@ -145,7 +170,113 @@ class DashboardsHomeUI(ttk.Frame):
         style.configure("SessionUser.TLabel", background="#F8FBFE", foreground="#122033", font=("Segoe UI", 16, "bold"))
         style.configure("Eyebrow.TLabel", background="#F8FBFE", foreground="#005DA8", font=("Segoe UI", 8, "bold"))
         style.configure("Muted.TLabel", background="#F8FBFE", foreground="#607086", font=("Segoe UI", 9))
+        style.configure("SectionTitle.TLabel", background="#FFFFFF", foreground="#122033", font=("Segoe UI", 20, "bold"))
         style.configure("Badge.TLabel", background="#EDF7FF", foreground="#005DA8", font=("Segoe UI", 9, "bold"), padding=(10, 4))
+
+    def _module_codes(self):
+        return [item["code"] for item in self._allowed_modules()]
+
+    def _load_live_home(self):
+        year = datetime.now().year
+        try:
+            self.summary = api_client.get_som_summary_api(year, modules=self._module_codes()) or {}
+            self.actions_payload = api_client.get_som_action_center_api(year) or {}
+        except Exception as exc:
+            self._render_error(exc)
+            return
+        self._render_kpis()
+        self._render_tasks()
+        self._render_executive()
+
+    def _render_error(self, exc):
+        ttk.Label(self.kpi_frame, text=f"No se pudo cargar Inicio: {exc}", foreground="#B42318").pack(anchor="w")
+
+    def _money_short(self, value):
+        amount = float(value or 0)
+        if abs(amount) >= 1_000_000:
+            return f"${amount/1_000_000:,.1f}M"
+        if abs(amount) >= 1_000:
+            return f"${amount/1_000:,.1f}K"
+        return f"${amount:,.2f}"
+
+    def _kpi(self, parent, label, value, hint):
+        box = tk.Frame(parent, bg="#FFFFFF", highlightbackground="#D7E1EC", highlightthickness=1)
+        box.pack(side="left", fill="x", expand=True, padx=(0, 10))
+        tk.Label(box, text=label.upper(), bg="#FFFFFF", fg="#607086", font=("Segoe UI", 8)).pack(anchor="w", padx=12, pady=(10, 0))
+        tk.Label(box, text=value, bg="#FFFFFF", fg="#122033", font=("Segoe UI", 18, "bold")).pack(anchor="w", padx=12, pady=(5, 0))
+        tk.Label(box, text=hint, bg="#FFFFFF", fg="#122033", font=("Segoe UI", 8)).pack(anchor="w", padx=12, pady=(0, 10))
+
+    def _render_kpis(self):
+        for child in self.kpi_frame.winfo_children():
+            child.destroy()
+        kpis = self.summary.get("kpis") or {}
+        can_finance = bool((self.summary.get("visibility") or {}).get("finance"))
+        self._kpi(self.kpi_frame, "Servicios YTD", str(int(kpis.get("services") or 0)), "Operaciones del año")
+        if can_finance:
+            self._kpi(self.kpi_frame, "Facturas FE", self._money_short(kpis.get("invoiced")), "Electrónicas año a fecha")
+            self._kpi(self.kpi_frame, "CxC", self._money_short(kpis.get("ar")), "Saldo pendiente")
+        self._kpi(self.kpi_frame, "Informes YTD", str(int(kpis.get("reports") or 0)), "Servicios con informe")
+
+    def _render_tasks(self):
+        for child in self.task_summary.winfo_children():
+            child.destroy()
+        for child in self.tasks_frame.winfo_children():
+            child.destroy()
+        rows = [item for item in (self.actions_payload.get("actions") or []) if self.can_access(item.get("module"))]
+        critical = sum(int(item.get("count") or 0) for item in rows if item.get("severity") == "critical")
+        review = sum(int(item.get("count") or 0) for item in rows if item.get("severity") == "warning")
+        total = sum(int(item.get("count") or 0) for item in rows)
+        for label, value in (("Críticos", critical), ("Revisión", review), ("Total tareas", total)):
+            item = ttk.Frame(self.task_summary, style="Hero.TFrame")
+            item.pack(side="left", fill="x", expand=True, padx=(0, 8))
+            ttk.Label(item, text=label.upper(), style="Eyebrow.TLabel").pack(anchor="w")
+            ttk.Label(item, text=str(value), style="SessionUser.TLabel").pack(anchor="w")
+        if not rows:
+            ttk.Label(self.tasks_frame, text="Sin pendientes visibles para tu rol.", foreground="#607086").pack(anchor="w")
+            return
+        for item in rows:
+            self._task_row(self.tasks_frame, item)
+
+    def _task_row(self, parent, item):
+        tone = {"critical": "#B42318", "warning": "#B7791F", "info": "#005DA8"}.get(item.get("severity"), "#64748B")
+        row = tk.Frame(parent, bg="#FFFFFF", highlightbackground="#D7E1EC", highlightthickness=1)
+        row.pack(fill="x", pady=(0, 8))
+        tk.Frame(row, bg=tone, width=4).pack(side="left", fill="y")
+        count = tk.Label(row, text=str(item.get("count") or 0), bg="#EDF7FF", fg=tone, font=("Segoe UI", 12, "bold"), width=4)
+        count.pack(side="left", padx=10, pady=10)
+        copy = tk.Frame(row, bg="#FFFFFF")
+        copy.pack(side="left", fill="x", expand=True, pady=10)
+        tk.Label(copy, text=item.get("title") or "-", bg="#FFFFFF", fg="#122033", font=("Segoe UI", 10, "bold")).pack(anchor="w")
+        tk.Label(copy, text=item.get("detail") or "", bg="#FFFFFF", fg="#607086", font=("Segoe UI", 9)).pack(anchor="w")
+        ttk.Button(row, text=item.get("cta") or "Abrir", command=lambda m=item.get("module"): self._open_module_code(m)).pack(side="right", padx=10)
+
+    def _render_executive(self):
+        for child in self.exec_body.winfo_children():
+            child.destroy()
+        visibility = self.summary.get("visibility") or {}
+        executive = self.summary.get("executive") or {}
+        if not visibility.get("finance"):
+            ttk.Label(self.exec_body, text="Métricas financieras ocultas por rol/permisos.", foreground="#607086", wraplength=360).pack(anchor="w")
+            return
+        top = executive.get("top_clients") or []
+        aging = executive.get("aging") or []
+        mix = executive.get("service_mix") or []
+        self._section_rows("Top 3 clientes FE", top, "client", "amount", money=True)
+        self._section_rows("Aging CxC", aging, "bucket", "amount", money=True)
+        self._section_rows("Mix de servicios", mix, "label", "value", money=False)
+
+    def _section_rows(self, title, rows, label_key, value_key, money=False):
+        ttk.Label(self.exec_body, text=title, font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(0, 6))
+        if not rows:
+            ttk.Label(self.exec_body, text="Sin datos visibles.", foreground="#607086").pack(anchor="w", pady=(0, 10))
+            return
+        for row in rows[:5]:
+            line = ttk.Frame(self.exec_body)
+            line.pack(fill="x", pady=2)
+            ttk.Label(line, text=str(row.get(label_key) or "-")[:28]).pack(side="left", fill="x", expand=True)
+            value = self._money_short(row.get(value_key)) if money else str(row.get(value_key) or 0)
+            ttk.Label(line, text=value).pack(side="right")
+        ttk.Separator(self.exec_body).pack(fill="x", pady=8)
 
     def _card(self, parent, item, row, col):
         card = tk.Frame(parent, bg="#FFFFFF", highlightbackground="#D7E1EC", highlightthickness=1)
@@ -203,6 +334,12 @@ class DashboardsHomeUI(ttk.Frame):
         if self.open_module:
             return self.open_module(item["module"])
         messagebox.showinfo("SOM", f"Abrir {item['label']}")
+
+    def _open_module_code(self, code):
+        found = next((item for item in self.MODULES if item["code"] == code), None)
+        if found:
+            return self._open_item(found)
+        messagebox.showinfo("SOM", f"Abrir {code or 'módulo'}")
 
     def _clear_host(self):
         for child in self.parent.winfo_children():

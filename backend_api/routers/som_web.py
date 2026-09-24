@@ -18,7 +18,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20260924-executive-home-v2"
+_ASSET_VERSION = "20260924-executive-home-v3"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -159,8 +159,8 @@ def som_web_summary(
 ):
     selected_year = int(anio or datetime.now().year)
     company = company_code(header_value=x_company_code)
-    start = _period_start(selected_year)
-    end = _period_end(selected_year)
+    start = _year_start(selected_year)
+    end = _year_to_date_end(selected_year)
     fiscal_start = _year_start(selected_year)
     fiscal_end = _year_to_date_end(selected_year)
     role = str(x_role or "").strip().lower()
@@ -170,20 +170,24 @@ def som_web_summary(
     conn = database.get_conn()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
+        electronic_invoice_filter = """
+              AND LENGTH(REGEXP_REPLACE(COALESCE(numero_documento,''), '[^0-9]', '', 'g')) >= 20
+        """
         services = _scalar(
             cur,
             "SELECT COUNT(*) FROM servicios WHERE company_code=%s AND fecha_inicio >= %s AND fecha_inicio < %s",
-            (company, start, end),
+            (company, fiscal_start, fiscal_end),
         )
         invoiced = _safe_scalar(
             cur,
-            """
+            f"""
             SELECT COALESCE(SUM(total),0)
             FROM invoicing
             WHERE company_code=%s
               AND fecha_emision >= %s
               AND fecha_emision < %s
               AND COALESCE(estado,'') NOT IN ('ANULADA','VOID','CANCELADA')
+              {electronic_invoice_filter}
             """,
             (company, fiscal_start, fiscal_end),
         ) if is_finance_role else 0.0
@@ -195,7 +199,7 @@ def som_web_summary(
         reports = _scalar(
             cur,
             "SELECT COUNT(*) FROM servicios WHERE company_code=%s AND fecha_inicio >= %s AND fecha_inicio < %s AND COALESCE(num_informe,'')<>''",
-            (company, start, end),
+            (company, fiscal_start, fiscal_end),
         )
         monthly = _query_rows(
             cur,
@@ -225,29 +229,15 @@ def som_web_summary(
                   AND fecha_emision < ((SELECT MAX(month_start) FROM months) + INTERVAL '1 month')
                 GROUP BY date_trunc('month', fecha_emision)::date
             ),
-            inv AS (
-                SELECT date_trunc('month', fecha_emision)::date AS month_start,
-                       COUNT(*) AS invoices,
-                       COALESCE(SUM(total),0) AS invoiced
-                FROM invoicing
-                WHERE company_code=%s
-                  AND fecha_emision >= (SELECT MIN(month_start) FROM months)
-                  AND fecha_emision < ((SELECT MAX(month_start) FROM months) + INTERVAL '1 month')
-                  AND COALESCE(estado,'') NOT IN ('ANULADA','VOID','CANCELADA')
-                GROUP BY date_trunc('month', fecha_emision)::date
-            )
             SELECT TO_CHAR(m.month_start, 'YYYY-MM') AS month,
                    COALESCE(svc.services,0) AS services,
-                   COALESCE(inv.invoices,0) AS invoices,
-                   COALESCE(inv.invoiced,0) AS invoiced,
                    COALESCE(cxc.ar_open,0) AS ar_open
             FROM months m
             LEFT JOIN svc ON svc.month_start = m.month_start
             LEFT JOIN cxc ON cxc.month_start = m.month_start
-            LEFT JOIN inv ON inv.month_start = m.month_start
             ORDER BY m.month_start
             """,
-            (end, end, company, company, company),
+            (end, end, company, company),
         )
         service_mix = _query_rows(
             cur,
@@ -262,11 +252,11 @@ def som_web_summary(
             ORDER BY value DESC, label
             LIMIT 6
             """,
-            (company, start, end),
+            (company, fiscal_start, fiscal_end),
         )
         top_clients = _query_rows(
             cur,
-            """
+            f"""
             SELECT COALESCE(NULLIF(TRIM(nombre_cliente),''), codigo_cliente, 'Sin cliente') AS client,
                    COUNT(*) AS invoices,
                    COALESCE(SUM(total),0) AS amount
@@ -275,6 +265,7 @@ def som_web_summary(
               AND fecha_emision >= %s
               AND fecha_emision < %s
               AND COALESCE(estado,'') NOT IN ('ANULADA','VOID','CANCELADA')
+              {electronic_invoice_filter}
             GROUP BY COALESCE(NULLIF(TRIM(nombre_cliente),''), codigo_cliente, 'Sin cliente')
             ORDER BY amount DESC, invoices DESC
             LIMIT 3
@@ -339,8 +330,8 @@ def som_web_action_center(
 ):
     selected_year = int(anio or datetime.now().year)
     company = company_code(header_value=x_company_code)
-    start = _period_start(selected_year)
-    end = _period_end(selected_year)
+    start = _year_start(selected_year)
+    end = _year_to_date_end(selected_year)
     conn = database.get_conn()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -1536,14 +1527,14 @@ def som_web_home() -> HTMLResponse:
         const items = data.kpis instanceof Array ? data.kpis : (
           financeVisible
             ? [
-                { label:"Servicios", value:data.kpis.services || 0, hint:"Desde agosto", format:"int" },
-                { label:"Facturación", value:data.kpis.invoiced || 0, hint:"Emitido año a fecha", format:"money" },
+                { label:"Servicios YTD", value:data.kpis.services || 0, hint:"Operaciones del año", format:"int" },
+                { label:"Facturas FE", value:data.kpis.invoiced || 0, hint:"Electrónicas año a fecha", format:"money" },
                 { label:"CxC", value:data.kpis.ar || 0, hint:"Saldo pendiente", format:"money" },
-                { label:"Informes", value:data.kpis.reports || 0, hint:"Desde agosto", format:"int" }
+                { label:"Informes YTD", value:data.kpis.reports || 0, hint:"Servicios con informe", format:"int" }
               ]
             : [
-                { label:"Servicios", value:data.kpis.services || 0, hint:"Desde agosto", format:"int" },
-                { label:"Informes", value:data.kpis.reports || 0, hint:"Generados", format:"int" },
+                { label:"Servicios YTD", value:data.kpis.services || 0, hint:"Operaciones del año", format:"int" },
+                { label:"Informes YTD", value:data.kpis.reports || 0, hint:"Servicios con informe", format:"int" },
                 { label:"Pendientes", value:0, hint:"Según permisos", format:"int" },
                 { label:"Empresa", value:1, hint:selectedCompany(), format:"int" }
               ]
@@ -1628,9 +1619,10 @@ def som_web_home() -> HTMLResponse:
         const payload = await getJSON(`/som/action-center?anio=${encodeURIComponent($("year").value)}`);
         const rows = (payload.actions || []).filter(item => canView(item.module));
         const counts = rows.reduce((acc,item) => {
-          acc.total += Number(item.count || 0);
-          if (item.severity === "critical") acc.critical += 1;
-          if (item.severity === "warning") acc.warning += 1;
+          const amount = Number(item.count || 0);
+          acc.total += amount;
+          if (item.severity === "critical") acc.critical += amount;
+          if (item.severity === "warning") acc.warning += amount;
           return acc;
         }, {critical:0, warning:0, total:0});
         if ($("homeCriticalCount")) $("homeCriticalCount").textContent = counts.critical;
@@ -1670,7 +1662,7 @@ def som_web_home() -> HTMLResponse:
       if ($("homeExecScope")) $("homeExecScope").textContent = canExecutive ? "admin/master" : (canFinance ? "finanzas" : "operativo");
       main.innerHTML = `
         <div class="card panel chart-card">
-          <div class="panel-head"><h2>Últimos 6 meses</h2><span class="muted">${canFinance ? "Servicios + facturación + AR" : "Cantidad de servicios"}</span></div>
+          <div class="panel-head"><h2>Últimos 6 meses</h2><span class="muted">${canFinance ? "Servicios + CxC abierta" : "Cantidad de servicios"}</span></div>
           ${renderComboChart(months, canFinance)}
         </div>
         <div class="card panel">
@@ -1682,7 +1674,7 @@ def som_web_home() -> HTMLResponse:
         side.innerHTML = `
           <div class="home-pill-list">
             <div><strong>Top cliente</strong><span title="${esc(topClients[0]?.client || "-")}">${esc(topClients[0]?.client || "-")}</span></div>
-            <div><strong>Facturación top 3</strong><span title="${money(topClients.reduce((s,r) => s + Number(r.amount || 0), 0))}">${money(topClients.reduce((s,r) => s + Number(r.amount || 0), 0))}</span></div>
+            <div><strong>Facturas FE top 3</strong><span title="${money(topClients.reduce((s,r) => s + Number(r.amount || 0), 0))}">${money(topClients.reduce((s,r) => s + Number(r.amount || 0), 0))}</span></div>
             <div><strong>CxC abierta</strong><span>${money(data.kpis?.ar || 0)}</span></div>
           </div>
           <h3 style="margin:14px 0 8px;font-size:14px">Top 3 clientes del año</h3>
@@ -1691,7 +1683,7 @@ def som_web_home() -> HTMLResponse:
           ${renderAging(aging)}`;
       } else if (canFinance) {
         side.className = "";
-        side.innerHTML = `<div class="home-pill-list"><div><strong>CxC abierta</strong><span>${money(data.kpis?.ar || 0)}</span></div><div><strong>Facturación año a fecha</strong><span>${money(data.kpis?.invoiced || 0)}</span></div></div><h3 style="margin:14px 0 8px;font-size:14px">Aging CxC</h3>${renderAging(aging)}`;
+        side.innerHTML = `<div class="home-pill-list"><div><strong>CxC abierta</strong><span>${money(data.kpis?.ar || 0)}</span></div><div><strong>Facturas FE año a fecha</strong><span>${money(data.kpis?.invoiced || 0)}</span></div></div><h3 style="margin:14px 0 8px;font-size:14px">Aging CxC</h3>${renderAging(aging)}`;
       } else {
         side.className = "status";
         side.textContent = "Tu inicio muestra pendientes operativos y servicios. Las métricas financieras se ocultan por rol/permisos.";
@@ -1699,14 +1691,13 @@ def som_web_home() -> HTMLResponse:
     }
     function renderComboChart(rows, canFinance) {
       if (!rows.length) return '<div class="status">Sin datos para los últimos 6 meses.</div>';
-      const maxMoney = Math.max(...rows.map(r => Math.max(Number(r.invoiced || 0), Number(r.ar_open || 0))), 1);
+      const maxMoney = Math.max(...rows.map(r => Number(r.ar_open || 0)), 1);
       const maxServices = Math.max(...rows.map(r => Number(r.services || 0)), 1);
       return `<div class="chart-combo">${rows.map(r => {
-        const invH = canFinance ? Math.max(4, Number(r.invoiced || 0) / maxMoney * 150) : 0;
         const arH = canFinance ? Math.max(4, Number(r.ar_open || 0) / maxMoney * 150) : 0;
         const svcH = Math.max(4, Number(r.services || 0) / maxServices * 150);
-        return `<div class="combo-col"><div class="combo-bars">${canFinance ? `<div title="Facturación ${money(r.invoiced)}" class="combo-bar" style="height:${invH}px"></div><div title="AR ${money(r.ar_open)}" class="combo-bar ar" style="height:${arH}px"></div>` : ""}<div title="Servicios ${esc(r.services)}" class="combo-bar services" style="height:${svcH}px;background:#0f172a"></div></div><div class="combo-label">${esc(r.month)}</div></div>`;
-      }).join("")}</div><div class="chart-legend">${canFinance ? '<span><i class="legend-dot"></i>Facturación</span><span><i class="legend-dot ar"></i>AR</span>' : ""}<span><i class="legend-dot services"></i>Servicios</span></div>`;
+        return `<div class="combo-col"><div class="combo-bars">${canFinance ? `<div title="CxC abierta ${money(r.ar_open)}" class="combo-bar ar" style="height:${arH}px"></div>` : ""}<div title="Servicios ${esc(r.services)}" class="combo-bar services" style="height:${svcH}px;background:#0f172a"></div></div><div class="combo-label">${esc(r.month)}</div></div>`;
+      }).join("")}</div><div class="chart-legend">${canFinance ? '<span><i class="legend-dot ar"></i>CxC abierta</span>' : ""}<span><i class="legend-dot services"></i>Servicios</span></div>`;
     }
     function renderServiceMix(rows) {
       if (!rows.length) return '<div class="status">Sin servicios para clasificar.</div>';
