@@ -18,7 +18,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20260924-executive-home-v1"
+_ASSET_VERSION = "20260924-control-home-v2"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -798,10 +798,11 @@ def som_web_home() -> HTMLResponse:
     .accounting-entry-summary { cursor:pointer; }
     .accounting-entry-summary:hover { background:#edf7ff; }
     .accounting-entry-summary td { font-weight:700; }
-    .accounting-entry-lines-row td { background:#fbfdff; padding:0; }
-    .accounting-entry-lines-box { padding:9px 10px 12px; border-top:1px solid #dbe5f0; }
-    .accounting-entry-lines-box table { width:100%; border-collapse:collapse; }
+    .accounting-entry-lines-row > td { background:#fbfdff; padding:0; max-width:0; overflow:hidden; }
+    .accounting-entry-lines-box { padding:9px 10px 12px; border-top:1px solid #dbe5f0; max-width:min(100%, calc(100vw - 340px)); overflow:auto; }
+    .accounting-entry-lines-box table { width:max-content; min-width:100%; border-collapse:collapse; }
     .accounting-entry-lines-box th,.accounting-entry-lines-box td { padding:6px 8px; border-bottom:1px solid #edf2f7; font-weight:400; }
+    .accounting-entry-lines-box th:nth-child(3),.accounting-entry-lines-box td:nth-child(3) { min-width:320px; max-width:760px; white-space:normal; overflow-wrap:anywhere; }
     .accounting-entry-toggle { display:inline-flex; align-items:center; justify-content:center; width:24px; height:24px; border:1px solid #cfd9e5; border-radius:6px; background:#fff; color:#005da8; font-weight:900; }
     .accounting-report-head { display:flex; flex-wrap:wrap; justify-content:space-between; gap:10px; align-items:center; margin:0 0 10px; }
     .accounting-report-head h3 { margin:0; font-size:16px; }
@@ -921,6 +922,7 @@ def som_web_home() -> HTMLResponse:
       .itp-bi-totals { grid-template-columns:1fr; }
       .finance-filter-row,.finance-filter-row.compact { grid-template-columns:1fr; }
       .accounting-hero,.accounting-grid,.accounting-filters,.accounting-entry-line,.accounting-topline,.accounting-tc { grid-template-columns:1fr; }
+      .accounting-entry-lines-box { max-width:calc(100vw - 40px); }
       .surveyor-line { grid-template-columns:1fr; }
       aside { min-height:auto; }
       header { flex-direction:column; }
@@ -974,7 +976,6 @@ def som_web_home() -> HTMLResponse:
         <div class="toolbar">
           <select id="companyTop"></select>
           <select id="year"></select>
-          <button id="refresh">Actualizar</button>
         </div>
       </header>
       <section class="grid kpis">
@@ -1551,8 +1552,8 @@ def som_web_home() -> HTMLResponse:
         <div class="home-action-layout">
           <div class="home-command">
             <div class="card home-action-hero">
-              <h2>Mi bandeja de trabajo</h2>
-              <p>Pendientes reales para ${esc(session?.usuario || "usuario")} en ${esc(selectedCompany())}. La prioridad se filtra por rol y por módulos disponibles; Inicio deja de ser un segundo menú.</p>
+              <h2>Centro de control SOM</h2>
+              <p>Inicio personalizado para ${esc(session?.usuario || "usuario")} según rol, permisos y empresa activa. Solo aparecen tareas, indicadores y áreas autorizadas.</p>
               <div class="home-action-summary">
                 <div><span>Críticos</span><strong id="homeCriticalCount">-</strong></div>
                 <div><span>Revisión</span><strong id="homeWarningCount">-</strong></div>
@@ -1570,17 +1571,10 @@ def som_web_home() -> HTMLResponse:
               <span class="muted">Sesión</span>
               <strong>${esc(session?.usuario || "-")}</strong>
               <span>${esc((session?.rol || role || "user").toUpperCase())} · ${esc(selectedCompany())}</span>
-              <button onclick="refreshSummary()">Actualizar pendientes</button>
             </div>
             <div class="card panel">
               <div class="panel-head"><h2>Vista ejecutiva</h2><span class="muted" id="homeExecScope">según permisos</span></div>
               <div id="homeExecutiveSide" class="status">Cargando indicadores...</div>
-            </div>
-            <div class="card panel">
-              <div class="panel-head"><h2>Automatizaciones</h2><span class="muted">sin botones manuales</span></div>
-              <div class="home-mini-list">
-                ${canView("finanzas") ? '<div><strong>BAC / Gmail fiscal</strong><span class="muted">Automático cada 15 min</span></div><div><strong>Tarjetas corporativas</strong><span class="muted">PDF recibido + cierre día 3</span></div><div><strong>Pagos BAC</strong><span class="muted">Cruce por monto, fecha y referencia</span></div>' : '<div><strong>Automatizaciones</strong><span class="muted">Filtradas por permisos</span></div>'}
-              </div>
             </div>
           </div>
         </div>`;
@@ -6378,7 +6372,7 @@ def som_web_home() -> HTMLResponse:
     $("backLogin").onclick = showLogin;
     $("setupPasskey").onclick = registerDevicePasskey;
     $("logout").onclick = () => { localStorage.removeItem(SESSION_KEY); session=null; showLogin(); };
-    $("refresh").onclick = () => {
+    if ($("refresh")) $("refresh").onclick = () => {
       refreshSummary();
       if (currentModule === "master_data") renderMasterData();
       if (currentModule === "servicios") renderServicios();
