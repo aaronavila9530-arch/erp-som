@@ -18,10 +18,10 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20260924-accounting-reconis-v4"
+_ASSET_VERSION = "20260924-action-center-v1"
 
 MODULES_WEB = [
-    {"code": "dashboard", "title": "Inicio", "subtitle": "Servicios, facturación, CxC e informes desde agosto en adelante."},
+    {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
     {"code": "master_data", "title": "Master Data", "subtitle": "Clientes, proveedores, empleados, surveyors, servicios, datos fiscales y datos bancarios."},
     {"code": "servicios", "title": "Servicios", "subtitle": "Registro, edición, surveyors, demoras, cierre y trazabilidad operativa."},
     {"code": "finanzas", "title": "Finanzas", "subtitle": "Facturación, Collections, ITP, bancos, Accounting, fiscal y tarjetas."},
@@ -81,6 +81,33 @@ def _safe_scalar(cur, sql: str, params: tuple) -> float:
         return _scalar(cur, sql, params)
     except Exception:
         return 0.0
+
+
+def _safe_action_scalar(cur, sql: str, params: tuple = ()) -> float:
+    try:
+        cur.execute("SAVEPOINT som_action_center")
+        value = _scalar(cur, sql, params)
+        cur.execute("RELEASE SAVEPOINT som_action_center")
+        return value
+    except Exception:
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT som_action_center")
+            cur.execute("RELEASE SAVEPOINT som_action_center")
+        except Exception:
+            pass
+        return 0.0
+
+
+def _action_item(key: str, module: str, title: str, count: float, severity: str, detail: str, cta: str = "Abrir") -> dict:
+    return {
+        "key": key,
+        "module": module,
+        "title": title,
+        "count": int(count or 0),
+        "severity": severity,
+        "detail": detail,
+        "cta": cta,
+    }
 
 
 @router.get("/som/catalog")
@@ -152,6 +179,154 @@ def som_web_summary(
                 "reports": reports,
             },
             "monthly": monthly,
+        }
+    finally:
+        database.release_conn(conn)
+
+
+@router.get("/som/action-center")
+def som_web_action_center(
+    anio: int | None = Query(None),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+):
+    selected_year = int(anio or datetime.now().year)
+    company = company_code(header_value=x_company_code)
+    start = _period_start(selected_year)
+    end = _period_end(selected_year)
+    conn = database.get_conn()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        actions: list[dict] = []
+
+        overdue_payments = _safe_action_scalar(
+            cur,
+            """
+            SELECT COUNT(*)
+            FROM payment_obligations
+            WHERE company_code=%s
+              AND record_type='OBLIGATION'
+              AND COALESCE(active, TRUE)=TRUE
+              AND COALESCE(balance,0)>0
+              AND due_date IS NOT NULL
+              AND due_date < CURRENT_DATE
+            """,
+            (company,),
+        )
+        actions.append(_action_item("itp_overdue", "finanzas", "Pagos vencidos por realizar", overdue_payments, "critical", "Invoice To Pay con saldo vencido.", "Revisar pagos"))
+
+        pending_invoices = _safe_action_scalar(
+            cur,
+            """
+            SELECT COUNT(*)
+            FROM collections
+            WHERE company_code=%s
+              AND COALESCE(saldo_pendiente,0)>0
+            """,
+            (company,),
+        )
+        actions.append(_action_item("collections_open", "finanzas", "Facturas pendientes de cobro", pending_invoices, "warning", "CxC con saldo abierto.", "Abrir CxC"))
+
+        accounting_unposted = _safe_action_scalar(
+            cur,
+            """
+            SELECT COUNT(*)
+            FROM accounting_entries
+            WHERE company_code=%s
+              AND COALESCE(workflow_status,'DRAFT') <> 'POSTED'
+            """,
+            (company,),
+        )
+        actions.append(_action_item("accounting_unposted", "finanzas", "Asientos pendientes de posteo", accounting_unposted, "warning", "Accounting requiere revisión, aprobación o posteo.", "Abrir Accounting"))
+
+        hr_pending = _safe_action_scalar(
+            cur,
+            """
+            SELECT COUNT(*)
+            FROM hr_events
+            WHERE COALESCE(status,'PENDING')='PENDING'
+            """,
+            (),
+        )
+        actions.append(_action_item("hr_requests", "hhrre", "Solicitudes de HHRR por aprobar", hr_pending, "warning", "Vacaciones, permisos u otros eventos pendientes.", "Abrir HHRR"))
+
+        reports_to_generate = _safe_action_scalar(
+            cur,
+            """
+            SELECT COUNT(*)
+            FROM servicios
+            WHERE company_code=%s
+              AND LOWER(TRIM(COALESCE(estado,'')))='finalizado'
+              AND fecha_inicio >= %s
+              AND fecha_inicio < %s
+              AND (
+                    num_informe IS NULL
+                 OR TRIM(num_informe)=''
+                 OR LOWER(TRIM(num_informe))='none'
+              )
+            """,
+            (company, start, end),
+        )
+        actions.append(_action_item("reports_missing_number", "informes", "Informes pendientes por generar", reports_to_generate, "warning", "Servicios finalizados sin número de informe.", "Abrir informes"))
+
+        reports_to_review = _safe_action_scalar(
+            cur,
+            """
+            SELECT COUNT(*)
+            FROM servicios
+            WHERE company_code=%s
+              AND LOWER(TRIM(COALESCE(estado,'')))='finalizado'
+              AND fecha_inicio >= %s
+              AND fecha_inicio < %s
+              AND COALESCE(NULLIF(TRIM(status_informe),''),'Pending')='Pending'
+              AND COALESCE(NULLIF(TRIM(num_informe),''),'') <> ''
+              AND LOWER(TRIM(COALESCE(num_informe,''))) <> 'none'
+            """,
+            (company, start, end),
+        )
+        actions.append(_action_item("reports_review", "informes", "Informes pendientes de revisar", reports_to_review, "info", "Servicios con informe referenciado y revisión pendiente.", "Revisar informes"))
+
+        services_active = _safe_action_scalar(
+            cur,
+            """
+            SELECT COUNT(*)
+            FROM servicios
+            WHERE company_code=%s
+              AND fecha_inicio >= %s
+              AND fecha_inicio < %s
+              AND LOWER(TRIM(COALESCE(estado,''))) NOT IN ('finalizado','cancelado','cerrado')
+            """,
+            (company, start, end),
+        )
+        actions.append(_action_item("services_active", "servicios", "Servicios activos por cerrar o actualizar", services_active, "info", "Operaciones abiertas con seguimiento pendiente.", "Abrir servicios"))
+
+        billable_services = _safe_action_scalar(
+            cur,
+            """
+            SELECT COUNT(*)
+            FROM servicios
+            WHERE company_code=%s
+              AND LOWER(TRIM(COALESCE(estado,'')))='finalizado'
+              AND fecha_inicio >= %s
+              AND fecha_inicio < %s
+              AND COALESCE(valor_factura,0)=0
+            """,
+            (company, start, end),
+        )
+        actions.append(_action_item("billing_pending", "finanzas", "Servicios finalizados pendientes de facturar", billable_services, "warning", "Billing debe revisar servicios sin valor de factura.", "Abrir facturación"))
+
+        visible = [item for item in actions if item["count"] > 0]
+        visible.sort(key=lambda item: ({"critical": 0, "warning": 1, "info": 2}.get(item["severity"], 3), -item["count"], item["title"]))
+        return {
+            "company_code": company,
+            "year": selected_year,
+            "generated_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+            "actions": visible,
+            "counts": {
+                "critical": sum(1 for item in visible if item["severity"] == "critical"),
+                "warning": sum(1 for item in visible if item["severity"] == "warning"),
+                "info": sum(1 for item in visible if item["severity"] == "info"),
+                "total": sum(item["count"] for item in visible),
+            },
         }
     finally:
         database.release_conn(conn)
@@ -392,6 +567,30 @@ def som_web_home() -> HTMLResponse:
     .home-automation-list { display:grid; gap:8px; }
     .home-automation-list div { display:flex; justify-content:space-between; gap:12px; border-bottom:1px solid #edf2f7; padding:7px 0; }
     .home-automation-list strong { color:#122033; }
+    .home-action-layout { display:grid; grid-template-columns:minmax(0,1.45fr) minmax(300px,.75fr); gap:12px; align-items:start; }
+    .home-action-hero { padding:18px; border-left:4px solid var(--blue); background:#fff; }
+    .home-action-hero h2 { margin:0 0 6px; font-size:28px; line-height:1.12; }
+    .home-action-hero p { margin:0; color:#607086; line-height:1.45; }
+    .home-action-summary { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:9px; margin-top:14px; }
+    .home-action-summary div { border:1px solid #d7e1ec; border-radius:8px; background:#f8fbfe; padding:10px; }
+    .home-action-summary span { display:block; color:#64748b; font-size:11px; font-weight:800; letter-spacing:.04em; text-transform:uppercase; }
+    .home-action-summary strong { display:block; margin-top:5px; font-size:22px; }
+    .home-action-list { display:grid; gap:9px; }
+    .home-action-item { display:grid; grid-template-columns:42px minmax(0,1fr) max-content; gap:12px; align-items:center; border:1px solid #d7e1ec; border-left:4px solid #64748b; border-radius:8px; background:#fff; padding:12px; }
+    .home-action-item.critical { border-left-color:#b42318; background:#fff7f6; }
+    .home-action-item.warning { border-left-color:#b7791f; background:#fffaf0; }
+    .home-action-item.info { border-left-color:#005da8; background:#fbfdff; }
+    .home-action-count { display:inline-grid; place-items:center; min-width:34px; height:34px; border-radius:8px; background:#edf2f7; color:#122033; font-weight:900; }
+    .home-action-item.critical .home-action-count { background:#fee4e2; color:#b42318; }
+    .home-action-item.warning .home-action-count { background:#fef3c7; color:#7a4a00; }
+    .home-action-item.info .home-action-count { background:#e6f2ff; color:#005da8; }
+    .home-action-copy strong { display:block; margin-bottom:3px; font-size:15px; }
+    .home-action-copy span { color:#607086; white-space:normal; }
+    .home-action-empty { padding:18px; text-align:center; }
+    .home-side-stack { display:grid; gap:12px; }
+    .home-mini-list { display:grid; gap:8px; }
+    .home-mini-list div { display:flex; justify-content:space-between; gap:12px; border-bottom:1px solid #edf2f7; padding:7px 0; }
+    .home-mini-list strong { color:#122033; }
     .md-actions { display:flex; flex-wrap:wrap; gap:10px; margin:12px 0 14px; }
     .filters { display:flex; flex-wrap:wrap; gap:10px; align-items:center; padding:12px; margin-bottom:12px; }
     .filters.service-filters { display:grid; grid-template-columns:1.4fr repeat(4,minmax(130px,1fr)) auto auto; align-items:end; }
@@ -575,7 +774,7 @@ def som_web_home() -> HTMLResponse:
     .error { color:var(--red); }
     .hidden { display:none !important; }
     @media(max-width:980px) {
-      .login,.app,.kpis,.kpi-grid,.home-grid,.home-hero,.home-work-grid,.home-insight-grid,.view-grid,.grid.two { grid-template-columns:1fr; }
+      .login,.app,.kpis,.kpi-grid,.home-grid,.home-hero,.home-work-grid,.home-insight-grid,.home-action-layout,.home-action-summary,.view-grid,.grid.two { grid-template-columns:1fr; }
       .login-card { max-width:none; padding:34px 24px; }
       .hero-logo { min-height:300px; padding:22px; }
       .hero-logo img { width:min(88%,520px); height:250px; }
@@ -633,7 +832,7 @@ def som_web_home() -> HTMLResponse:
       <header>
         <div>
           <h1 id="pageTitle">Inicio</h1>
-          <div id="pageSubtitle" class="muted">Servicios, facturación, CxC e informes.</div>
+        <div id="pageSubtitle" class="muted">Pendientes, aprobaciones, revisiones y alertas según permisos.</div>
         </div>
         <div class="toolbar">
           <select id="companyTop"></select>
@@ -1161,7 +1360,10 @@ def som_web_home() -> HTMLResponse:
           $(`kpiValue${i+1}`).textContent = kpiValue(item);
           $(`kpiHint${i+1}`).textContent = item.hint || "";
         }
-        if (currentModule === "dashboard" && data.monthly) renderHomeChart(data.monthly || []);
+        if (currentModule === "dashboard") {
+          if (data.monthly) renderHomeChart(data.monthly || []);
+          loadHomeActionCenter();
+        }
       } catch {
         for (let i = 1; i <= 4; i++) {
           $(`kpiValue${i}`).textContent = "0";
@@ -1184,54 +1386,74 @@ def som_web_home() -> HTMLResponse:
       }
     }
     function renderHome() {
-      const allowed = catalog.modules.filter(m => m.code !== "dashboard" && canView(m.code));
       const role = String(session?.rol || "").toLowerCase();
-      const cards = [
-        {code:"servicios", cls:"ops", title:"Servicios", text:"Operaciones activas, edición, cierre, costos y trazabilidad de servicios.", cta:"Abrir servicios"},
-        {code:"finanzas", cls:"finance", title:"Finanzas", text:"Billing, Collections, bancos, ITP, Accounting, reportes y automatizaciones.", cta:"Abrir finanzas"},
-        {code:"informes", cls:"reports", title:"Informes", text:"Draft, bunker, condition, certificados, revisiones y documentos pendientes.", cta:"Abrir informes"},
-        {code:"comercial", cls:"ops", title:"Comercial", text:"Cotizaciones, precios, clientes, puertos y análisis comercial.", cta:"Abrir comercial"},
-        {code:"hhrre", cls:"people", title:"HHRR", text:"Horas, vacaciones, payroll, colillas, red médica y calculadora salarial.", cta:"Abrir HHRR"},
-        {code:"master_data", cls:"admin", title:"Master Data", text:"Catálogos base, clientes, proveedores, bancos y estructura operativa.", cta:"Abrir master data"},
-        {code:"admin_users", cls:"admin", title:"Admin", text:"Usuarios, permisos, roles, auditoría y gobierno del ERP.", cta:"Abrir admin"},
-        {code:"qa_som", cls:"people", title:"Q&A SOM", text:"Manual vivo del ERP, soporte guiado y conocimiento operativo.", cta:"Abrir Q&A"}
-      ].filter(card => allowed.some(m => m.code === card.code));
-      const badgeText = allowed.map(m => m.title).slice(0, 6).map(label => `<span>${esc(label)}</span>`).join("") || "<span>Sin módulos asignados</span>";
-      const automationRows = [
-        ["BAC / Gmail fiscal", canView("finanzas") ? "Automático cada 15 min" : "No visible para este rol"],
-        ["Tarjetas corporativas", canView("finanzas") ? "PDF recibido + cierre día 3" : "No visible para este rol"],
-        ["Alertas operativas", canView("informes") || canView("servicios") ? "Pendientes y revisiones" : "Filtrado por permisos"],
-        ["Seguridad", "Vista limitada por rol/permisos"]
-      ];
       $("content").innerHTML = `
-        <div class="home-command">
-          <div class="home-hero">
-            <div class="card home-hero-main">
-              <h2>Centro de control SOM</h2>
-              <p>Vista inicial personalizada para ${esc(session?.usuario || "usuario")}. Solo aparecen módulos y señales que tu rol puede consultar o ejecutar.</p>
-              <div class="home-badge-row">${badgeText}</div>
+        <div class="home-action-layout">
+          <div class="home-command">
+            <div class="card home-action-hero">
+              <h2>Mi bandeja de trabajo</h2>
+              <p>Pendientes reales para ${esc(session?.usuario || "usuario")} en ${esc(selectedCompany())}. La prioridad se filtra por rol y por módulos disponibles; Inicio deja de ser un segundo menú.</p>
+              <div class="home-action-summary">
+                <div><span>Críticos</span><strong id="homeCriticalCount">-</strong></div>
+                <div><span>Revisión</span><strong id="homeWarningCount">-</strong></div>
+                <div><span>Total tareas</span><strong id="homeTotalCount">-</strong></div>
+              </div>
             </div>
+            <div class="card panel">
+              <div class="panel-head"><h2>Pendientes y aprobaciones</h2><span class="muted" id="homeActionStamp">Consultando...</span></div>
+              <div id="homeActionList" class="home-action-list"><div class="status">Cargando pendientes...</div></div>
+            </div>
+          </div>
+          <div class="home-side-stack">
             <div class="card home-role-panel">
               <span class="muted">Sesión</span>
               <strong>${esc(session?.usuario || "-")}</strong>
               <span>${esc((session?.rol || role || "user").toUpperCase())} · ${esc(selectedCompany())}</span>
-              <button onclick="refreshSummary()">Actualizar centro</button>
+              <button onclick="refreshSummary()">Actualizar pendientes</button>
             </div>
-          </div>
-          <div class="home-work-grid">
-            ${cards.map(card => `<div class="card home-work-card ${card.cls}" onclick="selectModule('${card.code}')"><div><h3>${esc(card.title)}</h3><p>${esc(card.text)}</p></div><button>${esc(card.cta)}</button></div>`).join("") || '<div class="status">Este usuario no tiene módulos visibles configurados.</div>'}
-          </div>
-          <div class="home-insight-grid">
             <div class="card panel">
               <div class="panel-head"><h2>Movimiento del año</h2><span class="muted">${$("year").value}</span></div>
               <div id="homeChart" class="status">Cargando...</div>
             </div>
             <div class="card panel">
-              <div class="panel-head"><h2>Automatizaciones</h2><span class="muted">según permisos</span></div>
-              <div class="home-automation-list">${automationRows.map(([label, value]) => `<div><strong>${esc(label)}</strong><span class="muted">${esc(value)}</span></div>`).join("")}</div>
+              <div class="panel-head"><h2>Automatizaciones</h2><span class="muted">sin botones manuales</span></div>
+              <div class="home-mini-list">
+                ${canView("finanzas") ? '<div><strong>BAC / Gmail fiscal</strong><span class="muted">Automático cada 15 min</span></div><div><strong>Tarjetas corporativas</strong><span class="muted">PDF recibido + cierre día 3</span></div><div><strong>Pagos BAC</strong><span class="muted">Cruce por monto, fecha y referencia</span></div>' : '<div><strong>Automatizaciones</strong><span class="muted">Filtradas por permisos</span></div>'}
+              </div>
             </div>
           </div>
         </div>`;
+      loadHomeActionCenter();
+    }
+    async function loadHomeActionCenter() {
+      const list = $("homeActionList");
+      if (!list) return;
+      try {
+        const payload = await getJSON(`/som/action-center?anio=${encodeURIComponent($("year").value)}`);
+        const rows = (payload.actions || []).filter(item => canView(item.module));
+        const counts = rows.reduce((acc,item) => {
+          acc.total += Number(item.count || 0);
+          if (item.severity === "critical") acc.critical += 1;
+          if (item.severity === "warning") acc.warning += 1;
+          return acc;
+        }, {critical:0, warning:0, total:0});
+        if ($("homeCriticalCount")) $("homeCriticalCount").textContent = counts.critical;
+        if ($("homeWarningCount")) $("homeWarningCount").textContent = counts.warning;
+        if ($("homeTotalCount")) $("homeTotalCount").textContent = counts.total;
+        if ($("homeActionStamp")) $("homeActionStamp").textContent = payload.generated_at ? new Date(payload.generated_at).toLocaleString() : "Actualizado";
+        if (!rows.length) {
+          list.innerHTML = '<div class="card home-action-empty"><strong>Sin pendientes visibles para tu rol.</strong><p class="muted">Cuando haya aprobaciones, pagos vencidos, informes por revisar o asientos por postear, aparecerán aquí.</p></div>';
+          return;
+        }
+        list.innerHTML = rows.map(item => `
+          <div class="home-action-item ${esc(item.severity || "info")}">
+            <div class="home-action-count">${esc(item.count)}</div>
+            <div class="home-action-copy"><strong>${esc(item.title)}</strong><span>${esc(item.detail || "")}</span></div>
+            <button onclick="selectModule('${esc(item.module)}')">${esc(item.cta || "Abrir")}</button>
+          </div>`).join("");
+      } catch (err) {
+        list.innerHTML = `<div class="status error">No se pudieron cargar pendientes: ${esc(err.message)}</div>`;
+      }
     }
     function renderHomeChart(rows) {
       const el = $("homeChart");
