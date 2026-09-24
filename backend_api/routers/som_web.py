@@ -18,7 +18,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20260924-executive-home-v4"
+_ASSET_VERSION = "20260924-executive-home-v5"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -725,6 +725,22 @@ def som_web_home() -> HTMLResponse:
     .kpi strong { display:block; font-size:24px; margin-top:10px; }
     .panel { padding:14px; }
     .panel-head { display:flex; justify-content:space-between; gap:12px; align-items:center; margin-bottom:12px; }
+    .home-panel-tools { display:flex; align-items:center; justify-content:flex-end; gap:8px; min-width:0; }
+    .home-panel-tools .muted { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .home-collapse-btn { width:30px; height:30px; min-width:30px; padding:0; border-radius:7px; background:#fff; color:#005da8; border:1px solid #bfd6ee; font-weight:900; line-height:1; }
+    .home-section-collapsed { display:none !important; }
+    .home-subhead { display:flex; justify-content:space-between; align-items:center; gap:8px; margin:13px 0 8px; }
+    .home-subhead h3 { margin:0; font-size:14px; }
+    .home-subhead .home-collapse-btn { width:26px; height:26px; min-width:26px; }
+    .home-clickable { cursor:pointer; }
+    .home-clickable:hover { background:#edf7ff; }
+    .combo-col.home-clickable:hover .combo-bars, .pie-metric.home-clickable:hover, .home-pill-list div.home-clickable:hover { filter:brightness(.98); }
+    .home-insight-metrics { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin:10px 0 12px; }
+    .home-insight-metrics div { border:1px solid #d7e1ec; border-radius:8px; background:#f8fbfe; padding:10px; min-width:0; }
+    .home-insight-metrics span { display:block; color:#607086; font-size:11px; font-weight:800; text-transform:uppercase; }
+    .home-insight-metrics strong { display:block; margin-top:6px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .home-insight-note { margin:0 0 12px; color:#334155; line-height:1.45; }
+    .home-insight-actions { display:flex; flex-wrap:wrap; gap:8px; }
     .home-grid { grid-template-columns:repeat(4,minmax(0,1fr)); margin-top:12px; }
     .home-card { padding:16px; min-height:118px; cursor:pointer; border-top:3px solid var(--blue); }
     .home-card:nth-child(2) { border-top-color:var(--green); }
@@ -1639,6 +1655,97 @@ def som_web_home() -> HTMLResponse:
         $(`kpiHint${i+1}`).textContent = "Presione Actualizar";
       }
     }
+    function homeJs(value) {
+      return `'${String(value ?? "").replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/\r?\n/g, " ")}'`;
+    }
+    function homeEncodedPayload(value) {
+      return encodeURIComponent(JSON.stringify(value || {}));
+    }
+    function homeToggle(id, btnId) {
+      const el = $(id);
+      const btn = $(btnId);
+      if (!el) return;
+      const closed = el.classList.toggle("home-section-collapsed");
+      if (btn) {
+        btn.textContent = closed ? "+" : "-";
+        btn.setAttribute("aria-expanded", closed ? "false" : "true");
+      }
+    }
+    function homeSubsection(title, id, body, collapsed=false) {
+      const btnId = `${id}Toggle`;
+      return `<div class="home-subhead"><h3>${esc(title)}</h3><button class="home-collapse-btn" id="${btnId}" aria-expanded="${collapsed ? "false" : "true"}" onclick="homeToggle('${id}','${btnId}')">${collapsed ? "+" : "-"}</button></div><div id="${id}" class="${collapsed ? "home-section-collapsed" : ""}">${body}</div>`;
+    }
+    function showHomeInsightFromEncoded(kind, encoded) {
+      try {
+        showHomeInsight(kind, JSON.parse(decodeURIComponent(encoded || "%7B%7D")));
+      } catch (err) {
+        showHomeInsight(kind, {});
+      }
+    }
+    function homeInsightMetric(label, value) {
+      return `<div><span>${esc(label)}</span><strong title="${esc(value)}">${esc(value)}</strong></div>`;
+    }
+    function homeSmartAction(moduleName, label) {
+      if (!moduleName || !canView(moduleName)) return "";
+      return `<button onclick="closeModal(); selectModule(${homeJs(moduleName)})">${esc(label || "Abrir")}</button>`;
+    }
+    function homeFinanceAction(tab, label) {
+      if (!canView("finanzas")) return "";
+      return `<button onclick="closeModal(); selectModule('finanzas'); setTimeout(() => switchFinanceTab(${homeJs(tab)}), 0)">${esc(label || "Abrir finanzas")}</button>`;
+    }
+    function showHomeInsight(kind, item={}) {
+      const titleMap = {
+        action:"Pendiente",
+        month:"Lectura mensual",
+        service:"Mix de servicios",
+        topClient:"Top cliente",
+        top3:"Facturas FE abiertas",
+        ar:"CxC abierta",
+        aging:"Aging CxC"
+      };
+      const title = titleMap[kind] || "Detalle inteligente";
+      const body = buildHomeInsight(kind, item || {});
+      closeModal();
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal small">
+            <div class="modal-head"><h2>${esc(title)}</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+            ${body}
+          </div>
+        </div>`);
+    }
+    function buildHomeInsight(kind, item) {
+      const totalServices = Number(homeSummary?.kpis?.services || 0) || 0;
+      const mixTotal = (homeSummary?.executive?.service_mix || []).reduce((s,r) => s + Number(r.value || 0), 0) || 1;
+      if (kind === "action") {
+        return `<div class="home-insight-metrics">${homeInsightMetric("Cantidad", item.count || 0)}${homeInsightMetric("Severidad", item.severity || "info")}${homeInsightMetric("Módulo", item.module || "-")}</div><p class="home-insight-note">${esc(item.detail || "Pendiente visible según tu rol y permisos.")}</p><div class="home-insight-actions">${homeSmartAction(item.module, item.cta || "Abrir módulo")}</div>`;
+      }
+      if (kind === "month") {
+        const services = Number(item.services || 0);
+        const ar = Number(item.ar_open || 0);
+        const note = ar > 0 ? "Mes con CxC abierta: conviene revisar antigüedad, cliente y cobros antes de que se vuelva vencido." : "Mes sin CxC abierta visible; úsalo como referencia contra servicios emitidos y cierres operativos.";
+        return `<div class="home-insight-metrics">${homeInsightMetric("Mes", item.month || "-")}${homeInsightMetric("Servicios", intFmt.format(services))}${homeInsightMetric("CxC abierta", money(ar))}</div><p class="home-insight-note">${note}</p><div class="home-insight-actions">${homeFinanceAction("collections", "Abrir CxC")}${homeSmartAction("servicios", "Abrir servicios")}</div>`;
+      }
+      if (kind === "service") {
+        const value = Number(item.value || 0);
+        const pct = Math.round(value / mixTotal * 100);
+        return `<div class="home-insight-metrics">${homeInsightMetric("Servicio", item.label || "-")}${homeInsightMetric("Cantidad", intFmt.format(value))}${homeInsightMetric("Participación", `${pct}%`)}</div><p class="home-insight-note">Este servicio concentra ${pct}% del mix visible del año. Sirve para revisar demanda, asignación de surveyors y posibles paquetes comerciales.</p><div class="home-insight-actions">${homeSmartAction("servicios", "Ver servicios")}${homeSmartAction("informes", "Ver informes")}</div>`;
+      }
+      if (kind === "topClient") {
+        const amount = Number(item.amount || 0);
+        return `<div class="home-insight-metrics">${homeInsightMetric("Cliente", item.client || "-")}${homeInsightMetric("Facturas FE", item.count || 0)}${homeInsightMetric("Monto", money(amount))}</div><p class="home-insight-note">Cliente con mayor peso en facturación electrónica del año. Buen punto para revisar concentración, crédito y cobros abiertos.</p><div class="home-insight-actions">${homeFinanceAction("collections", "Abrir CxC")}${homeFinanceAction("credit", "Ver crédito")}</div>`;
+      }
+      if (kind === "top3") {
+        const rows = item.rows || [];
+        const count = rows.reduce((s,r) => s + Number(r.count || 0), 0);
+        return `<div class="home-insight-metrics">${homeInsightMetric("Top 3", money(item.amount || 0))}${homeInsightMetric("Facturas FE", intFmt.format(count))}${homeInsightMetric("Clientes", intFmt.format(rows.length))}</div><p class="home-insight-note">Este monto suma facturas electrónicas abiertas del año para los tres clientes principales. No incluye facturas manuales cortas.</p><div class="home-insight-actions">${homeFinanceAction("collections", "Abrir CxC")}</div>`;
+      }
+      if (kind === "aging") {
+        return `<div class="home-insight-metrics">${homeInsightMetric("Rango", item.bucket || "-")}${homeInsightMetric("Monto", money(item.amount || 0))}${homeInsightMetric("Prioridad", String(item.bucket || "").includes("90") ? "Alta" : "Normal")}</div><p class="home-insight-note">Usa este rango para decidir la siguiente gestión de cobro. Los rangos altos deben revisarse antes que nueva facturación del mismo cliente.</p><div class="home-insight-actions">${homeFinanceAction("collections", "Abrir CxC")}</div>`;
+      }
+      const aging = homeSummary?.executive?.aging || [];
+      return `<div class="home-insight-metrics">${homeInsightMetric("CxC abierta", money(item.amount || homeSummary?.kpis?.ar || 0))}${homeInsightMetric("Servicios YTD", intFmt.format(totalServices))}${homeInsightMetric("Buckets", intFmt.format(aging.length))}</div><p class="home-insight-note">Vista financiera abierta según permisos. Prioriza cobros vencidos y revisa si hay facturas FE sin gestión reciente.</p><div class="home-insight-actions">${homeFinanceAction("collections", "Abrir CxC")}</div>`;
+    }
     function renderHome() {
       const role = String(session?.rol || "").toLowerCase();
       $("content").innerHTML = `
@@ -1654,8 +1761,11 @@ def som_web_home() -> HTMLResponse:
               </div>
             </div>
             <div class="card panel">
-              <div class="panel-head"><h2>Pendientes y aprobaciones</h2><span class="muted" id="homeActionStamp">Consultando...</span></div>
-              <div id="homeActionList" class="home-action-list"><div class="status">Cargando pendientes...</div></div>
+              <div class="panel-head">
+                <h2>Pendientes y aprobaciones</h2>
+                <div class="home-panel-tools"><span class="muted" id="homeActionStamp">Consultando...</span><button class="home-collapse-btn" id="homeActionToggle" aria-expanded="true" onclick="homeToggle('homeActionBody','homeActionToggle')">-</button></div>
+              </div>
+              <div id="homeActionBody"><div id="homeActionList" class="home-action-list"><div class="status">Cargando pendientes...</div></div></div>
             </div>
             <div id="homeExecutiveMain" class="home-exec-grid"></div>
           </div>
@@ -1666,8 +1776,11 @@ def som_web_home() -> HTMLResponse:
               <span>${esc((session?.rol || role || "user").toUpperCase())} · ${esc(selectedCompany())}</span>
             </div>
             <div class="card panel">
-              <div class="panel-head"><h2>Vista ejecutiva</h2><span class="muted" id="homeExecScope">según permisos</span></div>
-              <div id="homeExecutiveSide" class="status">Cargando indicadores...</div>
+              <div class="panel-head">
+                <h2>Vista ejecutiva</h2>
+                <div class="home-panel-tools"><span class="muted" id="homeExecScope">según permisos</span><button class="home-collapse-btn" id="homeExecutiveToggle" aria-expanded="true" onclick="homeToggle('homeExecutiveBody','homeExecutiveToggle')">-</button></div>
+              </div>
+              <div id="homeExecutiveBody"><div id="homeExecutiveSide" class="status">Cargando indicadores...</div></div>
             </div>
           </div>
         </div>`;
@@ -1696,10 +1809,10 @@ def som_web_home() -> HTMLResponse:
           return;
         }
         list.innerHTML = rows.map(item => `
-          <div class="home-action-item ${esc(item.severity || "info")}">
+          <div class="home-action-item home-clickable ${esc(item.severity || "info")}" onclick="showHomeInsightFromEncoded('action','${homeEncodedPayload(item)}')">
             <div class="home-action-count">${esc(item.count)}</div>
             <div class="home-action-copy"><strong>${esc(item.title)}</strong><span>${esc(item.detail || "")}</span></div>
-            <button onclick="selectModule('${esc(item.module)}')">${esc(item.cta || "Abrir")}</button>
+            <button onclick="event.stopPropagation(); selectModule(${homeJs(item.module)})">${esc(item.cta || "Abrir")}</button>
           </div>`).join("");
       } catch (err) {
         list.innerHTML = `<div class="status error">No se pudieron cargar pendientes: ${esc(err.message)}</div>`;
@@ -1724,28 +1837,33 @@ def som_web_home() -> HTMLResponse:
       if ($("homeExecScope")) $("homeExecScope").textContent = canExecutive ? "admin/master" : (canFinance ? "finanzas" : "operativo");
       main.innerHTML = `
         <div class="card panel chart-card">
-          <div class="panel-head"><h2>Últimos 6 meses</h2><span class="muted">${canFinance ? "Servicios + CxC abierta" : "Cantidad de servicios"}</span></div>
-          ${renderComboChart(months, canFinance)}
+          <div class="panel-head">
+            <h2>Últimos 6 meses</h2>
+            <div class="home-panel-tools"><span class="muted">${canFinance ? "Servicios + CxC abierta" : "Cantidad de servicios"}</span><button class="home-collapse-btn" id="homeMonthsToggle" aria-expanded="true" onclick="homeToggle('homeMonthsBody','homeMonthsToggle')">-</button></div>
+          </div>
+          <div id="homeMonthsBody">${renderComboChart(months, canFinance)}</div>
         </div>
         <div class="card panel">
-          <div class="panel-head"><h2>Mix de servicios</h2><span class="muted">${$("year").value}</span></div>
-          ${renderServiceMix(serviceMix)}
+          <div class="panel-head">
+            <h2>Mix de servicios</h2>
+            <div class="home-panel-tools"><span class="muted">${$("year").value}</span><button class="home-collapse-btn" id="homeMixToggle" aria-expanded="true" onclick="homeToggle('homeMixBody','homeMixToggle')">-</button></div>
+          </div>
+          <div id="homeMixBody">${renderServiceMix(serviceMix)}</div>
         </div>`;
       if (canExecutive) {
+        const top3Amount = topClients.reduce((s,r) => s + Number(r.amount || 0), 0);
         side.className = "";
         side.innerHTML = `
-          <div class="home-pill-list">
-            <div><strong>Top cliente</strong><span title="${esc(topClients[0]?.client || "-")}">${esc(topClients[0]?.client || "-")}</span></div>
-            <div><strong>Facturas FE top 3</strong><span title="${money(topClients.reduce((s,r) => s + Number(r.amount || 0), 0))}">${money(topClients.reduce((s,r) => s + Number(r.amount || 0), 0))}</span></div>
-            <div><strong>CxC abierta</strong><span>${money(data.kpis?.ar || 0)}</span></div>
-          </div>
-          <h3 style="margin:14px 0 8px;font-size:14px">Top 3 clientes del año</h3>
-          ${renderTopClients(topClients)}
-          <h3 style="margin:14px 0 8px;font-size:14px">Aging CxC</h3>
-          ${renderAging(aging)}`;
+          ${homeSubsection("Indicadores ejecutivos", "homeExecPillsBody", `<div class="home-pill-list">
+            <div class="home-clickable" onclick="showHomeInsightFromEncoded('topClient','${homeEncodedPayload(topClients[0] || {})}')"><strong>Top cliente</strong><span title="${esc(topClients[0]?.client || "-")}">${esc(topClients[0]?.client || "-")}</span></div>
+            <div class="home-clickable" onclick="showHomeInsightFromEncoded('top3','${homeEncodedPayload({amount:top3Amount, rows:topClients})}')"><strong>Facturas FE top 3</strong><span title="${money(top3Amount)}">${money(top3Amount)}</span></div>
+            <div class="home-clickable" onclick="showHomeInsightFromEncoded('ar','${homeEncodedPayload({amount:data.kpis?.ar || 0, aging})}')"><strong>CxC abierta</strong><span>${money(data.kpis?.ar || 0)}</span></div>
+          </div>`)}
+          ${homeSubsection("Top 3 clientes del año", "homeTopClientsBody", renderTopClients(topClients))}
+          ${homeSubsection("Aging CxC", "homeAgingBody", renderAging(aging))}`;
       } else if (canFinance) {
         side.className = "";
-        side.innerHTML = `<div class="home-pill-list"><div><strong>CxC abierta</strong><span>${money(data.kpis?.ar || 0)}</span></div><div><strong>Facturas FE año a fecha</strong><span>${money(data.kpis?.invoiced || 0)}</span></div></div><h3 style="margin:14px 0 8px;font-size:14px">Aging CxC</h3>${renderAging(aging)}`;
+        side.innerHTML = `${homeSubsection("Indicadores financieros", "homeFinancePillsBody", `<div class="home-pill-list"><div class="home-clickable" onclick="showHomeInsightFromEncoded('ar','${homeEncodedPayload({amount:data.kpis?.ar || 0, aging})}')"><strong>CxC abierta</strong><span>${money(data.kpis?.ar || 0)}</span></div><div class="home-clickable" onclick="showHomeInsightFromEncoded('top3','${homeEncodedPayload({amount:data.kpis?.invoiced || 0, rows:[]})}')"><strong>Facturas FE año a fecha</strong><span>${money(data.kpis?.invoiced || 0)}</span></div></div>`)}${homeSubsection("Aging CxC", "homeAgingBody", renderAging(aging))}`;
       } else {
         side.className = "status";
         side.textContent = "Tu inicio muestra pendientes operativos y servicios. Las métricas financieras se ocultan por rol/permisos.";
@@ -1765,7 +1883,7 @@ def som_web_home() -> HTMLResponse:
       return `<div class="chart-combo">${rows.map(r => {
         const arH = canFinance ? Math.max(4, Number(r.ar_open || 0) / maxMoney * 150) : 0;
         const svcH = Math.max(4, Number(r.services || 0) / maxServices * 150);
-        return `<div class="combo-col"><div class="combo-bars">${canFinance ? `<div title="CxC abierta ${money(r.ar_open)}" class="combo-bar ar" style="height:${arH}px"></div>` : ""}<div title="Servicios ${esc(r.services)}" class="combo-bar services" style="height:${svcH}px;background:#0f172a"></div></div><div class="combo-label">${esc(r.month)}</div></div>`;
+        return `<div class="combo-col home-clickable" onclick="showHomeInsightFromEncoded('month','${homeEncodedPayload(r)}')"><div class="combo-bars">${canFinance ? `<div title="CxC abierta ${money(r.ar_open)}" class="combo-bar ar" style="height:${arH}px"></div>` : ""}<div title="Servicios ${esc(r.services)}" class="combo-bar services" style="height:${svcH}px;background:#0f172a"></div></div><div class="combo-label">${esc(r.month)}</div></div>`;
       }).join("")}</div><div class="chart-legend">${canFinance ? '<span><i class="legend-dot ar"></i>CxC abierta</span>' : ""}<span><i class="legend-dot services"></i>Servicios</span></div>`;
     }
     function renderServiceMix(rows) {
@@ -1780,17 +1898,17 @@ def som_web_home() -> HTMLResponse:
         return part;
       }).join(", ");
       const top = rows[0] || {};
-      return `<div class="pie-wrap"><div class="pie-metric"><div class="css-pie" style="background:conic-gradient(${stops})"></div><strong>${esc(top.value || 0)}</strong><span title="${esc(top.label || "")}">${esc(top.label || "Sin datos")}</span></div><div class="mini-bars">${rows.slice(0,5).map((row,i) => `<div class="mini-bar-row"><strong title="${esc(row.label)}">${esc(row.label)}</strong><div class="mini-track"><div class="mini-fill" style="width:${Math.max(5, Number(row.value || 0) / total * 100)}%;background:${colors[i % colors.length]}"></div></div><span>${esc(row.value)}</span></div>`).join("")}</div></div>`;
+      return `<div class="pie-wrap"><div class="pie-metric home-clickable" onclick="showHomeInsightFromEncoded('service','${homeEncodedPayload(top)}')"><div class="css-pie" style="background:conic-gradient(${stops})"></div><strong>${esc(top.value || 0)}</strong><span title="${esc(top.label || "")}">${esc(top.label || "Sin datos")}</span></div><div class="mini-bars">${rows.slice(0,5).map((row,i) => `<div class="mini-bar-row home-clickable" onclick="showHomeInsightFromEncoded('service','${homeEncodedPayload(row)}')"><strong title="${esc(row.label)}">${esc(row.label)}</strong><div class="mini-track"><div class="mini-fill" style="width:${Math.max(5, Number(row.value || 0) / total * 100)}%;background:${colors[i % colors.length]}"></div></div><span>${esc(row.value)}</span></div>`).join("")}</div></div>`;
     }
     function renderTopClients(rows) {
       if (!rows.length) return '<div class="status">Visible solo para admin/master o sin datos del año.</div>';
       const max = Math.max(...rows.map(r => Number(r.amount || 0)), 1);
-      return `<div class="mini-bars">${rows.map(row => `<div class="mini-bar-row"><strong title="${esc(row.client)}">${esc(row.client)}</strong><div class="mini-track"><div class="mini-fill" style="width:${Math.max(5, Number(row.amount || 0) / max * 100)}%"></div></div><span>${money(row.amount)}</span></div>`).join("")}</div>`;
+      return `<div class="mini-bars">${rows.map(row => `<div class="mini-bar-row home-clickable" onclick="showHomeInsightFromEncoded('topClient','${homeEncodedPayload(row)}')"><strong title="${esc(row.client)}">${esc(row.client)}</strong><div class="mini-track"><div class="mini-fill" style="width:${Math.max(5, Number(row.amount || 0) / max * 100)}%"></div></div><span>${money(row.amount)}</span></div>`).join("")}</div>`;
     }
     function renderAging(rows) {
       if (!rows.length) return '<div class="status">Sin CxC abierta visible.</div>';
       const max = Math.max(...rows.map(r => Number(r.amount || 0)), 1);
-      return `<div class="mini-bars">${rows.map(row => `<div class="mini-bar-row"><strong>${esc(row.bucket)}</strong><div class="mini-track"><div class="mini-fill" style="width:${Math.max(5, Number(row.amount || 0) / max * 100)}%;background:#b7791f"></div></div><span>${money(row.amount)}</span></div>`).join("")}</div>`;
+      return `<div class="mini-bars">${rows.map(row => `<div class="mini-bar-row home-clickable" onclick="showHomeInsightFromEncoded('aging','${homeEncodedPayload(row)}')"><strong>${esc(row.bucket)}</strong><div class="mini-track"><div class="mini-fill" style="width:${Math.max(5, Number(row.amount || 0) / max * 100)}%;background:#b7791f"></div></div><span>${money(row.amount)}</span></div>`).join("")}</div>`;
     }
     function renderFinanzas() {
       if (financeTab === "invoicing") financeTab = "billing";
