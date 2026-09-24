@@ -18,7 +18,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20260924-executive-home-v7"
+_ASSET_VERSION = "20260924-web-tables-v1"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -826,13 +826,35 @@ def som_web_home() -> HTMLResponse:
     .home-pill-list span { text-align:right; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .md-actions { display:flex; flex-wrap:wrap; gap:10px; margin:12px 0 14px; }
     .filters { display:flex; flex-wrap:wrap; gap:10px; align-items:center; padding:12px; margin-bottom:12px; }
-    .filters.service-filters { display:grid; grid-template-columns:1.4fr repeat(4,minmax(130px,1fr)) auto auto; align-items:end; }
+    .filters.service-filters { display:grid; grid-template-columns:1.45fr repeat(4,minmax(145px,1fr)) auto auto; align-items:end; padding:0; margin:0; }
     .form-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
     .form-grid label { display:grid; gap:5px; color:#334155; font-size:13px; }
     .form-grid .wide { grid-column:1/-1; }
     .form-grid textarea { width:100%; min-height:78px; border:1px solid var(--line); border-radius:7px; padding:9px 11px; font:inherit; resize:vertical; }
-    .service-actions { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0; }
+    .service-command-center { display:grid; grid-template-columns:minmax(0,1.1fr) minmax(290px,.9fr); gap:12px; margin:12px 0; }
+    .service-command-card { border:1px solid #d7e1ec; border-radius:9px; background:#fbfdff; padding:12px; min-width:0; }
+    .service-command-card h3 { margin:0 0 9px; color:#334155; font-size:12px; text-transform:uppercase; letter-spacing:.04em; }
+    .service-actions { display:flex; flex-wrap:wrap; gap:8px; margin:0; align-items:center; }
     .service-actions button { height:34px; }
+    .service-actions.primary-actions button:first-child { min-width:154px; }
+    .service-actions.export-actions { justify-content:flex-start; }
+    .service-filter-card { grid-column:1/-1; border:1px solid #d7e1ec; border-radius:9px; background:#fff; padding:12px; }
+    .service-filter-head { display:flex; justify-content:space-between; gap:10px; align-items:center; margin-bottom:10px; }
+    .service-filter-head h3 { margin:0; font-size:13px; color:#334155; text-transform:uppercase; letter-spacing:.04em; }
+    .excel-th { cursor:pointer; user-select:none; position:relative; padding-right:22px; }
+    .excel-th::after { content:"▾"; position:absolute; right:7px; top:50%; transform:translateY(-50%); color:#607086; font-size:10px; opacity:.75; }
+    .excel-th.filtered::after { color:var(--blue); opacity:1; }
+    .excel-filter-menu { position:fixed; z-index:80; width:min(330px,92vw); max-height:440px; overflow:hidden; display:grid; gap:8px; border:1px solid #b9c9da; border-radius:10px; background:#fff; box-shadow:0 22px 60px rgba(15,31,53,.22); padding:10px; }
+    .excel-filter-menu h4 { margin:0; font-size:13px; color:#122033; }
+    .excel-filter-actions { display:grid; grid-template-columns:1fr 1fr; gap:7px; }
+    .excel-filter-actions button { height:30px; padding:0 8px; font-size:12px; }
+    .excel-filter-search { height:32px; }
+    .excel-filter-values { max-height:210px; overflow:auto; border:1px solid #e3ebf3; border-radius:8px; padding:6px; display:grid; gap:4px; }
+    .excel-filter-values label { display:flex; gap:7px; align-items:center; min-width:0; font-size:12px; }
+    .excel-filter-values input { width:14px; height:14px; flex:0 0 auto; }
+    .excel-filter-values span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .excel-filter-footer { display:flex; gap:7px; justify-content:flex-end; border-top:1px solid #edf2f7; padding-top:8px; }
+    .excel-filter-footer button { height:32px; padding:0 10px; }
     .tabs { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0; }
     .tabs button { background:#fff; color:var(--ink); border:1px solid var(--line); }
     .tabs button.active { background:var(--blue); color:#fff; border-color:var(--blue); }
@@ -1041,7 +1063,7 @@ def som_web_home() -> HTMLResponse:
       .hero-logo { min-height:300px; padding:22px; }
       .hero-logo img { width:min(88%,520px); height:250px; }
       .form-grid { grid-template-columns:1fr; }
-      .filters.service-filters { grid-template-columns:1fr; }
+      .filters.service-filters,.service-command-center { grid-template-columns:1fr; }
       .itp-bi-header,.itp-bi-controls,.itp-bi-body,.itp-bi-summary { grid-template-columns:1fr; }
       .itp-bi-totals { grid-template-columns:1fr; }
       .finance-filter-row,.finance-filter-row.compact { grid-template-columns:1fr; }
@@ -1425,6 +1447,105 @@ def som_web_home() -> HTMLResponse:
     function options(values, selected="", placeholder="Todos") {
       const list = [...new Set(rowsList(values).map(v => String(v ?? "").trim()).filter(Boolean))].sort((a,b) => a.localeCompare(b));
       return `<option value="">${esc(placeholder)}</option>` + list.map(v => `<option value="${esc(v)}"${v === selected ? " selected" : ""}>${esc(v)}</option>`).join("");
+    }
+    function cellText(row, index) {
+      return (row.cells[index]?.innerText || row.cells[index]?.textContent || "").trim();
+    }
+    function compareExcelValues(a, b) {
+      const na = Number(String(a).replace(/[$,\\s]/g, ""));
+      const nb = Number(String(b).replace(/[$,\\s]/g, ""));
+      if (!Number.isNaN(na) && !Number.isNaN(nb)) return na - nb;
+      return String(a).localeCompare(String(b), "es", { numeric:true, sensitivity:"base" });
+    }
+    function closeExcelFilterMenus() {
+      document.querySelectorAll(".excel-filter-menu").forEach(menu => menu.remove());
+    }
+    function applyExcelTableFilters(table) {
+      const filters = table._excelFilters || new Map();
+      Array.from(table.tBodies[0]?.rows || []).forEach(row => {
+        let show = true;
+        filters.forEach((values, index) => {
+          if (values && values.size && !values.has(cellText(row, index))) show = false;
+        });
+        row.style.display = show ? "" : "none";
+      });
+      Array.from(table.tHead?.rows[0]?.cells || []).forEach((th, index) => {
+        th.classList.toggle("filtered", Boolean(filters.get(index)?.size));
+      });
+    }
+    function sortExcelTable(table, index, dir) {
+      const body = table.tBodies[0];
+      if (!body) return;
+      const rows = Array.from(body.rows);
+      rows.sort((ra, rb) => compareExcelValues(cellText(ra, index), cellText(rb, index)) * dir);
+      rows.forEach(row => body.appendChild(row));
+      applyExcelTableFilters(table);
+    }
+    function openExcelFilterMenu(table, th, index) {
+      closeExcelFilterMenus();
+      if (!table._excelFilters) table._excelFilters = new Map();
+      const current = table._excelFilters.get(index) || new Set();
+      const values = [...new Set(Array.from(table.tBodies[0]?.rows || []).map(row => cellText(row, index)).filter(Boolean))]
+        .sort((a,b) => compareExcelValues(a,b));
+      const menu = document.createElement("div");
+      menu.className = "excel-filter-menu";
+      menu.innerHTML = `
+        <h4>${esc(th.innerText || "Columna")}</h4>
+        <div class="excel-filter-actions">
+          <button class="secondary" data-sort="1">A-Z / Menor</button>
+          <button class="secondary" data-sort="-1">Z-A / Mayor</button>
+          <button class="secondary" data-select="all">Marcar todo</button>
+          <button class="secondary" data-select="none">Desmarcar</button>
+        </div>
+        <input class="excel-filter-search" placeholder="Buscar valor..." />
+        <div class="excel-filter-values">${values.map((value, i) => {
+          const checked = !current.size || current.has(value);
+          return `<label data-value-row><input type="checkbox" value="${esc(value)}" ${checked ? "checked" : ""} /><span title="${esc(value)}">${esc(value)}</span></label>`;
+        }).join("") || '<div class="muted">Sin valores</div>'}</div>
+        <div class="excel-filter-footer">
+          <button class="secondary" data-clear="one">Limpiar columna</button>
+          <button class="secondary" data-clear="all">Limpiar todo</button>
+          <button data-apply="1">Aplicar</button>
+        </div>`;
+      document.body.appendChild(menu);
+      const rect = th.getBoundingClientRect();
+      menu.style.left = `${Math.min(rect.left, window.innerWidth - menu.offsetWidth - 10)}px`;
+      menu.style.top = `${Math.min(rect.bottom + 6, window.innerHeight - menu.offsetHeight - 10)}px`;
+      menu.addEventListener("click", event => event.stopPropagation());
+      menu.querySelector("[data-sort='1']").onclick = () => { sortExcelTable(table, index, 1); closeExcelFilterMenus(); };
+      menu.querySelector("[data-sort='-1']").onclick = () => { sortExcelTable(table, index, -1); closeExcelFilterMenus(); };
+      menu.querySelector("[data-select='all']").onclick = () => menu.querySelectorAll(".excel-filter-values input").forEach(input => input.checked = true);
+      menu.querySelector("[data-select='none']").onclick = () => menu.querySelectorAll(".excel-filter-values input").forEach(input => input.checked = false);
+      menu.querySelector("[data-clear='one']").onclick = () => { table._excelFilters.delete(index); applyExcelTableFilters(table); closeExcelFilterMenus(); };
+      menu.querySelector("[data-clear='all']").onclick = () => { table._excelFilters = new Map(); applyExcelTableFilters(table); closeExcelFilterMenus(); };
+      menu.querySelector("[data-apply='1']").onclick = () => {
+        const checked = Array.from(menu.querySelectorAll(".excel-filter-values input:checked")).map(input => input.value);
+        if (!checked.length || checked.length === values.length) table._excelFilters.delete(index);
+        else table._excelFilters.set(index, new Set(checked));
+        applyExcelTableFilters(table);
+        closeExcelFilterMenus();
+      };
+      menu.querySelector(".excel-filter-search").oninput = event => {
+        const q = event.target.value.toLowerCase();
+        menu.querySelectorAll("[data-value-row]").forEach(label => {
+          label.style.display = label.innerText.toLowerCase().includes(q) ? "" : "none";
+        });
+      };
+    }
+    function enhanceExcelTables(root=document) {
+      root.querySelectorAll(".table-wrap table").forEach(table => {
+        if (table.dataset.excelEnhanced === "1" || !table.tHead || !table.tBodies.length) return;
+        table.dataset.excelEnhanced = "1";
+        Array.from(table.tHead.rows[0]?.cells || []).forEach((th, index) => {
+          if (th.classList.contains("pick-col") || !th.innerText.trim()) return;
+          th.classList.add("excel-th");
+          th.title = "Filtrar u ordenar esta columna";
+          th.addEventListener("click", event => {
+            event.stopPropagation();
+            openExcelFilterMenu(table, th, index);
+          });
+        });
+      });
     }
     function valueFrom(id) {
       return ($(id)?.value || "").trim();
@@ -6161,33 +6282,49 @@ def som_web_home() -> HTMLResponse:
             <h2>Servicios</h2>
             <span id="svcCount" class="muted">Presione Buscar</span>
           </div>
-          <div class="service-actions">
-            <button onclick="openServiceForm()">+ Agregar servicio</button>
-            <button class="secondary" onclick="confirmSelectedService()">Generar Consecutivo</button>
-            <button onclick="editSelectedService()">Editar servicio</button>
-            <button class="green" onclick="closeSelectedService()">Finalizar Servicio</button>
-            <button class="secondary" onclick="viewSelectedService()">Ver</button>
-            <button class="secondary" onclick="delaySelectedService()">Demoras</button>
-            <button class="brown" onclick="cancelSelectedService()">Cancelar</button>
-            <button class="dark" onclick="deleteSelectedService()">Eliminar</button>
-            <button class="secondary" onclick="exportServicios('csv')">CSV</button>
-            <button class="secondary" onclick="exportServicios('pdf')">PDF</button>
-            <button class="secondary" onclick="exportServicios('xml')">XML</button>
-            <button class="secondary" onclick="exportServicios('excel')">Excel</button>
-          </div>
-          <div class="filters service-filters">
-            <label>Buscar<input id="svcQ" placeholder="Consecutivo, buque, cliente, informe, surveyor..." /></label>
-            <label>Año<select id="svcYear"><option value="">Todos</option></select></label>
-            <label>Tipo<select id="svcTipo"></select></label>
-            <label>Estado<select id="svcEstado"></select></label>
-            <label>Cliente<select id="svcCliente"></select></label>
-            <button onclick="loadServiceMeta().then(() => loadServicios(1)).catch(err => showServiceMsg(err.message, true))">Buscar</button>
-            <button class="secondary" onclick="clearServiceFilters()">Limpiar</button>
-            <label>Continente<select id="svcContinente"></select></label>
-            <label>País<select id="svcPais"></select></label>
-            <label>Puerto<select id="svcPuerto"></select></label>
-            <label>Operación<select id="svcOperacion"></select></label>
-            <label>Surveyor<select id="svcSurveyor"></select></label>
+          <div class="service-command-center">
+            <section class="service-command-card">
+              <h3>Acciones del servicio</h3>
+              <div class="service-actions primary-actions">
+                <button onclick="openServiceForm()">+ Agregar servicio</button>
+                <button class="secondary" onclick="confirmSelectedService()">Generar consecutivo</button>
+                <button onclick="editSelectedService()">Editar servicio</button>
+                <button class="green" onclick="closeSelectedService()">Finalizar</button>
+                <button class="secondary" onclick="viewSelectedService()">Ver</button>
+                <button class="secondary" onclick="delaySelectedService()">Demoras</button>
+                <button class="brown" onclick="cancelSelectedService()">Cancelar</button>
+                <button class="dark" onclick="deleteSelectedService()">Eliminar</button>
+              </div>
+            </section>
+            <section class="service-command-card">
+              <h3>Exportar tabla</h3>
+              <div class="service-actions export-actions">
+                <button class="secondary" onclick="exportServicios('csv')">CSV</button>
+                <button class="secondary" onclick="exportServicios('pdf')">PDF</button>
+                <button class="secondary" onclick="exportServicios('xml')">XML</button>
+                <button class="secondary" onclick="exportServicios('excel')">Excel</button>
+              </div>
+            </section>
+            <section class="service-filter-card">
+              <div class="service-filter-head">
+                <h3>Filtros de búsqueda</h3>
+                <span class="muted">Los encabezados de tabla también filtran y ordenan como Excel.</span>
+              </div>
+              <div class="filters service-filters">
+                <label>Buscar<input id="svcQ" placeholder="Consecutivo, buque, cliente, informe, surveyor..." /></label>
+                <label>Año<select id="svcYear"><option value="">Todos</option></select></label>
+                <label>Tipo<select id="svcTipo"></select></label>
+                <label>Estado<select id="svcEstado"></select></label>
+                <label>Cliente<select id="svcCliente"></select></label>
+                <button onclick="loadServiceMeta().then(() => loadServicios(1)).catch(err => showServiceMsg(err.message, true))">Buscar</button>
+                <button class="secondary" onclick="clearServiceFilters()">Limpiar</button>
+                <label>Continente<select id="svcContinente"></select></label>
+                <label>País<select id="svcPais"></select></label>
+                <label>Puerto<select id="svcPuerto"></select></label>
+                <label>Operación<select id="svcOperacion"></select></label>
+                <label>Surveyor<select id="svcSurveyor"></select></label>
+              </div>
+            </section>
           </div>
           <div id="svcMsg" class="status hidden"></div>
           <div id="svcTable" class="workspace"></div>
@@ -6707,6 +6844,9 @@ def som_web_home() -> HTMLResponse:
       if (currentModule === "servicios") renderServicios();
       if (currentModule === "finanzas") renderFinanzas();
     };
+    document.addEventListener("click", closeExcelFilterMenus);
+    const contentObserver = new MutationObserver(() => enhanceExcelTables($("content") || document));
+    if ($("content")) contentObserver.observe($("content"), { childList:true, subtree:true });
     bootSelectors();
     loadCatalog().then(showLogin).catch(showLogin);
   </script>
