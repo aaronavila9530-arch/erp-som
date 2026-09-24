@@ -18,7 +18,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20260924-itp-invoice-layout-v1"
+_ASSET_VERSION = "20260924-executive-home-v1"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -98,6 +98,22 @@ def _safe_action_scalar(cur, sql: str, params: tuple = ()) -> float:
         return 0.0
 
 
+def _query_rows(cur, sql: str, params: tuple = ()) -> list[dict]:
+    try:
+        cur.execute("SAVEPOINT som_query_rows")
+        cur.execute(sql, params)
+        rows = [dict(row) for row in (cur.fetchall() or [])]
+        cur.execute("RELEASE SAVEPOINT som_query_rows")
+        return rows
+    except Exception:
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT som_query_rows")
+            cur.execute("RELEASE SAVEPOINT som_query_rows")
+        except Exception:
+            pass
+        return []
+
+
 def _action_item(key: str, module: str, title: str, count: float, severity: str, detail: str, cta: str = "Abrir") -> dict:
     return {
         "key": key,
@@ -125,11 +141,17 @@ def som_web_catalog():
 def som_web_summary(
     anio: int | None = Query(None),
     x_company_code: str | None = Header(None, alias="X-Company-Code"),
+    x_role: str | None = Header(None, alias="X-Role"),
+    x_modules: str | None = Header(None, alias="X-Modules"),
 ):
     selected_year = int(anio or datetime.now().year)
     company = company_code(header_value=x_company_code)
     start = _period_start(selected_year)
     end = _period_end(selected_year)
+    role = str(x_role or "").strip().lower()
+    modules = {item.strip().lower() for item in str(x_modules or "").split(",") if item.strip()}
+    is_executive = role in {"admin", "master"}
+    is_finance_role = is_executive or "finanzas" in modules or any(token in role for token in ("account", "contab", "financ"))
     conn = database.get_conn()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -138,40 +160,126 @@ def som_web_summary(
             "SELECT COUNT(*) FROM servicios WHERE company_code=%s AND fecha_inicio >= %s AND fecha_inicio < %s",
             (company, start, end),
         )
-        invoiced = _scalar(
+        invoiced = _safe_scalar(
             cur,
-            "SELECT COALESCE(SUM(total),0) FROM invoicing WHERE company_code=%s AND fecha_emision >= %s AND fecha_emision < %s",
+            "SELECT COALESCE(SUM(total),0) FROM collections WHERE company_code=%s AND fecha_emision >= %s AND fecha_emision < %s",
             (company, start, end),
-        )
-        ar = _scalar(
+        ) if is_finance_role else 0.0
+        ar = _safe_scalar(
             cur,
             "SELECT COALESCE(SUM(saldo_pendiente),0) FROM collections WHERE company_code=%s AND saldo_pendiente > 0",
             (company,),
-        )
+        ) if is_finance_role else 0.0
         reports = _scalar(
             cur,
             "SELECT COUNT(*) FROM servicios WHERE company_code=%s AND fecha_inicio >= %s AND fecha_inicio < %s AND COALESCE(num_informe,'')<>''",
             (company, start, end),
         )
-        cur.execute(
+        monthly = _query_rows(
+            cur,
             """
-            SELECT TO_CHAR(fecha_inicio, 'YYYY-MM') AS month,
-                   COUNT(*) AS services,
-                   COALESCE(SUM(valor_factura),0) AS invoiced
+            WITH months AS (
+                SELECT generate_series(
+                    date_trunc('month', LEAST(CURRENT_DATE, (%s::date - INTERVAL '1 day'))) - INTERVAL '5 months',
+                    date_trunc('month', LEAST(CURRENT_DATE, (%s::date - INTERVAL '1 day'))),
+                    INTERVAL '1 month'
+                )::date AS month_start
+            ),
+            svc AS (
+                SELECT date_trunc('month', fecha_inicio)::date AS month_start,
+                       COUNT(*) AS services
+                FROM servicios
+                WHERE company_code=%s
+                  AND fecha_inicio >= (SELECT MIN(month_start) FROM months)
+                  AND fecha_inicio < ((SELECT MAX(month_start) FROM months) + INTERVAL '1 month')
+                GROUP BY date_trunc('month', fecha_inicio)::date
+            ),
+            cxc AS (
+                SELECT date_trunc('month', fecha_emision)::date AS month_start,
+                       COUNT(*) AS invoices,
+                       COALESCE(SUM(total),0) AS invoiced,
+                       COALESCE(SUM(saldo_pendiente),0) AS ar_open
+                FROM collections
+                WHERE company_code=%s
+                  AND fecha_emision >= (SELECT MIN(month_start) FROM months)
+                  AND fecha_emision < ((SELECT MAX(month_start) FROM months) + INTERVAL '1 month')
+                GROUP BY date_trunc('month', fecha_emision)::date
+            )
+            SELECT TO_CHAR(m.month_start, 'YYYY-MM') AS month,
+                   COALESCE(svc.services,0) AS services,
+                   COALESCE(cxc.invoices,0) AS invoices,
+                   COALESCE(cxc.invoiced,0) AS invoiced,
+                   COALESCE(cxc.ar_open,0) AS ar_open
+            FROM months m
+            LEFT JOIN svc ON svc.month_start = m.month_start
+            LEFT JOIN cxc ON cxc.month_start = m.month_start
+            ORDER BY m.month_start
+            """,
+            (end, end, company, company),
+        )
+        service_mix = _query_rows(
+            cur,
+            """
+            SELECT COALESCE(NULLIF(TRIM(operacion),''), NULLIF(TRIM(tipo),''), 'Sin clasificar') AS label,
+                   COUNT(*) AS value
             FROM servicios
             WHERE company_code=%s
               AND fecha_inicio >= %s
               AND fecha_inicio < %s
-            GROUP BY TO_CHAR(fecha_inicio, 'YYYY-MM')
-            ORDER BY month
+            GROUP BY COALESCE(NULLIF(TRIM(operacion),''), NULLIF(TRIM(tipo),''), 'Sin clasificar')
+            ORDER BY value DESC, label
+            LIMIT 6
             """,
             (company, start, end),
         )
-        monthly = cur.fetchall()
+        top_clients = _query_rows(
+            cur,
+            """
+            SELECT COALESCE(NULLIF(TRIM(nombre_cliente),''), codigo_cliente, 'Sin cliente') AS client,
+                   COUNT(*) AS invoices,
+                   COALESCE(SUM(total),0) AS amount,
+                   COALESCE(SUM(saldo_pendiente),0) AS ar_open
+            FROM collections
+            WHERE company_code=%s
+              AND fecha_emision >= %s
+              AND fecha_emision < %s
+            GROUP BY COALESCE(NULLIF(TRIM(nombre_cliente),''), codigo_cliente, 'Sin cliente')
+            ORDER BY amount DESC, invoices DESC
+            LIMIT 3
+            """,
+            (company, start, end),
+        ) if is_executive else []
+        aging = _query_rows(
+            cur,
+            """
+            SELECT bucket, COUNT(*) AS invoices, COALESCE(SUM(saldo_pendiente),0) AS amount
+            FROM (
+                SELECT saldo_pendiente,
+                       CASE
+                           WHEN fecha_vencimiento IS NULL OR fecha_vencimiento >= CURRENT_DATE THEN 'Al día'
+                           WHEN CURRENT_DATE - fecha_vencimiento <= 30 THEN '1-30'
+                           WHEN CURRENT_DATE - fecha_vencimiento <= 60 THEN '31-60'
+                           WHEN CURRENT_DATE - fecha_vencimiento <= 90 THEN '61-90'
+                           ELSE '+90'
+                       END AS bucket
+                FROM collections
+                WHERE company_code=%s
+                  AND COALESCE(saldo_pendiente,0)>0
+            ) x
+            GROUP BY bucket
+            ORDER BY CASE bucket WHEN 'Al día' THEN 0 WHEN '1-30' THEN 1 WHEN '31-60' THEN 2 WHEN '61-90' THEN 3 ELSE 4 END
+            """,
+            (company,),
+        ) if is_finance_role else []
         return {
             "company_code": company,
             "year": selected_year,
             "from": start,
+            "visibility": {
+                "executive": is_executive,
+                "finance": is_finance_role,
+                "operations": True,
+            },
             "kpis": {
                 "services": services,
                 "invoiced": invoiced,
@@ -179,6 +287,12 @@ def som_web_summary(
                 "reports": reports,
             },
             "monthly": monthly,
+            "executive": {
+                "service_mix": service_mix,
+                "top_clients": top_clients,
+                "aging": aging,
+                "most_offered_service": service_mix[0] if service_mix else None,
+            },
         }
     finally:
         database.release_conn(conn)
@@ -592,6 +706,27 @@ def som_web_home() -> HTMLResponse:
     .home-mini-list { display:grid; gap:8px; }
     .home-mini-list div { display:flex; justify-content:space-between; gap:12px; border-bottom:1px solid #edf2f7; padding:7px 0; }
     .home-mini-list strong { color:#122033; }
+    .home-exec-grid { display:grid; grid-template-columns:minmax(0,1.35fr) minmax(300px,.75fr); gap:12px; align-items:start; }
+    .chart-card { min-width:0; }
+    .chart-combo { min-height:230px; display:flex; align-items:flex-end; gap:10px; padding:12px 6px 6px; border-bottom:1px solid #d8e3ee; }
+    .combo-col { flex:1; min-width:44px; display:grid; grid-template-rows:1fr auto; gap:7px; align-items:end; height:210px; }
+    .combo-bars { height:170px; display:flex; gap:5px; align-items:end; justify-content:center; border-bottom:1px solid #e2e8f0; }
+    .combo-bar { width:16px; border-radius:5px 5px 0 0; background:#005da8; min-height:4px; }
+    .combo-bar.ar { background:#029fcf; }
+    .combo-label { font-size:11px; color:#607086; text-align:center; white-space:nowrap; }
+    .chart-legend { display:flex; flex-wrap:wrap; gap:10px; color:#607086; font-size:12px; margin-top:8px; }
+    .legend-dot { width:10px; height:10px; display:inline-block; border-radius:3px; margin-right:5px; background:#005da8; }
+    .legend-dot.ar { background:#029fcf; }
+    .legend-dot.services { background:#0f172a; }
+    .mini-bars { display:grid; gap:8px; }
+    .mini-bar-row { display:grid; grid-template-columns:minmax(120px,1fr) minmax(120px,1.2fr) max-content; gap:9px; align-items:center; font-size:13px; }
+    .mini-track { height:10px; background:#e8eef5; border-radius:999px; overflow:hidden; }
+    .mini-fill { height:100%; background:#00703c; border-radius:999px; }
+    .pie-wrap { display:grid; grid-template-columns:118px minmax(0,1fr); gap:12px; align-items:center; }
+    .css-pie { width:112px; aspect-ratio:1; border-radius:50%; background:conic-gradient(#005da8 0 45%, #029fcf 45% 72%, #087a52 72% 88%, #b7791f 88% 100%); box-shadow:inset 0 0 0 26px #fff; border:1px solid #d7e1ec; }
+    .home-pill-list { display:grid; gap:8px; }
+    .home-pill-list div { display:flex; justify-content:space-between; gap:12px; padding:9px 10px; border:1px solid #e2eaf3; border-radius:8px; background:#fbfdff; }
+    .home-pill-list strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .md-actions { display:flex; flex-wrap:wrap; gap:10px; margin:12px 0 14px; }
     .filters { display:flex; flex-wrap:wrap; gap:10px; align-items:center; padding:12px; margin-bottom:12px; }
     .filters.service-filters { display:grid; grid-template-columns:1.4fr repeat(4,minmax(130px,1fr)) auto auto; align-items:end; }
@@ -776,7 +911,7 @@ def som_web_home() -> HTMLResponse:
     .error { color:var(--red); }
     .hidden { display:none !important; }
     @media(max-width:980px) {
-      .login,.app,.kpis,.kpi-grid,.home-grid,.home-hero,.home-work-grid,.home-insight-grid,.home-action-layout,.home-action-summary,.view-grid,.grid.two { grid-template-columns:1fr; }
+      .login,.app,.kpis,.kpi-grid,.home-grid,.home-hero,.home-work-grid,.home-insight-grid,.home-action-layout,.home-exec-grid,.home-action-summary,.view-grid,.grid.two { grid-template-columns:1fr; }
       .login-card { max-width:none; padding:34px 24px; }
       .hero-logo { min-height:300px; padding:22px; }
       .hero-logo img { width:min(88%,520px); height:250px; }
@@ -869,6 +1004,7 @@ def som_web_home() -> HTMLResponse:
     let pendingUser = null;
     let pendingAction = null;
     let catalog = { modules:[], master_data_actions:[], master_data_views:[] };
+    let homeSummary = null;
     let currentModule = "dashboard";
     let selectedMasterView = null;
     let currentRows = [];
@@ -1081,12 +1217,16 @@ def som_web_home() -> HTMLResponse:
 
     const money = value => "$" + moneyFmt.format(Number(value || 0));
     const kpiValue = item => item?.format === "money" ? money(item.value) : intFmt.format(Number(item?.value || 0));
+    function sessionModuleCodes() {
+      return [...new Set([...(session?.modules || []), ...Object.keys(session?.permissions || {})])];
+    }
     const headers = (extra={}) => ({
       "Content-Type":"application/json",
       "X-Company-Code": selectedCompany(),
       "X-User": session?.usuario || "",
       "X-Role": session?.rol || "",
       "X-User-Role": session?.rol || "",
+      "X-Modules": sessionModuleCodes().join(","),
       ...extra
     });
     function selectedCompany() {
@@ -1350,12 +1490,23 @@ def som_web_home() -> HTMLResponse:
           ? `/som/summary?anio=${$("year").value}`
           : `/som/module-summary?module=${encodeURIComponent(currentModule)}&anio=${$("year").value}`;
         const data = await getJSON(path);
-        const items = data.kpis instanceof Array ? data.kpis : [
-          { label:"Servicios", value:data.kpis.services || 0, hint:"Desde agosto", format:"int" },
-          { label:"Facturación", value:data.kpis.invoiced || 0, hint:"Desde agosto", format:"money" },
-          { label:"CxC", value:data.kpis.ar || 0, hint:"Saldo pendiente", format:"money" },
-          { label:"Informes", value:data.kpis.reports || 0, hint:"Desde agosto", format:"int" }
-        ];
+        if (currentModule === "dashboard") homeSummary = data;
+        const financeVisible = currentModule !== "dashboard" || dashboardCanSeeFinance(data);
+        const items = data.kpis instanceof Array ? data.kpis : (
+          financeVisible
+            ? [
+                { label:"Servicios", value:data.kpis.services || 0, hint:"Desde agosto", format:"int" },
+                { label:"Facturación", value:data.kpis.invoiced || 0, hint:"Collections del año", format:"money" },
+                { label:"CxC", value:data.kpis.ar || 0, hint:"Saldo pendiente", format:"money" },
+                { label:"Informes", value:data.kpis.reports || 0, hint:"Desde agosto", format:"int" }
+              ]
+            : [
+                { label:"Servicios", value:data.kpis.services || 0, hint:"Desde agosto", format:"int" },
+                { label:"Informes", value:data.kpis.reports || 0, hint:"Generados", format:"int" },
+                { label:"Pendientes", value:0, hint:"Según permisos", format:"int" },
+                { label:"Empresa", value:1, hint:selectedCompany(), format:"int" }
+              ]
+        );
         for (let i = 0; i < 4; i++) {
           const item = items[i] || { label:"-", value:0, hint:"" };
           $(`kpiLabel${i+1}`).textContent = item.label;
@@ -1363,7 +1514,7 @@ def som_web_home() -> HTMLResponse:
           $(`kpiHint${i+1}`).textContent = item.hint || "";
         }
         if (currentModule === "dashboard") {
-          if (data.monthly) renderHomeChart(data.monthly || []);
+          renderHomeExecutive(data);
           loadHomeActionCenter();
         }
       } catch {
@@ -1371,6 +1522,13 @@ def som_web_home() -> HTMLResponse:
           $(`kpiValue${i}`).textContent = "0";
         }
       }
+    }
+    function dashboardCanSeeFinance(data=homeSummary) {
+      return Boolean(data?.visibility?.finance || canView("finanzas"));
+    }
+    function dashboardCanSeeExecutive(data=homeSummary) {
+      const role = String(session?.rol || "").toLowerCase();
+      return Boolean(data?.visibility?.executive || ["admin","master"].includes(role));
     }
     function resetKpisForManualLoad() {
       const mod = catalog.modules.find(m => m.code === currentModule);
@@ -1405,6 +1563,7 @@ def som_web_home() -> HTMLResponse:
               <div class="panel-head"><h2>Pendientes y aprobaciones</h2><span class="muted" id="homeActionStamp">Consultando...</span></div>
               <div id="homeActionList" class="home-action-list"><div class="status">Cargando pendientes...</div></div>
             </div>
+            <div id="homeExecutiveMain" class="home-exec-grid"></div>
           </div>
           <div class="home-side-stack">
             <div class="card home-role-panel">
@@ -1414,8 +1573,8 @@ def som_web_home() -> HTMLResponse:
               <button onclick="refreshSummary()">Actualizar pendientes</button>
             </div>
             <div class="card panel">
-              <div class="panel-head"><h2>Movimiento del año</h2><span class="muted">${$("year").value}</span></div>
-              <div id="homeChart" class="status">Cargando...</div>
+              <div class="panel-head"><h2>Vista ejecutiva</h2><span class="muted" id="homeExecScope">según permisos</span></div>
+              <div id="homeExecutiveSide" class="status">Cargando indicadores...</div>
             </div>
             <div class="card panel">
               <div class="panel-head"><h2>Automatizaciones</h2><span class="muted">sin botones manuales</span></div>
@@ -1426,6 +1585,7 @@ def som_web_home() -> HTMLResponse:
           </div>
         </div>`;
       loadHomeActionCenter();
+      renderHomeExecutive(homeSummary);
     }
     async function loadHomeActionCenter() {
       const list = $("homeActionList");
@@ -1457,20 +1617,85 @@ def som_web_home() -> HTMLResponse:
         list.innerHTML = `<div class="status error">No se pudieron cargar pendientes: ${esc(err.message)}</div>`;
       }
     }
-    function renderHomeChart(rows) {
-      const el = $("homeChart");
-      if (!el) return;
-      if (!rows.length) {
-        el.className = "status";
-        el.textContent = "Sin movimiento desde agosto para la empresa seleccionada.";
+    function renderHomeExecutive(data=homeSummary) {
+      const main = $("homeExecutiveMain");
+      const side = $("homeExecutiveSide");
+      if (!main || !side) return;
+      if (!data) {
+        main.innerHTML = '<div class="card panel"><div class="status">Cargando vista ejecutiva...</div></div>';
+        side.className = "status";
+        side.textContent = "Cargando...";
         return;
       }
-      el.className = "";
-      const max = Math.max(...rows.map(r => Number(r.invoiced || r.services || 0)), 1);
-      el.innerHTML = rows.map(r => {
-        const value = Number(r.invoiced || 0);
-        return `<div class="bar-row"><div>${r.month}</div><div class="track"><div class="fill" style="width:${Math.max(5, (value || r.services) / max * 100)}%"></div></div><strong>${money(value)}</strong></div>`;
-      }).join("");
+      const canFinance = dashboardCanSeeFinance(data);
+      const canExecutive = dashboardCanSeeExecutive(data);
+      const months = data.monthly || [];
+      const serviceMix = data.executive?.service_mix || [];
+      const topClients = canExecutive ? (data.executive?.top_clients || []) : [];
+      const aging = canFinance ? (data.executive?.aging || []) : [];
+      if ($("homeExecScope")) $("homeExecScope").textContent = canExecutive ? "admin/master" : (canFinance ? "finanzas" : "operativo");
+      main.innerHTML = `
+        <div class="card panel chart-card">
+          <div class="panel-head"><h2>Últimos 6 meses</h2><span class="muted">${canFinance ? "Servicios + facturación + AR" : "Cantidad de servicios"}</span></div>
+          ${renderComboChart(months, canFinance)}
+        </div>
+        <div class="card panel">
+          <div class="panel-head"><h2>Servicio más ofrecido</h2><span class="muted">${$("year").value}</span></div>
+          ${renderServiceMix(serviceMix)}
+        </div>`;
+      if (canExecutive) {
+        side.className = "";
+        side.innerHTML = `
+          <div class="home-pill-list">
+            <div><strong>Top cliente</strong><span>${esc(topClients[0]?.client || "-")}</span></div>
+            <div><strong>Facturación top 3</strong><span>${money(topClients.reduce((s,r) => s + Number(r.amount || 0), 0))}</span></div>
+            <div><strong>CxC abierta</strong><span>${money(data.kpis?.ar || 0)}</span></div>
+          </div>
+          <h3 style="margin:14px 0 8px;font-size:14px">Top 3 clientes del año</h3>
+          ${renderTopClients(topClients)}
+          <h3 style="margin:14px 0 8px;font-size:14px">Aging CxC</h3>
+          ${renderAging(aging)}`;
+      } else if (canFinance) {
+        side.className = "";
+        side.innerHTML = `<div class="home-pill-list"><div><strong>CxC abierta</strong><span>${money(data.kpis?.ar || 0)}</span></div><div><strong>Facturación año</strong><span>${money(data.kpis?.invoiced || 0)}</span></div></div><h3 style="margin:14px 0 8px;font-size:14px">Aging CxC</h3>${renderAging(aging)}`;
+      } else {
+        side.className = "status";
+        side.textContent = "Tu inicio muestra pendientes operativos y servicios. Las métricas financieras se ocultan por rol/permisos.";
+      }
+    }
+    function renderComboChart(rows, canFinance) {
+      if (!rows.length) return '<div class="status">Sin datos para los últimos 6 meses.</div>';
+      const maxMoney = Math.max(...rows.map(r => Math.max(Number(r.invoiced || 0), Number(r.ar_open || 0))), 1);
+      const maxServices = Math.max(...rows.map(r => Number(r.services || 0)), 1);
+      return `<div class="chart-combo">${rows.map(r => {
+        const invH = canFinance ? Math.max(4, Number(r.invoiced || 0) / maxMoney * 150) : 0;
+        const arH = canFinance ? Math.max(4, Number(r.ar_open || 0) / maxMoney * 150) : 0;
+        const svcH = Math.max(4, Number(r.services || 0) / maxServices * 150);
+        return `<div class="combo-col"><div class="combo-bars">${canFinance ? `<div title="Facturación ${money(r.invoiced)}" class="combo-bar" style="height:${invH}px"></div><div title="AR ${money(r.ar_open)}" class="combo-bar ar" style="height:${arH}px"></div>` : ""}<div title="Servicios ${esc(r.services)}" class="combo-bar services" style="height:${svcH}px;background:#0f172a"></div></div><div class="combo-label">${esc(r.month)}</div></div>`;
+      }).join("")}</div><div class="chart-legend">${canFinance ? '<span><i class="legend-dot"></i>Facturación</span><span><i class="legend-dot ar"></i>AR</span>' : ""}<span><i class="legend-dot services"></i>Servicios</span></div>`;
+    }
+    function renderServiceMix(rows) {
+      if (!rows.length) return '<div class="status">Sin servicios para clasificar.</div>';
+      const total = rows.reduce((sum,row) => sum + Number(row.value || 0), 0) || 1;
+      const colors = ["#005da8","#029fcf","#087a52","#b7791f","#8a5cf6","#64748b"];
+      let start = 0;
+      const stops = rows.map((row, i) => {
+        const pct = Number(row.value || 0) / total * 100;
+        const part = `${colors[i % colors.length]} ${start}% ${start + pct}%`;
+        start += pct;
+        return part;
+      }).join(", ");
+      return `<div class="pie-wrap"><div class="css-pie" style="background:conic-gradient(${stops})"></div><div class="mini-bars">${rows.slice(0,5).map((row,i) => `<div class="mini-bar-row"><strong>${esc(row.label)}</strong><div class="mini-track"><div class="mini-fill" style="width:${Math.max(5, Number(row.value || 0) / total * 100)}%;background:${colors[i % colors.length]}"></div></div><span>${esc(row.value)}</span></div>`).join("")}</div></div>`;
+    }
+    function renderTopClients(rows) {
+      if (!rows.length) return '<div class="status">Visible solo para admin/master o sin datos del año.</div>';
+      const max = Math.max(...rows.map(r => Number(r.amount || 0)), 1);
+      return `<div class="mini-bars">${rows.map(row => `<div class="mini-bar-row"><strong>${esc(row.client)}</strong><div class="mini-track"><div class="mini-fill" style="width:${Math.max(5, Number(row.amount || 0) / max * 100)}%"></div></div><span>${money(row.amount)}</span></div>`).join("")}</div>`;
+    }
+    function renderAging(rows) {
+      if (!rows.length) return '<div class="status">Sin CxC abierta visible.</div>';
+      const max = Math.max(...rows.map(r => Number(r.amount || 0)), 1);
+      return `<div class="mini-bars">${rows.map(row => `<div class="mini-bar-row"><strong>${esc(row.bucket)}</strong><div class="mini-track"><div class="mini-fill" style="width:${Math.max(5, Number(row.amount || 0) / max * 100)}%;background:#b7791f"></div></div><span>${money(row.amount)}</span></div>`).join("")}</div>`;
     }
     function renderFinanzas() {
       if (financeTab === "invoicing") financeTab = "billing";
