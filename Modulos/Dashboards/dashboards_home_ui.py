@@ -87,6 +87,29 @@ class DashboardsHomeUI(ttk.Frame):
         self.pack(fill="both", expand=True)
         self._build_ui()
 
+    class Collapsible(ttk.Frame):
+        def __init__(self, parent, title, expanded=True):
+            super().__init__(parent)
+            self.expanded = tk.BooleanVar(value=expanded)
+            self.head = ttk.Frame(self)
+            self.head.pack(fill="x")
+            self.button = ttk.Button(self.head, text="-" if expanded else "+", width=3, command=self.toggle)
+            self.button.pack(side="left", padx=(0, 6))
+            ttk.Label(self.head, text=title, font=("Segoe UI", 10, "bold")).pack(side="left", fill="x", expand=True)
+            self.body = ttk.Frame(self)
+            if expanded:
+                self.body.pack(fill="both", expand=True, pady=(8, 0))
+
+        def toggle(self):
+            if self.expanded.get():
+                self.body.forget()
+                self.expanded.set(False)
+                self.button.configure(text="+")
+            else:
+                self.body.pack(fill="both", expand=True, pady=(8, 0))
+                self.expanded.set(True)
+                self.button.configure(text="-")
+
     def _allowed_modules(self):
         return [item for item in self.MODULES if self.can_access(item["code"])]
 
@@ -148,15 +171,15 @@ class DashboardsHomeUI(ttk.Frame):
         self.task_summary = ttk.Frame(command, style="Hero.TFrame")
         self.task_summary.pack(fill="x")
 
-        tasks = ttk.LabelFrame(left, text="Pendientes y aprobaciones")
+        tasks = self.Collapsible(left, "Pendientes y aprobaciones")
         tasks.pack(fill="both", expand=True)
-        self.tasks_frame = ttk.Frame(tasks)
-        self.tasks_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        self.tasks_frame = ttk.Frame(tasks.body)
+        self.tasks_frame.pack(fill="both", expand=True)
 
-        self.exec_frame = ttk.LabelFrame(right, text="Vista ejecutiva")
+        self.exec_frame = self.Collapsible(right, "Vista ejecutiva")
         self.exec_frame.pack(fill="both", expand=True)
-        self.exec_body = ttk.Frame(self.exec_frame)
-        self.exec_body.pack(fill="both", expand=True, padx=10, pady=10)
+        self.exec_body = ttk.Frame(self.exec_frame.body)
+        self.exec_body.pack(fill="both", expand=True)
 
         self._load_live_home()
 
@@ -242,13 +265,20 @@ class DashboardsHomeUI(ttk.Frame):
         tone = {"critical": "#B42318", "warning": "#B7791F", "info": "#005DA8"}.get(item.get("severity"), "#64748B")
         row = tk.Frame(parent, bg="#FFFFFF", highlightbackground="#D7E1EC", highlightthickness=1)
         row.pack(fill="x", pady=(0, 8))
+        row.bind("<Button-1>", lambda _event, i=item: self._show_insight("action", i))
         tk.Frame(row, bg=tone, width=4).pack(side="left", fill="y")
         count = tk.Label(row, text=str(item.get("count") or 0), bg="#EDF7FF", fg=tone, font=("Segoe UI", 12, "bold"), width=4)
         count.pack(side="left", padx=10, pady=10)
+        count.bind("<Button-1>", lambda _event, i=item: self._show_insight("action", i))
         copy = tk.Frame(row, bg="#FFFFFF")
         copy.pack(side="left", fill="x", expand=True, pady=10)
-        tk.Label(copy, text=item.get("title") or "-", bg="#FFFFFF", fg="#122033", font=("Segoe UI", 10, "bold")).pack(anchor="w")
-        tk.Label(copy, text=item.get("detail") or "", bg="#FFFFFF", fg="#607086", font=("Segoe UI", 9)).pack(anchor="w")
+        copy.bind("<Button-1>", lambda _event, i=item: self._show_insight("action", i))
+        title = tk.Label(copy, text=item.get("title") or "-", bg="#FFFFFF", fg="#122033", font=("Segoe UI", 10, "bold"))
+        title.pack(anchor="w")
+        title.bind("<Button-1>", lambda _event, i=item: self._show_insight("action", i))
+        detail = tk.Label(copy, text=item.get("detail") or "", bg="#FFFFFF", fg="#607086", font=("Segoe UI", 9))
+        detail.pack(anchor="w")
+        detail.bind("<Button-1>", lambda _event, i=item: self._show_insight("action", i))
         ttk.Button(row, text=item.get("cta") or "Abrir", command=lambda m=item.get("module"): self._open_module_code(m)).pack(side="right", padx=10)
 
     def _render_executive(self):
@@ -262,22 +292,139 @@ class DashboardsHomeUI(ttk.Frame):
         top = executive.get("top_clients") or []
         aging = executive.get("aging") or []
         mix = executive.get("service_mix") or []
-        self._section_rows("Top 3 clientes FE", top, "client", "amount", money=True)
-        self._section_rows("Aging CxC", aging, "bucket", "amount", money=True)
-        self._section_rows("Mix de servicios", mix, "label", "value", money=False)
+        monthly = self.summary.get("monthly") or []
+        kpis = self.summary.get("kpis") or {}
+        if visibility.get("executive"):
+            self._pill_rows(
+                "Indicadores ejecutivos",
+                [
+                    ("Top cliente", top[0].get("client") if top else "-", "topClient", top[0] if top else {}),
+                    ("Facturas FE top 3", self._money_short(sum(float(r.get("amount") or 0) for r in top[:3])), "top3", {"rows": top[:3]}),
+                    ("CxC abierta", self._money_short(kpis.get("ar")), "ar", {"amount": kpis.get("ar"), "aging": aging}),
+                ],
+            )
+        else:
+            self._pill_rows(
+                "Indicadores financieros",
+                [
+                    ("Facturas FE año a fecha", self._money_short(kpis.get("invoiced")), "top3", {"amount": kpis.get("invoiced"), "rows": []}),
+                    ("CxC abierta", self._money_short(kpis.get("ar")), "ar", {"amount": kpis.get("ar"), "aging": aging}),
+                ],
+            )
+        self._section_rows("Últimos 6 meses", monthly, "month", "services", money=False, kind="month")
+        if visibility.get("executive"):
+            self._section_rows("Top 3 clientes FE", top, "client", "amount", money=True, kind="topClient")
+        self._section_rows("Aging CxC", aging, "bucket", "amount", money=True, kind="aging")
+        self._section_rows("Mix de servicios", mix, "label", "value", money=False, kind="service")
 
-    def _section_rows(self, title, rows, label_key, value_key, money=False):
-        ttk.Label(self.exec_body, text=title, font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(0, 6))
-        if not rows:
-            ttk.Label(self.exec_body, text="Sin datos visibles.", foreground="#607086").pack(anchor="w", pady=(0, 10))
-            return
-        for row in rows[:5]:
-            line = ttk.Frame(self.exec_body)
+    def _pill_rows(self, title, rows):
+        section = self.Collapsible(self.exec_body, title)
+        section.pack(fill="x", pady=(0, 10))
+        for label, value, kind, payload in rows:
+            line = tk.Frame(section.body, bg="#FBFDFE", highlightbackground="#D7E1EC", highlightthickness=1)
             line.pack(fill="x", pady=2)
-            ttk.Label(line, text=str(row.get(label_key) or "-")[:28]).pack(side="left", fill="x", expand=True)
+            line.bind("<Button-1>", lambda _event, k=kind, p=payload: self._show_insight(k, p))
+            left = tk.Label(line, text=label, bg="#FBFDFE", fg="#122033", font=("Segoe UI", 9, "bold"))
+            left.pack(side="left", padx=8, pady=6)
+            right = tk.Label(line, text=str(value), bg="#FBFDFE", fg="#122033", font=("Segoe UI", 9))
+            right.pack(side="right", padx=8, pady=6)
+            left.bind("<Button-1>", lambda _event, k=kind, p=payload: self._show_insight(k, p))
+            right.bind("<Button-1>", lambda _event, k=kind, p=payload: self._show_insight(k, p))
+
+    def _section_rows(self, title, rows, label_key, value_key, money=False, kind=None):
+        section = self.Collapsible(self.exec_body, title)
+        section.pack(fill="x", pady=(0, 10))
+        if not rows:
+            ttk.Label(section.body, text="Sin datos visibles.", foreground="#607086").pack(anchor="w", pady=(0, 6))
+            return
+        max_value = max(float(row.get(value_key) or 0) for row in rows[:6]) or 1
+        for row in rows[:5]:
+            line = tk.Frame(section.body, bg="#FFFFFF")
+            line.pack(fill="x", pady=2)
+            line.bind("<Button-1>", lambda _event, k=kind, p=row: self._show_insight(k, p))
+            label = tk.Label(line, text=str(row.get(label_key) or "-")[:28], bg="#FFFFFF", fg="#122033")
+            label.pack(side="left", fill="x", expand=True)
+            label.bind("<Button-1>", lambda _event, k=kind, p=row: self._show_insight(k, p))
+            bar = tk.Frame(line, bg="#E8EEF5", width=110, height=8)
+            bar.pack(side="left", padx=8)
+            fill_width = max(8, int(float(row.get(value_key) or 0) / max_value * 110))
+            tk.Frame(bar, bg="#00703C" if kind != "aging" else "#B7791F", width=fill_width, height=8).place(x=0, y=0)
             value = self._money_short(row.get(value_key)) if money else str(row.get(value_key) or 0)
-            ttk.Label(line, text=value).pack(side="right")
-        ttk.Separator(self.exec_body).pack(fill="x", pady=8)
+            value_label = tk.Label(line, text=value, bg="#FFFFFF", fg="#122033")
+            value_label.pack(side="right")
+            value_label.bind("<Button-1>", lambda _event, k=kind, p=row: self._show_insight(k, p))
+
+    def _show_insight(self, kind, item):
+        item = item or {}
+        title = {
+            "action": "Pendiente",
+            "month": "Lectura mensual",
+            "service": "Mix de servicios",
+            "topClient": "Top cliente",
+            "top3": "Facturas FE",
+            "ar": "CxC abierta",
+            "aging": "Aging CxC",
+        }.get(kind, "Detalle inteligente")
+        text = self._insight_text(kind, item)
+        win = tk.Toplevel(self)
+        win.title(title)
+        win.geometry("520x300")
+        win.transient(self.winfo_toplevel())
+        frame = ttk.Frame(win, padding=16)
+        frame.pack(fill="both", expand=True)
+        ttk.Label(frame, text=title, font=("Segoe UI", 16, "bold")).pack(anchor="w")
+        ttk.Label(frame, text=text, wraplength=470, justify="left").pack(anchor="w", pady=(12, 14))
+        actions = ttk.Frame(frame)
+        actions.pack(fill="x", side="bottom")
+        module = item.get("module")
+        if kind in {"month", "ar", "aging", "topClient", "top3"} and self.can_access("finanzas"):
+            ttk.Button(actions, text="Abrir Finanzas", command=lambda: [win.destroy(), self._open_module_code("finanzas")]).pack(side="left", padx=(0, 8))
+        if kind == "service" and self.can_access("servicios"):
+            ttk.Button(actions, text="Abrir Servicios", command=lambda: [win.destroy(), self._open_module_code("servicios")]).pack(side="left", padx=(0, 8))
+        if kind == "action" and module:
+            ttk.Button(actions, text=item.get("cta") or "Abrir módulo", command=lambda: [win.destroy(), self._open_module_code(module)]).pack(side="left", padx=(0, 8))
+        ttk.Button(actions, text="Cerrar", command=win.destroy).pack(side="right")
+
+    def _insight_text(self, kind, item):
+        if kind == "action":
+            return (
+                f"Cantidad: {item.get('count') or 0}\n"
+                f"Severidad: {item.get('severity') or 'info'}\n"
+                f"Módulo: {item.get('module') or '-'}\n\n"
+                f"{item.get('detail') or 'Pendiente visible según rol y permisos.'}"
+            )
+        if kind == "month":
+            return (
+                f"Mes: {item.get('month') or '-'}\n"
+                f"Servicios: {int(item.get('services') or 0)}\n"
+                f"CxC abierta: {self._money_short(item.get('ar_open'))}\n\n"
+                "Úsalo para comparar movimiento operativo contra cobros abiertos y priorizar gestión."
+            )
+        if kind == "service":
+            return (
+                f"Servicio: {item.get('label') or '-'}\n"
+                f"Cantidad: {item.get('value') or 0}\n\n"
+                "Indica concentración del mix de servicios. Sirve para revisar demanda, asignación y oportunidades comerciales."
+            )
+        if kind == "topClient":
+            return (
+                f"Cliente: {item.get('client') or '-'}\n"
+                f"Facturas FE: {item.get('count') or 0}\n"
+                f"Monto: {self._money_short(item.get('amount'))}\n\n"
+                "Cliente con mayor peso en facturación electrónica del año. Conviene revisar crédito y cobros abiertos."
+            )
+        if kind == "aging":
+            return (
+                f"Rango: {item.get('bucket') or '-'}\n"
+                f"Monto: {self._money_short(item.get('amount'))}\n\n"
+                "Prioriza rangos vencidos antes de nueva facturación al mismo cliente."
+            )
+        rows = item.get("rows") or []
+        return (
+            f"Monto: {self._money_short(item.get('amount') or sum(float(r.get('amount') or 0) for r in rows))}\n"
+            f"Clientes: {len(rows)}\n\n"
+            "Suma visible según rol/permisos. No expone información financiera a usuarios sin acceso."
+        )
 
     def _card(self, parent, item, row, col):
         card = tk.Frame(parent, bg="#FFFFFF", highlightbackground="#D7E1EC", highlightthickness=1)
