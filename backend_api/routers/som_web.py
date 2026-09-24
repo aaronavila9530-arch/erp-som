@@ -18,7 +18,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20260924-hhrr-web-v1"
+_ASSET_VERSION = "20260924-login-guard-v1"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -1169,7 +1169,15 @@ def som_web_home() -> HTMLResponse:
     const SESSION_KEY = "somWebSession";
     const PASSKEY_KEY = "somWebPasskey";
     const SAVED_LOGIN_KEY = "somWebSavedLogin";
-    const rememberedSession = JSON.parse(localStorage.getItem(SESSION_KEY) || "null");
+    function readLocalJson(key) {
+      try {
+        return JSON.parse(localStorage.getItem(key) || "null");
+      } catch {
+        localStorage.removeItem(key);
+        return null;
+      }
+    }
+    const rememberedSession = readLocalJson(SESSION_KEY);
     let session = null;
     let pendingUser = null;
     let pendingAction = null;
@@ -1612,7 +1620,7 @@ def som_web_home() -> HTMLResponse:
         option.textContent = String(y);
         $("year").appendChild(option);
       }
-      const savedLogin = JSON.parse(localStorage.getItem(SAVED_LOGIN_KEY) || "null");
+      const savedLogin = readLocalJson(SAVED_LOGIN_KEY);
       const rememberedLogin = savedLogin || (rememberedSession ? { usuario:rememberedSession.usuario, company:rememberedSession.company } : null);
       if (rememberedLogin) {
         $("user").value = rememberedLogin.usuario || "";
@@ -1751,7 +1759,7 @@ def som_web_home() -> HTMLResponse:
       }
     }
     async function unlockWithPasskey() {
-      const saved = JSON.parse(localStorage.getItem(PASSKEY_KEY) || "null");
+      const saved = readLocalJson(PASSKEY_KEY);
       if (!saved || !window.PublicKeyCredential) return;
       $("loginMsg").textContent = "Validando dispositivo...";
       try {
@@ -7159,7 +7167,7 @@ def som_web_home() -> HTMLResponse:
       if (session) {
         session.company = value;
         localStorage.setItem(SESSION_KEY, JSON.stringify(session));
-        const saved = JSON.parse(localStorage.getItem(PASSKEY_KEY) || "null");
+        const saved = readLocalJson(PASSKEY_KEY);
         if (saved?.session) {
           saved.session.company = value;
           saved.company = value;
