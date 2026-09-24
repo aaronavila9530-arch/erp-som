@@ -18,7 +18,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20260924-web-tables-v3"
+_ASSET_VERSION = "20260924-hhrr-web-v1"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -851,6 +851,30 @@ def som_web_home() -> HTMLResponse:
     .excel-filter-values span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .excel-filter-footer { display:flex; gap:7px; justify-content:flex-end; border-top:1px solid #edf2f7; padding-top:8px; }
     .excel-filter-footer button { height:32px; padding:0 10px; }
+    .hr-shell { display:grid; gap:12px; min-width:0; }
+    .hr-hero { display:grid; grid-template-columns:minmax(0,1.35fr) minmax(300px,.65fr); gap:12px; align-items:stretch; }
+    .hr-card { border:1px solid #d7e1ec; border-radius:8px; background:#fff; padding:14px; min-width:0; box-shadow:var(--shadow); }
+    .hr-hero h2 { margin:0; font-size:27px; line-height:1.12; }
+    .hr-hero p { margin:8px 0 0; color:#607086; line-height:1.45; }
+    .hr-news-list { display:grid; gap:7px; margin-top:8px; max-height:160px; overflow:auto; }
+    .hr-news-list div { border:1px solid #e2eaf3; border-radius:7px; background:#fbfdff; padding:8px 10px; color:#334155; }
+    .hr-actions { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:10px; }
+    .hr-action-card { text-align:left; min-height:104px; height:auto; background:#fff; color:#122033; border:1px solid #d7e1ec; border-top:4px solid var(--blue); border-radius:8px; padding:12px; display:grid; align-content:start; gap:6px; }
+    .hr-action-card strong { font-size:16px; }
+    .hr-action-card span { color:#607086; line-height:1.35; white-space:normal; }
+    .hr-action-card:hover,.hr-action-card.active { background:#edf7ff; border-color:#b8d5f1; }
+    .hr-toolbar { display:flex; flex-wrap:wrap; gap:8px; align-items:end; margin:10px 0; }
+    .hr-toolbar label { display:grid; gap:4px; min-width:150px; color:#475569; font-size:12px; font-weight:700; text-transform:uppercase; }
+    .hr-toolbar button { height:34px; }
+    .hr-work { min-width:0; }
+    .hr-kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:10px; margin:10px 0; }
+    .hr-kpi { border:1px solid #d7e1ec; border-radius:8px; background:#f8fbfe; padding:10px; }
+    .hr-kpi span { display:block; color:#64748b; font-size:11px; font-weight:800; text-transform:uppercase; }
+    .hr-kpi strong { display:block; margin-top:5px; font-size:21px; }
+    .hr-form { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:10px; margin:10px 0; }
+    .hr-form label { display:grid; gap:5px; color:#334155; font-size:13px; }
+    .hr-form textarea { min-height:84px; border:1px solid var(--line); border-radius:7px; padding:9px 11px; font:inherit; resize:vertical; }
+    .hr-form .wide { grid-column:1/-1; }
     .tabs { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0; }
     .tabs button { background:#fff; color:var(--ink); border:1px solid var(--line); }
     .tabs button.active { background:var(--blue); color:#fff; border-color:var(--blue); }
@@ -1059,7 +1083,7 @@ def som_web_home() -> HTMLResponse:
       .hero-logo { min-height:300px; padding:22px; }
       .hero-logo img { width:min(88%,520px); height:250px; }
       .form-grid { grid-template-columns:1fr; }
-      .service-command-center { grid-template-columns:1fr; }
+      .service-command-center,.hr-hero { grid-template-columns:1fr; }
       .itp-bi-header,.itp-bi-controls,.itp-bi-body,.itp-bi-summary { grid-template-columns:1fr; }
       .itp-bi-totals { grid-template-columns:1fr; }
       .finance-filter-row,.finance-filter-row.compact { grid-template-columns:1fr; }
@@ -1212,6 +1236,8 @@ def som_web_home() -> HTMLResponse:
     let portRows = [];
     let financeClientes = [];
     let financeClienteRows = [];
+    let hrCurrentView = "home";
+    let hrRows = [];
     const DISPUTE_STATUSES = ["New","In process","Process by Sales","Process by RTR","Process by Invoicing","Process by Collections","Process by Bank","Process by Disputes","Written Off","Resolved"];
     const SERVICE_COLUMNS = [
       "consec","tipo","estado","num_informe","buque_contenedor","cliente","contacto","detalle",
@@ -1606,6 +1632,42 @@ def som_web_home() -> HTMLResponse:
       const perms = session.permissions || {};
       return (session.modules || []).includes(code) || (perms[code] || []).length > 0;
     }
+    function canHr(action) {
+      if (!session) return false;
+      const role = String(session.rol || "").toLowerCase();
+      const user = String(session.usuario || "").toLowerCase();
+      if (["admin","master"].includes(role) || ["admin","aaron01","gerencia1"].includes(user)) return true;
+      const surveyorBasic = ["payslips_view","payslips_download","requests_view","requests_create","hours_view","hours_register","medical_network","policies_view"];
+      if (["surveyor01","surveyor02","surveyor03"].includes(user)) return surveyorBasic.includes(action);
+      const perms = session.permissions || {};
+      const all = new Set([...(perms.hhrre || []), ...(perms.hhrr || [])].map(x => String(x).toLowerCase()));
+      if (all.has("admin") || all.has("*") || all.has(String(action).toLowerCase())) return true;
+      const backendAliases = {
+        payslips_view:["payslips","view"],
+        payslips_download:["payslips","view"],
+        requests_view:["view","approve"],
+        requests_create:["view"],
+        requests_approve:["approve"],
+        hours_view:["ot_log","view"],
+        hours_register:["ot_log","view"],
+        hours_approve:["ot_log_status","ot_log","view"],
+        payroll_view:["payroll","view"],
+        payroll_generate:["generate","payroll"],
+        employees_view:["employees","view"],
+        employees_edit:["employees"],
+        salary_calculator:["view"],
+        medical_network:["view"],
+        policies_view:["view"],
+        policies_edit:["view"],
+        news_publish:["view"]
+      };
+      if ((backendAliases[action] || []).some(alias => all.has(alias))) return true;
+      const employeeBasic = new Set(surveyorBasic);
+      const hrPrivileged = new Set(["payroll_view","payroll_generate","employees_view","employees_edit","requests_approve","hours_approve","policies_edit","news_publish","salary_calculator","liquidations"]);
+      if (employeeBasic.has(action)) return ["user","hr","rrhh","hhrre","hhrr","finance","accounting"].includes(role);
+      if (hrPrivileged.has(action)) return ["hr","rrhh","hhrre","hhrr"].includes(role);
+      return false;
+    }
     function showLogin() {
       $("loginView").classList.remove("hidden");
       $("appView").classList.add("hidden");
@@ -1740,6 +1802,7 @@ def som_web_home() -> HTMLResponse:
       else if (code === "master_data") renderMasterData();
       else if (code === "servicios" || code === "servicios_op" || (mod?.title || "").toLowerCase() === "servicios") renderServicios();
       else if (code === "finanzas") renderFinanzas();
+      else if (code === "hhrre" || code === "hhrr") renderHHRR();
       else renderComingSoon(mod);
     }
     async function refreshSummary() {
@@ -6768,6 +6831,309 @@ def som_web_home() -> HTMLResponse:
       win.document.write(`<html><head><title>Servicios ${stamp}</title><style>body{font-family:Arial,sans-serif}table{border-collapse:collapse;width:100%;font-size:10px}th,td{border:1px solid #bbb;padding:4px;text-align:left}th{background:#eef3f8}</style></head><body><h2>Servicios ${esc(selectedCompany())}</h2>${tableHtml}<script>window.print()<\\/script></body></html>`);
       win.document.close();
     }
+    function hrActions() {
+      const specs = [
+        ["payroll","Payroll","Planilla, cálculo y colillas administrativas.","payroll_view"],
+        ["payslips","Colillas","Consulta y descarga de colillas de pago.","payslips_view"],
+        ["requests","Solicitudes","Vacaciones, incapacidades, constancias y aprobaciones.","requests_view"],
+        ["hours","Horas","Registro, edición y aprobación de horas.","hours_view"],
+        ["employees","Empleados","Ficha laboral, jornada, salario, vacaciones y activos.","employees_view"],
+        ["salary","Calculadora salarial","Empleado, independiente, propietario y escenarios.","salary_calculator"],
+        ["medical","Red médica","Clínicas, especialidades, ubicación y contacto.","medical_network"],
+        ["policies","Políticas","Documentos internos y normativa HHRR.","policies_view"],
+        ["news","Noticias","Publicación de noticias HHRR.","news_publish"]
+      ];
+      return specs.filter(item => canHr(item[3]));
+    }
+    function hrTable(rows, cols) {
+      if (!rows || !rows.length) return '<div class="status">Sin datos para esta vista.</div>';
+      return `<div class="table-wrap"><table><thead><tr>${cols.map(c => `<th>${esc(c.replace(/_/g," "))}</th>`).join("")}</tr></thead><tbody>${rows.map(row => `<tr>${cols.map(c => `<td>${esc(row?.[c] ?? "")}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
+    }
+    function hrStatus(msg, error=false) {
+      const el = $("hrStatus");
+      if (!el) return;
+      el.className = error ? "status error" : "status";
+      el.textContent = msg;
+      el.classList.remove("hidden");
+    }
+    function renderHHRR() {
+      const actions = hrActions();
+      const role = String(session?.rol || "").toUpperCase();
+      $("content").innerHTML = `
+        <div class="hr-shell">
+          <section class="hr-hero">
+            <div class="hr-card">
+              <h2>Módulo HHRR</h2>
+              <p>Horas, vacaciones, solicitudes, payroll, colillas, empleados, calculadora salarial, red médica, políticas y noticias según permisos.</p>
+              <div class="hr-kpis">
+                <div class="hr-kpi"><span>Usuario</span><strong>${esc(session?.usuario || "-")}</strong></div>
+                <div class="hr-kpi"><span>Rol</span><strong>${esc(role || "-")}</strong></div>
+                <div class="hr-kpi"><span>Accesos</span><strong>${actions.length}</strong></div>
+              </div>
+            </div>
+            <div class="hr-card">
+              <div class="panel-head"><h2>Noticias</h2>${canHr("news_publish") ? '<button class="secondary" onclick="renderHrNewsForm()">Publicar</button>' : ""}</div>
+              <div id="hrNews" class="hr-news-list"><div>Cargando noticias...</div></div>
+            </div>
+          </section>
+          <section class="hr-card">
+            <div class="hr-actions">${actions.map(([key,title,desc]) => `<button class="hr-action-card ${hrCurrentView === key ? "active" : ""}" onclick="openHrView('${key}')"><strong>${esc(title)}</strong><span>${esc(desc)}</span></button>`).join("") || '<div class="status">No hay acciones HHRR autorizadas para este usuario.</div>'}</div>
+          </section>
+          <section class="hr-card hr-work">
+            <div class="panel-head"><h2 id="hrViewTitle">HHRR</h2><span id="hrViewHint" class="muted">Seleccione una opción.</span></div>
+            <div id="hrStatus" class="status hidden"></div>
+            <div id="hrWorkspace"></div>
+          </section>
+        </div>`;
+      loadHrNews();
+      openHrView(actions[0]?.[0] || "home");
+    }
+    async function loadHrNews() {
+      const box = $("hrNews");
+      if (!box) return;
+      try {
+        const data = await getJSON("/noticias/latest");
+        const items = [1,2,3,4,5].map(i => data[`noticia_${i}`]).filter(Boolean);
+        box.innerHTML = items.length ? items.map(item => `<div>${esc(item)}</div>`).join("") : '<div>Sin noticias publicadas.</div>';
+      } catch (err) {
+        box.innerHTML = `<div class="error">No se pudieron cargar noticias: ${esc(err.message)}</div>`;
+      }
+    }
+    function openHrView(key) {
+      hrCurrentView = key;
+      document.querySelectorAll(".hr-action-card").forEach(btn => btn.classList.toggle("active", btn.getAttribute("onclick")?.includes(`'${key}'`)));
+      const map = {
+        payroll:renderHrPayroll, payslips:renderHrPayslips, requests:renderHrRequests, hours:renderHrHours,
+        employees:renderHrEmployees, salary:renderHrSalary, medical:renderHrMedical, policies:renderHrPolicies, news:renderHrNewsForm
+      };
+      (map[key] || renderHrHome)();
+    }
+    function renderHrHome() {
+      $("hrViewTitle").textContent = "HHRR";
+      $("hrViewHint").textContent = "Seleccione una opción autorizada.";
+      $("hrWorkspace").innerHTML = '<div class="status">Use las tarjetas superiores para abrir una vista de HHRR.</div>';
+    }
+    function renderHrRequests() {
+      $("hrViewTitle").textContent = "Solicitudes HHRR";
+      $("hrViewHint").textContent = "Vacaciones, incapacidades, constancias y aprobación.";
+      const adminTools = canHr("requests_approve") ? '<button class="green" onclick="resolveHrRequest(\'approve\')">Aprobar</button><button class="brown" onclick="resolveHrRequest(\'reject\')">Rechazar</button>' : "";
+      const createTools = canHr("requests_create") ? `
+        <details class="pln-section"><summary>Nueva solicitud</summary><div class="pln-section-body">
+          <div class="hr-form">
+            <label>Tipo<select id="hrReqType"><option>VACACIONES</option><option>INCAPACIDAD</option><option>CONSTANCIA_SALARIAL</option><option>CONSTANCIA_LABORAL</option><option>LICENCIA</option></select></label>
+            <label>Fecha<input id="hrReqDate" type="date" value="${new Date().toISOString().slice(0,10)}" /></label>
+            <label>Días<input id="hrReqDays" type="number" step="0.5" placeholder="Solo vacaciones" /></label>
+            <label class="wide">Motivo<textarea id="hrReqReason"></textarea></label>
+            <button onclick="createHrRequest()">Enviar solicitud</button>
+          </div>
+        </div></details>` : "";
+      $("hrWorkspace").innerHTML = `${createTools}<div class="hr-toolbar"><button onclick="loadHrRequests()">Cargar solicitudes</button>${adminTools}</div><div id="hrRequestsTable"></div>`;
+      loadHrRequests();
+    }
+    async function loadHrRequests() {
+      try {
+        hrRows = rowsList(await getJSON("/hr/events/"));
+        const rows = hrRows.map(r => ({ id:r.id, empleado:r.empleado, event_type:r.event_type, event_date:r.event_date, status:r.status, vacaciones:r.vacaciones, created_by:r.created_by, approved_by:r.approved_by }));
+        $("hrRequestsTable").innerHTML = hrTable(rows, ["id","empleado","event_type","event_date","status","vacaciones","created_by","approved_by"]);
+        enhanceExcelTables($("hrRequestsTable"));
+      } catch (err) {
+        $("hrRequestsTable").innerHTML = `<div class="status error">${esc(err.message)}</div>`;
+      }
+    }
+    async function createHrRequest() {
+      const type = valueFrom("hrReqType");
+      const payload = { motivo:valueFrom("hrReqReason") };
+      if (type === "VACACIONES" && valueFrom("hrReqDays")) payload.dias_solicitados = Number(valueFrom("hrReqDays"));
+      try {
+        await postJSON("/hr/events/", { event_type:type, event_date:valueFrom("hrReqDate"), payload });
+        hrStatus("Solicitud enviada.");
+        await loadHrRequests();
+      } catch (err) { hrStatus(err.message, true); }
+    }
+    async function resolveHrRequest(action) {
+      const id = prompt("ID de solicitud");
+      if (!id) return;
+      const comentario = prompt("Comentario", action === "reject" ? "Rechazo solicitado" : "Aprobado") || "";
+      try {
+        await sendJSON("PATCH", `/hr/events/${encodeURIComponent(id)}/${action}`, { comentario });
+        hrStatus(action === "approve" ? "Solicitud aprobada." : "Solicitud rechazada.");
+        await loadHrRequests();
+      } catch (err) { hrStatus(err.message, true); }
+    }
+    function renderHrHours() {
+      $("hrViewTitle").textContent = "Registro de Horas";
+      $("hrViewHint").textContent = "Registro, edición y aprobación según permisos.";
+      const approveTools = canHr("hours_approve") ? '<button class="green" onclick="setHrHourStatus(\'APROBADO\')">Aprobar</button><button class="brown" onclick="setHrHourStatus(\'RECHAZADO\')">Rechazar</button>' : "";
+      const registerTools = canHr("hours_register") ? `
+        <details class="pln-section"><summary>Registrar horas</summary><div class="pln-section-body">
+          <div class="hr-form">
+            <label>Usuario<input id="hrHourUser" placeholder="Solo admin/master" /></label>
+            <label>Tipo<select id="hrHourType"><option>OPERACION</option><option>INFORME</option></select></label>
+            <label>Inicio<input id="hrHourStart" type="datetime-local" /></label>
+            <label>Fin<input id="hrHourEnd" type="datetime-local" /></label>
+            <label>Referencia<input id="hrHourRef" /></label>
+            <label class="wide">Actividad<textarea id="hrHourActivity"></textarea></label>
+            <button onclick="createHrHour()">Registrar horas</button>
+          </div>
+        </div></details>` : "";
+      $("hrWorkspace").innerHTML = `${registerTools}<div id="hrHoursSummary"></div><div class="hr-toolbar"><button onclick="loadHrHours()">Cargar horas</button>${approveTools}</div><div id="hrHoursTable"></div>`;
+      loadHrHours();
+    }
+    async function loadHrHours() {
+      try {
+        const summary = await getJSON("/hr/ot-log/summary").catch(() => null);
+        const items = rowsList(summary);
+        $("hrHoursSummary").innerHTML = items.length ? `<div class="hr-kpis">${items.slice(0,4).map(x => `<div class="hr-kpi"><span>${esc(x.usuario)}</span><strong>${esc(x.horas_registradas)} h</strong><small>${esc(x.mensaje || "")}</small></div>`).join("")}</div>` : "";
+        const payload = await getJSON("/hr/ot-log/?page=1&page_size=100");
+        hrRows = rowsList(payload);
+        $("hrHoursTable").innerHTML = hrTable(hrRows, ["id","usuario","tipo","fecha_inicio","fecha_fin","duracion_horas","referencia","actividad_detalle","estado"]);
+        enhanceExcelTables($("hrHoursTable"));
+      } catch (err) {
+        $("hrHoursTable").innerHTML = `<div class="status error">${esc(err.message)}</div>`;
+      }
+    }
+    async function createHrHour() {
+      const payload = {
+        usuario:valueFrom("hrHourUser") || undefined,
+        tipo:valueFrom("hrHourType"),
+        fecha_inicio:valueFrom("hrHourStart"),
+        fecha_fin:valueFrom("hrHourEnd"),
+        referencia:valueFrom("hrHourRef"),
+        actividad_detalle:valueFrom("hrHourActivity")
+      };
+      try { await postJSON("/hr/ot-log/", payload); hrStatus("Horas registradas."); await loadHrHours(); }
+      catch (err) { hrStatus(err.message, true); }
+    }
+    async function setHrHourStatus(status) {
+      const id = prompt("ID de registro de horas");
+      if (!id) return;
+      try { await sendJSON("PUT", `/hr/ot-log/${encodeURIComponent(id)}/estado`, { estado:status }); hrStatus("Estado actualizado."); await loadHrHours(); }
+      catch (err) { hrStatus(err.message, true); }
+    }
+    function renderHrPayslips() {
+      $("hrViewTitle").textContent = "Colillas de Pago";
+      $("hrViewHint").textContent = "Consulta y descarga de colillas.";
+      $("hrWorkspace").innerHTML = `<div class="hr-toolbar"><label>Año<input id="hrPayYear" type="number" value="${$("year").value}" /></label><label>Mes<input id="hrPayMonth" type="number" min="1" max="12" /></label><button onclick="loadHrPayslips()">Cargar colillas</button><button class="secondary" onclick="downloadHrPayslip()">Descargar PDF</button></div><div id="hrPayslipsTable"></div>`;
+      loadHrPayslips();
+    }
+    async function loadHrPayslips() {
+      const params = new URLSearchParams({ page:"1", page_size:"100" });
+      if (valueFrom("hrPayYear")) params.set("year", valueFrom("hrPayYear"));
+      if (valueFrom("hrPayMonth")) params.set("month", valueFrom("hrPayMonth"));
+      try {
+        const payload = await getJSON(`/hr/payroll/payslips?${params}`);
+        hrRows = rowsList(payload);
+        $("hrPayslipsTable").innerHTML = hrTable(hrRows, ["id","usuario","year","month","salario_bruto","salario_neto","horas_extra","monto_horas_extra","generado_por","creado_en"]);
+        enhanceExcelTables($("hrPayslipsTable"));
+      } catch (err) { $("hrPayslipsTable").innerHTML = `<div class="status error">${esc(err.message)}</div>`; }
+    }
+    function downloadHrPayslip() {
+      const id = prompt("ID de colilla/run");
+      const row = hrRows.find(r => String(r.id) === String(id));
+      if (!row) return alert("Seleccione un ID válido de la tabla.");
+      window.open(`/hr/payroll/payslips/${encodeURIComponent(row.year)}/${encodeURIComponent(row.month)}/pdf?usuario=${encodeURIComponent(row.usuario)}`, "_blank");
+    }
+    function renderHrPayroll() {
+      $("hrViewTitle").textContent = "Payroll / Planilla";
+      $("hrViewHint").textContent = "Empleados activos y cálculo del período cerrado.";
+      $("hrWorkspace").innerHTML = `<div class="hr-toolbar"><button onclick="loadHrPayrollEmployees()">Cargar empleados payroll</button><button class="secondary" onclick="calculateHrPayroll()">Calcular usuario</button></div><div id="hrPayrollTable"></div>`;
+      loadHrPayrollEmployees();
+    }
+    async function loadHrPayrollEmployees() {
+      try {
+        const payload = await getJSON("/hr/payroll/employees");
+        hrRows = rowsList(payload);
+        $("hrPayrollTable").innerHTML = hrTable(hrRows, ["usuario","nombre","apellidos","jornada","salario","pago","estado","horas_contratadas","horas_tope_ordinario","tarifa_hora_extra"]);
+        enhanceExcelTables($("hrPayrollTable"));
+      } catch (err) { $("hrPayrollTable").innerHTML = `<div class="status error">${esc(err.message)}</div>`; }
+    }
+    async function calculateHrPayroll() {
+      const usuario = prompt("Usuario");
+      const year = prompt("Año", String(new Date().getFullYear()));
+      const month = prompt("Mes cerrado", String(new Date().getMonth() || 12));
+      if (!usuario || !year || !month) return;
+      try {
+        const data = await getJSON(`/hr/payroll/calculate?usuario=${encodeURIComponent(usuario)}&year=${encodeURIComponent(year)}&month=${encodeURIComponent(month)}`);
+        showObjectModal("Cálculo payroll", data);
+      } catch (err) { hrStatus(err.message, true); }
+    }
+    function renderHrEmployees() {
+      $("hrViewTitle").textContent = "Empleados HHRR";
+      $("hrViewHint").textContent = "Ficha laboral y políticas de horas.";
+      $("hrWorkspace").innerHTML = `<div class="hr-toolbar"><label>Buscar<input id="hrEmpQ" placeholder="Nombre o usuario" /></label><label>Estado<select id="hrEmpStatus"><option value="">Activo</option><option>Todos</option><option>Inactivo</option></select></label><button onclick="loadHrEmployees()">Cargar empleados</button></div><div id="hrEmployeesTable"></div>`;
+      loadHrEmployees();
+    }
+    async function loadHrEmployees() {
+      const params = new URLSearchParams({ page:"1", page_size:"100" });
+      if (valueFrom("hrEmpQ")) { params.set("nombre", valueFrom("hrEmpQ")); params.set("usuario", valueFrom("hrEmpQ")); }
+      if (valueFrom("hrEmpStatus")) params.set("estado", valueFrom("hrEmpStatus"));
+      try {
+        const payload = await getJSON(`/hr/employees?${params}`);
+        hrRows = rowsList(payload);
+        $("hrEmployeesTable").innerHTML = hrTable(hrRows, ["id","codigo","usuario","nombre","apellidos","estado","jornada","salario","pago","fecha_ingreso","horas_contratadas","vacaciones"]);
+        enhanceExcelTables($("hrEmployeesTable"));
+      } catch (err) { $("hrEmployeesTable").innerHTML = `<div class="status error">${esc(err.message)}</div>`; }
+    }
+    function renderHrSalary() {
+      $("hrViewTitle").textContent = "Calculadora Salarial";
+      $("hrViewHint").textContent = "Escenarios CR para empleado, independiente y propietario.";
+      $("hrWorkspace").innerHTML = `<div class="hr-form"><label>Escenario<select id="hrSalScenario"><option value="EMPLOYEE">Empleado</option><option value="INDEPENDENT">Independiente</option><option value="OWNER">Propietario</option></select></label><label>Monto mensual<input id="hrSalAmount" type="number" step="0.01" /></label><label>Etiqueta<input id="hrSalLabel" /></label><label><span>Guardar</span><select id="hrSalSave"><option value="false">No</option><option value="true">Sí</option></select></label><button onclick="calculateHrSalary()">Calcular</button></div><div id="hrSalaryResult"></div>`;
+    }
+    async function calculateHrSalary() {
+      try {
+        const data = await postJSON("/hr/salary-calculator/calculate", { scenario:valueFrom("hrSalScenario"), amount:Number(valueFrom("hrSalAmount") || 0), label:valueFrom("hrSalLabel") || null, save:valueFrom("hrSalSave") === "true", expenses:[] });
+        $("hrSalaryResult").innerHTML = `<div class="hr-kpis"><div class="hr-kpi"><span>Neto / ingreso</span><strong>${money(data.net_salary || data.net_monthly_income || data.owner_net_income || 0)}</strong></div><div class="hr-kpi"><span>Costo empresa</span><strong>${money(data.total_company_cost || data.total_burden || 0)}</strong></div><div class="hr-kpi"><span>Impuesto</span><strong>${money(data.salary_income_tax || data.income_tax || 0)}</strong></div></div>${hrTable(Object.entries(data).map(([key,value]) => ({ key, value:typeof value === "object" ? JSON.stringify(value) : value })), ["key","value"])}`;
+        enhanceExcelTables($("hrSalaryResult"));
+      } catch (err) { $("hrSalaryResult").innerHTML = `<div class="status error">${esc(err.message)}</div>`; }
+    }
+    function renderHrMedical() {
+      $("hrViewTitle").textContent = "Red Médica";
+      $("hrViewHint").textContent = "Búsqueda por profesional, clínica, especialidad y ubicación.";
+      $("hrWorkspace").innerHTML = `<div class="hr-toolbar"><label>Buscar<input id="hrMedQ" /></label><label>Especialidad<input id="hrMedSpecialty" /></label><label>Provincia<input id="hrMedProvince" /></label><button onclick="loadHrMedical()">Buscar</button></div><div id="hrMedicalTable"></div>`;
+      loadHrMedical();
+    }
+    async function loadHrMedical() {
+      const params = new URLSearchParams({ page:"1", page_size:"100" });
+      if (valueFrom("hrMedQ")) params.set("q", valueFrom("hrMedQ"));
+      if (valueFrom("hrMedSpecialty")) params.set("specialty", valueFrom("hrMedSpecialty"));
+      if (valueFrom("hrMedProvince")) params.set("province", valueFrom("hrMedProvince"));
+      try {
+        const payload = await getJSON(`/hr/medical-network/search?${params}`);
+        hrRows = rowsList(payload);
+        $("hrMedicalTable").innerHTML = hrTable(hrRows, ["professional_name","specialty","consultation_type","service_type","clinic_name","province","canton","district"]);
+        enhanceExcelTables($("hrMedicalTable"));
+      } catch (err) { $("hrMedicalTable").innerHTML = `<div class="status error">${esc(err.message)}</div>`; }
+    }
+    function renderHrPolicies() {
+      $("hrViewTitle").textContent = "Políticas HHRR";
+      $("hrViewHint").textContent = "Políticas internas y documentos.";
+      $("hrWorkspace").innerHTML = `<div class="hr-toolbar"><label>Categoría<input id="hrPolicyCategory" /></label><button onclick="loadHrPolicies()">Cargar políticas</button></div><div id="hrPoliciesTable"></div>`;
+      loadHrPolicies();
+    }
+    async function loadHrPolicies() {
+      const params = new URLSearchParams({ solo_activas:"true" });
+      if (valueFrom("hrPolicyCategory")) params.set("categoria", valueFrom("hrPolicyCategory"));
+      try {
+        const payload = await getJSON(`/hr/policies?${params}`);
+        hrRows = rowsList(payload);
+        $("hrPoliciesTable").innerHTML = hrTable(hrRows, ["id","categoria","titulo","contenido","articulo_ref","activo"]);
+        enhanceExcelTables($("hrPoliciesTable"));
+      } catch (err) { $("hrPoliciesTable").innerHTML = `<div class="status error">${esc(err.message)}</div>`; }
+    }
+    function renderHrNewsForm() {
+      $("hrViewTitle").textContent = "Publicar Noticias HHRR";
+      $("hrViewHint").textContent = "Visible en el inicio de HHRR según permisos.";
+      $("hrWorkspace").innerHTML = `<div class="hr-form">${[1,2,3,4,5].map(i => `<label class="wide">Noticia ${i}<textarea id="hrNews${i}"></textarea></label>`).join("")}<button onclick="publishHrNews()">Publicar noticias</button></div>`;
+    }
+    async function publishHrNews() {
+      const payload = {};
+      [1,2,3,4,5].forEach(i => payload[`noticia_${i}`] = valueFrom(`hrNews${i}`));
+      try { await postJSON("/noticias", payload); hrStatus("Noticias publicadas."); await loadHrNews(); }
+      catch (err) { hrStatus(err.message, true); }
+    }
+    function showObjectModal(title, data) {
+      document.body.insertAdjacentHTML("beforeend", `<div class="modal-backdrop" id="svcModal"><div class="modal"><div class="modal-head"><h2>${esc(title)}</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>${hrTable(Object.entries(data || {}).map(([key,value]) => ({ key, value:typeof value === "object" ? JSON.stringify(value) : value })), ["key","value"])}</div></div>`);
+    }
     function renderComingSoon(mod) {
       $("content").innerHTML = `<div class="card panel"><div class="panel-head"><h2>${mod.title}</h2></div><div class="status">Seleccione una opción del módulo para continuar.</div></div>`;
     }
@@ -6782,6 +7148,7 @@ def som_web_home() -> HTMLResponse:
       if (currentModule === "master_data") renderMasterData();
       if (currentModule === "servicios") renderServicios();
       if (currentModule === "finanzas") renderFinanzas();
+      if (currentModule === "hhrre" || currentModule === "hhrr") renderHHRR();
     };
     function changeCompany(value) {
       if (!value) return;
@@ -6806,6 +7173,7 @@ def som_web_home() -> HTMLResponse:
       if (currentModule === "master_data") renderMasterData();
       if (currentModule === "servicios") renderServicios();
       if (currentModule === "finanzas") renderFinanzas();
+      if (currentModule === "hhrre" || currentModule === "hhrr") renderHHRR();
     }
     $("company").onchange = () => changeCompany($("company").value);
     $("companyTop").onchange = () => changeCompany($("companyTop").value);
@@ -6814,6 +7182,7 @@ def som_web_home() -> HTMLResponse:
       else resetKpisForManualLoad();
       if (currentModule === "servicios") renderServicios();
       if (currentModule === "finanzas") renderFinanzas();
+      if (currentModule === "hhrre" || currentModule === "hhrr") renderHHRR();
     };
     document.addEventListener("click", closeExcelFilterMenus);
     const contentObserver = new MutationObserver(() => enhanceExcelTables($("content") || document));
