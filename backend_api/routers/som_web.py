@@ -1034,7 +1034,10 @@ def som_web_home() -> HTMLResponse:
       <div id="loginForm" class="form">
         <input id="user" autocomplete="username" placeholder="Usuario" />
         <input id="pass" autocomplete="current-password" placeholder="Contraseña" type="password" />
-        <select id="loginCompany"></select>
+        <select id="loginCompany">
+          <option value="MSL-CR">MSL-CR | MSL MARINE SURVEYORS AND LOGISTICS GROUP SRL</option>
+          <option value="MCI-CR">MCI-CR | MSL MARINE CLAIMS RISK & INTELLIGENCE</option>
+        </select>
         <label class="remember"><input id="rememberDevice" type="checkbox" /> Guardar credenciales en este dispositivo</label>
         <button id="loginBtn">Ingresar</button>
         <button id="bioBtn" class="secondary" type="button">Entrar con Windows Hello / passkey</button>
@@ -1420,6 +1423,7 @@ def som_web_home() -> HTMLResponse:
       return row;
     }
     function fillCompanySelect(select) {
+      if (!select) return;
       select.innerHTML = "";
       DEFAULT_COMPANIES.forEach(c => {
         const option = document.createElement("option");
@@ -1656,7 +1660,13 @@ def som_web_home() -> HTMLResponse:
       }
     }
     function homeJs(value) {
-      return `'${String(value ?? "").replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/\r?\n/g, " ")}'`;
+      const slash = String.fromCharCode(92);
+      const text = String(value ?? "")
+        .split(slash).join(slash + slash)
+        .split("'").join(slash + "'")
+        .split(String.fromCharCode(10)).join(" ")
+        .split(String.fromCharCode(13)).join(" ");
+      return "'" + text + "'";
     }
     function homeEncodedPayload(value) {
       return encodeURIComponent(JSON.stringify(value || {}));
