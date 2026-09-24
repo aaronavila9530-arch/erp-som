@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from fastapi import APIRouter, Header, HTTPException, Query
@@ -18,7 +18,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20260924-control-home-v2"
+_ASSET_VERSION = "20260924-executive-home-v2"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -64,6 +64,19 @@ def _period_start(year: int) -> str:
 
 def _period_end(year: int) -> str:
     return f"{int(year) + 1}-01-01"
+
+
+def _year_start(year: int) -> str:
+    return f"{int(year)}-01-01"
+
+
+def _year_to_date_end(year: int) -> str:
+    today = datetime.now().date()
+    if int(year) < today.year:
+        return f"{int(year) + 1}-01-01"
+    if int(year) > today.year:
+        return f"{int(year)}-01-01"
+    return (today + timedelta(days=1)).isoformat()
 
 
 def _scalar(cur, sql: str, params: tuple) -> float:
@@ -148,6 +161,8 @@ def som_web_summary(
     company = company_code(header_value=x_company_code)
     start = _period_start(selected_year)
     end = _period_end(selected_year)
+    fiscal_start = _year_start(selected_year)
+    fiscal_end = _year_to_date_end(selected_year)
     role = str(x_role or "").strip().lower()
     modules = {item.strip().lower() for item in str(x_modules or "").split(",") if item.strip()}
     is_executive = role in {"admin", "master"}
@@ -162,8 +177,15 @@ def som_web_summary(
         )
         invoiced = _safe_scalar(
             cur,
-            "SELECT COALESCE(SUM(total),0) FROM collections WHERE company_code=%s AND fecha_emision >= %s AND fecha_emision < %s",
-            (company, start, end),
+            """
+            SELECT COALESCE(SUM(total),0)
+            FROM invoicing
+            WHERE company_code=%s
+              AND fecha_emision >= %s
+              AND fecha_emision < %s
+              AND COALESCE(estado,'') NOT IN ('ANULADA','VOID','CANCELADA')
+            """,
+            (company, fiscal_start, fiscal_end),
         ) if is_finance_role else 0.0
         ar = _safe_scalar(
             cur,
@@ -196,26 +218,36 @@ def som_web_summary(
             ),
             cxc AS (
                 SELECT date_trunc('month', fecha_emision)::date AS month_start,
-                       COUNT(*) AS invoices,
-                       COALESCE(SUM(total),0) AS invoiced,
                        COALESCE(SUM(saldo_pendiente),0) AS ar_open
                 FROM collections
                 WHERE company_code=%s
                   AND fecha_emision >= (SELECT MIN(month_start) FROM months)
                   AND fecha_emision < ((SELECT MAX(month_start) FROM months) + INTERVAL '1 month')
                 GROUP BY date_trunc('month', fecha_emision)::date
+            ),
+            inv AS (
+                SELECT date_trunc('month', fecha_emision)::date AS month_start,
+                       COUNT(*) AS invoices,
+                       COALESCE(SUM(total),0) AS invoiced
+                FROM invoicing
+                WHERE company_code=%s
+                  AND fecha_emision >= (SELECT MIN(month_start) FROM months)
+                  AND fecha_emision < ((SELECT MAX(month_start) FROM months) + INTERVAL '1 month')
+                  AND COALESCE(estado,'') NOT IN ('ANULADA','VOID','CANCELADA')
+                GROUP BY date_trunc('month', fecha_emision)::date
             )
             SELECT TO_CHAR(m.month_start, 'YYYY-MM') AS month,
                    COALESCE(svc.services,0) AS services,
-                   COALESCE(cxc.invoices,0) AS invoices,
-                   COALESCE(cxc.invoiced,0) AS invoiced,
+                   COALESCE(inv.invoices,0) AS invoices,
+                   COALESCE(inv.invoiced,0) AS invoiced,
                    COALESCE(cxc.ar_open,0) AS ar_open
             FROM months m
             LEFT JOIN svc ON svc.month_start = m.month_start
             LEFT JOIN cxc ON cxc.month_start = m.month_start
+            LEFT JOIN inv ON inv.month_start = m.month_start
             ORDER BY m.month_start
             """,
-            (end, end, company, company),
+            (end, end, company, company, company),
         )
         service_mix = _query_rows(
             cur,
@@ -237,17 +269,17 @@ def som_web_summary(
             """
             SELECT COALESCE(NULLIF(TRIM(nombre_cliente),''), codigo_cliente, 'Sin cliente') AS client,
                    COUNT(*) AS invoices,
-                   COALESCE(SUM(total),0) AS amount,
-                   COALESCE(SUM(saldo_pendiente),0) AS ar_open
-            FROM collections
+                   COALESCE(SUM(total),0) AS amount
+            FROM invoicing
             WHERE company_code=%s
               AND fecha_emision >= %s
               AND fecha_emision < %s
+              AND COALESCE(estado,'') NOT IN ('ANULADA','VOID','CANCELADA')
             GROUP BY COALESCE(NULLIF(TRIM(nombre_cliente),''), codigo_cliente, 'Sin cliente')
             ORDER BY amount DESC, invoices DESC
             LIMIT 3
             """,
-            (company, start, end),
+            (company, fiscal_start, fiscal_end),
         ) if is_executive else []
         aging = _query_rows(
             cur,
@@ -275,6 +307,8 @@ def som_web_summary(
             "company_code": company,
             "year": selected_year,
             "from": start,
+            "fiscal_from": fiscal_start,
+            "fiscal_to": fiscal_end,
             "visibility": {
                 "executive": is_executive,
                 "finance": is_finance_role,
@@ -706,7 +740,7 @@ def som_web_home() -> HTMLResponse:
     .home-mini-list { display:grid; gap:8px; }
     .home-mini-list div { display:flex; justify-content:space-between; gap:12px; border-bottom:1px solid #edf2f7; padding:7px 0; }
     .home-mini-list strong { color:#122033; }
-    .home-exec-grid { display:grid; grid-template-columns:minmax(0,1.35fr) minmax(300px,.75fr); gap:12px; align-items:start; }
+    .home-exec-grid { display:grid; grid-template-columns:minmax(460px,1.45fr) minmax(340px,.85fr); gap:12px; align-items:stretch; }
     .chart-card { min-width:0; }
     .chart-combo { min-height:230px; display:flex; align-items:flex-end; gap:10px; padding:12px 6px 6px; border-bottom:1px solid #d8e3ee; }
     .combo-col { flex:1; min-width:44px; display:grid; grid-template-rows:1fr auto; gap:7px; align-items:end; height:210px; }
@@ -718,15 +752,21 @@ def som_web_home() -> HTMLResponse:
     .legend-dot { width:10px; height:10px; display:inline-block; border-radius:3px; margin-right:5px; background:#005da8; }
     .legend-dot.ar { background:#029fcf; }
     .legend-dot.services { background:#0f172a; }
-    .mini-bars { display:grid; gap:8px; }
-    .mini-bar-row { display:grid; grid-template-columns:minmax(120px,1fr) minmax(120px,1.2fr) max-content; gap:9px; align-items:center; font-size:13px; }
+    .mini-bars { display:grid; gap:8px; min-width:0; }
+    .mini-bar-row { display:grid; grid-template-columns:minmax(110px,1fr) minmax(90px,1.2fr) max-content; gap:9px; align-items:center; font-size:13px; min-width:0; }
+    .mini-bar-row strong { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .mini-track { height:10px; background:#e8eef5; border-radius:999px; overflow:hidden; }
     .mini-fill { height:100%; background:#00703c; border-radius:999px; }
-    .pie-wrap { display:grid; grid-template-columns:118px minmax(0,1fr); gap:12px; align-items:center; }
-    .css-pie { width:112px; aspect-ratio:1; border-radius:50%; background:conic-gradient(#005da8 0 45%, #029fcf 45% 72%, #087a52 72% 88%, #b7791f 88% 100%); box-shadow:inset 0 0 0 26px #fff; border:1px solid #d7e1ec; }
+    .pie-wrap { display:grid; grid-template-columns:96px minmax(0,1fr); gap:12px; align-items:center; min-width:0; }
+    .pie-metric { text-align:center; display:grid; gap:7px; justify-items:center; }
+    .pie-metric strong { font-size:22px; line-height:1; }
+    .pie-metric span { color:#607086; font-size:11px; font-weight:800; text-transform:uppercase; }
+    .css-pie { width:92px; aspect-ratio:1; border-radius:50%; background:conic-gradient(#005da8 0 45%, #029fcf 45% 72%, #087a52 72% 88%, #b7791f 88% 100%); box-shadow:inset 0 0 0 21px #fff; border:1px solid #d7e1ec; }
+    .pie-wrap .mini-bar-row { grid-template-columns:minmax(0,1fr) minmax(64px,.7fr) 22px; gap:7px; }
     .home-pill-list { display:grid; gap:8px; }
     .home-pill-list div { display:flex; justify-content:space-between; gap:12px; padding:9px 10px; border:1px solid #e2eaf3; border-radius:8px; background:#fbfdff; }
     .home-pill-list strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .home-pill-list span { text-align:right; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .md-actions { display:flex; flex-wrap:wrap; gap:10px; margin:12px 0 14px; }
     .filters { display:flex; flex-wrap:wrap; gap:10px; align-items:center; padding:12px; margin-bottom:12px; }
     .filters.service-filters { display:grid; grid-template-columns:1.4fr repeat(4,minmax(130px,1fr)) auto auto; align-items:end; }
@@ -1497,7 +1537,7 @@ def som_web_home() -> HTMLResponse:
           financeVisible
             ? [
                 { label:"Servicios", value:data.kpis.services || 0, hint:"Desde agosto", format:"int" },
-                { label:"Facturación", value:data.kpis.invoiced || 0, hint:"Collections del año", format:"money" },
+                { label:"Facturación", value:data.kpis.invoiced || 0, hint:"Emitido año a fecha", format:"money" },
                 { label:"CxC", value:data.kpis.ar || 0, hint:"Saldo pendiente", format:"money" },
                 { label:"Informes", value:data.kpis.reports || 0, hint:"Desde agosto", format:"int" }
               ]
@@ -1634,15 +1674,15 @@ def som_web_home() -> HTMLResponse:
           ${renderComboChart(months, canFinance)}
         </div>
         <div class="card panel">
-          <div class="panel-head"><h2>Servicio más ofrecido</h2><span class="muted">${$("year").value}</span></div>
+          <div class="panel-head"><h2>Mix de servicios</h2><span class="muted">${$("year").value}</span></div>
           ${renderServiceMix(serviceMix)}
         </div>`;
       if (canExecutive) {
         side.className = "";
         side.innerHTML = `
           <div class="home-pill-list">
-            <div><strong>Top cliente</strong><span>${esc(topClients[0]?.client || "-")}</span></div>
-            <div><strong>Facturación top 3</strong><span>${money(topClients.reduce((s,r) => s + Number(r.amount || 0), 0))}</span></div>
+            <div><strong>Top cliente</strong><span title="${esc(topClients[0]?.client || "-")}">${esc(topClients[0]?.client || "-")}</span></div>
+            <div><strong>Facturación top 3</strong><span title="${money(topClients.reduce((s,r) => s + Number(r.amount || 0), 0))}">${money(topClients.reduce((s,r) => s + Number(r.amount || 0), 0))}</span></div>
             <div><strong>CxC abierta</strong><span>${money(data.kpis?.ar || 0)}</span></div>
           </div>
           <h3 style="margin:14px 0 8px;font-size:14px">Top 3 clientes del año</h3>
@@ -1651,7 +1691,7 @@ def som_web_home() -> HTMLResponse:
           ${renderAging(aging)}`;
       } else if (canFinance) {
         side.className = "";
-        side.innerHTML = `<div class="home-pill-list"><div><strong>CxC abierta</strong><span>${money(data.kpis?.ar || 0)}</span></div><div><strong>Facturación año</strong><span>${money(data.kpis?.invoiced || 0)}</span></div></div><h3 style="margin:14px 0 8px;font-size:14px">Aging CxC</h3>${renderAging(aging)}`;
+        side.innerHTML = `<div class="home-pill-list"><div><strong>CxC abierta</strong><span>${money(data.kpis?.ar || 0)}</span></div><div><strong>Facturación año a fecha</strong><span>${money(data.kpis?.invoiced || 0)}</span></div></div><h3 style="margin:14px 0 8px;font-size:14px">Aging CxC</h3>${renderAging(aging)}`;
       } else {
         side.className = "status";
         side.textContent = "Tu inicio muestra pendientes operativos y servicios. Las métricas financieras se ocultan por rol/permisos.";
@@ -1679,12 +1719,13 @@ def som_web_home() -> HTMLResponse:
         start += pct;
         return part;
       }).join(", ");
-      return `<div class="pie-wrap"><div class="css-pie" style="background:conic-gradient(${stops})"></div><div class="mini-bars">${rows.slice(0,5).map((row,i) => `<div class="mini-bar-row"><strong>${esc(row.label)}</strong><div class="mini-track"><div class="mini-fill" style="width:${Math.max(5, Number(row.value || 0) / total * 100)}%;background:${colors[i % colors.length]}"></div></div><span>${esc(row.value)}</span></div>`).join("")}</div></div>`;
+      const top = rows[0] || {};
+      return `<div class="pie-wrap"><div class="pie-metric"><div class="css-pie" style="background:conic-gradient(${stops})"></div><strong>${esc(top.value || 0)}</strong><span title="${esc(top.label || "")}">${esc(top.label || "Sin datos")}</span></div><div class="mini-bars">${rows.slice(0,5).map((row,i) => `<div class="mini-bar-row"><strong title="${esc(row.label)}">${esc(row.label)}</strong><div class="mini-track"><div class="mini-fill" style="width:${Math.max(5, Number(row.value || 0) / total * 100)}%;background:${colors[i % colors.length]}"></div></div><span>${esc(row.value)}</span></div>`).join("")}</div></div>`;
     }
     function renderTopClients(rows) {
       if (!rows.length) return '<div class="status">Visible solo para admin/master o sin datos del año.</div>';
       const max = Math.max(...rows.map(r => Number(r.amount || 0)), 1);
-      return `<div class="mini-bars">${rows.map(row => `<div class="mini-bar-row"><strong>${esc(row.client)}</strong><div class="mini-track"><div class="mini-fill" style="width:${Math.max(5, Number(row.amount || 0) / max * 100)}%"></div></div><span>${money(row.amount)}</span></div>`).join("")}</div>`;
+      return `<div class="mini-bars">${rows.map(row => `<div class="mini-bar-row"><strong title="${esc(row.client)}">${esc(row.client)}</strong><div class="mini-track"><div class="mini-fill" style="width:${Math.max(5, Number(row.amount || 0) / max * 100)}%"></div></div><span>${money(row.amount)}</span></div>`).join("")}</div>`;
     }
     function renderAging(rows) {
       if (!rows.length) return '<div class="status">Sin CxC abierta visible.</div>';
