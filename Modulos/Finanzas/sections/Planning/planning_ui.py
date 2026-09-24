@@ -26,6 +26,9 @@ class FinancePlanningUI(tk.Frame):
         self._build()
 
     def _build(self):
+        style = ttk.Style(self)
+        style.configure("PLN.Treeview", rowheight=30)
+        style.configure("PLN.Treeview.Heading", font=("Segoe UI", 9, "bold"))
         header = tk.Frame(self, bg="white")
         header.pack(fill="x", padx=12, pady=(8, 4))
         title = tk.Frame(header, bg="white")
@@ -81,7 +84,7 @@ class FinancePlanningUI(tk.Frame):
     def _add_tree(self, key, title, columns):
         frame = ttk.Frame(self.tabs, padding=5)
         self.tabs.add(frame, text=title)
-        tree = ttk.Treeview(frame, columns=columns, show="headings")
+        tree = ttk.Treeview(frame, columns=columns, show="headings", style="PLN.Treeview")
         y = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
         x = ttk.Scrollbar(frame, orient="horizontal", command=tree.xview)
         tree.configure(yscrollcommand=y.set, xscrollcommand=x.set)
@@ -92,7 +95,14 @@ class FinancePlanningUI(tk.Frame):
         frame.columnconfigure(0, weight=1)
         for col in columns:
             tree.heading(col, text=col.replace("_", " ").title())
-            tree.column(col, width=240 if col in {"payee_name", "account_name", "name", "nombre_proyecto"} else 130)
+            wide_cols = {"payee_name", "account_name", "name", "nombre_proyecto", "message", "concept", "client_name"}
+            money_cols = {"amount", "balance", "actual_amount", "target_amount", "progress_amount", "expected_revenue", "expected_cost", "expected_profit", "monthly_savings", "planned_inflow", "planned_outflow", "planned_saving"}
+            width = 320 if col in wide_cols else 150
+            if col in money_cols:
+                width = 170
+            if col in {"id", "count", "status", "priority", "currency", "currency_code"}:
+                width = 110
+            tree.column(col, width=width, minwidth=min(width, 140), stretch=False)
         self.trees[key] = tree
 
     def search(self):
