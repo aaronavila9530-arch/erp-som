@@ -18,7 +18,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20260924-login-guard-v1"
+_ASSET_VERSION = "20260924-login-syntax-v1"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -6924,7 +6924,7 @@ def som_web_home() -> HTMLResponse:
     function renderHrRequests() {
       $("hrViewTitle").textContent = "Solicitudes HHRR";
       $("hrViewHint").textContent = "Vacaciones, incapacidades, constancias y aprobación.";
-      const adminTools = canHr("requests_approve") ? '<button class="green" onclick="resolveHrRequest(\'approve\')">Aprobar</button><button class="brown" onclick="resolveHrRequest(\'reject\')">Rechazar</button>' : "";
+      const adminTools = canHr("requests_approve") ? `<button class="green" onclick="resolveHrRequest('approve')">Aprobar</button><button class="brown" onclick="resolveHrRequest('reject')">Rechazar</button>` : "";
       const createTools = canHr("requests_create") ? `
         <details class="pln-section"><summary>Nueva solicitud</summary><div class="pln-section-body">
           <div class="hr-form">
@@ -6971,7 +6971,7 @@ def som_web_home() -> HTMLResponse:
     function renderHrHours() {
       $("hrViewTitle").textContent = "Registro de Horas";
       $("hrViewHint").textContent = "Registro, edición y aprobación según permisos.";
-      const approveTools = canHr("hours_approve") ? '<button class="green" onclick="setHrHourStatus(\'APROBADO\')">Aprobar</button><button class="brown" onclick="setHrHourStatus(\'RECHAZADO\')">Rechazar</button>' : "";
+      const approveTools = canHr("hours_approve") ? `<button class="green" onclick="setHrHourStatus('APROBADO')">Aprobar</button><button class="brown" onclick="setHrHourStatus('RECHAZADO')">Rechazar</button>` : "";
       const registerTools = canHr("hours_register") ? `
         <details class="pln-section"><summary>Registrar horas</summary><div class="pln-section-body">
           <div class="hr-form">
