@@ -18,7 +18,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20260923-accounting-reconis-v3"
+_ASSET_VERSION = "20260924-accounting-reconis-v4"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Servicios, facturación, CxC e informes desde agosto en adelante."},
@@ -417,7 +417,7 @@ def som_web_home() -> HTMLResponse:
     .finance-toolbar { display:flex; flex-wrap:wrap; gap:8px; margin:8px 0 12px; }
     .finance-toolbar button { height:34px; }
     .accounting-shell { display:grid; gap:10px; }
-    .accounting-hero { display:grid; grid-template-columns:repeat(4,minmax(150px,1fr)); gap:10px; align-items:stretch; }
+    .accounting-hero { display:grid; grid-template-columns:repeat(3,minmax(150px,1fr)); gap:10px; align-items:stretch; }
     .accounting-title { padding:14px; border:1px solid #d7e1ec; border-radius:8px; background:#fff; }
     .accounting-title h2 { margin:0; font-size:26px; line-height:1.1; }
     .accounting-title p { margin:6px 0 0; color:#607089; }
@@ -425,8 +425,8 @@ def som_web_home() -> HTMLResponse:
     .accounting-kpi span { display:block; color:#64748b; font-size:11px; font-weight:800; letter-spacing:.04em; text-transform:uppercase; }
     .accounting-kpi strong { display:block; margin-top:6px; color:#0f172a; font-size:21px; }
     .accounting-company { display:inline-flex; align-items:center; min-height:25px; margin-top:7px; border:1px solid #b8d5f1; border-radius:999px; padding:3px 10px; background:#edf7ff; color:#005da8; font-size:12px; font-weight:800; }
-    .accounting-topline { display:grid; grid-template-columns:minmax(420px,1fr) minmax(360px,520px); gap:10px; align-items:stretch; }
-    .accounting-tc { display:grid; grid-template-columns:minmax(100px,1fr) minmax(120px,1fr) max-content; gap:8px; align-items:end; padding:10px; border:1px solid #d7e1ec; border-radius:8px; background:#fff; }
+    .accounting-topline { display:grid; grid-template-columns:minmax(300px,1fr) minmax(320px,520px); gap:10px; align-items:stretch; }
+    .accounting-tc { display:grid; grid-template-columns:minmax(80px,1fr) minmax(115px,1fr) max-content; gap:8px; align-items:end; padding:10px; border:1px solid #d7e1ec; border-radius:8px; background:#fff; }
     .accounting-tc h3,.accounting-filter-box h3 { grid-column:1/-1; margin:0 0 2px; font-size:13px; color:#334155; font-weight:800; }
     .accounting-tc label,.accounting-filter-box label { display:grid; gap:4px; color:#475569; font-size:12px; font-weight:700; }
     .accounting-tc input { height:32px; }
@@ -440,13 +440,13 @@ def som_web_home() -> HTMLResponse:
     .accounting-actions button.green { background:var(--green); color:white; border-color:var(--green); }
     .accounting-actions button.brown { background:var(--brown); color:white; border-color:var(--brown); }
     .accounting-filter-box { padding:10px; border:1px solid #d7e1ec; border-radius:8px; background:#fff; }
-    .accounting-filters { display:grid; grid-template-columns:150px repeat(6,minmax(130px,1fr)) repeat(2,max-content); gap:9px; align-items:end; }
+    .accounting-filters { display:grid; grid-template-columns:150px repeat(3,minmax(135px,1fr)) minmax(180px,1.1fr) minmax(165px,1fr) repeat(2,max-content); gap:9px; align-items:end; }
     .accounting-filters label { display:grid; gap:5px; color:#475569; font-size:12px; font-weight:700; text-transform:uppercase; }
     .accounting-filters input,.accounting-filters select { min-width:0; height:34px; }
     .accounting-radio { display:flex; gap:10px; align-items:center; height:34px; border:1px solid #d7e1ec; border-radius:7px; padding:0 9px; background:#f8fbfe; }
     .accounting-radio label { display:flex; grid-auto-flow:column; gap:6px; align-items:center; text-transform:none; font-weight:700; color:#334155; }
     .accounting-radio input { width:14px; height:14px; }
-    .accounting-toolbar { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:10px; padding-top:10px; border-top:1px solid #edf2f7; }
+    .accounting-toolbar { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:10px; padding-top:10px; border-top:1px solid #edf2f7; max-width:100%; overflow:visible; }
     .accounting-toolbar button,.accounting-menu summary { height:34px; border:1px solid #cfd9e5; border-radius:7px; padding:0 12px; background:#fff; color:#122033; display:inline-flex; align-items:center; cursor:pointer; font-weight:600; }
     .accounting-toolbar button.primary { background:var(--blue); color:#fff; border-color:var(--blue); }
     .accounting-menu { position:relative; }
@@ -467,6 +467,13 @@ def som_web_home() -> HTMLResponse:
     .accounting-entry-lines-box table { width:100%; border-collapse:collapse; }
     .accounting-entry-lines-box th,.accounting-entry-lines-box td { padding:6px 8px; border-bottom:1px solid #edf2f7; font-weight:400; }
     .accounting-entry-toggle { display:inline-flex; align-items:center; justify-content:center; width:24px; height:24px; border:1px solid #cfd9e5; border-radius:6px; background:#fff; color:#005da8; font-weight:900; }
+    .accounting-report-head { display:flex; flex-wrap:wrap; justify-content:space-between; gap:10px; align-items:center; margin:0 0 10px; }
+    .accounting-report-head h3 { margin:0; font-size:16px; }
+    .accounting-report-head .muted { font-size:12px; }
+    .accounting-summary-grid { display:grid; grid-template-columns:repeat(4,minmax(160px,1fr)); gap:10px; margin-bottom:10px; }
+    .accounting-summary-card { border:1px solid #d7e1ec; border-radius:8px; background:#f8fbfe; padding:10px; }
+    .accounting-summary-card span { display:block; color:#64748b; font-size:11px; font-weight:800; letter-spacing:.04em; text-transform:uppercase; }
+    .accounting-summary-card strong { display:block; margin-top:5px; color:#0f172a; font-size:19px; }
     .accounting-alerts { display:grid; gap:8px; }
     .accounting-alert-item { border:1px solid #e5edf6; border-left:4px solid #f59e0b; border-radius:7px; padding:8px 10px; background:#fff; }
     .accounting-alert-item.critical { border-left-color:#b42318; background:#fff7f6; }
@@ -703,6 +710,7 @@ def som_web_home() -> HTMLResponse:
     let selectedBankLineIndexes = new Set();
     let selectedGenericFinanceIndexes = new Set();
     let accountingRows = [];
+    let accountingEntryViewRows = [];
     let selectedAccountingEntryId = null;
     let expandedAccountingEntryIds = new Set();
     let accountingAccounts = [];
@@ -1350,7 +1358,6 @@ def som_web_home() -> HTMLResponse:
             <div class="accounting-kpi"><span>Debe periodo</span><strong id="accKpiDebit">-</strong></div>
             <div class="accounting-kpi"><span>Haber periodo</span><strong id="accKpiCredit">-</strong></div>
             <div class="accounting-kpi"><span>IVA neto</span><strong id="accKpiIva">-</strong></div>
-            <div class="accounting-kpi"><span>Salud cierre</span><strong id="accKpiHealth">-</strong></div>
           </div>
           <div class="accounting-filter-box">
             <h3>Filtros contables</h3>
@@ -1382,8 +1389,6 @@ def som_web_home() -> HTMLResponse:
           </div>
           <div class="accounting-grid">
             <main class="accounting-work">
-              <div id="accAutomationStatus" class="accounting-banner">Automático: BAC/Gmail cada 15 min; estados de tarjeta se procesan desde PDF recibido y se contabilizan el día 3 del mes.</div>
-              <div id="accSelection" class="accounting-banner">Seleccione un asiento desde la tabla para ajustar, aprobar, contabilizar o reversar.</div>
               <div id="accountingResult" class="status">Configure filtros y presione Buscar.</div>
             </main>
           </div>
@@ -1402,7 +1407,7 @@ def som_web_home() -> HTMLResponse:
     }
     async function initAccountingWeb() {
       selectedAccountingEntryId = null;
-      await Promise.allSettled([loadAccountingAccountOptions(), refreshAccountingDashboard(), ensureAccountingBackendAutomation()]);
+      await Promise.allSettled([loadAccountingAccountOptions(), refreshAccountingDashboard()]);
     }
     function setAccountingMode(mode) {
       if ($("accMode")) $("accMode").value = mode;
@@ -1490,9 +1495,41 @@ def som_web_home() -> HTMLResponse:
       const report = valueFrom("accReport") || "BC";
       if (report === "ASIENTOS") return renderAccountingEntryGroups(rows);
       if (report === "BC") return renderAccountingTrialBalance(rows);
-      return renderAccountingLines(rows);
+      if (report === "ANALITICO_CUENTA") return renderAccountingAnalytic(rows);
+      if (report === "DETALLE_TIPO") return renderAccountingTypeDetail(rows);
+      return renderAccountingGroupedLines(rows);
+    }
+    function groupAccountingFlatLines(rows) {
+      const map = new Map();
+      rows.forEach((row, idx) => {
+        const id = String(row.entry_id || `SIN_ASIENTO_${idx}`);
+        const entry = map.get(id) || {
+          entry_id: row.entry_id || "",
+          entry_date: row.entry_date || "",
+          period: row.period || "",
+          origin: row.origin || "",
+          workflow_status: row.workflow_status || "",
+          description: row.entry_description || row.description || row.line_description || "",
+          lines: []
+        };
+        entry.lines.push({
+          line_id: row.line_id || "",
+          account_code: row.account_code || "",
+          account_name: row.account_name || "",
+          account_type: row.account_type || "",
+          line_description: row.line_description || "",
+          debit: row.debit || 0,
+          credit: row.credit || 0
+        });
+        map.set(id, entry);
+      });
+      return [...map.values()];
+    }
+    function renderAccountingGroupedLines(rows) {
+      return renderAccountingEntryGroups(groupAccountingFlatLines(rows));
     }
     function renderAccountingEntryGroups(rows) {
+      accountingEntryViewRows = Array.isArray(rows) ? rows : [];
       const fmt = n => Number(n || 0).toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2});
       const totals = entry => (entry.lines || []).reduce((acc,line) => {
         acc.debit += Number(line.debit || 0);
@@ -1514,16 +1551,14 @@ def som_web_home() -> HTMLResponse:
       return `<table><thead><tr><th>Línea</th><th>Cuenta</th><th>Nombre</th><th>Detalle</th><th>Debe</th><th>Haber</th></tr></thead><tbody>${lines.map(line => `<tr><td>${esc(line.line_id || "")}</td><td>${esc(line.account_code || "")}</td><td>${esc(line.account_name || "")}</td><td>${esc(line.line_description || "")}</td><td>${fmt(line.debit)}</td><td>${fmt(line.credit)}</td></tr>`).join("")}</tbody></table>`;
     }
     function toggleAccountingEntryGroup(index) {
-      const entry = accountingRows[index];
+      const entry = accountingEntryViewRows[index];
       if (!entry) return;
       const id = String(entry.entry_id || "");
       selectedAccountingEntryId = entry.entry_id || null;
       if (expandedAccountingEntryIds.has(id)) expandedAccountingEntryIds.delete(id);
       else expandedAccountingEntryIds.add(id);
-      const banner = $("accSelection");
-      if (banner) banner.textContent = selectedAccountingEntryId ? `Asiento seleccionado: ${selectedAccountingEntryId} · ${entry.entry_date || ""} · ${entry.origin || ""} · ${entry.workflow_status || ""}` : "Seleccione un asiento desde la tabla.";
       const target = $("accountingResult");
-      if (target) target.innerHTML = renderAccountingEntryGroups(accountingRows);
+      if (target) target.innerHTML = renderAccountingPreview(accountingRows);
     }
     function renderAccountingLines(rows) {
       const cols = ["entry_date","entry_id","period","origin","workflow_status","account_code","account_name","account_type","line_description","debit","credit"];
@@ -1536,10 +1571,67 @@ def som_web_home() -> HTMLResponse:
     function selectAccountingEntry(index) {
       const row = accountingRows[index];
       selectedAccountingEntryId = row?.entry_id || null;
-      const banner = $("accSelection");
-      if (banner) banner.textContent = selectedAccountingEntryId ? `Asiento seleccionado: ${selectedAccountingEntryId} · ${row.entry_date || ""} · ${row.origin || ""} · ${row.workflow_status || ""}` : "Seleccione un asiento desde la tabla.";
       const target = $("accountingResult");
       if (target && accountingRows.length) target.innerHTML = renderAccountingPreview(accountingRows);
+    }
+    function renderAccountingAnalytic(rows) {
+      const fmt = n => Number(n || 0).toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2});
+      const account = accountingResolveAccount(valueFrom("accAccountCode"));
+      const debit = rows.reduce((sum,row) => sum + Number(row.debit || 0), 0);
+      const credit = rows.reduce((sum,row) => sum + Number(row.credit || 0), 0);
+      const header = `<div class="accounting-report-head"><h3>Analítico de cuenta</h3><span class="muted">${esc(account || "Seleccione una cuenta o abra una cuenta del resumen")}</span></div>`;
+      if (!account) {
+        const map = new Map();
+        rows.forEach(row => {
+          const code = String(row.account_code || "").trim();
+          if (!code) return;
+          const item = map.get(code) || {account_code:code, account_name:row.account_name || "", account_type:row.account_type || "", debit:0, credit:0, lines:0};
+          item.debit += Number(row.debit || 0);
+          item.credit += Number(row.credit || 0);
+          item.lines += 1;
+          map.set(code, item);
+        });
+        const out = [...map.values()].sort((a,b) => Math.abs((b.debit - b.credit)) - Math.abs((a.debit - a.credit)));
+        return `${header}<div class="accounting-summary-grid">
+          <div class="accounting-summary-card"><span>Debe</span><strong>${fmt(debit)}</strong></div>
+          <div class="accounting-summary-card"><span>Haber</span><strong>${fmt(credit)}</strong></div>
+          <div class="accounting-summary-card"><span>Saldo neto</span><strong>${fmt(debit - credit)}</strong></div>
+          <div class="accounting-summary-card"><span>Cuentas</span><strong>${out.length}</strong></div>
+        </div><div class="table-wrap"><table><thead><tr><th>Cuenta</th><th>Nombre</th><th>Tipo</th><th>Líneas</th><th>Debe</th><th>Haber</th><th>Saldo</th></tr></thead><tbody>${out.map(row => `<tr onclick="pickAccountingAccount(${JSON.stringify(row.account_code || "")})" class="accounting-entry-summary"><td>${esc(row.account_code)}</td><td>${esc(row.account_name)}</td><td>${esc(row.account_type)}</td><td>${row.lines}</td><td>${fmt(row.debit)}</td><td>${fmt(row.credit)}</td><td>${fmt(row.debit - row.credit)}</td></tr>`).join("")}</tbody></table></div>`;
+      }
+      const byMonth = new Map();
+      rows.forEach(row => {
+        const month = String(row.period || row.entry_date || "").slice(0,7) || "Sin periodo";
+        const item = byMonth.get(month) || {period:month, debit:0, credit:0};
+        item.debit += Number(row.debit || 0);
+        item.credit += Number(row.credit || 0);
+        byMonth.set(month, item);
+      });
+      const monthRows = [...byMonth.values()].sort((a,b) => a.period.localeCompare(b.period));
+      return `${header}<div class="accounting-summary-grid">
+        <div class="accounting-summary-card"><span>Debe</span><strong>${fmt(debit)}</strong></div>
+        <div class="accounting-summary-card"><span>Haber</span><strong>${fmt(credit)}</strong></div>
+        <div class="accounting-summary-card"><span>Saldo neto</span><strong>${fmt(debit - credit)}</strong></div>
+        <div class="accounting-summary-card"><span>Movimientos</span><strong>${rows.length}</strong></div>
+      </div><div class="table-wrap"><table><thead><tr><th>Mes</th><th>Debe</th><th>Haber</th><th>Saldo</th></tr></thead><tbody>${monthRows.map(row => `<tr><td>${esc(row.period)}</td><td>${fmt(row.debit)}</td><td>${fmt(row.credit)}</td><td>${fmt(row.debit - row.credit)}</td></tr>`).join("")}</tbody></table></div>${renderAccountingGroupedLines(rows)}`;
+    }
+    function pickAccountingAccount(code) {
+      if ($("accAccountCode")) $("accAccountCode").value = code;
+      loadAccountingWeb();
+    }
+    function renderAccountingTypeDetail(rows) {
+      const fmt = n => Number(n || 0).toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2});
+      const map = new Map();
+      rows.forEach(row => {
+        const type = String(row.account_type || "SIN TIPO").trim() || "SIN TIPO";
+        const item = map.get(type) || {type, debit:0, credit:0, lines:0};
+        item.debit += Number(row.debit || 0);
+        item.credit += Number(row.credit || 0);
+        item.lines += 1;
+        map.set(type, item);
+      });
+      const out = [...map.values()].sort((a,b) => a.type.localeCompare(b.type));
+      return `<div class="accounting-report-head"><h3>Detalle por tipo de cuenta</h3><span class="muted">${rows.length} líneas contables</span></div><div class="table-wrap"><table><thead><tr><th>Tipo</th><th>Líneas</th><th>Debe</th><th>Haber</th><th>Saldo</th></tr></thead><tbody>${out.map(row => `<tr><td>${esc(row.type)}</td><td>${row.lines}</td><td>${fmt(row.debit)}</td><td>${fmt(row.credit)}</td><td>${fmt(row.debit - row.credit)}</td></tr>`).join("")}</tbody></table></div>${renderAccountingGroupedLines(rows)}`;
     }
     function renderAccountingTrialBalance(rows) {
       const map = new Map();
@@ -1603,7 +1695,6 @@ def som_web_home() -> HTMLResponse:
         if (dashboard?.kpis) {
           $("accKpiDebit").textContent = fmtAccMoney(dashboard.kpis.debit);
           $("accKpiCredit").textContent = fmtAccMoney(dashboard.kpis.credit);
-          $("accKpiHealth").textContent = `${dashboard.health_score ?? "-"}%`;
         }
         if (iva) $("accKpiIva").textContent = fmtAccMoney(iva.iva_total ?? iva?.fiscal?.net_tax);
         applyAccountingTc(fx);
@@ -1617,36 +1708,11 @@ def som_web_home() -> HTMLResponse:
       if ($("accTcDate")) $("accTcDate").value = date || "";
     }
     async function fetchAccountingTc() {
-      const target = $("accAutomationStatus");
       try {
         const fx = await getJSON("/accounting/advanced/fx/rate");
         applyAccountingTc(fx);
-        if (target) target.textContent = `TC BCCR actualizado: ${fmtAccMoney(fx.rate || fx.exchange_rate)} al ${fx.date || fx.rate_date || ""}. BAC/Gmail sigue en revisión automática cada 15 min.`;
       } catch (err) {
-        if (target) target.textContent = `No se pudo consultar TC BCCR: ${err.message}`;
-      }
-    }
-    async function ensureAccountingBackendAutomation() {
-      const target = $("accAutomationStatus");
-      if (!target) return;
-      const account = "contabilidad@mslogisticsgroup.com";
-      try {
-        const current = await getJSON(`/accounting/tax/gmail/status?account_email=${encodeURIComponent(account)}`);
-        let connection = current?.connection || {};
-        if (!connection.auto_enabled || Number(connection.interval_minutes || 0) !== 15) {
-          const payload = {account_email: account, enabled: true, interval_minutes: 15, user: (session?.usuario || "SOM_WEB")};
-          connection = await sendJSON("PUT", "/accounting/tax/gmail/automation", payload);
-        }
-        const next = connection?.next_sync_at ? ` Próxima revisión: ${new Date(connection.next_sync_at).toLocaleString()}.` : "";
-        target.textContent = `Automático activo: BAC/Gmail ${account} cada ${connection?.interval_minutes || 15} min. Los PDF de tarjetas recibidos por correo se importan y contabilizan; el cierre histórico queda programado para el día 3 de cada mes.${next}`;
-      } catch (err) {
-        try {
-          const status = await getJSON(`/accounting/tax/gmail/status?account_email=${encodeURIComponent(account)}`);
-          const auto = status?.connection?.auto_enabled ? `activo cada ${status.connection.interval_minutes || 15} min` : "pendiente de activar";
-          target.textContent = `Automatización BAC/Gmail ${auto}. Tarjetas se procesan desde PDF recibido; no se usan botones manuales en Accounting Web. ${status?.connection?.last_error || err.message || ""}`;
-        } catch {
-          target.textContent = `Automático esperado: BAC/Gmail cada 15 min y tarjetas desde PDF recibido. No se pudo leer estado backend: ${err.message}`;
-        }
+        alert(`No se pudo consultar TC BCCR: ${err.message}`);
       }
     }
     function requireAccountingEntryId() {
