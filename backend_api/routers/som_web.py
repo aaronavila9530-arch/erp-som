@@ -18,7 +18,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20260924-web-tables-v2"
+_ASSET_VERSION = "20260924-web-tables-v3"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -826,7 +826,6 @@ def som_web_home() -> HTMLResponse:
     .home-pill-list span { text-align:right; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .md-actions { display:flex; flex-wrap:wrap; gap:10px; margin:12px 0 14px; }
     .filters { display:flex; flex-wrap:wrap; gap:10px; align-items:center; padding:12px; margin-bottom:12px; }
-    .filters.service-filters { display:grid; grid-template-columns:1.45fr repeat(4,minmax(145px,1fr)) auto auto; align-items:end; padding:0; margin:0; }
     .form-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
     .form-grid label { display:grid; gap:5px; color:#334155; font-size:13px; }
     .form-grid .wide { grid-column:1/-1; }
@@ -838,9 +837,6 @@ def som_web_home() -> HTMLResponse:
     .service-actions button { height:34px; }
     .service-actions.primary-actions button:first-child { min-width:154px; }
     .service-actions.export-actions { justify-content:flex-start; }
-    .service-filter-card { grid-column:1/-1; border:1px solid #d7e1ec; border-radius:9px; background:#fff; padding:12px; }
-    .service-filter-head { display:flex; justify-content:space-between; gap:10px; align-items:center; margin-bottom:10px; }
-    .service-filter-head h3 { margin:0; font-size:13px; color:#334155; text-transform:uppercase; letter-spacing:.04em; }
     .excel-th { cursor:pointer; user-select:none; position:relative; padding-right:22px; }
     .excel-th::after { content:"▾"; position:absolute; right:7px; top:50%; transform:translateY(-50%); color:#607086; font-size:10px; opacity:.75; }
     .excel-th.filtered::after { color:var(--blue); opacity:1; }
@@ -1063,7 +1059,7 @@ def som_web_home() -> HTMLResponse:
       .hero-logo { min-height:300px; padding:22px; }
       .hero-logo img { width:min(88%,520px); height:250px; }
       .form-grid { grid-template-columns:1fr; }
-      .filters.service-filters,.service-command-center { grid-template-columns:1fr; }
+      .service-command-center { grid-template-columns:1fr; }
       .itp-bi-header,.itp-bi-controls,.itp-bi-body,.itp-bi-summary { grid-template-columns:1fr; }
       .itp-bi-totals { grid-template-columns:1fr; }
       .finance-filter-row,.finance-filter-row.compact { grid-template-columns:1fr; }
@@ -6280,7 +6276,7 @@ def som_web_home() -> HTMLResponse:
         <div class="card panel">
           <div class="panel-head">
             <h2>Servicios</h2>
-            <span id="svcCount" class="muted">Presione Buscar</span>
+            <span id="svcCount" class="muted">Cargando servicios...</span>
           </div>
           <div class="service-command-center">
             <section class="service-command-card">
@@ -6305,63 +6301,38 @@ def som_web_home() -> HTMLResponse:
                 <button class="secondary" onclick="exportServicios('excel')">Excel</button>
               </div>
             </section>
-            <section class="service-filter-card">
-              <div class="service-filter-head">
-                <h3>Filtros de búsqueda</h3>
-                <span class="muted">Los encabezados de tabla también filtran y ordenan como Excel.</span>
-              </div>
-              <div class="filters service-filters">
-                <label>Buscar<input id="svcQ" placeholder="Consecutivo, buque, cliente, informe, surveyor..." /></label>
-                <label>Año<select id="svcYear"><option value="">Todos</option></select></label>
-                <label>Tipo<select id="svcTipo"></select></label>
-                <label>Estado<select id="svcEstado"></select></label>
-                <label>Cliente<select id="svcCliente"></select></label>
-                <button onclick="loadServiceMeta().then(() => loadServicios(1)).catch(err => showServiceMsg(err.message, true))">Buscar</button>
-                <button class="secondary" onclick="clearServiceFilters()">Limpiar</button>
-                <label>Continente<select id="svcContinente"></select></label>
-                <label>País<select id="svcPais"></select></label>
-                <label>Puerto<select id="svcPuerto"></select></label>
-                <label>Operación<select id="svcOperacion"></select></label>
-                <label>Surveyor<select id="svcSurveyor"></select></label>
-              </div>
-            </section>
           </div>
           <div id="svcMsg" class="status hidden"></div>
           <div id="svcTable" class="workspace"></div>
         </div>`;
-      for (let y = {year}; y >= {year} - 6; y--) {
-        $("svcYear").insertAdjacentHTML("beforeend", `<option value="${y}"${String(y)===$("year").value ? " selected" : ""}>${y}</option>`);
-      }
-      ["svcTipo","svcEstado","svcCliente","svcContinente","svcPais","svcPuerto","svcOperacion","svcSurveyor"].forEach(id => {
-        if ($(id)) $(id).innerHTML = '<option value="">Todos</option>';
-      });
-      $("svcTable").innerHTML = '<div class="status">Configure filtros y presione Buscar.</div>';
+      $("svcTable").innerHTML = '<div class="status">Cargando servicios. Use los encabezados de la tabla para ordenar o filtrar.</div>';
+      loadServiceMeta().catch(() => null).then(() => loadServicios(1));
     }
     async function loadServiceMeta() {
       const meta = await getJSON("/servicios/_meta/filtros");
       serviceMeta = meta || {};
-      $("svcTipo").innerHTML = options(serviceMeta.tipo, "", "Todos");
-      $("svcEstado").innerHTML = options(serviceMeta.status, "", "Todos");
-      $("svcCliente").innerHTML = options(serviceMeta.cliente, "", "Todos");
-      $("svcOperacion").innerHTML = options(serviceMeta.operacion, "", "Todos");
-      $("svcSurveyor").innerHTML = options(serviceMeta.surveyor, "", "Todos");
+      if ($("svcTipo")) $("svcTipo").innerHTML = options(serviceMeta.tipo, "", "Todos");
+      if ($("svcEstado")) $("svcEstado").innerHTML = options(serviceMeta.status, "", "Todos");
+      if ($("svcCliente")) $("svcCliente").innerHTML = options(serviceMeta.cliente, "", "Todos");
+      if ($("svcOperacion")) $("svcOperacion").innerHTML = options(serviceMeta.operacion, "", "Todos");
+      if ($("svcSurveyor")) $("svcSurveyor").innerHTML = options(serviceMeta.surveyor, "", "Todos");
       const continentes = await getJSON("/cpp/continentes").catch(() => serviceMeta.continente || []);
-      $("svcContinente").innerHTML = options(continentes, "", "Todos");
-      $("svcPais").innerHTML = options(serviceMeta.pais, "", "Todos");
-      $("svcPuerto").innerHTML = options(serviceMeta.puerto, "", "Todos");
-      $("svcContinente").onchange = async () => {
+      if ($("svcContinente")) $("svcContinente").innerHTML = options(continentes, "", "Todos");
+      if ($("svcPais")) $("svcPais").innerHTML = options(serviceMeta.pais, "", "Todos");
+      if ($("svcPuerto")) $("svcPuerto").innerHTML = options(serviceMeta.puerto, "", "Todos");
+      if ($("svcContinente")) $("svcContinente").onchange = async () => {
         const cont = valueFrom("svcContinente");
         const paises = cont ? await getJSON(`/cpp/paises?continente=${encodeURIComponent(cont)}`).catch(() => serviceMeta.pais || []) : serviceMeta.pais || [];
-        $("svcPais").innerHTML = options(paises, "", "Todos");
-        $("svcPuerto").innerHTML = options([], "", "Todos");
+        if ($("svcPais")) $("svcPais").innerHTML = options(paises, "", "Todos");
+        if ($("svcPuerto")) $("svcPuerto").innerHTML = options([], "", "Todos");
       };
-      $("svcPais").onchange = async () => {
+      if ($("svcPais")) $("svcPais").onchange = async () => {
         const pais = valueFrom("svcPais");
         const cont = valueFrom("svcContinente");
         let path = `/cpp/puertos?pais=${encodeURIComponent(pais)}`;
         if (cont) path += `&continente=${encodeURIComponent(cont)}`;
         const puertos = pais ? await getJSON(path).catch(() => serviceMeta.puerto || []) : serviceMeta.puerto || [];
-        $("svcPuerto").innerHTML = options(puertos, "", "Todos");
+        if ($("svcPuerto")) $("svcPuerto").innerHTML = options(puertos, "", "Todos");
       };
     }
     function serviceQueryParams(page=1) {
