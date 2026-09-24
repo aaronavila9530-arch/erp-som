@@ -179,8 +179,9 @@ class DashboardsHomeUI(ttk.Frame):
     def _load_live_home(self):
         year = datetime.now().year
         try:
-            self.summary = api_client.get_som_summary_api(year, modules=self._module_codes()) or {}
-            self.actions_payload = api_client.get_som_action_center_api(year) or {}
+            modules = self._module_codes()
+            self.summary = api_client.get_som_summary_api(year, modules=modules) or {}
+            self.actions_payload = api_client.get_som_action_center_api(year, modules=modules) or {}
         except Exception as exc:
             self._render_error(exc)
             return

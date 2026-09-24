@@ -4092,10 +4092,12 @@ def api_request(method: str, url: str, **kwargs):
     )
 
 
-def get_som_summary_api(anio: int | None = None, modules: list[str] | None = None):
+def get_som_summary_api(anio: int | None = None, modules: list[str] | None = None, permissions: list[str] | None = None):
     headers = {}
     if modules is not None:
         headers["X-Modules"] = ",".join(str(item).strip() for item in modules if str(item).strip())
+    if permissions is not None:
+        headers["X-Permissions"] = ",".join(str(item).strip() for item in permissions if str(item).strip())
     response = api_request(
         "GET",
         "/som/summary",
@@ -4107,11 +4109,17 @@ def get_som_summary_api(anio: int | None = None, modules: list[str] | None = Non
     return response.json()
 
 
-def get_som_action_center_api(anio: int | None = None):
+def get_som_action_center_api(anio: int | None = None, modules: list[str] | None = None, permissions: list[str] | None = None):
+    headers = {}
+    if modules is not None:
+        headers["X-Modules"] = ",".join(str(item).strip() for item in modules if str(item).strip())
+    if permissions is not None:
+        headers["X-Permissions"] = ",".join(str(item).strip() for item in permissions if str(item).strip())
     response = api_request(
         "GET",
         "/som/action-center",
         params={"anio": anio or datetime.now().year},
+        headers=headers,
         timeout=45,
     )
     response.raise_for_status()

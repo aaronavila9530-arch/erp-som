@@ -18,7 +18,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20260924-executive-home-v3"
+_ASSET_VERSION = "20260924-executive-home-v4"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -127,10 +127,20 @@ def _query_rows(cur, sql: str, params: tuple = ()) -> list[dict]:
         return []
 
 
-def _action_item(key: str, module: str, title: str, count: float, severity: str, detail: str, cta: str = "Abrir") -> dict:
+def _action_item(
+    key: str,
+    module: str,
+    title: str,
+    count: float,
+    severity: str,
+    detail: str,
+    cta: str = "Abrir",
+    permission: str | None = None,
+) -> dict:
     return {
         "key": key,
         "module": module,
+        "permission": permission,
         "title": title,
         "count": int(count or 0),
         "severity": severity,
@@ -228,7 +238,7 @@ def som_web_summary(
                   AND fecha_emision >= (SELECT MIN(month_start) FROM months)
                   AND fecha_emision < ((SELECT MAX(month_start) FROM months) + INTERVAL '1 month')
                 GROUP BY date_trunc('month', fecha_emision)::date
-            ),
+            )
             SELECT TO_CHAR(m.month_start, 'YYYY-MM') AS month,
                    COALESCE(svc.services,0) AS services,
                    COALESCE(cxc.ar_open,0) AS ar_open
@@ -327,6 +337,9 @@ def som_web_summary(
 def som_web_action_center(
     anio: int | None = Query(None),
     x_company_code: str | None = Header(None, alias="X-Company-Code"),
+    x_role: str | None = Header(None, alias="X-Role"),
+    x_modules: str | None = Header(None, alias="X-Modules"),
+    x_permissions: str | None = Header(None, alias="X-Permissions"),
 ):
     selected_year = int(anio or datetime.now().year)
     company = company_code(header_value=x_company_code)
@@ -336,6 +349,19 @@ def som_web_action_center(
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
         actions: list[dict] = []
+        role = str(x_role or "").strip().lower()
+        modules = {item.strip().lower() for item in str(x_modules or "").split(",") if item.strip()}
+        permissions = {item.strip().lower() for item in str(x_permissions or "").split(",") if item.strip()}
+        elevated = role in {"admin", "master"}
+
+        def can_show(module: str, permission: str | None = None) -> bool:
+            module_norm = str(module or "").strip().lower()
+            perm_norm = str(permission or "").strip().lower()
+            if elevated:
+                return True
+            if perm_norm and (perm_norm in permissions or f"{module_norm}:{perm_norm}" in permissions):
+                return True
+            return module_norm in modules and not perm_norm
 
         overdue_payments = _safe_action_scalar(
             cur,
@@ -351,7 +377,8 @@ def som_web_action_center(
             """,
             (company,),
         )
-        actions.append(_action_item("itp_overdue", "finanzas", "Pagos vencidos por realizar", overdue_payments, "critical", "Invoice To Pay con saldo vencido.", "Revisar pagos"))
+        if can_show("finanzas"):
+            actions.append(_action_item("itp_overdue", "finanzas", "Pagos vencidos por realizar", overdue_payments, "critical", "Invoice To Pay con saldo vencido.", "Revisar pagos"))
 
         pending_invoices = _safe_action_scalar(
             cur,
@@ -363,7 +390,8 @@ def som_web_action_center(
             """,
             (company,),
         )
-        actions.append(_action_item("collections_open", "finanzas", "Facturas pendientes de cobro", pending_invoices, "warning", "CxC con saldo abierto.", "Abrir CxC"))
+        if can_show("finanzas"):
+            actions.append(_action_item("collections_open", "finanzas", "Facturas pendientes de cobro", pending_invoices, "warning", "CxC con saldo abierto.", "Abrir CxC"))
 
         accounting_unposted = _safe_action_scalar(
             cur,
@@ -375,7 +403,8 @@ def som_web_action_center(
             """,
             (company,),
         )
-        actions.append(_action_item("accounting_unposted", "finanzas", "Asientos pendientes de posteo", accounting_unposted, "warning", "Accounting requiere revisión, aprobación o posteo.", "Abrir Accounting"))
+        if can_show("finanzas"):
+            actions.append(_action_item("accounting_unposted", "finanzas", "Asientos pendientes de posteo", accounting_unposted, "warning", "Accounting requiere revisión, aprobación o posteo.", "Abrir Accounting"))
 
         hr_pending = _safe_action_scalar(
             cur,
@@ -386,7 +415,20 @@ def som_web_action_center(
             """,
             (),
         )
-        actions.append(_action_item("hr_requests", "hhrre", "Solicitudes de HHRR por aprobar", hr_pending, "warning", "Vacaciones, permisos u otros eventos pendientes.", "Abrir HHRR"))
+        if can_show("hhrre", "requests_approve") or can_show("hhrr", "requests_approve") or can_show("hhrre", "approve") or can_show("hhrr", "approve"):
+            actions.append(_action_item("hr_requests", "hhrre", "Solicitudes de HHRR por aprobar", hr_pending, "warning", "Vacaciones, permisos u otros eventos pendientes.", "Abrir HHRR", "requests_approve"))
+
+        hours_pending = _safe_action_scalar(
+            cur,
+            """
+            SELECT COUNT(*)
+            FROM hr_ot_log
+            WHERE UPPER(TRIM(COALESCE(estado,'PENDIENTE')))='PENDIENTE'
+            """,
+            (),
+        )
+        if can_show("hhrre", "hours_approve") or can_show("hhrr", "hours_approve") or can_show("hhrre", "ot_log_status") or can_show("hhrr", "ot_log_status"):
+            actions.append(_action_item("hr_hours_pending", "hhrre", "Horas pendientes de aprobar", hours_pending, "warning", "Registros de horas en espera de aprobación.", "Revisar horas", "hours_approve"))
 
         reports_to_generate = _safe_action_scalar(
             cur,
@@ -405,7 +447,8 @@ def som_web_action_center(
             """,
             (company, start, end),
         )
-        actions.append(_action_item("reports_missing_number", "informes", "Informes pendientes por generar", reports_to_generate, "warning", "Servicios finalizados sin número de informe.", "Abrir informes"))
+        if can_show("informes"):
+            actions.append(_action_item("reports_missing_number", "informes", "Informes pendientes por generar", reports_to_generate, "warning", "Servicios finalizados sin número de informe.", "Abrir informes"))
 
         reports_to_review = _safe_action_scalar(
             cur,
@@ -422,7 +465,8 @@ def som_web_action_center(
             """,
             (company, start, end),
         )
-        actions.append(_action_item("reports_review", "informes", "Informes pendientes de revisar", reports_to_review, "info", "Servicios con informe referenciado y revisión pendiente.", "Revisar informes"))
+        if can_show("informes"):
+            actions.append(_action_item("reports_review", "informes", "Informes pendientes de revisar", reports_to_review, "info", "Servicios con informe referenciado y revisión pendiente.", "Revisar informes"))
 
         services_active = _safe_action_scalar(
             cur,
@@ -436,7 +480,8 @@ def som_web_action_center(
             """,
             (company, start, end),
         )
-        actions.append(_action_item("services_active", "servicios", "Servicios activos por cerrar o actualizar", services_active, "info", "Operaciones abiertas con seguimiento pendiente.", "Abrir servicios"))
+        if can_show("servicios"):
+            actions.append(_action_item("services_active", "servicios", "Servicios activos por cerrar o actualizar", services_active, "info", "Operaciones abiertas con seguimiento pendiente.", "Abrir servicios"))
 
         billable_services = _safe_action_scalar(
             cur,
@@ -451,7 +496,8 @@ def som_web_action_center(
             """,
             (company, start, end),
         )
-        actions.append(_action_item("billing_pending", "finanzas", "Servicios finalizados pendientes de facturar", billable_services, "warning", "Billing debe revisar servicios sin valor de factura.", "Abrir facturación"))
+        if can_show("finanzas"):
+            actions.append(_action_item("billing_pending", "finanzas", "Servicios finalizados pendientes de facturar", billable_services, "warning", "Billing debe revisar servicios sin valor de factura.", "Abrir facturación"))
 
         visible = [item for item in actions if item["count"] > 0]
         visible.sort(key=lambda item: ({"critical": 0, "warning": 1, "info": 2}.get(item["severity"], 3), -item["count"], item["title"]))
@@ -754,6 +800,10 @@ def som_web_home() -> HTMLResponse:
     .pie-metric span { color:#607086; font-size:11px; font-weight:800; text-transform:uppercase; }
     .css-pie { width:92px; aspect-ratio:1; border-radius:50%; background:conic-gradient(#005da8 0 45%, #029fcf 45% 72%, #087a52 72% 88%, #b7791f 88% 100%); box-shadow:inset 0 0 0 21px #fff; border:1px solid #d7e1ec; }
     .pie-wrap .mini-bar-row { grid-template-columns:minmax(0,1fr) minmax(64px,.7fr) 22px; gap:7px; }
+    .home-empty-insight { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; padding:10px 0 4px; }
+    .home-empty-insight div { border:1px solid #e2eaf3; border-radius:8px; background:#fbfdff; padding:12px; min-width:0; }
+    .home-empty-insight span { display:block; color:#607086; font-size:11px; text-transform:uppercase; font-weight:800; }
+    .home-empty-insight strong { display:block; margin-top:6px; font-size:18px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .home-pill-list { display:grid; gap:8px; }
     .home-pill-list div { display:flex; justify-content:space-between; gap:12px; padding:9px 10px; border:1px solid #e2eaf3; border-radius:8px; background:#fbfdff; }
     .home-pill-list strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -1252,6 +1302,17 @@ def som_web_home() -> HTMLResponse:
     function sessionModuleCodes() {
       return [...new Set([...(session?.modules || []), ...Object.keys(session?.permissions || {})])];
     }
+    function sessionPermissionCodes() {
+      const perms = session?.permissions || {};
+      const out = [];
+      Object.entries(perms).forEach(([module, actions]) => {
+        (actions || []).forEach(action => {
+          out.push(String(action));
+          out.push(`${module}:${action}`);
+        });
+      });
+      return [...new Set(out)];
+    }
     const headers = (extra={}) => ({
       "Content-Type":"application/json",
       "X-Company-Code": selectedCompany(),
@@ -1259,6 +1320,7 @@ def som_web_home() -> HTMLResponse:
       "X-Role": session?.rol || "",
       "X-User-Role": session?.rol || "",
       "X-Modules": sessionModuleCodes().join(","),
+      "X-Permissions": sessionPermissionCodes().join(","),
       ...extra
     });
     function selectedCompany() {
@@ -1690,7 +1752,14 @@ def som_web_home() -> HTMLResponse:
       }
     }
     function renderComboChart(rows, canFinance) {
-      if (!rows.length) return '<div class="status">Sin datos para los últimos 6 meses.</div>';
+      if (!rows.length) {
+        const k = homeSummary?.kpis || {};
+        return `<div class="home-empty-insight">
+          <div><span>Servicios YTD</span><strong>${intFmt.format(Number(k.services || 0))}</strong></div>
+          ${canFinance ? `<div><span>CxC abierta</span><strong>${money(k.ar || 0)}</strong></div>` : ""}
+          <div><span>Informes YTD</span><strong>${intFmt.format(Number(k.reports || 0))}</strong></div>
+        </div><div class="status">Sin movimiento mensual reciente para graficar; se muestran indicadores del año.</div>`;
+      }
       const maxMoney = Math.max(...rows.map(r => Number(r.ar_open || 0)), 1);
       const maxServices = Math.max(...rows.map(r => Number(r.services || 0)), 1);
       return `<div class="chart-combo">${rows.map(r => {
