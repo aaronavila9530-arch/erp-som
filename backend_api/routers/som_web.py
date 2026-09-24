@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from io import BytesIO
 from datetime import datetime, timedelta
 from pathlib import Path
 
 from fastapi import APIRouter, Header, HTTPException, Query
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
+from PIL import Image
 from psycopg2.extras import RealDictCursor
 
 import database
@@ -18,7 +20,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20260924-login-syntax-v1"
+_ASSET_VERSION = "20260924-pwa-icon-v1"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -670,6 +672,11 @@ def som_web_home() -> HTMLResponse:
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>SOM Web</title>
+  <meta name="theme-color" content="#073659" />
+  <link rel="manifest" href="/som/manifest.webmanifest?v={asset_version}" />
+  <link rel="icon" type="image/png" sizes="32x32" href="/som/icon/msl-32.png?v={asset_version}" />
+  <link rel="icon" type="image/png" sizes="192x192" href="/som/icon/msl-192.png?v={asset_version}" />
+  <link rel="apple-touch-icon" sizes="180x180" href="/som/icon/msl-180.png?v={asset_version}" />
   <style>
     :root {
       color-scheme: light;
@@ -7215,18 +7222,81 @@ def som_web_version():
     return {"asset_version": _ASSET_VERSION}
 
 
-@router.get("/som/logo/{brand}")
-def som_web_logo(brand: str) -> FileResponse:
-    filenames = ["mci_logo.png"] if brand.lower() in {"mci", "mci-cr"} else ["msl_logo.png", "header.png"]
-    path = None
+def _asset_path(*filenames: str) -> Path | None:
     for filename in filenames:
         for folder in (_ASSETS, _REPO_ASSETS):
             candidate = folder / filename
             if candidate.exists():
-                path = candidate
-                break
-        if path:
-            break
+                return candidate
+    return None
+
+
+def _square_logo_png(filename: str, size: int) -> bytes:
+    source = _asset_path(filename)
+    if not source:
+        raise HTTPException(status_code=404, detail="Logo no disponible")
+    size = max(32, min(int(size or 192), 1024))
+    with Image.open(source) as image:
+        logo = image.convert("RGBA")
+        canvas = Image.new("RGBA", (size, size), (255, 255, 255, 255))
+        max_logo = int(size * 0.82)
+        logo.thumbnail((max_logo, max_logo), Image.Resampling.LANCZOS)
+        x = (size - logo.width) // 2
+        y = (size - logo.height) // 2
+        canvas.alpha_composite(logo, (x, y))
+        output = BytesIO()
+        canvas.save(output, format="PNG")
+        return output.getvalue()
+
+
+@router.get("/som/manifest.webmanifest")
+def som_web_manifest():
+    return JSONResponse(
+        {
+            "name": "ERP-SOM Web",
+            "short_name": "SOM Web",
+            "description": "ERP-SOM Web para MSL Marine Surveyors.",
+            "start_url": f"/som?v={_ASSET_VERSION}",
+            "scope": "/",
+            "display": "standalone",
+            "background_color": "#ffffff",
+            "theme_color": "#073659",
+            "icons": [
+                {"src": f"/som/icon/msl-192.png?v={_ASSET_VERSION}", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+                {"src": f"/som/icon/msl-512.png?v={_ASSET_VERSION}", "sizes": "512x512", "type": "image/png", "purpose": "any"},
+                {"src": f"/som/icon/msl-512.png?v={_ASSET_VERSION}", "sizes": "512x512", "type": "image/png", "purpose": "maskable"},
+            ],
+        },
+        media_type="application/manifest+json",
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
+    )
+
+
+@router.get("/som/icon/{name}")
+def som_web_icon(name: str):
+    brand = "mci" if name.lower().startswith("mci") else "msl"
+    filename = "mci_logo.png" if brand == "mci" else "msl_logo.png"
+    digits = "".join(ch for ch in name if ch.isdigit())
+    size = int(digits or 192)
+    return Response(
+        _square_logo_png(filename, size),
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
+@router.get("/favicon.ico")
+def som_web_favicon():
+    return Response(
+        _square_logo_png("msl_logo.png", 64),
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
+@router.get("/som/logo/{brand}")
+def som_web_logo(brand: str) -> FileResponse:
+    path = _asset_path(*(["mci_logo.png"] if brand.lower() in {"mci", "mci-cr"} else ["msl_logo.png", "header.png"]))
     if not path:
         raise HTTPException(status_code=404, detail="Logo no disponible")
     return FileResponse(path)
