@@ -18,7 +18,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20260924-web-tables-v1"
+_ASSET_VERSION = "20260924-web-tables-v2"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -6860,6 +6860,11 @@ def som_web_home() -> HTMLResponse:
             "Pragma": "no-cache",
         },
     )
+
+
+@router.get("/som/web-version")
+def som_web_version():
+    return {"asset_version": _ASSET_VERSION}
 
 
 @router.get("/som/logo/{brand}")
