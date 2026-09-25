@@ -20,7 +20,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20260925-itp-calendar-modal-v1"
+_ASSET_VERSION = "20260925-itp-calendar-alerts-v1"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -877,6 +877,13 @@ def som_web_home() -> HTMLResponse:
     .itp-calendar-head { display:flex; flex-wrap:wrap; justify-content:space-between; gap:10px; align-items:center; margin-bottom:10px; }
     .itp-calendar-nav { display:flex; gap:8px; align-items:center; }
     .itp-calendar-nav button { min-width:38px; }
+    .itp-calendar-alerts { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:8px; margin:10px 0; }
+    .itp-calendar-alert { border:1px solid #d7e1ec; border-left:4px solid var(--blue); border-radius:8px; background:#fff; padding:9px 11px; color:#122033; }
+    .itp-calendar-alert.critical { border-left-color:#b42318; background:#fff7f6; }
+    .itp-calendar-alert.warning { border-left-color:#b7791f; background:#fffaf0; }
+    .itp-calendar-alert.info { border-left-color:#005da8; background:#f4f9ff; }
+    .itp-calendar-alert strong { display:block; font-size:18px; line-height:1.15; }
+    .itp-calendar-alert span { display:block; margin-top:3px; color:#52637a; font-size:12px; line-height:1.35; }
     .itp-calendar-week { display:grid; grid-template-columns:repeat(7,minmax(130px,1fr)); gap:8px; min-width:950px; margin-bottom:6px; color:#607086; font-size:12px; font-weight:800; text-transform:uppercase; }
     .itp-calendar { display:grid; grid-template-columns:repeat(7,minmax(130px,1fr)); gap:8px; min-width:950px; overflow:visible; }
     .itp-calendar-day { border:1px solid #d7e1ec; border-radius:8px; background:#f7fafc; min-height:118px; padding:8px; display:grid; align-content:start; gap:6px; text-align:left; color:#122033; }
@@ -3074,6 +3081,7 @@ def som_web_home() -> HTMLResponse:
         msg.className = "status hidden";
         renderItpKpis(kpis);
         renderItpTable();
+        await refreshItpScheduleIfOpen();
       } catch (err) {
         itpRows = [];
         table.innerHTML = "";
@@ -3141,7 +3149,14 @@ def som_web_home() -> HTMLResponse:
       $("itpKpis").className = "grid kpis hidden";
       $("itpAlerts").className = "status hidden";
     }
-    async function loadItpPaymentSchedule() {
+    function itpScheduleIsOpen() {
+      const box = $("itpSchedule");
+      return !!box && !box.classList.contains("hidden") && !!box.innerHTML.trim();
+    }
+    async function refreshItpScheduleIfOpen() {
+      if (itpScheduleIsOpen()) await loadItpPaymentSchedule(true);
+    }
+    async function loadItpPaymentSchedule(silent=false) {
       const box = $("itpSchedule");
       if (!box) return;
       const today = new Date();
@@ -3149,7 +3164,7 @@ def som_web_home() -> HTMLResponse:
       const from = new Date(itpScheduleMonth.getFullYear(), itpScheduleMonth.getMonth(), 1).toISOString().slice(0,10);
       const to = new Date(itpScheduleMonth.getFullYear(), itpScheduleMonth.getMonth() + 1, 0).toISOString().slice(0,10);
       box.className = "workspace";
-      box.innerHTML = '<div class="status">Cargando cronograma de pagos...</div>';
+      if (!silent) box.innerHTML = '<div class="status">Cargando cronograma de pagos...</div>';
       try {
         const data = await getJSON(`/invoice-to-pay/payment-schedule?date_from=${from}&date_to=${to}`);
         box.innerHTML = renderItpPaymentSchedule(data, from, to);
@@ -3198,6 +3213,7 @@ def som_web_home() -> HTMLResponse:
       window.itpScheduleDays = Object.fromEntries((data.days || []).map(day => [day.date, day]));
       const totalRange = Object.entries(data.totals || {}).map(([cur, amount]) => `${esc(cur)} ${Number(amount || 0).toLocaleString("en-US",{maximumFractionDigits:2})}`).join(" · ") || "Sin obligaciones";
       const monthTitle = start.toLocaleDateString("es-CR", { month:"long", year:"numeric" });
+      const alerts = renderItpScheduleAlerts(data, from, to);
       return `
         <div class="itp-calendar-head">
           <div>
@@ -3210,9 +3226,35 @@ def som_web_home() -> HTMLResponse:
             <button class="secondary" onclick="shiftItpPaymentSchedule(1)">›</button>
           </div>
         </div>
+        ${alerts}
         <div class="itp-calendar-week"><span>Dom</span><span>Lun</span><span>Mar</span><span>Mié</span><span>Jue</span><span>Vie</span><span>Sáb</span></div>
         <div class="itp-calendar">${cells.join("")}</div>
         <div id="itpScheduleDetail" class="status">Seleccione un día u obligación para abrir el detalle en una ventana emergente.</div>`;
+    }
+    function renderItpScheduleAlerts(data, from, to) {
+      const todayKey = new Date().toISOString().slice(0,10);
+      const soon = new Date();
+      soon.setDate(soon.getDate() + 7);
+      const soonKey = soon.toISOString().slice(0,10);
+      const days = data.days || [];
+      const allItems = days.flatMap(day => (day.items || []).map(item => ({ ...item, due_date:item.due_date || day.date })));
+      const overdue = allItems.filter(item => item.due_date < todayKey);
+      const dueToday = allItems.filter(item => item.due_date === todayKey);
+      const upcoming = allItems.filter(item => item.due_date > todayKey && item.due_date <= soonKey);
+      const busyDays = days.filter(day => (day.items || []).length >= 8).sort((a,b) => (b.items || []).length - (a.items || []).length);
+      const moneyByCurrency = rows => rows.reduce((acc, item) => {
+        const currency = item.currency || "-";
+        acc[currency] = (acc[currency] || 0) + Number(item.balance || 0);
+        return acc;
+      }, {});
+      const moneyText = rows => Object.entries(moneyByCurrency(rows)).map(([cur, amount]) => `${esc(cur)} ${amount.toLocaleString("en-US",{maximumFractionDigits:2})}`).join(" · ") || "Sin monto";
+      const cards = [];
+      if (overdue.length) cards.push(["critical", overdue.length, "Vencidas", moneyText(overdue)]);
+      if (dueToday.length) cards.push(["warning", dueToday.length, "Vencen hoy", moneyText(dueToday)]);
+      if (upcoming.length) cards.push(["info", upcoming.length, "Próximos 7 días", moneyText(upcoming)]);
+      if (busyDays.length) cards.push(["warning", busyDays[0].items.length, `Día con más obligaciones: ${esc(busyDays[0].date)}`, "Click en el día para ver todas las líneas."]);
+      if (!cards.length) cards.push(["info", 0, "Sin alertas críticas", `Cronograma ${esc(from)} a ${esc(to)} actualizado.`]);
+      return `<div class="itp-calendar-alerts">${cards.map(([cls, count, title, detail]) => `<div class="itp-calendar-alert ${cls}"><strong>${esc(count)}</strong><span><b>${esc(title)}</b><br>${detail}</span></div>`).join("")}</div>`;
     }
     function openItpScheduleModal(title, body) {
       closeModal();
@@ -3787,6 +3829,7 @@ def som_web_home() -> HTMLResponse:
       try {
         const result = await postJSON("/invoice-to-pay/biweekly-obligations/save-draft", { period:valueFrom("itpBiPeriod"), fortnight:Number(valueFrom("itpBiFortnight") || 1), rows:collectItpBiweeklyRows() });
         msg.textContent = `Borrador guardado. Líneas: ${result.rows || result.saved || itpBiweeklyRows.length}`;
+        await refreshItpScheduleIfOpen();
       } catch (err) {
         msg.className = "status error";
         msg.textContent = err.message;
