@@ -2560,6 +2560,114 @@ def create_manual_obligation(
         "id": new_id
     }
 
+
+@router.post("/calendar/materialize")
+def materialize_calendar_obligation(
+    payload: dict = Body(default_factory=dict),
+    conn=Depends(get_db),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+):
+    payee_name = str(payload.get("payee_name") or "").strip()
+    obligation_type = str(payload.get("obligation_type") or "CALENDAR").strip()
+    payee_type = str(payload.get("payee_type") or obligation_type or "OTHER").strip()
+    reference = str(payload.get("reference") or payload.get("referencia") or "").strip()
+    currency = str(payload.get("currency") or "USD").strip().upper()
+    origin = str(payload.get("origin") or "CALENDAR").strip().upper()
+    if not payee_name:
+        raise HTTPException(status_code=400, detail="Beneficiario requerido")
+    if currency not in {"USD", "CRC"}:
+        raise HTTPException(status_code=400, detail="Moneda invalida")
+    try:
+        total = Decimal(str(payload.get("total") or payload.get("balance") or "0")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        balance = Decimal(str(payload.get("balance") or total)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Monto invalido")
+    if total <= 0 or balance <= 0:
+        raise HTTPException(status_code=400, detail="Total y saldo deben ser mayores a cero")
+    if balance > total:
+        raise HTTPException(status_code=400, detail="El saldo no puede ser mayor que el total")
+    try:
+        due_date = _coerce_date(payload.get("due_date"), date.today())
+        issue_date = _coerce_date(payload.get("issue_date"), date.today()) if payload.get("issue_date") else date.today()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Fecha invalida")
+    service_id = payload.get("service_id")
+    if service_id is None:
+        raw_id = str(payload.get("projected_id") or payload.get("id") or "")
+        if raw_id.startswith("SURVEYOR-PROJECTED-"):
+            parts = raw_id.split("-")
+            if len(parts) >= 3 and parts[2].isdigit():
+                service_id = int(parts[2])
+
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    company = normalize_company_code(header_value=x_company_code)
+    try:
+        _ensure_company_column(cur)
+        if is_employee_payee(cur, payee_name):
+            raise HTTPException(status_code=400, detail="El beneficiario existe como empleado en Master Data; no se registra en ITP.")
+        cur.execute(
+            """
+            SELECT id
+            FROM payment_obligations
+            WHERE company_code = %s
+              AND COALESCE(active, TRUE) = TRUE
+              AND origin = %s
+              AND obligation_type = %s
+              AND COALESCE(reference, '') = COALESCE(%s, '')
+              AND COALESCE(payee_name, '') = %s
+              AND COALESCE(balance, 0) > 0
+            LIMIT 1
+            """,
+            (company, origin, obligation_type, reference, payee_name),
+        )
+        existing = cur.fetchone()
+        if existing:
+            conn.commit()
+            return {"status": "exists", "id": existing["id"]}
+        cur.execute(
+            """
+            INSERT INTO payment_obligations (
+                company_code, record_type, payee_type, payee_name, obligation_type,
+                reference, issue_date, due_date, vessel, country, operation, currency,
+                total, balance, status, origin, service_id, notes, active, created_at
+            )
+            VALUES (
+                %s, 'OBLIGATION', %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, TRUE, NOW()
+            )
+            RETURNING *
+            """,
+            (
+                company,
+                payee_type,
+                payee_name,
+                obligation_type,
+                reference,
+                issue_date,
+                due_date,
+                payload.get("vessel") or "",
+                payload.get("country") or "",
+                payload.get("operation") or "",
+                currency,
+                total,
+                balance,
+                "PARTIAL" if balance < total else "PENDING",
+                origin,
+                service_id,
+                payload.get("notes") or "",
+            ),
+        )
+        row = cur.fetchone()
+        conn.commit()
+        return {"status": "ok", "id": row["id"], "data": dict(row or {})}
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as exc:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Error materializando obligacion: {str(exc)}")
+
 # ============================================================
 # 📥 UPLOAD XML (FACTURA / NC) — 100% BLINDADO
 # ============================================================
