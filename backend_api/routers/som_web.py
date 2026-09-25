@@ -20,7 +20,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20260925-itp-paid-biweekly-filter-v2"
+_ASSET_VERSION = "20260925-itp-plan-payment-action-v1"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -3065,6 +3065,7 @@ def som_web_home() -> HTMLResponse:
           <div class="itp-action-group">
             <h3>Acciones</h3>
             <div class="itp-action-row">
+              <button onclick="openItpPlanPaymentForm()">Planificar pago</button>
               <button class="green" onclick="openItpPaymentForm()">Aplicar pago</button>
               <button class="brown" onclick="deleteSelectedItp()">Eliminar</button>
             </div>
@@ -3142,11 +3143,12 @@ def som_web_home() -> HTMLResponse:
     function renderItpTable() {
       const table = $("itpTable");
       const cols = ["id","payee_name","obligation_type","referencia","planned_payment_date","due_date","currency","total","balance","status","origin","issue_date","last_payment_date","vessel","country","operation"];
+      const labels = { planned_payment_date:"Pago planificado", due_date:"Vence", payee_name:"Beneficiario", obligation_type:"Tipo", referencia:"Referencia", issue_date:"Factura", last_payment_date:"Último pago" };
       if (!itpRows.length) {
         table.innerHTML = '<div class="status">Sin obligaciones para esta consulta.</div>';
         return;
       }
-      table.innerHTML = `<div class="table-wrap"><table><thead><tr><th class="pick-col"></th>${cols.map(c => `<th>${esc(c.replace(/_/g," "))}</th>`).join("")}</tr></thead><tbody>${itpRows.map((row, idx) => {
+      table.innerHTML = `<div class="table-wrap"><table><thead><tr><th class="pick-col"></th>${cols.map(c => `<th>${esc(labels[c] || c.replace(/_/g," "))}</th>`).join("")}</tr></thead><tbody>${itpRows.map((row, idx) => {
         const due = String(row.due_date || "").slice(0,10);
         const overdue = ["PENDING","PARTIAL"].includes(String(row.status || "").toUpperCase()) && due && due < new Date().toISOString().slice(0,10);
         const selected = selectedItpIndexes.has(idx);
@@ -3492,6 +3494,43 @@ def som_web_home() -> HTMLResponse:
           path = "/invoice-to-pay/upload/pdf";
         }
         await sendForm(path, fd);
+        closeModal();
+        await loadItp();
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    function openItpPlanPaymentForm() {
+      const row = requireItpRow();
+      if (!row) return;
+      if (String(row.status || "").toUpperCase() === "PAID" || Number(row.balance || 0) <= 0) return alert("La obligación ya está pagada.");
+      const current = String(row.planned_payment_date || row.due_date || new Date().toISOString().slice(0,10)).slice(0,10);
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal small">
+            <div class="modal-head"><h2>Planificar pago ITP</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+            <div class="status">${esc(row.payee_name)} · Saldo ${esc(row.currency)} ${Number(row.balance || 0).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:2})}</div>
+            <div class="form-grid">
+              <label>Fecha pago planificada<input id="itpPlanDate" type="date" value="${esc(current)}" /></label>
+              <label>Vencimiento<input type="date" value="${esc(String(row.due_date || "").slice(0,10))}" disabled /></label>
+              <label class="wide">Referencia<input value="${esc(row.referencia || "")}" disabled /></label>
+            </div>
+            <div class="md-actions"><button onclick="submitItpPlanPayment()">Guardar planificación</button><button class="secondary" onclick="closeModal()">Cancelar</button></div>
+            <div id="itpPlanMsg" class="status hidden"></div>
+          </div>
+        </div>`);
+    }
+    async function submitItpPlanPayment() {
+      const row = requireItpRow();
+      if (!row) return;
+      const msg = $("itpPlanMsg");
+      msg.className = "status";
+      msg.textContent = "Guardando fecha planificada...";
+      try {
+        const planned = valueFrom("itpPlanDate");
+        if (!planned) throw new Error("Seleccione la fecha de pago planificada.");
+        await sendJSON("PATCH", `/invoice-to-pay/${encodeURIComponent(row.id)}`, { planned_payment_date:planned });
         closeModal();
         await loadItp();
       } catch (err) {
