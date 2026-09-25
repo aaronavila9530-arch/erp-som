@@ -20,7 +20,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20260925-itp-calendar-day-detail-v1"
+_ASSET_VERSION = "20260925-itp-calendar-modal-v1"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -891,6 +891,9 @@ def som_web_home() -> HTMLResponse:
     .itp-calendar-more { border:0; background:transparent; color:#506582; padding:0; font:inherit; text-align:left; cursor:pointer; }
     .itp-calendar-more:hover { color:var(--blue); text-decoration:underline; }
     .itp-calendar-total { font-size:12px; color:#8a5a00; font-weight:800; }
+    .modal.itp-schedule-modal { width:min(1180px,98vw); max-height:94vh; display:flex; flex-direction:column; overflow:hidden; }
+    .itp-schedule-modal .itp-schedule-content { min-height:0; overflow:auto; }
+    .itp-schedule-modal .table-wrap { max-height:68vh; }
     .itp-detail-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:8px; margin-top:8px; }
     .itp-detail-grid div { border:1px solid #e2eaf3; border-radius:7px; background:#fff; padding:8px; }
     .itp-detail-grid span { display:block; color:#607086; font-size:11px; font-weight:800; text-transform:uppercase; }
@@ -3209,27 +3212,33 @@ def som_web_home() -> HTMLResponse:
         </div>
         <div class="itp-calendar-week"><span>Dom</span><span>Lun</span><span>Mar</span><span>Mié</span><span>Jue</span><span>Vie</span><span>Sáb</span></div>
         <div class="itp-calendar">${cells.join("")}</div>
-        <div id="itpScheduleDetail" class="status">Seleccione una obligación del calendario para ver el detalle.</div>`;
+        <div id="itpScheduleDetail" class="status">Seleccione un día u obligación para abrir el detalle en una ventana emergente.</div>`;
+    }
+    function openItpScheduleModal(title, body) {
+      closeModal();
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal itp-schedule-modal">
+            <div class="modal-head"><h2>${esc(title)}</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+            <div class="itp-schedule-content">${body}</div>
+          </div>
+        </div>`);
+      enhanceExcelTables($("svcModal"));
     }
     function showItpScheduleDay(key) {
-      const box = $("itpScheduleDetail");
       const day = window.itpScheduleDays?.[key];
-      if (!box || !day) return;
-      box.innerHTML = `
-        <strong>${esc(key)} · ${(day.items || []).length} obligación(es)</strong>
+      if (!day) return;
+      openItpScheduleModal(`${key} · ${(day.items || []).length} obligación(es)`, `
         <div class="table-wrap"><table><thead><tr><th>Beneficiario</th><th>Referencia</th><th>Tipo</th><th>Moneda</th><th>Saldo</th><th>Estado</th></tr></thead><tbody>
           ${(day.items || []).map(item => `<tr><td>${esc(item.payee_name)}</td><td>${esc(item.referencia || item.invoice_number || "")}</td><td>${esc(item.obligation_type)}</td><td>${esc(item.currency)}</td><td>${Number(item.balance || 0).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:2})}</td><td>${esc(item.status)}</td></tr>`).join("")}
-        </tbody></table></div>`;
-      enhanceExcelTables(box);
+        </tbody></table></div>`);
     }
     function showItpScheduleItem(key, index) {
-      const box = $("itpScheduleDetail");
       const day = window.itpScheduleDays?.[key];
       const item = day?.items?.[index];
-      if (!box || !item) return;
+      if (!item) return;
       const amount = `${item.currency || ""} ${Number(item.balance || 0).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:2})}`;
-      box.innerHTML = `
-        <strong>${esc(item.payee_name || "Obligación")} · ${esc(key)}</strong>
+      openItpScheduleModal(`${item.payee_name || "Obligación"} · ${key}`, `
         <div class="itp-detail-grid">
           <div><span>Monto pendiente</span><strong>${esc(amount)}</strong></div>
           <div><span>Estado</span><strong>${esc(item.status || "-")}</strong></div>
@@ -3244,7 +3253,7 @@ def som_web_home() -> HTMLResponse:
         <div class="md-actions">
           ${String(item.id || "").match(/^\\d+$/) ? `<button class="green" onclick="selectItpObligationFromCalendar(${Number(item.id)})">Seleccionar en ITP</button>` : ""}
           <button class="secondary" onclick="showItpScheduleDay('${key}')">Ver todo el día</button>
-        </div>`;
+        </div>`);
     }
     function selectItpObligationFromCalendar(id) {
       const idx = itpRows.findIndex(row => Number(row.id) === Number(id));
