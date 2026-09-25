@@ -1,10 +1,18 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
 from typing import Any
 
 from psycopg2.extras import Json, RealDictCursor
+
+try:
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+except Exception:  # pragma: no cover - optional until dependency is installed
+    serialization = None
+    ec = None
 
 try:
     from pywebpush import WebPushException, webpush
@@ -80,12 +88,100 @@ def ensure_push_subscriptions_table(cur) -> None:
     )
 
 
-def vapid_public_key() -> str:
-    return os.getenv("VAPID_PUBLIC_KEY", "").strip()
+def ensure_system_settings_table(cur) -> None:
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS app_system_settings (
+            setting_key TEXT PRIMARY KEY,
+            setting_value TEXT NOT NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+        )
+        """
+    )
 
 
-def vapid_ready() -> bool:
-    return bool(vapid_public_key() and os.getenv("VAPID_PRIVATE_KEY", "").strip() and webpush)
+def _b64url(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+
+
+def _generate_vapid_pair() -> tuple[str, str] | None:
+    if serialization is None or ec is None:
+        return None
+    private_key = ec.generate_private_key(ec.SECP256R1())
+    private_pem = private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode("ascii")
+    numbers = private_key.public_key().public_numbers()
+    public_raw = b"\x04" + numbers.x.to_bytes(32, "big") + numbers.y.to_bytes(32, "big")
+    return _b64url(public_raw), private_pem
+
+
+def _setting(cur, key: str) -> str:
+    ensure_system_settings_table(cur)
+    cur.execute("SELECT setting_value FROM app_system_settings WHERE setting_key = %s", (key,))
+    row = cur.fetchone()
+    if isinstance(row, dict):
+        return str(row.get("setting_value") or "")
+    return str(row[0] or "") if row else ""
+
+
+def _store_setting(cur, key: str, value: str) -> None:
+    ensure_system_settings_table(cur)
+    cur.execute(
+        """
+        INSERT INTO app_system_settings (setting_key, setting_value, updated_at)
+        VALUES (%s, %s, NOW())
+        ON CONFLICT (setting_key)
+        DO UPDATE SET setting_value = EXCLUDED.setting_value, updated_at = NOW()
+        """,
+        (key, value),
+    )
+
+
+def ensure_vapid_keys(cur) -> tuple[str, str]:
+    public_env = os.getenv("VAPID_PUBLIC_KEY", "").strip()
+    private_env = os.getenv("VAPID_PRIVATE_KEY", "").strip()
+    if public_env and private_env:
+        return public_env, private_env
+
+    public_key = _setting(cur, "vapid_public_key")
+    private_key = _setting(cur, "vapid_private_key")
+    if public_key and private_key:
+        return public_key, private_key
+
+    generated = _generate_vapid_pair()
+    if not generated:
+        return "", ""
+    public_key, private_key = generated
+    _store_setting(cur, "vapid_public_key", public_key)
+    _store_setting(cur, "vapid_private_key", private_key)
+    return public_key, private_key
+
+
+def vapid_public_key(cur=None) -> str:
+    env_value = os.getenv("VAPID_PUBLIC_KEY", "").strip()
+    if env_value:
+        return env_value
+    if cur is None:
+        return ""
+    public_key, _private_key = ensure_vapid_keys(cur)
+    return public_key
+
+
+def vapid_ready(cur=None) -> bool:
+    if not webpush:
+        return False
+    public_key = os.getenv("VAPID_PUBLIC_KEY", "").strip()
+    private_key = os.getenv("VAPID_PRIVATE_KEY", "").strip()
+    if public_key and private_key:
+        return True
+    if cur is None:
+        return False
+    public_key, private_key = ensure_vapid_keys(cur)
+    return bool(public_key and private_key)
 
 
 def upsert_push_subscription(cur, recipient_user: str, subscription: dict[str, Any], user_agent: str | None = None) -> int | None:
@@ -137,8 +233,9 @@ def _push_payload(title: str, message: str, metadata: dict[str, Any] | None = No
 
 
 def dispatch_push_notification(cur, recipient_user: str, title: str, message: str, metadata: dict[str, Any] | None = None) -> int:
-    if not vapid_ready():
+    if not vapid_ready(cur):
         return 0
+    _public_key, private_key = ensure_vapid_keys(cur)
     recipient = (recipient_user or "").strip().lower()
     if not recipient:
         return 0
@@ -164,7 +261,7 @@ def dispatch_push_notification(cur, recipient_user: str, title: str, message: st
             webpush(
                 subscription_info=subscription_info,
                 data=_push_payload(title, message, metadata),
-                vapid_private_key=os.getenv("VAPID_PRIVATE_KEY", "").strip(),
+                vapid_private_key=private_key,
                 vapid_claims=vapid_claims,
             )
             sent += 1

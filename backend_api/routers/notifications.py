@@ -52,11 +52,15 @@ def list_notifications(
 
 
 @router.get("/push/config")
-def push_config():
+def push_config(conn=Depends(get_db)):
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    public_key = vapid_public_key(cur)
+    ready = vapid_ready(cur)
+    conn.commit()
     return {
-        "enabled": vapid_ready(),
-        "public_key": vapid_public_key(),
-        "message": "Configure VAPID_PUBLIC_KEY y VAPID_PRIVATE_KEY para push aun con SOM Web cerrado." if not vapid_ready() else "Web Push disponible.",
+        "enabled": ready,
+        "public_key": public_key,
+        "message": "Web Push disponible." if ready else "Web Push no disponible: falta dependencia pywebpush/cryptography en el backend.",
     }
 
 
@@ -75,8 +79,9 @@ async def subscribe_push(
         subscription_id = upsert_push_subscription(cur, usuario, payload, request.headers.get("user-agent"))
         if not subscription_id:
             raise HTTPException(400, "Suscripción push inválida")
+        push_enabled = vapid_ready(cur)
         conn.commit()
-        return {"status": "OK", "id": subscription_id, "push_enabled": vapid_ready()}
+        return {"status": "OK", "id": subscription_id, "push_enabled": push_enabled}
     except HTTPException:
         conn.rollback()
         raise
