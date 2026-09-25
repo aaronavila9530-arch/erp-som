@@ -53,6 +53,7 @@ HAZEL_CONTRIBUTION_CODE = "3.1.99"
 HAZEL_CONTRIBUTION_NAME = "Aportes de terceros - Hazel Barrantes"
 EMPLOYEE_WORKER_CCSS_RATE = Decimal("0.1083")
 NET_BIWEEKLY_EMPLOYEE_NAMES = ("erasmo", "manfred")
+EXCLUDED_BIWEEKLY_PAYROLL_NAMES = ("diana", "pabel")
 
 
 def _cleanup_biweekly_export_cache():
@@ -77,6 +78,7 @@ def _ensure_company_column(cur):
     cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS paid_with_card BOOLEAN NOT NULL DEFAULT FALSE")
     cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS card_paid_at DATE")
     cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS card_holder_name TEXT")
+    cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS planned_payment_date DATE")
 
 
 def _normalize_payment_method(value: str | None) -> str:
@@ -151,14 +153,72 @@ def _previous_period(period: str) -> str:
     return f"{year:04d}-{month:02d}"
 
 
+def _easter_sunday(year: int) -> date:
+    a = year % 19
+    b = year // 100
+    c = year % 100
+    d = b // 4
+    e = b % 4
+    f = (b + 8) // 25
+    g = (b - f + 1) // 3
+    h = (19 * a + b - d - g + 15) % 30
+    i = c // 4
+    k = c % 4
+    l = (32 + 2 * e + 2 * i - h - k) % 7
+    m = (a + 11 * h + 22 * l) // 451
+    month = (h + l - 7 * m + 114) // 31
+    day = ((h + l - 7 * m + 114) % 31) + 1
+    return date(year, month, day)
+
+
+def _cr_holidays(year: int) -> set[date]:
+    easter = _easter_sunday(year)
+    return {
+        date(year, 1, 1),
+        easter - timedelta(days=3),
+        easter - timedelta(days=2),
+        date(year, 4, 11),
+        date(year, 5, 1),
+        date(year, 7, 25),
+        date(year, 8, 2),
+        date(year, 8, 15),
+        date(year, 9, 15),
+        date(year, 12, 1),
+        date(year, 12, 25),
+    }
+
+
+def _previous_business_day(value: date) -> date:
+    holidays = _cr_holidays(value.year) | _cr_holidays(value.year - 1)
+    current = value
+    while current.weekday() >= 5 or current in holidays:
+        current -= timedelta(days=1)
+    return current
+
+
 def _fortnight_due_date(period: str, fortnight: int) -> str:
     year, month = [int(part) for part in str(period).split("-")[:2]]
-    day = 15 if int(fortnight or 1) == 1 else calendar.monthrange(year, month)[1]
-    return f"{year:04d}-{month:02d}-{day:02d}"
+    day = 15 if int(fortnight or 1) == 1 else min(30, calendar.monthrange(year, month)[1])
+    return _previous_business_day(date(year, month, day)).isoformat()
 
 
-def _biweekly_payment_date(period: str, fortnight: int, value: str | None) -> str:
+FIXED_BIWEEKLY_PAYMENT_CATEGORIES = {
+    "PLANILLA",
+    "CCSS",
+    "IVA",
+    "TARJETAS DE CREDITO",
+    "TARJETAS DE CRÉDITO",
+    "ALQUILER",
+    "INTERNET",
+    "TELEFONIA",
+    "TELEFONÍA",
+}
+
+
+def _biweekly_payment_date(period: str, fortnight: int, value: str | None, category: str | None = None) -> str:
     fallback = _fortnight_due_date(period, fortnight)
+    if str(category or "").strip().upper() in FIXED_BIWEEKLY_PAYMENT_CATEGORIES:
+        return fallback
     text = str(value or "").strip()
     if not text:
         return fallback
@@ -432,7 +492,7 @@ def _save_biweekly_draft(cur, company: str, period: str, fortnight: int, rows: l
         amount = _money(item.get("amount"))
         if amount <= 0:
             continue
-        payment_date = _biweekly_payment_date(period, fortnight, item.get("due_date"))
+        payment_date = _biweekly_payment_date(period, fortnight, item.get("due_date"), item.get("category"))
         payment_method = _normalize_payment_method(item.get("payment_method"))
         is_card_payment = payment_method == CARD_3155_METHOD
         is_hazel_payment = payment_method == HAZEL_PAYMENT_METHOD
@@ -995,6 +1055,7 @@ def search_invoice_to_pay(
             last_payment_date,
             issue_date,
             due_date,
+            planned_payment_date,
             origin,
             payment_bank,
             payment_bank_account_code,
@@ -1169,6 +1230,8 @@ def invoice_to_pay_payment_schedule(
             balance,
             status,
             due_date,
+            planned_payment_date,
+            COALESCE(planned_payment_date, due_date) AS schedule_date,
             payment_method,
             payment_bank_account_name,
             origin
@@ -1177,10 +1240,10 @@ def invoice_to_pay_payment_schedule(
           AND company_code = %s
           AND status IN ('PENDING','PARTIAL')
           AND COALESCE(balance, 0) > 0
-          AND due_date IS NOT NULL
-          AND due_date >= %s
-          AND due_date <= %s
-        ORDER BY due_date ASC, payee_name ASC
+          AND COALESCE(planned_payment_date, due_date) IS NOT NULL
+          AND COALESCE(planned_payment_date, due_date) >= %s
+          AND COALESCE(planned_payment_date, due_date) <= %s
+        ORDER BY COALESCE(planned_payment_date, due_date) ASC, payee_name ASC
         """,
         (company, start, end),
     )
@@ -1190,7 +1253,8 @@ def invoice_to_pay_payment_schedule(
     real_obligation_ids = {int(row["id"]) for row in rows if row.get("id") is not None}
 
     def append_calendar_item(row: dict, *, add_to_total: bool = True) -> None:
-        key = row["due_date"].isoformat() if hasattr(row.get("due_date"), "isoformat") else str(row.get("due_date"))
+        schedule_value = row.get("schedule_date") or row.get("planned_payment_date") or row.get("due_date")
+        key = schedule_value.isoformat() if hasattr(schedule_value, "isoformat") else str(schedule_value)
         if not key or key == "None":
             return
         day = days.setdefault(key, {"date": key, "count": 0, "totals": {}, "items": []})
@@ -1203,7 +1267,10 @@ def invoice_to_pay_payment_schedule(
         item = dict(row)
         item["balance"] = amount
         item["total"] = float(row.get("total") or 0)
-        item["due_date"] = key
+        if hasattr(item.get("due_date"), "isoformat"):
+            item["due_date"] = item["due_date"].isoformat()
+        item["schedule_date"] = key
+        item["planned_payment_date"] = key if item.get("planned_payment_date") else ""
         day["items"].append(item)
 
     for row in rows:
@@ -1557,6 +1624,9 @@ def biweekly_obligations_preview(
             (company,),
         )
         for emp in cur.fetchall() or []:
+            employee_name_key = _employee_full_name(emp).lower()
+            if any(name in employee_name_key for name in EXCLUDED_BIWEEKLY_PAYROLL_NAMES):
+                continue
             amount, payroll_notes = _employee_biweekly_pay(cur, emp, period, int(fortnight or 1))
             _append_unique_biweekly_row(rows, seen_rows, row(
                 "Planilla",
@@ -1570,6 +1640,7 @@ def biweekly_obligations_preview(
 
         if int(fortnight or 1) == 1:
             prev_period = _previous_period(period)
+            fortnight_payment_date = _fortnight_due_date(period, 1)
             try:
                 year, month = [int(part) for part in prev_period.split("-")]
                 next_year, next_month = (year + 1, 1) if month == 12 else (year, month + 1)
@@ -1614,14 +1685,14 @@ def biweekly_obligations_preview(
                 taxes = {r["direction"]: _money(r["tax_crc"]) for r in cur.fetchall() or []}
                 iva_amount = _money(taxes.get("SALE", Decimal("0")) - taxes.get("PURCHASE", Decimal("0")))
                 if iva_amount > 0:
-                    _append_unique_biweekly_row(rows, seen_rows, row("IVA", f"IVA por pagar {prev_period}", iva_amount, "CRC", default_crc_bank, "ACCOUNTING_TAX", "IVA venta menos IVA compra del mes anterior.", f"{period}-15"))
+                    _append_unique_biweekly_row(rows, seen_rows, row("IVA", f"IVA por pagar {prev_period}", iva_amount, "CRC", default_crc_bank, "ACCOUNTING_TAX", "IVA venta menos IVA compra del mes anterior.", fortnight_payment_date))
             except Exception as exc:
                 conn.rollback()
-                _append_unique_biweekly_row(rows, seen_rows, row("IVA", f"Revisar IVA mes anterior {prev_period}", 0, "CRC", default_crc_bank, "REVISION", str(exc), f"{period}-15"))
+                _append_unique_biweekly_row(rows, seen_rows, row("IVA", f"Revisar IVA mes anterior {prev_period}", 0, "CRC", default_crc_bank, "REVISION", str(exc), fortnight_payment_date))
 
-            _append_unique_biweekly_row(rows, seen_rows, row("CCSS", "CCSS por pagar", 0, "CRC", default_crc_bank, "MANUAL", "Completar monto confirmado por CCSS.", f"{period}-15"))
-            _append_unique_biweekly_row(rows, seen_rows, row("Telefonia", "Manfred Bolanos Barrantes", 7000, "CRC", default_crc_bank, "AUTO_FIXED", "Apoyo celular primera quincena.", f"{period}-15"))
-            _append_unique_biweekly_row(rows, seen_rows, row("Telefonia", "Erasmo Gomez Gomez", 7000, "CRC", default_crc_bank, "AUTO_FIXED", "Apoyo celular primera quincena.", f"{period}-15"))
+            _append_unique_biweekly_row(rows, seen_rows, row("CCSS", "CCSS por pagar", 0, "CRC", default_crc_bank, "MANUAL", "Completar monto confirmado por CCSS.", fortnight_payment_date))
+            _append_unique_biweekly_row(rows, seen_rows, row("Telefonia", "Manfred Bolanos Barrantes", 7000, "CRC", default_crc_bank, "AUTO_FIXED", "Apoyo celular primera quincena.", fortnight_payment_date))
+            _append_unique_biweekly_row(rows, seen_rows, row("Telefonia", "Erasmo Gomez Gomez", 7000, "CRC", default_crc_bank, "AUTO_FIXED", "Apoyo celular primera quincena.", fortnight_payment_date))
 
             cur.execute(
                 """
@@ -1656,7 +1727,7 @@ def biweekly_obligations_preview(
             )
             statements = cur.fetchall() or []
             if not statements:
-                _append_unique_biweekly_row(rows, seen_rows, row("Tarjetas de credito", f"Faltan estados BAC {prev_period}", 0, "CRC", "BAC", "REVISION", "Importar estados BAC del mes anterior para calcular tarjetas.", f"{period}-15"))
+                _append_unique_biweekly_row(rows, seen_rows, row("Tarjetas de credito", f"Faltan estados BAC {prev_period}", 0, "CRC", "BAC", "REVISION", "Importar estados BAC del mes anterior para calcular tarjetas.", fortnight_payment_date))
             card_labels = {"3155": "Aaron", "1951": "Diana", "1936": "Diana", "1969": "Pabel", "1944": "Pabel", "3148": "ITP"}
             for st in statements:
                 last4 = str(st.get("card_last4") or "").strip()
@@ -1664,9 +1735,9 @@ def biweekly_obligations_preview(
                 crc = _money(st.get("cash_payment_crc"))
                 usd = _money(st.get("cash_payment_usd"))
                 if crc > 0:
-                    _append_unique_biweekly_row(rows, seen_rows, row("Tarjetas de credito", f"BAC {label} contado CRC {st.get('statement_period') or ''}", crc, "CRC", "BAC", "CORP_CARD", f"Tarjeta {last4}", f"{period}-15"))
+                    _append_unique_biweekly_row(rows, seen_rows, row("Tarjetas de credito", f"BAC {label} contado CRC {st.get('statement_period') or ''}", crc, "CRC", "BAC", "CORP_CARD", f"Tarjeta {last4}", fortnight_payment_date))
                 if usd > 0:
-                    _append_unique_biweekly_row(rows, seen_rows, row("Tarjetas de credito", f"BAC {label} contado USD {st.get('statement_period') or ''}", usd, "USD", "BAC", "CORP_CARD", f"Tarjeta {last4}. Convertir/pagar segun banco.", f"{period}-15"))
+                    _append_unique_biweekly_row(rows, seen_rows, row("Tarjetas de credito", f"BAC {label} contado USD {st.get('statement_period') or ''}", usd, "USD", "BAC", "CORP_CARD", f"Tarjeta {last4}. Convertir/pagar segun banco.", fortnight_payment_date))
 
         cur.execute(
             """
@@ -1787,7 +1858,7 @@ def biweekly_obligations_apply(
                 beneficiary = str(item.get("name") or "").strip()
                 bank_code = str(item.get("bank_accounting_code") or "").strip()
                 voucher = str(item.get("bank_voucher") or "").strip()
-                payment_date = _biweekly_payment_date(period, int(payload.get("fortnight") or 1), item.get("due_date"))
+                payment_date = _biweekly_payment_date(period, int(payload.get("fortnight") or 1), item.get("due_date"), item.get("category"))
                 currency = str(item.get("currency") or "CRC").upper()
                 amount = _money(item.get("amount"))
                 payment_method = _normalize_payment_method(item.get("payment_method"))
@@ -2628,12 +2699,12 @@ def materialize_calendar_obligation(
             """
             INSERT INTO payment_obligations (
                 company_code, record_type, payee_type, payee_name, obligation_type,
-                reference, issue_date, due_date, vessel, country, operation, currency,
+                reference, issue_date, due_date, planned_payment_date, vessel, country, operation, currency,
                 total, balance, status, origin, service_id, notes, active, created_at
             )
             VALUES (
                 %s, 'OBLIGATION', %s, %s, %s,
-                %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s, %s,
                 %s, %s, %s, %s, %s, %s, TRUE, NOW()
             )
             RETURNING *
@@ -2646,6 +2717,7 @@ def materialize_calendar_obligation(
                 reference,
                 issue_date,
                 due_date,
+                _coerce_date(payload.get("planned_payment_date"), due_date) if payload.get("planned_payment_date") else due_date,
                 payload.get("vessel") or "",
                 payload.get("country") or "",
                 payload.get("operation") or "",
@@ -3038,6 +3110,7 @@ def update_invoice_to_pay(
         "reference": "reference",
         "issue_date": "issue_date",
         "due_date": "due_date",
+        "planned_payment_date": "planned_payment_date",
         "vessel": "vessel",
         "country": "country",
         "operation": "operation",
@@ -3064,6 +3137,8 @@ def update_invoice_to_pay(
             value = str(value or "USD").upper()
             if value not in {"USD", "CRC"}:
                 raise HTTPException(status_code=400, detail="Moneda inválida")
+        if key in {"issue_date", "due_date", "planned_payment_date"} and value:
+            value = _coerce_date(value, date.today())
         updates[column] = value
 
     if not updates:

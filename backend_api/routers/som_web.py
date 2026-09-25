@@ -20,7 +20,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20260925-itp-calendar-materialize-v1"
+_ASSET_VERSION = "20260925-itp-planned-payment-v1"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -1627,6 +1627,39 @@ def som_web_home() -> HTMLResponse:
       if (Array.isArray(value?.items)) return value.items;
       return [];
     }
+    function easterSunday(year) {
+      const a = year % 19, b = Math.floor(year / 100), c = year % 100;
+      const d = Math.floor(b / 4), e = b % 4, f = Math.floor((b + 8) / 25), g = Math.floor((b - f + 1) / 3);
+      const h = (19 * a + b - d - g + 15) % 30, i = Math.floor(c / 4), k = c % 4;
+      const l = (32 + 2 * e + 2 * i - h - k) % 7, m = Math.floor((a + 11 * h + 22 * l) / 451);
+      const month = Math.floor((h + l - 7 * m + 114) / 31), day = ((h + l - 7 * m + 114) % 31) + 1;
+      return new Date(Date.UTC(year, month - 1, day));
+    }
+    function isoFromDateUTC(date) {
+      return date.toISOString().slice(0,10);
+    }
+    function crHolidaySet(year) {
+      const easter = easterSunday(year);
+      const addDays = days => {
+        const d = new Date(easter);
+        d.setUTCDate(d.getUTCDate() + days);
+        return isoFromDateUTC(d);
+      };
+      return new Set([
+        `${year}-01-01`, addDays(-3), addDays(-2), `${year}-04-11`, `${year}-05-01`,
+        `${year}-07-25`, `${year}-08-02`, `${year}-08-15`, `${year}-09-15`,
+        `${year}-12-01`, `${year}-12-25`
+      ]);
+    }
+    function previousBusinessDayCR(isoDate) {
+      const d = new Date(`${isoDate}T00:00:00Z`);
+      let holidays = crHolidaySet(d.getUTCFullYear());
+      while (d.getUTCDay() === 0 || d.getUTCDay() === 6 || holidays.has(isoFromDateUTC(d))) {
+        d.setUTCDate(d.getUTCDate() - 1);
+        holidays = crHolidaySet(d.getUTCFullYear());
+      }
+      return isoFromDateUTC(d);
+    }
     function firstFromSet(set) {
       const first = set.values().next();
       return first.done ? null : first.value;
@@ -3108,7 +3141,7 @@ def som_web_home() -> HTMLResponse:
     }
     function renderItpTable() {
       const table = $("itpTable");
-      const cols = ["id","payee_name","obligation_type","referencia","issue_date","due_date","vessel","country","operation","currency","total","balance","last_payment_date","status","origin"];
+      const cols = ["id","payee_name","obligation_type","referencia","issue_date","due_date","planned_payment_date","vessel","country","operation","currency","total","balance","last_payment_date","status","origin"];
       if (!itpRows.length) {
         table.innerHTML = '<div class="status">Sin obligaciones para esta consulta.</div>';
         return;
@@ -3237,10 +3270,10 @@ def som_web_home() -> HTMLResponse:
       soon.setDate(soon.getDate() + 7);
       const soonKey = soon.toISOString().slice(0,10);
       const days = data.days || [];
-      const allItems = days.flatMap(day => (day.items || []).map(item => ({ ...item, due_date:item.due_date || day.date })));
-      const overdue = allItems.filter(item => item.due_date < todayKey);
-      const dueToday = allItems.filter(item => item.due_date === todayKey);
-      const upcoming = allItems.filter(item => item.due_date > todayKey && item.due_date <= soonKey);
+      const allItems = days.flatMap(day => (day.items || []).map(item => ({ ...item, schedule_date:item.schedule_date || item.planned_payment_date || day.date })));
+      const overdue = allItems.filter(item => item.schedule_date < todayKey);
+      const dueToday = allItems.filter(item => item.schedule_date === todayKey);
+      const upcoming = allItems.filter(item => item.schedule_date > todayKey && item.schedule_date <= soonKey);
       const busyDays = days.filter(day => (day.items || []).length >= 8).sort((a,b) => (b.items || []).length - (a.items || []).length);
       const moneyByCurrency = rows => rows.reduce((acc, item) => {
         const currency = item.currency || "-";
@@ -3271,8 +3304,8 @@ def som_web_home() -> HTMLResponse:
       const day = window.itpScheduleDays?.[key];
       if (!day) return;
       openItpScheduleModal(`${key} · ${(day.items || []).length} obligación(es)`, `
-        <div class="table-wrap"><table><thead><tr><th>Beneficiario</th><th>Referencia</th><th>Tipo</th><th>Moneda</th><th>Saldo</th><th>Estado</th><th>Acción</th></tr></thead><tbody>
-          ${(day.items || []).map((item, idx) => `<tr><td>${esc(item.payee_name)}</td><td>${esc(item.referencia || item.invoice_number || "")}</td><td>${esc(item.obligation_type)}</td><td>${esc(item.currency)}</td><td>${Number(item.balance || 0).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:2})}</td><td>${esc(item.status)}</td><td><button class="secondary" onclick="openItpScheduleEdit('${key}', ${idx})">${String(item.id || "").match(/^\\d+$/) ? "Modificar" : "Crear / modificar"}</button></td></tr>`).join("")}
+        <div class="table-wrap"><table><thead><tr><th>Beneficiario</th><th>Referencia</th><th>Tipo</th><th>Pago planificado</th><th>Vence</th><th>Moneda</th><th>Saldo</th><th>Estado</th><th>Acción</th></tr></thead><tbody>
+          ${(day.items || []).map((item, idx) => `<tr><td>${esc(item.payee_name)}</td><td>${esc(item.referencia || item.invoice_number || "")}</td><td>${esc(item.obligation_type)}</td><td>${esc(item.schedule_date || item.planned_payment_date || key)}</td><td>${esc(item.due_date || "")}</td><td>${esc(item.currency)}</td><td>${Number(item.balance || 0).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:2})}</td><td>${esc(item.status)}</td><td><button class="secondary" onclick="openItpScheduleEdit('${key}', ${idx})">${String(item.id || "").match(/^\\d+$/) ? "Modificar" : "Crear / modificar"}</button></td></tr>`).join("")}
         </tbody></table></div>`);
     }
     function showItpScheduleItem(key, index) {
@@ -3287,6 +3320,8 @@ def som_web_home() -> HTMLResponse:
           <div><span>Origen</span><strong>${esc(item.origin || "-")}</strong></div>
           <div><span>Tipo</span><strong>${esc(item.obligation_type || item.payee_type || "-")}</strong></div>
           <div><span>Referencia</span><strong>${esc(item.referencia || item.reference || item.invoice_number || "-")}</strong></div>
+          <div><span>Pago planificado</span><strong>${esc(item.schedule_date || item.planned_payment_date || key)}</strong></div>
+          <div><span>Vencimiento</span><strong>${esc(item.due_date || "-")}</strong></div>
           <div><span>Servicio / buque</span><strong>${esc(item.vessel || "-")}</strong></div>
           <div><span>Operación</span><strong>${esc(item.operation || "-")}</strong></div>
           <div><span>Banco / método</span><strong>${esc(item.payment_bank_account_name || item.payment_method || "-")}</strong></div>
@@ -3309,6 +3344,7 @@ def som_web_home() -> HTMLResponse:
           <label>Tipo obligación<input id="itpCalEditType" value="${esc(item.obligation_type || item.payee_type || "")}" /></label>
           <label>Referencia<input id="itpCalEditReference" value="${esc(item.referencia || item.reference || item.invoice_number || "")}" /></label>
           <label>Fecha vencimiento<input id="itpCalEditDue" type="date" value="${esc(String(item.due_date || key).slice(0,10))}" /></label>
+          <label>Fecha pago planificada<input id="itpCalEditPlanned" type="date" value="${esc(String(item.planned_payment_date || item.schedule_date || key).slice(0,10))}" /></label>
           <label>Moneda<select id="itpCalEditCurrency"><option value="USD"${String(item.currency || "").toUpperCase() === "USD" ? " selected" : ""}>USD</option><option value="CRC"${String(item.currency || "").toUpperCase() === "CRC" ? " selected" : ""}>CRC</option></select></label>
           <label>Total<input id="itpCalEditTotal" type="number" step="0.01" value="${esc(item.total || item.balance || 0)}" /></label>
           <label>Saldo<input id="itpCalEditBalance" type="number" step="0.01" value="${esc(item.balance || 0)}" /></label>
@@ -3344,6 +3380,7 @@ def som_web_home() -> HTMLResponse:
           obligation_type:valueFrom("itpCalEditType"),
           reference:valueFrom("itpCalEditReference"),
           due_date:valueFrom("itpCalEditDue"),
+          planned_payment_date:valueFrom("itpCalEditPlanned"),
           currency:valueFrom("itpCalEditCurrency") || "USD",
           total,
           balance,
@@ -3545,7 +3582,7 @@ def som_web_home() -> HTMLResponse:
     }
     function downloadItpExcel() {
       if (!itpRows.length) return alert("No hay datos para exportar.");
-      const cols = ["id","payee_name","obligation_type","referencia","issue_date","due_date","vessel","country","operation","currency","total","balance","last_payment_date","status","origin"];
+      const cols = ["id","payee_name","obligation_type","referencia","issue_date","due_date","planned_payment_date","vessel","country","operation","currency","total","balance","last_payment_date","status","origin"];
       downloadExcelFile(`itp_${new Date().toISOString().slice(0,10)}.xls`, itpRows, cols, "Invoice To Pay");
     }
     function openItpPaymentReport() {
@@ -3871,7 +3908,8 @@ def som_web_home() -> HTMLResponse:
       const fortnight = Number(valueFrom("itpBiFortnight") || 1);
       const [year, month] = period.split("-").map(Number);
       const lastDay = new Date(year, month, 0).getDate();
-      const due = `${period}-${String(fortnight === 1 ? 15 : lastDay).padStart(2, "0")}`;
+      const rawDue = `${period}-${String(fortnight === 1 ? 15 : Math.min(30, lastDay)).padStart(2, "0")}`;
+      const due = previousBusinessDayCR(rawDue);
       itpBiweeklyRows.push(normalizeItpBiPaymentRow({
         category, name:"", amount:0, currency:"CRC", bank_account:"", due_date:due,
         source:"MANUAL", notes:"", obligation_id:null, reference:"", balance:0,
