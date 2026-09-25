@@ -20,7 +20,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20260925-itp-calendar-month-v1"
+_ASSET_VERSION = "20260925-itp-calendar-day-detail-v1"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -879,14 +879,17 @@ def som_web_home() -> HTMLResponse:
     .itp-calendar-nav button { min-width:38px; }
     .itp-calendar-week { display:grid; grid-template-columns:repeat(7,minmax(130px,1fr)); gap:8px; min-width:950px; margin-bottom:6px; color:#607086; font-size:12px; font-weight:800; text-transform:uppercase; }
     .itp-calendar { display:grid; grid-template-columns:repeat(7,minmax(130px,1fr)); gap:8px; min-width:950px; overflow:visible; }
-    .itp-calendar-day { border:1px solid #d7e1ec; border-radius:8px; background:#fff; min-height:118px; padding:8px; display:grid; align-content:start; gap:6px; text-align:left; color:#122033; }
-    .itp-calendar-day:disabled { cursor:default; background:#f7fafc; color:#94a3b8; }
+    .itp-calendar-day { border:1px solid #d7e1ec; border-radius:8px; background:#f7fafc; min-height:118px; padding:8px; display:grid; align-content:start; gap:6px; text-align:left; color:#122033; }
+    .itp-calendar-day.has-items { cursor:pointer; background:#fffaf0; border-color:#e8c27a; }
+    .itp-calendar-day.has-items:hover { border-color:#d99a18; box-shadow:0 10px 24px rgba(15,23,42,.08); }
+    .itp-calendar-day:focus { outline:2px solid var(--blue); outline-offset:2px; }
     .itp-calendar-day.muted-day { opacity:.62; }
     .itp-calendar-day.today { border-color:var(--blue); box-shadow:inset 0 0 0 1px var(--blue); }
-    .itp-calendar-day:not(:disabled) { background:#fffaf0; border-color:#e8c27a; }
     .itp-calendar-day strong { display:flex; justify-content:space-between; gap:6px; font-size:13px; }
     .itp-calendar-pill { display:block; border:0; border-radius:6px; background:#edf2f7; padding:5px 6px; font-size:12px; color:#122033; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-align:left; cursor:pointer; }
     .itp-calendar-pill:hover { background:#dbeafe; color:#073659; }
+    .itp-calendar-more { border:0; background:transparent; color:#506582; padding:0; font:inherit; text-align:left; cursor:pointer; }
+    .itp-calendar-more:hover { color:var(--blue); text-decoration:underline; }
     .itp-calendar-total { font-size:12px; color:#8a5a00; font-weight:800; }
     .itp-detail-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:8px; margin-top:8px; }
     .itp-detail-grid div { border:1px solid #e2eaf3; border-radius:7px; background:#fff; padding:8px; }
@@ -3027,7 +3030,6 @@ def som_web_home() -> HTMLResponse:
             <h3>Reportes</h3>
             <div class="itp-action-row">
               <button class="secondary" onclick="downloadItpExcel()">Excel</button>
-              <button class="secondary" onclick="openItpPaymentReport()">Pagos / presupuesto</button>
               <button class="secondary" onclick="loadItpPaymentSchedule()">Cronograma pagos</button>
             </div>
           </div>
@@ -3181,12 +3183,13 @@ def som_web_home() -> HTMLResponse:
           ? Object.entries(day.totals || {}).map(([cur, amount]) => `${esc(cur)} ${Number(amount || 0).toLocaleString("en-US",{maximumFractionDigits:2})}`).join(" · ")
           : "";
         const items = (day?.items || []).slice(0, 4);
+        const hasItems = !!day && (day.items || []).length > 0;
         cells.push(`
-          <div class="itp-calendar-day ${outside ? "muted-day" : ""} ${key === todayKey ? "today" : ""}">
+          <div class="itp-calendar-day ${hasItems ? "has-items" : ""} ${outside ? "muted-day" : ""} ${key === todayKey ? "today" : ""}" ${hasItems ? `role="button" tabindex="0" onclick="showItpScheduleDay('${key}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();showItpScheduleDay('${key}');}"` : ""}>
             <strong>${d.getDate()}</strong>
             ${totalText ? `<span class="itp-calendar-total">${totalText}</span>` : ""}
-            ${items.map((item, idx) => `<button class="itp-calendar-pill" onclick="showItpScheduleItem('${key}', ${idx})" title="${esc(item.payee_name || "Obligación")}">${esc(item.payee_name || "Obligación")} · ${esc(item.currency || "")} ${Number(item.balance || 0).toLocaleString("en-US",{maximumFractionDigits:2})}</button>`).join("")}
-            ${(day?.items || []).length > 4 ? `<span class="muted">+${(day.items || []).length - 4} más</span>` : ""}
+            ${items.map((item, idx) => `<button class="itp-calendar-pill" onclick="event.stopPropagation(); showItpScheduleItem('${key}', ${idx})" title="${esc(item.payee_name || "Obligación")}">${esc(item.payee_name || "Obligación")} · ${esc(item.currency || "")} ${Number(item.balance || 0).toLocaleString("en-US",{maximumFractionDigits:2})}</button>`).join("")}
+            ${(day?.items || []).length > 4 ? `<button class="itp-calendar-more" onclick="event.stopPropagation(); showItpScheduleDay('${key}')">+${(day.items || []).length - 4} más</button>` : ""}
           </div>`);
       }
       window.itpScheduleDays = Object.fromEntries((data.days || []).map(day => [day.date, day]));
