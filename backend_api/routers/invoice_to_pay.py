@@ -1123,6 +1123,79 @@ def invoice_to_pay_kpis(conn=Depends(get_db)):
     }
 
 
+@router.get("/payment-schedule")
+def invoice_to_pay_payment_schedule(
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date] = Query(None),
+    conn=Depends(get_db),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+):
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    company = normalize_company_code(header_value=x_company_code)
+    _ensure_company_column(cur)
+    today = date.today()
+    start = date_from or today.replace(day=1)
+    if date_to:
+        end = date_to
+    else:
+        next_month = today.replace(day=28) + timedelta(days=4)
+        end = next_month.replace(day=1) + timedelta(days=35)
+
+    cur.execute(
+        """
+        SELECT
+            id,
+            payee_name,
+            payee_type,
+            reference AS referencia,
+            vessel,
+            operation,
+            country,
+            currency,
+            total,
+            balance,
+            status,
+            due_date,
+            payment_method,
+            payment_bank_account_name
+        FROM payment_obligations
+        WHERE COALESCE(active, TRUE) = TRUE
+          AND company_code = %s
+          AND status IN ('PENDING','PARTIAL')
+          AND COALESCE(balance, 0) > 0
+          AND due_date IS NOT NULL
+          AND due_date >= %s
+          AND due_date <= %s
+        ORDER BY due_date ASC, payee_name ASC
+        """,
+        (company, start, end),
+    )
+    rows = [dict(row) for row in cur.fetchall() or []]
+    days: dict[str, dict] = {}
+    totals: dict[str, float] = {}
+    for row in rows:
+        key = row["due_date"].isoformat() if hasattr(row.get("due_date"), "isoformat") else str(row.get("due_date"))
+        day = days.setdefault(key, {"date": key, "count": 0, "totals": {}, "items": []})
+        currency = row.get("currency") or "-"
+        amount = float(row.get("balance") or 0)
+        day["count"] += 1
+        day["totals"][currency] = round(float(day["totals"].get(currency, 0)) + amount, 2)
+        totals[currency] = round(float(totals.get(currency, 0)) + amount, 2)
+        item = dict(row)
+        item["balance"] = amount
+        item["total"] = float(row.get("total") or 0)
+        item["due_date"] = key
+        day["items"].append(item)
+    return {
+        "company_code": company,
+        "date_from": start.isoformat(),
+        "date_to": end.isoformat(),
+        "days": list(days.values()),
+        "totals": totals,
+        "total_count": len(rows),
+    }
+
+
 @router.get("/biweekly-obligations/preview")
 def biweekly_obligations_preview(
     period: str = Query(...),

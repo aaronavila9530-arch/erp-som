@@ -59,7 +59,7 @@ from routers.exchange_rate import router as exchange_rate_router
 from routers.password_reset import router as password_reset_router
 from routers.mobile_auth import router as mobile_auth_router
 from routers.user_admin import router as user_admin_router
-from routers.notifications import router as notifications_router
+from routers.notifications import router as notifications_router, start_notification_scheduler
 from routers.som_web import router as som_web_router
 from routers.companies import router as companies_router
 from routers.masterdata_bank_accounts import router as masterdata_bank_accounts_router
@@ -153,6 +153,7 @@ app.add_middleware(
 @app.on_event("startup")
 def _debug_routes_all():
     start_gmail_fiscal_scheduler()
+    start_notification_scheduler()
     print("\n=== TODAS LAS RUTAS REGISTRADAS ===")
     for r in app.router.routes:
         path = getattr(r, "path", "")

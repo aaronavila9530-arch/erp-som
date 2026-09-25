@@ -20,7 +20,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20260924-pwa-icon-v1"
+_ASSET_VERSION = "20260925-notifications-itp-v1"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -858,6 +858,28 @@ def som_web_home() -> HTMLResponse:
     .excel-filter-values span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .excel-filter-footer { display:flex; gap:7px; justify-content:flex-end; border-top:1px solid #edf2f7; padding-top:8px; }
     .excel-filter-footer button { height:32px; padding:0 10px; }
+    .notify-wrap { position:relative; display:flex; gap:8px; align-items:center; }
+    .notify-btn { position:relative; min-width:42px; padding:0 10px; }
+    .notify-count { position:absolute; top:-7px; right:-6px; min-width:18px; height:18px; border-radius:999px; background:#b42318; color:#fff; font-size:11px; display:none; align-items:center; justify-content:center; padding:0 5px; }
+    .notify-count.visible { display:flex; }
+    .notify-panel { position:absolute; right:0; top:44px; width:min(430px,calc(100vw - 30px)); max-height:520px; overflow:auto; background:#fff; border:1px solid var(--line); border-radius:8px; box-shadow:var(--shadow); z-index:40; padding:12px; }
+    .notify-panel.hidden { display:none; }
+    .notify-head { display:flex; justify-content:space-between; gap:8px; align-items:center; margin-bottom:8px; }
+    .notify-list { display:grid; gap:8px; }
+    .notify-item { border:1px solid #e2eaf3; border-left:4px solid var(--blue); border-radius:7px; padding:9px; background:#fbfdff; }
+    .notify-item strong { display:block; font-size:14px; }
+    .notify-item p { margin:4px 0 0; color:#475569; line-height:1.35; }
+    .notify-item small { display:block; margin-top:5px; color:#64748b; }
+    .itp-calendar-week { display:grid; grid-template-columns:repeat(7,minmax(130px,1fr)); gap:8px; min-width:950px; margin-bottom:6px; color:#607086; font-size:12px; font-weight:800; text-transform:uppercase; }
+    .itp-calendar { display:grid; grid-template-columns:repeat(7,minmax(130px,1fr)); gap:8px; min-width:950px; overflow:visible; }
+    .itp-calendar-day { border:1px solid #d7e1ec; border-radius:8px; background:#fff; min-height:118px; padding:8px; display:grid; align-content:start; gap:6px; text-align:left; color:#122033; }
+    .itp-calendar-day:disabled { cursor:default; background:#f7fafc; color:#94a3b8; }
+    .itp-calendar-day.muted-day { opacity:.62; }
+    .itp-calendar-day.today { border-color:var(--blue); box-shadow:inset 0 0 0 1px var(--blue); }
+    .itp-calendar-day:not(:disabled) { background:#fffaf0; border-color:#e8c27a; }
+    .itp-calendar-day strong { display:flex; justify-content:space-between; gap:6px; font-size:13px; }
+    .itp-calendar-pill { display:block; border-radius:6px; background:#edf2f7; padding:5px 6px; font-size:12px; color:#122033; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .itp-calendar-total { font-size:12px; color:#8a5a00; font-weight:800; }
     .hr-shell { display:grid; gap:12px; min-width:0; }
     .hr-hero { display:grid; grid-template-columns:minmax(0,1.35fr) minmax(300px,.65fr); gap:12px; align-items:stretch; }
     .hr-card { border:1px solid #d7e1ec; border-radius:8px; background:#fff; padding:14px; min-width:0; box-shadow:var(--shadow); }
@@ -1152,6 +1174,17 @@ def som_web_home() -> HTMLResponse:
         <div class="toolbar">
           <select id="companyTop"></select>
           <select id="year"></select>
+          <div class="notify-wrap">
+            <button id="notifyEnable" class="secondary" type="button" title="Activar notificaciones">Activar alertas</button>
+            <button id="notifyBell" class="secondary notify-btn" type="button" title="Notificaciones">Alertas<span id="notifyCount" class="notify-count"></span></button>
+            <div id="notifyPanel" class="notify-panel hidden">
+              <div class="notify-head">
+                <h2>Notificaciones</h2>
+                <button class="secondary" onclick="markAllNotificationsRead()">Marcar leídas</button>
+              </div>
+              <div id="notifyList" class="notify-list"><div class="status">Sin notificaciones cargadas.</div></div>
+            </div>
+          </div>
         </div>
       </header>
       <section class="grid kpis">
@@ -1176,6 +1209,9 @@ def som_web_home() -> HTMLResponse:
     const SESSION_KEY = "somWebSession";
     const PASSKEY_KEY = "somWebPasskey";
     const SAVED_LOGIN_KEY = "somWebSavedLogin";
+    const ASSET_VERSION = "{asset_version}";
+    let notificationPollTimer = null;
+    let lastNotificationSeenId = Number(localStorage.getItem("somWebLastNotificationId") || 0);
     function readLocalJson(key) {
       try {
         return JSON.parse(localStorage.getItem(key) || "null");
@@ -1446,6 +1482,98 @@ def som_web_home() -> HTMLResponse:
       }
       return resp.json();
     }
+    function urlBase64ToUint8Array(base64String) {
+      const padding = "=".repeat((4 - base64String.length % 4) % 4);
+      const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+      const rawData = atob(base64);
+      return Uint8Array.from([...rawData].map(char => char.charCodeAt(0)));
+    }
+    async function registerSomServiceWorker() {
+      if (!("serviceWorker" in navigator)) return null;
+      try {
+        return await navigator.serviceWorker.register(`/som/service-worker.js?v=${ASSET_VERSION}`);
+      } catch {
+        return null;
+      }
+    }
+    async function enableNotifications() {
+      const status = $("notifyEnable");
+      if (!("Notification" in window)) {
+        if (status) status.textContent = "Sin soporte";
+        alert("Este navegador no soporta notificaciones.");
+        return;
+      }
+      const permission = Notification.permission === "granted" ? "granted" : await Notification.requestPermission();
+      if (permission !== "granted") {
+        if (status) status.textContent = "Alertas bloqueadas";
+        return;
+      }
+      const sw = await registerSomServiceWorker();
+      const config = await getJSON("/notifications/push/config").catch(() => ({ enabled:false, public_key:"" }));
+      if (sw && config.public_key && "PushManager" in window) {
+        const existing = await sw.pushManager.getSubscription();
+        const subscription = existing || await sw.pushManager.subscribe({
+          userVisibleOnly:true,
+          applicationServerKey:urlBase64ToUint8Array(config.public_key)
+        });
+        await postJSON("/notifications/push/subscribe", subscription.toJSON());
+        if (status) status.textContent = "Alertas activas";
+      } else if (status) {
+        status.textContent = "Alertas en pantalla";
+      }
+      await loadNotifications(true);
+    }
+    function showForegroundNotification(item) {
+      if (!item || Number(item.id || 0) <= lastNotificationSeenId) return;
+      lastNotificationSeenId = Number(item.id || 0);
+      localStorage.setItem("somWebLastNotificationId", String(lastNotificationSeenId));
+      if ("Notification" in window && Notification.permission === "granted") {
+        try {
+          const n = new Notification(item.title || "SOM", { body:item.message || "", icon:"/som/icon/msl-192.png" });
+          n.onclick = () => window.focus();
+        } catch {}
+      }
+    }
+    async function loadNotifications(foreground=false) {
+      if (!session) return;
+      try {
+        const payload = await getJSON("/notifications?limit=30");
+        const rows = rowsList(payload);
+        const count = Number(payload.unread_count || 0);
+        const badge = $("notifyCount");
+        if (badge) {
+          badge.textContent = count > 99 ? "99+" : String(count);
+          badge.classList.toggle("visible", count > 0);
+        }
+        const list = $("notifyList");
+        if (list) {
+          list.innerHTML = rows.length ? rows.map(row => `
+            <div class="notify-item">
+              <strong>${esc(row.title)}</strong>
+              <p>${esc(row.message)}</p>
+              <small>${esc(row.created_at || "")}</small>
+            </div>`).join("") : '<div class="status">Sin notificaciones.</div>';
+        }
+        if (foreground && rows.length) showForegroundNotification(rows[0]);
+      } catch {}
+    }
+    async function scanNotificationAlerts() {
+      if (!session) return;
+      const role = String(session.rol || "").toLowerCase();
+      if (!["admin","master"].includes(role)) return;
+      await postJSON("/notifications/scan", { days_ahead:3 }).catch(() => null);
+      await loadNotifications(true);
+    }
+    function startNotificationPolling() {
+      if (notificationPollTimer) clearInterval(notificationPollTimer);
+      loadNotifications(false);
+      scanNotificationAlerts();
+      notificationPollTimer = setInterval(() => loadNotifications(true), 60000);
+    }
+    async function markAllNotificationsRead() {
+      await sendJSON("PATCH", "/notifications/read-all", {});
+      await loadNotifications(false);
+    }
     async function sendJSON(method, path, payload, extraHeaders={}) {
       const resp = await fetch(path, { method, headers:headers(extraHeaders), body:payload ? JSON.stringify(payload) : undefined });
       if (!resp.ok) {
@@ -1697,6 +1825,8 @@ def som_web_home() -> HTMLResponse:
       $("companyTop").value = session.company || "MSL-CR";
       renderNav();
       selectModule(currentModule);
+      registerSomServiceWorker();
+      startNotificationPolling();
     }
     async function login() {
       $("loginMsg").textContent = "Validando...";
@@ -2871,11 +3001,13 @@ def som_web_home() -> HTMLResponse:
           <button class="brown" onclick="deleteSelectedItp()">Eliminar</button>
           <button class="secondary" onclick="downloadItpExcel()">Exportar Excel</button>
           <button class="secondary" onclick="openItpPaymentReport()">Reporte pagos ITP / presupuesto</button>
+          <button class="secondary" onclick="loadItpPaymentSchedule()">Cronograma pagos</button>
           <button class="secondary" onclick="renderFinancePlanning($('itpTable'))">PLN / Planificación</button>
         </div>
         <div id="itpKpis" class="grid kpis hidden"></div>
         <div id="itpAlerts" class="status hidden"></div>
         <div id="itpMsg" class="status hidden"></div>
+        <div id="itpSchedule" class="workspace hidden"></div>
         <div id="itpTable" class="workspace"><div class="status">Configure filtros y presione Buscar para consultar ITP.</div></div>`;
     }
     function itpParams() {
@@ -2967,10 +3099,78 @@ def som_web_home() -> HTMLResponse:
       itpRows = [];
       selectedItpIndex = null;
       selectedItpIndexes = new Set();
+      if ($("itpSchedule")) {
+        $("itpSchedule").className = "workspace hidden";
+        $("itpSchedule").innerHTML = "";
+      }
       $("itpTable").innerHTML = '<div class="status">Configure filtros y presione Buscar para consultar ITP.</div>';
       $("itpMsg").className = "status hidden";
       $("itpKpis").className = "grid kpis hidden";
       $("itpAlerts").className = "status hidden";
+    }
+    async function loadItpPaymentSchedule() {
+      const box = $("itpSchedule");
+      if (!box) return;
+      const today = new Date();
+      const from = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().slice(0,10);
+      const to = new Date(today.getFullYear(), today.getMonth() + 2, 0).toISOString().slice(0,10);
+      box.className = "workspace";
+      box.innerHTML = '<div class="status">Cargando cronograma de pagos...</div>';
+      try {
+        const data = await getJSON(`/invoice-to-pay/payment-schedule?date_from=${from}&date_to=${to}`);
+        box.innerHTML = renderItpPaymentSchedule(data, from, to);
+        enhanceExcelTables(box);
+      } catch (err) {
+        box.innerHTML = `<div class="status error">${esc(err.message)}</div>`;
+      }
+    }
+    function renderItpPaymentSchedule(data, from, to) {
+      const byDate = new Map((data.days || []).map(day => [day.date, day]));
+      const start = new Date(`${from}T00:00:00`);
+      const end = new Date(`${to}T00:00:00`);
+      const first = new Date(start);
+      first.setDate(first.getDate() - first.getDay());
+      const last = new Date(end);
+      last.setDate(last.getDate() + (6 - last.getDay()));
+      const todayKey = new Date().toISOString().slice(0,10);
+      const cells = [];
+      for (let d = new Date(first); d <= last; d.setDate(d.getDate() + 1)) {
+        const key = d.toISOString().slice(0,10);
+        const day = byDate.get(key);
+        const outside = key < from || key > to;
+        const totalText = day
+          ? Object.entries(day.totals || {}).map(([cur, amount]) => `${esc(cur)} ${Number(amount || 0).toLocaleString("en-US",{maximumFractionDigits:2})}`).join(" · ")
+          : "";
+        const items = (day?.items || []).slice(0, 2);
+        cells.push(`
+          <button class="itp-calendar-day ${outside ? "muted-day" : ""} ${key === todayKey ? "today" : ""}" onclick="showItpScheduleDay('${key}')" ${day ? "" : "disabled"}>
+            <strong>${d.getDate()}</strong>
+            ${totalText ? `<span class="itp-calendar-total">${totalText}</span>` : ""}
+            ${items.map(item => `<span class="itp-calendar-pill">${esc(item.payee_name || "Obligación")} · ${esc(item.currency || "")} ${Number(item.balance || 0).toLocaleString("en-US",{maximumFractionDigits:2})}</span>`).join("")}
+            ${(day?.items || []).length > 2 ? `<span class="muted">+${(day.items || []).length - 2} más</span>` : ""}
+          </button>`);
+      }
+      window.itpScheduleDays = Object.fromEntries((data.days || []).map(day => [day.date, day]));
+      const totalRange = Object.entries(data.totals || {}).map(([cur, amount]) => `${esc(cur)} ${Number(amount || 0).toLocaleString("en-US",{maximumFractionDigits:2})}`).join(" · ") || "Sin obligaciones";
+      return `
+        <div class="panel-head">
+          <h2>Cronograma de pagos ITP</h2>
+          <span class="muted">${esc(from)} a ${esc(to)} · ${totalRange}</span>
+        </div>
+        <div class="itp-calendar-week"><span>Dom</span><span>Lun</span><span>Mar</span><span>Mié</span><span>Jue</span><span>Vie</span><span>Sáb</span></div>
+        <div class="itp-calendar">${cells.join("")}</div>
+        <div id="itpScheduleDetail" class="status">Seleccione un día con obligaciones para ver el detalle.</div>`;
+    }
+    function showItpScheduleDay(key) {
+      const box = $("itpScheduleDetail");
+      const day = window.itpScheduleDays?.[key];
+      if (!box || !day) return;
+      box.innerHTML = `
+        <strong>${esc(key)} · ${(day.items || []).length} obligación(es)</strong>
+        <div class="table-wrap"><table><thead><tr><th>Beneficiario</th><th>Referencia</th><th>Tipo</th><th>Moneda</th><th>Saldo</th><th>Estado</th></tr></thead><tbody>
+          ${(day.items || []).map(item => `<tr><td>${esc(item.payee_name)}</td><td>${esc(item.referencia || item.invoice_number || "")}</td><td>${esc(item.obligation_type)}</td><td>${esc(item.currency)}</td><td>${Number(item.balance || 0).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:2})}</td><td>${esc(item.status)}</td></tr>`).join("")}
+        </tbody></table></div>`;
+      enhanceExcelTables(box);
     }
     function openItpManualForm() {
       document.body.insertAdjacentHTML("beforeend", `
@@ -7157,7 +7357,9 @@ def som_web_home() -> HTMLResponse:
     $("bioBtn").onclick = unlockWithPasskey;
     $("backLogin").onclick = showLogin;
     $("setupPasskey").onclick = registerDevicePasskey;
-    $("logout").onclick = () => { localStorage.removeItem(SESSION_KEY); session=null; showLogin(); };
+    $("logout").onclick = () => { if (notificationPollTimer) clearInterval(notificationPollTimer); localStorage.removeItem(SESSION_KEY); session=null; showLogin(); };
+    $("notifyEnable").onclick = enableNotifications;
+    $("notifyBell").onclick = async (event) => { event.stopPropagation(); $("notifyPanel").classList.toggle("hidden"); await loadNotifications(false); };
     if ($("refresh")) $("refresh").onclick = () => {
       refreshSummary();
       if (currentModule === "master_data") renderMasterData();
@@ -7268,6 +7470,42 @@ def som_web_manifest():
             ],
         },
         media_type="application/manifest+json",
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
+    )
+
+
+@router.get("/som/service-worker.js")
+def som_web_service_worker():
+    js = """
+self.addEventListener('push', event => {
+  let payload = {};
+  try { payload = event.data ? event.data.json() : {}; } catch { payload = {}; }
+  const title = payload.title || 'SOM Web';
+  const options = {
+    body: payload.body || '',
+    icon: payload.icon || '/som/icon/msl-192.png',
+    badge: payload.badge || '/som/icon/msl-192.png',
+    data: payload.data || { url: payload.url || '/som' }
+  };
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+self.addEventListener('notificationclick', event => {
+  event.notification.close();
+  const target = event.notification?.data?.url || '/som';
+  event.waitUntil(clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clientList => {
+    for (const client of clientList) {
+      if ('focus' in client) {
+        client.navigate(target);
+        return client.focus();
+      }
+    }
+    return clients.openWindow(target);
+  }));
+});
+"""
+    return Response(
+        js,
+        media_type="application/javascript",
         headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
     )
 
