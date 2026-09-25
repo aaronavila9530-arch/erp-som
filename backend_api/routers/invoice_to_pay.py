@@ -6,7 +6,8 @@ from fastapi import (
     Header,
     UploadFile,
     File,
-    Form
+    Form,
+    Body,
 )
 from fastapi.responses import StreamingResponse
 from psycopg2.extras import RealDictCursor
@@ -2895,6 +2896,92 @@ def upload_invoice_pdf(
         )
 
     return {"message": "PDF uploaded and obligation created successfully"}
+
+
+@router.patch("/{obligation_id}")
+def update_invoice_to_pay(
+    obligation_id: int,
+    payload: dict = Body(default_factory=dict),
+    conn=Depends(get_db),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+):
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    company = normalize_company_code(header_value=x_company_code)
+    _ensure_company_column(cur)
+    cur.execute(
+        """
+        SELECT id, total, balance, status
+        FROM payment_obligations
+        WHERE id = %s
+          AND company_code = %s
+          AND COALESCE(active, TRUE) = TRUE
+        FOR UPDATE
+        """,
+        (obligation_id, company),
+    )
+    existing = cur.fetchone()
+    if not existing:
+        raise HTTPException(status_code=404, detail="Obligation not found")
+
+    allowed = {
+        "payee_name": "payee_name",
+        "payee_type": "payee_type",
+        "obligation_type": "obligation_type",
+        "reference": "reference",
+        "issue_date": "issue_date",
+        "due_date": "due_date",
+        "vessel": "vessel",
+        "country": "country",
+        "operation": "operation",
+        "currency": "currency",
+        "total": "total",
+        "balance": "balance",
+        "notes": "notes",
+    }
+    updates = {}
+    for key, column in allowed.items():
+        if key not in payload:
+            continue
+        value = payload.get(key)
+        if isinstance(value, str):
+            value = value.strip()
+        if key in {"total", "balance"}:
+            try:
+                value = Decimal(str(value or "0")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            except Exception:
+                raise HTTPException(status_code=400, detail=f"{key} inválido")
+            if value <= 0:
+                raise HTTPException(status_code=400, detail="Use Aplicar pago para cancelar una obligación; el saldo editado debe ser mayor a cero.")
+        if key == "currency":
+            value = str(value or "USD").upper()
+            if value not in {"USD", "CRC"}:
+                raise HTTPException(status_code=400, detail="Moneda inválida")
+        updates[column] = value
+
+    if not updates:
+        raise HTTPException(status_code=400, detail="No hay campos para actualizar")
+
+    next_total = Decimal(str(updates.get("total", existing.get("total") or 0))).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    next_balance = Decimal(str(updates.get("balance", existing.get("balance") or 0))).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    if next_balance > next_total:
+        raise HTTPException(status_code=400, detail="El saldo no puede ser mayor que el total")
+    updates["status"] = "PARTIAL" if next_balance < next_total else "PENDING"
+
+    assignments = ", ".join(f"{column} = %s" for column in updates)
+    params = list(updates.values()) + [obligation_id, company]
+    cur.execute(
+        f"""
+        UPDATE payment_obligations
+        SET {assignments}
+        WHERE id = %s
+          AND company_code = %s
+        RETURNING *
+        """,
+        params,
+    )
+    row = cur.fetchone()
+    conn.commit()
+    return {"status": "ok", "data": dict(row or {})}
 
 
 @router.delete("/{obligation_id}")

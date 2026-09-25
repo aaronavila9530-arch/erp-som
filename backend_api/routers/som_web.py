@@ -20,7 +20,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20260925-itp-calendar-alerts-v1"
+_ASSET_VERSION = "20260925-itp-calendar-edit-v1"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -3271,8 +3271,8 @@ def som_web_home() -> HTMLResponse:
       const day = window.itpScheduleDays?.[key];
       if (!day) return;
       openItpScheduleModal(`${key} · ${(day.items || []).length} obligación(es)`, `
-        <div class="table-wrap"><table><thead><tr><th>Beneficiario</th><th>Referencia</th><th>Tipo</th><th>Moneda</th><th>Saldo</th><th>Estado</th></tr></thead><tbody>
-          ${(day.items || []).map(item => `<tr><td>${esc(item.payee_name)}</td><td>${esc(item.referencia || item.invoice_number || "")}</td><td>${esc(item.obligation_type)}</td><td>${esc(item.currency)}</td><td>${Number(item.balance || 0).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:2})}</td><td>${esc(item.status)}</td></tr>`).join("")}
+        <div class="table-wrap"><table><thead><tr><th>Beneficiario</th><th>Referencia</th><th>Tipo</th><th>Moneda</th><th>Saldo</th><th>Estado</th><th>Acción</th></tr></thead><tbody>
+          ${(day.items || []).map((item, idx) => `<tr><td>${esc(item.payee_name)}</td><td>${esc(item.referencia || item.invoice_number || "")}</td><td>${esc(item.obligation_type)}</td><td>${esc(item.currency)}</td><td>${Number(item.balance || 0).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:2})}</td><td>${esc(item.status)}</td><td>${String(item.id || "").match(/^\\d+$/) ? `<button class="secondary" onclick="openItpScheduleEdit('${key}', ${idx})">Modificar</button>` : `<span class="muted">Proyectada</span>`}</td></tr>`).join("")}
         </tbody></table></div>`);
     }
     function showItpScheduleItem(key, index) {
@@ -3294,8 +3294,65 @@ def som_web_home() -> HTMLResponse:
         ${item.notes ? `<p class="muted">${esc(item.notes)}</p>` : ""}
         <div class="md-actions">
           ${String(item.id || "").match(/^\\d+$/) ? `<button class="green" onclick="selectItpObligationFromCalendar(${Number(item.id)})">Seleccionar en ITP</button>` : ""}
+          ${String(item.id || "").match(/^\\d+$/) ? `<button onclick="openItpScheduleEdit('${key}', ${index})">Modificar línea</button>` : `<span class="status">Esta línea es proyectada. Aún no existe como obligación ITP real; ajústela desde Obligaciones quincenales o desde el origen del servicio.</span>`}
           <button class="secondary" onclick="showItpScheduleDay('${key}')">Ver todo el día</button>
         </div>`);
+    }
+    function openItpScheduleEdit(key, index) {
+      const day = window.itpScheduleDays?.[key];
+      const item = day?.items?.[index];
+      if (!item || !String(item.id || "").match(/^\\d+$/)) return alert("Solo se pueden modificar obligaciones ITP reales. Las proyectadas se ajustan desde su origen.");
+      openItpScheduleModal(`Modificar obligación ${item.id}`, `
+        <div class="form-grid">
+          <label>Beneficiario<input id="itpCalEditPayee" value="${esc(item.payee_name || "")}" /></label>
+          <label>Tipo obligación<input id="itpCalEditType" value="${esc(item.obligation_type || item.payee_type || "")}" /></label>
+          <label>Referencia<input id="itpCalEditReference" value="${esc(item.referencia || item.reference || item.invoice_number || "")}" /></label>
+          <label>Fecha vencimiento<input id="itpCalEditDue" type="date" value="${esc(String(item.due_date || key).slice(0,10))}" /></label>
+          <label>Moneda<select id="itpCalEditCurrency"><option value="USD"${String(item.currency || "").toUpperCase() === "USD" ? " selected" : ""}>USD</option><option value="CRC"${String(item.currency || "").toUpperCase() === "CRC" ? " selected" : ""}>CRC</option></select></label>
+          <label>Total<input id="itpCalEditTotal" type="number" step="0.01" value="${esc(item.total || item.balance || 0)}" /></label>
+          <label>Saldo<input id="itpCalEditBalance" type="number" step="0.01" value="${esc(item.balance || 0)}" /></label>
+          <label>Buque / servicio<input id="itpCalEditVessel" value="${esc(item.vessel || "")}" /></label>
+          <label>País<input id="itpCalEditCountry" value="${esc(item.country || "")}" /></label>
+          <label>Operación<input id="itpCalEditOperation" value="${esc(item.operation || "")}" /></label>
+          <label class="wide">Notas<textarea id="itpCalEditNotes">${esc(item.notes || "")}</textarea></label>
+        </div>
+        <div class="status">Para cancelar/pagar una obligación use Aplicar pago; aquí solo se corrigen datos de la obligación pendiente.</div>
+        <div class="md-actions">
+          <button class="green" onclick="submitItpScheduleEdit(${Number(item.id)})">Guardar cambios</button>
+          <button class="secondary" onclick="showItpScheduleItem('${key}', ${index})">Cancelar</button>
+        </div>
+        <div id="itpCalEditMsg" class="status hidden"></div>`);
+    }
+    async function submitItpScheduleEdit(id) {
+      const msg = $("itpCalEditMsg");
+      msg.className = "status";
+      msg.textContent = "Guardando cambios...";
+      try {
+        const total = Number(valueFrom("itpCalEditTotal") || 0);
+        const balance = Number(valueFrom("itpCalEditBalance") || 0);
+        if (total <= 0 || balance <= 0) throw new Error("Total y saldo deben ser mayores a cero. Para pagar use Aplicar pago.");
+        if (balance > total) throw new Error("El saldo no puede ser mayor que el total.");
+        const payload = {
+          payee_name:valueFrom("itpCalEditPayee"),
+          obligation_type:valueFrom("itpCalEditType"),
+          reference:valueFrom("itpCalEditReference"),
+          due_date:valueFrom("itpCalEditDue"),
+          currency:valueFrom("itpCalEditCurrency") || "USD",
+          total,
+          balance,
+          vessel:valueFrom("itpCalEditVessel"),
+          country:valueFrom("itpCalEditCountry"),
+          operation:valueFrom("itpCalEditOperation"),
+          notes:valueFrom("itpCalEditNotes")
+        };
+        await sendJSON("PATCH", `/invoice-to-pay/${encodeURIComponent(id)}`, payload);
+        closeModal();
+        await loadItp();
+        await refreshItpScheduleIfOpen();
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
     }
     function selectItpObligationFromCalendar(id) {
       const idx = itpRows.findIndex(row => Number(row.id) === Number(id));
