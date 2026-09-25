@@ -187,6 +187,16 @@ def _add_months(value: date, months: int) -> date:
     return date(month_index // 12, month_index % 12 + 1, 1)
 
 
+def _periods_between(start: date, end: date) -> list[str]:
+    periods = []
+    current = date(start.year, start.month, 1)
+    last = date(end.year, end.month, 1)
+    while current <= last:
+        periods.append(f"{current.year:04d}-{current.month:02d}")
+        current = _add_months(current, 1)
+    return periods
+
+
 def _coerce_date(value, fallback: date) -> date:
     if isinstance(value, date):
         return value
@@ -562,7 +572,7 @@ def _sync_servicios_to_itp(cur, company_code: str):
                 %s, 'OBLIGATION', 'SURVEYOR', fr.surveyor_nombre, 'SURVEYOR_FEE',
                 CONCAT(fr.consec::text, '-', fr.orden::text),
                 fr.buque_contenedor, fr.pais, fr.operacion, fr.consec,
-                fr.fecha_fin, (fr.fecha_fin + INTERVAL '15 days'), fr.currency,
+                fr.fecha_fin, (fr.fecha_fin + INTERVAL '7 days'), fr.currency,
                 fr.honorario, fr.honorario, 'PENDING', 'SERVICIOS', fr.detalle, NOW()
             FROM ({flat_select}) fr
             WHERE NOT EXISTS (
@@ -585,7 +595,7 @@ def _sync_servicios_to_itp(cur, company_code: str):
                    operation=COALESCE(fr.operacion, po.operation),
                    currency=fr.currency,
                    issue_date=COALESCE(fr.fecha_fin, po.issue_date),
-                   due_date=COALESCE((fr.fecha_fin + INTERVAL '15 days'), po.due_date),
+                   due_date=COALESCE((fr.fecha_fin + INTERVAL '7 days'), po.due_date),
                    notes=COALESCE(fr.detalle, po.notes),
                    updated_at=NOW()
             FROM ({flat_select}) fr
@@ -693,7 +703,7 @@ def _sync_servicios_to_itp(cur, company_code: str):
             s.operacion,
             s.consec,
             s.fecha_fin,
-            (s.fecha_fin + INTERVAL '15 days'),
+            (s.fecha_fin + INTERVAL '7 days'),
             CASE WHEN LOWER(TRIM(COALESCE(s.pais, ''))) = 'costa rica' THEN 'CRC' ELSE 'USD' END,
             s.honorarios,
             s.honorarios,
@@ -807,7 +817,7 @@ def _sync_servicios_to_itp(cur, company_code: str):
             operation = COALESCE(s.operacion, po.operation),
             currency = CASE WHEN LOWER(TRIM(COALESCE(s.pais, ''))) = 'costa rica' THEN 'CRC' ELSE 'USD' END,
             issue_date = COALESCE(s.fecha_fin, po.issue_date),
-            due_date = COALESCE((s.fecha_fin + INTERVAL '15 days'), po.due_date),
+            due_date = COALESCE((s.fecha_fin + INTERVAL '7 days'), po.due_date),
             notes = COALESCE(s.detalle, po.notes),
             updated_at = NOW()
         FROM servicios s
@@ -1133,6 +1143,8 @@ def invoice_to_pay_payment_schedule(
     cur = conn.cursor(cursor_factory=RealDictCursor)
     company = normalize_company_code(header_value=x_company_code)
     _ensure_company_column(cur)
+    _sync_servicios_to_itp(cur, company)
+    conn.commit()
     today = date.today()
     start = date_from or today.replace(day=1)
     if date_to:
@@ -1157,7 +1169,8 @@ def invoice_to_pay_payment_schedule(
             status,
             due_date,
             payment_method,
-            payment_bank_account_name
+            payment_bank_account_name,
+            origin
         FROM payment_obligations
         WHERE COALESCE(active, TRUE) = TRUE
           AND company_code = %s
@@ -1173,19 +1186,270 @@ def invoice_to_pay_payment_schedule(
     rows = [dict(row) for row in cur.fetchall() or []]
     days: dict[str, dict] = {}
     totals: dict[str, float] = {}
-    for row in rows:
+    real_obligation_ids = {int(row["id"]) for row in rows if row.get("id") is not None}
+
+    def append_calendar_item(row: dict, *, add_to_total: bool = True) -> None:
         key = row["due_date"].isoformat() if hasattr(row.get("due_date"), "isoformat") else str(row.get("due_date"))
+        if not key or key == "None":
+            return
         day = days.setdefault(key, {"date": key, "count": 0, "totals": {}, "items": []})
         currency = row.get("currency") or "-"
         amount = float(row.get("balance") or 0)
         day["count"] += 1
-        day["totals"][currency] = round(float(day["totals"].get(currency, 0)) + amount, 2)
-        totals[currency] = round(float(totals.get(currency, 0)) + amount, 2)
+        if add_to_total and amount > 0:
+            day["totals"][currency] = round(float(day["totals"].get(currency, 0)) + amount, 2)
+            totals[currency] = round(float(totals.get(currency, 0)) + amount, 2)
         item = dict(row)
         item["balance"] = amount
         item["total"] = float(row.get("total") or 0)
         item["due_date"] = key
         day["items"].append(item)
+
+    for row in rows:
+        append_calendar_item(row)
+
+    cur.execute("SELECT to_regclass('public.servicio_surveyors_flat') AS table_name")
+    has_flat_surveyors = bool((cur.fetchone() or {}).get("table_name"))
+    if has_flat_surveyors:
+        cur.execute(
+            """
+            WITH service_surveyors AS (
+                SELECT s.consec, s.buque_contenedor, s.pais, s.operacion, s.fecha_fin, s.detalle,
+                       CASE WHEN LOWER(TRIM(COALESCE(s.pais, ''))) = 'costa rica' THEN 'CRC' ELSE 'USD' END AS currency,
+                       v.orden, v.surveyor_nombre, v.honorario
+                FROM servicios s
+                JOIN servicio_surveyors_flat f ON f.servicio_consec = s.consec
+                CROSS JOIN LATERAL (VALUES
+                    (1, f.surveyor_1, f.honorario_1),
+                    (2, f.surveyor_2, f.honorario_2),
+                    (3, f.surveyor_3, f.honorario_3),
+                    (4, f.surveyor_4, f.honorario_4),
+                    (5, f.surveyor_5, f.honorario_5),
+                    (6, f.surveyor_6, f.honorario_6),
+                    (7, f.surveyor_7, f.honorario_7),
+                    (8, f.surveyor_8, f.honorario_8),
+                    (9, f.surveyor_9, f.honorario_9),
+                    (10, f.surveyor_10, f.honorario_10)
+                ) AS v(orden, surveyor_nombre, honorario)
+                WHERE COALESCE(s.company_code, 'MSL-CR') = %s
+                  AND NULLIF(TRIM(COALESCE(v.surveyor_nombre, '')), '') IS NOT NULL
+                  AND COALESCE(v.honorario, 0) > 0
+                  AND s.fecha_fin IS NOT NULL
+            )
+            SELECT
+                consec,
+                CONCAT(consec::text, '-', orden::text) AS reference,
+                surveyor_nombre AS payee_name,
+                buque_contenedor,
+                pais,
+                operacion,
+                detalle,
+                fecha_fin,
+                (fecha_fin + INTERVAL '7 days')::date AS due_date,
+                currency,
+                honorario AS amount
+            FROM service_surveyors ss
+            WHERE (ss.fecha_fin + INTERVAL '7 days')::date BETWEEN %s AND %s
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM payment_obligations po
+                  WHERE po.company_code = %s
+                    AND COALESCE(po.active, TRUE) = TRUE
+                    AND po.origin = 'SERVICIOS'
+                    AND po.obligation_type = 'SURVEYOR_FEE'
+                    AND po.service_id = ss.consec
+                    AND po.reference = CONCAT(ss.consec::text, '-', ss.orden::text)
+              )
+            ORDER BY due_date, payee_name
+            """,
+            (company, start, end, company),
+        )
+    else:
+        cur.execute(
+            """
+            SELECT
+                s.consec,
+                s.consec::text AS reference,
+                s.surveyor AS payee_name,
+                s.buque_contenedor,
+                s.pais,
+                s.operacion,
+                s.detalle,
+                s.fecha_fin,
+                (s.fecha_fin + INTERVAL '7 days')::date AS due_date,
+                CASE WHEN LOWER(TRIM(COALESCE(s.pais, ''))) = 'costa rica' THEN 'CRC' ELSE 'USD' END AS currency,
+                s.honorarios AS amount
+            FROM servicios s
+            WHERE COALESCE(s.company_code, 'MSL-CR') = %s
+              AND NULLIF(TRIM(COALESCE(s.surveyor, '')), '') IS NOT NULL
+              AND COALESCE(s.honorarios, 0) > 0
+              AND s.fecha_fin IS NOT NULL
+              AND (s.fecha_fin + INTERVAL '7 days')::date BETWEEN %s AND %s
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM payment_obligations po
+                  WHERE po.company_code = %s
+                    AND COALESCE(po.active, TRUE) = TRUE
+                    AND po.origin = 'SERVICIOS'
+                    AND po.obligation_type = 'SURVEYOR_FEE'
+                    AND po.service_id = s.consec
+              )
+            ORDER BY due_date, payee_name
+            """,
+            (company, start, end, company),
+        )
+    projected_surveyor_count = 0
+    for svc in cur.fetchall() or []:
+        amount = _money(svc.get("amount"))
+        append_calendar_item(
+            {
+                "id": f"SURVEYOR-PROJECTED-{svc.get('consec')}-{svc.get('reference')}",
+                "payee_name": svc.get("payee_name") or "Surveyor",
+                "payee_type": "SURVEYOR",
+                "obligation_type": "SURVEYOR_FEE",
+                "referencia": svc.get("reference") or svc.get("consec"),
+                "vessel": svc.get("buque_contenedor") or "",
+                "operation": svc.get("operacion") or "SERVICIOS",
+                "country": svc.get("pais") or "",
+                "currency": svc.get("currency") or "CRC",
+                "total": float(amount),
+                "balance": float(amount),
+                "status": "PROJECTED",
+                "due_date": svc.get("due_date"),
+                "payment_method": "BANK",
+                "payment_bank_account_name": "",
+                "origin": "SERVICIOS",
+                "notes": f"Pago proyectado a surveyor 7 días después de finalizar operación. {svc.get('detalle') or ''}".strip(),
+            },
+            add_to_total=True,
+        )
+        projected_surveyor_count += 1
+
+    if has_flat_surveyors:
+        cur.execute(
+            """
+            SELECT
+                s.consec,
+                s.consec::text AS reference,
+                s.surveyor AS payee_name,
+                s.buque_contenedor,
+                s.pais,
+                s.operacion,
+                s.detalle,
+                s.fecha_fin,
+                (s.fecha_fin + INTERVAL '7 days')::date AS due_date,
+                CASE WHEN LOWER(TRIM(COALESCE(s.pais, ''))) = 'costa rica' THEN 'CRC' ELSE 'USD' END AS currency,
+                s.honorarios AS amount
+            FROM servicios s
+            WHERE COALESCE(s.company_code, 'MSL-CR') = %s
+              AND NULLIF(TRIM(COALESCE(s.surveyor, '')), '') IS NOT NULL
+              AND COALESCE(s.honorarios, 0) > 0
+              AND s.fecha_fin IS NOT NULL
+              AND (s.fecha_fin + INTERVAL '7 days')::date BETWEEN %s AND %s
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM servicio_surveyors_flat f
+                  WHERE f.servicio_consec = s.consec
+                    AND COALESCE(f.cantidad_surveyors, 0) > 0
+              )
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM payment_obligations po
+                  WHERE po.company_code = %s
+                    AND COALESCE(po.active, TRUE) = TRUE
+                    AND po.origin = 'SERVICIOS'
+                    AND po.obligation_type = 'SURVEYOR_FEE'
+                    AND po.service_id = s.consec
+              )
+            ORDER BY due_date, payee_name
+            """,
+            (company, start, end, company),
+        )
+        for svc in cur.fetchall() or []:
+            amount = _money(svc.get("amount"))
+            append_calendar_item(
+                {
+                    "id": f"SURVEYOR-PROJECTED-{svc.get('consec')}-{svc.get('reference')}",
+                    "payee_name": svc.get("payee_name") or "Surveyor",
+                    "payee_type": "SURVEYOR",
+                    "obligation_type": "SURVEYOR_FEE",
+                    "referencia": svc.get("reference") or svc.get("consec"),
+                    "vessel": svc.get("buque_contenedor") or "",
+                    "operation": svc.get("operacion") or "SERVICIOS",
+                    "country": svc.get("pais") or "",
+                    "currency": svc.get("currency") or "CRC",
+                    "total": float(amount),
+                    "balance": float(amount),
+                    "status": "PROJECTED",
+                    "due_date": svc.get("due_date"),
+                    "payment_method": "BANK",
+                    "payment_bank_account_name": "",
+                    "origin": "SERVICIOS",
+                    "notes": f"Pago proyectado a surveyor 7 días después de finalizar operación. {svc.get('detalle') or ''}".strip(),
+                },
+                add_to_total=True,
+            )
+            projected_surveyor_count += 1
+
+    projected_count = 0
+    seen_projected: set[tuple] = set()
+    for period in _periods_between(start, end):
+        for fortnight in (1, 2):
+            due = _coerce_date(_fortnight_due_date(period, fortnight), start)
+            if due < start or due > end:
+                continue
+            try:
+                preview = biweekly_obligations_preview(
+                    period=period,
+                    fortnight=fortnight,
+                    force=False,
+                    conn=conn,
+                    x_company_code=company,
+                )
+            except Exception:
+                continue
+            for line in preview.get("rows", []) or []:
+                obligation_id = line.get("obligation_id")
+                if obligation_id and int(obligation_id) in real_obligation_ids:
+                    continue
+                line_due = _coerce_date(line.get("due_date"), due)
+                if line_due < start or line_due > end:
+                    continue
+                amount = _money(line.get("balance") if line.get("balance") is not None else line.get("amount"))
+                projected_key = (
+                    period,
+                    fortnight,
+                    str(line.get("category") or "").upper(),
+                    str(line.get("name") or "").upper(),
+                    str(line.get("reference") or "").upper(),
+                    str(amount),
+                )
+                if projected_key in seen_projected:
+                    continue
+                seen_projected.add(projected_key)
+                append_calendar_item(
+                    {
+                        "id": f"BIWEEKLY-{period}-Q{fortnight}-{len(seen_projected)}",
+                        "payee_name": line.get("name") or line.get("category") or "Obligación quincenal",
+                        "payee_type": line.get("category") or "BIWEEKLY",
+                        "obligation_type": line.get("category") or "BIWEEKLY",
+                        "referencia": line.get("reference") or f"{period} Q{fortnight}",
+                        "vessel": "",
+                        "operation": line.get("source") or "BIWEEKLY",
+                        "country": "",
+                        "currency": line.get("currency") or "CRC",
+                        "total": float(amount),
+                        "balance": float(amount),
+                        "status": "PROJECTED",
+                        "due_date": line_due,
+                        "payment_method": line.get("payment_method") or "BANK",
+                        "payment_bank_account_name": line.get("bank_account") or "",
+                        "origin": "BIWEEKLY",
+                        "notes": line.get("notes") or "",
+                    },
+                    add_to_total=True,
+                )
+                projected_count += 1
     return {
         "company_code": company,
         "date_from": start.isoformat(),
@@ -1193,6 +1457,8 @@ def invoice_to_pay_payment_schedule(
         "days": list(days.values()),
         "totals": totals,
         "total_count": len(rows),
+        "projected_count": projected_count,
+        "projected_surveyor_count": projected_surveyor_count,
     }
 
 
