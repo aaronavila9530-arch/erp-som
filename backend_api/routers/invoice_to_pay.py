@@ -466,6 +466,34 @@ def _load_biweekly_carryover_drafts(cur, company: str, period: str, fortnight: i
     return rows
 
 
+def _load_biweekly_paid_keys(cur, company: str, period: str, fortnight: int) -> set[str]:
+    _ensure_biweekly_schema(cur)
+    cur.execute(
+        """
+        SELECT
+            l.category,
+            l.beneficiary AS name,
+            l.amount,
+            l.currency,
+            l.obligation_id,
+            l.reference
+        FROM itp_biweekly_payment_batches b
+        JOIN itp_biweekly_payment_lines l ON l.batch_id = b.id
+        WHERE b.company_code = %s
+          AND b.period = %s
+          AND b.fortnight = %s
+          AND NULLIF(TRIM(COALESCE(l.bank_voucher, '')), '') IS NOT NULL
+        """,
+        (company, period, int(fortnight or 1)),
+    )
+    keys: set[str] = set()
+    for line in cur.fetchall() or []:
+        item = dict(line)
+        item["amount"] = float(_money(item.get("amount")))
+        keys.add(_biweekly_row_key_text(item))
+    return keys
+
+
 def _save_biweekly_draft(cur, company: str, period: str, fortnight: int, rows: list, user: str):
     _ensure_biweekly_schema(cur)
     cur.execute(
@@ -1017,11 +1045,11 @@ def search_invoice_to_pay(
         params.append(due_date_to)
 
     if payment_date_from:
-        filters.append("last_payment_date >= %s")
+        filters.append("COALESCE(planned_payment_date, due_date) >= %s")
         params.append(payment_date_from)
 
     if payment_date_to:
-        filters.append("last_payment_date <= %s")
+        filters.append("COALESCE(planned_payment_date, due_date) <= %s")
         params.append(payment_date_to)
 
     where_clause = ""
@@ -1476,7 +1504,10 @@ def invoice_to_pay_payment_schedule(
                 )
             except Exception:
                 continue
+            paid_biweekly_keys = _load_biweekly_paid_keys(cur, company, period, fortnight)
             for line in preview.get("rows", []) or []:
+                if _biweekly_row_key_text(line) in paid_biweekly_keys:
+                    continue
                 obligation_id = line.get("obligation_id")
                 if obligation_id and int(obligation_id) in real_obligation_ids:
                     continue

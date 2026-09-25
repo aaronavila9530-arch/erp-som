@@ -20,7 +20,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20260925-itp-planned-payment-v1"
+_ASSET_VERSION = "20260925-itp-paid-biweekly-filter-v1"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -3050,8 +3050,8 @@ def som_web_home() -> HTMLResponse:
           <label>Factura hasta<input id="itpIssueTo" type="date" /></label>
           <label>Vence desde<input id="itpDueFrom" type="date" /></label>
           <label>Vence hasta<input id="itpDueTo" type="date" /></label>
-          <label>Pago desde<input id="itpPaymentFrom" type="date" /></label>
-          <label>Pago hasta<input id="itpPaymentTo" type="date" /></label>
+          <label>Pago planificado desde<input id="itpPaymentFrom" type="date" /></label>
+          <label>Pago planificado hasta<input id="itpPaymentTo" type="date" /></label>
         </div>
         <div class="itp-action-grid">
           <div class="itp-action-group">
@@ -3141,7 +3141,7 @@ def som_web_home() -> HTMLResponse:
     }
     function renderItpTable() {
       const table = $("itpTable");
-      const cols = ["id","payee_name","obligation_type","referencia","issue_date","due_date","planned_payment_date","vessel","country","operation","currency","total","balance","last_payment_date","status","origin"];
+      const cols = ["id","payee_name","obligation_type","referencia","planned_payment_date","due_date","currency","total","balance","status","origin","issue_date","last_payment_date","vessel","country","operation"];
       if (!itpRows.length) {
         table.innerHTML = '<div class="status">Sin obligaciones para esta consulta.</div>';
         return;
@@ -3582,7 +3582,7 @@ def som_web_home() -> HTMLResponse:
     }
     function downloadItpExcel() {
       if (!itpRows.length) return alert("No hay datos para exportar.");
-      const cols = ["id","payee_name","obligation_type","referencia","issue_date","due_date","planned_payment_date","vessel","country","operation","currency","total","balance","last_payment_date","status","origin"];
+      const cols = ["id","payee_name","obligation_type","referencia","planned_payment_date","due_date","currency","total","balance","status","origin","issue_date","last_payment_date","vessel","country","operation"];
       downloadExcelFile(`itp_${new Date().toISOString().slice(0,10)}.xls`, itpRows, cols, "Invoice To Pay");
     }
     function openItpPaymentReport() {
