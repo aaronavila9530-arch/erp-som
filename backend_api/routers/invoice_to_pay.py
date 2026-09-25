@@ -288,6 +288,23 @@ def _biweekly_row_key_text(row: dict) -> str:
     return "|".join(str(part) for part in _biweekly_row_key(row))
 
 
+def _biweekly_row_identity(row: dict) -> tuple:
+    obligation_id = row.get("obligation_id")
+    if obligation_id:
+        return ("ITP", int(obligation_id))
+    return (
+        "MANUAL",
+        str(row.get("category") or "").strip().upper(),
+        str(row.get("name") or "").strip().upper(),
+        str(row.get("currency") or "CRC").strip().upper(),
+        str(row.get("reference") or "").strip().upper(),
+    )
+
+
+def _biweekly_row_identity_text(row: dict) -> str:
+    return "|".join(str(part) for part in _biweekly_row_identity(row))
+
+
 def _append_unique_biweekly_row(rows: list[dict], seen: set, row: dict) -> None:
     key = _biweekly_row_key(row)
     if key in seen:
@@ -466,7 +483,7 @@ def _load_biweekly_carryover_drafts(cur, company: str, period: str, fortnight: i
     return rows
 
 
-def _load_biweekly_paid_keys(cur, company: str, period: str, fortnight: int) -> set[str]:
+def _load_biweekly_paid_markers(cur, company: str, period: str, fortnight: int) -> dict[str, set[str]]:
     _ensure_biweekly_schema(cur)
     cur.execute(
         """
@@ -486,12 +503,13 @@ def _load_biweekly_paid_keys(cur, company: str, period: str, fortnight: int) -> 
         """,
         (company, period, int(fortnight or 1)),
     )
-    keys: set[str] = set()
+    markers = {"keys": set(), "identities": set()}
     for line in cur.fetchall() or []:
         item = dict(line)
         item["amount"] = float(_money(item.get("amount")))
-        keys.add(_biweekly_row_key_text(item))
-    return keys
+        markers["keys"].add(_biweekly_row_key_text(item))
+        markers["identities"].add(_biweekly_row_identity_text(item))
+    return markers
 
 
 def _save_biweekly_draft(cur, company: str, period: str, fortnight: int, rows: list, user: str):
@@ -1504,9 +1522,12 @@ def invoice_to_pay_payment_schedule(
                 )
             except Exception:
                 continue
-            paid_biweekly_keys = _load_biweekly_paid_keys(cur, company, period, fortnight)
+            paid_biweekly_markers = _load_biweekly_paid_markers(cur, company, period, fortnight)
             for line in preview.get("rows", []) or []:
-                if _biweekly_row_key_text(line) in paid_biweekly_keys:
+                if (
+                    _biweekly_row_key_text(line) in paid_biweekly_markers["keys"]
+                    or _biweekly_row_identity_text(line) in paid_biweekly_markers["identities"]
+                ):
                     continue
                 obligation_id = line.get("obligation_id")
                 if obligation_id and int(obligation_id) in real_obligation_ids:
@@ -1515,6 +1536,8 @@ def invoice_to_pay_payment_schedule(
                 if line_due < start or line_due > end:
                     continue
                 amount = _money(line.get("balance") if line.get("balance") is not None else line.get("amount"))
+                if amount <= 0:
+                    continue
                 projected_key = (
                     period,
                     fortnight,
