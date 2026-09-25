@@ -1474,7 +1474,7 @@ def biweekly_obligations_preview(
     cur = conn.cursor(cursor_factory=RealDictCursor)
     _ensure_company_column(cur)
     _ensure_biweekly_schema(cur)
-    carryover_rows = _load_biweekly_carryover_drafts(cur, company, period, int(fortnight or 1))
+    carryover_rows = [] if force else _load_biweekly_carryover_drafts(cur, company, period, int(fortnight or 1))
     if not force:
         draft = _load_biweekly_draft(cur, company, period, fortnight)
         if draft:
