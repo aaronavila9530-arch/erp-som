@@ -1402,7 +1402,7 @@ def invoice_to_pay_payment_schedule(
                 preview = biweekly_obligations_preview(
                     period=period,
                     fortnight=fortnight,
-                    force=False,
+                    force=True,
                     conn=conn,
                     x_company_code=company,
                 )

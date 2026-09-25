@@ -20,7 +20,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20260925-itp-calendar-obligations-v1"
+_ASSET_VERSION = "20260925-itp-calendar-month-v1"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -870,6 +870,13 @@ def som_web_home() -> HTMLResponse:
     .notify-item strong { display:block; font-size:14px; }
     .notify-item p { margin:4px 0 0; color:#475569; line-height:1.35; }
     .notify-item small { display:block; margin-top:5px; color:#64748b; }
+    .itp-action-grid { display:grid; grid-template-columns:minmax(0,1.5fr) minmax(0,1fr) minmax(0,.8fr); gap:10px; margin:10px 0 12px; align-items:start; }
+    .itp-action-group { border:1px solid #d7e1ec; border-radius:8px; background:#fbfdff; padding:10px; min-width:0; }
+    .itp-action-group h3 { margin:0 0 8px; color:#607086; font-size:11px; text-transform:uppercase; letter-spacing:.04em; }
+    .itp-action-row { display:flex; flex-wrap:wrap; gap:8px; }
+    .itp-calendar-head { display:flex; flex-wrap:wrap; justify-content:space-between; gap:10px; align-items:center; margin-bottom:10px; }
+    .itp-calendar-nav { display:flex; gap:8px; align-items:center; }
+    .itp-calendar-nav button { min-width:38px; }
     .itp-calendar-week { display:grid; grid-template-columns:repeat(7,minmax(130px,1fr)); gap:8px; min-width:950px; margin-bottom:6px; color:#607086; font-size:12px; font-weight:800; text-transform:uppercase; }
     .itp-calendar { display:grid; grid-template-columns:repeat(7,minmax(130px,1fr)); gap:8px; min-width:950px; overflow:visible; }
     .itp-calendar-day { border:1px solid #d7e1ec; border-radius:8px; background:#fff; min-height:118px; padding:8px; display:grid; align-content:start; gap:6px; text-align:left; color:#122033; }
@@ -878,8 +885,13 @@ def som_web_home() -> HTMLResponse:
     .itp-calendar-day.today { border-color:var(--blue); box-shadow:inset 0 0 0 1px var(--blue); }
     .itp-calendar-day:not(:disabled) { background:#fffaf0; border-color:#e8c27a; }
     .itp-calendar-day strong { display:flex; justify-content:space-between; gap:6px; font-size:13px; }
-    .itp-calendar-pill { display:block; border-radius:6px; background:#edf2f7; padding:5px 6px; font-size:12px; color:#122033; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .itp-calendar-pill { display:block; border:0; border-radius:6px; background:#edf2f7; padding:5px 6px; font-size:12px; color:#122033; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-align:left; cursor:pointer; }
+    .itp-calendar-pill:hover { background:#dbeafe; color:#073659; }
     .itp-calendar-total { font-size:12px; color:#8a5a00; font-weight:800; }
+    .itp-detail-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:8px; margin-top:8px; }
+    .itp-detail-grid div { border:1px solid #e2eaf3; border-radius:7px; background:#fff; padding:8px; }
+    .itp-detail-grid span { display:block; color:#607086; font-size:11px; font-weight:800; text-transform:uppercase; }
+    .itp-detail-grid strong { display:block; margin-top:3px; overflow-wrap:anywhere; }
     .hr-shell { display:grid; gap:12px; min-width:0; }
     .hr-hero { display:grid; grid-template-columns:minmax(0,1.35fr) minmax(300px,.65fr); gap:12px; align-items:stretch; }
     .hr-card { border:1px solid #d7e1ec; border-radius:8px; background:#fff; padding:14px; min-width:0; box-shadow:var(--shadow); }
@@ -1113,6 +1125,7 @@ def som_web_home() -> HTMLResponse:
       .hero-logo img { width:min(88%,520px); height:250px; }
       .form-grid { grid-template-columns:1fr; }
       .service-command-center,.hr-hero { grid-template-columns:1fr; }
+      .itp-action-grid { grid-template-columns:1fr; }
       .itp-bi-header,.itp-bi-controls,.itp-bi-body,.itp-bi-summary { grid-template-columns:1fr; }
       .itp-bi-totals { grid-template-columns:1fr; }
       .finance-filter-row,.finance-filter-row.compact { grid-template-columns:1fr; }
@@ -1275,6 +1288,7 @@ def som_web_home() -> HTMLResponse:
     let itpRows = [];
     let selectedItpIndex = null;
     let selectedItpIndexes = new Set();
+    let itpScheduleMonth = null;
     let itpBiweeklyRows = [];
     let selectedItpBiweeklyIndex = null;
     let itpBiweeklyChecked = new Set();
@@ -2993,16 +3007,30 @@ def som_web_home() -> HTMLResponse:
           <label>Pago desde<input id="itpPaymentFrom" type="date" /></label>
           <label>Pago hasta<input id="itpPaymentTo" type="date" /></label>
         </div>
-        <div class="finance-toolbar">
-          <button class="green" onclick="openItpManualForm()">Registrar obligación manual</button>
-          <button onclick="openItpUploadForm()">Cargar factura PDF / XML</button>
-          <button onclick="openItpBiweekly()">Obligaciones quincenales</button>
-          <button class="green" onclick="openItpPaymentForm()">Aplicar pago</button>
-          <button class="brown" onclick="deleteSelectedItp()">Eliminar</button>
-          <button class="secondary" onclick="downloadItpExcel()">Exportar Excel</button>
-          <button class="secondary" onclick="openItpPaymentReport()">Reporte pagos ITP / presupuesto</button>
-          <button class="secondary" onclick="loadItpPaymentSchedule()">Cronograma pagos</button>
-          <button class="secondary" onclick="renderFinancePlanning($('itpTable'))">PLN / Planificación</button>
+        <div class="itp-action-grid">
+          <div class="itp-action-group">
+            <h3>Registrar</h3>
+            <div class="itp-action-row">
+              <button class="green" onclick="openItpManualForm()">Obligación manual</button>
+              <button onclick="openItpUploadForm()">Cargar factura PDF / XML</button>
+              <button onclick="openItpBiweekly()">Obligaciones quincenales</button>
+            </div>
+          </div>
+          <div class="itp-action-group">
+            <h3>Acciones</h3>
+            <div class="itp-action-row">
+              <button class="green" onclick="openItpPaymentForm()">Aplicar pago</button>
+              <button class="brown" onclick="deleteSelectedItp()">Eliminar</button>
+            </div>
+          </div>
+          <div class="itp-action-group">
+            <h3>Reportes</h3>
+            <div class="itp-action-row">
+              <button class="secondary" onclick="downloadItpExcel()">Excel</button>
+              <button class="secondary" onclick="openItpPaymentReport()">Pagos / presupuesto</button>
+              <button class="secondary" onclick="loadItpPaymentSchedule()">Cronograma pagos</button>
+            </div>
+          </div>
         </div>
         <div id="itpKpis" class="grid kpis hidden"></div>
         <div id="itpAlerts" class="status hidden"></div>
@@ -3112,8 +3140,9 @@ def som_web_home() -> HTMLResponse:
       const box = $("itpSchedule");
       if (!box) return;
       const today = new Date();
-      const from = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().slice(0,10);
-      const to = new Date(today.getFullYear(), today.getMonth() + 2, 0).toISOString().slice(0,10);
+      if (!itpScheduleMonth) itpScheduleMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+      const from = new Date(itpScheduleMonth.getFullYear(), itpScheduleMonth.getMonth(), 1).toISOString().slice(0,10);
+      const to = new Date(itpScheduleMonth.getFullYear(), itpScheduleMonth.getMonth() + 1, 0).toISOString().slice(0,10);
       box.className = "workspace";
       box.innerHTML = '<div class="status">Cargando cronograma de pagos...</div>';
       try {
@@ -3123,6 +3152,16 @@ def som_web_home() -> HTMLResponse:
       } catch (err) {
         box.innerHTML = `<div class="status error">${esc(err.message)}</div>`;
       }
+    }
+    function shiftItpPaymentSchedule(months) {
+      const base = itpScheduleMonth || new Date();
+      itpScheduleMonth = new Date(base.getFullYear(), base.getMonth() + months, 1);
+      loadItpPaymentSchedule();
+    }
+    function resetItpPaymentSchedule() {
+      const today = new Date();
+      itpScheduleMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+      loadItpPaymentSchedule();
     }
     function renderItpPaymentSchedule(data, from, to) {
       const byDate = new Map((data.days || []).map(day => [day.date, day]));
@@ -3141,25 +3180,33 @@ def som_web_home() -> HTMLResponse:
         const totalText = day
           ? Object.entries(day.totals || {}).map(([cur, amount]) => `${esc(cur)} ${Number(amount || 0).toLocaleString("en-US",{maximumFractionDigits:2})}`).join(" · ")
           : "";
-        const items = (day?.items || []).slice(0, 2);
+        const items = (day?.items || []).slice(0, 4);
         cells.push(`
-          <button class="itp-calendar-day ${outside ? "muted-day" : ""} ${key === todayKey ? "today" : ""}" onclick="showItpScheduleDay('${key}')" ${day ? "" : "disabled"}>
+          <div class="itp-calendar-day ${outside ? "muted-day" : ""} ${key === todayKey ? "today" : ""}">
             <strong>${d.getDate()}</strong>
             ${totalText ? `<span class="itp-calendar-total">${totalText}</span>` : ""}
-            ${items.map(item => `<span class="itp-calendar-pill">${esc(item.payee_name || "Obligación")} · ${esc(item.currency || "")} ${Number(item.balance || 0).toLocaleString("en-US",{maximumFractionDigits:2})}</span>`).join("")}
-            ${(day?.items || []).length > 2 ? `<span class="muted">+${(day.items || []).length - 2} más</span>` : ""}
-          </button>`);
+            ${items.map((item, idx) => `<button class="itp-calendar-pill" onclick="showItpScheduleItem('${key}', ${idx})" title="${esc(item.payee_name || "Obligación")}">${esc(item.payee_name || "Obligación")} · ${esc(item.currency || "")} ${Number(item.balance || 0).toLocaleString("en-US",{maximumFractionDigits:2})}</button>`).join("")}
+            ${(day?.items || []).length > 4 ? `<span class="muted">+${(day.items || []).length - 4} más</span>` : ""}
+          </div>`);
       }
       window.itpScheduleDays = Object.fromEntries((data.days || []).map(day => [day.date, day]));
       const totalRange = Object.entries(data.totals || {}).map(([cur, amount]) => `${esc(cur)} ${Number(amount || 0).toLocaleString("en-US",{maximumFractionDigits:2})}`).join(" · ") || "Sin obligaciones";
+      const monthTitle = start.toLocaleDateString("es-CR", { month:"long", year:"numeric" });
       return `
-        <div class="panel-head">
-          <h2>Cronograma de pagos ITP</h2>
-          <span class="muted">${esc(from)} a ${esc(to)} · ${totalRange}</span>
+        <div class="itp-calendar-head">
+          <div>
+            <h2>Cronograma de pagos ITP</h2>
+            <span class="muted">${esc(monthTitle)} · ${totalRange}</span>
+          </div>
+          <div class="itp-calendar-nav">
+            <button class="secondary" onclick="shiftItpPaymentSchedule(-1)">‹</button>
+            <button class="secondary" onclick="resetItpPaymentSchedule()">Mes actual</button>
+            <button class="secondary" onclick="shiftItpPaymentSchedule(1)">›</button>
+          </div>
         </div>
         <div class="itp-calendar-week"><span>Dom</span><span>Lun</span><span>Mar</span><span>Mié</span><span>Jue</span><span>Vie</span><span>Sáb</span></div>
         <div class="itp-calendar">${cells.join("")}</div>
-        <div id="itpScheduleDetail" class="status">Seleccione un día con obligaciones para ver el detalle.</div>`;
+        <div id="itpScheduleDetail" class="status">Seleccione una obligación del calendario para ver el detalle.</div>`;
     }
     function showItpScheduleDay(key) {
       const box = $("itpScheduleDetail");
@@ -3171,6 +3218,41 @@ def som_web_home() -> HTMLResponse:
           ${(day.items || []).map(item => `<tr><td>${esc(item.payee_name)}</td><td>${esc(item.referencia || item.invoice_number || "")}</td><td>${esc(item.obligation_type)}</td><td>${esc(item.currency)}</td><td>${Number(item.balance || 0).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:2})}</td><td>${esc(item.status)}</td></tr>`).join("")}
         </tbody></table></div>`;
       enhanceExcelTables(box);
+    }
+    function showItpScheduleItem(key, index) {
+      const box = $("itpScheduleDetail");
+      const day = window.itpScheduleDays?.[key];
+      const item = day?.items?.[index];
+      if (!box || !item) return;
+      const amount = `${item.currency || ""} ${Number(item.balance || 0).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:2})}`;
+      box.innerHTML = `
+        <strong>${esc(item.payee_name || "Obligación")} · ${esc(key)}</strong>
+        <div class="itp-detail-grid">
+          <div><span>Monto pendiente</span><strong>${esc(amount)}</strong></div>
+          <div><span>Estado</span><strong>${esc(item.status || "-")}</strong></div>
+          <div><span>Origen</span><strong>${esc(item.origin || "-")}</strong></div>
+          <div><span>Tipo</span><strong>${esc(item.obligation_type || item.payee_type || "-")}</strong></div>
+          <div><span>Referencia</span><strong>${esc(item.referencia || item.reference || item.invoice_number || "-")}</strong></div>
+          <div><span>Servicio / buque</span><strong>${esc(item.vessel || "-")}</strong></div>
+          <div><span>Operación</span><strong>${esc(item.operation || "-")}</strong></div>
+          <div><span>Banco / método</span><strong>${esc(item.payment_bank_account_name || item.payment_method || "-")}</strong></div>
+        </div>
+        ${item.notes ? `<p class="muted">${esc(item.notes)}</p>` : ""}
+        <div class="md-actions">
+          ${String(item.id || "").match(/^\\d+$/) ? `<button class="green" onclick="selectItpObligationFromCalendar(${Number(item.id)})">Seleccionar en ITP</button>` : ""}
+          <button class="secondary" onclick="showItpScheduleDay('${key}')">Ver todo el día</button>
+        </div>`;
+    }
+    function selectItpObligationFromCalendar(id) {
+      const idx = itpRows.findIndex(row => Number(row.id) === Number(id));
+      if (idx >= 0) {
+        selectedItpIndexes = new Set([idx]);
+        selectedItpIndex = idx;
+        renderItpTable();
+        $("itpTable")?.scrollIntoView({ behavior:"smooth", block:"start" });
+      } else {
+        alert("Busque la obligación en ITP para seleccionarla. Si es proyectada, aún no existe como obligación aplicada.");
+      }
     }
     function openItpManualForm() {
       document.body.insertAdjacentHTML("beforeend", `
