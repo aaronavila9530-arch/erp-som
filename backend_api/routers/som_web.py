@@ -20,7 +20,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20260925-itp-plan-payment-action-v1"
+_ASSET_VERSION = "20260928-hr-payroll-web-v1"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -929,6 +929,14 @@ def som_web_home() -> HTMLResponse:
     .hr-form label { display:grid; gap:5px; color:#334155; font-size:13px; }
     .hr-form textarea { min-height:84px; border:1px solid var(--line); border-radius:7px; padding:9px 11px; font:inherit; resize:vertical; }
     .hr-form .wide { grid-column:1/-1; }
+    .hr-payroll-layout { display:grid; grid-template-columns:minmax(0,1.35fr) minmax(300px,.65fr); gap:12px; align-items:start; }
+    .hr-preview-card { border:1px solid #d7e1ec; border-radius:8px; background:#f8fbfe; padding:12px; min-width:0; }
+    .hr-preview-card h3 { margin:0 0 8px; font-size:17px; }
+    .hr-preview-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; margin-top:8px; }
+    .hr-preview-metric { border:1px solid #e2eaf3; border-radius:7px; background:#fff; padding:9px; min-width:0; }
+    .hr-preview-metric span { display:block; color:#64748b; font-size:11px; font-weight:800; text-transform:uppercase; }
+    .hr-preview-metric strong { display:block; margin-top:4px; font-size:18px; overflow-wrap:anywhere; }
+    .hr-payroll-note { margin-top:8px; color:#607086; font-size:13px; line-height:1.35; }
     .tabs { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0; }
     .tabs button { background:#fff; color:var(--ink); border:1px solid var(--line); }
     .tabs button.active { background:var(--blue); color:#fff; border-color:var(--blue); }
@@ -1316,6 +1324,8 @@ def som_web_home() -> HTMLResponse:
     let financeClienteRows = [];
     let hrCurrentView = "home";
     let hrRows = [];
+    let selectedHrPayrollIndex = null;
+    let hrPayrollPreview = null;
     const DISPUTE_STATUSES = ["New","In process","Process by Sales","Process by RTR","Process by Invoicing","Process by Collections","Process by Bank","Process by Disputes","Written Off","Resolved"];
     const SERVICE_COLUMNS = [
       "consec","tipo","estado","num_informe","buque_contenedor","cliente","contacto","detalle",
@@ -7531,25 +7541,122 @@ def som_web_home() -> HTMLResponse:
     function renderHrPayroll() {
       $("hrViewTitle").textContent = "Payroll / Planilla";
       $("hrViewHint").textContent = "Empleados activos y cálculo del período cerrado.";
-      $("hrWorkspace").innerHTML = `<div class="hr-toolbar"><button onclick="loadHrPayrollEmployees()">Cargar empleados payroll</button><button class="secondary" onclick="calculateHrPayroll()">Calcular usuario</button></div><div id="hrPayrollTable"></div>`;
+      selectedHrPayrollIndex = null;
+      hrPayrollPreview = null;
+      const closed = previousClosedPayrollPeriod();
+      $("hrWorkspace").innerHTML = `
+        <div class="hr-toolbar">
+          <label>Año cerrado<input id="hrPayrollYear" type="number" value="${closed.year}" disabled /></label>
+          <label>Mes cerrado<input id="hrPayrollMonth" type="number" value="${closed.month}" disabled /></label>
+          <button onclick="loadHrPayrollEmployees()">Cargar empleados payroll</button>
+          <button class="secondary" onclick="calculateSelectedHrPayroll()">Preview planilla</button>
+          <button onclick="postSelectedHrPayroll()">Postear planilla + asiento</button>
+        </div>
+        <div class="hr-payroll-layout">
+          <div id="hrPayrollTable"></div>
+          <div id="hrPayrollPreview" class="hr-preview-card">
+            <h3>Preview</h3>
+            <div class="status">Seleccione un empleado y presione Preview planilla.</div>
+          </div>
+        </div>`;
       loadHrPayrollEmployees();
+    }
+    function previousClosedPayrollPeriod() {
+      const today = new Date();
+      let year = today.getFullYear();
+      let month = today.getMonth();
+      if (month === 0) { month = 12; year -= 1; }
+      return { year, month };
+    }
+    function renderHrPayrollRows() {
+      const cols = ["usuario","nombre","apellidos","jornada","salario","pago","estado","horas_contratadas","horas_tope_ordinario","tarifa_hora_extra"];
+      if (!hrRows.length) {
+        $("hrPayrollTable").innerHTML = '<div class="status">Sin empleados activos para payroll.</div>';
+        return;
+      }
+      $("hrPayrollTable").innerHTML = `<div class="table-wrap"><table><thead><tr><th></th>${cols.map(c => `<th>${esc(c.replace(/_/g," "))}</th>`).join("")}</tr></thead><tbody>${hrRows.map((row, idx) => {
+        const selected = idx === selectedHrPayrollIndex;
+        return `<tr class="${selected ? "service-selected" : ""}" onclick="selectHrPayrollEmployee(${idx})"><td class="pick-col"><input class="row-pick" type="radio" name="hrPayrollPick" ${selected ? "checked" : ""} onclick="event.stopPropagation(); selectHrPayrollEmployee(${idx})" /></td>${cols.map(c => `<td>${esc(row?.[c] ?? "")}</td>`).join("")}</tr>`;
+      }).join("")}</tbody></table></div>`;
+      enhanceExcelTables($("hrPayrollTable"));
+    }
+    function selectHrPayrollEmployee(idx) {
+      selectedHrPayrollIndex = idx;
+      hrPayrollPreview = null;
+      renderHrPayrollRows();
+      renderHrPayrollPreview(null, "Empleado seleccionado. Genere el preview antes de postear.");
+    }
+    function selectedHrPayrollEmployee() {
+      return selectedHrPayrollIndex === null ? null : hrRows[selectedHrPayrollIndex];
+    }
+    function renderHrPayrollPreview(data, message="") {
+      const box = $("hrPayrollPreview");
+      if (!box) return;
+      if (!data) {
+        box.innerHTML = `<h3>Preview</h3><div class="status">${esc(message || "Seleccione un empleado y presione Preview planilla.")}</div>`;
+        return;
+      }
+      const metrics = [
+        ["Empleado", `${data.nombre || ""} ${data.apellidos || ""}`.trim() || data.usuario],
+        ["Periodo", `${String(data.month).padStart(2,"0")}/${data.year}`],
+        ["Salario bruto", Number(data.salario_bruto || 0).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:2})],
+        ["Salario neto", Number(data.salario_neto || 0).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:2})],
+        ["Horas registradas", data.horas_registradas || 0],
+        ["Horas extra", data.horas_ot || 0],
+        ["Monto horas extra", Number(data.pago_horas_extra || 0).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:2})],
+        ["Costo empresa", Number(data.costo_total_empresa || 0).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:2})]
+      ];
+      box.innerHTML = `<h3>Preview de planilla</h3>
+        <div class="hr-preview-grid">${metrics.map(([label,value]) => `<div class="hr-preview-metric"><span>${esc(label)}</span><strong>${esc(value)}</strong></div>`).join("")}</div>
+        <div class="hr-payroll-note">Revise el cálculo. Al postear se registra payroll y se sincroniza el asiento contable de planilla.</div>`;
     }
     async function loadHrPayrollEmployees() {
       try {
         const payload = await getJSON("/hr/payroll/employees");
         hrRows = rowsList(payload);
-        $("hrPayrollTable").innerHTML = hrTable(hrRows, ["usuario","nombre","apellidos","jornada","salario","pago","estado","horas_contratadas","horas_tope_ordinario","tarifa_hora_extra"]);
-        enhanceExcelTables($("hrPayrollTable"));
+        selectedHrPayrollIndex = null;
+        hrPayrollPreview = null;
+        renderHrPayrollRows();
+        renderHrPayrollPreview(null, `${hrRows.length} empleado(s) activos cargados. Seleccione una fila.`);
       } catch (err) { $("hrPayrollTable").innerHTML = `<div class="status error">${esc(err.message)}</div>`; }
     }
-    async function calculateHrPayroll() {
-      const usuario = prompt("Usuario");
-      const year = prompt("Año", String(new Date().getFullYear()));
-      const month = prompt("Mes cerrado", String(new Date().getMonth() || 12));
-      if (!usuario || !year || !month) return;
+    async function calculateSelectedHrPayroll() {
+      const row = selectedHrPayrollEmployee();
+      if (!row) return hrStatus("Seleccione un empleado de la tabla.", true);
+      const year = valueFrom("hrPayrollYear");
+      const month = valueFrom("hrPayrollMonth");
       try {
-        const data = await getJSON(`/hr/payroll/calculate?usuario=${encodeURIComponent(usuario)}&year=${encodeURIComponent(year)}&month=${encodeURIComponent(month)}`);
-        showObjectModal("Cálculo payroll", data);
+        const data = await getJSON(`/hr/payroll/calculate?usuario=${encodeURIComponent(row.usuario)}&year=${encodeURIComponent(year)}&month=${encodeURIComponent(month)}`);
+        hrPayrollPreview = data;
+        renderHrPayrollPreview(data);
+        hrStatus("Preview calculado. Revise antes de postear.");
+      } catch (err) { hrStatus(err.message, true); }
+    }
+    async function postSelectedHrPayroll() {
+      const row = selectedHrPayrollEmployee();
+      if (!row) return hrStatus("Seleccione un empleado de la tabla.", true);
+      if (!hrPayrollPreview || String(hrPayrollPreview.usuario) !== String(row.usuario)) {
+        await calculateSelectedHrPayroll();
+        if (!hrPayrollPreview || String(hrPayrollPreview.usuario) !== String(row.usuario)) return;
+      }
+      if (!confirm(`Postear planilla de ${row.usuario} y sincronizar asiento contable?`)) return;
+      const payload = {
+        usuario:hrPayrollPreview.usuario,
+        year:hrPayrollPreview.year,
+        month:hrPayrollPreview.month,
+        salario_neto:hrPayrollPreview.salario_neto || 0,
+        salario_bruto:hrPayrollPreview.salario_bruto || hrPayrollPreview.salario_neto || 0,
+        horas_ot:hrPayrollPreview.horas_ot || 0,
+        pago_horas_extra:hrPayrollPreview.pago_horas_extra || 0,
+        pdf_path:`/LOCAL_USER_FILE/COLILLA_${hrPayrollPreview.usuario}_${hrPayrollPreview.year}_${hrPayrollPreview.month}.pdf`
+      };
+      try {
+        await sendJSON("PUT", "/hr/payroll/post", payload);
+        await postJSON("/accounting/sync/payroll", {});
+        hrStatus("Planilla registrada y asiento contable sincronizado.");
+        hrPayrollPreview = null;
+        renderHrPayrollPreview(null, "Planilla posteada. Puede seleccionar otro empleado.");
+        await loadHrPayrollEmployees();
       } catch (err) { hrStatus(err.message, true); }
     }
     function renderHrEmployees() {

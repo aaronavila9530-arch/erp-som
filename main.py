@@ -80,6 +80,7 @@ class MainApp(tk.Frame):
         self.company_var = tk.StringVar()
         self._logra_alert_shown = set()
         self._global_alert_shown = {}
+        self._app_notification_seen = set()
         self._permission_cache = {}
 
         self._build_menu_lateral()
@@ -450,7 +451,10 @@ class MainApp(tk.Frame):
     def _check_app_notifications(self):
         try:
             data = api_client.listar_notificaciones_api(unread_only=True, limit=5)
-            rows = data.get("data") or []
+            rows = [
+                row for row in (data.get("data") or [])
+                if row.get("id") not in self._app_notification_seen
+            ]
             if rows:
                 lines = []
                 ids = []
@@ -460,16 +464,17 @@ class MainApp(tk.Frame):
                     lines.append(f"{title}: {message}")
                     if row.get("id"):
                         ids.append(row.get("id"))
+                for notification_id in ids:
+                    self._app_notification_seen.add(notification_id)
+                    try:
+                        api_client.marcar_notificacion_leida_api(notification_id)
+                    except Exception:
+                        pass
                 messagebox.showinfo(
                     "Notificaciones ERP",
                     "\n\n".join(lines),
                     parent=self.parent,
                 )
-                for notification_id in ids:
-                    try:
-                        api_client.marcar_notificacion_leida_api(notification_id)
-                    except Exception:
-                        pass
         except Exception:
             pass
         finally:

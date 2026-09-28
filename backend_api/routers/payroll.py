@@ -212,7 +212,7 @@ def listar_empleados_payroll(conn=Depends(get_db)):
     conn.commit()
 
     cur.execute("""
-        SELECT
+        SELECT DISTINCT ON (LOWER(TRIM(usuario)))
             nombre,
             apellidos,
             jornada,
@@ -230,7 +230,8 @@ def listar_empleados_payroll(conn=Depends(get_db)):
         WHERE estado = 'Activo'
           AND COALESCE(activo, TRUE) = TRUE
           AND usuario IS NOT NULL
-        ORDER BY nombre, apellidos
+          AND TRIM(usuario) <> ''
+        ORDER BY LOWER(TRIM(usuario)), nombre, apellidos
     """)
 
     return {
