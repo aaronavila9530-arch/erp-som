@@ -13,6 +13,7 @@ from PyInstaller.utils.hooks import collect_submodules
 project_root = os.path.abspath(SPECPATH)
 python_root = os.path.dirname(os.__file__)
 python_base = os.path.dirname(python_root)
+tcl_root = os.path.join(python_base, "tcl")
 
 # ============================================================
 # HIDDEN IMPORTS
@@ -71,6 +72,18 @@ hidden_imports += ["pythoncom", "pywintypes", "win32com", "win32com.client"]
 # DATAS
 # ============================================================
 
+tcl_datas = []
+for src, dest in (
+    (os.path.join(tcl_root, "tcl8.6"), "_tcl_data"),
+    (os.path.join(tcl_root, "tk8.6"), "_tk_data"),
+    (os.path.join(tcl_root, "tcl8.6"), "_tcl"),
+    (os.path.join(tcl_root, "tk8.6"), "_tk"),
+    (os.path.join(tcl_root, "tcl8.6"), os.path.join("tcl", "tcl8.6")),
+    (os.path.join(tcl_root, "tk8.6"), os.path.join("tcl", "tk8.6")),
+):
+    if os.path.isdir(src):
+        tcl_datas.append((src, dest))
+
 datas = [
     ("assets", "assets"),
     ("Modulos", "Modulos"),
@@ -78,14 +91,14 @@ datas = [
     ("desktop_services", "desktop_services"),
     ("resource_utils.py", "."),
     ("version.py", "."),
-    (os.path.join(python_base, "tcl", "tcl8.6"), "_tcl_data"),
-    (os.path.join(python_base, "tcl", "tk8.6"), "_tk_data"),
+    *tcl_datas,
 ]
 
-binaries = [
-    (os.path.join(python_base, "DLLs", "tcl86t.dll"), "."),
-    (os.path.join(python_base, "DLLs", "tk86t.dll"), "."),
-]
+binaries = []
+for dll in ("tcl86t.dll", "tk86t.dll"):
+    src = os.path.join(python_base, "DLLs", dll)
+    if os.path.isfile(src):
+        binaries.append((src, "."))
 
 # ============================================================
 # ANALYSIS
