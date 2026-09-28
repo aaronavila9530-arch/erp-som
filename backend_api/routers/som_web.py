@@ -20,7 +20,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20260928-payslips-secure-v1"
+_ASSET_VERSION = "20260928-service-save-v1"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -7206,7 +7206,7 @@ def som_web_home() -> HTMLResponse:
               <label>Continente<select id="svcForm_continente"></select></label>
               <label>País<select id="svcForm_pais"></select></label>
               <label>Puerto<select id="svcForm_puerto"></select></label>
-              <label>Operación<select id="svcForm_operacion">${serviceSelectOptions(serviceMeta.operacionesCatalog, row?.operacion, ["nombre","Nombre"], "Seleccione operación")}</select></label>
+              <label>Operación<select id="svcForm_operacion">${serviceSelectOptions(serviceMeta.operacionesCatalog, row?.operacion, ["nombre","Nombre","operacion","Operacion","servicio","Servicio","label","descripcion","Descripcion"], "Seleccione operación")}</select></label>
               <label>Fecha inicio<input id="svcForm_fecha_inicio" type="date" value="${val("fecha_inicio")}" required /></label>
               <label>Hora inicio<input id="svcForm_hora_inicio" type="time" value="${val("hora_inicio")}" required /></label>
               <label>Fecha fin<input id="svcForm_fecha_fin" type="date" value="${val("fecha_fin")}" /></label>
