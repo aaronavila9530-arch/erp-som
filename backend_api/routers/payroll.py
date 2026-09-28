@@ -213,6 +213,7 @@ def _insert_payroll_adjustment_entry(cur, run: dict, before: dict, after: dict, 
 def listar_empleados_payroll(conn=Depends(get_db)):
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
+    allowed_year, allowed_month = _closed_payroll_period()
     ensure_employee_hours_policy_columns(cur)
     cur.execute("ALTER TABLE empleados ADD COLUMN IF NOT EXISTS activo BOOLEAN NOT NULL DEFAULT TRUE")
     cur.execute("UPDATE empleados SET activo = TRUE WHERE activo IS NULL")
@@ -220,29 +221,37 @@ def listar_empleados_payroll(conn=Depends(get_db)):
 
     cur.execute("""
         SELECT DISTINCT ON (LOWER(TRIM(usuario)))
-            nombre,
-            apellidos,
-            jornada,
-            salario,
-            pago,
-            estado,
-            usuario,
-            horas_contratadas,
-            horas_tope_ordinario,
-            horas_tope_maximo,
-            tarifa_hora_extra,
-            pago_minimo_garantizado,
-            cedula_id
-        FROM empleados
-        WHERE estado = 'Activo'
-          AND COALESCE(activo, TRUE) = TRUE
-          AND usuario IS NOT NULL
-          AND TRIM(usuario) <> ''
-        ORDER BY LOWER(TRIM(usuario)), nombre, apellidos
-    """)
+            e.nombre,
+            e.apellidos,
+            e.jornada,
+            e.salario,
+            e.pago,
+            e.estado,
+            e.usuario,
+            e.horas_contratadas,
+            e.horas_tope_ordinario,
+            e.horas_tope_maximo,
+            e.tarifa_hora_extra,
+            e.pago_minimo_garantizado,
+            e.cedula_id,
+            pr.id AS payroll_run_id,
+            CASE WHEN pr.id IS NULL THEN 'Pendiente' ELSE 'Generada' END AS planilla_estado
+        FROM empleados e
+        LEFT JOIN payroll_runs pr
+          ON pr.usuario = e.usuario
+         AND pr.year = %s
+         AND pr.month = %s
+        WHERE e.estado = 'Activo'
+          AND COALESCE(e.activo, TRUE) = TRUE
+          AND e.usuario IS NOT NULL
+          AND TRIM(e.usuario) <> ''
+        ORDER BY LOWER(TRIM(e.usuario)), e.nombre, e.apellidos
+    """, (allowed_year, allowed_month))
 
     return {
         "total": cur.rowcount,
+        "year": allowed_year,
+        "month": allowed_month,
         "data": cur.fetchall()
     }
 

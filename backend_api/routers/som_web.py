@@ -20,7 +20,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20260928-hr-payroll-web-v2"
+_ASSET_VERSION = "20260928-hr-payroll-web-v3"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -7564,7 +7564,7 @@ def som_web_home() -> HTMLResponse:
       loadHrPayrollPeriodAndEmployees();
     }
     function renderHrPayrollRows() {
-      const cols = ["usuario","nombre","apellidos","jornada","salario","pago","estado","horas_contratadas","horas_tope_ordinario","tarifa_hora_extra"];
+      const cols = ["usuario","nombre","apellidos","jornada","salario","pago","estado","planilla_estado","horas_contratadas","horas_tope_ordinario","tarifa_hora_extra"];
       if (!hrRows.length) {
         $("hrPayrollTable").innerHTML = '<div class="status">Sin empleados activos para payroll.</div>';
         return;
@@ -7579,7 +7579,12 @@ def som_web_home() -> HTMLResponse:
       selectedHrPayrollIndex = idx;
       hrPayrollPreview = null;
       renderHrPayrollRows();
-      renderHrPayrollPreview(null, "Empleado seleccionado. Presione Generar planilla para revisar y confirmar.");
+      const row = selectedHrPayrollEmployee();
+      if (row?.payroll_run_id) {
+        renderHrPayrollPreview(null, "Este empleado ya tiene la planilla generada para el período cerrado.");
+      } else {
+        renderHrPayrollPreview(null, "Empleado seleccionado. Presione Generar planilla para revisar y confirmar.");
+      }
     }
     function selectedHrPayrollEmployee() {
       return selectedHrPayrollIndex === null ? null : hrRows[selectedHrPayrollIndex];
@@ -7634,6 +7639,11 @@ def som_web_home() -> HTMLResponse:
     async function calculateSelectedHrPayroll() {
       const row = selectedHrPayrollEmployee();
       if (!row) return hrStatus("Seleccione un empleado de la tabla.", true);
+      if (row.payroll_run_id) {
+        const msg = "La planilla de este empleado ya fue cerrada para el período seleccionado.";
+        renderHrPayrollPreview(null, msg);
+        return hrStatus(msg, true);
+      }
       const year = valueFrom("hrPayrollYear");
       const month = valueFrom("hrPayrollMonth");
       try {
@@ -7650,6 +7660,7 @@ def som_web_home() -> HTMLResponse:
     async function postSelectedHrPayroll() {
       const row = selectedHrPayrollEmployee();
       if (!row) return hrStatus("Seleccione un empleado de la tabla.", true);
+      if (row.payroll_run_id) return hrStatus("La planilla de este empleado ya fue cerrada.", true);
       if (!hrPayrollPreview || String(hrPayrollPreview.usuario) !== String(row.usuario)) {
         await calculateSelectedHrPayroll();
         if (!hrPayrollPreview || String(hrPayrollPreview.usuario) !== String(row.usuario)) return;
