@@ -20,7 +20,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20260928-hr-payroll-web-v3"
+_ASSET_VERSION = "20260928-services-operation-combo-v1"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -1433,7 +1433,7 @@ def som_web_home() -> HTMLResponse:
       },
       servicios_md: {
         title:"Servicio",
-        endpoint:"/servicios_md",
+        endpoint:"/servicios_md/",
         add:"/servicios_md/add",
         update:"/servicios_md/update",
         ultimo:"/servicios_md/ultimo",
@@ -7007,7 +7007,7 @@ def som_web_home() -> HTMLResponse:
       if (term) params.set("q", term);
       const endpoints = {
         clientes:"/clientes",
-        operaciones:"/servicios_md",
+        operaciones:"/servicios_md/",
         surveyores:"/surveyores"
       };
       const data = await getJSON(`${endpoints[kind]}?${params.toString()}`).catch(() => ({ data:[] }));
@@ -7020,7 +7020,9 @@ def som_web_home() -> HTMLResponse:
         getJSON("/servicios-surveyors/catalogo/lista").catch(() => ({ data:[] }))
       ]);
       serviceMeta.clientesCatalog = clientes;
-      serviceMeta.operacionesCatalog = operaciones;
+      serviceMeta.operacionesCatalog = operaciones.length
+        ? operaciones
+        : rowsList(serviceMeta.operacion || []).map(nombre => ({ nombre }));
       serviceSurveyorCatalog = rowsList(surveyors).map(row => ({
         ...row,
         full_name:[row.nombre, row.apellidos].filter(Boolean).join(" ") || row.surveyor_nombre || row.nombre_completo || row.nombre || ""
