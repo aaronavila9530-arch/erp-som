@@ -20,7 +20,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20260928-masterdata-forms-v1"
+_ASSET_VERSION = "20260928-masterdata-upload-v1"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -6303,10 +6303,7 @@ def som_web_home() -> HTMLResponse:
       result.className = "status";
       result.textContent = "Cargando formularios...";
       try {
-        const resp = await fetch("/master-data/forms/upload", { method:"POST", headers:headers(), body:form });
-        let data = {};
-        try { data = await resp.json(); } catch {}
-        if (!resp.ok) throw new Error(data.detail || resp.statusText || "No se pudieron cargar los formularios.");
+        const data = await sendForm("/master-data/forms/upload", form);
         const failed = Array.isArray(data.failed) ? data.failed : [];
         result.className = failed.length ? "status warning" : "status";
         result.innerHTML = `<strong>Creados:</strong> ${esc(data.created || 0)} · <strong>Actualizados:</strong> ${esc(data.updated || 0)} · <strong>No cargados:</strong> ${esc(failed.length)}`

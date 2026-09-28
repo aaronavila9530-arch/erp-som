@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import io
+import re
 import tempfile
 from dataclasses import dataclass
+from datetime import date, datetime
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, File, Header, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
@@ -117,6 +120,41 @@ LABELS = {
     "costo": "Costo / Cost",
 }
 
+LABEL_TO_FIELD = {label.strip().lower(): field for field, label in LABELS.items()}
+
+UPLOAD_SPECS = {
+    "cliente": {
+        "label": "Cliente",
+        "code_field": "Codigo",
+        "fields": SPECS["clientes"].fields,
+        "required": ("NombreJuridico", "Pais"),
+    },
+    "proveedor": {
+        "label": "Proveedor",
+        "code_field": "Codigo",
+        "fields": SPECS["proveedores"].fields,
+        "required": ("Nombre", "Pais"),
+    },
+    "empleado": {
+        "label": "Empleado",
+        "code_field": "codigo",
+        "fields": SPECS["empleados"].fields,
+        "required": ("nombre", "apellidos"),
+    },
+    "surveyor": {
+        "label": "Surveyor",
+        "code_field": "codigo",
+        "fields": SPECS["surveyores"].fields,
+        "required": ("nombre", "apellidos", "pais_o_nacionalidad"),
+    },
+    "servicio": {
+        "label": "Servicio",
+        "code_field": "codigo",
+        "fields": SPECS["servicios-md"].fields,
+        "required": ("nombre",),
+    },
+}
+
 
 def _spec(entity_key: str) -> FormSpec:
     spec = SPECS.get(ALIASES.get(str(entity_key or "").strip().lower(), entity_key))
@@ -167,8 +205,164 @@ def _normalize_upload_entity(entity: str) -> str:
     return value
 
 
+def _clean_value(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    return str(value).strip()
+
+
+def _clean_number(value: Any) -> str:
+    return _clean_value(value).replace(",", "")
+
+
+def _format_date(value: Any) -> str:
+    text = _clean_value(value)
+    if not text:
+        return ""
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%m/%d/%Y"):
+        try:
+            return datetime.strptime(text, fmt).date().isoformat()
+        except Exception:
+            continue
+    return text
+
+
+def _normalize_import_key(value: Any) -> str:
+    text = _clean_value(value)
+    match = re.search(r"\(([^()]+)\)\s*$", text)
+    if match:
+        text = match.group(1)
+    return text.strip()
+
+
+def _field_from_header(value: Any, spec: dict | None = None) -> str:
+    text = _normalize_import_key(value)
+    fields = set(spec["fields"]) if spec else None
+    if fields and text in fields:
+        return text
+    mapped = LABEL_TO_FIELD.get(text.lower())
+    if mapped and (not fields or mapped in fields):
+        return mapped
+    return text
+
+
+def _infer_upload_spec(text: str, fields: list[str]) -> tuple[str, dict] | tuple[None, None]:
+    haystack = f"{text} {' '.join(fields)}".lower()
+    for key, spec in UPLOAD_SPECS.items():
+        if key in haystack or spec["label"].lower() in haystack:
+            return key, spec
+    for key, spec in UPLOAD_SPECS.items():
+        if sum(1 for field in fields if field in spec["fields"]) >= 3:
+            return key, spec
+    return None, None
+
+
+def _clean_record(entity: str, data: dict[str, Any]) -> dict[str, Any]:
+    spec = UPLOAD_SPECS[entity]
+    cleaned = {field: _clean_value(data.get(field)) for field in spec["fields"]}
+    if entity == "cliente":
+        cleaned["FechaDePago"] = _format_date(cleaned.get("FechaDePago"))
+    elif entity in {"surveyor", "empleado"}:
+        for field in ("honorario", "salario", "horas_contratadas", "horas_tope_ordinario", "horas_tope_maximo", "tarifa_hora_extra"):
+            if cleaned.get(field):
+                cleaned[field] = _clean_number(cleaned[field])
+    return cleaned
+
+
+def _validate_upload_record(entity: str, data: dict[str, Any]) -> list[str]:
+    missing: list[str] = []
+    for field in UPLOAD_SPECS[entity]["required"]:
+        if field == "pais_o_nacionalidad":
+            if not (data.get("nacionalidad") or data.get("Pais") or data.get("pais")):
+                missing.append("nacionalidad/pais")
+            continue
+        if not data.get(field):
+            missing.append(field)
+    return missing
+
+
+def _read_xlsx_upload(path: Path) -> list[dict[str, Any]]:
+    from openpyxl import load_workbook
+
+    wb = load_workbook(path, data_only=True)
+    records: list[dict[str, Any]] = []
+    for ws in wb.worksheets:
+        entity, spec = _infer_upload_spec(ws.title, [])
+        header_row = None
+        headers: list[str] = []
+        for row_idx in range(1, min(ws.max_row, 20) + 1):
+            row_values = [_field_from_header(ws.cell(row_idx, col).value, spec) for col in range(1, ws.max_column + 1)]
+            row_keys = [value for value in row_values if value]
+            inferred_entity, inferred_spec = _infer_upload_spec(ws.title, row_keys)
+            if inferred_entity and inferred_spec:
+                entity, spec = inferred_entity, inferred_spec
+            if spec and sum(1 for header in row_values if header in spec["fields"]) >= 2:
+                header_row = row_idx
+                headers = row_values
+                break
+        if not entity or not spec or not header_row:
+            records.append({"file": str(path), "entity": ws.title, "data": {}, "error": "No se pudo identificar el formulario"})
+            continue
+        for row_idx in range(header_row + 1, ws.max_row + 1):
+            data = {}
+            has_value = False
+            for col_idx, field in enumerate(headers, start=1):
+                if field not in spec["fields"]:
+                    continue
+                value = ws.cell(row_idx, col_idx).value
+                if _clean_value(value):
+                    has_value = True
+                data[field] = value
+            if all(_clean_value(data.get(field)) == LABELS.get(field, field) for field in data):
+                continue
+            if has_value:
+                records.append({"file": str(path), "entity": entity, "data": _clean_record(entity, data), "error": ""})
+    return records
+
+
+def _read_docx_upload(path: Path) -> list[dict[str, Any]]:
+    from docx import Document
+
+    doc = Document(str(path))
+    title_text = "\n".join(p.text for p in doc.paragraphs[:8])
+    table_fields: dict[str, Any] = {}
+    for table in doc.tables:
+        for row in table.rows[1:]:
+            cells = row.cells
+            if len(cells) >= 3:
+                field = _normalize_import_key(cells[2].text)
+                value = cells[1].text
+            elif len(cells) >= 2:
+                field = _field_from_header(cells[0].text)
+                value = cells[1].text
+            else:
+                continue
+            if field:
+                table_fields[field] = value
+    entity, spec = _infer_upload_spec(title_text, list(table_fields))
+    if not entity or not spec:
+        return [{"file": str(path), "entity": "", "data": {}, "error": "No se pudo identificar el formulario"}]
+    return [{"file": str(path), "entity": entity, "data": _clean_record(entity, table_fields), "error": ""}]
+
+
+def _import_masterdata_files(paths: list[Path]) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for path in paths:
+        suffix = path.suffix.lower()
+        if suffix == ".xlsx":
+            records.extend(_read_xlsx_upload(path))
+        elif suffix == ".docx":
+            records.extend(_read_docx_upload(path))
+        else:
+            records.append({"file": str(path), "entity": "", "data": {}, "error": "Formato no soportado"})
+    return records
+
+
 def _save_masterdata_record(entity: str, data: dict, company: str) -> str:
-    from Modulos.MasterData.masterdata_forms import FORM_SPECS, validate_record
     from routers.clientes import add_cliente, update_cliente
     from routers.empleados import Empleado, agregar_empleado, update_empleado
     from routers.proveedores import add_proveedor, update_proveedor
@@ -176,13 +370,13 @@ def _save_masterdata_record(entity: str, data: dict, company: str) -> str:
     from routers.surveyores import add_surveyor, update_surveyor
 
     entity = _normalize_upload_entity(entity)
-    spec = FORM_SPECS.get(entity)
+    spec = UPLOAD_SPECS.get(entity)
     if not spec:
         raise ValueError(f"Tipo de formulario no soportado: {entity}")
     payload = dict(data or {})
     payload["company_code"] = company
 
-    code_field = spec.code_field
+    code_field = spec["code_field"]
     if not str(payload.get(code_field) or "").strip():
         if entity == "empleado":
             payload.pop("codigo", None)
@@ -191,7 +385,7 @@ def _save_masterdata_record(entity: str, data: dict, company: str) -> str:
             if code:
                 payload[code_field] = code
 
-    missing = validate_record(spec, payload)
+    missing = _validate_upload_record(entity, payload)
     if missing:
         raise ValueError("Faltan campos requeridos: " + ", ".join(missing))
 
@@ -299,7 +493,6 @@ async def upload_masterdata_forms(
     files: list[UploadFile] = File(...),
     x_company_code: str | None = Header(None, alias="X-Company-Code"),
 ):
-    from Modulos.MasterData.masterdata_forms import import_masterdata_files
     from services.tenanting import company_code
 
     company = company_code(header_value=x_company_code)
@@ -318,7 +511,7 @@ async def upload_masterdata_forms(
                 tmp.write(await upload.read())
                 temp_paths.append(Path(tmp.name))
         if temp_paths:
-            imported = import_masterdata_files([str(path) for path in temp_paths])
+            imported = _import_masterdata_files(temp_paths)
         for idx, record in enumerate(imported, start=1):
             if record.get("error"):
                 failed.append({"index": idx, "file": record.get("file"), "error": record.get("error")})
