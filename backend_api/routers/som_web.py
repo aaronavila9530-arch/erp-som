@@ -20,7 +20,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20260928-service-save-v1"
+_ASSET_VERSION = "20260928-payslip-download-v1"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -1624,6 +1624,23 @@ def som_web_home() -> HTMLResponse:
         throw new Error(msg);
       }
       return resp.json();
+    }
+    async function downloadBinary(path, filename, extraHeaders={}) {
+      const resp = await fetch(path, { method:"GET", headers:headers(extraHeaders) });
+      if (!resp.ok) {
+        let msg = resp.statusText || `${resp.status}`;
+        try { msg = (await resp.json()).detail || msg; } catch {}
+        throw new Error(msg);
+      }
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
     }
     async function sendForm(path, formData) {
       const h = headers();
@@ -7570,9 +7587,9 @@ def som_web_home() -> HTMLResponse:
         target.innerHTML = '<div class="status">Sin colillas para esta consulta.</div>';
         return;
       }
-      target.innerHTML = `<div class="table-wrap"><table><thead><tr><th class="pick-col"></th>${cols.map(c => `<th>${esc(c.replace(/_/g," "))}</th>`).join("")}<th>Acción</th></tr></thead><tbody>${hrRows.map((row, idx) => {
+      target.innerHTML = `<div class="table-wrap"><table><thead><tr><th class="pick-col"></th>${cols.map(c => `<th>${esc(c.replace(/_/g," "))}</th>`).join("")}</tr></thead><tbody>${hrRows.map((row, idx) => {
         const selected = idx === selectedHrPayslipIndex;
-        return `<tr class="${selected ? "service-selected" : ""}" onclick="selectHrPayslip(${idx})"><td class="pick-col"><input class="row-pick" type="radio" name="hrPayslipPick" ${selected ? "checked" : ""} onclick="event.stopPropagation(); selectHrPayslip(${idx})" /></td>${cols.map(c => `<td>${esc(row?.[c] ?? "")}</td>`).join("")}<td><button class="secondary" onclick="event.stopPropagation(); selectHrPayslip(${idx}); downloadHrPayslip()">Descargar</button></td></tr>`;
+        return `<tr class="${selected ? "service-selected" : ""}" onclick="selectHrPayslip(${idx})"><td class="pick-col"><input class="row-pick" type="radio" name="hrPayslipPick" ${selected ? "checked" : ""} onclick="event.stopPropagation(); selectHrPayslip(${idx})" /></td>${cols.map(c => `<td>${esc(row?.[c] ?? "")}</td>`).join("")}</tr>`;
       }).join("")}</tbody></table></div>`;
       enhanceExcelTables(target);
     }
@@ -7591,10 +7608,15 @@ def som_web_home() -> HTMLResponse:
         renderHrPayslipRows();
       } catch (err) { $("hrPayslipsTable").innerHTML = `<div class="status error">${esc(err.message)}</div>`; }
     }
-    function downloadHrPayslip() {
+    async function downloadHrPayslip() {
       const row = selectedHrPayslipIndex === null ? null : hrRows[selectedHrPayslipIndex];
       if (!row) return alert("Seleccione una colilla de la tabla.");
-      window.open(`/hr/payroll/payslips/${encodeURIComponent(row.year)}/${encodeURIComponent(row.month)}/pdf?usuario=${encodeURIComponent(row.usuario)}`, "_blank");
+      try {
+        const filename = `colilla-${row.usuario || "empleado"}-${row.year}-${String(row.month).padStart(2, "0")}.pdf`;
+        await downloadBinary(`/hr/payroll/payslips/${encodeURIComponent(row.year)}/${encodeURIComponent(row.month)}/pdf?usuario=${encodeURIComponent(row.usuario)}`, filename);
+      } catch (err) {
+        alert(err.message || "No se pudo descargar la colilla.");
+      }
     }
     function renderHrPayroll() {
       $("hrViewTitle").textContent = "Payroll / Planilla";
