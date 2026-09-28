@@ -40,7 +40,7 @@ def require_permission(module: str, action: str):
             module_code = "hhrr"
 
         # DEBUG CLAVE
-        print(f"🔐 RBAC CHECK → user={username} role={role} module={module_code} action={action_code}")
+        print(f"RBAC CHECK -> user={username} role={role} module={module_code} action={action_code}")
 
         # =====================================================
         # MASTER → ACCESO TOTAL

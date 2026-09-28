@@ -20,7 +20,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20260928-masterdata-upload-v1"
+_ASSET_VERSION = "20260928-payslips-secure-v1"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -1325,6 +1325,7 @@ def som_web_home() -> HTMLResponse:
     let hrCurrentView = "home";
     let hrRows = [];
     let selectedHrPayrollIndex = null;
+    let selectedHrPayslipIndex = null;
     let hrPayrollPreview = null;
     const DISPUTE_STATUSES = ["New","In process","Process by Sales","Process by RTR","Process by Invoicing","Process by Collections","Process by Bank","Process by Disputes","Written Off","Resolved"];
     const SERVICE_COLUMNS = [
@@ -7557,8 +7558,27 @@ def som_web_home() -> HTMLResponse:
     function renderHrPayslips() {
       $("hrViewTitle").textContent = "Colillas de Pago";
       $("hrViewHint").textContent = "Consulta y descarga de colillas.";
-      $("hrWorkspace").innerHTML = `<div class="hr-toolbar"><label>Año<input id="hrPayYear" type="number" value="${$("year").value}" /></label><label>Mes<input id="hrPayMonth" type="number" min="1" max="12" /></label><button onclick="loadHrPayslips()">Cargar colillas</button><button class="secondary" onclick="downloadHrPayslip()">Descargar PDF</button></div><div id="hrPayslipsTable"></div>`;
+      selectedHrPayslipIndex = null;
+      $("hrWorkspace").innerHTML = `<div class="hr-toolbar"><label>Año<input id="hrPayYear" type="number" value="${$("year").value}" /></label><label>Mes<input id="hrPayMonth" type="number" min="1" max="12" /></label><button onclick="loadHrPayslips()">Cargar colillas</button><button class="secondary" onclick="downloadHrPayslip()">Descargar colilla seleccionada</button></div><div id="hrPayslipsTable"></div>`;
       loadHrPayslips();
+    }
+    function renderHrPayslipRows() {
+      const target = $("hrPayslipsTable");
+      if (!target) return;
+      const cols = ["usuario","year","month","salario_bruto","salario_neto","horas_extra","monto_horas_extra","generado_por","creado_en"];
+      if (!hrRows.length) {
+        target.innerHTML = '<div class="status">Sin colillas para esta consulta.</div>';
+        return;
+      }
+      target.innerHTML = `<div class="table-wrap"><table><thead><tr><th class="pick-col"></th>${cols.map(c => `<th>${esc(c.replace(/_/g," "))}</th>`).join("")}<th>Acción</th></tr></thead><tbody>${hrRows.map((row, idx) => {
+        const selected = idx === selectedHrPayslipIndex;
+        return `<tr class="${selected ? "service-selected" : ""}" onclick="selectHrPayslip(${idx})"><td class="pick-col"><input class="row-pick" type="radio" name="hrPayslipPick" ${selected ? "checked" : ""} onclick="event.stopPropagation(); selectHrPayslip(${idx})" /></td>${cols.map(c => `<td>${esc(row?.[c] ?? "")}</td>`).join("")}<td><button class="secondary" onclick="event.stopPropagation(); selectHrPayslip(${idx}); downloadHrPayslip()">Descargar</button></td></tr>`;
+      }).join("")}</tbody></table></div>`;
+      enhanceExcelTables(target);
+    }
+    function selectHrPayslip(idx) {
+      selectedHrPayslipIndex = idx;
+      renderHrPayslipRows();
     }
     async function loadHrPayslips() {
       const params = new URLSearchParams({ page:"1", page_size:"100" });
@@ -7567,14 +7587,13 @@ def som_web_home() -> HTMLResponse:
       try {
         const payload = await getJSON(`/hr/payroll/payslips?${params}`);
         hrRows = rowsList(payload);
-        $("hrPayslipsTable").innerHTML = hrTable(hrRows, ["id","usuario","year","month","salario_bruto","salario_neto","horas_extra","monto_horas_extra","generado_por","creado_en"]);
-        enhanceExcelTables($("hrPayslipsTable"));
+        selectedHrPayslipIndex = null;
+        renderHrPayslipRows();
       } catch (err) { $("hrPayslipsTable").innerHTML = `<div class="status error">${esc(err.message)}</div>`; }
     }
     function downloadHrPayslip() {
-      const id = prompt("ID de colilla/run");
-      const row = hrRows.find(r => String(r.id) === String(id));
-      if (!row) return alert("Seleccione un ID válido de la tabla.");
+      const row = selectedHrPayslipIndex === null ? null : hrRows[selectedHrPayslipIndex];
+      if (!row) return alert("Seleccione una colilla de la tabla.");
       window.open(`/hr/payroll/payslips/${encodeURIComponent(row.year)}/${encodeURIComponent(row.month)}/pdf?usuario=${encodeURIComponent(row.usuario)}`, "_blank");
     }
     function renderHrPayroll() {
