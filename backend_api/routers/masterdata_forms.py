@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import io
+import tempfile
 from dataclasses import dataclass
+from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, Header, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 
 
@@ -23,6 +25,21 @@ SPECS = {
     "empleados": FormSpec("empleados", "Empleado", ("nombre", "apellidos", "estado_civil", "genero", "nacionalidad", "prefijo", "telefono", "provincia", "canton", "distrito", "direccion", "jornada", "salario", "fecha_ingreso", "horas_contratadas", "horas_tope_ordinario", "horas_tope_maximo", "tarifa_hora_extra", "pago_minimo_garantizado", "pago", "banco", "cuenta_iban", "moneda", "enfermedades", "contacto_emergencia", "telefono_emergencia", "activo1", "marca1", "serial1", "activo2", "marca2", "serial2", "activo3", "marca3", "serial3", "activo")),
     "surveyores": FormSpec("surveyores", "Surveyor", ("nombre", "apellidos", "email", "estado_civil", "genero", "nacionalidad", "prefijo", "telefono", "provincia", "canton", "distrito", "direccion", "jornada", "operacion", "honorario", "pago", "banco", "direccion_banco", "cuenta_iban", "moneda", "swift", "uid", "enfermedades", "contacto_emergencia", "telefono_emergencia", "puerto", "activo")),
     "servicios-md": FormSpec("servicios-md", "Servicio", ("codigo_prod", "nombre", "costo")),
+}
+
+ALIASES = {
+    "cliente": "clientes",
+    "clientes": "clientes",
+    "proveedor": "proveedores",
+    "proveedores": "proveedores",
+    "empleado": "empleados",
+    "empleados": "empleados",
+    "surveyor": "surveyores",
+    "surveyores": "surveyores",
+    "servicio": "servicios-md",
+    "servicios": "servicios-md",
+    "servicios_md": "servicios-md",
+    "servicios-md": "servicios-md",
 }
 
 
@@ -102,10 +119,104 @@ LABELS = {
 
 
 def _spec(entity_key: str) -> FormSpec:
-    spec = SPECS.get(entity_key)
+    spec = SPECS.get(ALIASES.get(str(entity_key or "").strip().lower(), entity_key))
     if not spec:
         raise HTTPException(status_code=400, detail="Tipo de formulario no soportado")
     return spec
+
+
+def _next_code(entity: str, company: str) -> str | None:
+    import database
+    from services.tenanting import company_prefix
+
+    table_suffix = {
+        "cliente": ("cliente", "C"),
+        "proveedor": ("proveedor", "P"),
+        "surveyor": ("surveyor", "S"),
+    }.get(entity)
+    if not table_suffix:
+        return None
+    table, suffix = table_suffix
+    prefix = company_prefix(company)
+    rows = database.sql(
+        f"""
+        SELECT MAX(CAST(SUBSTRING(codigo FROM 5 FOR 4) AS INTEGER))
+        FROM {table}
+        WHERE company_code = %s
+          AND codigo LIKE %s
+        """,
+        (company, f"{prefix}-%-{suffix}"),
+        fetch=True,
+    )
+    ultimo = rows[0][0] if rows and rows[0][0] is not None else 0
+    return f"{prefix}-{int(ultimo) + 1:04d}-{suffix}"
+
+
+def _normalize_upload_entity(entity: str) -> str:
+    value = str(entity or "").strip().lower()
+    if value in {"clientes", "cliente"}:
+        return "cliente"
+    if value in {"proveedores", "proveedor"}:
+        return "proveedor"
+    if value in {"empleados", "empleado"}:
+        return "empleado"
+    if value in {"surveyores", "surveyor"}:
+        return "surveyor"
+    if value in {"servicio", "servicios", "servicios-md", "servicios_md"}:
+        return "servicio"
+    return value
+
+
+def _save_masterdata_record(entity: str, data: dict, company: str) -> str:
+    from Modulos.MasterData.masterdata_forms import FORM_SPECS, validate_record
+    from routers.clientes import add_cliente, update_cliente
+    from routers.empleados import Empleado, agregar_empleado, update_empleado
+    from routers.proveedores import add_proveedor, update_proveedor
+    from routers.servicios_md import add_servicio, update_servicio
+    from routers.surveyores import add_surveyor, update_surveyor
+
+    entity = _normalize_upload_entity(entity)
+    spec = FORM_SPECS.get(entity)
+    if not spec:
+        raise ValueError(f"Tipo de formulario no soportado: {entity}")
+    payload = dict(data or {})
+    payload["company_code"] = company
+
+    code_field = spec.code_field
+    if not str(payload.get(code_field) or "").strip():
+        if entity == "empleado":
+            payload.pop("codigo", None)
+        else:
+            code = _next_code(entity, company)
+            if code:
+                payload[code_field] = code
+
+    missing = validate_record(spec, payload)
+    if missing:
+        raise ValueError("Faltan campos requeridos: " + ", ".join(missing))
+
+    adders = {
+        "cliente": lambda p: add_cliente(p, x_company_code=company),
+        "proveedor": lambda p: add_proveedor(p, x_company_code=company),
+        "empleado": lambda p: agregar_empleado(Empleado(**p), x_company_code=company),
+        "surveyor": lambda p: add_surveyor(p, x_company_code=company),
+        "servicio": lambda p: add_servicio(p, x_company_code=company),
+    }
+    updaters = {
+        "cliente": lambda p: update_cliente(p, x_company_code=company),
+        "proveedor": lambda p: update_proveedor(p, x_company_code=company),
+        "empleado": lambda p: update_empleado(p, x_company_code=company),
+        "surveyor": lambda p: update_surveyor(p, x_company_code=company),
+        "servicio": lambda p: update_servicio(p, x_company_code=company),
+    }
+    try:
+        adders[entity](payload)
+        return "created"
+    except Exception:
+        if not str(payload.get(code_field) or "").strip():
+            raise
+        updaters[entity](payload)
+        return "updated"
 
 
 def _filename(spec: FormSpec, suffix: str) -> str:
@@ -181,3 +292,54 @@ def download_masterdata_form(entity_key: str, fmt: str):
         media_type=media_type,
         headers={"Content-Disposition": f'attachment; filename="{_filename(spec, suffix)}"'},
     )
+
+
+@router.post("/upload")
+async def upload_masterdata_forms(
+    files: list[UploadFile] = File(...),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+):
+    from Modulos.MasterData.masterdata_forms import import_masterdata_files
+    from services.tenanting import company_code
+
+    company = company_code(header_value=x_company_code)
+    created = 0
+    updated = 0
+    failed: list[dict] = []
+    imported: list[dict] = []
+    temp_paths: list[Path] = []
+    try:
+        for upload in files:
+            suffix = Path(upload.filename or "").suffix.lower()
+            if suffix not in {".xlsx", ".docx"}:
+                failed.append({"file": upload.filename, "error": "Formato no soportado"})
+                continue
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                tmp.write(await upload.read())
+                temp_paths.append(Path(tmp.name))
+        if temp_paths:
+            imported = import_masterdata_files([str(path) for path in temp_paths])
+        for idx, record in enumerate(imported, start=1):
+            if record.get("error"):
+                failed.append({"index": idx, "file": record.get("file"), "error": record.get("error")})
+                continue
+            try:
+                status = _save_masterdata_record(record.get("entity"), record.get("data") or {}, company)
+                if status == "updated":
+                    updated += 1
+                else:
+                    created += 1
+            except Exception as exc:
+                failed.append({"index": idx, "file": record.get("file"), "entity": record.get("entity"), "error": str(exc)})
+    finally:
+        for path in temp_paths:
+            try:
+                path.unlink(missing_ok=True)
+            except Exception:
+                pass
+    return {
+        "created": created,
+        "updated": updated,
+        "failed": failed,
+        "total": created + updated + len(failed),
+    }

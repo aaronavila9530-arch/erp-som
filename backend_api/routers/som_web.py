@@ -20,7 +20,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20260928-services-operation-combo-v1"
+_ASSET_VERSION = "20260928-masterdata-forms-v1"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -6273,12 +6273,48 @@ def som_web_home() -> HTMLResponse:
         $("masterWorkspace").classList.remove("hidden");
         $("masterWorkspace").innerHTML = `<div class="panel-head"><h2>Exportar formulario</h2></div>
           <div class="md-actions">
-            ${["cliente","proveedor","empleado","surveyor"].map(e => `<a href="/master-data/forms/${e}/xlsx" target="_blank"><button>Excel ${e}</button></a><a href="/master-data/forms/${e}/docx" target="_blank"><button class="secondary">Word ${e}</button></a>`).join("")}
+            ${["cliente","proveedor","empleado","surveyor","servicio"].map(e => `<a href="/master-data/forms/${e}/xlsx" target="_blank"><button>Excel ${e}</button></a><a href="/master-data/forms/${e}/docx" target="_blank"><button class="secondary">Word ${e}</button></a>`).join("")}
           </div>`;
+        return;
+      }
+      if (key === "import_form") {
+        $("masterWorkspace").classList.remove("hidden");
+        $("masterWorkspace").innerHTML = `<div class="panel-head"><h2>Cargar formularios</h2><span class="muted">Excel o Word exportados desde Master Data</span></div>
+          <div class="md-actions">
+            <input id="mdFormUploadInput" type="file" multiple accept=".xlsx,.docx" />
+            <button onclick="uploadMasterDataForms()">Cargar formularios</button>
+          </div>
+          <div id="mdFormUploadResult" class="status">Seleccione uno o varios formularios completados.</div>`;
         return;
       }
       if (key === "company_fiscal") openCompanyFiscalForm();
       if (key === "bank_accounts") openMasterView("bank_accounts");
+    }
+    async function uploadMasterDataForms() {
+      const input = $("mdFormUploadInput");
+      const result = $("mdFormUploadResult");
+      if (!input?.files?.length) {
+        result.className = "status error";
+        result.textContent = "Seleccione al menos un archivo .xlsx o .docx.";
+        return;
+      }
+      const form = new FormData();
+      [...input.files].forEach(file => form.append("files", file));
+      result.className = "status";
+      result.textContent = "Cargando formularios...";
+      try {
+        const resp = await fetch("/master-data/forms/upload", { method:"POST", headers:headers(), body:form });
+        let data = {};
+        try { data = await resp.json(); } catch {}
+        if (!resp.ok) throw new Error(data.detail || resp.statusText || "No se pudieron cargar los formularios.");
+        const failed = Array.isArray(data.failed) ? data.failed : [];
+        result.className = failed.length ? "status warning" : "status";
+        result.innerHTML = `<strong>Creados:</strong> ${esc(data.created || 0)} · <strong>Actualizados:</strong> ${esc(data.updated || 0)} · <strong>No cargados:</strong> ${esc(failed.length)}`
+          + (failed.length ? `<div style="margin-top:8px">${failed.slice(0,8).map(item => `<div>${esc(item.file || item.entity || "Formulario")}: ${esc(item.error || "Error")}</div>`).join("")}</div>` : "");
+      } catch (err) {
+        result.className = "status error";
+        result.textContent = err.message;
+      }
     }
     async function loadMasterFilters() {
       try {
