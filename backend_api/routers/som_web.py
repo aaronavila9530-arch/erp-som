@@ -20,7 +20,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20260928-hr-payroll-web-v1"
+_ASSET_VERSION = "20260928-hr-payroll-web-v2"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -1507,7 +1507,11 @@ def som_web_home() -> HTMLResponse:
 
     async function getJSON(path, extraHeaders={}) {
       const resp = await fetch(path, { headers:headers(extraHeaders) });
-      if (!resp.ok) throw new Error(`${path} -> ${resp.status}`);
+      if (!resp.ok) {
+        let msg = resp.statusText || `${resp.status}`;
+        try { msg = (await resp.json()).detail || msg; } catch {}
+        throw new Error(msg);
+      }
       return resp.json();
     }
     async function postJSON(path, payload) {
@@ -7543,30 +7547,21 @@ def som_web_home() -> HTMLResponse:
       $("hrViewHint").textContent = "Empleados activos y cálculo del período cerrado.";
       selectedHrPayrollIndex = null;
       hrPayrollPreview = null;
-      const closed = previousClosedPayrollPeriod();
       $("hrWorkspace").innerHTML = `
         <div class="hr-toolbar">
-          <label>Año cerrado<input id="hrPayrollYear" type="number" value="${closed.year}" disabled /></label>
-          <label>Mes cerrado<input id="hrPayrollMonth" type="number" value="${closed.month}" disabled /></label>
-          <button onclick="loadHrPayrollEmployees()">Cargar empleados payroll</button>
-          <button class="secondary" onclick="calculateSelectedHrPayroll()">Preview planilla</button>
-          <button onclick="postSelectedHrPayroll()">Postear planilla + asiento</button>
+          <label>Año cerrado<input id="hrPayrollYear" type="number" disabled /></label>
+          <label>Mes cerrado<input id="hrPayrollMonth" type="number" disabled /></label>
+          <button class="secondary" onclick="loadHrPayrollEmployees()">Actualizar empleados</button>
+          <button onclick="generateSelectedHrPayroll()">Generar planilla</button>
         </div>
         <div class="hr-payroll-layout">
           <div id="hrPayrollTable"></div>
           <div id="hrPayrollPreview" class="hr-preview-card">
-            <h3>Preview</h3>
-            <div class="status">Seleccione un empleado y presione Preview planilla.</div>
+            <h3>Planilla</h3>
+            <div class="status">Seleccione un empleado y genere la planilla.</div>
           </div>
         </div>`;
-      loadHrPayrollEmployees();
-    }
-    function previousClosedPayrollPeriod() {
-      const today = new Date();
-      let year = today.getFullYear();
-      let month = today.getMonth();
-      if (month === 0) { month = 12; year -= 1; }
-      return { year, month };
+      loadHrPayrollPeriodAndEmployees();
     }
     function renderHrPayrollRows() {
       const cols = ["usuario","nombre","apellidos","jornada","salario","pago","estado","horas_contratadas","horas_tope_ordinario","tarifa_hora_extra"];
@@ -7584,7 +7579,7 @@ def som_web_home() -> HTMLResponse:
       selectedHrPayrollIndex = idx;
       hrPayrollPreview = null;
       renderHrPayrollRows();
-      renderHrPayrollPreview(null, "Empleado seleccionado. Genere el preview antes de postear.");
+      renderHrPayrollPreview(null, "Empleado seleccionado. Presione Generar planilla para revisar y confirmar.");
     }
     function selectedHrPayrollEmployee() {
       return selectedHrPayrollIndex === null ? null : hrRows[selectedHrPayrollIndex];
@@ -7593,7 +7588,7 @@ def som_web_home() -> HTMLResponse:
       const box = $("hrPayrollPreview");
       if (!box) return;
       if (!data) {
-        box.innerHTML = `<h3>Preview</h3><div class="status">${esc(message || "Seleccione un empleado y presione Preview planilla.")}</div>`;
+        box.innerHTML = `<h3>Planilla</h3><div class="status">${esc(message || "Seleccione un empleado y genere la planilla.")}</div>`;
         return;
       }
       const metrics = [
@@ -7606,9 +7601,22 @@ def som_web_home() -> HTMLResponse:
         ["Monto horas extra", Number(data.pago_horas_extra || 0).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:2})],
         ["Costo empresa", Number(data.costo_total_empresa || 0).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:2})]
       ];
-      box.innerHTML = `<h3>Preview de planilla</h3>
+      box.innerHTML = `<h3>Previsualización de planilla</h3>
         <div class="hr-preview-grid">${metrics.map(([label,value]) => `<div class="hr-preview-metric"><span>${esc(label)}</span><strong>${esc(value)}</strong></div>`).join("")}</div>
-        <div class="hr-payroll-note">Revise el cálculo. Al postear se registra payroll y se sincroniza el asiento contable de planilla.</div>`;
+        <div class="hr-payroll-note">Revise el cálculo. Al confirmar se registra la planilla y se sincroniza el asiento contable automáticamente.</div>
+        <div class="hr-toolbar" style="padding:10px 0 0; margin:0; border:0;">
+          <button onclick="postSelectedHrPayroll()">Confirmar y postear asiento</button>
+        </div>`;
+    }
+    async function loadHrPayrollPeriodAndEmployees() {
+      try {
+        const period = await getJSON("/hr/payroll/period");
+        $("hrPayrollYear").value = period.year || "";
+        $("hrPayrollMonth").value = period.month || "";
+      } catch (err) {
+        hrStatus(err.message, true);
+      }
+      await loadHrPayrollEmployees();
     }
     async function loadHrPayrollEmployees() {
       try {
@@ -7620,6 +7628,9 @@ def som_web_home() -> HTMLResponse:
         renderHrPayrollPreview(null, `${hrRows.length} empleado(s) activos cargados. Seleccione una fila.`);
       } catch (err) { $("hrPayrollTable").innerHTML = `<div class="status error">${esc(err.message)}</div>`; }
     }
+    async function generateSelectedHrPayroll() {
+      await calculateSelectedHrPayroll();
+    }
     async function calculateSelectedHrPayroll() {
       const row = selectedHrPayrollEmployee();
       if (!row) return hrStatus("Seleccione un empleado de la tabla.", true);
@@ -7629,8 +7640,12 @@ def som_web_home() -> HTMLResponse:
         const data = await getJSON(`/hr/payroll/calculate?usuario=${encodeURIComponent(row.usuario)}&year=${encodeURIComponent(year)}&month=${encodeURIComponent(month)}`);
         hrPayrollPreview = data;
         renderHrPayrollPreview(data);
-        hrStatus("Preview calculado. Revise antes de postear.");
-      } catch (err) { hrStatus(err.message, true); }
+        hrStatus("Planilla previsualizada. Revise y confirme para registrar asiento.");
+      } catch (err) {
+        hrPayrollPreview = null;
+        renderHrPayrollPreview(null, err.message);
+        hrStatus(err.message, true);
+      }
     }
     async function postSelectedHrPayroll() {
       const row = selectedHrPayrollEmployee();

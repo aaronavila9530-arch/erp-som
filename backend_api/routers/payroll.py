@@ -99,6 +99,13 @@ def _payroll_rates_for_stored_run(salario_bruto: float, salario_mensual: float, 
     return deduccion_rate, patronal_rate, is_quincenal
 
 
+def _closed_payroll_period() -> tuple[int, int]:
+    hoy = date.today()
+    if hoy.month == 1:
+        return hoy.year - 1, 12
+    return hoy.year, hoy.month - 1
+
+
 def _money(value) -> Decimal:
     return Decimal(str(value or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
@@ -244,6 +251,19 @@ def listar_empleados_payroll(conn=Depends(get_db)):
 # ============================================================
 
 @router.get(
+    "/period",
+    dependencies=[Depends(require_permission("hhrr", "payroll"))]
+)
+def periodo_payroll_cerrado():
+    year, month = _closed_payroll_period()
+    return {
+        "year": year,
+        "month": month,
+        "label": f"{month:02d}/{year}"
+    }
+
+
+@router.get(
     "/calculate",
     dependencies=[Depends(require_permission("hhrr", "payroll"))]
 )
@@ -262,14 +282,7 @@ def calcular_payroll(
     # --------------------------------------------------------
     # VALIDAR PERÍODO (SOLO MES CERRADO / MES ANTERIOR)
     # --------------------------------------------------------
-    hoy = date.today()
-
-    if hoy.month == 1:
-        allowed_month = 12
-        allowed_year = hoy.year - 1
-    else:
-        allowed_month = hoy.month - 1
-        allowed_year = hoy.year
+    allowed_year, allowed_month = _closed_payroll_period()
 
     if year != allowed_year or month != allowed_month:
         raise HTTPException(
