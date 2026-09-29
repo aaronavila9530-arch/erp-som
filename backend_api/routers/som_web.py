@@ -20,7 +20,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20260928-payslip-download-v1"
+_ASSET_VERSION = "20260928-hr-requests-ui-v1"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -937,6 +937,30 @@ def som_web_home() -> HTMLResponse:
     .hr-preview-metric span { display:block; color:#64748b; font-size:11px; font-weight:800; text-transform:uppercase; }
     .hr-preview-metric strong { display:block; margin-top:4px; font-size:18px; overflow-wrap:anywhere; }
     .hr-payroll-note { margin-top:8px; color:#607086; font-size:13px; line-height:1.35; }
+    .hr-request-summary { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:10px; margin:10px 0; }
+    .hr-request-summary .hr-kpi { background:#fff; }
+    .hr-request-workspace { display:grid; grid-template-columns:minmax(0,1.35fr) minmax(320px,.65fr); gap:12px; align-items:start; }
+    .hr-request-list { display:grid; gap:8px; min-width:0; }
+    .hr-request-card { border:1px solid #d7e1ec; border-left:5px solid #7b8794; border-radius:8px; background:#fff; padding:10px 12px; display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px 12px; text-align:left; cursor:pointer; }
+    .hr-request-card:hover,.hr-request-card.selected { border-color:#9ec9ee; border-left-color:var(--blue); background:#f6fbff; }
+    .hr-request-card.pending { border-left-color:#c77800; }
+    .hr-request-card.approved { border-left-color:#087a52; }
+    .hr-request-card.rejected { border-left-color:#b42318; }
+    .hr-request-card h3 { margin:0; font-size:16px; overflow-wrap:anywhere; }
+    .hr-request-card p { margin:3px 0 0; color:#607086; line-height:1.35; }
+    .hr-request-card small { color:#64748b; font-weight:700; }
+    .hr-request-meta { display:flex; flex-wrap:wrap; gap:6px; align-items:center; grid-column:1/-1; }
+    .hr-request-detail { border:1px solid #d7e1ec; border-radius:8px; background:#f8fbfe; padding:12px; min-width:0; position:sticky; top:10px; }
+    .hr-request-detail h3 { margin:0 0 8px; font-size:17px; }
+    .hr-request-detail dl { display:grid; grid-template-columns:120px minmax(0,1fr); gap:7px 10px; margin:10px 0; }
+    .hr-request-detail dt { color:#64748b; font-size:12px; font-weight:800; text-transform:uppercase; }
+    .hr-request-detail dd { margin:0; overflow-wrap:anywhere; }
+    .hr-request-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
+    .hr-request-table { margin-top:12px; }
+    .hr-status-pill { display:inline-flex; align-items:center; min-height:24px; border-radius:999px; padding:2px 9px; border:1px solid #d7e1ec; background:#f8fafc; color:#334155; font-size:12px; font-weight:800; }
+    .hr-status-pill.pending { border-color:#f5d08a; background:#fff7e8; color:#9a5b00; }
+    .hr-status-pill.approved { border-color:#bde5cd; background:#effaf4; color:#087a52; }
+    .hr-status-pill.rejected { border-color:#f3c4c0; background:#fff3f1; color:#b42318; }
     .tabs { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0; }
     .tabs button { background:#fff; color:var(--ink); border:1px solid var(--line); }
     .tabs button.active { background:var(--blue); color:#fff; border-color:var(--blue); }
@@ -1145,7 +1169,8 @@ def som_web_home() -> HTMLResponse:
       .hero-logo { min-height:300px; padding:22px; }
       .hero-logo img { width:min(88%,520px); height:250px; }
       .form-grid { grid-template-columns:1fr; }
-      .service-command-center,.hr-hero { grid-template-columns:1fr; }
+      .service-command-center,.hr-hero,.hr-request-workspace { grid-template-columns:1fr; }
+      .hr-request-detail { position:static; }
       .itp-action-grid { grid-template-columns:1fr; }
       .itp-bi-header,.itp-bi-controls,.itp-bi-body,.itp-bi-summary { grid-template-columns:1fr; }
       .itp-bi-totals { grid-template-columns:1fr; }
@@ -1324,6 +1349,7 @@ def som_web_home() -> HTMLResponse:
     let financeClienteRows = [];
     let hrCurrentView = "home";
     let hrRows = [];
+    let selectedHrRequestIndex = null;
     let selectedHrPayrollIndex = null;
     let selectedHrPayslipIndex = null;
     let hrPayrollPreview = null;
@@ -7478,7 +7504,7 @@ def som_web_home() -> HTMLResponse:
     function renderHrRequests() {
       $("hrViewTitle").textContent = "Solicitudes HHRR";
       $("hrViewHint").textContent = "Vacaciones, incapacidades, constancias y aprobación.";
-      const adminTools = canHr("requests_approve") ? `<button class="green" onclick="resolveHrRequest('approve')">Aprobar</button><button class="brown" onclick="resolveHrRequest('reject')">Rechazar</button>` : "";
+      selectedHrRequestIndex = null;
       const createTools = canHr("requests_create") ? `
         <details class="pln-section"><summary>Nueva solicitud</summary><div class="pln-section-body">
           <div class="hr-form">
@@ -7489,17 +7515,126 @@ def som_web_home() -> HTMLResponse:
             <button onclick="createHrRequest()">Enviar solicitud</button>
           </div>
         </div></details>` : "";
-      $("hrWorkspace").innerHTML = `${createTools}<div class="hr-toolbar"><button onclick="loadHrRequests()">Cargar solicitudes</button>${adminTools}</div><div id="hrRequestsTable"></div>`;
+      $("hrWorkspace").innerHTML = `${createTools}<div class="hr-toolbar"><button onclick="loadHrRequests()">Actualizar solicitudes</button></div><div id="hrRequestsView"></div>`;
       loadHrRequests();
+    }
+    function hrRequestStatusClass(status) {
+      const value = String(status || "").toUpperCase();
+      if (value === "APPROVED" || value === "APROBADO") return "approved";
+      if (value === "REJECTED" || value === "RECHAZADO") return "rejected";
+      return "pending";
+    }
+    function hrRequestStatusLabel(status) {
+      const value = String(status || "PENDING").toUpperCase();
+      const labels = { PENDING:"Pendiente", APPROVED:"Aprobada", REJECTED:"Rechazada", APROBADO:"Aprobada", RECHAZADO:"Rechazada" };
+      return labels[value] || value.replace(/_/g, " ");
+    }
+    function hrRequestTypeLabel(value) {
+      return String(value || "SOLICITUD").replace(/_/g, " ").toLowerCase().replace(/\\b\\w/g, c => c.toUpperCase());
+    }
+    function hrRequestPayloadText(row) {
+      const payload = row?.payload || {};
+      if (payload.motivo) return String(payload.motivo);
+      if (payload.reason) return String(payload.reason);
+      if (row?.comentario_solicitud) return String(row.comentario_solicitud);
+      return "Sin comentario.";
+    }
+    function hrSelectedRequest() {
+      return selectedHrRequestIndex === null ? null : hrRows[selectedHrRequestIndex];
+    }
+    function selectHrRequest(idx) {
+      selectedHrRequestIndex = idx;
+      renderHrRequestsView();
+    }
+    function renderHrRequestsView() {
+      const target = $("hrRequestsView");
+      if (!target) return;
+      if (!hrRows.length) {
+        target.innerHTML = '<div class="status">No hay solicitudes para mostrar.</div>';
+        return;
+      }
+      if (selectedHrRequestIndex === null || !hrRows[selectedHrRequestIndex]) {
+        const pendingIndex = hrRows.findIndex(row => hrRequestStatusClass(row.status) === "pending");
+        selectedHrRequestIndex = pendingIndex >= 0 ? pendingIndex : 0;
+      }
+      const counts = hrRows.reduce((acc, row) => {
+        acc.total += 1;
+        acc[hrRequestStatusClass(row.status)] += 1;
+        return acc;
+      }, { total:0, pending:0, approved:0, rejected:0 });
+      const selected = hrSelectedRequest();
+      const cardHtml = hrRows.map((row, idx) => {
+        const statusClass = hrRequestStatusClass(row.status);
+        const isSelected = idx === selectedHrRequestIndex;
+        const days = Number(row.vacaciones || 0);
+        return `
+          <button class="hr-request-card ${statusClass} ${isSelected ? "selected" : ""}" onclick="selectHrRequest(${idx})">
+            <div>
+              <h3>${esc(row.empleado || row.created_by || "Sin empleado")}</h3>
+              <p>${esc(hrRequestTypeLabel(row.event_type))} · ${esc(row.event_date || "-")}</p>
+            </div>
+            <span class="hr-status-pill ${statusClass}">${esc(hrRequestStatusLabel(row.status))}</span>
+            <div class="hr-request-meta">
+              <span class="badge">ID ${esc(row.id)}</span>
+              ${days ? `<span class="badge open">${esc(days)} día(s)</span>` : ""}
+              <small>Creada por ${esc(row.created_by || "-")}</small>
+            </div>
+          </button>`;
+      }).join("");
+      const detail = selected ? renderHrRequestDetail(selected) : '<div class="status">Seleccione una solicitud.</div>';
+      const tableRows = hrRows.map(r => ({
+        id:r.id,
+        empleado:r.empleado,
+        tipo:hrRequestTypeLabel(r.event_type),
+        fecha:r.event_date,
+        estado:hrRequestStatusLabel(r.status),
+        vacaciones:r.vacaciones,
+        creado_por:r.created_by,
+        aprobado_por:r.approved_by || ""
+      }));
+      target.innerHTML = `
+        <div class="hr-request-summary">
+          <div class="hr-kpi"><span>Total</span><strong>${counts.total}</strong></div>
+          <div class="hr-kpi"><span>Pendientes</span><strong>${counts.pending}</strong></div>
+          <div class="hr-kpi"><span>Aprobadas</span><strong>${counts.approved}</strong></div>
+          <div class="hr-kpi"><span>Rechazadas</span><strong>${counts.rejected}</strong></div>
+        </div>
+        <div class="hr-request-workspace">
+          <div class="hr-request-list">${cardHtml}</div>
+          <aside class="hr-request-detail">${detail}</aside>
+        </div>
+        <details class="pln-section hr-request-table"><summary>Tabla completa / filtros</summary><div class="pln-section-body">${hrTable(tableRows, ["id","empleado","tipo","fecha","estado","vacaciones","creado_por","aprobado_por"])}</div></details>`;
+      enhanceExcelTables(target);
+    }
+    function renderHrRequestDetail(row) {
+      const statusClass = hrRequestStatusClass(row.status);
+      const canResolve = canHr("requests_approve") && statusClass === "pending";
+      const payload = row.payload || {};
+      const requestedDays = payload.dias_solicitados || row.vacaciones || "";
+      return `
+        <div class="panel-head">
+          <h3>Solicitud #${esc(row.id)}</h3>
+          <span class="hr-status-pill ${statusClass}">${esc(hrRequestStatusLabel(row.status))}</span>
+        </div>
+        <dl>
+          <dt>Empleado</dt><dd>${esc(row.empleado || "-")}</dd>
+          <dt>Tipo</dt><dd>${esc(hrRequestTypeLabel(row.event_type))}</dd>
+          <dt>Fecha</dt><dd>${esc(row.event_date || "-")}</dd>
+          <dt>Días</dt><dd>${esc(requestedDays || "-")}</dd>
+          <dt>Motivo</dt><dd>${esc(hrRequestPayloadText(row))}</dd>
+          <dt>Creada por</dt><dd>${esc(row.created_by || "-")}</dd>
+          <dt>Aprobada por</dt><dd>${esc(row.approved_by || "-")}</dd>
+          <dt>Creada</dt><dd>${esc(row.created_at || "-")}</dd>
+        </dl>
+        ${canResolve ? `<div class="hr-request-actions"><button class="green" onclick="resolveHrRequest('approve')">Aprobar solicitud</button><button class="brown" onclick="resolveHrRequest('reject')">Rechazar solicitud</button></div>` : `<div class="status">Seleccione una solicitud pendiente para accionar.</div>`}`;
     }
     async function loadHrRequests() {
       try {
         hrRows = rowsList(await getJSON("/hr/events/"));
-        const rows = hrRows.map(r => ({ id:r.id, empleado:r.empleado, event_type:r.event_type, event_date:r.event_date, status:r.status, vacaciones:r.vacaciones, created_by:r.created_by, approved_by:r.approved_by }));
-        $("hrRequestsTable").innerHTML = hrTable(rows, ["id","empleado","event_type","event_date","status","vacaciones","created_by","approved_by"]);
-        enhanceExcelTables($("hrRequestsTable"));
+        selectedHrRequestIndex = null;
+        renderHrRequestsView();
       } catch (err) {
-        $("hrRequestsTable").innerHTML = `<div class="status error">${esc(err.message)}</div>`;
+        $("hrRequestsView").innerHTML = `<div class="status error">${esc(err.message)}</div>`;
       }
     }
     async function createHrRequest() {
@@ -7513,8 +7648,9 @@ def som_web_home() -> HTMLResponse:
       } catch (err) { hrStatus(err.message, true); }
     }
     async function resolveHrRequest(action) {
-      const id = prompt("ID de solicitud");
-      if (!id) return;
+      const row = hrSelectedRequest();
+      if (!row) return hrStatus("Seleccione una solicitud.", true);
+      const id = row.id;
       const comentario = prompt("Comentario", action === "reject" ? "Rechazo solicitado" : "Aprobado") || "";
       try {
         await sendJSON("PATCH", `/hr/events/${encodeURIComponent(id)}/${action}`, { comentario });
