@@ -1418,6 +1418,7 @@ def sync_itp_to_accounting(conn, company_code_filter: str | None = None):
                 p.payee_type,
                 p.obligation_type,
                 p.reference,
+                p.service_id,
                 p.electronic_key,
                 p.country,
                 p.issue_date,
@@ -1427,6 +1428,7 @@ def sync_itp_to_accounting(conn, company_code_filter: str | None = None):
                 p.balance,
                 p.status,
                 p.active,
+                p.origin,
                 p.notes,
                 p.payment_bank_account_code,
                 p.payment_bank_account_name,
@@ -1455,6 +1457,7 @@ def sync_itp_to_accounting(conn, company_code_filter: str | None = None):
             current_payee_name = payee_name
             current_country = (ob.get("country") or "").strip()
             current_reference = (ob.get("reference") or "").strip()
+            current_service_id = ob.get("service_id")
             current_electronic_key = (ob.get("electronic_key") or "").strip()
             current_notes = (ob.get("notes") or "").strip()
             payee_type = (ob.get("payee_type") or "").upper()
@@ -1462,6 +1465,19 @@ def sync_itp_to_accounting(conn, company_code_filter: str | None = None):
             current_payee_type = payee_type
             current_obligation_type = obligation_type
             currency = (ob.get("currency") or "").upper()
+
+            if (ob.get("origin") or "").upper() == "SERVICIOS" and current_service_id:
+                cur.execute("""
+                    SELECT company_code
+                    FROM servicios
+                    WHERE consec = %s
+                    LIMIT 1
+                """, (current_service_id,))
+                service_company_row = cur.fetchone()
+                service_company = normalize_company_code((service_company_row or {}).get("company_code"))
+                if service_company and service_company != obligation_company:
+                    _delete_system_entries(obligation_id, company=obligation_company)
+                    continue
 
             total_raw = float(ob.get("total") or 0)
             balance_raw = float(ob.get("balance") or 0)
