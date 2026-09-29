@@ -20,7 +20,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20260929-hr-hours-table-v2"
+_ASSET_VERSION = "20260929-hr-hours-kpis-v3"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -7698,7 +7698,6 @@ def som_web_home() -> HTMLResponse:
           <span class="muted">Seleccione una o varias líneas de la tabla para accionar.</span>
           <div class="hr-hours-tools">${registerTools}<button class="secondary" onclick="loadHrHours()">Actualizar</button><button class="secondary" onclick="downloadHrHoursExcel()">Exportar Excel</button>${approveTools}</div>
         </div>
-        <div id="hrHoursSummary"></div>
         <div id="hrHoursView"></div>`;
       loadHrHours();
     }
@@ -7784,12 +7783,15 @@ def som_web_home() -> HTMLResponse:
       }
       const validIds = new Set(hrRows.map(hrHourId));
       selectedHrHourIds = new Set(Array.from(selectedHrHourIds).filter(id => validIds.has(id)));
-      const counts = hrRows.reduce((acc, row) => {
+      const filtered = hrFilteredHours();
+      const filteredCounts = filtered.reduce((acc, row) => {
         acc.total += 1;
+        acc.hours += Number(row.duracion_horas || 0);
         acc[hrHourStatusClass(row.estado)] += 1;
         return acc;
-      }, { total:0, pending:0, approved:0, rejected:0 });
-      const filtered = hrFilteredHours();
+      }, { total:0, hours:0, pending:0, approved:0, rejected:0 });
+      const activeFilters = ["hrHourFilterUser","hrHourFilterType","hrHourFilterStatus","hrHourFilterQ"].filter(id => Boolean(valueFrom(id))).length;
+      const userLabel = valueFrom("hrHourFilterUser") || "Todos";
       const selectedRows = hrSelectedHours();
       const visibleIds = filtered.map(hrHourId);
       const allSelected = visibleIds.length > 0 && visibleIds.every(id => selectedHrHourIds.has(id));
@@ -7813,10 +7815,11 @@ def som_web_home() -> HTMLResponse:
       }).join("");
       target.innerHTML = `
         <div class="hr-request-summary">
-          <div class="hr-kpi"><span>Total</span><strong>${counts.total}</strong></div>
-          <div class="hr-kpi"><span>Pendientes</span><strong>${counts.pending}</strong></div>
-          <div class="hr-kpi"><span>Aprobadas</span><strong>${counts.approved}</strong></div>
-          <div class="hr-kpi"><span>Rechazadas</span><strong>${counts.rejected}</strong></div>
+          <div class="hr-kpi"><span>Usuario</span><strong>${esc(userLabel)}</strong></div>
+          <div class="hr-kpi"><span>Registros visibles</span><strong>${filteredCounts.total}</strong></div>
+          <div class="hr-kpi"><span>Horas visibles</span><strong>${Number(filteredCounts.hours || 0).toLocaleString("en-US", { maximumFractionDigits:2 })} h</strong></div>
+          <div class="hr-kpi"><span>Pendientes visibles</span><strong>${filteredCounts.pending}</strong></div>
+          <div class="hr-kpi"><span>Filtros activos</span><strong>${activeFilters}</strong></div>
         </div>
         <div class="hr-hours-filters">
           <label>Usuario<select id="hrHourFilterUser" onchange="renderHrHoursView()"><option value="">Todos</option>${users.map(user => `<option value="${esc(user)}" ${valueFrom("hrHourFilterUser") === String(user) ? "selected" : ""}>${esc(user)}</option>`).join("")}</select></label>
@@ -7839,9 +7842,6 @@ def som_web_home() -> HTMLResponse:
     }
     async function loadHrHours() {
       try {
-        const summary = await getJSON("/hr/ot-log/summary").catch(() => null);
-        const items = rowsList(summary);
-        $("hrHoursSummary").innerHTML = items.length ? `<div class="hr-kpis">${items.slice(0,4).map(x => `<div class="hr-kpi"><span>${esc(x.usuario)}</span><strong>${esc(x.horas_registradas)} h</strong><small>${esc(x.mensaje || "")}</small></div>`).join("")}</div>` : "";
         const payload = await getJSON("/hr/ot-log/?page=1&page_size=100");
         hrRows = rowsList(payload);
         selectedHrHourIds = new Set();
