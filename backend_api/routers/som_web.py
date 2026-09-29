@@ -20,7 +20,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20260929-hr-employees-desktop-v7"
+_ASSET_VERSION = "20260929-hr-salary-calculator-v8"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -1103,6 +1103,24 @@ def som_web_home() -> HTMLResponse:
     .hr-emp-tab-panel textarea { min-height:72px; resize:vertical; }
     .hr-emp-check { display:flex !important; align-items:center; gap:9px; min-height:38px; }
     .hr-emp-check input { width:auto; }
+    .hr-salary-layout { display:grid; grid-template-columns:minmax(360px,1fr) minmax(420px,1fr); gap:14px; align-items:start; }
+    .hr-salary-tabs { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; border-bottom:1px solid var(--line); padding-bottom:8px; }
+    .hr-salary-tabs button { background:#fff; color:#122033; border:1px solid #cfd9e5; }
+    .hr-salary-tabs button.active { background:#005da8; color:#fff; border-color:#005da8; }
+    .hr-salary-pane { display:none; }
+    .hr-salary-pane.active { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+    .hr-salary-pane label,.hr-salary-expense label { display:grid; gap:5px; font-weight:700; color:#334155; }
+    .hr-salary-pane label.wide,.hr-salary-expense.wide { grid-column:1 / -1; }
+    .hr-salary-check { display:flex !important; align-items:center; gap:9px; min-height:38px; }
+    .hr-salary-check input { width:auto; }
+    .hr-salary-expense { grid-column:1 / -1; border:1px solid var(--line); border-radius:8px; padding:10px; background:#fbfdff; }
+    .hr-salary-expense-grid { display:grid; grid-template-columns:minmax(160px,1.2fr) 130px 110px 100px minmax(150px,1fr) auto; gap:8px; align-items:end; }
+    .hr-salary-expense-list { display:grid; gap:6px; margin-top:10px; max-height:160px; overflow:auto; }
+    .hr-salary-expense-row { display:flex; justify-content:space-between; gap:10px; align-items:center; border:1px solid #d7e1ec; border-radius:8px; padding:7px 9px; background:#fff; }
+    .hr-salary-result { display:grid; gap:10px; }
+    .hr-salary-kpis { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+    .hr-salary-detail { white-space:pre-wrap; line-height:1.42; max-height:460px; overflow:auto; border:1px solid var(--line); border-radius:8px; padding:12px; background:#fff; }
+    .hr-salary-history table { min-width:680px; }
     .service-warning { background:#fff3f3; }
     .badge { display:inline-flex; align-items:center; min-height:24px; border:1px solid var(--line); border-radius:999px; padding:2px 9px; background:#f8fafc; font-size:12px; }
     .badge.open { border-color:#b7d8ff; color:#005da8; background:#edf7ff; }
@@ -1202,7 +1220,7 @@ def som_web_home() -> HTMLResponse:
       .itp-action-grid { grid-template-columns:1fr; }
       .itp-bi-header,.itp-bi-controls,.itp-bi-body,.itp-bi-summary { grid-template-columns:1fr; }
       .itp-bi-totals { grid-template-columns:1fr; }
-      .finance-filter-row,.finance-filter-row.compact,.hr-hours-filters,.hr-emp-filters,.hr-emp-tab-panel.active { grid-template-columns:1fr; }
+      .finance-filter-row,.finance-filter-row.compact,.hr-hours-filters,.hr-emp-filters,.hr-emp-tab-panel.active,.hr-salary-layout,.hr-salary-pane.active,.hr-salary-expense-grid,.hr-salary-kpis { grid-template-columns:1fr; }
       .accounting-hero,.accounting-grid,.accounting-filters,.accounting-entry-line,.accounting-topline,.accounting-tc { grid-template-columns:1fr; }
       .accounting-entry-lines-box { max-width:calc(100vw - 40px); }
       .surveyor-line { grid-template-columns:1fr; }
@@ -1386,6 +1404,10 @@ def som_web_home() -> HTMLResponse:
     let hrEmployeePage = 1;
     let hrEmployeeTotal = 0;
     let hrPayrollPreview = null;
+    let hrSalaryScenario = "EMPLOYEE";
+    let hrSalaryRules = null;
+    let hrSalaryExpenses = [];
+    let hrSalaryHistoryRows = [];
     const DISPUTE_STATUSES = ["New","In process","Process by Sales","Process by RTR","Process by Invoicing","Process by Collections","Process by Bank","Process by Disputes","Written Off","Resolved"];
     const SERVICE_COLUMNS = [
       "consec","tipo","estado","num_informe","buque_contenedor","cliente","contacto","detalle",
@@ -8342,15 +8364,295 @@ def som_web_home() -> HTMLResponse:
     }
     function renderHrSalary() {
       $("hrViewTitle").textContent = "Calculadora Salarial";
-      $("hrViewHint").textContent = "Escenarios CR para empleado, independiente y propietario.";
-      $("hrWorkspace").innerHTML = `<div class="hr-form"><label>Escenario<select id="hrSalScenario"><option value="EMPLOYEE">Empleado</option><option value="INDEPENDENT">Independiente</option><option value="OWNER">Propietario</option></select></label><label>Monto mensual<input id="hrSalAmount" type="number" step="0.01" /></label><label>Etiqueta<input id="hrSalLabel" /></label><label><span>Guardar</span><select id="hrSalSave"><option value="false">No</option><option value="true">Sí</option></select></label><button onclick="calculateHrSalary()">Calcular</button></div><div id="hrSalaryResult"></div>`;
+      $("hrViewHint").textContent = "CR 2026: impuestos, cargas, IVA, PYME, depreciación y comparativa.";
+      hrSalaryScenario = "EMPLOYEE";
+      hrSalaryExpenses = [];
+      $("hrWorkspace").innerHTML = `
+        <div class="hr-salary-layout">
+          <section>
+            <div class="hr-salary-tabs">
+              <button id="hrSalTab_EMPLOYEE" class="active" onclick="switchHrSalaryScenario('EMPLOYEE')">Asalariado</button>
+              <button id="hrSalTab_INDEPENDENT" onclick="switchHrSalaryScenario('INDEPENDENT')">Independiente</button>
+              <button id="hrSalTab_OWNER" onclick="switchHrSalaryScenario('OWNER')">Dueño de empresa</button>
+            </div>
+            <div id="hrSalaryForm"></div>
+            <div class="md-actions" style="margin-top:12px;">
+              <button onclick="calculateHrSalary(false)">Calcular</button>
+              <button onclick="calculateHrSalary(true)">Calcular y guardar</button>
+              <button class="secondary" onclick="compareHrSalary()">Comparar opciones</button>
+              <button class="secondary" onclick="clearHrSalaryExpenses()">Limpiar gastos</button>
+            </div>
+          </section>
+          <section class="hr-salary-result">
+            <div id="hrSalaryStatus" class="status">Ingrese un monto y presione Calcular.</div>
+            <div id="hrSalaryKpis" class="hr-salary-kpis"></div>
+            <div id="hrSalaryDetail" class="hr-salary-detail">Sin cálculo todavía.</div>
+            <div class="hr-salary-history">
+              <div class="panel-head"><h3>Historial</h3><button class="secondary" onclick="loadHrSalaryHistory()">Actualizar</button></div>
+              <div id="hrSalaryHistory"><div class="status">Cargando historial...</div></div>
+            </div>
+          </section>
+        </div>`;
+      renderHrSalaryForm();
+      loadHrSalaryRules();
+      loadHrSalaryHistory();
     }
-    async function calculateHrSalary() {
+    function currentYear() {
+      return new Date().getFullYear();
+    }
+    function hrSalaryYearOptions(selected="") {
+      const current = currentYear();
+      let html = '<option value=""></option>';
+      for (let year=current; year>=1995; year--) html += `<option value="${year}" ${String(selected) === String(year) ? "selected" : ""}>${year}</option>`;
+      return html;
+    }
+    function switchHrSalaryScenario(scenario) {
+      hrSalaryScenario = scenario;
+      document.querySelectorAll(".hr-salary-tabs button").forEach(btn => btn.classList.remove("active"));
+      $(`hrSalTab_${scenario}`)?.classList.add("active");
+      renderHrSalaryForm();
+    }
+    function renderHrSalaryForm() {
+      const box = $("hrSalaryForm");
+      if (!box) return;
+      const pymeYears = ["1","2","3","4","5","6"].map(y => `<option value="${y}">${y}</option>`).join("");
+      const expenseEditor = hrSalaryScenario === "EMPLOYEE" ? "" : renderHrSalaryExpenseEditor();
+      if (hrSalaryScenario === "EMPLOYEE") {
+        box.innerHTML = `
+          <div class="hr-salary-pane active">
+            <label>Etiqueta<input id="hrSalLabel" /></label>
+            <label>Salario mensual bruto<input id="hrSalAmount" type="number" step="0.01" value="0" /></label>
+            <div class="status wide">Automatiza SEM, IVM, Banco Popular, renta salarial y costo patronal 2026.</div>
+          </div>`;
+        return;
+      }
+      if (hrSalaryScenario === "INDEPENDENT") {
+        box.innerHTML = `
+          <div class="hr-salary-pane active">
+            <label>Etiqueta<input id="hrSalLabel" /></label>
+            <label>Monto mensual a facturar sin IVA<input id="hrSalAmount" type="number" step="0.01" value="0" /></label>
+            <label>Monto deuda vehicular / costo original<input id="hrSalVehicleDebt" type="number" step="0.01" value="0" /></label>
+            <label>Año compra vehículo<select id="hrSalVehicleYear">${hrSalaryYearOptions(currentYear())}</select></label>
+            <label>Vida útil vehículo en años<input id="hrSalVehicleLife" type="number" step="1" value="10" /></label>
+            <label>Cuota vehicular mensual<input id="hrSalVehiclePayment" type="number" step="0.01" value="0" /></label>
+            <label class="hr-salary-check"><input id="hrSalPyme" type="checkbox" /> PYME registrada</label>
+            <label>Año PYME<select id="hrSalPymeYear">${pymeYears}</select></label>
+            <div class="status wide">Vehículo usa vida útil referencial de 10 años; gastos corrientes no requieren año ni vida útil.</div>
+            ${expenseEditor}
+          </div>`;
+        renderHrSalaryExpenseList();
+        return;
+      }
+      box.innerHTML = `
+        <div class="hr-salary-pane active">
+          <label>Etiqueta<input id="hrSalLabel" /></label>
+          <label>Ingreso bruto mensual empresa sin IVA<input id="hrSalAmount" type="number" step="0.01" value="0" /></label>
+          <label>Tipo pago socio<select id="hrSalDistribution"><option value="NONE">No aplica</option><option value="DIETAS">Dietas</option><option value="DIVIDENDS">Dividendos</option></select></label>
+          <div class="status">Calcula automáticamente el 15% y el neto de dietas/dividendos sobre el ingreso mensual.</div>
+          <label class="hr-salary-check"><input id="hrSalPyme" type="checkbox" /> PYME registrada</label>
+          <label>Año PYME<select id="hrSalPymeYear">${pymeYears}</select></label>
+          <label>Monto deuda vehicular / costo original<input id="hrSalVehicleDebt" type="number" step="0.01" value="0" /></label>
+          <label>Año compra vehículo<select id="hrSalVehicleYear">${hrSalaryYearOptions(currentYear())}</select></label>
+          <label>Vida útil vehículo en años<input id="hrSalVehicleLife" type="number" step="1" value="10" /></label>
+          <label>Cuota vehicular mensual<input id="hrSalVehiclePayment" type="number" step="0.01" value="0" /></label>
+          ${expenseEditor}
+        </div>`;
+      renderHrSalaryExpenseList();
+    }
+    function renderHrSalaryExpenseEditor() {
+      const categories = hrSalaryRules?.expense_categories || [];
+      const optionsHtml = categories.map(v => `<option value="${esc(v)}"></option>`).join("");
+      return `
+        <div class="hr-salary-expense wide">
+          <strong>Gastos deducibles</strong>
+          <div class="hr-salary-expense-grid">
+            <label>Rubro<input id="hrSalExpenseCategory" list="hrSalExpenseCategories" value="${esc(categories[0] || "")}" /><datalist id="hrSalExpenseCategories">${optionsHtml}</datalist></label>
+            <label>Monto<input id="hrSalExpenseAmount" type="number" step="0.01" value="0" /></label>
+            <label>Año compra<select id="hrSalExpenseYear">${hrSalaryYearOptions("")}</select></label>
+            <label>Vida útil<input id="hrSalExpenseLife" type="number" step="1" value="10" /></label>
+            <label>Nota<input id="hrSalExpenseNote" /></label>
+            <button type="button" onclick="addHrSalaryExpense()">Agregar</button>
+          </div>
+          <div id="hrSalaryExpenseList" class="hr-salary-expense-list"></div>
+        </div>`;
+    }
+    async function loadHrSalaryRules() {
       try {
-        const data = await postJSON("/hr/salary-calculator/calculate", { scenario:valueFrom("hrSalScenario"), amount:Number(valueFrom("hrSalAmount") || 0), label:valueFrom("hrSalLabel") || null, save:valueFrom("hrSalSave") === "true", expenses:[] });
-        $("hrSalaryResult").innerHTML = `<div class="hr-kpis"><div class="hr-kpi"><span>Neto / ingreso</span><strong>${money(data.net_salary || data.net_monthly_income || data.owner_net_income || 0)}</strong></div><div class="hr-kpi"><span>Costo empresa</span><strong>${money(data.total_company_cost || data.total_burden || 0)}</strong></div><div class="hr-kpi"><span>Impuesto</span><strong>${money(data.salary_income_tax || data.income_tax || 0)}</strong></div></div>${hrTable(Object.entries(data).map(([key,value]) => ({ key, value:typeof value === "object" ? JSON.stringify(value) : value })), ["key","value"])}`;
-        enhanceExcelTables($("hrSalaryResult"));
-      } catch (err) { $("hrSalaryResult").innerHTML = `<div class="status error">${esc(err.message)}</div>`; }
+        hrSalaryRules = await getJSON("/hr/salary-calculator/rules");
+        renderHrSalaryForm();
+      } catch (err) {
+        if ($("hrSalaryStatus")) $("hrSalaryStatus").textContent = `No se pudieron cargar reglas: ${err.message}`;
+      }
+    }
+    function hrSalaryNum(id) {
+      const text = valueFrom(id).replace(/\\s/g, "");
+      if (!text) return 0;
+      if (text.includes(",") && text.includes(".")) return Number(text.lastIndexOf(",") > text.lastIndexOf(".") ? text.replace(/\\./g, "").replace(",", ".") : text.replace(/,/g, "")) || 0;
+      if (text.includes(",")) return Number(text.replace(",", ".")) || 0;
+      return Number(text) || 0;
+    }
+    function hrSalaryIntOrNull(id) {
+      const value = hrSalaryNum(id);
+      return value ? Math.trunc(value) : null;
+    }
+    function addHrSalaryExpense() {
+      const category = valueFrom("hrSalExpenseCategory") || "Otro gasto deducible";
+      const amount = hrSalaryNum("hrSalExpenseAmount");
+      const purchaseYear = hrSalaryIntOrNull("hrSalExpenseYear");
+      const usefulLife = hrSalaryIntOrNull("hrSalExpenseLife");
+      const note = valueFrom("hrSalExpenseNote") || null;
+      hrSalaryExpenses.push({ category, amount, note, purchase_year:purchaseYear, useful_life_years:usefulLife });
+      if ($("hrSalExpenseAmount")) $("hrSalExpenseAmount").value = "0";
+      if ($("hrSalExpenseNote")) $("hrSalExpenseNote").value = "";
+      if ($("hrSalExpenseYear")) $("hrSalExpenseYear").value = "";
+      renderHrSalaryExpenseList();
+    }
+    function removeHrSalaryExpense(index) {
+      hrSalaryExpenses.splice(index, 1);
+      renderHrSalaryExpenseList();
+    }
+    function clearHrSalaryExpenses() {
+      hrSalaryExpenses = [];
+      renderHrSalaryExpenseList();
+    }
+    function renderHrSalaryExpenseList() {
+      const box = $("hrSalaryExpenseList");
+      if (!box) return;
+      box.innerHTML = hrSalaryExpenses.length
+        ? hrSalaryExpenses.map((row, idx) => `<div class="hr-salary-expense-row"><span>${esc(row.category)} · ${salaryMoney(row.amount)}${row.purchase_year ? ` · compra ${esc(row.purchase_year)} · vida ${esc(row.useful_life_years || 10)} años` : ""}</span><button class="secondary" onclick="removeHrSalaryExpense(${idx})">Quitar</button></div>`).join("")
+        : '<div class="status">Sin gastos agregados.</div>';
+    }
+    function collectHrSalaryPayload(save=false) {
+      const payload = { scenario:hrSalaryScenario, amount:hrSalaryNum("hrSalAmount"), label:valueFrom("hrSalLabel") || null, save:Boolean(save), expenses:[] };
+      if (hrSalaryScenario !== "EMPLOYEE") {
+        payload.vehicle_debt_amount = hrSalaryNum("hrSalVehicleDebt");
+        payload.vehicle_purchase_year = hrSalaryIntOrNull("hrSalVehicleYear");
+        payload.vehicle_useful_life_years = Math.trunc(hrSalaryNum("hrSalVehicleLife") || 10);
+        payload.vehicle_monthly_payment = hrSalaryNum("hrSalVehiclePayment");
+        payload.is_pyme = Boolean($("hrSalPyme")?.checked);
+        payload.pyme_year = Math.trunc(hrSalaryNum("hrSalPymeYear") || 0);
+        payload.expenses = hrSalaryExpenses;
+      }
+      if (hrSalaryScenario === "OWNER") {
+        payload.distribution_type = valueFrom("hrSalDistribution") || "NONE";
+        payload.distribution_amount = 0;
+      }
+      return payload;
+    }
+    const HR_SALARY_LABELS = {
+      gross_salary:"Salario bruto", worker_contributions_total:"Total deducciones trabajador", salary_income_tax:"Impuesto al salario", net_salary:"Salario neto",
+      employer_contributions_total:"Total aporte patronal", total_company_cost:"Costo total empresa", monthly_invoice_subtotal:"Subtotal factura mensual",
+      vat_13:"IVA 13%", monthly_invoice_total:"Total factura con IVA", deductible_expenses:"Gastos deducibles", deductible_expenses_total:"Total gastos deducibles",
+      deductible_expenses_total_monthly:"Total gastos deducibles mensual", net_before_ccss:"Ingreso neto antes de CCSS", ccss_rate:"Tasa CCSS",
+      ccss_independent:"CCSS independiente", taxable_income_monthly_reference:"Base imponible mensual ref.", taxable_income_annual_reference:"Base imponible anual ref.",
+      annual_income_tax:"Renta anual", base_annual_income_tax:"Renta anual antes de exoneración", pyme_applied:"Beneficio PYME aplicado",
+      pyme_gross_limit_exceeded:"Límite PYME excedido", monthly_income_tax_reference:"Renta mensual ref.", net_after_ccss_and_tax_monthly_reference:"Neto mensual ref.",
+      cash_remaining_monthly_reference:"Dinero mensual después de rebajos", monthly_gross_income:"Ingreso bruto mensual", monthly_income_total_with_vat:"Ingreso mensual con IVA",
+      annual_gross_income:"Ingreso bruto anual", distribution_type:"Tipo de pago socio", distribution_gross_monthly:"Monto bruto dietas/dividendos",
+      distribution_withholding_15:"Retención 15%", distribution_net_monthly:"Neto después del 15%", distribution_is_deductible:"Deducible para empresa",
+      annual_net_taxable_income:"Renta neta imponible anual", corporate_regime:"Régimen renta jurídica", base_corporate_income_tax:"Impuesto base",
+      pyme_exemption_rate:"Exoneración PYME", annual_corporate_income_tax:"Renta jurídica anual", monthly_corporate_income_tax_reference:"Renta jurídica mensual ref.",
+      worker_contributions:"Deducciones trabajador", employer_contributions:"Aporte patronal", salary_income_tax_detail:"Detalle impuesto salarial",
+      income_tax_detail:"Detalle impuesto renta", corporate_tax_detail:"Detalle renta jurídica"
+    };
+    const HR_SALARY_HIGHLIGHTS = {
+      EMPLOYEE:["net_salary","worker_contributions_total","salary_income_tax","total_company_cost"],
+      INDEPENDENT:["monthly_invoice_total","cash_remaining_monthly_reference","ccss_independent","annual_income_tax"],
+      OWNER:["monthly_income_total_with_vat","distribution_net_monthly","distribution_withholding_15","annual_corporate_income_tax"]
+    };
+    function salaryLabel(key) {
+      return HR_SALARY_LABELS[key] || String(key || "").replace(/_/g, " ").replace(/\\b\\w/g, c => c.toUpperCase());
+    }
+    function salaryMoney(value) {
+      const n = Number(value || 0);
+      return `CRC ${n.toLocaleString("en-US", { minimumFractionDigits:2, maximumFractionDigits:2 })}`;
+    }
+    function salaryValueText(key, value) {
+      if (typeof value === "boolean") return value ? "Sí" : "No";
+      if (typeof value === "number") return key.endsWith("_rate") ? `${(value * 100).toFixed(2)}%` : salaryMoney(value);
+      if (key === "distribution_type") return ({ NONE:"No aplica", DIETAS:"Dietas", DIVIDENDS:"Dividendos" }[value] || value);
+      return value ?? "";
+    }
+    function renderHrSalaryKpis(data) {
+      const keys = HR_SALARY_HIGHLIGHTS[data?.scenario] || [];
+      $("hrSalaryKpis").innerHTML = keys.map(key => `<div class="hr-kpi"><span>${esc(salaryLabel(key))}</span><strong>${esc(salaryValueText(key, data?.[key]))}</strong></div>`).join("");
+    }
+    function renderHrSalaryResult(data) {
+      renderHrSalaryKpis(data);
+      const scenarioLabel = ({ EMPLOYEE:"Asalariado", INDEPENDENT:"Independiente", OWNER:"Dueño de empresa" }[data.scenario] || data.scenario);
+      $("hrSalaryStatus").textContent = `${scenarioLabel} · regla ${data.rule_version || "CR-2026"} · cálculo automático listo`;
+      const lines = ["Desglose del cálculo", ""];
+      Object.entries(data).forEach(([key, value]) => {
+        if (["scenario","rule_version","currency","disclaimer"].includes(key)) return;
+        if (Array.isArray(value)) {
+          lines.push(salaryLabel(key));
+          value.forEach(item => {
+            if (item && typeof item === "object") {
+              const name = item.name || item.category || `${item.from ?? ""} - ${item.to ?? ""}`;
+              const amount = item.amount ?? item.tax ?? "";
+              const rate = typeof item.rate === "number" ? ` (${(item.rate * 100).toFixed(2)}%)` : "";
+              const extra = item.remaining_book_value !== undefined && item.remaining_book_value !== null ? ` | saldo libro ${salaryMoney(item.remaining_book_value)}` : "";
+              lines.push(`  - ${name}: ${salaryMoney(amount)}${rate}${extra}`);
+            }
+          });
+          lines.push("");
+        } else {
+          lines.push(`${salaryLabel(key)}: ${salaryValueText(key, value)}`);
+        }
+      });
+      lines.push("");
+      lines.push(String(data.disclaimer || ""));
+      $("hrSalaryDetail").textContent = lines.join("\\n");
+    }
+    async function calculateHrSalary(save=false) {
+      try {
+        const data = await postJSON("/hr/salary-calculator/calculate", collectHrSalaryPayload(save));
+        renderHrSalaryResult(data);
+        if (save) await loadHrSalaryHistory();
+      } catch (err) {
+        $("hrSalaryDetail").innerHTML = `<div class="status error">${esc(err.message)}</div>`;
+      }
+    }
+    async function compareHrSalary() {
+      try {
+        const data = await postJSON("/hr/salary-calculator/compare", collectHrSalaryPayload(false));
+        $("hrSalaryStatus").textContent = `IA activa · comparativa ${data.rule_version || "CR-2026"} · ${data.recommended_label || ""}`;
+        $("hrSalaryKpis").innerHTML = (data.scenarios || []).slice(0,4).map(row => `<div class="hr-kpi"><span>${esc(row.label || row.scenario)}</span><strong>${salaryMoney(row.monthly_income_reference)}</strong></div>`).join("");
+        const lines = ["IA activa: comparativa de escenarios", "", String(data.summary || ""), ""];
+        (data.scenarios || []).forEach((row, idx) => {
+          lines.push(`${idx + 1}. ${row.label}`);
+          lines.push(`   Ingreso mensual ref.: ${salaryMoney(row.monthly_income_reference)}`);
+          lines.push(`   Carga mensual fiscal/social: ${salaryMoney(row.monthly_tax_and_social_burden)}`);
+          lines.push(`   PYME aplicado: ${row.pyme_applied ? "Sí" : "No"}`);
+          if (row.pyme_gross_limit_exceeded) lines.push("   Nota: excede el límite PYME anual 2026.");
+          lines.push("   Pros:");
+          (row.pros || []).forEach(item => lines.push(`     - ${item}`));
+          lines.push("   Contras:");
+          (row.cons || []).forEach(item => lines.push(`     - ${item}`));
+          lines.push("");
+        });
+        lines.push(String(data.disclaimer || ""));
+        $("hrSalaryDetail").textContent = lines.join("\\n");
+      } catch (err) {
+        $("hrSalaryDetail").innerHTML = `<div class="status error">${esc(err.message)}</div>`;
+      }
+    }
+    async function loadHrSalaryHistory() {
+      const target = $("hrSalaryHistory");
+      if (!target) return;
+      try {
+        const payload = await getJSON("/hr/salary-calculator/history?limit=50");
+        hrSalaryHistoryRows = rowsList(payload);
+        if (!hrSalaryHistoryRows.length) {
+          target.innerHTML = '<div class="status">Sin cálculos guardados para esta empresa.</div>';
+          return;
+        }
+        const rows = hrSalaryHistoryRows.map(row => ({ id:row.id, escenario:({ EMPLOYEE:"Asalariado", INDEPENDENT:"Independiente", OWNER:"Dueño de empresa" }[row.scenario] || row.scenario), etiqueta:row.label || "", creado_por:row.created_by || "", fecha:row.created_at || "" }));
+        target.innerHTML = hrTable(rows, ["id","escenario","etiqueta","creado_por","fecha"]);
+        enhanceExcelTables(target);
+      } catch (err) {
+        target.innerHTML = `<div class="status error">${esc(err.message)}</div>`;
+      }
     }
     function renderHrMedical() {
       $("hrViewTitle").textContent = "Red Médica";
