@@ -20,7 +20,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20260929-hr-hours-kpis-v4"
+_ASSET_VERSION = "20260929-hr-hours-capacity-v5"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -1362,6 +1362,7 @@ def som_web_home() -> HTMLResponse:
     let hrRows = [];
     let selectedHrRequestIndex = null;
     let selectedHrHourIds = new Set();
+    let hrHourPolicies = new Map();
     let selectedHrPayrollIndex = null;
     let selectedHrPayslipIndex = null;
     let hrPayrollPreview = null;
@@ -7757,6 +7758,9 @@ def som_web_home() -> HTMLResponse:
     function hrSelectedHours() {
       return hrRows.filter(row => selectedHrHourIds.has(hrHourId(row)));
     }
+    function hrHourPolicyFor(usuario) {
+      return hrHourPolicies.get(String(usuario || "").toLowerCase()) || {};
+    }
     function toggleHrHourSelection(id, checked) {
       const key = String(id || "");
       if (!key) return;
@@ -7790,8 +7794,19 @@ def som_web_home() -> HTMLResponse:
         acc[hrHourStatusClass(row.estado)] += 1;
         return acc;
       }, { total:0, hours:0, pending:0, approved:0, rejected:0 });
+      const visibleUsers = Array.from(new Set(filtered.map(row => row.usuario).filter(Boolean)));
+      const negotiatedHours = visibleUsers.reduce((sum, usuario) => {
+        const policy = hrHourPolicyFor(usuario);
+        return sum + Number(policy.horas_contratadas || policy.tope_ordinario || 0);
+      }, 0);
+      const usedVisibleHours = filtered.reduce((sum, row) => {
+        return hrHourStatusClass(row.estado) === "rejected" ? sum : sum + Number(row.duracion_horas || 0);
+      }, 0);
+      const remainingHours = Math.max(negotiatedHours - usedVisibleHours, 0);
+      const usagePct = negotiatedHours ? Math.min((usedVisibleHours / negotiatedHours) * 100, 999) : 0;
       const activeFilters = ["hrHourFilterUser","hrHourFilterType","hrHourFilterStatus","hrHourFilterQ"].filter(id => Boolean(valueFrom(id))).length;
       const userLabel = valueFrom("hrHourFilterUser") || "Todos";
+      const fmtHours = value => Number(value || 0).toLocaleString("en-US", { maximumFractionDigits:2 });
       const selectedRows = hrSelectedHours();
       const visibleIds = filtered.map(hrHourId);
       const allSelected = visibleIds.length > 0 && visibleIds.every(id => selectedHrHourIds.has(id));
@@ -7816,8 +7831,11 @@ def som_web_home() -> HTMLResponse:
       target.innerHTML = `
         <div class="hr-request-summary">
           <div class="hr-kpi"><span>Usuario</span><strong>${esc(userLabel)}</strong></div>
+          <div class="hr-kpi"><span>Horas negociadas</span><strong>${fmtHours(negotiatedHours)} h</strong></div>
+          <div class="hr-kpi"><span>Horas usadas visibles</span><strong>${fmtHours(usedVisibleHours)} h</strong></div>
+          <div class="hr-kpi"><span>Saldo disponible</span><strong>${fmtHours(remainingHours)} h</strong></div>
+          <div class="hr-kpi"><span>Uso negociación</span><strong>${fmtHours(usagePct)}%</strong></div>
           <div class="hr-kpi"><span>Registros visibles</span><strong>${filteredCounts.total}</strong></div>
-          <div class="hr-kpi"><span>Horas visibles</span><strong>${Number(filteredCounts.hours || 0).toLocaleString("en-US", { maximumFractionDigits:2 })} h</strong></div>
           <div class="hr-kpi"><span>Pendientes visibles</span><strong>${filteredCounts.pending}</strong></div>
           <div class="hr-kpi"><span>Filtros activos</span><strong>${activeFilters}</strong></div>
         </div>
@@ -7842,6 +7860,8 @@ def som_web_home() -> HTMLResponse:
     }
     async function loadHrHours() {
       try {
+        const summary = await getJSON("/hr/ot-log/summary").catch(() => null);
+        hrHourPolicies = new Map(rowsList(summary).map(row => [String(row.usuario || "").toLowerCase(), row]));
         const payload = await getJSON("/hr/ot-log/?page=1&page_size=100");
         hrRows = rowsList(payload);
         selectedHrHourIds = new Set();
