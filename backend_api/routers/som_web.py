@@ -20,7 +20,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20260929-accounting-company-guard-v6"
+_ASSET_VERSION = "20260929-hr-employees-desktop-v7"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -1086,6 +1086,23 @@ def som_web_home() -> HTMLResponse:
     .row-pick::before { content:""; width:10px; height:10px; border-radius:50%; transform:scale(0); transition:transform .08s ease-in-out; background:var(--blue); }
     .row-pick:checked { border-color:var(--blue); background:#eff7ff; }
     .row-pick:checked::before { transform:scale(1); }
+    .hr-emp-filters { display:grid; grid-template-columns:repeat(4,minmax(160px,1fr)) auto auto; gap:10px; align-items:end; margin-bottom:12px; }
+    .hr-emp-toolbar { display:flex; justify-content:space-between; gap:12px; align-items:center; margin-bottom:10px; flex-wrap:wrap; }
+    .hr-emp-actions { display:flex; gap:8px; flex-wrap:wrap; }
+    .hr-emp-table table { min-width:2200px; }
+    .hr-emp-table th,.hr-emp-table td { font-size:12px; }
+    .hr-emp-modal { width:min(980px,96vw); }
+    .hr-emp-tabs { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; border-bottom:1px solid var(--line); padding-bottom:8px; }
+    .hr-emp-tabs button { background:#fff; color:#122033; border:1px solid #cfd9e5; }
+    .hr-emp-tabs button.active { background:#005da8; color:#fff; border-color:#005da8; }
+    .hr-emp-tab-panel { display:none; }
+    .hr-emp-tab-panel.active { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+    .hr-emp-tab-panel label { display:grid; gap:5px; font-weight:700; color:#334155; }
+    .hr-emp-tab-panel label.wide { grid-column:1 / -1; }
+    .hr-emp-tab-panel input,.hr-emp-tab-panel select,.hr-emp-tab-panel textarea { width:100%; min-width:0; }
+    .hr-emp-tab-panel textarea { min-height:72px; resize:vertical; }
+    .hr-emp-check { display:flex !important; align-items:center; gap:9px; min-height:38px; }
+    .hr-emp-check input { width:auto; }
     .service-warning { background:#fff3f3; }
     .badge { display:inline-flex; align-items:center; min-height:24px; border:1px solid var(--line); border-radius:999px; padding:2px 9px; background:#f8fafc; font-size:12px; }
     .badge.open { border-color:#b7d8ff; color:#005da8; background:#edf7ff; }
@@ -1185,7 +1202,7 @@ def som_web_home() -> HTMLResponse:
       .itp-action-grid { grid-template-columns:1fr; }
       .itp-bi-header,.itp-bi-controls,.itp-bi-body,.itp-bi-summary { grid-template-columns:1fr; }
       .itp-bi-totals { grid-template-columns:1fr; }
-      .finance-filter-row,.finance-filter-row.compact,.hr-hours-filters { grid-template-columns:1fr; }
+      .finance-filter-row,.finance-filter-row.compact,.hr-hours-filters,.hr-emp-filters,.hr-emp-tab-panel.active { grid-template-columns:1fr; }
       .accounting-hero,.accounting-grid,.accounting-filters,.accounting-entry-line,.accounting-topline,.accounting-tc { grid-template-columns:1fr; }
       .accounting-entry-lines-box { max-width:calc(100vw - 40px); }
       .surveyor-line { grid-template-columns:1fr; }
@@ -1365,6 +1382,9 @@ def som_web_home() -> HTMLResponse:
     let hrHourPolicies = new Map();
     let selectedHrPayrollIndex = null;
     let selectedHrPayslipIndex = null;
+    let selectedHrEmployeeIndex = null;
+    let hrEmployeePage = 1;
+    let hrEmployeeTotal = 0;
     let hrPayrollPreview = null;
     const DISPUTE_STATUSES = ["New","In process","Process by Sales","Process by RTR","Process by Invoicing","Process by Collections","Process by Bank","Process by Disputes","Written Off","Resolved"];
     const SERVICE_COLUMNS = [
@@ -8112,20 +8132,213 @@ def som_web_home() -> HTMLResponse:
     }
     function renderHrEmployees() {
       $("hrViewTitle").textContent = "Empleados HHRR";
-      $("hrViewHint").textContent = "Ficha laboral y políticas de horas.";
-      $("hrWorkspace").innerHTML = `<div class="hr-toolbar"><label>Buscar<input id="hrEmpQ" placeholder="Nombre o usuario" /></label><label>Estado<select id="hrEmpStatus"><option value="">Activo</option><option>Todos</option><option>Inactivo</option></select></label><button onclick="loadHrEmployees()">Cargar empleados</button></div><div id="hrEmployeesTable"></div>`;
+      $("hrViewHint").textContent = "Ficha laboral, jornada, salario, vacaciones, activos y políticas de horas.";
+      selectedHrEmployeeIndex = null;
+      hrEmployeePage = 1;
+      $("hrWorkspace").innerHTML = `
+        <div class="hr-emp-toolbar">
+          <span class="muted">Vista alineada con HHRR escritorio. Solo admin/master puede consultar o modificar empleados.</span>
+          <div class="hr-emp-actions">
+            <button onclick="openHrEmployeeForm(null, 'new')">Nuevo empleado</button>
+            <button class="secondary" onclick="loadHrEmployees(1)">Buscar</button>
+            <button class="secondary" onclick="clearHrEmployeeFilters()">Limpiar</button>
+          </div>
+        </div>
+        <div class="hr-emp-filters">
+          <label>Nombre<input id="hrEmpName" placeholder="Nombre o apellidos" onkeydown="if(event.key==='Enter'){event.preventDefault();loadHrEmployees(1)}" /></label>
+          <label>Código<input id="hrEmpCode" placeholder="MSL-0001-E" onkeydown="if(event.key==='Enter'){event.preventDefault();loadHrEmployees(1)}" /></label>
+          <label>Estado<select id="hrEmpStatus"><option value="Activo">Activo</option><option value="Inactivo">Inactivo</option><option value="Todos">Todos</option></select></label>
+          <label>Usuario<input id="hrEmpUser" placeholder="usuario SOM" onkeydown="if(event.key==='Enter'){event.preventDefault();loadHrEmployees(1)}" /></label>
+          <button onclick="loadHrEmployees(1)">Buscar</button>
+          <button class="secondary" onclick="clearHrEmployeeFilters()">Limpiar</button>
+        </div>
+        <div id="hrEmployeesTable"><div class="status">Cargando empleados...</div></div>`;
       loadHrEmployees();
     }
-    async function loadHrEmployees() {
-      const params = new URLSearchParams({ page:"1", page_size:"100" });
-      if (valueFrom("hrEmpQ")) { params.set("nombre", valueFrom("hrEmpQ")); params.set("usuario", valueFrom("hrEmpQ")); }
+    function hrEmployeeParams(page=hrEmployeePage) {
+      const params = new URLSearchParams({ page:String(page || 1), page_size:"50" });
+      if (valueFrom("hrEmpName")) params.set("nombre", valueFrom("hrEmpName"));
+      if (valueFrom("hrEmpCode")) params.set("codigo", valueFrom("hrEmpCode"));
       if (valueFrom("hrEmpStatus")) params.set("estado", valueFrom("hrEmpStatus"));
+      if (valueFrom("hrEmpUser")) params.set("usuario", valueFrom("hrEmpUser"));
+      return params;
+    }
+    async function loadHrEmployees(page=hrEmployeePage) {
+      const params = hrEmployeeParams(page);
       try {
         const payload = await getJSON(`/hr/employees?${params}`);
+        hrEmployeePage = Number(payload.page || page || 1);
+        hrEmployeeTotal = Number(payload.total || 0);
         hrRows = rowsList(payload);
-        $("hrEmployeesTable").innerHTML = hrTable(hrRows, ["id","codigo","usuario","nombre","apellidos","estado","jornada","salario","pago","fecha_ingreso","horas_contratadas","vacaciones"]);
-        enhanceExcelTables($("hrEmployeesTable"));
+        selectedHrEmployeeIndex = null;
+        renderHrEmployeesTable();
       } catch (err) { $("hrEmployeesTable").innerHTML = `<div class="status error">${esc(err.message)}</div>`; }
+    }
+    function clearHrEmployeeFilters() {
+      ["hrEmpName","hrEmpCode","hrEmpUser"].forEach(id => { if ($(id)) $(id).value = ""; });
+      if ($("hrEmpStatus")) $("hrEmpStatus").value = "Activo";
+      loadHrEmployees(1);
+    }
+    function renderHrEmployeesTable() {
+      const target = $("hrEmployeesTable");
+      if (!target) return;
+      const cols = ["id","codigo","nombre","apellidos","cedula_id","usuario","estado","jornada","salario","pago","banco","moneda","fecha_ingreso","horas_contratadas","horas_tope_ordinario","horas_tope_maximo","tarifa_hora_extra","pago_minimo_garantizado","activo1","activo2","activo3"];
+      const pages = Math.max(1, Math.ceil((hrEmployeeTotal || hrRows.length || 0) / 50));
+      if (!hrRows.length) {
+        target.innerHTML = `<div class="status">Sin empleados para los filtros seleccionados.</div>
+          <div class="pager"><span>Página ${hrEmployeePage} de ${pages} · 0 registros</span></div>`;
+        return;
+      }
+      target.innerHTML = `
+        <div class="hr-emp-table table-wrap">
+          <table>
+            <thead><tr><th>Acción</th>${cols.map(c => `<th>${esc(c.replace(/_/g," "))}</th>`).join("")}</tr></thead>
+            <tbody>${hrRows.map((row, idx) => {
+              const selected = idx === selectedHrEmployeeIndex;
+              return `<tr class="${selected ? "service-selected" : ""}" onclick="selectedHrEmployeeIndex=${idx};renderHrEmployeesTable()">
+                <td><div class="toolbar"><button class="secondary" onclick="event.stopPropagation();openHrEmployeeForm(${idx}, 'view')">Ver</button><button onclick="event.stopPropagation();openHrEmployeeForm(${idx}, 'edit')">Editar</button></div></td>
+                ${cols.map(c => `<td>${esc(hrEmployeeDisplay(row, c))}</td>`).join("")}
+              </tr>`;
+            }).join("")}</tbody>
+          </table>
+        </div>
+        <div class="pager">
+          <span>Página ${hrEmployeePage} de ${pages} · ${hrEmployeeTotal || hrRows.length} registro(s)</span>
+          <div class="toolbar">
+            <button class="secondary" ${hrEmployeePage <= 1 ? "disabled" : ""} onclick="loadHrEmployees(1)">«</button>
+            <button class="secondary" ${hrEmployeePage <= 1 ? "disabled" : ""} onclick="loadHrEmployees(${Math.max(1, hrEmployeePage - 1)})">‹</button>
+            <button class="secondary" ${hrEmployeePage >= pages ? "disabled" : ""} onclick="loadHrEmployees(${Math.min(pages, hrEmployeePage + 1)})">›</button>
+          </div>
+        </div>`;
+      enhanceExcelTables(target);
+    }
+    function hrEmployeeDisplay(row, key) {
+      const value = row?.[key];
+      if (key === "pago_minimo_garantizado") return value ? "Sí" : "No";
+      if (value === true) return "Sí";
+      if (value === false) return "No";
+      return value ?? "";
+    }
+    function hrEmployeeSelectOptions(values, selected="") {
+      return values.map(v => `<option value="${esc(v)}" ${String(v) === String(selected || "") ? "selected" : ""}>${esc(v)}</option>`).join("");
+    }
+    function hrEmployeeField(field, row={}, mode="edit") {
+      const [name, label, type, choices] = field;
+      const readonly = mode === "view" || name === "codigo";
+      const disabled = readonly ? "disabled" : "";
+      const value = row?.[name] ?? "";
+      if (type === "textarea") return `<label class="wide">${esc(label)}<textarea id="hrEmpForm_${esc(name)}" ${disabled}>${esc(value)}</textarea></label>`;
+      if (type === "select") return `<label>${esc(label)}<select id="hrEmpForm_${esc(name)}" ${disabled}>${hrEmployeeSelectOptions(choices, value)}</select></label>`;
+      if (type === "checkbox") return `<label class="hr-emp-check"><input id="hrEmpForm_${esc(name)}" type="checkbox" ${value ? "checked" : ""} ${disabled} /> ${esc(label)}</label>`;
+      const step = type === "number" ? ' step="0.01"' : "";
+      const onAge = name === "fecha_nacimiento" ? ' onchange="updateHrEmployeeAge()"' : "";
+      return `<label>${esc(label)}<input id="hrEmpForm_${esc(name)}" type="${esc(type)}" value="${esc(value)}" ${disabled}${step}${onAge} /></label>`;
+    }
+    function hrEmployeeFieldGroups() {
+      return [
+        ["Datos personales", [
+          ["id","ID","text"],["codigo","Código","text"],["cedula_id","Cédula ID","text"],["usuario","Usuario SOM","text"],
+          ["nombre","Nombre","text"],["apellidos","Apellidos","text"],
+          ["estado_civil","Estado civil","select",["","Soltero","Casado","Unión libre","Divorciado","Separado","Viudo","Otro"]],
+          ["genero","Género","select",["","Masculino","Femenina","Otro"]],
+          ["nacionalidad","Nacionalidad","text"],["fecha_nacimiento","Fecha nacimiento","date"],["edad","Edad","number"]
+        ]],
+        ["Contacto y dirección", [
+          ["prefijo","Prefijo","select",["","+506","+52","+57","+1","+504"]],["telefono","Teléfono","text"],
+          ["provincia","Provincia","text"],["canton","Cantón","text"],["distrito","Distrito","text"],["direccion","Dirección","textarea"]
+        ]],
+        ["Laboral y pagos", [
+          ["jornada","Jornada","select",["","Completa","Medio tiempo","Por horas","Tiempo completo"]],
+          ["salario","Salario","number"],["pago","Pago","select",["","Mensual","Quincenal","Semanal"]],
+          ["banco","Banco","text"],["cuenta_iban","Cuenta IBAN","text"],["moneda","Moneda","select",["","CRC","USD","EUR"]],
+          ["fecha_ingreso","Fecha ingreso","date"],["horas_contratadas","Horas contratadas","number"],
+          ["horas_tope_ordinario","Horas tope ordinario","number"],["horas_tope_maximo","Horas tope máximo","number"],
+          ["tarifa_hora_extra","Tarifa hora extra","number"],["vacaciones","Vacaciones","number"],
+          ["estado","Estado","select",["","Activo","Inactivo"]],["pago_minimo_garantizado","Pago mínimo garantizado","checkbox"]
+        ]],
+        ["Emergencia y salud", [
+          ["enfermedades","Enfermedades","textarea"],["contacto_emergencia","Contacto emergencia","text"],["telefono_emergencia","Teléfono emergencia","text"]
+        ]],
+        ["Activos", [
+          ["activo1","Activo 1","text"],["marca1","Marca 1","text"],["serial1","Serial 1","text"],
+          ["activo2","Activo 2","text"],["marca2","Marca 2","text"],["serial2","Serial 2","text"],
+          ["activo3","Activo 3","text"],["marca3","Marca 3","text"],["serial3","Serial 3","text"]
+        ]]
+      ];
+    }
+    function openHrEmployeeForm(idx=null, mode="view") {
+      const row = idx === null ? { estado:"Activo", moneda:"CRC", pago:"Mensual", jornada:"Completa", pago_minimo_garantizado:false } : (hrRows[idx] || {});
+      const title = mode === "new" ? "Nuevo empleado" : mode === "edit" ? "Modificar empleado" : "Ver empleado";
+      const groups = hrEmployeeFieldGroups();
+      closeModal();
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal hr-emp-modal">
+            <div class="modal-head"><h2>${esc(title)}</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+            <div class="hr-emp-tabs">${groups.map((g,i) => `<button type="button" class="${i === 0 ? "active" : ""}" onclick="showHrEmployeeTab(${i})">${esc(g[0])}</button>`).join("")}</div>
+            <div id="hrEmpFormMsg" class="status hidden"></div>
+            <form id="hrEmpForm" onsubmit="event.preventDefault();saveHrEmployee('${mode}')">
+              ${groups.map((g,i) => `<section class="hr-emp-tab-panel ${i === 0 ? "active" : ""}" data-hr-emp-tab="${i}">${g[1].map(field => hrEmployeeField(field, row, mode)).join("")}</section>`).join("")}
+              <div class="md-actions" style="margin-top:14px;">
+                ${mode === "view" ? "" : `<button type="submit">${mode === "new" ? "Crear empleado" : "Guardar cambios"}</button>`}
+                <button class="secondary" type="button" onclick="closeModal()">Cerrar</button>
+              </div>
+            </form>
+          </div>
+        </div>`);
+      if (mode !== "new" && $("hrEmpForm_id")) $("hrEmpForm_id").value = row.id || "";
+    }
+    function showHrEmployeeTab(index) {
+      document.querySelectorAll(".hr-emp-tabs button").forEach((btn, i) => btn.classList.toggle("active", i === index));
+      document.querySelectorAll(".hr-emp-tab-panel").forEach(panel => panel.classList.toggle("active", panel.dataset.hrEmpTab === String(index)));
+    }
+    function updateHrEmployeeAge() {
+      const birth = valueFrom("hrEmpForm_fecha_nacimiento");
+      const target = $("hrEmpForm_edad");
+      if (!birth || !target) return;
+      const d = new Date(`${birth}T00:00:00`);
+      if (Number.isNaN(d.getTime())) return;
+      const today = new Date();
+      let age = today.getFullYear() - d.getFullYear();
+      const m = today.getMonth() - d.getMonth();
+      if (m < 0 || (m === 0 && today.getDate() < d.getDate())) age -= 1;
+      target.value = age >= 0 ? age : "";
+    }
+    function collectHrEmployeePayload(mode) {
+      const payload = {};
+      hrEmployeeFieldGroups().flatMap(g => g[1]).forEach(([name, label, type]) => {
+        if (name === "id") return;
+        const el = $(`hrEmpForm_${name}`);
+        if (!el) return;
+        if (type === "checkbox") payload[name] = Boolean(el.checked);
+        else payload[name] = el.value === "" ? null : el.value;
+      });
+      if (!payload.nombre || !payload.apellidos) throw new Error("Nombre y apellidos son obligatorios.");
+      if (payload.estado) payload.activo = String(payload.estado).toLowerCase() !== "inactivo";
+      if (mode === "new") delete payload.codigo;
+      return payload;
+    }
+    async function saveHrEmployee(mode) {
+      const msg = $("hrEmpFormMsg");
+      msg.className = "status";
+      msg.textContent = "Guardando...";
+      msg.classList.remove("hidden");
+      try {
+        const payload = collectHrEmployeePayload(mode);
+        if (mode === "new") await postJSON("/hr/employees", payload);
+        else {
+          const id = valueFrom("hrEmpForm_id");
+          if (!id) throw new Error("No se encontró el ID del empleado.");
+          await sendJSON("PUT", `/hr/employees/${encodeURIComponent(id)}`, payload);
+        }
+        msg.textContent = mode === "new" ? "Empleado creado." : "Empleado actualizado.";
+        await loadHrEmployees(hrEmployeePage);
+        closeModal();
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+        msg.classList.remove("hidden");
+      }
     }
     function renderHrSalary() {
       $("hrViewTitle").textContent = "Calculadora Salarial";
