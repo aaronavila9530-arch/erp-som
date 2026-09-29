@@ -20,7 +20,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20260929-hr-hours-capacity-v5"
+_ASSET_VERSION = "20260929-accounting-company-guard-v6"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -3059,11 +3059,14 @@ def som_web_home() -> HTMLResponse:
       const summary = payload.summary || {};
       return `<div class="grid kpis"><div class="card kpi"><span>Estado</span><strong>${esc(payload?.period_control?.status || "-")}</strong></div><div class="card kpi"><span>Listo para cierre</span><strong>${payload.ready_to_close ? "Sí" : "No"}</strong></div><div class="card kpi"><span>Diferencia</span><strong>${fmtAccMoney(summary.difference)}</strong></div><div class="card kpi"><span>Alertas críticas</span><strong>${esc(summary.critical_alerts || 0)}</strong></div></div>${renderFinanceGenericTable(checklist)}`;
     }
+    function accountingGmailAccount() {
+      return selectedCompany() === "MCI-CR" ? "facturacion.fe@xtravon.com" : "contabilidad@mslogisticsgroup.com";
+    }
     async function runGmailFiscalSync() {
       const status = $("accOutlookStatus");
       status.className = "accounting-banner"; status.textContent = "Ejecutando sincronización Gmail fiscal en backend...";
       try {
-        const payload = await postJSON(`/accounting/tax/gmail/sync?max_messages=100&account_email=${encodeURIComponent("contabilidad@mslogisticsgroup.com")}`, {});
+        const payload = await postJSON(`/accounting/tax/gmail/sync?max_messages=100&account_email=${encodeURIComponent(accountingGmailAccount())}`, {});
         status.textContent = `Gmail backend: ${payload.imported || 0} importados, ${payload.errors || 0} errores.`;
       } catch (err) { status.className = "accounting-banner error"; status.textContent = err.message; }
     }
@@ -3071,7 +3074,7 @@ def som_web_home() -> HTMLResponse:
       const status = $("accOutlookStatus");
       status.className = "accounting-banner"; status.textContent = "Consultando estado Gmail backend...";
       try {
-        const payload = await getJSON(`/accounting/tax/gmail/status?account_email=${encodeURIComponent("contabilidad@mslogisticsgroup.com")}`);
+        const payload = await getJSON(`/accounting/tax/gmail/status?account_email=${encodeURIComponent(accountingGmailAccount())}`);
         const connection = payload.connection || {};
         status.textContent = `Gmail backend: ${connection.authorized ? "conectado" : "sin conexión"} · automatización ${connection.auto_enabled ? "activa" : "inactiva"} · última sync ${connection.last_sync_at || "-"}`;
       } catch (err) { status.className = "accounting-banner error"; status.textContent = err.message; }

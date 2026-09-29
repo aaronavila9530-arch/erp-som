@@ -48,6 +48,30 @@ _SCHEDULER_STARTED = False
 _CARD_HISTORY_POSTED_MONTH: str | None = None
 
 
+_ACCOUNT_COMPANY_BY_EMAIL = {
+    "contabilidad@mslogisticsgroup.com": "MSL-CR",
+    "gastos@mslogisticsgroup.com": "MSL-CR",
+    "facturacion.fe@xtravon.com": "MCI-CR",
+    "operations@xtravon.com": "MCI-CR",
+}
+
+_ACCOUNT_COMPANY_BY_DOMAIN = {
+    "mslogisticsgroup.com": "MSL-CR",
+    "xtravon.com": "MCI-CR",
+}
+
+
+def _company_for_account_email(account_email: str | None, fallback: str = "MSL-CR") -> str:
+    email = str(account_email or "").strip().lower()
+    if not email:
+        return fallback
+    mapped = _ACCOUNT_COMPANY_BY_EMAIL.get(email)
+    if mapped:
+        return mapped
+    domain = email.rsplit("@", 1)[-1] if "@" in email else ""
+    return _ACCOUNT_COMPANY_BY_DOMAIN.get(domain, fallback)
+
+
 def _configured_account_profiles() -> list[dict[str, object]]:
     raw = os.getenv("GMAIL_ACCOUNT_PROFILES", "").strip()
     profiles: list[dict[str, object]] = []
@@ -100,6 +124,12 @@ def _configured_account_profiles() -> list[dict[str, object]]:
                 "process_bac": True,
                 "process_tax": True,
             },
+            {
+                "account_email": "facturacion.fe@xtravon.com",
+                "company_code": "MCI-CR",
+                "process_bac": True,
+                "process_tax": True,
+            },
         ])
     seen = set()
     unique: list[dict[str, object]] = []
@@ -121,7 +151,7 @@ def _account_profile(account_email: str | None = None) -> dict[str, object]:
                 return profile
         return {
             "account_email": wanted,
-            "company_code": "MSL-CR",
+            "company_code": _company_for_account_email(wanted),
             "process_bac": True,
             "process_tax": True,
         }

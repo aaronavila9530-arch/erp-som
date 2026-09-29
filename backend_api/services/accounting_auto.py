@@ -55,7 +55,8 @@ def create_accounting_entry(
     origin,
     origin_id,
     lines,
-    created_by="SYSTEM"
+    created_by="SYSTEM",
+    company_code: str | None = None,
 ):
     """
     Crea un asiento contable con validación de partida doble
@@ -73,21 +74,23 @@ def create_accounting_entry(
     if total_debit != total_credit or total_debit == 0:
         raise ValueError("Partida no balanceada")
 
+    company = normalize_company_code(company_code)
     cur = conn.cursor(cursor_factory=RealDictCursor)
+    ensure_company_column("accounting_entries")
 
     # Las integraciones automáticas tampoco pueden escribir en un período cerrado.
     cur.execute("""
         SELECT status FROM accounting_period_controls
-        WHERE company_code = 'MSL-CR' AND period = %s
-    """, (period,))
+        WHERE company_code = %s AND period = %s
+    """, (company, period))
     period_control = cur.fetchone()
     if period_control and period_control.get("status") == "CLOSED":
         raise ValueError(f"El período contable {period} está cerrado")
     fiscal_year, fiscal_month = (int(value) for value in period.split("-"))
     cur.execute("""
         SELECT period_closed FROM closing_status
-        WHERE company_code='MSL-CR' AND fiscal_year=%s AND period=%s AND ledger='0L'
-    """, (fiscal_year, fiscal_month))
+        WHERE company_code = %s AND fiscal_year = %s AND period = %s AND ledger = '0L'
+    """, (company, fiscal_year, fiscal_month))
     legacy_control = cur.fetchone()
     if legacy_control and legacy_control.get("period_closed"):
         raise ValueError(f"El período contable {period} está cerrado")
@@ -95,10 +98,11 @@ def create_accounting_entry(
     # 1️⃣ Insert entry
     cur.execute("""
         INSERT INTO accounting_entries
-            (entry_date, period, description, origin, origin_id, created_by)
-        VALUES (%s, %s, %s, %s, %s, %s)
+            (company_code, entry_date, period, description, origin, origin_id, created_by)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
         RETURNING id
     """, (
+        company,
         entry_date,
         period,
         description,
@@ -721,7 +725,7 @@ def sync_payroll_to_accounting(conn):
 
 
 
-def sync_cash_app_to_accounting(conn):
+def sync_cash_app_to_accounting(conn, company_code_filter: str | None = None):
 
     from psycopg2.extras import RealDictCursor
     from datetime import date, datetime
@@ -730,8 +734,10 @@ def sync_cash_app_to_accounting(conn):
         raise Exception("DB connection is required")
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
+    company_filter = normalize_company_code(company_code_filter) if company_code_filter else None
 
     try:
+        ensure_company_column("cash_app")
         cur.execute("""
             ALTER TABLE cash_app
             ADD COLUMN IF NOT EXISTS bank_account_code TEXT
@@ -797,9 +803,15 @@ def sync_cash_app_to_accounting(conn):
         # ============================================================
         # 0️⃣ TRAER TODOS LOS PAGOS CASH_APP
         # ============================================================
-        cur.execute("""
+        cash_where = []
+        cash_params = []
+        if company_filter:
+            cash_where.append("c.company_code = %s")
+            cash_params.append(company_filter)
+        cur.execute(f"""
             SELECT
                 c.id,
+                c.company_code,
                 c.numero_documento,
                 c.codigo_cliente,
                 c.fecha_pago,
@@ -814,14 +826,17 @@ def sync_cash_app_to_accounting(conn):
             LEFT JOIN accounting_entries a
               ON a.origin = 'CASH_APP'
              AND a.origin_id = c.id
+             AND a.company_code = c.company_code
+            {"WHERE " + " AND ".join(cash_where) if cash_where else ""}
             ORDER BY c.id
-        """)
+        """, cash_params)
 
         pagos = cur.fetchall() or []
 
         for p in pagos:
 
             cash_id = p.get("id")
+            cash_company = normalize_company_code(p.get("company_code") or company_filter)
             numero = (p.get("numero_documento") or "").strip()
             current_client_code = (p.get("codigo_cliente") or "").strip()
             current_client_name = (p.get("nombre_cliente") or "").strip()
@@ -910,10 +925,10 @@ def sync_cash_app_to_accounting(conn):
 
                 cur.execute("""
                     INSERT INTO accounting_entries
-                    (entry_date, period, description, origin, origin_id, created_by)
-                    VALUES (%s, %s, %s, 'CASH_APP', %s, 'SYSTEM')
+                    (company_code, entry_date, period, description, origin, origin_id, created_by)
+                    VALUES (%s, %s, %s, %s, 'CASH_APP', %s, 'SYSTEM')
                     RETURNING id
-                """, (fecha, period, detail, cash_id))
+                """, (cash_company, fecha, period, detail, cash_id))
 
                 entry_id = cur.fetchone()["id"]
 
@@ -923,9 +938,10 @@ def sync_cash_app_to_accounting(conn):
                     UPDATE accounting_entries
                     SET entry_date = %s,
                         period = %s,
-                        description = %s
+                        description = %s,
+                        company_code = %s
                     WHERE id = %s
-                """, (fecha, period, detail, entry_id))
+                """, (fecha, period, detail, cash_company, entry_id))
 
 
             # ========================================================
@@ -996,9 +1012,10 @@ def sync_cash_app_to_accounting(conn):
                 SELECT id, moneda, total, saldo_pendiente
                 FROM collections
                 WHERE LTRIM(COALESCE(numero_documento,''), '0') = LTRIM(%s, '0')
+                  AND company_code = %s
                 ORDER BY id
                 LIMIT 1
-            """, (numero,))
+            """, (numero, cash_company))
             invoice_row = cur.fetchone()
             invoice_closed = bool(
                 invoice_row
@@ -1125,7 +1142,7 @@ def sync_cash_app_to_accounting(conn):
 
 
 
-def sync_itp_to_accounting(conn):
+def sync_itp_to_accounting(conn, company_code_filter: str | None = None):
     """
     Sincroniza payment_obligations → accounting
     (ERP-SOM BLINDADO - COA JERÁRQUICO)
@@ -1138,6 +1155,7 @@ def sync_itp_to_accounting(conn):
         raise Exception("DB connection is required")
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
+    company_filter = normalize_company_code(company_code_filter) if company_code_filter else None
 
     try:
 
@@ -1223,14 +1241,15 @@ def sync_itp_to_accounting(conn):
                 document = f"Fac{ref}"
             return f"{payee} {document}"
 
-        def _upsert_entry(origin: str, origin_id: int, entry_date: date, period: str, description: str) -> int:
+        def _upsert_entry(origin: str, origin_id: int, entry_date: date, period: str, description: str, company: str) -> int:
             cur.execute("""
                 SELECT id
                 FROM accounting_entries
                 WHERE origin = %s
                   AND origin_id = %s
+                  AND company_code = %s
                 LIMIT 1
-            """, (origin, origin_id))
+            """, (origin, origin_id, company))
 
             row = cur.fetchone()
             if row:
@@ -1239,27 +1258,31 @@ def sync_itp_to_accounting(conn):
                     UPDATE accounting_entries
                     SET entry_date = %s,
                         period = %s,
-                        description = %s
+                        description = %s,
+                        company_code = %s
                     WHERE id = %s
-                """, (entry_date, period, description, eid))
+                """, (entry_date, period, description, company, eid))
                 return eid
 
             cur.execute("""
                 INSERT INTO accounting_entries
-                    (entry_date, period, description, origin, origin_id, created_by)
-                VALUES (%s, %s, %s, %s, %s, 'SYSTEM')
+                    (company_code, entry_date, period, description, origin, origin_id, created_by)
+                VALUES (%s, %s, %s, %s, %s, %s, 'SYSTEM')
                 RETURNING id
-            """, (entry_date, period, description, origin, origin_id))
+            """, (company, entry_date, period, description, origin, origin_id))
 
             return cur.fetchone()["id"]
 
-        def _delete_future_system_entries(origin_id=None, origin=None):
+        def _delete_future_system_entries(origin_id=None, origin=None, company=None):
             clauses = [
                 "origin IN ('ITP', 'ITP_PAYMENT')",
                 "entry_date > CURRENT_DATE",
                 "COALESCE(created_by, 'SYSTEM') = 'SYSTEM'",
             ]
             params = []
+            if company:
+                clauses.append("company_code = %s")
+                params.append(company)
             if origin_id is not None:
                 clauses.append("origin_id = %s")
                 params.append(origin_id)
@@ -1275,12 +1298,15 @@ def sync_itp_to_accounting(conn):
             """, params)
             cur.execute(f"DELETE FROM accounting_entries WHERE {where_clause}", params)
 
-        def _delete_system_entries(origin_id=None, origin=None):
+        def _delete_system_entries(origin_id=None, origin=None, company=None):
             clauses = [
                 "origin IN ('ITP', 'ITP_PAYMENT')",
                 "COALESCE(created_by, 'SYSTEM') = 'SYSTEM'",
             ]
             params = []
+            if company:
+                clauses.append("company_code = %s")
+                params.append(company)
             if origin_id is not None:
                 clauses.append("origin_id = %s")
                 params.append(origin_id)
@@ -1359,7 +1385,7 @@ def sync_itp_to_accounting(conn):
             """, (employee_itp_ids,))
 
         today = date.today()
-        _delete_future_system_entries()
+        _delete_future_system_entries(company=company_filter)
 
         cur.execute("""
             SELECT rate, rate_date, source
@@ -1379,9 +1405,15 @@ def sync_itp_to_accounting(conn):
         # ============================================================
         # 1️⃣ Traer obligaciones activas
         # ============================================================
-        cur.execute("""
+        obligation_where = ["p.active = TRUE"]
+        obligation_params = []
+        if company_filter:
+            obligation_where.append("p.company_code = %s")
+            obligation_params.append(company_filter)
+        cur.execute(f"""
             SELECT
                 p.id,
+                p.company_code,
                 p.payee_name,
                 p.payee_type,
                 p.obligation_type,
@@ -1402,9 +1434,9 @@ def sync_itp_to_accounting(conn):
                 p.payment_card_last4,
                 COALESCE(p.paid_with_card, FALSE) AS paid_with_card
             FROM payment_obligations p
-            WHERE p.active = TRUE
+            WHERE {" AND ".join(obligation_where)}
             ORDER BY p.id ASC
-        """)
+        """, obligation_params)
 
         obligations = cur.fetchall() or []
         employee_name_keys = load_employee_name_keys(cur)
@@ -1416,6 +1448,7 @@ def sync_itp_to_accounting(conn):
         for ob in obligations:
 
             obligation_id = ob.get("id")
+            obligation_company = normalize_company_code(ob.get("company_code") or company_filter)
             payee_name = (ob.get("payee_name") or "").strip() or "N/A"
             if is_employee_payee(cur, payee_name, employee_name_keys):
                 continue
@@ -1441,7 +1474,7 @@ def sync_itp_to_accounting(conn):
             # ------------------------------------------------------------
             issue_date = _to_date(ob.get("issue_date")) or today
             if issue_date > today:
-                _delete_future_system_entries(obligation_id)
+                _delete_future_system_entries(obligation_id, company=obligation_company)
                 continue
             period = issue_date.strftime("%Y-%m")
 
@@ -1472,6 +1505,7 @@ def sync_itp_to_accounting(conn):
                     SELECT status, hacienda_status
                     FROM tax_electronic_documents
                     WHERE direction='PURCHASE'
+                      AND company_code = %s
                       AND (
                             electronic_key = ANY(%s)
                          OR document_number = ANY(%s)
@@ -1482,7 +1516,7 @@ def sync_itp_to_accounting(conn):
                       updated_at DESC NULLS LAST,
                       id DESC
                     LIMIT 1
-                """, (candidates, candidates, candidates))
+                """, (obligation_company, candidates, candidates, candidates))
                 return cur.fetchone()
 
             tax_status = _purchase_xml_status(ob.get("reference"))
@@ -1490,7 +1524,7 @@ def sync_itp_to_accounting(conn):
                 (tax_status.get("status") or "").upper() == "REJECTED"
                 or (tax_status.get("hacienda_status") or "").upper() == "REJECTED"
             ):
-                _delete_system_entries(obligation_id)
+                _delete_system_entries(obligation_id, company=obligation_company)
                 continue
 
             def _purchase_xml_tax_crc(reference, document_total_crc=None):
@@ -1505,6 +1539,7 @@ def sync_itp_to_accounting(conn):
                     SELECT currency_code, exchange_rate, tax_amount
                     FROM tax_electronic_documents
                     WHERE direction='PURCHASE'
+                      AND company_code = %s
                       AND (electronic_key = ANY(%s) OR document_number = ANY(%s))
                       AND UPPER(COALESCE(status,'')) <> 'REJECTED'
                       AND UPPER(COALESCE(hacienda_status,'')) <> 'REJECTED'
@@ -1514,7 +1549,7 @@ def sync_itp_to_accounting(conn):
                       updated_at DESC NULLS LAST,
                       id DESC
                     LIMIT 1
-                """, (candidates, candidates))
+                """, (obligation_company, candidates, candidates))
                 row = cur.fetchone()
                 if not row:
                     return None
@@ -1697,7 +1732,8 @@ def sync_itp_to_accounting(conn):
                 origin_id=obligation_id,
                 entry_date=issue_date,
                 period=period,
-                description=detail_text
+                description=detail_text,
+                company=obligation_company
             )
 
             # 🔥 Blindado: siempre recrear líneas para evitar residuos
@@ -1746,7 +1782,7 @@ def sync_itp_to_accounting(conn):
 
                 payment_date = _to_date(ob.get("last_payment_date")) or issue_date
                 if payment_date > today:
-                    _delete_future_system_entries(obligation_id, "ITP_PAYMENT")
+                    _delete_future_system_entries(obligation_id, "ITP_PAYMENT", company=obligation_company)
                     continue
                 payment_period = payment_date.strftime("%Y-%m")
                 payment_detail = (
@@ -1763,7 +1799,8 @@ def sync_itp_to_accounting(conn):
                     origin_id=obligation_id,
                     entry_date=payment_date,
                     period=payment_period,
-                    description=payment_detail
+                    description=payment_detail,
+                    company=obligation_company
                 )
 
                 # 🔥 Blindado: siempre recrear líneas
