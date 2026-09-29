@@ -20,7 +20,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20260929-hr-requests-polish-v2"
+_ASSET_VERSION = "20260929-hr-hours-selection-v1"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -964,6 +964,26 @@ def som_web_home() -> HTMLResponse:
     .hr-status-pill.pending { border-color:#f5d08a; background:#fff7e8; color:#9a5b00; }
     .hr-status-pill.approved { border-color:#bde5cd; background:#effaf4; color:#087a52; }
     .hr-status-pill.rejected { border-color:#f3c4c0; background:#fff3f1; color:#b42318; }
+    .hr-hours-topbar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; justify-content:space-between; margin:10px 0; }
+    .hr-hours-tools { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+    .hr-hours-layout { display:grid; grid-template-columns:minmax(0,1.25fr) minmax(340px,.75fr); gap:12px; align-items:start; }
+    .hr-hours-list { display:grid; gap:8px; min-width:0; }
+    .hr-hour-card { border:1px solid #d7e1ec; border-left:5px solid #c77800; border-radius:8px; background:#fff; color:#122033; padding:11px; min-height:82px; display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:8px 11px; text-align:left; cursor:pointer; }
+    .hr-hour-card:hover,.hr-hour-card.selected { border-color:#9ec9ee; border-left-color:var(--blue); background:#f6fbff; }
+    .hr-hour-card.approved { border-left-color:#087a52; }
+    .hr-hour-card.rejected { border-left-color:#b42318; }
+    .hr-hour-card input[type="checkbox"] { width:18px; height:18px; margin-top:2px; accent-color:#0067b1; }
+    .hr-hour-card h3 { margin:0; color:#122033; font-size:16px; line-height:1.25; overflow-wrap:anywhere; }
+    .hr-hour-card p { margin:3px 0 0; color:#607086; line-height:1.35; overflow-wrap:anywhere; }
+    .hr-hour-meta { display:flex; flex-wrap:wrap; gap:6px; align-items:center; grid-column:2/-1; }
+    .hr-hour-detail { border:1px solid #d7e1ec; border-radius:8px; background:#fff; color:#122033; padding:14px; min-width:0; position:sticky; top:10px; box-shadow:0 10px 26px rgba(15,31,53,.07); }
+    .hr-hour-detail h3 { margin:0 0 8px; color:#122033; font-size:17px; }
+    .hr-hour-detail dl { display:grid; grid-template-columns:120px minmax(0,1fr); gap:7px 10px; margin:10px 0; }
+    .hr-hour-detail dt { color:#64748b; font-size:12px; font-weight:800; text-transform:uppercase; }
+    .hr-hour-detail dd { margin:0; color:#122033; overflow-wrap:anywhere; }
+    .hr-hours-selection { border:1px solid #d7e1ec; border-radius:8px; background:#f8fbfe; padding:10px; margin:10px 0; display:flex; flex-wrap:wrap; gap:8px; align-items:center; justify-content:space-between; color:#52637a; }
+    .hr-hours-selection label { display:flex; align-items:center; gap:7px; font-weight:800; color:#334155; }
+    .hr-hours-table { margin-top:12px; }
     .tabs { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0; }
     .tabs button { background:#fff; color:var(--ink); border:1px solid var(--line); }
     .tabs button.active { background:var(--blue); color:#fff; border-color:var(--blue); }
@@ -1172,8 +1192,8 @@ def som_web_home() -> HTMLResponse:
       .hero-logo { min-height:300px; padding:22px; }
       .hero-logo img { width:min(88%,520px); height:250px; }
       .form-grid { grid-template-columns:1fr; }
-      .service-command-center,.hr-hero,.hr-request-workspace { grid-template-columns:1fr; }
-      .hr-request-detail { position:static; }
+      .service-command-center,.hr-hero,.hr-request-workspace,.hr-hours-layout { grid-template-columns:1fr; }
+      .hr-request-detail,.hr-hour-detail { position:static; }
       .itp-action-grid { grid-template-columns:1fr; }
       .itp-bi-header,.itp-bi-controls,.itp-bi-body,.itp-bi-summary { grid-template-columns:1fr; }
       .itp-bi-totals { grid-template-columns:1fr; }
@@ -1353,6 +1373,8 @@ def som_web_home() -> HTMLResponse:
     let hrCurrentView = "home";
     let hrRows = [];
     let selectedHrRequestIndex = null;
+    let selectedHrHourIndex = null;
+    let selectedHrHourIndexes = new Set();
     let selectedHrPayrollIndex = null;
     let selectedHrPayslipIndex = null;
     let hrPayrollPreview = null;
@@ -7681,21 +7703,159 @@ def som_web_home() -> HTMLResponse:
     function renderHrHours() {
       $("hrViewTitle").textContent = "Registro de Horas";
       $("hrViewHint").textContent = "Registro, edición y aprobación según permisos.";
-      const approveTools = canHr("hours_approve") ? `<button class="green" onclick="setHrHourStatus('APROBADO')">Aprobar</button><button class="brown" onclick="setHrHourStatus('RECHAZADO')">Rechazar</button>` : "";
-      const registerTools = canHr("hours_register") ? `
-        <details class="pln-section"><summary>Registrar horas</summary><div class="pln-section-body">
-          <div class="hr-form">
-            <label>Usuario<input id="hrHourUser" placeholder="Solo admin/master" /></label>
-            <label>Tipo<select id="hrHourType"><option>OPERACION</option><option>INFORME</option></select></label>
-            <label>Inicio<input id="hrHourStart" type="datetime-local" /></label>
-            <label>Fin<input id="hrHourEnd" type="datetime-local" /></label>
-            <label>Referencia<input id="hrHourRef" /></label>
-            <label class="wide">Actividad<textarea id="hrHourActivity"></textarea></label>
-            <button onclick="createHrHour()">Registrar horas</button>
-          </div>
-        </div></details>` : "";
-      $("hrWorkspace").innerHTML = `${registerTools}<div id="hrHoursSummary"></div><div class="hr-toolbar"><button onclick="loadHrHours()">Cargar horas</button>${approveTools}</div><div id="hrHoursTable"></div>`;
+      selectedHrHourIndex = null;
+      selectedHrHourIndexes = new Set();
+      const approveTools = canHr("hours_approve") ? `<button class="green" onclick="setSelectedHrHourStatus('APROBADO')">Aprobar seleccionadas</button><button class="brown" onclick="setSelectedHrHourStatus('RECHAZADO')">Rechazar seleccionadas</button>` : "";
+      const registerTools = canHr("hours_register") ? `<button onclick="openHrHourForm()">Registrar horas</button>` : "";
+      $("hrWorkspace").innerHTML = `
+        <div class="hr-hours-topbar">
+          <span class="muted">Seleccione una o varias líneas para aprobar o rechazar.</span>
+          <div class="hr-hours-tools">${registerTools}<button class="secondary" onclick="loadHrHours()">Actualizar horas</button>${approveTools}</div>
+        </div>
+        <div id="hrHoursSummary"></div>
+        <div id="hrHoursView"></div>`;
       loadHrHours();
+    }
+    function openHrHourForm() {
+      closeModal();
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal">
+            <div class="modal-head">
+              <h2>Registrar horas</h2>
+              <button class="secondary" onclick="closeModal()">Cerrar</button>
+            </div>
+            <p class="muted">Registre horas ordinarias, operación o informe para revisión.</p>
+            <div class="hr-form">
+              <label>Usuario<input id="hrHourUser" placeholder="Solo admin/master" /></label>
+              <label>Tipo<select id="hrHourType"><option>OPERACION</option><option>INFORME</option></select></label>
+              <label>Inicio<input id="hrHourStart" type="datetime-local" /></label>
+              <label>Fin<input id="hrHourEnd" type="datetime-local" /></label>
+              <label>Referencia<input id="hrHourRef" /></label>
+              <label class="wide">Actividad<textarea id="hrHourActivity"></textarea></label>
+              <div class="wide md-actions"><button onclick="createHrHour()">Guardar horas</button><button class="secondary" onclick="closeModal()">Cancelar</button></div>
+            </div>
+          </div>
+        </div>`);
+    }
+    function hrHourStatusClass(status) {
+      const value = String(status || "PENDIENTE").toUpperCase();
+      if (value === "APROBADO" || value === "APPROVED") return "approved";
+      if (value === "RECHAZADO" || value === "REJECTED") return "rejected";
+      return "pending";
+    }
+    function hrHourStatusLabel(status) {
+      const value = String(status || "PENDIENTE").toUpperCase();
+      const labels = { PENDIENTE:"Pendiente", APROBADO:"Aprobado", RECHAZADO:"Rechazado", APPROVED:"Aprobado", REJECTED:"Rechazado" };
+      return labels[value] || value.replace(/_/g, " ");
+    }
+    function hrSelectedHours() {
+      return Array.from(selectedHrHourIndexes).map(idx => hrRows[idx]).filter(Boolean);
+    }
+    function focusHrHour(idx) {
+      selectedHrHourIndex = idx;
+      renderHrHoursView();
+    }
+    function toggleHrHourSelection(idx, checked) {
+      if (checked) selectedHrHourIndexes.add(idx);
+      else selectedHrHourIndexes.delete(idx);
+      selectedHrHourIndex = idx;
+      renderHrHoursView();
+    }
+    function toggleAllHrHours(checked) {
+      selectedHrHourIndexes = new Set();
+      if (checked) hrRows.forEach((_row, idx) => selectedHrHourIndexes.add(idx));
+      if (checked && selectedHrHourIndex === null && hrRows.length) selectedHrHourIndex = 0;
+      renderHrHoursView();
+    }
+    function renderHrHoursView() {
+      const target = $("hrHoursView");
+      if (!target) return;
+      if (!hrRows.length) {
+        target.innerHTML = '<div class="status">Sin registros de horas para mostrar.</div>';
+        return;
+      }
+      if (selectedHrHourIndex === null || !hrRows[selectedHrHourIndex]) {
+        const pendingIndex = hrRows.findIndex(row => hrHourStatusClass(row.estado) === "pending");
+        selectedHrHourIndex = pendingIndex >= 0 ? pendingIndex : 0;
+      }
+      selectedHrHourIndexes = new Set(Array.from(selectedHrHourIndexes).filter(idx => Boolean(hrRows[idx])));
+      const counts = hrRows.reduce((acc, row) => {
+        acc.total += 1;
+        acc[hrHourStatusClass(row.estado)] += 1;
+        return acc;
+      }, { total:0, pending:0, approved:0, rejected:0 });
+      const selectedRows = hrSelectedHours();
+      const allSelected = hrRows.length > 0 && selectedHrHourIndexes.size === hrRows.length;
+      const cardHtml = hrRows.map((row, idx) => {
+        const statusClass = hrHourStatusClass(row.estado);
+        const focused = idx === selectedHrHourIndex;
+        const checked = selectedHrHourIndexes.has(idx);
+        return `
+          <div class="hr-hour-card ${statusClass} ${focused ? "selected" : ""}" role="button" tabindex="0" onclick="focusHrHour(${idx})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();focusHrHour(${idx})}">
+            <input type="checkbox" ${checked ? "checked" : ""} aria-label="Seleccionar registro ${esc(row.id)}" onclick="event.stopPropagation();toggleHrHourSelection(${idx}, this.checked)" />
+            <div>
+              <h3>${esc(row.usuario || "Sin usuario")} · ${esc(row.duracion_horas || 0)} h</h3>
+              <p>${esc(row.tipo || "-")} · ${esc(row.fecha_inicio || "-")} a ${esc(row.fecha_fin || "-")}</p>
+            </div>
+            <span class="hr-status-pill ${statusClass}">${esc(hrHourStatusLabel(row.estado))}</span>
+            <div class="hr-hour-meta">
+              <span class="badge">ID ${esc(row.id)}</span>
+              ${row.referencia ? `<span class="badge open">${esc(row.referencia)}</span>` : ""}
+              <small>${esc(row.actividad_detalle || "")}</small>
+            </div>
+          </div>`;
+      }).join("");
+      const detail = renderHrHourDetail(hrRows[selectedHrHourIndex], selectedRows.length);
+      const tableRows = hrRows.map(r => ({
+        id:r.id,
+        usuario:r.usuario,
+        tipo:r.tipo,
+        inicio:r.fecha_inicio,
+        fin:r.fecha_fin,
+        horas:r.duracion_horas,
+        referencia:r.referencia,
+        actividad:r.actividad_detalle,
+        estado:hrHourStatusLabel(r.estado)
+      }));
+      target.innerHTML = `
+        <div class="hr-request-summary">
+          <div class="hr-kpi"><span>Total</span><strong>${counts.total}</strong></div>
+          <div class="hr-kpi"><span>Pendientes</span><strong>${counts.pending}</strong></div>
+          <div class="hr-kpi"><span>Aprobadas</span><strong>${counts.approved}</strong></div>
+          <div class="hr-kpi"><span>Rechazadas</span><strong>${counts.rejected}</strong></div>
+        </div>
+        <div class="hr-hours-selection">
+          <label><input type="checkbox" ${allSelected ? "checked" : ""} onchange="toggleAllHrHours(this.checked)" /> Seleccionar todo</label>
+          <span>${selectedRows.length} registro(s) seleccionado(s)</span>
+        </div>
+        <div class="hr-hours-layout">
+          <div class="hr-hours-list">${cardHtml}</div>
+          <aside class="hr-hour-detail">${detail}</aside>
+        </div>
+        <details class="pln-section hr-hours-table"><summary>Tabla completa / filtros</summary><div class="pln-section-body">${hrTable(tableRows, ["id","usuario","tipo","inicio","fin","horas","referencia","actividad","estado"])}</div></details>`;
+      enhanceExcelTables(target);
+    }
+    function renderHrHourDetail(row, selectedCount) {
+      if (!row) return '<div class="hr-request-empty-note">Seleccione un registro de horas.</div>';
+      const statusClass = hrHourStatusClass(row.estado);
+      const actions = canHr("hours_approve") ? `<div class="hr-request-actions"><button class="green" onclick="setSelectedHrHourStatus('APROBADO')">Aprobar seleccionadas</button><button class="brown" onclick="setSelectedHrHourStatus('RECHAZADO')">Rechazar seleccionadas</button></div>` : "";
+      return `
+        <div class="panel-head">
+          <h3>Registro #${esc(row.id)}</h3>
+          <span class="hr-status-pill ${statusClass}">${esc(hrHourStatusLabel(row.estado))}</span>
+        </div>
+        <dl>
+          <dt>Usuario</dt><dd>${esc(row.usuario || "-")}</dd>
+          <dt>Tipo</dt><dd>${esc(row.tipo || "-")}</dd>
+          <dt>Inicio</dt><dd>${esc(row.fecha_inicio || "-")}</dd>
+          <dt>Fin</dt><dd>${esc(row.fecha_fin || "-")}</dd>
+          <dt>Duración</dt><dd>${esc(row.duracion_horas || 0)} h</dd>
+          <dt>Referencia</dt><dd>${esc(row.referencia || "-")}</dd>
+          <dt>Actividad</dt><dd>${esc(row.actividad_detalle || "-")}</dd>
+          <dt>Seleccionadas</dt><dd>${esc(selectedCount)}</dd>
+        </dl>
+        ${actions || '<div class="hr-request-empty-note">Sin acciones disponibles para su rol.</div>'}`;
     }
     async function loadHrHours() {
       try {
@@ -7704,10 +7864,11 @@ def som_web_home() -> HTMLResponse:
         $("hrHoursSummary").innerHTML = items.length ? `<div class="hr-kpis">${items.slice(0,4).map(x => `<div class="hr-kpi"><span>${esc(x.usuario)}</span><strong>${esc(x.horas_registradas)} h</strong><small>${esc(x.mensaje || "")}</small></div>`).join("")}</div>` : "";
         const payload = await getJSON("/hr/ot-log/?page=1&page_size=100");
         hrRows = rowsList(payload);
-        $("hrHoursTable").innerHTML = hrTable(hrRows, ["id","usuario","tipo","fecha_inicio","fecha_fin","duracion_horas","referencia","actividad_detalle","estado"]);
-        enhanceExcelTables($("hrHoursTable"));
+        selectedHrHourIndexes = new Set();
+        selectedHrHourIndex = null;
+        renderHrHoursView();
       } catch (err) {
-        $("hrHoursTable").innerHTML = `<div class="status error">${esc(err.message)}</div>`;
+        $("hrHoursView").innerHTML = `<div class="status error">${esc(err.message)}</div>`;
       }
     }
     async function createHrHour() {
@@ -7719,14 +7880,29 @@ def som_web_home() -> HTMLResponse:
         referencia:valueFrom("hrHourRef"),
         actividad_detalle:valueFrom("hrHourActivity")
       };
-      try { await postJSON("/hr/ot-log/", payload); hrStatus("Horas registradas."); await loadHrHours(); }
+      try { await postJSON("/hr/ot-log/", payload); hrStatus("Horas registradas."); closeModal(); await loadHrHours(); }
       catch (err) { hrStatus(err.message, true); }
     }
-    async function setHrHourStatus(status) {
-      const id = prompt("ID de registro de horas");
-      if (!id) return;
-      try { await sendJSON("PUT", `/hr/ot-log/${encodeURIComponent(id)}/estado`, { estado:status }); hrStatus("Estado actualizado."); await loadHrHours(); }
-      catch (err) { hrStatus(err.message, true); }
+    async function setSelectedHrHourStatus(status) {
+      const rows = hrSelectedHours();
+      if (!rows.length) return hrStatus("Seleccione uno o más registros de horas.", true);
+      const verb = status === "APROBADO" ? "aprobar" : "rechazar";
+      if (!confirm(`¿Desea ${verb} ${rows.length} registro(s) de horas seleccionado(s)?`)) return;
+      let ok = 0;
+      const errors = [];
+      for (const row of rows) {
+        const id = row?.id;
+        if (!id) continue;
+        try {
+          await sendJSON("PUT", `/hr/ot-log/${encodeURIComponent(id)}/estado`, { estado:status });
+          ok += 1;
+        } catch (err) {
+          errors.push(`#${id}: ${err.message}`);
+        }
+      }
+      const msg = errors.length ? `Actualizados ${ok}. Errores: ${errors.slice(0,3).join(" | ")}` : `Se actualizaron ${ok} registro(s).`;
+      hrStatus(msg, Boolean(errors.length));
+      await loadHrHours();
     }
     function renderHrPayslips() {
       $("hrViewTitle").textContent = "Colillas de Pago";
