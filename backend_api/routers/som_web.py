@@ -20,7 +20,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20260928-hr-requests-ui-v1"
+_ASSET_VERSION = "20260928-hr-requests-polish-v1"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -939,24 +939,27 @@ def som_web_home() -> HTMLResponse:
     .hr-payroll-note { margin-top:8px; color:#607086; font-size:13px; line-height:1.35; }
     .hr-request-summary { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:10px; margin:10px 0; }
     .hr-request-summary .hr-kpi { background:#fff; }
-    .hr-request-workspace { display:grid; grid-template-columns:minmax(0,1.35fr) minmax(320px,.65fr); gap:12px; align-items:start; }
+    .hr-request-topbar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; justify-content:space-between; margin:10px 0; }
+    .hr-request-topbar .hr-request-tools { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+    .hr-request-workspace { display:grid; grid-template-columns:minmax(0,1.25fr) minmax(340px,.75fr); gap:12px; align-items:start; }
     .hr-request-list { display:grid; gap:8px; min-width:0; }
-    .hr-request-card { border:1px solid #d7e1ec; border-left:5px solid #7b8794; border-radius:8px; background:#fff; padding:10px 12px; display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px 12px; text-align:left; cursor:pointer; }
+    .hr-request-card { border:1px solid #d7e1ec; border-left:5px solid #7b8794; border-radius:8px; background:#fff; color:#122033; padding:12px; min-height:86px; display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px 12px; text-align:left; cursor:pointer; }
     .hr-request-card:hover,.hr-request-card.selected { border-color:#9ec9ee; border-left-color:var(--blue); background:#f6fbff; }
     .hr-request-card.pending { border-left-color:#c77800; }
     .hr-request-card.approved { border-left-color:#087a52; }
     .hr-request-card.rejected { border-left-color:#b42318; }
-    .hr-request-card h3 { margin:0; font-size:16px; overflow-wrap:anywhere; }
+    .hr-request-card h3 { margin:0; color:#122033; font-size:16px; line-height:1.25; overflow-wrap:anywhere; }
     .hr-request-card p { margin:3px 0 0; color:#607086; line-height:1.35; }
     .hr-request-card small { color:#64748b; font-weight:700; }
     .hr-request-meta { display:flex; flex-wrap:wrap; gap:6px; align-items:center; grid-column:1/-1; }
-    .hr-request-detail { border:1px solid #d7e1ec; border-radius:8px; background:#f8fbfe; padding:12px; min-width:0; position:sticky; top:10px; }
-    .hr-request-detail h3 { margin:0 0 8px; font-size:17px; }
+    .hr-request-detail { border:1px solid #d7e1ec; border-radius:8px; background:#fff; color:#122033; padding:14px; min-width:0; position:sticky; top:10px; box-shadow:0 10px 26px rgba(15,31,53,.07); }
+    .hr-request-detail h3 { margin:0 0 8px; color:#122033; font-size:17px; }
     .hr-request-detail dl { display:grid; grid-template-columns:120px minmax(0,1fr); gap:7px 10px; margin:10px 0; }
     .hr-request-detail dt { color:#64748b; font-size:12px; font-weight:800; text-transform:uppercase; }
-    .hr-request-detail dd { margin:0; overflow-wrap:anywhere; }
+    .hr-request-detail dd { margin:0; color:#122033; overflow-wrap:anywhere; }
     .hr-request-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
     .hr-request-table { margin-top:12px; }
+    .hr-request-empty-note { border:1px dashed #cbd8e6; border-radius:8px; background:#f8fbfe; padding:14px; color:#607086; }
     .hr-status-pill { display:inline-flex; align-items:center; min-height:24px; border-radius:999px; padding:2px 9px; border:1px solid #d7e1ec; background:#f8fafc; color:#334155; font-size:12px; font-weight:800; }
     .hr-status-pill.pending { border-color:#f5d08a; background:#fff7e8; color:#9a5b00; }
     .hr-status-pill.approved { border-color:#bde5cd; background:#effaf4; color:#087a52; }
@@ -7505,18 +7508,34 @@ def som_web_home() -> HTMLResponse:
       $("hrViewTitle").textContent = "Solicitudes HHRR";
       $("hrViewHint").textContent = "Vacaciones, incapacidades, constancias y aprobación.";
       selectedHrRequestIndex = null;
-      const createTools = canHr("requests_create") ? `
-        <details class="pln-section"><summary>Nueva solicitud</summary><div class="pln-section-body">
+      const createButton = canHr("requests_create") ? '<button onclick="openHrRequestForm()">Nueva solicitud</button>' : "";
+      $("hrWorkspace").innerHTML = `
+        <div class="hr-request-topbar">
+          <span class="muted">Seleccione una solicitud para ver el detalle y accionar.</span>
+          <div class="hr-request-tools">${createButton}<button class="secondary" onclick="loadHrRequests()">Actualizar</button></div>
+        </div>
+        <div id="hrRequestsView"></div>`;
+      loadHrRequests();
+    }
+    function openHrRequestForm() {
+      closeModal();
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal">
+            <div class="modal-head">
+              <h2>Nueva solicitud HHRR</h2>
+              <button class="secondary" onclick="closeModal()">Cerrar</button>
+            </div>
+            <p class="muted">Registre vacaciones, incapacidades, licencias o constancias para revisión.</p>
           <div class="hr-form">
             <label>Tipo<select id="hrReqType"><option>VACACIONES</option><option>INCAPACIDAD</option><option>CONSTANCIA_SALARIAL</option><option>CONSTANCIA_LABORAL</option><option>LICENCIA</option></select></label>
             <label>Fecha<input id="hrReqDate" type="date" value="${new Date().toISOString().slice(0,10)}" /></label>
             <label>Días<input id="hrReqDays" type="number" step="0.5" placeholder="Solo vacaciones" /></label>
             <label class="wide">Motivo<textarea id="hrReqReason"></textarea></label>
-            <button onclick="createHrRequest()">Enviar solicitud</button>
+              <div class="wide md-actions"><button onclick="createHrRequest()">Enviar solicitud</button><button class="secondary" onclick="closeModal()">Cancelar</button></div>
+            </div>
           </div>
-        </div></details>` : "";
-      $("hrWorkspace").innerHTML = `${createTools}<div class="hr-toolbar"><button onclick="loadHrRequests()">Actualizar solicitudes</button></div><div id="hrRequestsView"></div>`;
-      loadHrRequests();
+        </div>`);
     }
     function hrRequestStatusClass(status) {
       const value = String(status || "").toUpperCase();
@@ -7568,7 +7587,7 @@ def som_web_home() -> HTMLResponse:
         const isSelected = idx === selectedHrRequestIndex;
         const days = Number(row.vacaciones || 0);
         return `
-          <button class="hr-request-card ${statusClass} ${isSelected ? "selected" : ""}" onclick="selectHrRequest(${idx})">
+          <div class="hr-request-card ${statusClass} ${isSelected ? "selected" : ""}" role="button" tabindex="0" onclick="selectHrRequest(${idx})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();selectHrRequest(${idx})}">
             <div>
               <h3>${esc(row.empleado || row.created_by || "Sin empleado")}</h3>
               <p>${esc(hrRequestTypeLabel(row.event_type))} · ${esc(row.event_date || "-")}</p>
@@ -7579,7 +7598,7 @@ def som_web_home() -> HTMLResponse:
               ${days ? `<span class="badge open">${esc(days)} día(s)</span>` : ""}
               <small>Creada por ${esc(row.created_by || "-")}</small>
             </div>
-          </button>`;
+          </div>`;
       }).join("");
       const detail = selected ? renderHrRequestDetail(selected) : '<div class="status">Seleccione una solicitud.</div>';
       const tableRows = hrRows.map(r => ({
@@ -7626,7 +7645,7 @@ def som_web_home() -> HTMLResponse:
           <dt>Aprobada por</dt><dd>${esc(row.approved_by || "-")}</dd>
           <dt>Creada</dt><dd>${esc(row.created_at || "-")}</dd>
         </dl>
-        ${canResolve ? `<div class="hr-request-actions"><button class="green" onclick="resolveHrRequest('approve')">Aprobar solicitud</button><button class="brown" onclick="resolveHrRequest('reject')">Rechazar solicitud</button></div>` : `<div class="status">Seleccione una solicitud pendiente para accionar.</div>`}`;
+        ${canResolve ? `<div class="hr-request-actions"><button class="green" onclick="resolveHrRequest('approve')">Aprobar</button><button class="brown" onclick="resolveHrRequest('reject')">Rechazar</button></div>` : `<div class="hr-request-empty-note">Esta solicitud no tiene acciones pendientes.</div>`}`;
     }
     async function loadHrRequests() {
       try {
@@ -7644,6 +7663,7 @@ def som_web_home() -> HTMLResponse:
       try {
         await postJSON("/hr/events/", { event_type:type, event_date:valueFrom("hrReqDate"), payload });
         hrStatus("Solicitud enviada.");
+        closeModal();
         await loadHrRequests();
       } catch (err) { hrStatus(err.message, true); }
     }
