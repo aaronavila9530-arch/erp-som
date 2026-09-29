@@ -5423,6 +5423,15 @@ def post_bac_partner_transfer_api(payload: dict):
     def norm(value):
         return re.sub(r"[^A-Z0-9]+", " ", str(value or "").upper()).strip()
 
+    def is_known_partner(value):
+        normalized = norm(value)
+        known = (
+            "DIANA VERONICA QUIROS BENAMBOURG",
+            "DIANA QUIROS BENAMBOURG",
+            "PABEL GONZALO PENA BARRETO",
+        )
+        return any(name in normalized for name in known)
+
     def overlap_score(left, right):
         left_tokens = {token for token in norm(left).split() if len(token) >= 3}
         right_tokens = {token for token in norm(right).split() if len(token) >= 3}
@@ -5615,6 +5624,28 @@ def post_bac_partner_transfer_api(payload: dict):
                     "reference": reference,
                     "matched_obligation_id": matched_obligation["id"],
                     "match_score": matched_obligation.get("score"),
+                }
+
+            if not is_known_partner(partner):
+                conn.rollback()
+                return {
+                    "status": "SKIPPED_UNMATCHED_TRANSFER",
+                    "reason": "Beneficiario no es socio conocido y no se encontro obligacion ITP pendiente para aplicar el pago.",
+                    "reference": reference,
+                    "partner_name": partner,
+                    "original_amount": float(amount),
+                    "original_currency": currency,
+                    "candidates": [
+                        {
+                            "id": candidate.get("id"),
+                            "payee_name": candidate.get("payee_name"),
+                            "reference": candidate.get("reference"),
+                            "score": candidate.get("score"),
+                            "balance": float(candidate.get("balance") or 0),
+                            "currency": candidate.get("currency"),
+                        }
+                        for candidate in candidates[:5]
+                    ],
                 }
 
             description = f"BAC transferencia socio {partner} Ref {reference}"

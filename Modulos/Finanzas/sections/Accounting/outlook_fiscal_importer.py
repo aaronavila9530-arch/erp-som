@@ -612,15 +612,18 @@ def _scan_bac_partner_transfer_folder(folder,state,summary,account,folder_name,l
         key=hashlib.sha256(
             f"BAC_PARTNER|{account}|{parsed['reference']}|{parsed['partner_name']}|{parsed['amount']}|{parsed['currency']}".encode("utf-8")
         ).hexdigest()
-        if state.get(key,{}).get("status") in {"IMPORTED","UPDATED","DUPLICATE"}:
+        if state.get(key,{}).get("status") in {"IMPORTED","UPDATED","DUPLICATE","SKIPPED_UNMATCHED_TRANSFER"}:
             continue
         imported_messages+=1
         summary["bac_partner_messages"]+=1
         try:
             response=post_bac_partner_transfer_api(parsed)
             status=response.get("status") or "IMPORTED"
-            detail=f"Asiento {response.get('entry_id')} CRC {response.get('amount_crc')}"
-            summary["bac_partner_imported"]+=1
+            if status == "SKIPPED_UNMATCHED_TRANSFER":
+                detail=response.get("reason") or "Transferencia sin obligacion ITP y beneficiario no socio conocido"
+            else:
+                detail=f"Asiento {response.get('entry_id')} CRC {response.get('amount_crc')}"
+                summary["bac_partner_imported"]+=1
             state[key]={"status":status,"updated_at":str(getattr(message,"ReceivedTime","") or ""),"reference":parsed["reference"]}
         except Exception as exc:
             status="ERROR"

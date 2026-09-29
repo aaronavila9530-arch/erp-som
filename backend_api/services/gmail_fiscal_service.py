@@ -763,11 +763,14 @@ def sync_mailbox(conn, triggered_by="SCHEDULER", max_messages=50, account_email:
                     ) if process_bac else None
                     if partner_payload:
                         try:
-                            _process_bac_partner_transfer(partner_payload)
+                            result = _process_bac_partner_transfer(partner_payload)
                             bac_partner_notifications+=1
                             summary["bac_partner_messages"]+=1
-                            summary["bac_partner_imported"]+=1
-                            imported+=1
+                            if str((result or {}).get("status") or "").upper() == "SKIPPED_UNMATCHED_TRANSFER":
+                                duplicates+=1
+                            else:
+                                summary["bac_partner_imported"]+=1
+                                imported+=1
                         except Exception as exc:
                             errors+=1
                             error_details.append(f"Transferencia BAC socios: {exc}")
