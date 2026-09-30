@@ -86,6 +86,8 @@ class PopupPreviewFactura(tk.Toplevel):
         survey = _safe(self.data.get("survey") or self.data.get("operacion")).upper()
         description = self._description_text()
         terms = _safe(self.data.get("payment_terms"))
+        if terms.isdigit():
+            terms = f"CREDIT {terms} DAYS"
         if not terms:
             days = _safe(self.data.get("termino_pago"), "0")
             terms = f"CREDIT {days} DAYS" if days not in ("", "0") else "DUE UPON RECEIPT"
@@ -159,15 +161,17 @@ class PopupPreviewFactura(tk.Toplevel):
         # Client and date blocks
         client_x = left + 16
         client_y = top + 244
-        client_w = 600
+        date_w = 252
+        col_w = date_w / 3
+        date_gap = 28
+        date_x = right - 16 - date_w
+        client_w = date_x - date_gap - client_x
         client_h = 170
         self.canvas.create_rectangle(client_x, client_y, client_x + client_w, client_y + client_h, outline="black", width=2)
-        text(client_x + 14, client_y + 18, f"CLIENT: {cliente}", size=16, bold=True)
-        text(client_x + 14, client_y + 82, f"PLACE: {place}", size=16, bold=True)
+        text(client_x + 14, client_y + 18, f"CLIENT: {cliente}", size=16, bold=True, width=client_w - 28)
+        text(client_x + 14, client_y + 82, f"PLACE: {place}", size=16, bold=True, width=client_w - 28)
 
-        date_x = client_x + client_w + 28
         date_y = client_y + 18
-        col_w = 92
         row_h = 42
         for i in range(4):
             x = date_x + i * col_w
@@ -179,7 +183,7 @@ class PopupPreviewFactura(tk.Toplevel):
             text(date_x + col_w * i + col_w / 2, date_y + 13, value, size=14, bold=True, anchor="n")
         for i, value in enumerate((day, month, year)):
             text(date_x + col_w * i + col_w / 2, date_y + row_h + 13, value, size=14, bold=True, anchor="n")
-        text(date_x - 6, date_y + 128, f"TERM OF PAYMENT: {terms.upper()}", size=11, bold=True, fill="red")
+        text(date_x - 6, date_y + 128, f"TERM OF PAYMENT: {terms.upper()}", size=11, bold=True, fill="red", width=date_w + 18)
 
         # Description block
         desc_title_y = client_y + client_h + 42
