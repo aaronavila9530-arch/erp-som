@@ -20,7 +20,7 @@ def _date_parts(value):
     if isinstance(value, date):
         return f"{value.day:02d}", f"{value.month:02d}", f"{str(value.year)[-2:]}"
     text = _safe(value)
-    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%B %d, %Y"):
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%B %d, %Y", "%B %d %Y", "%b %d, %Y", "%b %d %Y"):
         try:
             parsed = datetime.strptime(text[:20], fmt).date()
             return f"{parsed.day:02d}", f"{parsed.month:02d}", f"{str(parsed.year)[-2:]}"
@@ -48,8 +48,8 @@ class PopupPreviewFactura(tk.Toplevel):
         self.on_confirm = on_confirm
 
         self.title("Preview Factura")
-        self.geometry("760x650")
-        self.minsize(720, 560)
+        self.geometry("980x760")
+        self.minsize(760, 560)
         self.transient(parent)
         self.grab_set()
 
@@ -63,38 +63,22 @@ class PopupPreviewFactura(tk.Toplevel):
     # ============================================================
     def _build_ui(self):
 
-        root = tk.Frame(self, bg="white")
+        root = tk.Frame(self, bg="#f3f4f6")
         root.pack(fill="both", expand=True)
 
-        scroll_host = tk.Frame(root, bg="white")
+        scroll_host = tk.Frame(root, bg="#f3f4f6")
         scroll_host.pack(fill="both", expand=True)
 
-        self.canvas = tk.Canvas(scroll_host, bg="white", highlightthickness=0)
-        scrollbar = ttk.Scrollbar(scroll_host, orient="vertical", command=self.canvas.yview)
-        self.canvas.configure(yscrollcommand=scrollbar.set)
-        scrollbar.pack(side="right", fill="y")
-        self.canvas.pack(side="left", fill="both", expand=True)
+        self.canvas = tk.Canvas(scroll_host, bg="#f3f4f6", highlightthickness=0)
+        y_scroll = ttk.Scrollbar(scroll_host, orient="vertical", command=self.canvas.yview)
+        x_scroll = ttk.Scrollbar(scroll_host, orient="horizontal", command=self.canvas.xview)
+        self.canvas.configure(yscrollcommand=y_scroll.set, xscrollcommand=x_scroll.set)
 
-        container = tk.Frame(self.canvas, bg="white")
-        self.canvas_window = self.canvas.create_window((0, 0), window=container, anchor="nw")
-        container.bind("<Configure>", self._sync_scroll_region)
-        self.canvas.bind("<Configure>", self._sync_canvas_width)
-
-        pdf = tk.Frame(container, bg="white", bd=1, relief="solid", width=690, height=545)
-        pdf.pack(fill="both", expand=True, padx=30, pady=(20, 10))
-        pdf.pack_propagate(False)
-
-        def lbl(parent, text, bold=False, anchor="w", fg="black", size=10, justify="left"):
-            item = tk.Label(
-                parent,
-                text=text,
-                bg="white",
-                fg=fg,
-                anchor=anchor,
-                justify=justify,
-                font=("Times New Roman", size, "bold" if bold else "normal")
-            )
-            return item
+        y_scroll.grid(row=0, column=1, sticky="ns")
+        x_scroll.grid(row=1, column=0, sticky="ew")
+        self.canvas.grid(row=0, column=0, sticky="nsew")
+        scroll_host.grid_rowconfigure(0, weight=1)
+        scroll_host.grid_columnconfigure(0, weight=1)
 
         day, month, year = _date_parts(self.data.get("fecha_factura") or self.data.get("fecha_emision"))
         cliente = _safe(self.data.get("cliente") or self.data.get("nombre_cliente")).upper()
@@ -106,98 +90,20 @@ class PopupPreviewFactura(tk.Toplevel):
             days = _safe(self.data.get("termino_pago"), "0")
             terms = f"CREDIT {days} DAYS" if days not in ("", "0") else "DUE UPON RECEIPT"
         total = _money_text(self.data.get("total"), self.data.get("moneda", "USD"))
-
-        header = tk.Frame(pdf, bg="white")
-        header.pack(fill="x", padx=18, pady=(12, 6))
-        left = tk.Frame(header, bg="white")
-        left.pack(side="left", fill="x", expand=True)
-        right = tk.Frame(header, bg="white")
-        right.pack(side="right")
-
-        lbl(left, "M.S.L S.R.L", bold=True, fg="blue", size=18).pack(anchor="w")
-        lbl(left, "Marine Surveyors and Logistics Group", bold=True, fg="red", size=14).pack(anchor="w")
-        lbl(left, COMPANY_ADDRESS, bold=True, size=9).pack(anchor="w")
-        lbl(left, COMPANY_ADDRESS_2, bold=True, size=9).pack(anchor="w")
-        lbl(right, f"Ced. Jurídica {COMPANY_TAX_ID}", bold=True, anchor="e", size=9).pack(anchor="e")
-        lbl(right, f"Phone {COMPANY_PHONE}", bold=True, anchor="e", size=9).pack(anchor="e")
-        lbl(right, "\nINVOICE", bold=True, anchor="e", size=15).pack(anchor="e")
         invoice_no = _safe(self.data.get("numero_documento") or self.data.get("numero_factura") or "-")
-        inv_line = tk.Frame(right, bg="white")
-        inv_line.pack(anchor="e")
-        lbl(inv_line, "N°", bold=True, size=12).pack(side="left")
-        lbl(inv_line, invoice_no, bold=True, fg="red", size=12).pack(side="left")
 
-        top_row = tk.Frame(pdf, bg="white")
-        top_row.pack(fill="x", padx=18, pady=(8, 4))
-        client_box = tk.Frame(top_row, bg="white", bd=1, relief="solid", height=86)
-        client_box.pack(side="left", fill="x", expand=True)
-        client_box.pack_propagate(False)
-        lbl(client_box, f"CLIENT: {cliente}", bold=True, size=11).pack(anchor="w", padx=8, pady=(8, 0))
-        lbl(client_box, f"PLACE: {place}", bold=True, size=11).pack(anchor="w", padx=8, pady=(18, 0))
-
-        date_wrap = tk.Frame(top_row, bg="white")
-        date_wrap.pack(side="right", padx=(16, 0))
-        date_box = tk.Frame(date_wrap, bg="white", bd=1, relief="solid")
-        date_box.pack(anchor="e")
-        for idx, text in enumerate(("DAY", "MONTH", "YEAR")):
-            lbl(date_box, text, bold=True, size=10, anchor="center").grid(row=0, column=idx, ipadx=12, ipady=3, sticky="nsew")
-        for idx, text in enumerate((day, month, year)):
-            lbl(date_box, text, bold=True, size=10, anchor="center").grid(row=1, column=idx, ipadx=12, ipady=3, sticky="nsew")
-        lbl(date_wrap, f"TERM OF PAYMENT: {terms.upper()}", bold=True, fg="red", size=8).pack(anchor="e", pady=(15, 0))
-
-        lbl(pdf, "DESCRIPTION", bold=True, size=12).pack(anchor="w", padx=28, pady=(8, 2))
-        desc_box = tk.Frame(pdf, bg="white", bd=1, relief="solid", height=180)
-        desc_box.pack(fill="x", padx=18)
-        desc_box.pack_propagate(False)
-        desc_text = tk.Text(
-            desc_box,
-            height=8,
-            wrap="word",
-            bg="white",
-            fg="black",
-            relief="flat",
-            bd=0,
-            font=("Times New Roman", 11, "normal"),
-            padx=8,
-            pady=8,
+        self._draw_invoice_preview(
+            cliente=cliente,
+            place=place,
+            survey=survey,
+            description=description,
+            terms=terms,
+            total=total,
+            invoice_no=invoice_no,
+            day=day,
+            month=month,
+            year=year,
         )
-        desc_text.pack(fill="both", expand=True)
-        desc_text.insert("1.0", description)
-        desc_text.config(state="disabled")
-        if place:
-            lbl(desc_box, place, size=11).pack(anchor="w", padx=8, pady=(18, 0))
-        if survey:
-            lbl(desc_box, "SURVEY:", size=11).pack(anchor="w", padx=8, pady=(18, 0))
-            line = tk.Frame(desc_box, bg="white")
-            line.pack(fill="x", padx=8)
-            lbl(line, f"-{survey}", size=11).pack(side="left")
-            lbl(line, total, size=11).pack(side="right", padx=(0, 20))
-
-        total_box = tk.Frame(pdf, bg="white", bd=1, relief="solid")
-        total_box.pack(anchor="e", padx=42, pady=(8, 0))
-        lbl(total_box, "TOTAL", bold=True, size=12, anchor="center").pack(side="left", ipadx=13, ipady=5)
-        tk.Frame(total_box, bg="black", width=1, height=28).pack(side="left", fill="y")
-        lbl(total_box, total, bold=True, size=12, anchor="center").pack(side="left", ipadx=13, ipady=5)
-
-        bank = tk.Frame(container, bg="white")
-        bank.pack(fill="x", padx=54, pady=(4, 14))
-        bank_lines = [
-            "Beneficiary Bank: BCR Banco de Costa Rica",
-            "Direccion fisica: San Jose de Costa Rica",
-            "SWIFT N° BCRICRSJ",
-            "Account: 308258-5",
-            "",
-            f"IBAN CODE: {IBAN_CODE}",
-            f"Beneficiary: {COMPANY_LEGAL_NAME}",
-            f"Address: {COMPANY_ADDRESS_2}",
-            "Account: 308258-5 BCRICRSJ",
-            "",
-            "NOTE: PAYMENTS TO BE DRAWN ON C.R BANK FREE OF",
-            "ALL CHARGES / IN U.S DOLLARS",
-        ]
-        for text in bank_lines:
-            color = "red" if text.startswith("IBAN CODE") or text.startswith("NOTE") or text.startswith("ALL CHARGES") else "black"
-            lbl(bank, text, fg=color, size=9).pack(anchor="w")
 
         actions = tk.Frame(root, bg="white", bd=1, relief="ridge")
         actions.pack(fill="x", side="bottom", padx=0, pady=0)
@@ -209,32 +115,113 @@ class PopupPreviewFactura(tk.Toplevel):
 
     def _description_text(self):
         raw = _safe(self.data.get("descripcion") or self.data.get("descripcion_servicio"))
-        lines = [raw.upper()] if raw else []
+        return raw.upper() if raw else "SIN DESCRIPCION"
 
-        period = _safe(self.data.get("periodo_operacion") or self.data.get("periodo"))
-        report = _safe(self.data.get("num_informe") or self.data.get("numero_informe"))
-        vessel = _safe(self.data.get("buque") or self.data.get("buque_contenedor"))
+    def _draw_invoice_preview(self, *, cliente, place, survey, description, terms, total, invoice_no, day, month, year):
+        self.canvas.delete("all")
 
-        extra = []
-        if report:
-            extra.append(f"REPORT: {report}")
-        if vessel:
-            extra.append(f"VESSEL / CONTAINER: {vessel}")
-        if period:
-            extra.append(f"OPERATION PERIOD: {period}")
+        page_x = 36
+        page_y = 28
+        page_w = 900
+        page_h = 1060
+        margin = 28
+        left = page_x + margin
+        right = page_x + page_w - margin
+        top = page_y + margin
 
-        if extra:
-            if lines:
-                lines.append("")
-            lines.extend(extra)
+        def text(x, y, value, *, size=12, bold=False, fill="black", anchor="nw", width=None, justify="left"):
+            return self.canvas.create_text(
+                x,
+                y,
+                text=value,
+                fill=fill,
+                anchor=anchor,
+                width=width,
+                justify=justify,
+                font=("Times New Roman", size, "bold" if bold else "normal"),
+            )
 
-        return "\n".join(lines) or "SIN DESCRIPCION"
+        self.canvas.create_rectangle(page_x, page_y, page_x + page_w, page_y + page_h, fill="white", outline="")
+        self.canvas.create_rectangle(left, top, right, page_y + page_h - margin, outline="black", width=2)
 
-    def _sync_scroll_region(self, *_):
-        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+        # Header
+        text(left + 28, top + 28, "M.S.L S.R.L", size=24, bold=True, fill="blue")
+        text(left + 28, top + 66, "Marine Surveyors and Logistics Group", size=20, bold=True, fill="red")
+        text(left + 28, top + 100, COMPANY_ADDRESS, size=12, bold=True)
+        text(left + 28, top + 124, COMPANY_ADDRESS_2, size=12, bold=True)
 
-    def _sync_canvas_width(self, event):
-        self.canvas.itemconfigure(self.canvas_window, width=event.width)
+        text(right - 28, top + 34, f"Ced. Juridica {COMPANY_TAX_ID}", size=12, bold=True, anchor="ne")
+        text(right - 28, top + 58, f"Phone {COMPANY_PHONE}", size=12, bold=True, anchor="ne")
+        text(right - 88, top + 180, "INVOICE", size=22, bold=True, anchor="n")
+        text(right - 88, top + 220, "N°", size=16, bold=True, anchor="n")
+        text(right - 54, top + 220, invoice_no, size=16, bold=True, fill="red", anchor="n")
+
+        # Client and date blocks
+        client_x = left + 16
+        client_y = top + 244
+        client_w = 600
+        client_h = 170
+        self.canvas.create_rectangle(client_x, client_y, client_x + client_w, client_y + client_h, outline="black", width=2)
+        text(client_x + 14, client_y + 18, f"CLIENT: {cliente}", size=16, bold=True)
+        text(client_x + 14, client_y + 82, f"PLACE: {place}", size=16, bold=True)
+
+        date_x = client_x + client_w + 28
+        date_y = client_y + 18
+        col_w = 92
+        row_h = 42
+        for i in range(4):
+            x = date_x + i * col_w
+            self.canvas.create_line(x, date_y, x, date_y + row_h * 2, fill="black", width=2)
+        for j in range(3):
+            y = date_y + j * row_h
+            self.canvas.create_line(date_x, y, date_x + col_w * 3, y, fill="black", width=2)
+        for i, value in enumerate(("DAY", "MONTH", "YEAR")):
+            text(date_x + col_w * i + col_w / 2, date_y + 13, value, size=14, bold=True, anchor="n")
+        for i, value in enumerate((day, month, year)):
+            text(date_x + col_w * i + col_w / 2, date_y + row_h + 13, value, size=14, bold=True, anchor="n")
+        text(date_x - 6, date_y + 128, f"TERM OF PAYMENT: {terms.upper()}", size=11, bold=True, fill="red")
+
+        # Description block
+        desc_title_y = client_y + client_h + 42
+        text(left + 30, desc_title_y, "DESCRIPTION", size=18, bold=True)
+        desc_x = left + 16
+        desc_y = desc_title_y + 40
+        desc_w = right - desc_x - 16
+        desc_h = 285
+        self.canvas.create_rectangle(desc_x, desc_y, desc_x + desc_w, desc_y + desc_h, outline="black", width=2)
+        text(desc_x + 22, desc_y + 20, description, size=15, width=desc_w - 42)
+        if survey:
+            text(desc_x + 22, desc_y + 92, "SURVEY:", size=15)
+            text(desc_x + 22, desc_y + 122, f"-{survey}", size=15, width=desc_w - 220)
+            text(desc_x + desc_w - 42, desc_y + 90, total, size=15, anchor="ne")
+
+        # Total and bank block
+        total_y = desc_y + desc_h + 22
+        total_x = right - 260
+        self.canvas.create_rectangle(total_x, total_y, right - 16, total_y + 42, outline="black", width=2)
+        self.canvas.create_line(total_x + 100, total_y, total_x + 100, total_y + 42, fill="black", width=2)
+        text(total_x + 50, total_y + 12, "TOTAL", size=14, bold=True, anchor="n")
+        text(right - 56, total_y + 12, total, size=14, bold=True, anchor="ne")
+
+        bank_y = total_y + 74
+        bank_lines = [
+            ("Beneficiary Bank: BCR Banco de Costa Rica", "black"),
+            ("Direccion fisica: San Jose de Costa Rica", "black"),
+            ("SWIFT N° BCRICRSJ", "black"),
+            ("Account: 308258-5", "black"),
+            ("", "black"),
+            (f"IBAN CODE: {IBAN_CODE}", "red"),
+            (f"Beneficiary: {COMPANY_LEGAL_NAME}", "black"),
+            (f"Address: {COMPANY_ADDRESS_2}", "black"),
+            ("Account: 308258-5 BCRICRSJ", "black"),
+            ("", "black"),
+            ("NOTE: PAYMENTS TO BE DRAWN ON C.R BANK FREE OF", "red"),
+            ("ALL CHARGES / IN U.S DOLLARS", "red"),
+        ]
+        for index, (line, color) in enumerate(bank_lines):
+            text(desc_x + 22, bank_y + index * 22, line, size=12, bold=color == "red", fill=color)
+
+        self.canvas.configure(scrollregion=(0, 0, page_x + page_w + 36, page_y + page_h + 24))
 
     def _on_mousewheel(self, event):
         if getattr(event, "num", None) == 4:
@@ -243,7 +230,10 @@ class PopupPreviewFactura(tk.Toplevel):
             self.canvas.yview_scroll(3, "units")
         else:
             delta = int(-1 * (event.delta / 120))
-            self.canvas.yview_scroll(delta * 3, "units")
+            if event.state & 0x0001:
+                self.canvas.xview_scroll(delta * 3, "units")
+            else:
+                self.canvas.yview_scroll(delta * 3, "units")
 
     # ============================================================
     # CONFIRMACIÓN
