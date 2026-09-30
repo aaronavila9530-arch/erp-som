@@ -84,9 +84,19 @@ def _invoice_payload(data: dict) -> dict:
     description = _safe(data.get("descripcion") or data.get("descripcion_servicio"))
     description_lines = [line.strip() for line in description.splitlines() if line.strip()]
     if description_lines:
-        if not place and len(description_lines) >= 2 and not description_lines[1].upper().startswith("SURVEY"):
-            place = description_lines[1]
-        if description_lines[0].upper() != "SURVEY:" and not description_lines[0].startswith("-"):
+        clean_description_lines = []
+        for idx, line in enumerate(description_lines):
+            upper = line.upper()
+            if upper.startswith("PLACE:"):
+                if not place:
+                    place = line.split(":", 1)[1].strip()
+                continue
+            if not place and idx == 1 and not upper.startswith("SURVEY"):
+                place = line
+                continue
+            clean_description_lines.append(line)
+        description_lines = clean_description_lines
+        if description_lines and description_lines[0].upper() != "SURVEY:" and not description_lines[0].startswith("-"):
             description = description_lines[0]
         for idx, line in enumerate(description_lines):
             if line.upper().startswith("SURVEY") and idx + 1 < len(description_lines):

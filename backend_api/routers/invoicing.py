@@ -34,6 +34,19 @@ router = APIRouter(
     tags=["Invoicing & Billing"]
 )
 
+
+def _manual_invoice_description_snapshot(description: str | None, place: str | None) -> str:
+    text = str(description or "").strip()
+    place_text = str(place or "").strip()
+    if not place_text or "PLACE:" in text.upper():
+        return text
+    if not text:
+        return f"PLACE: {place_text}"
+    lines = [line.rstrip() for line in text.splitlines()]
+    insert_at = 1 if len(lines) > 1 else len(lines)
+    lines.insert(insert_at, f"PLACE: {place_text}")
+    return "\n".join(lines).strip()
+
 # ============================================================
 # RBAC GUARD
 # ============================================================
@@ -138,9 +151,13 @@ def emitir_factura_anticipada(
         if tipo == "MANUAL":
 
             descripcion = payload.get("descripcion")
+            descripcion_snapshot = _manual_invoice_description_snapshot(
+                descripcion,
+                payload.get("place") or payload.get("lugar"),
+            )
             total = payload.get("total")
 
-            if not descripcion:
+            if not descripcion_snapshot:
                 raise HTTPException(400, "Descripción requerida")
 
             try:
@@ -192,7 +209,7 @@ def emitir_factura_anticipada(
                 "pais": payload.get("pais"),
                 "num_informe": payload.get("num_informe"),
                 "periodo": payload.get("periodo_operacion"),
-                "descripcion": descripcion,
+                "descripcion": descripcion_snapshot,
                 "moneda": moneda,
                 "termino_pago": termino_pago,
                 "payment_terms": payload.get("payment_terms"),
@@ -262,7 +279,7 @@ def emitir_factura_anticipada(
                 payload.get("buque"),
                 payload.get("operacion"),
                 payload.get("periodo_operacion"),
-                descripcion
+                descripcion_snapshot
             ))
 
             factura_id = cur.fetchone()["id"]
