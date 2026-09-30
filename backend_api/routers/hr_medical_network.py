@@ -81,6 +81,22 @@ def _param(value):
     return text or None
 
 
+def _effective_medical_company(cur, requested_company: str) -> str:
+    cur.execute(
+        """
+        SELECT 1
+        FROM hr_medical_network
+        WHERE company_code = %s
+          AND active = TRUE
+        LIMIT 1
+        """,
+        (requested_company,),
+    )
+    if cur.fetchone():
+        return requested_company
+    return "MSL-CR"
+
+
 @router.post("/bulk-upsert")
 def bulk_upsert_medical_network(
     payload: dict,
@@ -193,6 +209,7 @@ def medical_network_filters(
     where_sql = " AND ".join(filters)
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         ensure_schema(cur)
+        params["company"] = _effective_medical_company(cur, company)
         result = {}
         for key, col in (
             ("provinces", "province"),
@@ -272,6 +289,7 @@ def search_medical_network(
     where_sql = " AND ".join(filters)
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         ensure_schema(cur)
+        params["company"] = _effective_medical_company(cur, company)
         cur.execute(f"SELECT COUNT(*) AS total FROM hr_medical_network WHERE {where_sql}", params)
         total = cur.fetchone()["total"]
         cur.execute(
