@@ -16974,6 +16974,9 @@ function AdvanceInvoiceMobile({
           value={form.descripcion}
           onChangeText={(value) => update("descripcion", value)}
         />
+        <InvoicePdfPreview form={form} invoiceNumber={invoiceNumber || "-"} />
+      </ScrollView>
+      <View style={styles.invoiceActionFooter}>
         <PrimaryButton label={busy ? "Procesando..." : "Facturar"} loading={busy} onPress={createInvoice} />
         {invoiceNumber ? (
           <View style={styles.financeFilterActions}>
@@ -16986,8 +16989,109 @@ function AdvanceInvoiceMobile({
           </View>
         ) : null}
         {message ? <Text style={message.includes("No ") || message.includes("requer") ? styles.error : styles.helperText}>{message}</Text> : null}
-      </ScrollView>
+      </View>
     </>
+  );
+}
+
+function invoiceDateParts(value: string) {
+  const text = String(value || "").trim();
+  const ymd = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (ymd) return { day: ymd[3], month: ymd[2], year: ymd[1].slice(-2) };
+  const parsed = new Date(text);
+  if (!Number.isNaN(parsed.getTime())) {
+    return {
+      day: String(parsed.getDate()).padStart(2, "0"),
+      month: String(parsed.getMonth() + 1).padStart(2, "0"),
+      year: String(parsed.getFullYear()).slice(-2)
+    };
+  }
+  const today = new Date();
+  return {
+    day: String(today.getDate()).padStart(2, "0"),
+    month: String(today.getMonth() + 1).padStart(2, "0"),
+    year: String(today.getFullYear()).slice(-2)
+  };
+}
+
+function invoiceMoney(total: string, moneda: string) {
+  const amount = Number(String(total || "0").replace(",", ""));
+  const prefix = String(moneda || "USD").toUpperCase() === "USD" ? "$" : String(moneda || "").toUpperCase();
+  return `${prefix} ${Number.isFinite(amount) ? amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "0.00"}`;
+}
+
+function InvoicePdfPreview({ form, invoiceNumber }: { form: Record<string, string>; invoiceNumber: string }) {
+  const date = invoiceDateParts(form.fecha_emision);
+  const terms = form.termino_pago ? `CREDIT ${form.termino_pago} DAYS` : "DUE UPON RECEIPT";
+  const total = invoiceMoney(form.total, form.moneda || "USD");
+  const description = String(form.descripcion || "SIN DESCRIPCION").toUpperCase();
+  const survey = String(form.survey || "").toUpperCase();
+
+  return (
+    <View style={styles.invoicePreviewSection}>
+      <Text style={styles.cardTitle}>Preview factura</Text>
+      <ScrollView horizontal showsHorizontalScrollIndicator>
+        <View style={styles.invoicePaper}>
+          <View style={styles.invoiceOuterBorder}>
+            <View style={styles.invoiceHeaderRow}>
+              <View style={styles.invoiceHeaderLeft}>
+                <Text style={styles.invoiceBrandBlue}>M.S.L S.R.L</Text>
+                <Text style={styles.invoiceBrandRed}>Marine Surveyors and Logistics Group</Text>
+                <Text style={styles.invoiceSmallBold}>San Jose, Costa Rica, C.A</Text>
+                <Text style={styles.invoiceSmallBold}>Alajuela, Rio Segundo, Plaza Aeropuerto, Local G-14</Text>
+              </View>
+              <View style={styles.invoiceHeaderRight}>
+                <Text style={styles.invoiceSmallBold}>Ced. Juridica 3-102-920372</Text>
+                <Text style={styles.invoiceSmallBold}>Phone 506-8814-07-84</Text>
+                <Text style={styles.invoiceTitle}>INVOICE</Text>
+                <Text style={styles.invoiceNumber}>N° <Text style={styles.invoiceNumberRed}>{invoiceNumber}</Text></Text>
+              </View>
+            </View>
+
+            <View style={styles.invoiceInfoRow}>
+              <View style={styles.invoiceClientBox}>
+                <Text style={styles.invoiceBoxText}>CLIENT: {String(form.nombre_factura || form.cliente || "").toUpperCase()}</Text>
+                <Text style={styles.invoiceBoxText}>PLACE: {String(form.place || "").toUpperCase()}</Text>
+              </View>
+              <View style={styles.invoiceDatePanel}>
+                <View style={styles.invoiceDateGrid}>
+                  <View style={styles.invoiceDateRow}>
+                    {["DAY", "MONTH", "YEAR"].map((label, index) => (
+                      <Text key={label} style={[styles.invoiceDateCellHeader, index < 2 ? styles.invoiceDateCellDivider : null]}>{label}</Text>
+                    ))}
+                  </View>
+                  <View style={[styles.invoiceDateRow, styles.invoiceDateValueRow]}>
+                    {[date.day, date.month, date.year].map((value, index) => (
+                      <Text key={`${value}-${index}`} style={[styles.invoiceDateCell, index < 2 ? styles.invoiceDateCellDivider : null]}>{value}</Text>
+                    ))}
+                  </View>
+                </View>
+                <Text style={styles.invoiceTerms}>TERM OF PAYMENT: {terms}</Text>
+              </View>
+            </View>
+
+            <Text style={styles.invoiceDescriptionTitle}>DESCRIPTION</Text>
+            <View style={styles.invoiceDescriptionBox}>
+              <Text style={styles.invoiceDescriptionText}>{description}</Text>
+              {survey ? (
+                <>
+                  <Text style={styles.invoiceDescriptionText}>SURVEY:</Text>
+                  <View style={styles.invoiceSurveyRow}>
+                    <Text style={[styles.invoiceDescriptionText, styles.invoiceSurveyText]}>-{survey}</Text>
+                    <Text style={styles.invoiceDescriptionText}>{total}</Text>
+                  </View>
+                </>
+              ) : null}
+            </View>
+
+            <View style={styles.invoiceTotalBox}>
+              <Text style={styles.invoiceTotalLabel}>TOTAL</Text>
+              <Text style={styles.invoiceTotalValue}>{total}</Text>
+            </View>
+          </View>
+        </View>
+      </ScrollView>
+    </View>
   );
 }
 
@@ -18234,6 +18338,81 @@ const styles = StyleSheet.create({
   accountingActionText: { color: "#475467", fontSize: 11, fontWeight: "700", lineHeight: 15 },
   formField: { marginBottom: 8 },
   helperText: { color: "#667085", fontSize: 13, fontWeight: "700", marginBottom: 12 },
+  invoiceActionFooter: {
+    backgroundColor: "white",
+    borderTopColor: BORDER,
+    borderTopWidth: 1,
+    padding: 12
+  },
+  invoiceBoxText: { color: "#101828", fontSize: 15, fontWeight: "900", marginBottom: 34 },
+  invoiceBrandBlue: { color: "blue", fontFamily: "serif", fontSize: 26, fontWeight: "900", marginBottom: 4 },
+  invoiceBrandRed: { color: "red", fontFamily: "serif", fontSize: 22, fontWeight: "900", marginBottom: 4 },
+  invoiceClientBox: {
+    borderColor: "black",
+    borderWidth: 2,
+    height: 150,
+    paddingHorizontal: 14,
+    paddingTop: 18,
+    width: 560
+  },
+  invoiceDateCell: {
+    color: "black",
+    flex: 1,
+    fontFamily: "serif",
+    fontSize: 14,
+    fontWeight: "900",
+    paddingVertical: 10,
+    textAlign: "center"
+  },
+  invoiceDateCellHeader: {
+    color: "black",
+    flex: 1,
+    fontFamily: "serif",
+    fontSize: 14,
+    fontWeight: "900",
+    paddingVertical: 10,
+    textAlign: "center"
+  },
+  invoiceDateCellDivider: { borderRightColor: "black", borderRightWidth: 2 },
+  invoiceDateGrid: {
+    borderColor: "black",
+    borderWidth: 2,
+    width: 276
+  },
+  invoiceDatePanel: { marginLeft: 24, width: 276 },
+  invoiceDateRow: { flexDirection: "row" },
+  invoiceDateValueRow: { borderTopColor: "black", borderTopWidth: 2 },
+  invoiceDescriptionBox: {
+    borderColor: "black",
+    borderWidth: 2,
+    minHeight: 250,
+    padding: 18
+  },
+  invoiceDescriptionText: { color: "black", fontFamily: "serif", fontSize: 17, marginBottom: 18 },
+  invoiceDescriptionTitle: { color: "black", fontFamily: "serif", fontSize: 22, fontWeight: "900", marginBottom: 14, marginTop: 36 },
+  invoiceHeaderLeft: { flex: 1 },
+  invoiceHeaderRight: { alignItems: "flex-end", width: 260 },
+  invoiceHeaderRow: { flexDirection: "row", marginBottom: 58 },
+  invoiceInfoRow: { flexDirection: "row" },
+  invoiceNumber: { color: "black", fontFamily: "serif", fontSize: 17, fontWeight: "900" },
+  invoiceNumberRed: { color: "red" },
+  invoiceOuterBorder: { borderColor: "black", borderWidth: 2, minHeight: 820, padding: 26 },
+  invoicePaper: { backgroundColor: "white", padding: 18, width: 940 },
+  invoicePreviewSection: { marginTop: 14 },
+  invoiceSmallBold: { color: "black", fontFamily: "serif", fontSize: 13, fontWeight: "900", marginBottom: 4 },
+  invoiceSurveyRow: { flexDirection: "row", gap: 20, justifyContent: "space-between" },
+  invoiceSurveyText: { flex: 1 },
+  invoiceTerms: { color: "red", fontFamily: "serif", fontSize: 12, fontWeight: "900", marginTop: 44 },
+  invoiceTitle: { color: "black", fontFamily: "serif", fontSize: 25, fontWeight: "900", marginTop: 90 },
+  invoiceTotalBox: {
+    alignSelf: "flex-end",
+    borderColor: "black",
+    borderWidth: 2,
+    flexDirection: "row",
+    marginTop: 22
+  },
+  invoiceTotalLabel: { borderRightColor: "black", borderRightWidth: 2, color: "black", fontFamily: "serif", fontSize: 16, fontWeight: "900", paddingHorizontal: 22, paddingVertical: 10 },
+  invoiceTotalValue: { color: "black", fontFamily: "serif", fontSize: 16, fontWeight: "900", paddingHorizontal: 22, paddingVertical: 10 },
   kioskNav: { backgroundColor: "white", borderBottomColor: BORDER, borderBottomWidth: 1, flexDirection: "row", gap: 10, padding: 12 },
   kioskTab: { alignItems: "center", backgroundColor: "#EEF3F8", borderColor: BORDER, borderRadius: 8, borderWidth: 1, flex: 1, paddingVertical: 14 },
   kioskTabActive: { backgroundColor: BLUE, borderColor: BLUE },
