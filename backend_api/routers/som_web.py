@@ -20,7 +20,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20260930-hr-payroll-hours-v1"
+_ASSET_VERSION = "20260930-services-pagination-v1"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -1385,6 +1385,7 @@ def som_web_home() -> HTMLResponse:
     let serviceRows = [];
     let serviceMeta = {};
     let serviceSurveyorCatalog = [];
+    const SERVICE_PAGE_SIZE = 25;
     let servicePage = 1;
     let serviceTotal = 0;
     let selectedServiceIndex = null;
@@ -7270,7 +7271,7 @@ def som_web_home() -> HTMLResponse:
       };
     }
     function serviceQueryParams(page=1) {
-      const params = new URLSearchParams({ page:String(page), page_size:"50" });
+      const params = new URLSearchParams({ page:String(page), page_size:String(SERVICE_PAGE_SIZE) });
       const map = {
         svcYear:"year", svcTipo:"tipo", svcEstado:"status", svcCliente:"cliente", svcContinente:"continente",
         svcPais:"pais", svcPuerto:"puerto", svcOperacion:"operacion", svcSurveyor:"surveyor", svcQ:"q"
@@ -7324,6 +7325,7 @@ def som_web_home() -> HTMLResponse:
         target.innerHTML = '<div class="status">Sin servicios para los filtros seleccionados.</div>';
         return;
       }
+      const totalPages = Math.max(1, Math.ceil(serviceTotal / SERVICE_PAGE_SIZE));
       target.innerHTML = `
         <div class="table-wrap">
           <table>
@@ -7336,9 +7338,9 @@ def som_web_home() -> HTMLResponse:
           </table>
         </div>
         <div class="pager">
-          <button class="secondary" onclick="loadServicios(Math.max(1, servicePage-1))">Anterior</button>
-          <span class="muted">Página ${servicePage} · ${serviceRows.length} visibles de ${intFmt.format(serviceTotal)}</span>
-          <button class="secondary" onclick="loadServicios(servicePage+1)" ${servicePage*50 >= serviceTotal ? "disabled" : ""}>Siguiente</button>
+          <button class="secondary" onclick="loadServicios(Math.max(1, servicePage-1))" ${servicePage <= 1 ? "disabled" : ""}>Anterior</button>
+          <span class="muted">Página ${servicePage} de ${totalPages} · ${serviceRows.length} visibles de ${intFmt.format(serviceTotal)}</span>
+          <button class="secondary" onclick="loadServicios(servicePage+1)" ${servicePage >= totalPages ? "disabled" : ""}>Siguiente</button>
         </div>`;
     }
     function toggleServiceRow(index, checked=null) {
