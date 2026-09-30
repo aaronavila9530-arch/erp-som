@@ -239,7 +239,7 @@ def listar_empleados_payroll(conn=Depends(get_db)):
     conn.commit()
 
     cur.execute("""
-        SELECT DISTINCT ON (LOWER(TRIM(usuario)))
+        SELECT DISTINCT ON (LOWER(TRIM(e.usuario)))
             e.nombre,
             e.apellidos,
             e.jornada,
