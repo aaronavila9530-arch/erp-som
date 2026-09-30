@@ -18,8 +18,10 @@ from typing import Optional
 import calendar
 import io
 import os
+import re
 import shutil
 import time
+import unicodedata
 import uuid
 
 from database import get_db
@@ -313,6 +315,96 @@ def _append_unique_biweekly_row(rows: list[dict], seen: set, row: dict) -> None:
     rows.append(row)
 
 
+def _biweekly_match_tokens(value: str) -> set[str]:
+    raw = unicodedata.normalize("NFKD", str(value or ""))
+    ascii_text = raw.encode("ascii", "ignore").decode("ascii").upper()
+    tokens = set(re.findall(r"[A-Z0-9]{4,}", ascii_text))
+    return tokens - {"PAGO", "FACTURA", "LINEA", "MANUAL", "PARTE", "DESDE", "HASTA"}
+
+
+def _filter_open_biweekly_rows(cur, company: str, rows: list[dict]) -> list[dict]:
+    if not rows:
+        return []
+    obligation_ids = sorted({
+        int(row.get("obligation_id"))
+        for row in rows
+        if str(row.get("obligation_id") or "").strip().isdigit()
+    })
+    open_by_id = {}
+    if obligation_ids:
+        cur.execute(
+            """
+            SELECT id, balance, status, active
+            FROM payment_obligations
+            WHERE company_code=%s
+              AND id = ANY(%s)
+            """,
+            (company, obligation_ids),
+        )
+        for ob in cur.fetchall() or []:
+            item = dict(ob)
+            if (
+                bool(item.get("active", True))
+                and str(item.get("status") or "").upper() in {"PENDING", "PARTIAL"}
+                and _money(item.get("balance")) > 0
+            ):
+                open_by_id[int(item["id"])] = item
+
+    cur.execute(
+        """
+        SELECT id, payee_name, reference, total, balance, status, active, last_payment_date, notes
+        FROM payment_obligations
+        WHERE company_code=%s
+          AND COALESCE(active, TRUE)=TRUE
+          AND status IN ('PAID','REPLACED')
+          AND COALESCE(balance,0)=0
+          AND COALESCE(total,0) > 0
+          AND (last_payment_date IS NOT NULL OR status='PAID')
+        ORDER BY COALESCE(last_payment_date, due_date, issue_date) DESC NULLS LAST, id DESC
+        LIMIT 500
+        """,
+        (company,),
+    )
+    closed = []
+    for ob in cur.fetchall() or []:
+        item = dict(ob)
+        item["_amount"] = _money(item.get("total"))
+        item["_tokens"] = _biweekly_match_tokens(
+            " ".join(str(item.get(key) or "") for key in ("payee_name", "reference", "notes"))
+        )
+        closed.append(item)
+
+    filtered = []
+    for row in rows:
+        item = dict(row)
+        raw_obligation_id = str(item.get("obligation_id") or "").strip()
+        if raw_obligation_id.isdigit():
+            open_obligation = open_by_id.get(int(raw_obligation_id))
+            if not open_obligation:
+                continue
+            item["amount"] = float(_money(open_obligation.get("balance")))
+            item["balance"] = float(_money(open_obligation.get("balance")))
+            filtered.append(item)
+            continue
+
+        amount = _money(item.get("amount"))
+        if amount <= 0:
+            filtered.append(item)
+            continue
+        text = " ".join(str(item.get(key) or "") for key in ("name", "reference", "notes"))
+        tokens = _biweekly_match_tokens(text)
+        if tokens:
+            matched_closed = any(
+                abs(closed_item["_amount"] - amount) <= Decimal("0.01")
+                and len(tokens.intersection(closed_item["_tokens"])) >= 2
+                for closed_item in closed
+            )
+            if matched_closed:
+                continue
+        filtered.append(item)
+    return filtered
+
+
 def _ensure_biweekly_schema(cur):
     cur.execute("""
         CREATE TABLE IF NOT EXISTS itp_biweekly_payment_batches (
@@ -420,7 +512,7 @@ def _load_biweekly_draft(cur, company: str, period: str, fortnight: int):
         item["amount"] = float(_money(item.get("amount")))
         item["balance"] = float(_money(item.get("balance")))
         rows.append(item)
-    return {"batch_id": batch_id, "rows": rows}
+    return {"batch_id": batch_id, "rows": _filter_open_biweekly_rows(cur, company, rows)}
 
 
 def _load_biweekly_carryover_drafts(cur, company: str, period: str, fortnight: int):
@@ -480,7 +572,7 @@ def _load_biweekly_carryover_drafts(cur, company: str, period: str, fortnight: i
         item["amount"] = float(_money(item.get("amount")))
         item["balance"] = float(_money(item.get("balance")))
         rows.append(item)
-    return rows
+    return _filter_open_biweekly_rows(cur, company, rows)
 
 
 def _load_biweekly_paid_markers(cur, company: str, period: str, fortnight: int) -> dict[str, set[str]]:
