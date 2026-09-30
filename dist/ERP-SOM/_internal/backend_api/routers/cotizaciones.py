@@ -552,7 +552,7 @@ def exportar_cotizacion_mobile(
             media_type = "application/pdf"
 
         filename = f"{_safe_export_name(quotation_number or cliente)}{suffix}"
-        return FileResponse(path, filename=filename, media_type=media_type)
+        return FileResponse(path, filename=filename, media_type=media_type, content_disposition_type="attachment")
     except Exception as exc:
         try:
             if os.path.exists(path):
@@ -638,7 +638,7 @@ def exportar_cotizacion_por_id(
             media_type = "application/pdf"
 
         filename = f"{_safe_export_name(data.get('quotation_number') or data.get('cliente'))}{suffix}"
-        return FileResponse(path, filename=filename, media_type=media_type)
+        return FileResponse(path, filename=filename, media_type=media_type, content_disposition_type="attachment")
 
     except Exception:
         raise

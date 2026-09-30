@@ -82,15 +82,15 @@ def _parse_service_date(value):
 
 
 def _normalize_service_date(value):
-    if value in (None, ""):
-        return value
+    if value is None or str(value).strip() == "":
+        return None
     return _parse_service_date(value).strftime("%Y-%m-%d")
 
 
 def _normalize_service_time(value):
     text = str(value or "").strip()
     if not text:
-        return ""
+        return None
 
     normalized = text.upper().replace(".", "").replace(" ", "")
     suffix = None
@@ -804,16 +804,18 @@ def actualizar_demoras(consec: int, payload: DemoraUpdate, x_company_code: str |
                 demoras = %(d)s,
                 duracion = (
                     EXTRACT(EPOCH FROM (
-                        (fecha_fin::date + hora_fin::time)
+                        (fecha_fin::date + NULLIF(hora_fin::text, '')::time)
                         -
-                        (fecha_inicio::date + hora_inicio::time)
+                        (fecha_inicio::date + NULLIF(hora_inicio::text, '')::time)
                     )) / 60
                     - COALESCE(%(d)s, 0)
                 )
             WHERE consec = %(c)s
               AND company_code = %(company_code)s
               AND fecha_fin IS NOT NULL
-              AND hora_fin IS NOT NULL
+              AND NULLIF(hora_fin::text, '') IS NOT NULL
+              AND fecha_inicio IS NOT NULL
+              AND NULLIF(hora_inicio::text, '') IS NOT NULL
             """,
             {
                 "d": payload.total,
@@ -952,9 +954,9 @@ def editar_servicio(
                      AND NULLIF(%(hora_inicio)s, '') IS NOT NULL
                     THEN (
                         EXTRACT(EPOCH FROM (
-                            (%(fecha_fin)s::date + %(hora_fin)s::time)
+                            (NULLIF(%(fecha_fin)s, '')::date + NULLIF(%(hora_fin)s, '')::time)
                             -
-                            (%(fecha_inicio)s::date + %(hora_inicio)s::time)
+                            (NULLIF(%(fecha_inicio)s, '')::date + NULLIF(%(hora_inicio)s, '')::time)
                         )) / 60
                         - COALESCE(demoras, 0)
                     )

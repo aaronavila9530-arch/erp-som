@@ -2373,11 +2373,14 @@ def sync_collections(
 
 
 @router.post("/sync/cash-app")
-def sync_cash_app(conn=Depends(get_db)):
+def sync_cash_app(
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+    conn=Depends(get_db),
+):
     _ensure_accounting_professional_schema(conn)
     try:
         from services.accounting_auto import sync_cash_app_to_accounting
-        sync_cash_app_to_accounting(conn)
+        sync_cash_app_to_accounting(conn, company_code_filter=_company_code(header_value=x_company_code))
 
         return {
             "status": "ok",
@@ -2392,11 +2395,14 @@ def sync_cash_app(conn=Depends(get_db)):
 
 
 @router.post("/sync/itp")
-def sync_itp(conn=Depends(get_db)):
+def sync_itp(
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+    conn=Depends(get_db),
+):
     _ensure_accounting_professional_schema(conn)
     try:
         from services.accounting_auto import sync_itp_to_accounting
-        sync_itp_to_accounting(conn)
+        sync_itp_to_accounting(conn, company_code_filter=_company_code(header_value=x_company_code))
 
         return {
             "status": "ok",
@@ -2443,8 +2449,8 @@ def sync_all_accounting(
         company = _company_code(header_value=x_company_code)
 
         sync_collections_to_accounting(conn, company_code_filter=company)
-        sync_cash_app_to_accounting(conn)
-        sync_itp_to_accounting(conn)
+        sync_cash_app_to_accounting(conn, company_code_filter=company)
+        sync_itp_to_accounting(conn, company_code_filter=company)
         sync_payroll_to_accounting(conn)
 
         after = _accounting_entry_stats(conn)

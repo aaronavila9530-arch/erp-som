@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from psycopg2.extras import RealDictCursor
 from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
@@ -10,6 +10,7 @@ from security.auth import get_current_user
 from security.rbac import require_permission
 from routers.hr_ot_log import _employee_hours_policy
 from services.employee_hours_policy_schema import ensure_employee_hours_policy_columns
+from services.tenanting import company_code, ensure_company_column
 
 BASE_DIR = os.path.dirname(
     os.path.dirname(
@@ -78,6 +79,24 @@ def calcular_renta(monto: float) -> float:
     return round(impuesto, 2)
 
 
+def _can_view_all_payslips(user: dict) -> bool:
+    return (user.get("rol") or "").strip().lower() in {"admin", "master"}
+
+
+def _target_payslip_user(user: dict, requested_user: str | None = None) -> str:
+    current = (user.get("usuario") or "").strip().lower()
+    requested = (requested_user or current).strip().lower()
+    if not requested:
+        raise HTTPException(401, "Usuario no autenticado")
+    if not _can_view_all_payslips(user) and requested != current:
+        raise HTTPException(403, "No autorizado para consultar colillas de otro usuario")
+    return requested
+
+
+def _ensure_payroll_company() -> None:
+    ensure_company_column("payroll_runs")
+
+
 def _payroll_rates(pago: str) -> tuple[float, float, bool]:
     is_quincenal = "QUINC" in ((pago or "").upper())
     return (
@@ -97,6 +116,13 @@ def _income_tax_for_period(salario_bruto: float, salario_mensual: float, is_quin
 def _payroll_rates_for_stored_run(salario_bruto: float, salario_mensual: float, pago: str) -> tuple[float, float, bool]:
     deduccion_rate, patronal_rate, is_quincenal = _payroll_rates(pago)
     return deduccion_rate, patronal_rate, is_quincenal
+
+
+def _closed_payroll_period() -> tuple[int, int]:
+    hoy = date.today()
+    if hoy.month == 1:
+        return hoy.year - 1, 12
+    return hoy.year, hoy.month - 1
 
 
 def _money(value) -> Decimal:
@@ -206,6 +232,7 @@ def _insert_payroll_adjustment_entry(cur, run: dict, before: dict, after: dict, 
 def listar_empleados_payroll(conn=Depends(get_db)):
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
+    allowed_year, allowed_month = _closed_payroll_period()
     ensure_employee_hours_policy_columns(cur)
     cur.execute("ALTER TABLE empleados ADD COLUMN IF NOT EXISTS activo BOOLEAN NOT NULL DEFAULT TRUE")
     cur.execute("UPDATE empleados SET activo = TRUE WHERE activo IS NULL")
@@ -213,35 +240,56 @@ def listar_empleados_payroll(conn=Depends(get_db)):
 
     cur.execute("""
         SELECT DISTINCT ON (LOWER(TRIM(usuario)))
-            nombre,
-            apellidos,
-            jornada,
-            salario,
-            pago,
-            estado,
-            usuario,
-            horas_contratadas,
-            horas_tope_ordinario,
-            horas_tope_maximo,
-            tarifa_hora_extra,
-            pago_minimo_garantizado,
-            cedula_id
-        FROM empleados
-        WHERE estado = 'Activo'
-          AND COALESCE(activo, TRUE) = TRUE
-          AND usuario IS NOT NULL
-          AND TRIM(usuario) <> ''
-        ORDER BY LOWER(TRIM(usuario)), nombre, apellidos
-    """)
+            e.nombre,
+            e.apellidos,
+            e.jornada,
+            e.salario,
+            e.pago,
+            e.estado,
+            e.usuario,
+            e.horas_contratadas,
+            e.horas_tope_ordinario,
+            e.horas_tope_maximo,
+            e.tarifa_hora_extra,
+            e.pago_minimo_garantizado,
+            e.cedula_id,
+            pr.id AS payroll_run_id,
+            CASE WHEN pr.id IS NULL THEN 'Pendiente' ELSE 'Generada' END AS planilla_estado
+        FROM empleados e
+        LEFT JOIN payroll_runs pr
+          ON pr.usuario = e.usuario
+         AND pr.year = %s
+         AND pr.month = %s
+        WHERE e.estado = 'Activo'
+          AND COALESCE(e.activo, TRUE) = TRUE
+          AND e.usuario IS NOT NULL
+          AND TRIM(e.usuario) <> ''
+        ORDER BY LOWER(TRIM(e.usuario)), e.nombre, e.apellidos
+    """, (allowed_year, allowed_month))
 
     return {
         "total": cur.rowcount,
+        "year": allowed_year,
+        "month": allowed_month,
         "data": cur.fetchall()
     }
 
 # ============================================================
 # 2️⃣ PREVIEW / CÁLCULO PAYROLL (NO GUARDA)
 # ============================================================
+
+@router.get(
+    "/period",
+    dependencies=[Depends(require_permission("hhrr", "payroll"))]
+)
+def periodo_payroll_cerrado():
+    year, month = _closed_payroll_period()
+    return {
+        "year": year,
+        "month": month,
+        "label": f"{month:02d}/{year}"
+    }
+
 
 @router.get(
     "/calculate",
@@ -262,14 +310,7 @@ def calcular_payroll(
     # --------------------------------------------------------
     # VALIDAR PERÍODO (SOLO MES CERRADO / MES ANTERIOR)
     # --------------------------------------------------------
-    hoy = date.today()
-
-    if hoy.month == 1:
-        allowed_month = 12
-        allowed_year = hoy.year - 1
-    else:
-        allowed_month = hoy.month - 1
-        allowed_year = hoy.year
+    allowed_year, allowed_month = _closed_payroll_period()
 
     if year != allowed_year or month != allowed_month:
         raise HTTPException(
@@ -438,9 +479,12 @@ def calcular_payroll(
 def postear_planilla(
     payload: dict,
     user=Depends(get_current_user),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
     conn=Depends(get_db)
 ):
     cur = conn.cursor()
+    _ensure_payroll_company()
+    selected_company = company_code(header_value=x_company_code)
 
     usuario = payload["usuario"]
     year = payload["year"]
@@ -465,9 +509,10 @@ def postear_planilla(
             horas_extra,
             monto_horas_extra,
             pdf_path,
-            generado_por
+            generado_por,
+            company_code
         )
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (usuario, year, month)
         DO UPDATE SET
             salario_neto       = EXCLUDED.salario_neto,
@@ -475,7 +520,8 @@ def postear_planilla(
             horas_extra        = EXCLUDED.horas_extra,
             monto_horas_extra  = EXCLUDED.monto_horas_extra,
             pdf_path           = EXCLUDED.pdf_path,
-            generado_por       = EXCLUDED.generado_por
+            generado_por       = EXCLUDED.generado_por,
+            company_code       = EXCLUDED.company_code
     """, (
         usuario,
         year,
@@ -485,7 +531,8 @@ def postear_planilla(
         payload["horas_ot"],             # horas_extra
         payload["pago_horas_extra"],     # monto_horas_extra
         pdf_path_online,                 # referencia lógica
-        user["usuario"]
+        user["usuario"],
+        selected_company
     ))
 
     conn.commit()
@@ -508,19 +555,19 @@ def listar_payslips(
     year: int | None = None,
     month: int | None = None,
     current_user=Depends(get_current_user),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
     conn=Depends(get_db)
 ):
 
     offset = (page - 1) * page_size
-    conditions = []
-    params = {}
+    _ensure_payroll_company()
+    company = company_code(header_value=x_company_code)
+    conditions = ["company_code = %(company_code)s"]
+    params = {"company_code": company}
 
-    rol = (current_user.get("rol") or "").lower()
-    usuario = current_user.get("usuario")
-
-    if rol not in ("admin", "master"):
+    if not _can_view_all_payslips(current_user):
         conditions.append("usuario = %(usuario)s")
-        params["usuario"] = usuario
+        params["usuario"] = _target_payslip_user(current_user)
 
     if year is not None:
         conditions.append("year = %(year)s")
@@ -950,6 +997,7 @@ def descargar_colilla_pdf(
     month: int,
     usuario: str | None = None,
     current_user=Depends(get_current_user),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
     conn=Depends(get_db)
 ):
     """
@@ -959,15 +1007,9 @@ def descargar_colilla_pdf(
     """
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
-    rol = (current_user.get("rol") or "").lower()
-    usuario_solicitado = usuario or current_user.get("usuario")
-
-    # --------------------------------------------------------
-    # RBAC: EMPLEADO SOLO SU PROPIA COLILLA
-    # --------------------------------------------------------
-    if rol not in ("admin", "master"):
-        if usuario_solicitado != current_user.get("usuario"):
-            raise HTTPException(403, "No autorizado")
+    _ensure_payroll_company()
+    company = company_code(header_value=x_company_code)
+    usuario_solicitado = _target_payslip_user(current_user, usuario)
 
     # --------------------------------------------------------
     # PAYROLL RUN (FUENTE DE VERDAD)
@@ -985,8 +1027,9 @@ def descargar_colilla_pdf(
         WHERE usuario = %s
           AND year = %s
           AND month = %s
+          AND company_code = %s
         LIMIT 1
-    """, (usuario_solicitado, year, month))
+    """, (usuario_solicitado, year, month, company))
 
     run = cur.fetchone()
     if not run:
@@ -1081,12 +1124,13 @@ def descargar_colilla_pdf_mobile_v2(
     puede descargar de otros; usuario normal solo la propia.
     """
     cur = conn.cursor(cursor_factory=RealDictCursor)
+    _ensure_payroll_company()
+    company = company_code()
     usuario_actual = (request_user or "").strip().lower()
-    rol_actual = (request_role or "").strip().lower()
     usuario_solicitado = (target_user or usuario_actual).strip().lower()
 
     cur.execute("""
-        SELECT usuario, activo
+        SELECT usuario, rol, activo
         FROM usuarios
         WHERE LOWER(TRIM(usuario)) = %s
         LIMIT 1
@@ -1098,8 +1142,13 @@ def descargar_colilla_pdf_mobile_v2(
     if not bool(auth_user.get("activo")):
         raise HTTPException(403, "Usuario inactivo")
 
-    if rol_actual not in ("admin", "master") and usuario_solicitado != usuario_actual:
-        raise HTTPException(403, "No autorizado")
+    usuario_solicitado = _target_payslip_user(
+        {
+            "usuario": auth_user.get("usuario"),
+            "rol": auth_user.get("rol") or request_role,
+        },
+        usuario_solicitado,
+    )
 
     cur.execute("""
         SELECT
@@ -1114,8 +1163,9 @@ def descargar_colilla_pdf_mobile_v2(
         WHERE usuario = %s
           AND year = %s
           AND month = %s
+          AND company_code = %s
         LIMIT 1
-    """, (usuario_solicitado, year, month))
+    """, (usuario_solicitado, year, month, company))
 
     run = cur.fetchone()
     if not run:

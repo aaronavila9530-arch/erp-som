@@ -32,7 +32,7 @@ def get_current_user(
     # =====================================================
     # DEBUG REAL
     # =====================================================
-    print(f"🔐 AUTH DEBUG | X-User={x_user!r} | X-Role={x_role!r}")
+    print(f"AUTH DEBUG | X-User={x_user!r} | X-Role={x_role!r}")
 
     # =====================================================
     # VALIDAR HEADERS
@@ -66,6 +66,7 @@ def get_current_user(
             SELECT
                 usuario,
                 nombre,
+                rol,
                 activo
             FROM usuarios
             WHERE LOWER(TRIM(usuario)) = %s
@@ -108,5 +109,5 @@ def get_current_user(
     return {
         "usuario": str(user["usuario"]).strip().lower(),
         "nombre": (user.get("nombre") or "").strip(),
-        "rol": rol
+        "rol": str(user.get("rol") or rol).strip().lower()
     }
