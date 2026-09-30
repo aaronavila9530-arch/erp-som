@@ -2578,7 +2578,7 @@ def som_web_home() -> HTMLResponse:
               <button class="primary" onclick="selectAccountingReport('ANALITICO_CUENTA')">Analítico</button>
               ${accountingMenu("Acciones", [["Nuevo asiento","openAccountingManualEntry()"],["Ajustar asiento seleccionado","openAccountingEntryEditor()"],["Enviar a revisión","transitionAccountingEntry('submit')"],["Aprobar","transitionAccountingEntry('approve')"],["Contabilizar","transitionAccountingEntry('post')"],["Reversar asiento seleccionado","reverseAccountingEntry()"],["Cierre mensual guiado","openAccountingGuidedClose()"]])}
               ${accountingMenu("Reportes", [["Asientos","selectAccountingReport('ASIENTOS')"],["Analítico de cuenta","selectAccountingReport('ANALITICO_CUENTA')"],["Detalle por tipo de cuenta","selectAccountingReport('DETALLE_TIPO')"],["Libro Mayor","selectAccountingReport('MAYOR')"],["Balance de Comprobación","selectAccountingReport('BC')"],["Estado de Situación Financiera","selectAccountingReport('ESF')"],["Estado de Resultados","selectAccountingReport('ER')"],["Flujo de Caja","selectAccountingReport('FC')"],["Estados financieros completos","loadAccountingCompleteStatements()"],["Reporte financiero ejecutivo","loadAccountingExecutive()"]])}
-              ${accountingMenu("Herramientas", [["Mi espacio contable","loadAccountingWorkspace()"],["Auxiliares contables","loadAccountingAuxiliaries()"],["Catálogo maestro de cuentas","loadAccountingAccounts()"],["Activos fijos","loadAccountingFixedAssets()"],["Tarjetas corporativas","loadAccountingCards()"],["Inventarios","loadAccountingInventory()"],["Sincronizar asientos ERP","runAccountingSyncAll()"],["Motor de contabilización","loadAccountingPostingRules()"]])}
+              ${accountingMenu("Herramientas", [["Mi espacio contable","loadAccountingWorkspace()"],["Auxiliares contables","loadAccountingAuxiliaries()"],["Catálogo maestro de cuentas","loadAccountingAccounts()"],["Activos fijos","loadAccountingFixedAssets()"],["Tarjetas corporativas","loadAccountingCards()"],["Inventarios","loadAccountingInventory()"],["Sincronizar asientos ERP","runAccountingSyncAll()"],["Autorizar Gmail backend","startGmailFiscalOAuth()"],["Activar Gmail automático","enableGmailFiscalAutomation()"],["Estado Gmail backend","loadGmailFiscalStatus()"],["Sincronizar Gmail ahora","runGmailFiscalSync()"],["Revisar Outlook local","runAccountingOutlookSync(false)"],["Historial BAC tarjetas","runAccountingOutlookSync(true)"],["Motor de contabilización","loadAccountingPostingRules()"]])}
               ${accountingMenu("Avanzado", [["Alertas y validaciones","loadAccountingAlerts()"],["Auditoría por usuario","loadAccountingAudit()"],["Accounting avanzado","loadAccountingAdvancedDashboard()"],["PORTIA contable","runPortiaAccounting()"],["Simulador fiscal multiempresa","loadTaxScenarioPlanner()"],["Centro fiscal Costa Rica","loadAccountingTaxCenter()"],["Biblioteca legal Costa Rica","loadAccountingLegalLibrary()"],["TRIBU-CR 150 IVA","openTaxDeclaration('IVA')"],["102 Impuesto sobre utilidades","openTaxDeclaration('ISU')"]])}
               <button onclick="exportAccountingReport('xlsx')">Exportar Excel</button>
               <button onclick="exportAccountingReport('pdf')">Exportar PDF</button>
@@ -3104,22 +3104,60 @@ def som_web_home() -> HTMLResponse:
     function accountingGmailAccount() {
       return selectedCompany() === "MCI-CR" ? "facturacion.fe@xtravon.com" : "contabilidad@mslogisticsgroup.com";
     }
+    function accountingMailStatusTarget() {
+      return $("accOutlookStatus") || $("accountingResult");
+    }
+    function setAccountingMailStatus(className, content, asHtml=false) {
+      const status = accountingMailStatusTarget();
+      if (!status) return;
+      status.className = className || "";
+      if (asHtml) status.innerHTML = content;
+      else status.textContent = content;
+    }
+    function renderGmailFiscalSummary(payload) {
+      const parts = [
+        `XML ${payload.imported || 0}`,
+        `PDF tarjetas ${payload.card_imported || 0}`,
+        `Pagos tarjetas ${payload.bac_card_posted || 0}`,
+        `Transferencias socio ${payload.bac_partner_imported || 0}`,
+        `Duplicados ${payload.duplicates || payload.card_duplicates || 0}`,
+        `Revisión ${payload.review || 0}`
+      ];
+      return parts.join(" · ");
+    }
+    async function startGmailFiscalOAuth() {
+      const account = accountingGmailAccount();
+      setAccountingMailStatus("accounting-banner", `Preparando autorización Google para ${account}...`);
+      try {
+        const payload = await postJSON("/accounting/tax/gmail/oauth/start", { user:session?.usuario || "WEB_USER", account_email:account });
+        const url = payload.authorization_url;
+        if (url) window.open(url, "_blank", "noopener,noreferrer");
+        setAccountingMailStatus("accounting-banner", `Se abrió la autorización Google para ${account}. Después de autorizar, regrese aquí y active Gmail automático.`);
+      } catch (err) { setAccountingMailStatus("accounting-banner error", err.message); }
+    }
+    async function enableGmailFiscalAutomation() {
+      const account = accountingGmailAccount();
+      setAccountingMailStatus("accounting-banner", `Activando revisión automática para ${account}...`);
+      try {
+        const payload = await sendJSON("PUT", "/accounting/tax/gmail/automation", { enabled:true, interval_minutes:10, user:session?.usuario || "WEB_USER", account_email:account });
+        setAccountingMailStatus("accounting-banner", `Gmail automático activo para ${payload.account_email || account}. Próxima revisión: ${payload.next_sync_at || "en breve"}.`);
+      } catch (err) { setAccountingMailStatus("accounting-banner error", err.message); }
+    }
     async function runGmailFiscalSync() {
-      const status = $("accOutlookStatus");
-      status.className = "accounting-banner"; status.textContent = "Ejecutando sincronización Gmail fiscal en backend...";
+      setAccountingMailStatus("accounting-banner", "Ejecutando sincronización Gmail fiscal en backend...");
       try {
         const payload = await postJSON(`/accounting/tax/gmail/sync?max_messages=100&account_email=${encodeURIComponent(accountingGmailAccount())}`, {});
-        status.textContent = `Gmail backend: ${payload.imported || 0} importados, ${payload.errors || 0} errores.`;
-      } catch (err) { status.className = "accounting-banner error"; status.textContent = err.message; }
+        setAccountingMailStatus("accounting-banner", `Gmail backend: ${renderGmailFiscalSummary(payload)}.`);
+      } catch (err) { setAccountingMailStatus("accounting-banner error", err.message); }
     }
     async function loadGmailFiscalStatus() {
-      const status = $("accOutlookStatus");
-      status.className = "accounting-banner"; status.textContent = "Consultando estado Gmail backend...";
+      setAccountingMailStatus("accounting-banner", "Consultando estado Gmail backend...");
       try {
         const payload = await getJSON(`/accounting/tax/gmail/status?account_email=${encodeURIComponent(accountingGmailAccount())}`);
         const connection = payload.connection || {};
-        status.textContent = `Gmail backend: ${connection.authorized ? "conectado" : "sin conexión"} · automatización ${connection.auto_enabled ? "activa" : "inactiva"} · última sync ${connection.last_sync_at || "-"}`;
-      } catch (err) { status.className = "accounting-banner error"; status.textContent = err.message; }
+        const counts = payload.message_counts?.[connection.account_email] || {};
+        setAccountingMailStatus("accounting-banner", `Gmail backend ${connection.account_email || accountingGmailAccount()}: ${connection.authorized ? "conectado" : "sin autorización"} · automatización ${connection.auto_enabled ? "activa" : "inactiva"} · última sync ${connection.last_sync_at || "-"} · próxima ${connection.next_sync_at || "-"} · mensajes ${Object.entries(counts).map(([k,v]) => `${k}:${v}`).join(", ") || "0"}${payload.oauth_configured ? "" : " · OAuth no configurado en servidor"}`);
+      } catch (err) { setAccountingMailStatus("accounting-banner error", err.message); }
     }
     function summarizeAccountingOutlook(result) {
       const history = result.card_history || {};
@@ -3134,18 +3172,14 @@ def som_web_home() -> HTMLResponse:
       return parts.join(" · ");
     }
     async function runAccountingOutlookSync(historyOnly) {
-      const status = $("accOutlookStatus");
-      status.className = "muted";
-      status.textContent = historyOnly ? "Cargando historial BAC 2025-2026..." : "Revisando Outlook/BAC local manual...";
+      setAccountingMailStatus("muted", historyOnly ? "Cargando historial BAC 2025-2026..." : "Revisando Outlook/BAC local manual...");
       try {
         const result = historyOnly
           ? await postJSON("/accounting/outlook-local/corporate-card-history", {})
           : await postJSON("/accounting/outlook-local/scan", { max_messages:100, process_corporate_cards:true, post_corporate_card_history:true });
-        status.className = "muted";
-        status.textContent = summarizeAccountingOutlook(result);
+        setAccountingMailStatus("muted", summarizeAccountingOutlook(result));
       } catch (err) {
-        status.className = "error";
-        status.textContent = err.message;
+        setAccountingMailStatus("error", err.message);
       }
     }
     function renderItpWeb(target) {
