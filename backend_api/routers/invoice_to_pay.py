@@ -335,7 +335,7 @@ def _filter_open_biweekly_rows(cur, company: str, rows: list[dict]) -> list[dict
         obligation_ids = sorted(set(raw_ids))
         cur.execute(
             """
-            SELECT id, company_code, balance, status, active
+            SELECT id, company_code, payee_name, reference, balance, status, active
             FROM payment_obligations
             WHERE company_code=%s
               AND id = ANY(%s)
@@ -385,6 +385,11 @@ def _filter_open_biweekly_rows(cur, company: str, rows: list[dict]) -> list[dict
             if not open_obligation:
                 continue
             item["origin_company_code"] = row_company
+            invoice_reference = display_itp_invoice_reference(open_obligation.get("reference"))
+            item["reference"] = invoice_reference
+            item["notes"] = f"Aplicar pago a ITP #{raw_obligation_id} | Factura: {invoice_reference}"
+            if open_obligation.get("payee_name"):
+                item["name"] = open_obligation.get("payee_name")
             item["amount"] = float(_money(open_obligation.get("balance")))
             item["balance"] = float(_money(open_obligation.get("balance")))
             filtered.append(item)
@@ -1965,6 +1970,7 @@ def biweekly_obligations_preview(
                 category = "Proveedores"
             else:
                 continue
+            invoice_reference = display_itp_invoice_reference(ob.get("reference"))
             _append_unique_biweekly_row(rows, seen_rows, row(
                 category,
                 ob.get("payee_name") or ob.get("reference") or category,
@@ -1972,10 +1978,10 @@ def biweekly_obligations_preview(
                 ob.get("currency") or "CRC",
                 ob.get("payment_bank_account_name") or ob.get("payment_bank_account_code") or ob.get("payment_bank") or "",
                 "ITP",
-                f"Aplicar pago a ITP #{ob.get('id')} | Ref: {ob.get('reference') or ''}".strip(),
+                f"Aplicar pago a ITP #{ob.get('id')} | Factura: {invoice_reference}".strip(),
                 _biweekly_payment_date(period, int(fortnight or 1), str(schedule_date), category),
                 obligation_id=ob.get("id"),
-                reference=ob.get("reference") or "",
+                reference=invoice_reference,
                 balance=ob.get("balance"),
                 origin_company_code=ob.get("company_code") or company,
             ))
