@@ -387,20 +387,29 @@ def create_ot_log(
     )
 
     row = cur.fetchone()
-    create_notifications(
-        cur,
-        get_admin_master_users(cur),
-        "Horas pendientes de aprobar",
-        f"{target_usuario} registró {duracion:.2f} horas de {tipo.lower()} para revisión.",
-        module_code="hhrre",
-        entity_type="hr_ot_log",
-        entity_id=row.get("id"),
-        metadata={"usuario": target_usuario, "tipo": tipo, "duracion_horas": duracion, "referencia": referencia},
-        created_by=user.get("usuario"),
-        dedupe_key=f"hr-hours-created:{row.get('id')}",
-    )
+    notification_error = None
+    cur.execute("SAVEPOINT hr_ot_log_notifications")
+    try:
+        create_notifications(
+            cur,
+            get_admin_master_users(cur),
+            "Horas pendientes de aprobar",
+            f"{target_usuario} registró {duracion:.2f} horas de {tipo.lower()} para revisión.",
+            module_code="hhrre",
+            entity_type="hr_ot_log",
+            entity_id=row.get("id"),
+            metadata={"usuario": target_usuario, "tipo": tipo, "duracion_horas": duracion, "referencia": referencia},
+            created_by=user.get("usuario"),
+            dedupe_key=f"hr-hours-created:{row.get('id')}",
+        )
+        cur.execute("RELEASE SAVEPOINT hr_ot_log_notifications")
+    except Exception as exc:
+        cur.execute("ROLLBACK TO SAVEPOINT hr_ot_log_notifications")
+        notification_error = str(exc)
     conn.commit()
     row["hours_status"] = _build_hours_summary(target_usuario, conn, inicio.year, inicio.month)
+    if notification_error:
+        row["notification_warning"] = notification_error[:500]
     return row
 
 
@@ -564,18 +573,23 @@ def update_ot_log(
         )
     )
     updated = cur.fetchone()
-    create_notification(
-        cur,
-        updated.get("usuario"),
-        "Registro de horas actualizado",
-        f"Tu registro de {updated.get('duracion_horas')} horas fue marcado como {estado}.",
-        module_code="hhrre",
-        entity_type="hr_ot_log",
-        entity_id=log_id,
-        metadata={"estado": estado, "duracion_horas": float(updated.get("duracion_horas") or 0)},
-        created_by=user.get("usuario"),
-        dedupe_key=f"hr-hours-status:{log_id}:{estado}",
-    )
+    cur.execute("SAVEPOINT hr_ot_log_update_notification")
+    try:
+        create_notification(
+            cur,
+            updated.get("usuario"),
+            "Registro de horas actualizado",
+            f"Tu registro de {updated.get('duracion_horas')} horas fue actualizado.",
+            module_code="hhrre",
+            entity_type="hr_ot_log",
+            entity_id=log_id,
+            metadata={"duracion_horas": float(updated.get("duracion_horas") or 0)},
+            created_by=user.get("usuario"),
+            dedupe_key=f"hr-hours-updated:{log_id}:{updated.get('updated_at')}",
+        )
+        cur.execute("RELEASE SAVEPOINT hr_ot_log_update_notification")
+    except Exception:
+        cur.execute("ROLLBACK TO SAVEPOINT hr_ot_log_update_notification")
     conn.commit()
     return updated
 
