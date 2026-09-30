@@ -96,6 +96,17 @@ def _money(value) -> Decimal:
     return Decimal(str(value or 0).replace(",", "")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
+def _normalize_biweekly_category(value: str | None) -> str:
+    text = unicodedata.normalize("NFKD", str(value or "").strip())
+    ascii_text = text.encode("ascii", "ignore").decode("ascii").upper()
+    mapping = {
+        "VIATICOS": "Viáticos",
+        "TELEFONIA": "Telefonia",
+        "TARJETAS DE CREDITO": "Tarjetas de credito",
+    }
+    return mapping.get(ascii_text, str(value or "").strip() or "Otros")
+
+
 def _employee_full_name(emp: dict) -> str:
     return f"{emp.get('nombre') or ''} {emp.get('apellidos') or ''}".strip()
 
@@ -219,7 +230,8 @@ FIXED_BIWEEKLY_PAYMENT_CATEGORIES = {
 
 def _biweekly_payment_date(period: str, fortnight: int, value: str | None, category: str | None = None) -> str:
     fallback = _fortnight_due_date(period, fortnight)
-    if str(category or "").strip().upper() in FIXED_BIWEEKLY_PAYMENT_CATEGORIES:
+    normalized_category = unicodedata.normalize("NFKD", str(category or "").strip()).encode("ascii", "ignore").decode("ascii").upper()
+    if normalized_category in FIXED_BIWEEKLY_PAYMENT_CATEGORIES:
         return fallback
     text = str(value or "").strip()
     if not text:
@@ -278,7 +290,7 @@ def _biweekly_row_key(row: dict) -> tuple:
         return ("ITP", int(obligation_id))
     return (
         "MANUAL",
-        str(row.get("category") or "").strip().upper(),
+        _normalize_biweekly_category(row.get("category")).upper(),
         str(row.get("name") or "").strip().upper(),
         str(row.get("currency") or "CRC").strip().upper(),
         str(_money(row.get("amount"))),
@@ -296,7 +308,7 @@ def _biweekly_row_identity(row: dict) -> tuple:
         return ("ITP", int(obligation_id))
     return (
         "MANUAL",
-        str(row.get("category") or "").strip().upper(),
+        _normalize_biweekly_category(row.get("category")).upper(),
         str(row.get("name") or "").strip().upper(),
         str(row.get("currency") or "CRC").strip().upper(),
         str(row.get("reference") or "").strip().upper(),
@@ -503,7 +515,8 @@ def _ensure_biweekly_schema(cur):
         VALUES
           ('5.1.03', 'Servicios básicos', 'EXPENSE', 'DEBIT', 3, '5.1', TRUE, TRUE),
           ('5.1.13', 'Gastos por supermercado', 'EXPENSE', 'DEBIT', 3, '5.1', TRUE, TRUE),
-          ('5.1.14', 'Gastos por alimentación', 'EXPENSE', 'DEBIT', 3, '5.1', TRUE, TRUE)
+          ('5.1.14', 'Gastos por alimentación', 'EXPENSE', 'DEBIT', 3, '5.1', TRUE, TRUE),
+          ('500-001-001-044', 'Viáticos', 'EXPENSE', 'DEBIT', 3, '5.1', TRUE, TRUE)
         ON CONFLICT(account_code) DO UPDATE
         SET account_name=EXCLUDED.account_name, accepts_posting=TRUE, active=TRUE
     """)
@@ -698,7 +711,7 @@ def _save_biweekly_draft(cur, company: str, period: str, fortnight: int, rows: l
             (
                 batch_id,
                 company,
-                str(item.get("category") or "Otros").strip(),
+                _normalize_biweekly_category(item.get("category")),
                 str(item.get("name") or "").strip() or "Sin beneficiario",
                 amount,
                 str(item.get("currency") or "CRC").upper(),
@@ -742,13 +755,14 @@ def _exchange_rate(cur, value_date: str) -> Decimal:
 
 
 def _debit_account_for(category: str):
+    category = _normalize_biweekly_category(category)
     mapping = {
         "Planilla": ("2.1.02.07", "Salarios por pagar"),
         "CCSS": ("2.1.05.01", "Obligaciones patronales por pagar-CCSS"),
         "IVA": ("2.1.02.03", "Impuesto sobre valor agregado (IVA) por pagar"),
         "Tarjetas de credito": ("2.1.02.10", "Tarjeta corporativa BAC por pagar"),
         "Telefonia": ("500-001-001-023", "Telefonos"),
-        "Viaticos": ("500-001-001-044", "Viaticos"),
+        "Viáticos": ("500-001-001-044", "Viáticos"),
         "Alquiler": ("5.1.05", "Gastos por alquiler"),
         "Internet": ("5.1.03", "Servicios básicos"),
         "Surveyors": ("2.1.01.01", "Cuentas por pagar-comerciales"),
@@ -1765,6 +1779,7 @@ def biweekly_obligations_preview(
     aaron_bank = "CR27010200009688657826"
 
     def suggested_bank(category, name, currency, current=""):
+        category = _normalize_biweekly_category(category)
         if category == "Tarjetas de credito":
             return "BAC"
         if "aaron avila" in str(name or "").lower():
@@ -1774,6 +1789,7 @@ def biweekly_obligations_preview(
         return current or ""
 
     def row(category, name, amount, currency="CRC", bank_account="", source="MANUAL", notes="", due_date=None, obligation_id=None, reference="", balance=None, origin_company_code=None):
+        category = _normalize_biweekly_category(category)
         amount = _money(amount)
         currency = currency or "CRC"
         return {
@@ -1959,14 +1975,17 @@ def biweekly_obligations_preview(
             schedule_date = _coerce_date(ob.get("schedule_date") or ob.get("planned_payment_date") or ob.get("due_date") or ob.get("issue_date"), due_start)
             if schedule_date < due_start or schedule_date > due_end:
                 continue
+            obligation_type_upper = str(ob.get("obligation_type") or "").upper()
             haystack = " ".join(str(ob.get(k) or "") for k in ("payee_name", "obligation_type", "notes", "reference")).lower()
             if "alquiler" in haystack or "rent" in haystack or "prime properties" in haystack:
                 category = "Alquiler"
             elif "internet" in haystack or "american data" in haystack:
                 category = "Internet"
-            elif "surveyor" in haystack or str(ob.get("obligation_type") or "").upper() == "SURVEYOR_FEE":
+            elif "surveyor" in haystack or obligation_type_upper == "SURVEYOR_FEE":
+                if not ob.get("planned_payment_date"):
+                    continue
                 category = "Surveyors"
-            elif str(ob.get("obligation_type") or "").upper() in {"SUPPLIER_INVOICE", "SUPPLIER_CREDIT_NOTE"}:
+            elif obligation_type_upper in {"SUPPLIER_INVOICE", "SUPPLIER_CREDIT_NOTE"}:
                 category = "Proveedores"
             else:
                 continue
@@ -2058,7 +2077,7 @@ def biweekly_obligations_apply(
         batch_id = cur.fetchone()["id"]
         for idx, item in enumerate(rows, start=1):
             try:
-                category = str(item.get("category") or "").strip()
+                category = _normalize_biweekly_category(item.get("category"))
                 beneficiary = str(item.get("name") or "").strip()
                 bank_code = str(item.get("bank_accounting_code") or "").strip()
                 voucher = str(item.get("bank_voucher") or "").strip()

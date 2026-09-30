@@ -20,7 +20,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20260930-services-pagination-v1"
+_ASSET_VERSION = "20260930-biweekly-obligations-v1"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -4025,7 +4025,7 @@ def som_web_home() -> HTMLResponse:
                   <button onclick="addItpBiweeklyLine('Planilla')">+ Planilla</button>
                   <button onclick="addItpBiweeklyLine('CCSS')">+ CCSS</button>
                   <button onclick="addItpBiweeklyLine('Surveyors')">+ Surveyors</button>
-                  <button onclick="addItpBiweeklyLine('Viaticos')">+ Viaticos</button>
+                  <button onclick="addItpBiweeklyLine('Viáticos')">+ Viáticos</button>
                   <button onclick="addItpBiweeklyLine('Telefonia')">+ Telefonia</button>
                   <button onclick="addItpBiweeklyLine('Otros')">+ Otros</button>
                   <button class="wide" onclick="editSelectedItpBiweeklyLine()">Editar seleccionada</button>
@@ -4045,7 +4045,7 @@ def som_web_home() -> HTMLResponse:
       itpBiweeklySuppressed = new Set();
       renderItpBiweeklyTable();
     }
-    const ITP_BI_CATEGORIES = ["Planilla","CCSS","IVA","Surveyors","Viaticos","Tarjetas de credito","Alquiler","Internet","Telefonia","Proveedores","Otros"];
+    const ITP_BI_CATEGORIES = ["Planilla","CCSS","IVA","Surveyors","Viáticos","Tarjetas de credito","Alquiler","Internet","Telefonia","Proveedores","Otros"];
     const ITP_BI_BANK_ACCOUNTS = [
       ["1.1.02.02.01","Banco BAC San Jose CRC"],
       ["1.1.02.02.02","Banco BAC San Jose USD"],
@@ -4065,6 +4065,7 @@ def som_web_home() -> HTMLResponse:
       return "Banco";
     }
     function normalizeItpBiPaymentRow(row) {
+      if (String(row.category || "").trim().toLowerCase() === "viaticos") row.category = "Viáticos";
       row.payment_method = String(row.payment_method || "BANK").toUpperCase();
       if (row.payment_method === "CARD_3155") row.payment_method = "CARD_BAC_3155";
       if (row.payment_method === "HAZEL_CONTRIBUTION") row.payment_method = "THIRD_PARTY_HAZEL";
@@ -4204,21 +4205,21 @@ def som_web_home() -> HTMLResponse:
         if (idx === selectedItpBiweeklyIndex) classes.push("itp-bi-selected");
         return `<tr class="${classes.join(" ")}" onclick="selectItpBiweeklyLine(${idx})">
           <td><input type="checkbox" data-bi-check="${idx}" ${itpBiweeklyChecked.has(idx) ? "checked" : ""} onclick="event.stopPropagation(); toggleItpBiweeklyChecked(${idx}, this.checked)" /></td>
-          <td><select data-bi="${idx}" data-field="category" onclick="event.stopPropagation()" onfocus="selectedItpBiweeklyIndex=${idx}">${itpBiOptions(ITP_BI_CATEGORIES, row.category || "Otros")}</select></td>
-          <td><input data-bi="${idx}" data-field="name" value="${esc(row.name || "")}" onclick="event.stopPropagation()" onfocus="selectedItpBiweeklyIndex=${idx}" /></td>
-          <td><input data-bi="${idx}" data-field="amount" type="number" step="0.01" value="${esc(row.amount || 0)}" onclick="event.stopPropagation()" onfocus="selectedItpBiweeklyIndex=${idx}" /></td>
-          <td><select data-bi="${idx}" data-field="currency" onclick="event.stopPropagation()" onfocus="selectedItpBiweeklyIndex=${idx}"><option${row.currency === "CRC" ? " selected" : ""}>CRC</option><option${row.currency === "USD" ? " selected" : ""}>USD</option></select></td>
+          <td><select data-bi="${idx}" data-field="category" onclick="event.stopPropagation()" onfocus="selectedItpBiweeklyIndex=${idx}" onchange="syncItpBiweeklyField(${idx}, this)">${itpBiOptions(ITP_BI_CATEGORIES, row.category || "Otros")}</select></td>
+          <td><input data-bi="${idx}" data-field="name" value="${esc(row.name || "")}" onclick="event.stopPropagation()" onfocus="selectedItpBiweeklyIndex=${idx}" oninput="syncItpBiweeklyField(${idx}, this)" /></td>
+          <td><input data-bi="${idx}" data-field="amount" type="number" step="0.01" value="${esc(row.amount || 0)}" onclick="event.stopPropagation()" onfocus="selectedItpBiweeklyIndex=${idx}" oninput="syncItpBiweeklyField(${idx}, this)" /></td>
+          <td><select data-bi="${idx}" data-field="currency" onclick="event.stopPropagation()" onfocus="selectedItpBiweeklyIndex=${idx}" onchange="syncItpBiweeklyField(${idx}, this)"><option${row.currency === "CRC" ? " selected" : ""}>CRC</option><option${row.currency === "USD" ? " selected" : ""}>USD</option></select></td>
           <td>${esc(status)}</td>
           <td><select data-bi="${idx}" data-field="payment_method" onclick="event.stopPropagation()" onfocus="selectedItpBiweeklyIndex=${idx}" onchange="syncItpBiweeklyPaymentMethod(${idx})">${itpBiOptions(ITP_BI_PAYMENT_METHODS, row.payment_method || "BANK")}</select></td>
-          <td><input data-bi="${idx}" data-field="bank_account" value="${esc(row.bank_account || "")}" onclick="event.stopPropagation()" onfocus="selectedItpBiweeklyIndex=${idx}" /></td>
-          <td><select data-bi="${idx}" data-field="bank_accounting_code" onclick="event.stopPropagation()" onfocus="selectedItpBiweeklyIndex=${idx}">${itpBiOptions(ITP_BI_BANK_ACCOUNTS, row.bank_accounting_code || "1.1.02.02.01")}</select></td>
-          <td><input data-bi="${idx}" data-field="bank_voucher" value="${esc(row.bank_voucher || "")}" onclick="event.stopPropagation()" onfocus="selectedItpBiweeklyIndex=${idx}" /></td>
-          <td><input data-bi="${idx}" data-field="due_date" type="date" value="${esc(String(row.due_date || "").slice(0,10))}" onclick="event.stopPropagation()" onfocus="selectedItpBiweeklyIndex=${idx}" /></td>
+          <td><input data-bi="${idx}" data-field="bank_account" value="${esc(row.bank_account || "")}" onclick="event.stopPropagation()" onfocus="selectedItpBiweeklyIndex=${idx}" oninput="syncItpBiweeklyField(${idx}, this)" /></td>
+          <td><select data-bi="${idx}" data-field="bank_accounting_code" onclick="event.stopPropagation()" onfocus="selectedItpBiweeklyIndex=${idx}" onchange="syncItpBiweeklyField(${idx}, this)">${itpBiOptions(ITP_BI_BANK_ACCOUNTS, row.bank_accounting_code || "1.1.02.02.01")}</select></td>
+          <td><input data-bi="${idx}" data-field="bank_voucher" value="${esc(row.bank_voucher || "")}" onclick="event.stopPropagation()" onfocus="selectedItpBiweeklyIndex=${idx}" oninput="syncItpBiweeklyField(${idx}, this)" /></td>
+          <td><input data-bi="${idx}" data-field="due_date" type="date" value="${esc(String(row.due_date || "").slice(0,10))}" onclick="event.stopPropagation()" onfocus="selectedItpBiweeklyIndex=${idx}" onchange="syncItpBiweeklyField(${idx}, this)" /></td>
           <td>${esc(row.obligation_id || "")}</td>
-          <td><input data-bi="${idx}" data-field="reference" value="${esc(row.reference || "")}" onclick="event.stopPropagation()" onfocus="selectedItpBiweeklyIndex=${idx}" /></td>
+          <td><input data-bi="${idx}" data-field="reference" value="${esc(row.reference || "")}" onclick="event.stopPropagation()" onfocus="selectedItpBiweeklyIndex=${idx}" oninput="syncItpBiweeklyField(${idx}, this)" /></td>
           <td style="text-align:right">${esc(row.obligation_id ? itpBiMoney(row.balance || row.amount || 0) : "")}</td>
           <td>${esc(row.source || "")}${row.origin_company_code && row.origin_company_code !== selectedCompany() ? ` / ${esc(row.origin_company_code)}` : ""}</td>
-          <td><input data-bi="${idx}" data-field="notes" value="${esc(row.notes || "")}" onclick="event.stopPropagation()" onfocus="selectedItpBiweeklyIndex=${idx}" /></td>
+          <td><input data-bi="${idx}" data-field="notes" value="${esc(row.notes || "")}" onclick="event.stopPropagation()" onfocus="selectedItpBiweeklyIndex=${idx}" oninput="syncItpBiweeklyField(${idx}, this)" /></td>
           <td><button class="brown" onclick="event.stopPropagation(); deleteItpBiweeklyLine(${idx})">Quitar</button></td>
         </tr>`;
       };
@@ -4271,7 +4272,15 @@ def som_web_home() -> HTMLResponse:
         rows[idx][field] = ["amount","balance"].includes(field) ? Number(input.value || 0) : input.value;
       });
       itpBiweeklyRows = rows.map(row => normalizeItpBiPaymentRow(row));
-      return rows;
+      return itpBiweeklyRows;
+    }
+    function syncItpBiweeklyField(idx, input) {
+      if (!itpBiweeklyRows[idx] || !input) return;
+      const field = input.dataset.field;
+      if (!field) return;
+      itpBiweeklyRows[idx][field] = ["amount","balance"].includes(field) ? Number(input.value || 0) : input.value;
+      normalizeItpBiPaymentRow(itpBiweeklyRows[idx]);
+      renderItpBiweeklySummary();
     }
     function syncItpBiweeklyPaymentMethod(idx) {
       collectItpBiweeklyRows();
