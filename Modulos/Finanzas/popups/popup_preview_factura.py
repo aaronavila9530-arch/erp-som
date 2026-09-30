@@ -49,21 +49,39 @@ class PopupPreviewFactura(tk.Toplevel):
 
         self.title("Preview Factura")
         self.geometry("760x650")
+        self.minsize(720, 560)
         self.transient(parent)
         self.grab_set()
 
         self._build_ui()
+        self.bind("<MouseWheel>", self._on_mousewheel)
+        self.bind("<Button-4>", self._on_mousewheel)
+        self.bind("<Button-5>", self._on_mousewheel)
 
     # ============================================================
     # UI
     # ============================================================
     def _build_ui(self):
 
-        container = tk.Frame(self, bg="white")
-        container.pack(fill="both", expand=True, padx=20, pady=20)
+        root = tk.Frame(self, bg="white")
+        root.pack(fill="both", expand=True)
+
+        scroll_host = tk.Frame(root, bg="white")
+        scroll_host.pack(fill="both", expand=True)
+
+        self.canvas = tk.Canvas(scroll_host, bg="white", highlightthickness=0)
+        scrollbar = ttk.Scrollbar(scroll_host, orient="vertical", command=self.canvas.yview)
+        self.canvas.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side="right", fill="y")
+        self.canvas.pack(side="left", fill="both", expand=True)
+
+        container = tk.Frame(self.canvas, bg="white")
+        self.canvas_window = self.canvas.create_window((0, 0), window=container, anchor="nw")
+        container.bind("<Configure>", self._sync_scroll_region)
+        self.canvas.bind("<Configure>", self._sync_canvas_width)
 
         pdf = tk.Frame(container, bg="white", bd=1, relief="solid", width=690, height=545)
-        pdf.pack(fill="both", expand=True, padx=10, pady=10)
+        pdf.pack(fill="both", expand=True, padx=30, pady=(20, 10))
         pdf.pack_propagate(False)
 
         def lbl(parent, text, bold=False, anchor="w", fg="black", size=10, justify="left"):
@@ -82,7 +100,7 @@ class PopupPreviewFactura(tk.Toplevel):
         cliente = _safe(self.data.get("cliente") or self.data.get("nombre_cliente")).upper()
         place = _safe(self.data.get("place") or self.data.get("lugar")).upper()
         survey = _safe(self.data.get("survey") or self.data.get("operacion")).upper()
-        description = _safe(self.data.get("descripcion") or self.data.get("descripcion_servicio")).upper()
+        description = self._description_text()
         terms = _safe(self.data.get("payment_terms"))
         if not terms:
             days = _safe(self.data.get("termino_pago"), "0")
@@ -131,7 +149,21 @@ class PopupPreviewFactura(tk.Toplevel):
         desc_box = tk.Frame(pdf, bg="white", bd=1, relief="solid", height=180)
         desc_box.pack(fill="x", padx=18)
         desc_box.pack_propagate(False)
-        lbl(desc_box, description, size=11, wraplength=610, justify="left").pack(anchor="w", padx=8, pady=(8, 0))
+        desc_text = tk.Text(
+            desc_box,
+            height=8,
+            wrap="word",
+            bg="white",
+            fg="black",
+            relief="flat",
+            bd=0,
+            font=("Times New Roman", 11, "normal"),
+            padx=8,
+            pady=8,
+        )
+        desc_text.pack(fill="both", expand=True)
+        desc_text.insert("1.0", description)
+        desc_text.config(state="disabled")
         if place:
             lbl(desc_box, place, size=11).pack(anchor="w", padx=8, pady=(18, 0))
         if survey:
@@ -148,7 +180,7 @@ class PopupPreviewFactura(tk.Toplevel):
         lbl(total_box, total, bold=True, size=12, anchor="center").pack(side="left", ipadx=13, ipady=5)
 
         bank = tk.Frame(container, bg="white")
-        bank.pack(fill="x", padx=34, pady=(4, 0))
+        bank.pack(fill="x", padx=54, pady=(4, 14))
         bank_lines = [
             "Beneficiary Bank: BCR Banco de Costa Rica",
             "Direccion fisica: San Jose de Costa Rica",
@@ -167,16 +199,51 @@ class PopupPreviewFactura(tk.Toplevel):
             color = "red" if text.startswith("IBAN CODE") or text.startswith("NOTE") or text.startswith("ALL CHARGES") else "black"
             lbl(bank, text, fg=color, size=9).pack(anchor="w")
 
-        # ====================================================
-        # BOTONES
-        # ====================================================
-        actions = tk.Frame(container, bg="white")
-        actions.pack(fill="x", pady=15)
+        actions = tk.Frame(root, bg="white", bd=1, relief="ridge")
+        actions.pack(fill="x", side="bottom", padx=0, pady=0)
 
-        ttk.Button(actions, text="⬅ Atrás", command=self.destroy).pack(side="left")
+        ttk.Button(actions, text="Atrás", command=self.destroy).pack(side="left", padx=16, pady=10)
 
         if self.on_confirm:
-            ttk.Button(actions, text="Facturar", command=self._confirmar).pack(side="right")
+            ttk.Button(actions, text="Facturar", command=self._confirmar).pack(side="right", padx=16, pady=10)
+
+    def _description_text(self):
+        raw = _safe(self.data.get("descripcion") or self.data.get("descripcion_servicio"))
+        lines = [raw.upper()] if raw else []
+
+        period = _safe(self.data.get("periodo_operacion") or self.data.get("periodo"))
+        report = _safe(self.data.get("num_informe") or self.data.get("numero_informe"))
+        vessel = _safe(self.data.get("buque") or self.data.get("buque_contenedor"))
+
+        extra = []
+        if report:
+            extra.append(f"REPORT: {report}")
+        if vessel:
+            extra.append(f"VESSEL / CONTAINER: {vessel}")
+        if period:
+            extra.append(f"OPERATION PERIOD: {period}")
+
+        if extra:
+            if lines:
+                lines.append("")
+            lines.extend(extra)
+
+        return "\n".join(lines) or "SIN DESCRIPCION"
+
+    def _sync_scroll_region(self, *_):
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+
+    def _sync_canvas_width(self, event):
+        self.canvas.itemconfigure(self.canvas_window, width=event.width)
+
+    def _on_mousewheel(self, event):
+        if getattr(event, "num", None) == 4:
+            self.canvas.yview_scroll(-3, "units")
+        elif getattr(event, "num", None) == 5:
+            self.canvas.yview_scroll(3, "units")
+        else:
+            delta = int(-1 * (event.delta / 120))
+            self.canvas.yview_scroll(delta * 3, "units")
 
     # ============================================================
     # CONFIRMACIÓN
