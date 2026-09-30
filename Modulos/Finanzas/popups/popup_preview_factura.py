@@ -125,7 +125,7 @@ class PopupPreviewFactura(tk.Toplevel):
         page_x = 36
         page_y = 28
         page_w = 900
-        page_h = 1060
+        page_h = 1250
         margin = 28
         left = page_x + margin
         right = page_x + page_w - margin
@@ -214,7 +214,7 @@ class PopupPreviewFactura(tk.Toplevel):
             ("SWIFT N° BCRICRSJ", "black"),
             ("Account: 308258-5", "black"),
             ("", "black"),
-            (f"IBAN CODE: {IBAN_CODE}", "red"),
+            (f"IBAN ACCOUNT: {IBAN_CODE}", "red"),
             (f"Beneficiary: {COMPANY_LEGAL_NAME}", "black"),
             (f"Address: {COMPANY_ADDRESS_2}", "black"),
             ("Account: 308258-5 BCRICRSJ", "black"),

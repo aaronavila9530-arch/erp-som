@@ -5979,7 +5979,7 @@ def som_web_home() -> HTMLResponse:
               <datalist id="advSurveyList"></datalist>
               <label class="wide">Descripción<textarea id="adv_desc"></textarea></label>
             </div>
-            <div class="status">La cuenta bancaria se mantiene fija: BCR Banco de Costa Rica · IBAN CR49015201308000025850 · SWIFT BCRICRSJ.</div>
+            <div class="status">La cuenta bancaria se mantiene fija: BCR Banco de Costa Rica · IBAN ACCOUNT CR49015201308000025850 · SWIFT BCRICRSJ.</div>
             <div class="md-actions"><button class="green" onclick="saveAdvanceInvoice()">Facturar</button><button class="secondary" onclick="closeModal()">Cancelar</button></div>
             <div id="advMsg" class="status hidden"></div>
           </div>

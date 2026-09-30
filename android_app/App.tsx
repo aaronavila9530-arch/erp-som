@@ -17087,6 +17087,18 @@ function InvoicePdfPreview({ form, invoiceNumber }: { form: Record<string, strin
               <Text style={styles.invoiceTotalLabel}>TOTAL</Text>
               <Text style={styles.invoiceTotalValue}>{total}</Text>
             </View>
+            <View style={styles.invoiceBankBlock}>
+              <Text style={styles.invoiceBankText}>Beneficiary Bank: BCR Banco de Costa Rica</Text>
+              <Text style={styles.invoiceBankText}>Direccion fisica: San Jose de Costa Rica</Text>
+              <Text style={styles.invoiceBankText}>SWIFT N° BCRICRSJ</Text>
+              <Text style={styles.invoiceBankText}>Account: 308258-5</Text>
+              <Text style={styles.invoiceBankIban}>IBAN ACCOUNT: CR49015201308000025850</Text>
+              <Text style={styles.invoiceBankText}>Beneficiary: MSL SRL Marine Surveyors and Logistics Group</Text>
+              <Text style={styles.invoiceBankText}>Address: Alajuela, Rio Segundo, Plaza Aeropuerto, Local G-14</Text>
+              <Text style={styles.invoiceBankText}>Account: 308258-5 BCRICRSJ</Text>
+              <Text style={styles.invoiceBankNote}>NOTE: PAYMENTS TO BE DRAWN ON C.R BANK FREE OF</Text>
+              <Text style={styles.invoiceBankNote}>ALL CHARGES / IN U.S DOLLARS</Text>
+            </View>
           </View>
         </View>
       </ScrollView>
@@ -18343,6 +18355,10 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     padding: 12
   },
+  invoiceBankBlock: { marginTop: 34, paddingLeft: 16 },
+  invoiceBankIban: { color: "red", fontFamily: "serif", fontSize: 12, fontWeight: "900", marginBottom: 7, marginTop: 14 },
+  invoiceBankNote: { color: "red", fontFamily: "serif", fontSize: 11, fontWeight: "900", marginTop: 4 },
+  invoiceBankText: { color: "black", fontFamily: "serif", fontSize: 12, fontWeight: "700", marginBottom: 5 },
   invoiceBoxText: { color: "#101828", fontSize: 14, fontWeight: "900", marginBottom: 30 },
   invoiceBrandBlue: { color: "blue", fontFamily: "serif", fontSize: 24, fontWeight: "900", marginBottom: 4 },
   invoiceBrandRed: { color: "red", fontFamily: "serif", fontSize: 20, fontWeight: "900", marginBottom: 4 },

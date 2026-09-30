@@ -218,9 +218,9 @@ def generar_factura_manual_pdf(data: dict) -> str:
         bank_y -= 0.43 * cm
     bank_y -= 0.45 * cm
     c.setFillColor(red)
-    c.drawString(bank_x, bank_y, "IBAN CODE:")
+    c.drawString(bank_x, bank_y, "IBAN ACCOUNT:")
     c.setFillColor(black)
-    c.drawString(bank_x + 2.0 * cm, bank_y, IBAN_CODE)
+    c.drawString(bank_x + 2.55 * cm, bank_y, IBAN_CODE)
     bank_y -= 0.43 * cm
     c.drawString(bank_x, bank_y, f"Beneficiary: {BENEFICIARY}")
     bank_y -= 0.43 * cm
@@ -316,7 +316,7 @@ def generar_factura_manual_word(data: dict) -> str:
         p = doc.add_paragraph()
         run(p, f"{label} {value}", False, None, 10)
     p = doc.add_paragraph()
-    run(p, "IBAN CODE: ", False, (255, 0, 0), 10)
+    run(p, "IBAN ACCOUNT: ", False, (255, 0, 0), 10)
     run(p, IBAN_CODE, False, None, 10)
     for line in [
         f"Beneficiary: {BENEFICIARY}",
