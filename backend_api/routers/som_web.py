@@ -20,7 +20,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20260929-gmail-fiscal-automation-v1"
+_ASSET_VERSION = "20260930-hr-policies-web-v1"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -1133,6 +1133,21 @@ def som_web_home() -> HTMLResponse:
     .hr-medical-detail h3 { margin:0 0 8px; color:#0f4c81; font-size:17px; overflow-wrap:anywhere; }
     .hr-medical-detail pre { white-space:pre-wrap; font:inherit; line-height:1.42; margin:0 0 12px; color:#334155; }
     .hr-medical-detail-actions { display:grid; gap:8px; }
+    .hr-policy-shell { display:grid; gap:10px; min-width:0; }
+    .hr-policy-actions { display:flex; flex-wrap:wrap; gap:8px; align-items:end; justify-content:space-between; }
+    .hr-policy-actions label { display:grid; gap:4px; min-width:240px; color:#475569; font-size:12px; font-weight:800; text-transform:uppercase; }
+    .hr-policy-tools { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+    .hr-policy-layout { display:grid; grid-template-columns:minmax(280px,.8fr) minmax(0,1.2fr); gap:12px; align-items:start; }
+    .hr-policy-list { display:grid; gap:8px; min-width:0; }
+    .hr-policy-card { border:1px solid #d7e1ec; border-left:5px solid #005da8; border-radius:8px; background:#fff; padding:12px; text-align:left; cursor:pointer; }
+    .hr-policy-card:hover,.hr-policy-card.selected { border-color:#9ec9ee; background:#f6fbff; }
+    .hr-policy-card h3 { margin:0; color:#122033; font-size:16px; line-height:1.25; overflow-wrap:anywhere; }
+    .hr-policy-card p { margin:5px 0 0; color:#607086; }
+    .hr-policy-reader { border:1px solid #d7e1ec; border-radius:8px; background:#fff; padding:16px; min-width:0; position:sticky; top:10px; box-shadow:0 10px 26px rgba(15,31,53,.07); }
+    .hr-policy-reader h3 { margin:0 0 4px; color:#122033; font-size:20px; overflow-wrap:anywhere; }
+    .hr-policy-reader pre { white-space:pre-wrap; font:inherit; line-height:1.5; margin:14px 0; color:#263548; }
+    .hr-policy-reader-footer { border-top:1px solid #e5edf5; padding-top:10px; color:#64748b; font-size:12px; text-align:center; }
+    .hr-policy-reader-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; }
     .hr-salary-history table { min-width:680px; }
     .service-warning { background:#fff3f3; }
     .badge { display:inline-flex; align-items:center; min-height:24px; border:1px solid var(--line); border-radius:999px; padding:2px 9px; background:#f8fafc; font-size:12px; }
@@ -1234,7 +1249,8 @@ def som_web_home() -> HTMLResponse:
       .itp-action-grid { grid-template-columns:1fr; }
       .itp-bi-header,.itp-bi-controls,.itp-bi-body,.itp-bi-summary { grid-template-columns:1fr; }
       .itp-bi-totals { grid-template-columns:1fr; }
-      .finance-filter-row,.finance-filter-row.compact,.hr-hours-filters,.hr-emp-filters,.hr-emp-tab-panel.active,.hr-salary-layout,.hr-salary-pane.active,.hr-salary-expense-grid,.hr-salary-kpis,.hr-medical-filters,.hr-medical-layout { grid-template-columns:1fr; }
+      .finance-filter-row,.finance-filter-row.compact,.hr-hours-filters,.hr-emp-filters,.hr-emp-tab-panel.active,.hr-salary-layout,.hr-salary-pane.active,.hr-salary-expense-grid,.hr-salary-kpis,.hr-medical-filters,.hr-medical-layout,.hr-policy-layout { grid-template-columns:1fr; }
+      .hr-policy-reader { position:static; }
       .accounting-hero,.accounting-grid,.accounting-filters,.accounting-entry-line,.accounting-topline,.accounting-tc { grid-template-columns:1fr; }
       .accounting-entry-lines-box { max-width:calc(100vw - 40px); }
       .surveyor-line { grid-template-columns:1fr; }
@@ -1418,6 +1434,7 @@ def som_web_home() -> HTMLResponse:
     let selectedHrPayrollIndex = null;
     let selectedHrPayslipIndex = null;
     let selectedHrEmployeeIndex = null;
+    let selectedHrPolicyId = null;
     let hrEmployeePage = 1;
     let hrEmployeeTotal = 0;
     let hrPayrollPreview = null;
@@ -8931,9 +8948,26 @@ def som_web_home() -> HTMLResponse:
     }
     function renderHrPolicies() {
       $("hrViewTitle").textContent = "Políticas HHRR";
-      $("hrViewHint").textContent = "Políticas internas y documentos.";
-      $("hrWorkspace").innerHTML = `<div class="hr-toolbar"><label>Categoría<input id="hrPolicyCategory" /></label><button onclick="loadHrPolicies()">Cargar políticas</button></div><div id="hrPoliciesTable"></div>`;
+      $("hrViewHint").textContent = "Seleccione una política para leerla. Admin y master pueden administrarlas.";
+      const canManage = canManageHrPolicies();
+      $("hrWorkspace").innerHTML = `
+        <div class="hr-policy-shell">
+          <div class="hr-policy-actions">
+            <label>Categoría<input id="hrPolicyCategory" placeholder="Ej. Vacaciones, General..." onkeydown="if(event.key==='Enter'){event.preventDefault();loadHrPolicies();}" /></label>
+            <div class="hr-policy-tools">
+              <button onclick="loadHrPolicies()">Cargar políticas</button>
+              <button class="secondary" onclick="clearHrPolicyFilter()">Limpiar</button>
+              ${canManage ? '<button class="green" onclick="openHrPolicyForm()">Agregar política</button>' : ""}
+            </div>
+          </div>
+          <div id="hrPoliciesView"><div class="status">Cargando políticas...</div></div>
+        </div>`;
+      selectedHrPolicyId = null;
       loadHrPolicies();
+    }
+    function canManageHrPolicies() {
+      const role = String(session?.rol || "").toLowerCase();
+      return ["admin","master"].includes(role);
     }
     async function loadHrPolicies() {
       const params = new URLSearchParams({ solo_activas:"true" });
@@ -8941,9 +8975,123 @@ def som_web_home() -> HTMLResponse:
       try {
         const payload = await getJSON(`/hr/policies?${params}`);
         hrRows = rowsList(payload);
-        $("hrPoliciesTable").innerHTML = hrTable(hrRows, ["id","categoria","titulo","contenido","articulo_ref","activo"]);
-        enhanceExcelTables($("hrPoliciesTable"));
-      } catch (err) { $("hrPoliciesTable").innerHTML = `<div class="status error">${esc(err.message)}</div>`; }
+        if (!selectedHrPolicyId || !hrRows.some(row => String(row.id) === String(selectedHrPolicyId))) {
+          selectedHrPolicyId = hrRows[0]?.id || null;
+        }
+        renderHrPoliciesView();
+      } catch (err) { $("hrPoliciesView").innerHTML = `<div class="status error">${esc(err.message)}</div>`; }
+    }
+    function clearHrPolicyFilter() {
+      if ($("hrPolicyCategory")) $("hrPolicyCategory").value = "";
+      selectedHrPolicyId = null;
+      loadHrPolicies();
+    }
+    function selectedHrPolicy() {
+      return hrRows.find(row => String(row.id) === String(selectedHrPolicyId)) || null;
+    }
+    function selectHrPolicy(id) {
+      selectedHrPolicyId = id;
+      renderHrPoliciesView();
+    }
+    function renderHrPoliciesView() {
+      const target = $("hrPoliciesView");
+      if (!target) return;
+      if (!hrRows.length) {
+        target.innerHTML = '<div class="status">Sin políticas activas para esta consulta.</div>';
+        return;
+      }
+      const selected = selectedHrPolicy() || hrRows[0];
+      selectedHrPolicyId = selected?.id || null;
+      const canManage = canManageHrPolicies();
+      const categories = new Set();
+      const list = hrRows.map(row => {
+        categories.add(row.categoria || "General");
+        const active = String(row.id) === String(selectedHrPolicyId);
+        return `
+          <div class="hr-policy-card ${active ? "selected" : ""}" role="button" tabindex="0" onclick="selectHrPolicy(${Number(row.id)})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();selectHrPolicy(${Number(row.id)});}">
+            <h3>${esc(row.titulo || "Sin título")}</h3>
+            <p>${esc(row.categoria || "General")}${row.articulo_ref ? ` · ${esc(row.articulo_ref)}` : ""}</p>
+          </div>`;
+      }).join("");
+      target.innerHTML = `
+        <div class="hr-request-summary">
+          <div class="hr-kpi"><span>Políticas</span><strong>${hrRows.length}</strong></div>
+          <div class="hr-kpi"><span>Categorías</span><strong>${categories.size}</strong></div>
+          <div class="hr-kpi"><span>Modo</span><strong>${canManage ? "Admin" : "Lectura"}</strong></div>
+        </div>
+        <div class="hr-policy-layout">
+          <div class="hr-policy-list">${list}</div>
+          <aside class="hr-policy-reader">${renderHrPolicyReader(selected, canManage)}</aside>
+        </div>`;
+    }
+    function renderHrPolicyReader(row, canManage) {
+      if (!row) return '<div class="status">Seleccione una política.</div>';
+      return `
+        <div class="panel-head">
+          <div>
+            <h3>${esc(row.titulo || "Política")}</h3>
+            <span class="muted">Categoría: ${esc(row.categoria || "General")}${row.articulo_ref ? ` | Referencia: ${esc(row.articulo_ref)}` : ""}</span>
+          </div>
+        </div>
+        <pre>${esc(row.contenido || "")}</pre>
+        <div class="hr-policy-reader-footer">Esta política interna se basa en el Reglamento Interno de Trabajo de MSL, aprobado conforme a la legislación laboral costarricense vigente. En caso de duda o conflicto, prevalece el documento oficial del Reglamento.</div>
+        ${canManage ? `<div class="hr-policy-reader-actions"><button onclick="openHrPolicyForm(${Number(row.id)})">Editar</button><button class="brown" onclick="deleteHrPolicy(${Number(row.id)})">Eliminar</button></div>` : ""}`;
+    }
+    function openHrPolicyForm(id=null) {
+      if (!canManageHrPolicies()) return hrStatus("Solo admin/master pueden modificar políticas.", true);
+      const row = id ? hrRows.find(item => String(item.id) === String(id)) : null;
+      closeModal();
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal">
+            <div class="modal-head">
+              <h2>${row ? "Editar política" : "Agregar política"}</h2>
+              <button class="secondary" onclick="closeModal()">Cerrar</button>
+            </div>
+            <div class="hr-form">
+              <label>Categoría<input id="hrPolCategory" value="${esc(row?.categoria || "")}" /></label>
+              <label>Título<input id="hrPolTitle" value="${esc(row?.titulo || "")}" /></label>
+              <label>Referencia artículo<input id="hrPolArticle" value="${esc(row?.articulo_ref || "")}" /></label>
+              ${row ? `<label>Activa<select id="hrPolActive"><option value="true" ${row.activo ? "selected" : ""}>Sí</option><option value="false" ${!row.activo ? "selected" : ""}>No</option></select></label>` : ""}
+              <label class="wide">Contenido<textarea id="hrPolContent">${esc(row?.contenido || "")}</textarea></label>
+              <div class="wide md-actions"><button onclick="saveHrPolicy(${row ? Number(row.id) : "null"})">Guardar</button><button class="secondary" onclick="closeModal()">Cancelar</button></div>
+            </div>
+          </div>
+        </div>`);
+    }
+    async function saveHrPolicy(id=null) {
+      if (!canManageHrPolicies()) return hrStatus("Solo admin/master pueden guardar políticas.", true);
+      const payload = {
+        categoria:valueFrom("hrPolCategory").trim(),
+        titulo:valueFrom("hrPolTitle").trim(),
+        articulo_ref:valueFrom("hrPolArticle").trim(),
+        contenido:valueFrom("hrPolContent").trim()
+      };
+      if ($("hrPolActive")) payload.activo = valueFrom("hrPolActive") === "true";
+      if (!payload.categoria || !payload.titulo || !payload.contenido) {
+        alert("Categoría, título y contenido son obligatorios.");
+        return;
+      }
+      try {
+        if (id) await sendJSON("PUT", `/hr/policies/${encodeURIComponent(id)}`, payload);
+        else await postJSON("/hr/policies", payload);
+        selectedHrPolicyId = id || null;
+        closeModal();
+        hrStatus(id ? "Política actualizada." : "Política creada.");
+        await loadHrPolicies();
+      } catch (err) { hrStatus(err.message, true); }
+    }
+    async function deleteHrPolicy(id) {
+      if (!canManageHrPolicies()) return hrStatus("Solo admin/master pueden eliminar políticas.", true);
+      const row = hrRows.find(item => String(item.id) === String(id));
+      if (!row) return;
+      if (!confirm(`¿Desea desactivar esta política?\\n\\n${row.titulo || ""}`)) return;
+      try {
+        await sendJSON("DELETE", `/hr/policies/${encodeURIComponent(id)}`);
+        selectedHrPolicyId = null;
+        hrStatus("Política desactivada correctamente.");
+        await loadHrPolicies();
+      } catch (err) { hrStatus(err.message, true); }
     }
     function renderHrNewsForm() {
       $("hrViewTitle").textContent = "Publicar Noticias HHRR";
