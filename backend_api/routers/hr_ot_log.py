@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from psycopg2.extras import RealDictCursor
 from datetime import date, datetime
+from decimal import Decimal
 import unicodedata
 
 from database import get_db
@@ -57,6 +58,18 @@ def _clean_text(value) -> str:
     text = unicodedata.normalize("NFD", text)
     text = "".join(ch for ch in text if unicodedata.category(ch) != "Mn")
     return " ".join(text.lower().split())
+
+
+def _json_safe(value):
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {key: _json_safe(val) for key, val in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    return value
 
 
 def _employee_hours_policy(emp: dict) -> dict:
@@ -410,7 +423,7 @@ def create_ot_log(
     row["hours_status"] = _build_hours_summary(target_usuario, conn, inicio.year, inicio.month)
     if notification_error:
         row["notification_warning"] = notification_error[:500]
-    return row
+    return _json_safe(dict(row))
 
 
 # ============================================================
@@ -591,7 +604,7 @@ def update_ot_log(
     except Exception:
         cur.execute("ROLLBACK TO SAVEPOINT hr_ot_log_update_notification")
     conn.commit()
-    return updated
+    return _json_safe(dict(updated))
 
 
 # ============================================================
