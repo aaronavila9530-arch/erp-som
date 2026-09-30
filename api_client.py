@@ -7518,8 +7518,22 @@ def download_comercial_cotizacion_export_api(cotizacion_id: int, formato: str, o
     )
     raise_for_status_with_detail(resp)
 
+    content_type = (resp.headers.get("content-type") or "").lower()
+    if "application/json" in content_type or "text/" in content_type:
+        try:
+            detail = resp.json().get("detail")
+        except Exception:
+            detail = resp.text[:500]
+        raise Exception(detail or "El backend no devolvió el archivo de cotización.")
+
+    content = resp.content or b""
+    if formato == "pdf" and not content.startswith(b"%PDF"):
+        raise Exception("El backend no devolvió un PDF válido para la cotización.")
+    if formato == "word" and not content.startswith(b"PK"):
+        raise Exception("El backend no devolvió un Word válido para la cotización.")
+
     with open(output_path, "wb") as f:
-        f.write(resp.content)
+        f.write(content)
 
     return output_path
 
