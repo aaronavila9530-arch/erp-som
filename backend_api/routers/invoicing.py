@@ -41,10 +41,10 @@ def _manual_invoice_description_snapshot(description: str | None, place: str | N
     if not place_text or "PLACE:" in text.upper():
         return text
     if not text:
-        return f"PLACE: {place_text}"
+        return place_text
     lines = [line.rstrip() for line in text.splitlines()]
     insert_at = 1 if len(lines) > 1 else len(lines)
-    lines.insert(insert_at, f"PLACE: {place_text}")
+    lines.insert(insert_at, place_text)
     return "\n".join(lines).strip()
 
 # ============================================================
