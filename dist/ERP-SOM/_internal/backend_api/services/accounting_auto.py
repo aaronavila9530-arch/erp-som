@@ -1,6 +1,7 @@
 from psycopg2.extras import RealDictCursor
 from datetime import date
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+import re
 from services.accounting_bank_rules import (
     BCR_COLLECTION_FEE_USD,
     backfill_missing_bank_accounts,
@@ -11,6 +12,31 @@ from services.accounting_bank_rules import (
 )
 from services.employee_payee_rules import employee_obligation_ids, is_employee_payee, load_employee_name_keys
 from services.tenanting import DEFAULT_COMPANY_CODE, company_code as normalize_company_code, ensure_company_column
+
+
+_CR_ELECTRONIC_KEY_RE = re.compile(r"\d{50}")
+
+
+def cr_invoice_number_from_reference(reference: str | None) -> str | None:
+    text = str(reference or "").strip()
+    if not text:
+        return None
+    digits = re.sub(r"\D", "", text)
+    if len(digits) == 50:
+        return digits[21:41]
+    if len(digits) == 20 and digits.startswith("001"):
+        return digits
+    match = _CR_ELECTRONIC_KEY_RE.search(text)
+    if match:
+        return match.group(0)[21:41]
+    return None
+
+
+def display_itp_invoice_reference(reference: str | None) -> str:
+    invoice_number = cr_invoice_number_from_reference(reference)
+    if invoice_number:
+        return invoice_number
+    return str(reference or "").strip()
 
 
 def _apply_current_fiscal_classification(conn):
@@ -1187,7 +1213,7 @@ def sync_itp_to_accounting(conn):
 
         def _itp_document_detail(payee_name: str, reference: str | None, obligation_id: int | None) -> str:
             payee = (payee_name or "").strip() or "N/A"
-            ref = (reference or "").strip()
+            ref = display_itp_invoice_reference(reference)
             if not ref:
                 return f"{payee} ITP {obligation_id}"
             ref_upper = ref.upper()
@@ -1280,6 +1306,10 @@ def sync_itp_to_accounting(conn):
         """)
         cur.execute("""
             ALTER TABLE payment_obligations
+            ADD COLUMN IF NOT EXISTS electronic_key TEXT
+        """)
+        cur.execute("""
+            ALTER TABLE payment_obligations
             ADD COLUMN IF NOT EXISTS payment_bank_account_code TEXT
         """)
         cur.execute("""
@@ -1356,6 +1386,7 @@ def sync_itp_to_accounting(conn):
                 p.payee_type,
                 p.obligation_type,
                 p.reference,
+                p.electronic_key,
                 p.country,
                 p.issue_date,
                 p.last_payment_date,
@@ -1391,6 +1422,7 @@ def sync_itp_to_accounting(conn):
             current_payee_name = payee_name
             current_country = (ob.get("country") or "").strip()
             current_reference = (ob.get("reference") or "").strip()
+            current_electronic_key = (ob.get("electronic_key") or "").strip()
             current_notes = (ob.get("notes") or "").strip()
             payee_type = (ob.get("payee_type") or "").upper()
             obligation_type = (ob.get("obligation_type") or "").upper()
@@ -1429,19 +1461,28 @@ def sync_itp_to_accounting(conn):
             calc_total = abs(total_crc)
 
             def _purchase_xml_status(reference):
-                if not reference:
+                candidates = [
+                    str(value).strip()
+                    for value in (reference, current_electronic_key, obligation_id)
+                    if str(value or "").strip()
+                ]
+                if not candidates:
                     return None
                 cur.execute("""
                     SELECT status, hacienda_status
                     FROM tax_electronic_documents
                     WHERE direction='PURCHASE'
-                      AND (electronic_key=%s OR document_number=%s OR source_id=%s)
+                      AND (
+                            electronic_key = ANY(%s)
+                         OR document_number = ANY(%s)
+                         OR source_id = ANY(%s)
+                      )
                     ORDER BY
                       CASE WHEN source_table='xml_upload' THEN 0 ELSE 1 END,
                       updated_at DESC NULLS LAST,
                       id DESC
                     LIMIT 1
-                """, (str(reference), str(reference), str(obligation_id)))
+                """, (candidates, candidates, candidates))
                 return cur.fetchone()
 
             tax_status = _purchase_xml_status(ob.get("reference"))
@@ -1453,13 +1494,18 @@ def sync_itp_to_accounting(conn):
                 continue
 
             def _purchase_xml_tax_crc(reference, document_total_crc=None):
-                if not reference:
+                candidates = [
+                    str(value).strip()
+                    for value in (reference, current_electronic_key)
+                    if str(value or "").strip()
+                ]
+                if not candidates:
                     return None
                 cur.execute("""
                     SELECT currency_code, exchange_rate, tax_amount
                     FROM tax_electronic_documents
                     WHERE direction='PURCHASE'
-                      AND (electronic_key=%s OR document_number=%s)
+                      AND (electronic_key = ANY(%s) OR document_number = ANY(%s))
                       AND UPPER(COALESCE(status,'')) <> 'REJECTED'
                       AND UPPER(COALESCE(hacienda_status,'')) <> 'REJECTED'
                       AND COALESCE(tax_amount,0) >= 0
@@ -1468,7 +1514,7 @@ def sync_itp_to_accounting(conn):
                       updated_at DESC NULLS LAST,
                       id DESC
                     LIMIT 1
-                """, (str(reference), str(reference)))
+                """, (candidates, candidates))
                 row = cur.fetchone()
                 if not row:
                     return None

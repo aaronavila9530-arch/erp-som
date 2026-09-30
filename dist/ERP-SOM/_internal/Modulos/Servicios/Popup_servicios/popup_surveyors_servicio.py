@@ -37,9 +37,10 @@ class PopupSurveyorsServicio(tk.Toplevel):
         self.on_saved = on_saved
 
         self.title(f"Surveyors del Servicio {consec}")
-        self.geometry("760x560")
+        self.geometry("1120x700")
+        self.minsize(920, 560)
         self.config(bg="white")
-        self.resizable(False, False)
+        self.resizable(True, True)
 
         self.rows = []
         self.catalogo_surveyors = []
@@ -105,22 +106,35 @@ class PopupSurveyorsServicio(tk.Toplevel):
         # -----------------------------------------------------
         table_wrap = tk.Frame(main, bg="white")
         table_wrap.pack(fill="both", expand=True)
+        table_wrap.grid_rowconfigure(0, weight=1)
+        table_wrap.grid_columnconfigure(0, weight=1)
 
         canvas = tk.Canvas(
             table_wrap,
             bg="white",
             highlightthickness=0
         )
-        canvas.pack(side="left", fill="both", expand=True)
+        canvas.grid(row=0, column=0, sticky="nsew")
 
-        scrollbar = ttk.Scrollbar(
+        v_scrollbar = ttk.Scrollbar(
             table_wrap,
             orient="vertical",
             command=canvas.yview
         )
-        scrollbar.pack(side="right", fill="y")
+        v_scrollbar.grid(row=0, column=1, sticky="ns")
 
-        canvas.configure(yscrollcommand=scrollbar.set)
+        h_scrollbar = ttk.Scrollbar(
+            table_wrap,
+            orient="horizontal",
+            command=canvas.xview
+        )
+        h_scrollbar.grid(row=1, column=0, sticky="ew")
+
+        canvas.configure(
+            yscrollcommand=v_scrollbar.set,
+            xscrollcommand=h_scrollbar.set
+        )
+        self._rows_canvas = canvas
 
         self.rows_frame = tk.Frame(canvas, bg="white")
         self.rows_window = canvas.create_window(
@@ -132,15 +146,20 @@ class PopupSurveyorsServicio(tk.Toplevel):
         def _on_frame_configure(event):
             canvas.configure(scrollregion=canvas.bbox("all"))
 
-        def _on_canvas_configure(event):
-            canvas.itemconfig(self.rows_window, width=event.width)
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        def _on_shift_mousewheel(event):
+            canvas.xview_scroll(int(-1 * (event.delta / 120)), "units")
 
         self.rows_frame.bind("<Configure>", _on_frame_configure)
-        canvas.bind("<Configure>", _on_canvas_configure)
+        canvas.bind("<MouseWheel>", _on_mousewheel)
+        canvas.bind("<Shift-MouseWheel>", _on_shift_mousewheel)
 
         # Header grilla
         hdr = tk.Frame(self.rows_frame, bg="white")
         hdr.grid(row=0, column=0, sticky="ew", pady=(0, 6))
+        self.rows_frame.grid_columnconfigure(0, minsize=1040)
         hdr.grid_columnconfigure(1, weight=1)
 
         tk.Label(
@@ -174,6 +193,7 @@ class PopupSurveyorsServicio(tk.Toplevel):
 
         self.rows_container = tk.Frame(self.rows_frame, bg="white")
         self.rows_container.grid(row=1, column=0, sticky="nsew")
+        self.rows_container.grid_columnconfigure(0, minsize=1040)
 
         # -----------------------------------------------------
         # BOTONES SUPERIORES
@@ -299,6 +319,10 @@ class PopupSurveyorsServicio(tk.Toplevel):
             pady=3
         )
         row_wrap.grid_columnconfigure(1, weight=1)
+        row_wrap.grid_columnconfigure(0, minsize=48)
+        row_wrap.grid_columnconfigure(1, minsize=720)
+        row_wrap.grid_columnconfigure(2, minsize=170)
+        row_wrap.grid_columnconfigure(3, minsize=90)
 
         lbl_idx = tk.Label(
             row_wrap,
@@ -311,7 +335,7 @@ class PopupSurveyorsServicio(tk.Toplevel):
         cmb_surveyor = ttk.Combobox(
             row_wrap,
             state="readonly",
-            width=42
+            width=86
         )
         cmb_surveyor["values"] = self._catalogo_display_values()
         cmb_surveyor.grid(row=0, column=1, padx=6, pady=6, sticky="ew")
