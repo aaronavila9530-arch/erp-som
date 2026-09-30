@@ -325,21 +325,22 @@ def _biweekly_match_tokens(value: str) -> set[str]:
 def _filter_open_biweekly_rows(cur, company: str, rows: list[dict]) -> list[dict]:
     if not rows:
         return []
-    obligation_ids = sorted({
-        int(row.get("obligation_id"))
-        for row in rows
-        if str(row.get("obligation_id") or "").strip().isdigit()
-    })
+    obligation_ids_by_company: dict[str, list[int]] = {}
+    for row in rows:
+        if str(row.get("obligation_id") or "").strip().isdigit():
+            row_company = normalize_company_code(header_value=row.get("origin_company_code") or row.get("company_code") or company)
+            obligation_ids_by_company.setdefault(row_company, []).append(int(row.get("obligation_id")))
     open_by_id = {}
-    if obligation_ids:
+    for obligation_company, raw_ids in obligation_ids_by_company.items():
+        obligation_ids = sorted(set(raw_ids))
         cur.execute(
             """
-            SELECT id, balance, status, active
+            SELECT id, company_code, balance, status, active
             FROM payment_obligations
             WHERE company_code=%s
               AND id = ANY(%s)
             """,
-            (company, obligation_ids),
+            (obligation_company, obligation_ids),
         )
         for ob in cur.fetchall() or []:
             item = dict(ob)
@@ -348,7 +349,7 @@ def _filter_open_biweekly_rows(cur, company: str, rows: list[dict]) -> list[dict
                 and str(item.get("status") or "").upper() in {"PENDING", "PARTIAL"}
                 and _money(item.get("balance")) > 0
             ):
-                open_by_id[int(item["id"])] = item
+                open_by_id[(item["company_code"], int(item["id"]))] = item
 
     cur.execute(
         """
@@ -379,9 +380,11 @@ def _filter_open_biweekly_rows(cur, company: str, rows: list[dict]) -> list[dict
         item = dict(row)
         raw_obligation_id = str(item.get("obligation_id") or "").strip()
         if raw_obligation_id.isdigit():
-            open_obligation = open_by_id.get(int(raw_obligation_id))
+            row_company = normalize_company_code(header_value=item.get("origin_company_code") or item.get("company_code") or company)
+            open_obligation = open_by_id.get((row_company, int(raw_obligation_id)))
             if not open_obligation:
                 continue
+            item["origin_company_code"] = row_company
             item["amount"] = float(_money(open_obligation.get("balance")))
             item["balance"] = float(_money(open_obligation.get("balance")))
             filtered.append(item)
@@ -403,6 +406,45 @@ def _filter_open_biweekly_rows(cur, company: str, rows: list[dict]) -> list[dict
                 continue
         filtered.append(item)
     return filtered
+
+
+def _dedupe_biweekly_rows_against_itp(rows: list[dict]) -> list[dict]:
+    itp_rows = []
+    for row in rows or []:
+        if row.get("obligation_id"):
+            text = " ".join(str(row.get(key) or "") for key in ("name", "reference", "notes"))
+            itp_rows.append({
+                "amount": _money(row.get("amount")),
+                "tokens": _biweekly_match_tokens(text),
+                "text": unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii").upper(),
+            })
+    if not itp_rows:
+        return rows
+    result = []
+    for row in rows or []:
+        if row.get("obligation_id"):
+            result.append(row)
+            continue
+        amount = _money(row.get("amount"))
+        text = " ".join(str(row.get(key) or "") for key in ("name", "reference", "notes"))
+        ascii_text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii").upper()
+        tokens = _biweekly_match_tokens(text)
+        is_duplicate = any(
+            amount > 0
+            and abs(item["amount"] - amount) <= Decimal("0.01")
+            and (
+                (
+                    len(tokens.intersection(item["tokens"])) >= 1
+                    and any(len(token) >= 10 for token in tokens.intersection(item["tokens"]))
+                )
+                or any(len(token) >= 10 and token in item["text"] for token in tokens)
+                or any(len(token) >= 10 and token in ascii_text for token in item["tokens"])
+            )
+            for item in itp_rows
+        )
+        if not is_duplicate:
+            result.append(row)
+    return result
 
 
 def _ensure_biweekly_schema(cur):
@@ -450,6 +492,7 @@ def _ensure_biweekly_schema(cur):
     cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS card_holder_name TEXT")
     cur.execute("ALTER TABLE itp_biweekly_payment_lines ADD COLUMN IF NOT EXISTS payment_method TEXT NOT NULL DEFAULT 'BANK'")
     cur.execute("ALTER TABLE itp_biweekly_payment_lines ADD COLUMN IF NOT EXISTS payment_card_last4 TEXT")
+    cur.execute("ALTER TABLE itp_biweekly_payment_lines ADD COLUMN IF NOT EXISTS origin_company_code TEXT")
     cur.execute("""
         INSERT INTO accounting_accounts(account_code, account_name, account_type, normal_balance, account_level, parent_account, accepts_posting, active)
         VALUES
@@ -496,6 +539,7 @@ def _load_biweekly_draft(cur, company: str, period: str, fortnight: int):
             amount AS balance,
             source,
             notes,
+            COALESCE(origin_company_code, company_code) AS origin_company_code,
             COALESCE(payment_method, 'BANK') AS payment_method,
             payment_card_last4
         FROM itp_biweekly_payment_lines
@@ -533,6 +577,7 @@ def _load_biweekly_carryover_drafts(cur, company: str, period: str, fortnight: i
             l.amount AS balance,
             COALESCE(NULLIF(l.source, ''), 'DRAFT') AS source,
             CONCAT_WS(' | ', NULLIF(l.notes, ''), CONCAT('Arrastrado desde ', b.period, ' Q', b.fortnight)) AS notes,
+            COALESCE(l.origin_company_code, l.company_code) AS origin_company_code,
             COALESCE(l.payment_method, 'BANK') AS payment_method,
             l.payment_card_last4
         FROM itp_biweekly_payment_batches b
@@ -641,9 +686,9 @@ def _save_biweekly_draft(cur, company: str, period: str, fortnight: int, rows: l
             INSERT INTO itp_biweekly_payment_lines(
                 batch_id, company_code, category, beneficiary, amount, currency, amount_crc,
                 destination_account, bank_accounting_code, bank_accounting_name, bank_voucher,
-                payment_method, payment_card_last4, payment_date, obligation_id, reference, source, notes
+                payment_method, payment_card_last4, payment_date, obligation_id, reference, source, notes, origin_company_code
             )
-            VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             """,
             (
                 batch_id,
@@ -664,6 +709,7 @@ def _save_biweekly_draft(cur, company: str, period: str, fortnight: int, rows: l
                 item.get("reference") or "",
                 item.get("source") or "DRAFT",
                 item.get("notes") or "",
+                normalize_company_code(header_value=item.get("origin_company_code") or item.get("company_code") or company),
             ),
         )
         saved += 1
@@ -1696,6 +1742,7 @@ def biweekly_obligations_preview(
             seen = set()
             for item in carryover_rows + draft["rows"]:
                 _append_unique_biweekly_row(rows, seen, item)
+            rows = _dedupe_biweekly_rows_against_itp(rows)
             return {
                 "period": period,
                 "fortnight": int(fortnight or 1),
@@ -1721,7 +1768,7 @@ def biweekly_obligations_preview(
             return default_crc_bank
         return current or ""
 
-    def row(category, name, amount, currency="CRC", bank_account="", source="MANUAL", notes="", due_date=None, obligation_id=None, reference="", balance=None):
+    def row(category, name, amount, currency="CRC", bank_account="", source="MANUAL", notes="", due_date=None, obligation_id=None, reference="", balance=None, origin_company_code=None):
         amount = _money(amount)
         currency = currency or "CRC"
         return {
@@ -1736,6 +1783,7 @@ def biweekly_obligations_preview(
             "obligation_id": obligation_id,
             "reference": reference or "",
             "balance": float(_money(balance if balance is not None else amount)),
+            "origin_company_code": normalize_company_code(header_value=origin_company_code or company),
             "bank_accounting_code": "1.1.02.02.01",
             "bank_accounting_name": "Banco BAC San Jose CRC CR87010200009640180220",
             "bank_voucher": "",
@@ -1888,18 +1936,18 @@ def biweekly_obligations_preview(
 
         cur.execute(
             """
-            SELECT id, payee_name, obligation_type, reference, currency, balance, issue_date, due_date,
+            SELECT id, company_code, payee_name, obligation_type, reference, currency, balance, issue_date, due_date,
                    planned_payment_date,
                    COALESCE(planned_payment_date, due_date, issue_date) AS schedule_date,
                    payment_bank, payment_bank_account_code, payment_bank_account_name, notes
             FROM payment_obligations
             WHERE COALESCE(active, TRUE)=TRUE
-              AND company_code=%s
+              AND company_code = ANY(%s)
               AND status IN ('PENDING','PARTIAL')
               AND COALESCE(balance,0) > 0
             ORDER BY COALESCE(planned_payment_date, due_date, issue_date) NULLS LAST, payee_name
             """,
-            (company,),
+            (["MSL-CR", "MCI-CR"],),
         )
         due_start, due_end = _fortnight_window(period, fortnight)
         for ob in cur.fetchall() or []:
@@ -1929,7 +1977,9 @@ def biweekly_obligations_preview(
                 obligation_id=ob.get("id"),
                 reference=ob.get("reference") or "",
                 balance=ob.get("balance"),
+                origin_company_code=ob.get("company_code") or company,
             ))
+        rows = _dedupe_biweekly_rows_against_itp(rows)
         return {"period": period, "fortnight": int(fortnight or 1), "company_code": company, "rows": rows}
     except Exception as exc:
         conn.rollback()
@@ -2061,11 +2111,12 @@ def biweekly_obligations_apply(
                 bank_name = bank_row["account_name"]
                 description = f"Pago quincenal {category} - {beneficiary} - Comp {voucher}"
                 obligation_id = item.get("obligation_id")
+                entry_company = normalize_company_code(header_value=item.get("origin_company_code") or item.get("company_code") or company) if obligation_id else company
                 if obligation_id:
-                    cur.execute("SELECT id, balance FROM payment_obligations WHERE id=%s AND company_code=%s FOR UPDATE", (int(obligation_id), company))
+                    cur.execute("SELECT id, balance FROM payment_obligations WHERE id=%s AND company_code=%s FOR UPDATE", (int(obligation_id), entry_company))
                     ob = cur.fetchone()
                     if not ob:
-                        raise ValueError(f"ITP {obligation_id} no existe")
+                        raise ValueError(f"ITP {obligation_id} no existe en {entry_company}")
                     balance = _money(ob.get("balance"))
                     if amount > balance:
                         raise ValueError(f"Pago excede saldo ITP {obligation_id}")
@@ -2090,13 +2141,13 @@ def biweekly_obligations_apply(
                             new_balance, "PAID" if new_balance == 0 else "PARTIAL", payment_date,
                             bank_code, bank_name, payment_method, payment_card_last4 or None,
                             is_card_payment, payment_date if is_card_payment else None,
-                            CARD_3155_LABEL if is_card_payment else None, int(obligation_id), company,
+                            CARD_3155_LABEL if is_card_payment else None, int(obligation_id), entry_company,
                         ),
                     )
                     applied += 1
                 entry_origin = "ITP_PAYMENT" if obligation_id else "ITP_BIWEEKLY_PAYMENT"
                 entry_origin_id = int(obligation_id) if obligation_id else batch_id * 10000 + idx
-                cur.execute("SELECT id FROM accounting_entries WHERE origin=%s AND origin_id=%s AND company_code=%s LIMIT 1", (entry_origin, entry_origin_id, company))
+                cur.execute("SELECT id FROM accounting_entries WHERE origin=%s AND origin_id=%s AND company_code=%s LIMIT 1", (entry_origin, entry_origin_id, entry_company))
                 existing = cur.fetchone()
                 if existing:
                     entry_id = existing["id"]
@@ -2108,7 +2159,7 @@ def biweekly_obligations_apply(
                         VALUES(%s,%s,%s,%s,%s,%s,'POSTED',%s,'CRC',%s,%s,%s,%s,NOW())
                         RETURNING id
                         """,
-                        (payment_date, period, description, entry_origin, entry_origin_id, user, company, rate, entry_origin, Json({"bank_voucher": voucher, "category": category, "source": item.get("source")}), user),
+                        (payment_date, period, description, entry_origin, entry_origin_id, user, entry_company, rate, entry_origin, Json({"bank_voucher": voucher, "category": category, "source": item.get("source"), "display_company_code": company}), user),
                     )
                     entry_id = cur.fetchone()["id"]
                 debit_code, debit_name = ("2.1.01.01", "Cuentas por pagar-comerciales") if obligation_id else _debit_account_for(category)
@@ -2126,14 +2177,14 @@ def biweekly_obligations_apply(
                         batch_id, company_code, category, beneficiary, amount, currency, amount_crc,
                         destination_account, bank_accounting_code, bank_accounting_name, bank_voucher,
                         payment_method, payment_card_last4,
-                        payment_date, obligation_id, reference, source, notes, accounting_entry_id
+                        payment_date, obligation_id, reference, source, notes, accounting_entry_id, origin_company_code
                     )
-                    VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                     """,
                     (
                         batch_id, company, category, beneficiary, amount, currency, amount_crc,
                         item.get("bank_account") or "", bank_code, bank_name, voucher, payment_method, payment_card_last4 or None, payment_date,
-                        obligation_id, item.get("reference") or "", item.get("source") or "", item.get("notes") or "", entry_id,
+                        obligation_id, item.get("reference") or "", item.get("source") or "", item.get("notes") or "", entry_id, entry_company,
                     ),
                 )
                 saved += 1

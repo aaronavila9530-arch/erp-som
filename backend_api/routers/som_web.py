@@ -4045,7 +4045,7 @@ def som_web_home() -> HTMLResponse:
           <td>${esc(row.obligation_id || "")}</td>
           <td><input data-bi="${idx}" data-field="reference" value="${esc(row.reference || "")}" onclick="event.stopPropagation()" onfocus="selectedItpBiweeklyIndex=${idx}" /></td>
           <td style="text-align:right">${esc(row.obligation_id ? itpBiMoney(row.balance || row.amount || 0) : "")}</td>
-          <td>${esc(row.source || "")}</td>
+          <td>${esc(row.source || "")}${row.origin_company_code && row.origin_company_code !== selectedCompany() ? ` / ${esc(row.origin_company_code)}` : ""}</td>
           <td><input data-bi="${idx}" data-field="notes" value="${esc(row.notes || "")}" onclick="event.stopPropagation()" onfocus="selectedItpBiweeklyIndex=${idx}" /></td>
           <td><button class="brown" onclick="event.stopPropagation(); deleteItpBiweeklyLine(${idx})">Quitar</button></td>
         </tr>`;
