@@ -1155,7 +1155,7 @@ def som_web_home() -> HTMLResponse:
     .itp-bi-totals strong:nth-child(1)::before { content:"Total CRC"; }
     .itp-bi-totals strong:nth-child(2)::before { content:"Total USD"; }
     .itp-bi-totals span::before { content:"Lineas"; }
-    .itp-bi-controls { display:grid; grid-template-columns:150px 140px repeat(4,max-content); align-items:end; gap:10px; padding:10px 12px; border:1px solid #d7e1ec; border-radius:9px; background:white; box-shadow:0 10px 24px rgba(15,31,53,.06); }
+    .itp-bi-controls { display:grid; grid-template-columns:150px 140px repeat(5,max-content); align-items:end; gap:10px; padding:10px 12px; border:1px solid #d7e1ec; border-radius:9px; background:white; box-shadow:0 10px 24px rgba(15,31,53,.06); }
     .itp-bi-controls label { display:grid; gap:5px; font-size:12px; font-weight:700; color:#475569; text-transform:uppercase; }
     .itp-bi-controls input,.itp-bi-controls select { width:100%; min-width:0; height:36px; border-radius:7px; padding:0 10px; }
     .itp-bi-controls .period-input { width:100%; }
@@ -1163,38 +1163,39 @@ def som_web_home() -> HTMLResponse:
     .itp-bi-controls button,.itp-bi-tools button { height:36px; border-radius:7px; background:#fff; color:#122033; border:1px solid #cfd9e5; }
     .itp-bi-controls button:first-of-type { background:#005da8; color:white; border-color:#005da8; }
     .itp-bi-controls button.green { background:#00703c; color:white; border-color:#00703c; }
-    .itp-bi-body { flex:1; min-height:0; display:grid; grid-template-columns:230px minmax(0,1fr); gap:10px; overflow:hidden; }
-    .itp-bi-actions { display:flex; flex-direction:column; gap:9px; min-height:0; overflow:auto; padding-right:2px; }
+    .itp-bi-body { flex:1; min-height:0; display:flex; flex-direction:column; gap:10px; overflow:hidden; }
+    .itp-bi-actions { display:none; }
     .itp-bi-tools-title { margin:0; font-size:12px; font-weight:800; color:#334155; letter-spacing:.04em; text-transform:uppercase; }
-    .itp-bi-tools { display:grid; grid-template-columns:1fr 1fr; gap:7px; padding:10px; border:1px solid #d7e1ec; border-radius:9px; background:#fff; box-shadow:0 10px 24px rgba(15,31,53,.06); }
-    .itp-bi-tools button { width:100%; }
-    .itp-bi-tools .wide { grid-column:1 / -1; }
-    .itp-bi-instruction { color:#7f1d1d; font-weight:700; line-height:1.34; padding:10px; border:1px solid #f4c7c7; border-radius:9px; background:#fff7f7; }
-    .itp-biweekly-modal .status { border-radius:9px; padding:10px; border:1px solid #d8e3ef; background:#fff; color:#52637a; line-height:1.35; }
+    .itp-bi-tools { display:flex; align-items:center; flex-wrap:wrap; gap:8px; padding:10px 12px; border:1px solid #d7e1ec; border-radius:9px; background:#fff; box-shadow:0 10px 24px rgba(15,31,53,.06); }
+    .itp-bi-tools button { min-width:92px; }
+    .itp-bi-tools .wide { min-width:150px; }
+    .itp-bi-instruction { display:none; }
+    .itp-biweekly-modal .status { display:none; border-radius:9px; padding:8px 10px; border:1px solid #d8e3ef; background:#fff; color:#52637a; line-height:1.35; }
     .itp-biweekly-modal .status.error { border-color:#fac5bd; background:#fff4f2; color:#b42318; }
     .itp-bi-main { min-width:0; min-height:0; display:flex; flex-direction:column; gap:10px; overflow:hidden; }
     .itp-bi-table { flex:1 1 auto; min-height:0; overflow:hidden; }
     .itp-bi-table .table-wrap { width:100%; height:100%; max-height:none; overflow:auto; background:#fff; border-radius:9px; border-color:#d7e1ec; box-shadow:0 10px 24px rgba(15,31,53,.06); }
-    .itp-bi-table table { width:max-content; min-width:2420px; font-size:13px; }
+    .itp-bi-table table { width:max-content; min-width:2320px; font-size:13px; }
     .itp-bi-table th,.itp-bi-table td { border-bottom:1px solid #e7edf4; padding:7px 8px; }
     .itp-bi-table th { background:#edf4fb; color:#334155; font-size:12px; text-transform:uppercase; }
     .itp-bi-table input,.itp-bi-table select { width:100%; height:30px; border-radius:6px; padding:0 7px; }
-    .itp-bi-table th:nth-child(1),.itp-bi-table td:nth-child(1) { min-width:130px; }
-    .itp-bi-table th:nth-child(2),.itp-bi-table td:nth-child(2) { min-width:250px; }
-    .itp-bi-table th:nth-child(3),.itp-bi-table td:nth-child(3) { min-width:140px; }
-    .itp-bi-table th:nth-child(4),.itp-bi-table td:nth-child(4) { min-width:100px; }
-    .itp-bi-table th:nth-child(5),.itp-bi-table td:nth-child(5) { min-width:100px; }
-    .itp-bi-table th:nth-child(6),.itp-bi-table td:nth-child(6) { min-width:190px; }
-    .itp-bi-table th:nth-child(7),.itp-bi-table td:nth-child(7) { min-width:260px; }
-    .itp-bi-table th:nth-child(8),.itp-bi-table td:nth-child(8) { min-width:270px; }
-    .itp-bi-table th:nth-child(9),.itp-bi-table td:nth-child(9) { min-width:180px; }
+    .itp-bi-table th:nth-child(1),.itp-bi-table td:nth-child(1) { min-width:54px; text-align:center; }
+    .itp-bi-table th:nth-child(2),.itp-bi-table td:nth-child(2) { min-width:170px; }
+    .itp-bi-table th:nth-child(3),.itp-bi-table td:nth-child(3) { min-width:250px; }
+    .itp-bi-table th:nth-child(4),.itp-bi-table td:nth-child(4) { min-width:120px; }
+    .itp-bi-table th:nth-child(5),.itp-bi-table td:nth-child(5) { min-width:86px; }
+    .itp-bi-table th:nth-child(6),.itp-bi-table td:nth-child(6) { min-width:105px; }
+    .itp-bi-table th:nth-child(7),.itp-bi-table td:nth-child(7) { min-width:190px; }
+    .itp-bi-table th:nth-child(8),.itp-bi-table td:nth-child(8) { min-width:260px; }
+    .itp-bi-table th:nth-child(9),.itp-bi-table td:nth-child(9) { min-width:190px; }
     .itp-bi-table th:nth-child(10),.itp-bi-table td:nth-child(10) { min-width:140px; }
-    .itp-bi-table th:nth-child(11),.itp-bi-table td:nth-child(11) { min-width:90px; }
-    .itp-bi-table th:nth-child(12),.itp-bi-table td:nth-child(12) { min-width:280px; }
-    .itp-bi-table th:nth-child(13),.itp-bi-table td:nth-child(13) { min-width:120px; }
+    .itp-bi-table th:nth-child(11),.itp-bi-table td:nth-child(11) { min-width:126px; }
+    .itp-bi-table th:nth-child(12),.itp-bi-table td:nth-child(12) { min-width:80px; }
+    .itp-bi-table th:nth-child(13),.itp-bi-table td:nth-child(13) { min-width:190px; }
     .itp-bi-table th:nth-child(14),.itp-bi-table td:nth-child(14) { min-width:120px; }
-    .itp-bi-table th:nth-child(15),.itp-bi-table td:nth-child(15) { min-width:300px; }
-    .itp-bi-table th:nth-child(16),.itp-bi-table td:nth-child(16) { min-width:96px; }
+    .itp-bi-table th:nth-child(15),.itp-bi-table td:nth-child(15) { min-width:115px; }
+    .itp-bi-table th:nth-child(16),.itp-bi-table td:nth-child(16) { min-width:280px; }
+    .itp-bi-table th:nth-child(17),.itp-bi-table td:nth-child(17) { min-width:90px; }
     .itp-bi-selected td { outline:2px solid #005da8; outline-offset:-2px; background:#e9f4ff !important; }
     .itp-bi-summary { flex:0 0 188px; display:grid; grid-template-columns:1fr 1fr; gap:10px; min-height:0; overflow:hidden; }
     .itp-bi-summary h3 { margin:0 0 6px; font-size:13px; font-weight:800; color:#334155; text-transform:uppercase; }
@@ -3846,23 +3847,20 @@ def som_web_home() -> HTMLResponse:
               <button class="secondary" onclick="applySelectedItpBiweekly()">Aplicar seleccionadas</button>
             </div>
             <div class="itp-bi-body">
-              <aside class="itp-bi-actions">
+              <section class="itp-bi-main">
                 <div class="itp-bi-tools">
-                  <div class="itp-bi-tools-title wide">Agregar / ajustar lineas</div>
+                  <div class="itp-bi-tools-title">Agregar / ajustar lineas</div>
                   <button onclick="addItpBiweeklyLine('Planilla')">+ Planilla</button>
                   <button onclick="addItpBiweeklyLine('CCSS')">+ CCSS</button>
                   <button onclick="addItpBiweeklyLine('Surveyors')">+ Surveyors</button>
                   <button onclick="addItpBiweeklyLine('Viaticos')">+ Viaticos</button>
                   <button onclick="addItpBiweeklyLine('Telefonia')">+ Telefonia</button>
                   <button onclick="addItpBiweeklyLine('Otros')">+ Otros</button>
-                  <button class="wide" onclick="editSelectedItpBiweeklyLine()">Editar linea seleccionada</button>
-                  <button class="wide" onclick="deleteSelectedItpBiweeklyLine()">Quitar linea seleccionada</button>
+                  <button class="wide" onclick="editSelectedItpBiweeklyLine()">Editar seleccionada</button>
+                  <button class="wide" onclick="deleteSelectedItpBiweeklyLine()">Quitar seleccionada</button>
                   <button class="wide" onclick="deleteCheckedItpBiweeklyLines()">Quitar marcadas</button>
                 </div>
-                <div class="itp-bi-instruction">Para aplicar una línea pagada: comprobante, fecha y cuenta contable. Las demás quedan pendientes en borrador y se arrastran a la siguiente quincena.</div>
-                <div id="itpBiMsg" class="status">Presione Generar automático para cargar obligaciones quincenales.</div>
-              </aside>
-              <section class="itp-bi-main">
+                <div id="itpBiMsg" class="status"></div>
                 <div id="itpBiTable" class="itp-bi-table"></div>
                 <div id="itpBiSummary" class="itp-bi-summary"></div>
               </section>
@@ -3961,6 +3959,7 @@ def som_web_home() -> HTMLResponse:
       const currentRows = force ? collectItpBiweeklyRows() : [];
       if ($("itpBiCompany")) $("itpBiCompany").textContent = `Empresa: ${company}`;
       msg.className = "status";
+      msg.style.display = "block";
       msg.textContent = `Consultando obligaciones quincenales para ${company}...`;
       try {
         const params = new URLSearchParams({ period:valueFrom("itpBiPeriod"), fortnight:valueFrom("itpBiFortnight") || "1", force:String(!!force), company:company, _:String(Date.now()) });
@@ -3969,17 +3968,17 @@ def som_web_home() -> HTMLResponse:
         itpBiweeklyRows = force ? mergeItpBiweeklyGenerated(generated, currentRows) : generated;
         itpBiweeklyChecked = new Set();
         msg.className = "status";
+        msg.style.display = "none";
         const loadedCompany = payload.company_code || company;
         if ($("itpBiCompany")) $("itpBiCompany").textContent = `Empresa: ${loadedCompany}`;
-        msg.textContent = payload.source === "draft"
-          ? `Borrador cargado para ${loadedCompany}. Filas: ${itpBiweeklyRows.length}. Revise pendientes antes de aplicar.`
-          : `Preview generado para ${loadedCompany}. Filas: ${itpBiweeklyRows.length}. Las lineas quitadas en pantalla no se reabren al regenerar.`;
+        msg.textContent = "";
         renderItpBiweeklyTable();
       } catch (err) {
         itpBiweeklyRows = [];
         table.innerHTML = "";
         renderItpBiweeklySummary();
         msg.className = "status error";
+        msg.style.display = "block";
         msg.innerHTML = `<strong>No se pudo generar el preview.</strong><br>${esc(err.message || "Revise el periodo, la quincena o intente nuevamente.")}`;
       }
     }
@@ -4134,6 +4133,7 @@ def som_web_home() -> HTMLResponse:
     async function saveItpBiweeklyDraft() {
       const msg = $("itpBiMsg");
       msg.className = "status";
+      msg.style.display = "block";
       msg.textContent = "Guardando borrador...";
       try {
         const result = await postJSON("/invoice-to-pay/biweekly-obligations/save-draft", { period:valueFrom("itpBiPeriod"), fortnight:Number(valueFrom("itpBiFortnight") || 1), rows:collectItpBiweeklyRows() });
@@ -4163,6 +4163,7 @@ def som_web_home() -> HTMLResponse:
       if (!confirm(`Se aplicarán solo las líneas listas y las demás quedarán en borrador.\\n\\nListas: ${ready.length}\\nPendientes: ${pending.length}\\n\\n¿Continuar?`)) return;
       const msg = $("itpBiMsg");
       msg.className = "status";
+      msg.style.display = "block";
       msg.textContent = "Aplicando pagos quincenales...";
       try {
         const payload = { period:valueFrom("itpBiPeriod"), fortnight:Number(valueFrom("itpBiFortnight") || 1), rows };

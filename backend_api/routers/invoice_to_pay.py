@@ -440,7 +440,7 @@ def _load_biweekly_carryover_drafts(cur, company: str, period: str, fortnight: i
             l.reference,
             l.amount AS balance,
             COALESCE(NULLIF(l.source, ''), 'DRAFT') AS source,
-            CONCAT_WS(' | ', NULLIF(l.notes, ''), 'Arrastrado desde ', b.period, ' Q', b.fortnight) AS notes,
+            CONCAT_WS(' | ', NULLIF(l.notes, ''), CONCAT('Arrastrado desde ', b.period, ' Q', b.fortnight)) AS notes,
             COALESCE(l.payment_method, 'BANK') AS payment_method,
             l.payment_card_last4
         FROM itp_biweekly_payment_batches b
@@ -1596,9 +1596,9 @@ def biweekly_obligations_preview(
     cur = conn.cursor(cursor_factory=RealDictCursor)
     _ensure_company_column(cur)
     _ensure_biweekly_schema(cur)
-    carryover_rows = [] if force else _load_biweekly_carryover_drafts(cur, company, period, int(fortnight or 1))
+    carryover_rows = _load_biweekly_carryover_drafts(cur, company, period, int(fortnight or 1))
+    draft = _load_biweekly_draft(cur, company, period, fortnight)
     if not force:
-        draft = _load_biweekly_draft(cur, company, period, fortnight)
         if draft:
             rows = []
             seen = set()
@@ -1614,7 +1614,8 @@ def biweekly_obligations_preview(
             }
     rows = []
     seen_rows = set()
-    for item in carryover_rows:
+    seed_rows = carryover_rows + ((draft or {}).get("rows") or [])
+    for item in seed_rows:
         _append_unique_biweekly_row(rows, seen_rows, item)
     default_crc_bank = "CR87010200009640180220"
     aaron_bank = "CR27010200009688657826"
@@ -1796,21 +1797,22 @@ def biweekly_obligations_preview(
         cur.execute(
             """
             SELECT id, payee_name, obligation_type, reference, currency, balance, issue_date, due_date,
+                   planned_payment_date,
+                   COALESCE(planned_payment_date, due_date, issue_date) AS schedule_date,
                    payment_bank, payment_bank_account_code, payment_bank_account_name, notes
             FROM payment_obligations
             WHERE COALESCE(active, TRUE)=TRUE
               AND company_code=%s
               AND status IN ('PENDING','PARTIAL')
               AND COALESCE(balance,0) > 0
-            ORDER BY due_date NULLS LAST, payee_name
+            ORDER BY COALESCE(planned_payment_date, due_date, issue_date) NULLS LAST, payee_name
             """,
             (company,),
         )
         due_start, due_end = _fortnight_window(period, fortnight)
         for ob in cur.fetchall() or []:
-            due_date = ob.get("due_date")
-            due_date = _coerce_date(ob.get("due_date") or ob.get("issue_date"), due_start)
-            if due_date > due_end:
+            schedule_date = _coerce_date(ob.get("schedule_date") or ob.get("planned_payment_date") or ob.get("due_date") or ob.get("issue_date"), due_start)
+            if schedule_date < due_start or schedule_date > due_end:
                 continue
             haystack = " ".join(str(ob.get(k) or "") for k in ("payee_name", "obligation_type", "notes", "reference")).lower()
             if "alquiler" in haystack or "rent" in haystack or "prime properties" in haystack:
@@ -1831,7 +1833,7 @@ def biweekly_obligations_preview(
                 ob.get("payment_bank_account_name") or ob.get("payment_bank_account_code") or ob.get("payment_bank") or "",
                 "ITP",
                 f"Aplicar pago a ITP #{ob.get('id')} | Ref: {ob.get('reference') or ''}".strip(),
-                _fortnight_due_date(period, fortnight),
+                _biweekly_payment_date(period, int(fortnight or 1), str(schedule_date), category),
                 obligation_id=ob.get("id"),
                 reference=ob.get("reference") or "",
                 balance=ob.get("balance"),
