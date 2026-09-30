@@ -16810,11 +16810,9 @@ function AdvanceInvoiceMobile({
   }
 
   function buildDescription(next: Record<string, string>) {
-    const firstLine = [next.num_informe, next.buque, next.nombre_factura].map((part) => String(part || "").trim()).filter(Boolean).join(" / ");
+    const firstLine = [next.place, next.survey, next.detalle].map((part) => String(part || "").trim()).filter(Boolean).join(" - ");
     const lines: string[] = [];
     if (firstLine) lines.push(firstLine);
-    if (next.place) lines.push("", next.place);
-    if (next.survey) lines.push("", "SURVEY:", `-${next.survey}`);
     return lines.join("\n");
   }
 
@@ -16860,6 +16858,7 @@ function AdvanceInvoiceMobile({
         ...current,
         buque: formatValue(row.buque_contenedor || row.buque || row.contenedor),
         survey: formatValue(row.operacion || row.survey),
+        detalle: formatValue(row.detalle || row.descripcion || row.descripcion_servicio),
         num_informe: formatValue(row.num_informe || row.numero_informe),
         periodo_operacion: formatValue(row.periodo_operacion || row.periodo || row.fecha_inicio).slice(0, 10),
         place
@@ -17030,7 +17029,7 @@ function InvoicePdfPreview({ form, invoiceNumber }: { form: Record<string, strin
   return (
     <View style={styles.invoicePreviewSection}>
       <Text style={styles.cardTitle}>Preview factura</Text>
-      <ScrollView horizontal showsHorizontalScrollIndicator>
+      <ScrollView horizontal showsHorizontalScrollIndicator contentContainerStyle={styles.invoicePreviewScroll}>
         <View style={styles.invoicePaper}>
           <View style={styles.invoiceOuterBorder}>
             <View style={styles.invoiceHeaderRow}>
@@ -18344,22 +18343,22 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     padding: 12
   },
-  invoiceBoxText: { color: "#101828", fontSize: 15, fontWeight: "900", marginBottom: 34 },
-  invoiceBrandBlue: { color: "blue", fontFamily: "serif", fontSize: 26, fontWeight: "900", marginBottom: 4 },
-  invoiceBrandRed: { color: "red", fontFamily: "serif", fontSize: 22, fontWeight: "900", marginBottom: 4 },
+  invoiceBoxText: { color: "#101828", fontSize: 14, fontWeight: "900", marginBottom: 30 },
+  invoiceBrandBlue: { color: "blue", fontFamily: "serif", fontSize: 24, fontWeight: "900", marginBottom: 4 },
+  invoiceBrandRed: { color: "red", fontFamily: "serif", fontSize: 20, fontWeight: "900", marginBottom: 4 },
   invoiceClientBox: {
     borderColor: "black",
     borderWidth: 2,
-    height: 150,
+    height: 148,
     paddingHorizontal: 14,
     paddingTop: 18,
-    width: 560
+    width: 500
   },
   invoiceDateCell: {
     color: "black",
     flex: 1,
     fontFamily: "serif",
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: "900",
     paddingVertical: 10,
     textAlign: "center"
@@ -18368,7 +18367,7 @@ const styles = StyleSheet.create({
     color: "black",
     flex: 1,
     fontFamily: "serif",
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: "900",
     paddingVertical: 10,
     textAlign: "center"
@@ -18377,33 +18376,34 @@ const styles = StyleSheet.create({
   invoiceDateGrid: {
     borderColor: "black",
     borderWidth: 2,
-    width: 276
+    width: 210
   },
-  invoiceDatePanel: { marginLeft: 24, width: 276 },
+  invoiceDatePanel: { marginLeft: 16, width: 210 },
   invoiceDateRow: { flexDirection: "row" },
   invoiceDateValueRow: { borderTopColor: "black", borderTopWidth: 2 },
   invoiceDescriptionBox: {
     borderColor: "black",
     borderWidth: 2,
-    minHeight: 250,
-    padding: 18
+    minHeight: 236,
+    padding: 16
   },
-  invoiceDescriptionText: { color: "black", fontFamily: "serif", fontSize: 17, marginBottom: 18 },
-  invoiceDescriptionTitle: { color: "black", fontFamily: "serif", fontSize: 22, fontWeight: "900", marginBottom: 14, marginTop: 36 },
+  invoiceDescriptionText: { color: "black", fontFamily: "serif", fontSize: 15, marginBottom: 18 },
+  invoiceDescriptionTitle: { color: "black", fontFamily: "serif", fontSize: 20, fontWeight: "900", marginBottom: 14, marginTop: 36 },
   invoiceHeaderLeft: { flex: 1 },
-  invoiceHeaderRight: { alignItems: "flex-end", width: 260 },
+  invoiceHeaderRight: { alignItems: "flex-end", width: 230 },
   invoiceHeaderRow: { flexDirection: "row", marginBottom: 58 },
-  invoiceInfoRow: { flexDirection: "row" },
-  invoiceNumber: { color: "black", fontFamily: "serif", fontSize: 17, fontWeight: "900" },
+  invoiceInfoRow: { alignItems: "flex-start", flexDirection: "row", justifyContent: "space-between" },
+  invoiceNumber: { color: "black", fontFamily: "serif", fontSize: 16, fontWeight: "900" },
   invoiceNumberRed: { color: "red" },
-  invoiceOuterBorder: { borderColor: "black", borderWidth: 2, minHeight: 820, padding: 26 },
-  invoicePaper: { backgroundColor: "white", padding: 18, width: 940 },
+  invoiceOuterBorder: { borderColor: "black", borderWidth: 2, minHeight: 760, padding: 24 },
+  invoicePaper: { backgroundColor: "white", padding: 16, width: 820 },
+  invoicePreviewScroll: { paddingRight: 12 },
   invoicePreviewSection: { marginTop: 14 },
-  invoiceSmallBold: { color: "black", fontFamily: "serif", fontSize: 13, fontWeight: "900", marginBottom: 4 },
+  invoiceSmallBold: { color: "black", fontFamily: "serif", fontSize: 12, fontWeight: "900", marginBottom: 4 },
   invoiceSurveyRow: { flexDirection: "row", gap: 20, justifyContent: "space-between" },
   invoiceSurveyText: { flex: 1 },
-  invoiceTerms: { color: "red", fontFamily: "serif", fontSize: 12, fontWeight: "900", marginTop: 44 },
-  invoiceTitle: { color: "black", fontFamily: "serif", fontSize: 25, fontWeight: "900", marginTop: 90 },
+  invoiceTerms: { color: "red", fontFamily: "serif", fontSize: 10, fontWeight: "900", marginTop: 44 },
+  invoiceTitle: { color: "black", fontFamily: "serif", fontSize: 24, fontWeight: "900", marginTop: 88 },
   invoiceTotalBox: {
     alignSelf: "flex-end",
     borderColor: "black",
@@ -18411,8 +18411,8 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     marginTop: 22
   },
-  invoiceTotalLabel: { borderRightColor: "black", borderRightWidth: 2, color: "black", fontFamily: "serif", fontSize: 16, fontWeight: "900", paddingHorizontal: 22, paddingVertical: 10 },
-  invoiceTotalValue: { color: "black", fontFamily: "serif", fontSize: 16, fontWeight: "900", paddingHorizontal: 22, paddingVertical: 10 },
+  invoiceTotalLabel: { borderRightColor: "black", borderRightWidth: 2, color: "black", fontFamily: "serif", fontSize: 15, fontWeight: "900", paddingHorizontal: 20, paddingVertical: 10 },
+  invoiceTotalValue: { color: "black", fontFamily: "serif", fontSize: 15, fontWeight: "900", paddingHorizontal: 20, paddingVertical: 10 },
   kioskNav: { backgroundColor: "white", borderBottomColor: BORDER, borderBottomWidth: 1, flexDirection: "row", gap: 10, padding: 12 },
   kioskTab: { alignItems: "center", backgroundColor: "#EEF3F8", borderColor: BORDER, borderRadius: 8, borderWidth: 1, flex: 1, paddingVertical: 14 },
   kioskTabActive: { backgroundColor: BLUE, borderColor: BLUE },
