@@ -81,6 +81,7 @@ class MainApp(tk.Frame):
         self._logra_alert_shown = set()
         self._global_alert_shown = {}
         self._app_notification_seen = set()
+        self._app_notification_muted_keys = set()
         self._permission_cache = {}
 
         self._build_menu_lateral()
@@ -448,20 +449,31 @@ class MainApp(tk.Frame):
     def _start_app_notifications(self):
         self.after(30000, self._check_app_notifications)
 
+    def _app_notification_key(self, row):
+        return (
+            str(row.get("title") or "").strip(),
+            str(row.get("message") or "").strip(),
+            str(row.get("target_module") or "").strip(),
+            str(row.get("target_id") or "").strip(),
+        )
+
     def _check_app_notifications(self):
         try:
             data = api_client.listar_notificaciones_api(unread_only=True, limit=5)
             rows = [
                 row for row in (data.get("data") or [])
                 if row.get("id") not in self._app_notification_seen
+                and self._app_notification_key(row) not in self._app_notification_muted_keys
             ]
             if rows:
                 lines = []
                 ids = []
+                muted_keys = []
                 for row in rows[:5]:
                     title = row.get("title") or "Notificacion"
                     message = row.get("message") or ""
                     lines.append(f"{title}: {message}")
+                    muted_keys.append(self._app_notification_key(row))
                     if row.get("id"):
                         ids.append(row.get("id"))
                 for notification_id in ids:
@@ -475,6 +487,7 @@ class MainApp(tk.Frame):
                     "\n\n".join(lines),
                     parent=self.parent,
                 )
+                self._app_notification_muted_keys.update(muted_keys)
         except Exception:
             pass
         finally:
