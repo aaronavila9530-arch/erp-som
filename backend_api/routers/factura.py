@@ -32,6 +32,20 @@ router = APIRouter(
     tags=["Facturación"]
 )
 
+
+def _manual_invoice_description_snapshot(description: str | None, place: str | None) -> str:
+    text = str(description or "").strip()
+    place_text = str(place or "").strip()
+    if not place_text or "PLACE:" in text.upper():
+        return text
+    if not text:
+        return place_text
+    lines = [line.rstrip() for line in text.splitlines()]
+    insert_at = 1 if len(lines) > 1 else len(lines)
+    if place_text not in {line.strip() for line in lines}:
+        lines.insert(insert_at, place_text)
+    return "\n".join(lines).strip()
+
 # ============================================================
 # RBAC GUARD
 # ============================================================
@@ -219,6 +233,13 @@ def crear_factura_manual(
         if fecha_factura is None:
             fecha_factura = datetime.now()
 
+        place = (
+            payload.get("place")
+            or payload.get("lugar")
+            or ", ".join([str(v).strip() for v in (servicio.get("puerto"), servicio.get("pais")) if str(v or "").strip()])
+        )
+        descripcion_snapshot = _manual_invoice_description_snapshot(payload.get("descripcion"), place)
+
         # ====================================================
         # INSERT FACTURA
         # ====================================================
@@ -265,7 +286,7 @@ def crear_factura_manual(
             VALUES (%s, %s, 1, %s, %s)
         """, (
             factura_id,
-            payload.get("descripcion"),
+            descripcion_snapshot,
             total,
             total
         ))
@@ -279,9 +300,10 @@ def crear_factura_manual(
             "cliente": servicio["cliente"],  # nombre visible
             "buque": servicio["buque_contenedor"],
             "operacion": servicio["operacion"],
+            "place": place,
             "num_informe": servicio["num_informe"],
             "periodo": f"{servicio['fecha_inicio']} a {servicio['fecha_fin']}",
-            "descripcion": payload.get("descripcion"),
+            "descripcion": descripcion_snapshot,
             "moneda": payload.get("moneda", "USD"),
             "termino_pago": termino_pago,
             "total": total
@@ -359,7 +381,7 @@ def crear_factura_manual(
             servicio.get("buque_contenedor"),
             servicio.get("operacion"),
             f"{servicio.get('fecha_inicio')} a {servicio.get('fecha_fin')}",
-            payload.get("descripcion")
+            descripcion_snapshot
         ))
 
 

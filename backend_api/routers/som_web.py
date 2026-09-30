@@ -1120,6 +1120,19 @@ def som_web_home() -> HTMLResponse:
     .hr-salary-result { display:grid; gap:10px; }
     .hr-salary-kpis { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
     .hr-salary-detail { white-space:pre-wrap; line-height:1.42; max-height:460px; overflow:auto; border:1px solid var(--line); border-radius:8px; padding:12px; background:#fff; }
+    .hr-medical-shell { display:grid; gap:10px; min-width:0; }
+    .hr-medical-actions { display:flex; flex-wrap:wrap; gap:8px; align-items:center; justify-content:space-between; }
+    .hr-medical-tools { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+    .hr-medical-filters { display:grid; grid-template-columns:repeat(4,minmax(170px,1fr)); gap:10px; align-items:end; }
+    .hr-medical-filters label { display:grid; gap:4px; color:#475569; font-size:12px; font-weight:800; text-transform:uppercase; }
+    .hr-medical-quick { display:flex; flex-wrap:wrap; gap:7px; align-items:center; color:#607086; font-size:13px; }
+    .hr-medical-layout { display:grid; grid-template-columns:minmax(0,1.35fr) minmax(320px,.65fr); gap:12px; align-items:start; }
+    .hr-medical-table tr.selected { background:#eaf6ff; }
+    .hr-medical-table tr.virtual td { color:#0f766e; }
+    .hr-medical-detail { border:1px solid #d7e1ec; border-radius:8px; background:#fff; padding:14px; position:sticky; top:10px; box-shadow:0 10px 26px rgba(15,31,53,.07); min-width:0; }
+    .hr-medical-detail h3 { margin:0 0 8px; color:#0f4c81; font-size:17px; overflow-wrap:anywhere; }
+    .hr-medical-detail pre { white-space:pre-wrap; font:inherit; line-height:1.42; margin:0 0 12px; color:#334155; }
+    .hr-medical-detail-actions { display:grid; gap:8px; }
     .hr-salary-history table { min-width:680px; }
     .service-warning { background:#fff3f3; }
     .badge { display:inline-flex; align-items:center; min-height:24px; border:1px solid var(--line); border-radius:999px; padding:2px 9px; background:#f8fafc; font-size:12px; }
@@ -1220,7 +1233,7 @@ def som_web_home() -> HTMLResponse:
       .itp-action-grid { grid-template-columns:1fr; }
       .itp-bi-header,.itp-bi-controls,.itp-bi-body,.itp-bi-summary { grid-template-columns:1fr; }
       .itp-bi-totals { grid-template-columns:1fr; }
-      .finance-filter-row,.finance-filter-row.compact,.hr-hours-filters,.hr-emp-filters,.hr-emp-tab-panel.active,.hr-salary-layout,.hr-salary-pane.active,.hr-salary-expense-grid,.hr-salary-kpis { grid-template-columns:1fr; }
+      .finance-filter-row,.finance-filter-row.compact,.hr-hours-filters,.hr-emp-filters,.hr-emp-tab-panel.active,.hr-salary-layout,.hr-salary-pane.active,.hr-salary-expense-grid,.hr-salary-kpis,.hr-medical-filters,.hr-medical-layout { grid-template-columns:1fr; }
       .accounting-hero,.accounting-grid,.accounting-filters,.accounting-entry-line,.accounting-topline,.accounting-tc { grid-template-columns:1fr; }
       .accounting-entry-lines-box { max-width:calc(100vw - 40px); }
       .surveyor-line { grid-template-columns:1fr; }
@@ -1395,6 +1408,9 @@ def som_web_home() -> HTMLResponse:
     let financeClienteRows = [];
     let hrCurrentView = "home";
     let hrRows = [];
+    let hrMedicalRows = [];
+    let hrMedicalFilters = {};
+    let selectedHrMedicalIndex = null;
     let selectedHrRequestIndex = null;
     let selectedHrHourIds = new Set();
     let hrHourPolicies = new Map();
@@ -5704,7 +5720,10 @@ def som_web_home() -> HTMLResponse:
         </div>`);
     }
     function defaultInvoiceDescription(row) {
-      return [row?.puerto, row?.pais, row?.operacion, row?.detalle].filter(Boolean).join(" - ");
+      return [row?.operacion, row?.detalle].filter(Boolean).join(" - ");
+    }
+    function billablePlace(row) {
+      return [row?.puerto, row?.pais].filter(Boolean).join(", ");
     }
     async function invoiceTerms(cliente) {
       try {
@@ -5729,6 +5748,7 @@ def som_web_home() -> HTMLResponse:
               <label>Moneda<select id="inv_moneda"><option>USD</option><option>CRC</option></select></label>
               <label>Término pago<input id="inv_termino" type="number" value="${esc(terms)}" readonly /></label>
               <label>Total<input id="inv_total" type="number" step="0.01" value="${esc(row.valor_factura || "")}" /></label>
+              <label class="wide">Place<input id="inv_place" value="${esc(billablePlace(row))}" placeholder="Lugar de emisión / dirección para la factura" /></label>
               <label class="wide">Descripción<textarea id="inv_desc">${esc(defaultInvoiceDescription(row))}</textarea></label>
             </div>
             <div class="md-actions"><button class="green" onclick="saveManualInvoice()">Facturar</button><button class="secondary" onclick="closeModal()">Cancelar</button></div>
@@ -5748,6 +5768,7 @@ def som_web_home() -> HTMLResponse:
           fecha_factura:valueFrom("inv_fecha"),
           moneda:valueFrom("inv_moneda") || "USD",
           termino_pago:Number(valueFrom("inv_termino") || 0),
+          place:valueFrom("inv_place"),
           total:Number(valueFrom("inv_total") || 0)
         };
         if (!payload.total || payload.total <= 0) throw new Error("Total requerido.");
@@ -8690,21 +8711,222 @@ def som_web_home() -> HTMLResponse:
     }
     function renderHrMedical() {
       $("hrViewTitle").textContent = "Red Médica";
-      $("hrViewHint").textContent = "Búsqueda por profesional, clínica, especialidad y ubicación.";
-      $("hrWorkspace").innerHTML = `<div class="hr-toolbar"><label>Buscar<input id="hrMedQ" /></label><label>Especialidad<input id="hrMedSpecialty" /></label><label>Provincia<input id="hrMedProvince" /></label><button onclick="loadHrMedical()">Buscar</button></div><div id="hrMedicalTable"></div>`;
+      $("hrViewHint").textContent = "Consulta por profesional, ubicación, especialidad, tipo de atención, centro o servicio.";
+      selectedHrMedicalIndex = null;
+      $("hrWorkspace").innerHTML = `
+        <div class="hr-medical-shell">
+          <div class="hr-medical-actions">
+            <div class="hr-medical-tools">
+              <button onclick="loadHrMedical()">Actualizar</button>
+              <button class="secondary" onclick="copyHrMedicalDetail()">Copiar detalle</button>
+              <button class="secondary" onclick="exportHrMedical()">Exportar resultado</button>
+              <button class="gray" onclick="clearHrMedicalFilters()">Ver todo</button>
+            </div>
+            <strong id="hrMedicalResult" class="muted">Cargando red médica...</strong>
+          </div>
+          <div id="hrMedicalKpis" class="hr-kpis"></div>
+          <div class="hr-medical-filters">
+            <label>Busqueda libre<input id="hrMedQ" oninput="scheduleHrMedicalLoad()" onkeydown="if(event.key==='Enter'){event.preventDefault();loadHrMedical()}" placeholder="Nombre, clínica, especialidad..." /></label>
+            <label>Provincia<select id="hrMedProvince" onchange="updateHrMedicalFilter('province', this.value)"></select></label>
+            <label>Cantón<select id="hrMedCanton" onchange="updateHrMedicalFilter('canton', this.value)"></select></label>
+            <label>Distrito<select id="hrMedDistrict" onchange="updateHrMedicalFilter('district', this.value)"></select></label>
+            <label>Especialidad<select id="hrMedSpecialty" onchange="updateHrMedicalFilter('specialty', this.value)"></select></label>
+            <label>Consulta<select id="hrMedConsultation" onchange="updateHrMedicalFilter('consultation_type', this.value)"></select></label>
+            <label>Servicio<select id="hrMedService" onchange="updateHrMedicalFilter('service_type', this.value)"></select></label>
+            <label>Centro / lugar<select id="hrMedClinic" onchange="updateHrMedicalFilter('clinic', this.value)"></select></label>
+          </div>
+          <div class="hr-medical-quick">
+            <strong>Accesos rápidos:</strong>
+            <button class="secondary" onclick="quickHrMedical('specialty','Medicina General')">Medicina General</button>
+            <button class="secondary" onclick="quickHrMedical('specialty','Odontologia')">Odontología</button>
+            <button class="secondary" onclick="quickHrMedical('specialty','Psicologia')">Psicología</button>
+            <button class="secondary" onclick="quickHrMedical('consultation_type','Presencial y Virtual')">Virtual</button>
+            <button class="secondary" onclick="quickHrMedical('province','SAN JOSE')">San José</button>
+            <button class="secondary" onclick="quickHrMedical('province','ALAJUELA')">Alajuela</button>
+          </div>
+          <div id="hrMedicalMsg" class="status hidden"></div>
+          <div class="hr-medical-layout">
+            <div id="hrMedicalTable" class="hr-medical-table"></div>
+            <aside id="hrMedicalDetail" class="hr-medical-detail">
+              <h3>Selecciona un profesional</h3>
+              <pre>Aquí verás especialidad, centro, modalidad y ubicación completa.</pre>
+            </aside>
+          </div>
+        </div>`;
+      loadHrMedical();
+    }
+    function hrMedicalFilterState() {
+      return {
+        q:valueFrom("hrMedQ"),
+        province:valueFrom("hrMedProvince"),
+        canton:valueFrom("hrMedCanton"),
+        district:valueFrom("hrMedDistrict"),
+        specialty:valueFrom("hrMedSpecialty"),
+        consultation_type:valueFrom("hrMedConsultation"),
+        service_type:valueFrom("hrMedService"),
+        clinic:valueFrom("hrMedClinic")
+      };
+    }
+    function hrMedicalParams(extra={}) {
+      const params = new URLSearchParams({ page:"1", page_size:String(extra.page_size || 400) });
+      const values = { ...hrMedicalFilterState(), ...extra };
+      delete values.page_size;
+      Object.entries(values).forEach(([key, value]) => { if (String(value || "").trim()) params.set(key, String(value).trim()); });
+      return params;
+    }
+    function setHrMedicalSelect(id, values, selected="") {
+      const el = $(id);
+      if (!el) return;
+      el.innerHTML = options(values || [], selected || "", "Todos");
+      if (selected && ![...el.options].some(opt => opt.value === selected)) el.value = "";
+    }
+    function renderHrMedicalFilters(payload={}) {
+      hrMedicalFilters = payload || {};
+      const current = hrMedicalFilterState();
+      setHrMedicalSelect("hrMedProvince", payload.provinces, current.province);
+      setHrMedicalSelect("hrMedCanton", payload.cantons, current.canton);
+      setHrMedicalSelect("hrMedDistrict", payload.districts, current.district);
+      setHrMedicalSelect("hrMedSpecialty", payload.specialties, current.specialty);
+      setHrMedicalSelect("hrMedConsultation", payload.consultation_types, current.consultation_type);
+      setHrMedicalSelect("hrMedService", payload.service_types, current.service_type);
+      setHrMedicalSelect("hrMedClinic", payload.clinics, current.clinic);
+      renderHrMedicalKpis(payload.summary || {});
+    }
+    function renderHrMedicalKpis(summary={}) {
+      const total = Number(summary.total || 0);
+      const visible = hrMedicalRows.length;
+      $("hrMedicalKpis").innerHTML = [
+        ["Registros red", total],
+        ["Resultado visible", visible],
+        ["Profesionales", summary.professionals || 0],
+        ["Especialidades", summary.specialties || 0],
+        ["Provincias", summary.provinces || 0]
+      ].map(([label,value]) => `<div class="hr-kpi"><span>${esc(label)}</span><strong>${Number(value || 0).toLocaleString("en-US")}</strong></div>`).join("");
+    }
+    let hrMedicalLoadTimer = null;
+    function scheduleHrMedicalLoad() {
+      if (hrMedicalLoadTimer) clearTimeout(hrMedicalLoadTimer);
+      hrMedicalLoadTimer = setTimeout(() => loadHrMedical(), 350);
+    }
+    function updateHrMedicalFilter(key, value) {
+      if (key === "province") {
+        if ($("hrMedCanton")) $("hrMedCanton").value = "";
+        if ($("hrMedDistrict")) $("hrMedDistrict").value = "";
+      }
+      if (key === "canton" && $("hrMedDistrict")) $("hrMedDistrict").value = "";
+      loadHrMedical();
+    }
+    function quickHrMedical(key, value) {
+      const map = {
+        province:"hrMedProvince",
+        specialty:"hrMedSpecialty",
+        consultation_type:"hrMedConsultation"
+      };
+      if ($(map[key])) $(map[key]).value = value;
       loadHrMedical();
     }
     async function loadHrMedical() {
-      const params = new URLSearchParams({ page:"1", page_size:"100" });
-      if (valueFrom("hrMedQ")) params.set("q", valueFrom("hrMedQ"));
-      if (valueFrom("hrMedSpecialty")) params.set("specialty", valueFrom("hrMedSpecialty"));
-      if (valueFrom("hrMedProvince")) params.set("province", valueFrom("hrMedProvince"));
+      const msg = $("hrMedicalMsg");
+      const result = $("hrMedicalResult");
+      if (msg) { msg.className = "status"; msg.textContent = "Consultando red médica..."; }
       try {
-        const payload = await getJSON(`/hr/medical-network/search?${params}`);
-        hrRows = rowsList(payload);
-        $("hrMedicalTable").innerHTML = hrTable(hrRows, ["professional_name","specialty","consultation_type","service_type","clinic_name","province","canton","district"]);
-        enhanceExcelTables($("hrMedicalTable"));
-      } catch (err) { $("hrMedicalTable").innerHTML = `<div class="status error">${esc(err.message)}</div>`; }
+        const params = hrMedicalParams();
+        const [filterPayload, searchPayload] = await Promise.all([
+          getJSON(`/hr/medical-network/filters?${params}`),
+          getJSON(`/hr/medical-network/search?${params}`)
+        ]);
+        hrMedicalRows = rowsList(searchPayload);
+        selectedHrMedicalIndex = hrMedicalRows.length ? 0 : null;
+        renderHrMedicalFilters(filterPayload);
+        renderHrMedicalTable(searchPayload.total || hrMedicalRows.length);
+        renderHrMedicalDetail();
+        if (result) {
+          const total = Number(searchPayload.total || hrMedicalRows.length);
+          result.textContent = `${total.toLocaleString("en-US")} resultados${total > hrMedicalRows.length ? " | mostrando primeros 400" : ""}`;
+        }
+        if (msg) msg.classList.add("hidden");
+      } catch (err) {
+        if ($("hrMedicalTable")) $("hrMedicalTable").innerHTML = `<div class="status error">${esc(err.message)}</div>`;
+        if (msg) { msg.className = "status error"; msg.textContent = err.message; }
+      }
+    }
+    function renderHrMedicalTable(total=null) {
+      const target = $("hrMedicalTable");
+      if (!target) return;
+      if (!hrMedicalRows.length) {
+        target.innerHTML = '<div class="status">Sin resultados. Ajuste filtros o use Ver todo.</div>';
+        renderHrMedicalKpis(hrMedicalFilters.summary || {});
+        return;
+      }
+      const cols = ["tasacion_id","professional_name","specialty","consultation_type","service_type","clinic_name","province","canton","district"];
+      target.innerHTML = `<div class="table-wrap"><table><thead><tr>${cols.map(c => `<th>${esc(c.replace(/_/g," "))}</th>`).join("")}</tr></thead><tbody>${hrMedicalRows.map((row, idx) => {
+        const virtual = String(row.consultation_type || "").toLowerCase().includes("virtual");
+        return `<tr class="${idx === selectedHrMedicalIndex ? "selected" : ""} ${virtual ? "virtual" : ""}" onclick="selectHrMedical(${idx})">${cols.map(c => `<td>${esc(row[c])}</td>`).join("")}</tr>`;
+      }).join("")}</tbody></table></div>`;
+      enhanceExcelTables(target);
+      renderHrMedicalKpis({ ...(hrMedicalFilters.summary || {}), total:total ?? hrMedicalFilters?.summary?.total });
+    }
+    function selectHrMedical(idx) {
+      selectedHrMedicalIndex = idx;
+      renderHrMedicalTable();
+      renderHrMedicalDetail();
+    }
+    function currentHrMedicalRow() {
+      return selectedHrMedicalIndex === null ? null : hrMedicalRows[selectedHrMedicalIndex];
+    }
+    function hrMedicalDetailText(row=currentHrMedicalRow()) {
+      if (!row) return "";
+      return [
+        `Profesional: ${row.professional_name || ""}`,
+        `Especialidad: ${row.specialty || ""}`,
+        `Consulta: ${row.consultation_type || ""}`,
+        `Servicio: ${row.service_type || ""}`,
+        `Lugar: ${row.clinic_name || ""}`,
+        `Ubicación: ${row.province || ""} / ${row.canton || ""} / ${row.district || ""}`,
+        `ID: ${row.tasacion_id || ""}`
+      ].join("\\n");
+    }
+    function renderHrMedicalDetail() {
+      const row = currentHrMedicalRow();
+      const detail = $("hrMedicalDetail");
+      if (!detail) return;
+      if (!row) {
+        detail.innerHTML = '<h3>Sin resultados</h3><pre>Ajuste filtros o limpie la búsqueda para ampliar la red disponible.</pre>';
+        return;
+      }
+      detail.innerHTML = `<h3>${esc(row.professional_name || "Sin nombre")}</h3><pre>${esc(hrMedicalDetailText(row))}</pre><div class="hr-medical-detail-actions"><button class="secondary" onclick="copyHrMedicalDetail()">Copiar detalle</button><button onclick="filterHrMedicalSelectedSpecialty()">Filtrar por esta especialidad</button><button class="secondary" onclick="filterHrMedicalSelectedLocation()">Filtrar por esta ubicación</button></div>`;
+    }
+    async function copyHrMedicalDetail() {
+      const text = hrMedicalDetailText();
+      if (!text) return alert("Seleccione un profesional.");
+      try {
+        await navigator.clipboard.writeText(text);
+        hrStatus("Detalle de red médica copiado.");
+      } catch {
+        showObjectModal("Detalle red médica", { detalle:text });
+      }
+    }
+    function filterHrMedicalSelectedSpecialty() {
+      const row = currentHrMedicalRow();
+      if (!row?.specialty) return;
+      $("hrMedSpecialty").value = row.specialty;
+      loadHrMedical();
+    }
+    function filterHrMedicalSelectedLocation() {
+      const row = currentHrMedicalRow();
+      if (!row) return;
+      if ($("hrMedProvince")) $("hrMedProvince").value = row.province || "";
+      if ($("hrMedCanton")) $("hrMedCanton").value = row.canton || "";
+      if ($("hrMedDistrict")) $("hrMedDistrict").value = row.district || "";
+      loadHrMedical();
+    }
+    function clearHrMedicalFilters() {
+      ["hrMedQ","hrMedProvince","hrMedCanton","hrMedDistrict","hrMedSpecialty","hrMedConsultation","hrMedService","hrMedClinic"].forEach(id => { if ($(id)) $(id).value = ""; });
+      loadHrMedical();
+    }
+    function exportHrMedical() {
+      if (!hrMedicalRows.length) return alert("No hay resultados para exportar.");
+      downloadExcelFile(`red_medica_${new Date().toISOString().slice(0,10)}.xls`, hrMedicalRows, ["tasacion_id","professional_name","specialty","consultation_type","service_type","clinic_name","province","canton","district"], "Red médica");
     }
     function renderHrPolicies() {
       $("hrViewTitle").textContent = "Políticas HHRR";
