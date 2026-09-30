@@ -498,7 +498,7 @@ def obtener_pdf_factura(
 
     cur.execute(
         """
-        SELECT pdf_path
+        SELECT *
         FROM invoicing
         WHERE numero_documento = %s
           AND company_code = %s
@@ -507,21 +507,42 @@ def obtener_pdf_factura(
     )
 
     row = cur.fetchone()
+
+    if not row:
+        cur.close()
+        raise HTTPException(
+            status_code=404,
+            detail="Factura no encontrada"
+        )
+
+    from services.pdf.factura_manual_pdf import generar_factura_manual_pdf
+
+    pdf_path = generar_factura_manual_pdf({
+        "numero_documento": row.get("numero_documento"),
+        "fecha_emision": row.get("fecha_emision"),
+        "cliente": row.get("nombre_cliente"),
+        "buque": row.get("buque_contenedor"),
+        "operacion": row.get("operacion"),
+        "survey": row.get("operacion"),
+        "num_informe": row.get("num_informe"),
+        "periodo": row.get("periodo_operacion"),
+        "descripcion": row.get("descripcion_servicio"),
+        "moneda": row.get("moneda"),
+        "termino_pago": row.get("termino_pago"),
+        "payment_terms": row.get("termino_pago"),
+        "total": row.get("total"),
+    })
+
+    cur.execute(
+        """
+        UPDATE invoicing
+        SET pdf_path = %s
+        WHERE id = %s
+        """,
+        (pdf_path, row.get("id")),
+    )
+    conn.commit()
     cur.close()
-
-    if not row or not row.get("pdf_path"):
-        raise HTTPException(
-            status_code=404,
-            detail="PDF no encontrado"
-        )
-
-    pdf_path = row["pdf_path"]
-
-    if not os.path.exists(pdf_path):
-        raise HTTPException(
-            status_code=404,
-            detail="El archivo PDF no existe en el servidor"
-        )
 
     return FileResponse(
         path=pdf_path,

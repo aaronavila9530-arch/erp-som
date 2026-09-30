@@ -82,9 +82,23 @@ def _invoice_payload(data: dict) -> dict:
     report = _safe(data.get("num_informe") or data.get("numero_informe"))
     client = _safe(data.get("cliente") or data.get("nombre_cliente"))
     description = _safe(data.get("descripcion") or data.get("descripcion_servicio"))
+    description_lines = [line.strip() for line in description.splitlines() if line.strip()]
+    if description_lines:
+        if not place and len(description_lines) >= 2 and not description_lines[1].upper().startswith("SURVEY"):
+            place = description_lines[1]
+        if description_lines[0].upper() != "SURVEY:" and not description_lines[0].startswith("-"):
+            description = description_lines[0]
+        for idx, line in enumerate(description_lines):
+            if line.upper().startswith("SURVEY") and idx + 1 < len(description_lines):
+                next_line = description_lines[idx + 1].lstrip("-").strip()
+                if next_line:
+                    survey = next_line
+                break
     if not description:
         description = " / ".join([p for p in [report, vessel, client] if p])
     payment_terms = _safe(data.get("payment_terms"))
+    if payment_terms.isdigit():
+        payment_terms = f"CREDIT {payment_terms} DAYS"
     if not payment_terms:
         terms = _safe(data.get("termino_pago"), "0")
         payment_terms = f"CREDIT {terms} DAYS" if str(terms) not in ("", "0") else "DUE UPON RECEIPT"
@@ -148,16 +162,18 @@ def generar_factura_manual_pdf(data: dict) -> str:
     # Client and date boxes
     client_x = left + 0.35 * cm
     client_y = top - 8.55 * cm
-    client_w = 13.45 * cm
+    date_w = 4.9 * cm
+    date_x = left + main_w - date_w - 0.65 * cm
+    client_w = date_x - client_x - 0.6 * cm
     client_h = 3.75 * cm
     c.rect(client_x, client_y, client_w, client_h, fill=0)
     c.setFont("Times-Bold", 12)
     c.drawString(client_x + 0.28 * cm, client_y + client_h - 0.7 * cm, f"CLIENT: {invoice['cliente'].upper()}")
-    c.drawString(client_x + 0.28 * cm, client_y + client_h - 2.0 * cm, f"PLACE: {invoice['place'].upper()}")
+    place_lines = _wrap(c, f"PLACE: {invoice['place'].upper()}", client_w - 0.6 * cm, "Times-Bold", 12)[:2]
+    for idx, line in enumerate(place_lines):
+        c.drawString(client_x + 0.28 * cm, client_y + client_h - (2.0 + idx * 0.48) * cm, line)
 
-    date_x = client_x + client_w + 0.6 * cm
     date_y = client_y + 1.65 * cm
-    date_w = 6.55 * cm
     date_h = 1.75 * cm
     c.rect(date_x, date_y, date_w, date_h, fill=0)
     for i in (1, 2):
@@ -189,13 +205,12 @@ def generar_factura_manual_pdf(data: dict) -> str:
     for line in _wrap(c, invoice["description"].upper(), desc_w - 1.0 * cm, "Times-Roman", 11)[:3]:
         c.drawString(desc_x + 0.45 * cm, y, line)
         y -= 0.55 * cm
-    y -= 0.35 * cm
-    if invoice["place"]:
-        c.drawString(desc_x + 0.45 * cm, y, invoice["place"].upper())
-        y -= 1.1 * cm
+    y -= 0.75 * cm
     c.drawString(desc_x + 0.45 * cm, y, "SURVEY:")
     y -= 0.5 * cm
-    c.drawString(desc_x + 0.45 * cm, y, f"-{invoice['survey'].upper()}")
+    for line in _wrap(c, f"-{invoice['survey'].upper()}", desc_w - 4.6 * cm, "Times-Roman", 11)[:2]:
+        c.drawString(desc_x + 0.45 * cm, y, line)
+        y -= 0.45 * cm
     c.drawRightString(desc_x + desc_w - 0.85 * cm, y + 0.55 * cm, _money_text(invoice["total"], invoice["moneda"]))
 
     # Total box
@@ -218,9 +233,8 @@ def generar_factura_manual_pdf(data: dict) -> str:
         bank_y -= 0.43 * cm
     bank_y -= 0.45 * cm
     c.setFillColor(red)
-    c.drawString(bank_x, bank_y, "IBAN ACCOUNT:")
+    c.drawString(bank_x, bank_y, f"IBAN ACCOUNT: {IBAN_CODE}")
     c.setFillColor(black)
-    c.drawString(bank_x + 2.55 * cm, bank_y, IBAN_CODE)
     bank_y -= 0.43 * cm
     c.drawString(bank_x, bank_y, f"Beneficiary: {BENEFICIARY}")
     bank_y -= 0.43 * cm
@@ -229,10 +243,9 @@ def generar_factura_manual_pdf(data: dict) -> str:
     c.drawString(bank_x, bank_y, "Account: 308258-5 BCRICRSJ")
 
     bank_y -= 0.85 * cm
-    c.setFont("Times-Bold", 8)
-    c.drawString(bank_x, bank_y, "NOTE:")
     c.setFillColor(red)
-    c.drawString(bank_x + 0.85 * cm, bank_y, "PAYMENTS TO BE DRAWN ON C.R BANK FREE OF")
+    c.setFont("Times-Bold", 8)
+    c.drawString(bank_x, bank_y, "NOTE: PAYMENTS TO BE DRAWN ON C.R BANK FREE OF")
     bank_y -= 0.35 * cm
     c.drawString(bank_x, bank_y, "ALL CHARGES / IN U.S DOLLARS")
     c.setFillColor(black)
