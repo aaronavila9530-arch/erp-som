@@ -20,7 +20,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20260930-hr-policies-web-v1"
+_ASSET_VERSION = "20260930-hr-news-web-v1"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -910,8 +910,22 @@ def som_web_home() -> HTMLResponse:
     .hr-card { border:1px solid #d7e1ec; border-radius:8px; background:#fff; padding:14px; min-width:0; box-shadow:var(--shadow); }
     .hr-hero h2 { margin:0; font-size:27px; line-height:1.12; }
     .hr-hero p { margin:8px 0 0; color:#607086; line-height:1.45; }
-    .hr-news-list { display:grid; gap:7px; margin-top:8px; max-height:160px; overflow:auto; }
-    .hr-news-list div { border:1px solid #e2eaf3; border-radius:7px; background:#fbfdff; padding:8px 10px; color:#334155; }
+    .news-board { border:1px solid #d7e1ec; border-radius:8px; background:#fff; box-shadow:var(--shadow); padding:14px; min-width:0; border-left:4px solid var(--blue); }
+    .home-news-mount,.news-mount { margin-bottom:14px; }
+    .news-board.compact { box-shadow:none; }
+    .news-board-head { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:10px; }
+    .news-board-head h2 { margin:0; font-size:22px; color:#122033; }
+    .news-board-head p { margin:4px 0 0; color:#607086; line-height:1.35; }
+    .news-board-tools { display:flex; flex-wrap:wrap; gap:8px; justify-content:flex-end; }
+    .news-board-tools button { height:34px; }
+    .news-list { display:grid; gap:8px; }
+    .news-item { border:1px solid #e2eaf3; border-radius:8px; background:#fbfdff; padding:10px 12px; display:grid; grid-template-columns:minmax(0,1fr) max-content; gap:10px; align-items:start; }
+    .news-item-main { min-width:0; }
+    .news-item-main strong { display:block; color:#005da8; font-size:12px; text-transform:uppercase; margin-bottom:4px; }
+    .news-item-main p { margin:0; color:#263548; line-height:1.42; overflow-wrap:anywhere; }
+    .news-item-actions { display:flex; flex-wrap:wrap; gap:6px; justify-content:flex-end; }
+    .news-item-actions button { height:30px; padding:0 9px; font-size:12px; }
+    .news-empty { border:1px dashed #c9d8e7; border-radius:8px; background:#f8fbfe; padding:12px; color:#607086; }
     .hr-actions { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:10px; }
     .hr-action-card { text-align:left; min-height:104px; height:auto; background:#fff; color:#122033; border:1px solid #d7e1ec; border-top:4px solid var(--blue); border-radius:8px; padding:12px; display:grid; align-content:start; gap:6px; }
     .hr-action-card strong { font-size:16px; }
@@ -1251,6 +1265,8 @@ def som_web_home() -> HTMLResponse:
       .itp-bi-totals { grid-template-columns:1fr; }
       .finance-filter-row,.finance-filter-row.compact,.hr-hours-filters,.hr-emp-filters,.hr-emp-tab-panel.active,.hr-salary-layout,.hr-salary-pane.active,.hr-salary-expense-grid,.hr-salary-kpis,.hr-medical-filters,.hr-medical-layout,.hr-policy-layout { grid-template-columns:1fr; }
       .hr-policy-reader { position:static; }
+      .news-item { grid-template-columns:1fr; }
+      .news-item-actions { justify-content:flex-start; }
       .accounting-hero,.accounting-grid,.accounting-filters,.accounting-entry-line,.accounting-topline,.accounting-tc { grid-template-columns:1fr; }
       .accounting-entry-lines-box { max-width:calc(100vw - 40px); }
       .surveyor-line { grid-template-columns:1fr; }
@@ -1427,6 +1443,7 @@ def som_web_home() -> HTMLResponse:
     let hrRows = [];
     let hrMedicalRows = [];
     let hrMedicalFilters = {};
+    let hrNewsData = {};
     let selectedHrMedicalIndex = null;
     let selectedHrRequestIndex = null;
     let selectedHrHourIds = new Set();
@@ -2244,6 +2261,141 @@ def som_web_home() -> HTMLResponse:
       const btnId = `${id}Toggle`;
       return `<div class="home-subhead"><h3>${esc(title)}</h3><button class="home-collapse-btn" id="${btnId}" aria-expanded="${collapsed ? "false" : "true"}" onclick="homeToggle('${id}','${btnId}')">${collapsed ? "+" : "-"}</button></div><div id="${id}" class="${collapsed ? "home-section-collapsed" : ""}">${body}</div>`;
     }
+    function canManageNews() {
+      const role = String(session?.rol || "").toLowerCase();
+      return ["admin","master"].includes(role);
+    }
+    function newsItems(data=hrNewsData) {
+      return [1,2,3,4,5].map(slot => ({ slot, text:String(data?.[`noticia_${slot}`] || "").trim() })).filter(item => item.text);
+    }
+    function renderNewsBoard(targetId, title="Noticias internas", compact=false) {
+      const target = $(targetId);
+      if (!target) return;
+      const items = newsItems();
+      const canManage = canManageNews();
+      const stamp = hrNewsData?.created_at ? new Date(hrNewsData.created_at).toLocaleString() : "";
+      const meta = [hrNewsData?.created_by ? `Publicado por ${hrNewsData.created_by}` : "", stamp].filter(Boolean).join(" · ");
+      const tools = canManage
+        ? `<div class="news-board-tools"><button onclick="openNewsEditor()">Agregar noticia</button>${hrNewsData?.id ? '<button class="secondary" onclick="openNewsBoardEditor()">Editar cartelera</button><button class="brown" onclick="deleteNewsBoard()">Eliminar cartelera</button>' : ""}</div>`
+        : "";
+      target.innerHTML = `
+        <section class="news-board ${compact ? "compact" : ""}">
+          <div class="news-board-head">
+            <div>
+              <h2>${esc(title)}</h2>
+              <p>${meta ? esc(meta) : "Comunicados visibles para todos los usuarios autorizados del ERP."}</p>
+            </div>
+            ${tools}
+          </div>
+          <div class="news-list">
+            ${items.length ? items.map(item => `
+              <article class="news-item">
+                <div class="news-item-main"><strong>Noticia ${item.slot}</strong><p>${esc(item.text)}</p></div>
+                ${canManage ? `<div class="news-item-actions"><button class="secondary" onclick="openNewsEditor(${item.slot})">Editar</button><button class="brown" onclick="deleteNewsItem(${item.slot})">Eliminar</button></div>` : ""}
+              </article>`).join("") : '<div class="news-empty">Sin noticias publicadas.</div>'}
+          </div>
+        </section>`;
+    }
+    async function loadNewsBoards() {
+      try {
+        hrNewsData = await getJSON("/noticias/latest");
+      } catch (err) {
+        hrNewsData = { error:err.message };
+      }
+      ["homeNewsBoard","hrNewsBoard","hrNews"].forEach(id => {
+        if ($(id)) renderNewsBoard(id, id === "homeNewsBoard" ? "Noticias internas" : "Noticias HHRR", id !== "homeNewsBoard");
+      });
+    }
+    function nextNewsSlot() {
+      const used = new Set(newsItems().map(item => item.slot));
+      return [1,2,3,4,5].find(slot => !used.has(slot)) || null;
+    }
+    function openNewsEditor(slot=null) {
+      if (!canManageNews()) return alert("Solo admin/master pueden administrar noticias.");
+      const targetSlot = slot || nextNewsSlot();
+      if (!targetSlot) return alert("La cartelera ya tiene 5 noticias. Edite o elimine una noticia existente.");
+      const current = hrNewsData?.[`noticia_${targetSlot}`] || "";
+      closeModal();
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal small">
+            <div class="modal-head"><h2>${slot ? "Editar noticia" : "Agregar noticia"}</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+            <div class="hr-form">
+              <label class="wide">Noticia ${targetSlot}<textarea id="newsEditorText">${esc(current)}</textarea></label>
+              <div class="wide md-actions"><button onclick="saveNewsItem(${targetSlot})">Guardar</button><button class="secondary" onclick="closeModal()">Cancelar</button></div>
+            </div>
+          </div>
+        </div>`);
+    }
+    function openNewsBoardEditor() {
+      if (!canManageNews()) return alert("Solo admin/master pueden administrar noticias.");
+      closeModal();
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal">
+            <div class="modal-head"><h2>Editar cartelera de noticias</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+            <div class="hr-form">
+              ${[1,2,3,4,5].map(i => `<label class="wide">Noticia ${i}<textarea id="newsBoard${i}">${esc(hrNewsData?.[`noticia_${i}`] || "")}</textarea></label>`).join("")}
+              <div class="wide md-actions"><button onclick="saveNewsBoard()">Guardar cartelera</button><button class="secondary" onclick="closeModal()">Cancelar</button></div>
+            </div>
+          </div>
+        </div>`);
+    }
+    function readNewsBoardPayload() {
+      const payload = {};
+      [1,2,3,4,5].forEach(i => {
+        payload[`noticia_${i}`] = valueFrom(`newsBoard${i}`).trim() || null;
+      });
+      return payload;
+    }
+    async function saveNewsBoard(payload=null) {
+      if (!canManageNews()) return alert("Solo admin/master pueden administrar noticias.");
+      const body = payload || readNewsBoardPayload();
+      if (![1,2,3,4,5].some(i => body[`noticia_${i}`])) return alert("Debe ingresar al menos una noticia.");
+      try {
+        hrNewsData = hrNewsData?.id
+          ? await sendJSON("PUT", `/noticias/${encodeURIComponent(hrNewsData.id)}`, body)
+          : await postJSON("/noticias", body);
+        closeModal();
+        await loadNewsBoards();
+        hrStatus("Noticias actualizadas.");
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+    async function saveNewsItem(slot) {
+      const text = valueFrom("newsEditorText").trim();
+      if (!text) return alert("La noticia no puede quedar vacía.");
+      const body = {};
+      [1,2,3,4,5].forEach(i => body[`noticia_${i}`] = hrNewsData?.[`noticia_${i}`] || null);
+      body[`noticia_${slot}`] = text;
+      await saveNewsBoard(body);
+    }
+    async function deleteNewsItem(slot) {
+      if (!canManageNews()) return alert("Solo admin/master pueden administrar noticias.");
+      const body = {};
+      [1,2,3,4,5].forEach(i => body[`noticia_${i}`] = i === slot ? null : (hrNewsData?.[`noticia_${i}`] || null));
+      if (![1,2,3,4,5].some(i => body[`noticia_${i}`])) {
+        await deleteNewsBoard();
+        return;
+      }
+      if (!confirm("¿Eliminar esta noticia?")) return;
+      await saveNewsBoard(body);
+    }
+    async function deleteNewsBoard() {
+      if (!canManageNews()) return alert("Solo admin/master pueden administrar noticias.");
+      if (!hrNewsData?.id) return;
+      if (!confirm("¿Eliminar toda la cartelera de noticias?")) return;
+      try {
+        await sendJSON("DELETE", `/noticias/${encodeURIComponent(hrNewsData.id)}`);
+        hrNewsData = {};
+        closeModal();
+        await loadNewsBoards();
+        hrStatus("Cartelera eliminada.");
+      } catch (err) {
+        alert(err.message);
+      }
+    }
     function showHomeInsightFromEncoded(kind, encoded) {
       try {
         showHomeInsight(kind, JSON.parse(decodeURIComponent(encoded || "%7B%7D")));
@@ -2318,6 +2470,7 @@ def som_web_home() -> HTMLResponse:
     function renderHome() {
       const role = String(session?.rol || "").toLowerCase();
       $("content").innerHTML = `
+        <div id="homeNewsBoard" class="home-news-mount"></div>
         <div class="home-action-layout">
           <div class="home-command">
             <div class="card home-action-hero">
@@ -2353,6 +2506,7 @@ def som_web_home() -> HTMLResponse:
             </div>
           </div>
         </div>`;
+      loadNewsBoards();
       loadHomeActionCenter();
       renderHomeExecutive(homeSummary);
     }
@@ -7559,8 +7713,7 @@ def som_web_home() -> HTMLResponse:
         ["employees","Empleados","Ficha laboral, jornada, salario, vacaciones y activos.","employees_view"],
         ["salary","Calculadora salarial","Empleado, independiente, propietario y escenarios.","salary_calculator"],
         ["medical","Red médica","Clínicas, especialidades, ubicación y contacto.","medical_network"],
-        ["policies","Políticas","Documentos internos y normativa HHRR.","policies_view"],
-        ["news","Noticias","Publicación de noticias HHRR.","news_publish"]
+        ["policies","Políticas","Documentos internos y normativa HHRR.","policies_view"]
       ];
       return specs.filter(item => canHr(item[3]));
     }
@@ -7580,8 +7733,8 @@ def som_web_home() -> HTMLResponse:
       const role = String(session?.rol || "").toUpperCase();
       $("content").innerHTML = `
         <div class="hr-shell">
-          <section class="hr-hero">
-            <div class="hr-card">
+          <div id="hrNewsBoard"></div>
+          <section class="hr-card">
               <h2>Módulo HHRR</h2>
               <p>Horas, vacaciones, solicitudes, payroll, colillas, empleados, calculadora salarial, red médica, políticas y noticias según permisos.</p>
               <div class="hr-kpis">
@@ -7589,11 +7742,6 @@ def som_web_home() -> HTMLResponse:
                 <div class="hr-kpi"><span>Rol</span><strong>${esc(role || "-")}</strong></div>
                 <div class="hr-kpi"><span>Accesos</span><strong>${actions.length}</strong></div>
               </div>
-            </div>
-            <div class="hr-card">
-              <div class="panel-head"><h2>Noticias</h2>${canHr("news_publish") ? '<button class="secondary" onclick="renderHrNewsForm()">Publicar</button>' : ""}</div>
-              <div id="hrNews" class="hr-news-list"><div>Cargando noticias...</div></div>
-            </div>
           </section>
           <section class="hr-card">
             <div class="hr-actions">${actions.map(([key,title,desc]) => `<button class="hr-action-card ${hrCurrentView === key ? "active" : ""}" onclick="openHrView('${key}')"><strong>${esc(title)}</strong><span>${esc(desc)}</span></button>`).join("") || '<div class="status">No hay acciones HHRR autorizadas para este usuario.</div>'}</div>
@@ -7604,19 +7752,11 @@ def som_web_home() -> HTMLResponse:
             <div id="hrWorkspace"></div>
           </section>
         </div>`;
-      loadHrNews();
+      loadNewsBoards();
       openHrView(actions[0]?.[0] || "home");
     }
     async function loadHrNews() {
-      const box = $("hrNews");
-      if (!box) return;
-      try {
-        const data = await getJSON("/noticias/latest");
-        const items = [1,2,3,4,5].map(i => data[`noticia_${i}`]).filter(Boolean);
-        box.innerHTML = items.length ? items.map(item => `<div>${esc(item)}</div>`).join("") : '<div>Sin noticias publicadas.</div>';
-      } catch (err) {
-        box.innerHTML = `<div class="error">No se pudieron cargar noticias: ${esc(err.message)}</div>`;
-      }
+      await loadNewsBoards();
     }
     function openHrView(key) {
       hrCurrentView = key;
@@ -9094,14 +9234,15 @@ def som_web_home() -> HTMLResponse:
       } catch (err) { hrStatus(err.message, true); }
     }
     function renderHrNewsForm() {
-      $("hrViewTitle").textContent = "Publicar Noticias HHRR";
-      $("hrViewHint").textContent = "Visible en el inicio de HHRR según permisos.";
-      $("hrWorkspace").innerHTML = `<div class="hr-form">${[1,2,3,4,5].map(i => `<label class="wide">Noticia ${i}<textarea id="hrNews${i}"></textarea></label>`).join("")}<button onclick="publishHrNews()">Publicar noticias</button></div>`;
+      $("hrViewTitle").textContent = "Noticias HHRR";
+      $("hrViewHint").textContent = canManageNews() ? "Administre la cartelera visible en Inicio y HHRR." : "Noticias publicadas para usuarios del ERP.";
+      $("hrWorkspace").innerHTML = '<div id="hrNews" class="news-mount"></div>';
+      loadNewsBoards();
     }
     async function publishHrNews() {
       const payload = {};
       [1,2,3,4,5].forEach(i => payload[`noticia_${i}`] = valueFrom(`hrNews${i}`));
-      try { await postJSON("/noticias", payload); hrStatus("Noticias publicadas."); await loadHrNews(); }
+      try { await postJSON("/noticias", payload); hrStatus("Noticias publicadas."); await loadNewsBoards(); }
       catch (err) { hrStatus(err.message, true); }
     }
     function showObjectModal(title, data) {

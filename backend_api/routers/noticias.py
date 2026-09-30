@@ -126,3 +126,114 @@ def obtener_ultima_noticia(
     )
 
     return cur.fetchone() or {}
+
+
+# =========================================================
+# PUT — ACTUALIZAR PUBLICACIÓN
+# URL: PUT /noticias/{noticia_id}
+# =========================================================
+@router.put("/{noticia_id}")
+def actualizar_noticias(
+    noticia_id: int,
+    payload: dict,
+    current_user=Depends(get_current_user),
+    conn=Depends(get_db)
+):
+    _check_admin_role(current_user)
+
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+
+    noticia_1 = payload.get("noticia_1")
+    noticia_2 = payload.get("noticia_2")
+    noticia_3 = payload.get("noticia_3")
+    noticia_4 = payload.get("noticia_4")
+    noticia_5 = payload.get("noticia_5")
+
+    if not any([noticia_1, noticia_2, noticia_3, noticia_4, noticia_5]):
+        raise HTTPException(
+            status_code=400,
+            detail="Debe enviar al menos una noticia"
+        )
+
+    try:
+        cur.execute(
+            """
+            UPDATE noticias
+            SET noticia_1 = %(noticia_1)s,
+                noticia_2 = %(noticia_2)s,
+                noticia_3 = %(noticia_3)s,
+                noticia_4 = %(noticia_4)s,
+                noticia_5 = %(noticia_5)s
+            WHERE id = %(id)s
+            RETURNING
+                id,
+                created_at,
+                created_by,
+                noticia_1,
+                noticia_2,
+                noticia_3,
+                noticia_4,
+                noticia_5
+            """,
+            {
+                "id": noticia_id,
+                "noticia_1": noticia_1,
+                "noticia_2": noticia_2,
+                "noticia_3": noticia_3,
+                "noticia_4": noticia_4,
+                "noticia_5": noticia_5,
+            }
+        )
+        noticia = cur.fetchone()
+        if not noticia:
+            raise HTTPException(status_code=404, detail="Noticia no encontrada")
+        conn.commit()
+        return noticia
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(
+            status_code=400,
+            detail=f"Error actualizando noticia: {str(e)}"
+        )
+
+
+# =========================================================
+# DELETE — ELIMINAR PUBLICACIÓN
+# URL: DELETE /noticias/{noticia_id}
+# =========================================================
+@router.delete("/{noticia_id}")
+def eliminar_noticias(
+    noticia_id: int,
+    current_user=Depends(get_current_user),
+    conn=Depends(get_db)
+):
+    _check_admin_role(current_user)
+
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+
+    try:
+        cur.execute(
+            """
+            DELETE FROM noticias
+            WHERE id = %(id)s
+            RETURNING id
+            """,
+            {"id": noticia_id}
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Noticia no encontrada")
+        conn.commit()
+        return {"message": "Noticias eliminadas correctamente", "id": noticia_id}
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(
+            status_code=400,
+            detail=f"Error eliminando noticia: {str(e)}"
+        )
