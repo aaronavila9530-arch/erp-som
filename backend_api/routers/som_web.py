@@ -1031,10 +1031,10 @@ def som_web_home() -> HTMLResponse:
     .pln-mini span { display:block; color:#64748b; font-size:11px; font-weight:800; text-transform:uppercase; }
     .pln-mini strong { display:block; margin-top:8px; font-size:22px; line-height:1.15; overflow-wrap:anywhere; }
     .pln-mini small { display:block; margin-top:7px; color:#607086; line-height:1.3; }
-    .pln-profit-strip { display:grid; grid-template-columns:repeat(4,minmax(140px,1fr)); gap:10px; }
-    .pln-profit-card { border:1px solid #d7e1ec; border-radius:8px; background:#fff; padding:14px 13px 16px; min-width:0; min-height:108px; text-align:left; cursor:pointer; color:#0f172a; overflow:visible; }
+    .pln-profit-strip { display:grid; grid-template-columns:repeat(4,minmax(160px,1fr)); gap:10px; align-items:stretch; }
+    .pln-profit-card { border:1px solid #d7e1ec; border-radius:8px; background:#fff; padding:14px 13px 16px; min-width:0; min-height:126px; display:grid; align-content:start; gap:4px; text-align:left; cursor:pointer; color:#0f172a; overflow:visible; }
     .pln-profit-card span { display:block; color:#64748b; font-size:11px; font-weight:800; text-transform:uppercase; }
-    .pln-profit-card strong { display:block; margin-top:8px; font-size:20px; line-height:1.35; overflow-wrap:anywhere; }
+    .pln-profit-card strong { display:block; margin-top:4px; font-size:19px; line-height:1.2; overflow-wrap:anywhere; }
     .pln-profit-card small { display:block; margin-top:6px; color:#607086; line-height:1.3; }
     .pln-kpi-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:12px; }
     .pln-kpi { min-height:104px; border:1px solid #d7e1ec; border-radius:8px; background:#fff; padding:15px; min-width:0; }
@@ -4617,8 +4617,9 @@ def som_web_home() -> HTMLResponse:
       if (!rows.length) return '<div class="status">Sin obligaciones en el horizonte seleccionado.</div>';
       return `<div class="pln-coverage-list">${rows.slice(0,8).map(row => {
         const good = row.status === "CUBRE";
-        const encoded = encodeURIComponent(JSON.stringify([row]));
-        return `<div class="pln-coverage-row" onclick="openPlanningDetail('${esc(row.label || row.bucket)}', JSON.parse(decodeURIComponent('${encoded}')), ['label','currency_code','available_before','required_amount','remaining_after','shortfall','coverage_pct','status'])">
+        const encoded = encodeURIComponent(JSON.stringify(row));
+        const title = encodeURIComponent(row.label || row.bucket || "Cobertura");
+        return `<div class="pln-coverage-row" onclick="openPlanningDetail(decodeURIComponent('${title}'), planningCoverageSourceRows(JSON.parse(decodeURIComponent('${encoded}'))), planningCoverageCols())">
           <div><strong>${esc(row.label || row.bucket)}</strong><br><span>${esc(row.currency_code)} · ${esc(row.count || 0)} líneas</span></div>
           <div><span>Disponible</span><br><strong>${money(row.available_before)}</strong></div>
           <div><span>Obligaciones</span><br><strong>${money(row.required_amount)}</strong></div>
@@ -4641,7 +4642,7 @@ def som_web_home() -> HTMLResponse:
     function planningSectionRows(title) {
       const p = planningPayload || {};
       const map = {
-        "Cobertura mensual": p.cash_coverage_month || [],
+        "Cobertura mensual": planningCoverageSourceRows(),
         "Obligaciones para cobertura": p.cash_requirements || [],
         "CxC abierta": p.collections_detail || [],
         "Aging CxC": p.collections_detail || [],
@@ -4659,10 +4660,26 @@ def som_web_home() -> HTMLResponse:
       };
       return map[title] || [];
     }
+    function planningCoverageSourceRows(row={}) {
+      const rows = planningPayload?.cash_requirements || [];
+      const month = String(row.month || row.period || row.label || "").slice(0, 7);
+      const currency = String(row.currency_code || row.currency || "").toUpperCase();
+      if (!month && !currency) return rows;
+      return rows.filter(item => {
+        const dueMonth = String(item.due_date || item.fecha || "").slice(0, 7);
+        const itemCurrency = String(item.currency_code || item.currency || item.moneda || "").toUpperCase();
+        const sameMonth = month ? dueMonth === month : true;
+        const sameCurrency = currency ? itemCurrency === currency : true;
+        return sameMonth && sameCurrency;
+      });
+    }
+    function planningCoverageCols() {
+      return ["source","id","concept","category","due_date","currency_code","amount","status","origin"];
+    }
     function planningSectionCols(title, fallback=[]) {
       const map = {
-        "Cobertura mensual":["source","id","concept","category","due_date","currency_code","amount","status","origin"],
-        "Calendario ITP":["source","id","concept","category","due_date","currency_code","amount","status","origin"],
+        "Cobertura mensual":planningCoverageCols(),
+        "Calendario ITP":planningCoverageCols(),
         "CxC abierta":["id","numero_documento","nombre_cliente","fecha_vencimiento","currency_code","total","amount","aging_dias","bucket_aging","num_informe","buque_contenedor","estado_factura"],
         "Aging CxC":["id","numero_documento","nombre_cliente","fecha_vencimiento","currency_code","total","amount","aging_dias","bucket_aging","num_informe","buque_contenedor","estado_factura"]
       };
