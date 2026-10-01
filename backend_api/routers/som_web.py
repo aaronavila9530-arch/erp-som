@@ -20,7 +20,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20260930-biweekly-obligations-v1"
+_ASSET_VERSION = "20261001-pln-currency-v2"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -1025,11 +1025,12 @@ def som_web_home() -> HTMLResponse:
     .pln-decision span { display:block; color:#64748b; font-size:11px; font-weight:800; text-transform:uppercase; }
     .pln-decision strong { display:block; margin-top:7px; font-size:30px; line-height:1.1; overflow-wrap:anywhere; }
     .pln-decision p { margin:9px 0 0; color:#607086; line-height:1.35; }
-    .pln-mini-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; }
-    .pln-mini { border:1px solid #d7e1ec; border-radius:8px; background:#fff; padding:14px; min-height:98px; text-align:left; cursor:pointer; color:#0f172a; }
+    .pln-mini-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+    .pln-mini { border:1px solid #d7e1ec; border-radius:8px; background:#fff; padding:13px; min-height:108px; text-align:left; cursor:pointer; color:#0f172a; overflow:hidden; }
     .pln-mini:hover,.pln-profit-card:hover { border-color:#8bb8e8; box-shadow:0 1px 8px rgba(15,23,42,.08); }
     .pln-mini span { display:block; color:#64748b; font-size:11px; font-weight:800; text-transform:uppercase; }
-    .pln-mini strong { display:block; margin-top:8px; font-size:22px; line-height:1.15; overflow-wrap:anywhere; }
+    .pln-mini strong { display:block; margin-top:7px; font-size:19px; line-height:1.18; overflow-wrap:anywhere; }
+    .pln-currency-line { display:block; white-space:normal; }
     .pln-mini small { display:block; margin-top:7px; color:#607086; line-height:1.3; }
     .pln-profit-strip { display:grid; grid-template-columns:repeat(4,minmax(160px,1fr)); gap:10px; align-items:stretch; }
     .pln-profit-card { border:1px solid #d7e1ec; border-radius:8px; background:#fff; padding:14px 13px 16px; min-width:0; min-height:126px; display:grid; align-content:start; gap:4px; text-align:left; cursor:pointer; color:#0f172a; overflow:visible; }
@@ -4503,10 +4504,10 @@ def som_web_home() -> HTMLResponse:
       const missing = coverage.reduce((sum,row) => sum + Number(row.shortfall || 0), 0);
       const okCount = coverage.filter(row => row.status === "CUBRE").length;
       const badCount = coverage.filter(row => row.status === "FALTANTE").length;
-      const bankText = Object.entries(bankAvailable).map(([cur,val]) => plnMoney(val, cur)).join(" | ") || "0.00";
-      const pendingText = Object.entries(requirements).map(([cur,val]) => plnMoney(val, cur)).join(" | ") || "0.00";
-      const netText = Object.entries(netCash).map(([cur,val]) => plnMoney(val, cur)).join(" | ") || "0.00";
-      const cxcText = Object.entries(collectionsOpen).map(([cur,val]) => plnMoney(val, cur)).join(" | ") || "0.00";
+      const bankText = plnCurrencyText(bankAvailable);
+      const pendingText = plnCurrencyText(requirements);
+      const netText = plnCurrencyText(netCash);
+      const cxcText = plnCurrencyText(collectionsOpen);
       const decisionTone = badCount ? "bad" : (missing > 0 ? "warn" : "good");
       const decisionTitle = badCount ? `Hay ${badCount} quincena(s) con faltante` : "Caja suficiente en el horizonte";
       const decisionCopy = coverage.length
@@ -4527,10 +4528,10 @@ def som_web_home() -> HTMLResponse:
               <p>${esc(decisionCopy)}</p>
             </div>
             <div class="pln-mini-grid">
-              <button class="pln-mini" onclick="openPlanningDetail('Bancos disponibles', planningPayload?.bank_accounts || [], ['bank_name','currency_code','account_code','account_name','available_amount','last_movement_date'])"><span>Bancos</span><strong title="${esc(bankText)}">${esc(bankText)}</strong><small>Saldo contable disponible.</small></button>
-              <button class="pln-mini" onclick="openPlanningDetail('Obligaciones pendientes', planningPayload?.cash_requirements || [], ['source','id','concept','category','due_date','currency_code','amount','status','origin'])"><span>Obligaciones</span><strong title="${esc(pendingText)}">${esc(pendingText)}</strong><small>ITP y compromisos pendientes.</small></button>
-              <button class="pln-mini" onclick="openPlanningDetail('Caja neta despues de pagar', planningNetRows(), ['currency_code','bank_available','required_amount','net_cash'])"><span>Caja neta</span><strong title="${esc(netText)}">${esc(netText)}</strong><small>Bancos menos obligaciones.</small></button>
-              <button class="pln-mini" onclick="openPlanningDetail('CxC abierta', planningPayload?.collections_open || [], ['currency_code','count','amount'])"><span>CxC abierta</span><strong title="${esc(cxcText)}">${esc(cxcText)}</strong><small>No suma a caja disponible.</small></button>
+              <button class="pln-mini" onclick="openPlanningDetail('Bancos disponibles', planningPayload?.bank_accounts || [], ['bank_name','currency_code','account_code','account_name','available_amount','last_movement_date'])"><span>Bancos</span><strong title="${esc(bankText)}">${plnCurrencyHtml(bankAvailable)}</strong><small>Saldo contable disponible.</small></button>
+              <button class="pln-mini" onclick="openPlanningDetail('Obligaciones pendientes', planningPayload?.cash_requirements || [], ['source','id','concept','category','due_date','currency_code','amount','status','origin'])"><span>Obligaciones</span><strong title="${esc(pendingText)}">${plnCurrencyHtml(requirements)}</strong><small>ITP y compromisos pendientes.</small></button>
+              <button class="pln-mini" onclick="openPlanningDetail('Caja neta despues de pagar', planningNetRows(), ['currency_code','bank_available','required_amount','net_cash'])"><span>Caja neta</span><strong title="${esc(netText)}">${plnCurrencyHtml(netCash)}</strong><small>Bancos menos obligaciones.</small></button>
+              <button class="pln-mini" onclick="openPlanningDetail('CxC abierta', planningPayload?.collections_open || [], ['currency_code','count','amount'])"><span>CxC abierta</span><strong title="${esc(cxcText)}">${plnCurrencyHtml(collectionsOpen)}</strong><small>No suma a caja disponible.</small></button>
               <button class="pln-mini" onclick="openPlanningDetail('Proyectos', planningPayload?.projects || [], ['id','name','client_name','status','currency_code','expected_revenue','expected_cost','expected_profit','monthly_savings'])"><span>Proyectos</span><strong>${esc(totals.projects || 0)}</strong><small>Utilidad esperada ${esc(plnMoney(totals.project_expected_profit || 0, 'USD'))}.</small></button>
             </div>
           </div>
@@ -4580,6 +4581,18 @@ def som_web_home() -> HTMLResponse:
     function plnMoney(value, currency) {
       const cur = String(currency || "").toUpperCase() || "CRC";
       return `${cur} ${moneyFmt.format(Number(value || 0))}`;
+    }
+    function plnCurrencyEntries(values) {
+      return Object.entries(values || {}).filter(([_cur,val]) => Number.isFinite(Number(val)));
+    }
+    function plnCurrencyText(values) {
+      const entries = plnCurrencyEntries(values);
+      return entries.length ? entries.map(([cur,val]) => plnMoney(val, cur)).join(" | ") : "0.00";
+    }
+    function plnCurrencyHtml(values) {
+      const entries = plnCurrencyEntries(values);
+      if (!entries.length) return "0.00";
+      return entries.map(([cur,val]) => `<span class="pln-currency-line">${esc(plnMoney(val, cur))}</span>`).join("");
     }
     function plnUsdEquivalent(value, currency) {
       const cur = String(currency || "").toUpperCase();
@@ -4794,8 +4807,7 @@ def som_web_home() -> HTMLResponse:
       if (String(key || "").endsWith("_pct")) return `${Number(row[key] || 0).toFixed(2)}%`;
       if (moneyCols.has(key)) {
         const cur = row.currency_code || row.currency || row.moneda || (String(row.account_name || "").toUpperCase().includes("USD") ? "USD" : "CRC");
-        const equiv = plnUsdEquivalent(row[key], cur);
-        return `${plnMoney(row[key], cur)}${equiv ? " (" + equiv + ")" : ""}`;
+        return plnMoney(row[key], cur);
       }
       return row[key] ?? "";
     }
