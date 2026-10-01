@@ -1058,7 +1058,7 @@ def som_web_home() -> HTMLResponse:
     .pln-bank-msg.error { color:#b91c1c; }
     .pln-bank-msg.ok { color:#047857; }
     .pln-coverage-list { display:grid; gap:8px; }
-    .pln-coverage-row { display:grid; grid-template-columns:minmax(0,1.25fr) repeat(3,minmax(76px,.65fr)) minmax(92px,.75fr); gap:7px; align-items:center; width:100%; max-width:100%; box-sizing:border-box; border:1px solid #d7e1ec; border-radius:8px; background:#fff; padding:10px 11px; cursor:pointer; }
+    .pln-coverage-row { display:grid; grid-template-columns:minmax(0,1.15fr) repeat(4,minmax(68px,.6fr)) minmax(88px,.7fr); gap:6px; align-items:center; width:100%; max-width:100%; box-sizing:border-box; border:1px solid #d7e1ec; border-radius:8px; background:#fff; padding:10px; cursor:pointer; }
     .pln-coverage-row:hover { border-color:#8bb8e8; box-shadow:0 1px 8px rgba(15,23,42,.08); }
     .pln-coverage-row strong { color:#0f172a; overflow-wrap:anywhere; }
     .pln-coverage-row span { color:#607086; font-size:12px; }
@@ -4617,14 +4617,16 @@ def som_web_home() -> HTMLResponse:
       if (!rows.length) return '<div class="status">Sin obligaciones en el horizonte seleccionado.</div>';
       return `<div class="pln-coverage-list">${rows.slice(0,8).map(row => {
         const good = row.status === "CUBRE";
+        const goodWithCxc = (row.status_with_collections || row.status) === "CUBRE";
         const encoded = encodeURIComponent(JSON.stringify(row));
         const title = encodeURIComponent(row.label || row.bucket || "Cobertura");
         return `<div class="pln-coverage-row" onclick="openPlanningDetail(decodeURIComponent('${title}'), planningCoverageSourceRows(JSON.parse(decodeURIComponent('${encoded}'))), planningCoverageCols())">
           <div><strong>${esc(row.label || row.bucket)}</strong><br><span>${esc(row.currency_code)} · ${esc(row.count || 0)} líneas</span></div>
-          <div><span>Disponible</span><br><strong>${money(row.available_before)}</strong></div>
+          <div><span>Bancos</span><br><strong>${money(row.available_before)}</strong></div>
+          <div><span>CxC ref.</span><br><strong>${money(row.collections_reference || 0)}</strong></div>
           <div><span>Obligaciones</span><br><strong>${money(row.required_amount)}</strong></div>
-          <div><span>Queda</span><br><strong>${money(row.remaining_after)}</strong></div>
-          <div><span class="pln-pill ${good ? "good" : "bad"}">${good ? "Cubre" : "Faltante " + money(row.shortfall)}</span></div>
+          <div><span>Queda bancos</span><br><strong>${money(row.remaining_after)}</strong></div>
+          <div><span class="pln-pill ${goodWithCxc ? "good" : "bad"}">${goodWithCxc ? "Cubre c/CxC" : "Falta c/CxC " + money(row.shortfall_with_collections ?? row.shortfall)}</span></div>
         </div>`;
       }).join("")}</div>`;
     }

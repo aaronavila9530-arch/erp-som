@@ -1135,23 +1135,40 @@ def finance_planning_summary(
         month_item.setdefault("source_rows", []).append(dict(row))
 
     running_by_currency = {cur: _money(amount) for cur, amount in bank_totals.items()}
+    running_with_collections_by_currency = {
+        cur: _money(bank_totals.get(cur)) + _money(collections_totals.get(cur))
+        for cur in sorted(set(bank_totals) | set(collections_totals))
+    }
     cash_coverage_fortnight = []
     for (_bucket, cur_code), row in sorted(requirement_by_fortnight.items(), key=lambda item: (item[1]["bucket"], item[1]["currency_code"])):
         available_before = _money(running_by_currency.get(cur_code))
+        cxc_reference = _money(collections_totals.get(cur_code))
+        available_with_collections = _money(running_with_collections_by_currency.get(cur_code))
         required = _money(row["required_amount"])
         remaining = available_before - required
+        remaining_with_collections = available_with_collections - required
         running_by_currency[cur_code] = remaining
+        running_with_collections_by_currency[cur_code] = remaining_with_collections
         status = "CUBRE" if remaining >= 0 else "FALTANTE"
+        status_with_collections = "CUBRE" if remaining_with_collections >= 0 else "FALTANTE"
         coverage_base = max(available_before, Decimal("0.00"))
+        coverage_with_collections_base = max(available_with_collections, Decimal("0.00"))
         coverage_pct = _float((coverage_base / required * Decimal("100")).quantize(MONEY)) if required else 100.0
+        coverage_with_collections_pct = _float((coverage_with_collections_base / required * Decimal("100")).quantize(MONEY)) if required else 100.0
         cash_coverage_fortnight.append({
             **row,
             "available_before": _float(available_before),
+            "collections_reference": _float(cxc_reference),
+            "available_with_collections_before": _float(available_with_collections),
             "required_amount": _float(required),
             "remaining_after": _float(remaining),
+            "remaining_with_collections_after": _float(remaining_with_collections),
             "shortfall": _float(abs(remaining) if remaining < 0 else 0),
+            "shortfall_with_collections": _float(abs(remaining_with_collections) if remaining_with_collections < 0 else 0),
             "coverage_pct": coverage_pct,
+            "coverage_with_collections_pct": coverage_with_collections_pct,
             "status": status,
+            "status_with_collections": status_with_collections,
         })
 
     cash_coverage_month = []
