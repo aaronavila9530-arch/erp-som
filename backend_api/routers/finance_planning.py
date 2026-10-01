@@ -862,6 +862,7 @@ def finance_planning_summary(
         has_collections = bool((cur.fetchone() or {}).get("table_name"))
         collections_open = []
         collections_aging = []
+        collections_detail = []
         if has_collections:
             cur.execute("""
                 SELECT COALESCE(moneda, 'CRC') AS currency_code,
@@ -888,6 +889,19 @@ def finance_planning_summary(
                 ORDER BY currency_code, bucket
             """, (company,))
             collections_aging = [_serialize(row) for row in cur.fetchall()]
+            cur.execute("""
+                SELECT id, numero_documento, codigo_cliente, nombre_cliente, tipo_factura,
+                       fecha_emision, fecha_vencimiento, moneda AS currency_code,
+                       total, saldo_pendiente AS amount, aging_dias, bucket_aging,
+                       num_informe, buque_contenedor, operacion, estado_factura, disputada
+                FROM collections
+                WHERE company_code=%s
+                  AND COALESCE(saldo_pendiente,0) > 0
+                  AND UPPER(COALESCE(estado_factura,'PENDIENTE_PAGO')) NOT IN ('PAGADA','WRITE_OFF')
+                ORDER BY fecha_vencimiento NULLS LAST, saldo_pendiente DESC
+                LIMIT 240
+            """, (company,))
+            collections_detail = [_serialize(row) for row in cur.fetchall()]
 
         cash_requirement_rows = []
         if has_itp:
@@ -1091,6 +1105,7 @@ def finance_planning_summary(
         "bank_accounts": bank_accounts,
         "collections_open": collections_open,
         "collections_aging": collections_aging,
+        "collections_detail": collections_detail,
         "cash_requirements": cash_requirements[:200],
         "cash_coverage_fortnight": cash_coverage_fortnight,
         "cash_coverage_month": cash_coverage_month,

@@ -1032,9 +1032,9 @@ def som_web_home() -> HTMLResponse:
     .pln-mini strong { display:block; margin-top:8px; font-size:22px; line-height:1.15; overflow-wrap:anywhere; }
     .pln-mini small { display:block; margin-top:7px; color:#607086; line-height:1.3; }
     .pln-profit-strip { display:grid; grid-template-columns:repeat(4,minmax(140px,1fr)); gap:10px; }
-    .pln-profit-card { border:1px solid #d7e1ec; border-radius:8px; background:#fff; padding:13px; min-width:0; text-align:left; cursor:pointer; color:#0f172a; }
+    .pln-profit-card { border:1px solid #d7e1ec; border-radius:8px; background:#fff; padding:14px 13px 16px; min-width:0; min-height:108px; text-align:left; cursor:pointer; color:#0f172a; overflow:visible; }
     .pln-profit-card span { display:block; color:#64748b; font-size:11px; font-weight:800; text-transform:uppercase; }
-    .pln-profit-card strong { display:block; margin-top:7px; font-size:22px; line-height:1.15; overflow-wrap:anywhere; }
+    .pln-profit-card strong { display:block; margin-top:8px; font-size:20px; line-height:1.35; overflow-wrap:anywhere; }
     .pln-profit-card small { display:block; margin-top:6px; color:#607086; line-height:1.3; }
     .pln-kpi-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:12px; }
     .pln-kpi { min-height:104px; border:1px solid #d7e1ec; border-radius:8px; background:#fff; padding:15px; min-width:0; }
@@ -4632,7 +4632,7 @@ def som_web_home() -> HTMLResponse:
       const opened = open ? " open" : "";
       const wide = ["Cobertura mensual","Obligaciones para cobertura","Obligaciones","Obligaciones quincenales ITP"].includes(title) ? " wide" : "";
       const summaryActions = rows.length
-        ? `<span class="pln-section-actions"><button class="secondary" type="button" onclick="event.stopPropagation(); openPlanningDetail('${esc(title)}', planningSectionRows('${esc(title)}'), ${JSON.stringify(cols).replace(/"/g, "&quot;")})">Detalle</button><button class="secondary" type="button" onclick="event.stopPropagation(); exportPlanningRows('${esc(title)}', planningSectionRows('${esc(title)}'), ${JSON.stringify(cols).replace(/"/g, "&quot;")})">Excel</button></span>`
+        ? `<span class="pln-section-actions"><button class="secondary" type="button" onclick="event.stopPropagation(); openPlanningDetail('${esc(title)}', planningSectionRows('${esc(title)}'), planningSectionCols('${esc(title)}', ${JSON.stringify(cols).replace(/"/g, "&quot;")}))">Detalle</button><button class="secondary" type="button" onclick="event.stopPropagation(); exportPlanningRows('${esc(title)}', planningSectionRows('${esc(title)}'), planningSectionCols('${esc(title)}', ${JSON.stringify(cols).replace(/"/g, "&quot;")}))">Excel</button></span>`
         : "";
       if (!rows.length) return `<details class="pln-section${wide}"${opened}><summary><span>${esc(title)} · 0 líneas</span></summary>${bodyStart}<div class="status">Sin datos para esta consulta.</div></div></details>`;
       const hasActions = title === "Proyectos";
@@ -4643,10 +4643,10 @@ def som_web_home() -> HTMLResponse:
       const map = {
         "Cobertura mensual": p.cash_coverage_month || [],
         "Obligaciones para cobertura": p.cash_requirements || [],
-        "CxC abierta": p.collections_open || [],
-        "Aging CxC": p.collections_aging || [],
+        "CxC abierta": p.collections_detail || [],
+        "Aging CxC": p.collections_detail || [],
         "Alertas": p.alerts || [],
-        "Calendario ITP": p.obligation_buckets || [],
+        "Calendario ITP": p.cash_requirements || [],
         "Obligaciones": p.obligations || [],
         "Obligaciones quincenales ITP": p.biweekly_lines || [],
         "Ingresos Accounting": p.revenue_lines || [],
@@ -4658,6 +4658,15 @@ def som_web_home() -> HTMLResponse:
         "Ahorro mensual": p.monthly_plan || []
       };
       return map[title] || [];
+    }
+    function planningSectionCols(title, fallback=[]) {
+      const map = {
+        "Cobertura mensual":["source","id","concept","category","due_date","currency_code","amount","status","origin"],
+        "Calendario ITP":["source","id","concept","category","due_date","currency_code","amount","status","origin"],
+        "CxC abierta":["id","numero_documento","nombre_cliente","fecha_vencimiento","currency_code","total","amount","aging_dias","bucket_aging","num_informe","buque_contenedor","estado_factura"],
+        "Aging CxC":["id","numero_documento","nombre_cliente","fecha_vencimiento","currency_code","total","amount","aging_dias","bucket_aging","num_informe","buque_contenedor","estado_factura"]
+      };
+      return map[title] || fallback;
     }
     function planningNetRows() {
       const totals = planningPayload?.totals || {};
