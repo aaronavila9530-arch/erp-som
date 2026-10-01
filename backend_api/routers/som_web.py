@@ -1001,18 +1001,33 @@ def som_web_home() -> HTMLResponse:
     .finance-filter-row button { justify-self:start; min-width:92px; padding:0 16px; }
     .finance-toolbar { display:flex; flex-wrap:wrap; gap:8px; margin:8px 0 12px; }
     .finance-toolbar button { height:34px; }
-    .pln-shell { display:grid; gap:14px; min-width:0; }
-    .pln-hero { display:grid; grid-template-columns:minmax(0,1fr) minmax(360px,.72fr); gap:12px; align-items:stretch; }
-    .pln-title { min-height:132px; padding:20px; border:1px solid #d7e1ec; border-left:5px solid #005da8; border-radius:8px; background:#fff; display:flex; flex-direction:column; justify-content:center; }
-    .pln-title h2 { margin:0; font-size:26px; line-height:1.12; }
-    .pln-title p { margin:10px 0 0; color:#607086; line-height:1.45; max-width:920px; }
-    .pln-scenario { padding:14px; border:1px solid #d7e1ec; border-radius:8px; background:#f8fbfe; display:grid; gap:10px; }
-    .pln-scenario h3 { margin:0; font-size:16px; }
+    .pln-shell { display:grid; gap:10px; min-width:0; }
+    .pln-command { display:grid; grid-template-columns:minmax(280px,1fr) minmax(520px,auto); gap:12px; align-items:end; }
+    .pln-title { min-width:0; }
+    .pln-title h2 { margin:0; font-size:24px; line-height:1.12; }
+    .pln-title p { margin:6px 0 0; color:#607086; line-height:1.35; max-width:920px; }
+    .pln-controls { display:grid; grid-template-columns:minmax(120px,150px) minmax(92px,120px) repeat(4,max-content); gap:8px; align-items:end; justify-content:end; }
+    .pln-controls label { display:grid; gap:4px; color:#475569; font-size:11px; font-weight:800; text-transform:uppercase; }
+    .pln-controls input,.pln-controls select { height:38px; }
+    .pln-scenario { border:1px solid #d7e1ec; border-radius:8px; background:#f8fbfe; overflow:hidden; }
+    .pln-scenario summary { cursor:pointer; padding:10px 12px; font-weight:800; color:#122033; }
+    .pln-scenario-body { display:grid; grid-template-columns:minmax(0,1fr) max-content minmax(260px,.6fr); gap:10px; align-items:end; padding:0 12px 12px; }
     .pln-scenario-grid { display:grid; grid-template-columns:repeat(3,minmax(120px,1fr)); gap:10px; align-items:end; }
     .pln-scenario-grid label { display:grid; gap:4px; font-size:12px; color:#475569; font-weight:700; }
-    .pln-scenario-result { min-height:42px; border:1px solid #d7e1ec; border-radius:8px; background:white; padding:11px 12px; color:#122033; line-height:1.35; }
-    .pln-controls { display:grid; grid-template-columns:minmax(220px,1fr) minmax(120px,160px) repeat(4,max-content); gap:10px; align-items:end; }
-    .pln-controls label { display:grid; gap:4px; color:#475569; font-size:12px; font-weight:800; text-transform:uppercase; }
+    .pln-scenario-result { min-height:38px; border:1px solid #d7e1ec; border-radius:8px; background:white; padding:9px 11px; color:#122033; line-height:1.35; }
+    .pln-board { display:grid; gap:12px; }
+    .pln-exec { display:grid; grid-template-columns:minmax(0,1.05fr) minmax(320px,.72fr); gap:12px; align-items:stretch; }
+    .pln-decision { border:1px solid #d7e1ec; border-left:6px solid #087a52; border-radius:8px; background:#fff; padding:18px; min-width:0; }
+    .pln-decision.bad { border-left-color:#c2410c; }
+    .pln-decision.warn { border-left-color:#b7791f; }
+    .pln-decision span { display:block; color:#64748b; font-size:11px; font-weight:800; text-transform:uppercase; }
+    .pln-decision strong { display:block; margin-top:7px; font-size:30px; line-height:1.1; overflow-wrap:anywhere; }
+    .pln-decision p { margin:9px 0 0; color:#607086; line-height:1.35; }
+    .pln-mini-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+    .pln-mini { border:1px solid #d7e1ec; border-radius:8px; background:#fff; padding:14px; min-height:98px; }
+    .pln-mini span { display:block; color:#64748b; font-size:11px; font-weight:800; text-transform:uppercase; }
+    .pln-mini strong { display:block; margin-top:8px; font-size:22px; line-height:1.15; overflow-wrap:anywhere; }
+    .pln-mini small { display:block; margin-top:7px; color:#607086; line-height:1.3; }
     .pln-kpi-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:12px; }
     .pln-kpi { min-height:104px; border:1px solid #d7e1ec; border-radius:8px; background:#fff; padding:15px; min-width:0; }
     .pln-kpi span { display:block; color:#64748b; font-size:11px; font-weight:800; text-transform:uppercase; }
@@ -1021,7 +1036,7 @@ def som_web_home() -> HTMLResponse:
     .pln-kpi.good { border-left:5px solid #087a52; }
     .pln-kpi.warn { border-left:5px solid #b7791f; }
     .pln-kpi.bad { border-left:5px solid #c2410c; }
-    .pln-liquidity-grid { display:grid; grid-template-columns:minmax(0,1.25fr) minmax(320px,.75fr); gap:12px; align-items:start; margin:12px 0; }
+    .pln-liquidity-grid { display:grid; grid-template-columns:minmax(0,1.2fr) minmax(330px,.8fr); gap:12px; align-items:start; }
     .pln-bank-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:10px; }
     .pln-bank-card { border:1px solid #d7e1ec; border-radius:8px; background:#fff; padding:13px; min-height:112px; }
     .pln-bank-card span { display:block; color:#64748b; font-size:11px; font-weight:800; text-transform:uppercase; }
@@ -1038,7 +1053,7 @@ def som_web_home() -> HTMLResponse:
     .pln-panel h3 { margin:0 0 10px; font-size:16px; }
     .pln-sections { display:grid; grid-template-columns:1fr; gap:14px; align-items:start; }
     .pln-section { border:1px solid #d7e1ec; border-radius:8px; background:#fff; padding:0; min-width:0; overflow:hidden; }
-    .pln-section summary { cursor:pointer; font-weight:800; color:#122033; padding:14px 16px; background:#f8fbfe; border-bottom:1px solid #edf2f7; }
+    .pln-section summary { cursor:pointer; font-weight:800; color:#122033; padding:12px 14px; background:#f8fbfe; border-bottom:1px solid #edf2f7; }
     .pln-section-body { padding:12px; }
     .pln-section-note { margin:0 0 10px; color:#607086; line-height:1.4; }
     .pln-section .table-wrap { margin-top:8px; max-height:380px; overflow:auto; scrollbar-gutter:stable both-edges; }
@@ -1281,7 +1296,7 @@ def som_web_home() -> HTMLResponse:
       .itp-action-grid { grid-template-columns:1fr; }
       .itp-bi-header,.itp-bi-controls,.itp-bi-body,.itp-bi-summary { grid-template-columns:1fr; }
       .itp-bi-totals { grid-template-columns:1fr; }
-      .finance-filter-row,.finance-filter-row.compact,.hr-hours-filters,.hr-emp-filters,.hr-emp-tab-panel.active,.hr-salary-layout,.hr-salary-pane.active,.hr-salary-expense-grid,.hr-salary-kpis,.hr-medical-filters,.hr-medical-layout,.hr-policy-layout,.pln-hero,.pln-liquidity-grid,.pln-coverage-row { grid-template-columns:1fr; }
+      .finance-filter-row,.finance-filter-row.compact,.hr-hours-filters,.hr-emp-filters,.hr-emp-tab-panel.active,.hr-salary-layout,.hr-salary-pane.active,.hr-salary-expense-grid,.hr-salary-kpis,.hr-medical-filters,.hr-medical-layout,.hr-policy-layout,.pln-command,.pln-controls,.pln-scenario-body,.pln-exec,.pln-mini-grid,.pln-liquidity-grid,.pln-coverage-row { grid-template-columns:1fr; }
       .hr-policy-reader { position:static; }
       .news-item { grid-template-columns:1fr; }
       .news-item-actions { justify-content:flex-start; }
@@ -4396,30 +4411,32 @@ def som_web_home() -> HTMLResponse:
       const period = new Date().toISOString().slice(0,7);
       target.innerHTML = `
         <div class="pln-shell">
-          <div class="pln-hero">
+          <div class="pln-command">
             <div class="pln-title">
-              <h2>PLN / Planificación financiera</h2>
-              <p>Liquidez real en bancos contra obligaciones quincenales, gastos extraordinarios, CxC abierta y proyectos con presupuesto.</p>
+              <h2>PLN / Liquidez y presupuesto</h2>
+              <p>Bancos reales contra obligaciones por quincena, CxC pendiente y proyectos especiales.</p>
             </div>
-            <div class="pln-scenario">
-              <h3>Comparador rápido</h3>
+            <div class="pln-controls">
+              <label>Periodo<input id="plnPeriod" value="${esc(period)}" placeholder="YYYY-MM" /></label>
+              <label>Meses<select id="plnMonths"><option>1</option><option>2</option><option>3</option><option selected>4</option><option>6</option><option>12</option></select></label>
+              <button onclick="loadFinancePlanning()">Buscar</button>
+              <button class="green" onclick="openPlanningProjectForm()">Proyecto</button>
+              <button class="secondary" onclick="openPlanningBankAccountForm()">Cuenta bancaria</button>
+              <button class="secondary" onclick="renderFinancePlanning($('planningWorkspace') || $('itpWorkspace'))">Limpiar</button>
+            </div>
+          </div>
+          <details class="pln-scenario">
+            <summary>Comparador rápido de escenario</summary>
+            <div class="pln-scenario-body">
               <div class="pln-scenario-grid">
                 <label>Ingreso %<input id="plnScenarioRevenue" type="number" step="1" value="0" /></label>
                 <label>Gasto %<input id="plnScenarioExpense" type="number" step="1" value="0" /></label>
                 <label>Ahorro extra<input id="plnScenarioSaving" type="number" step="0.01" value="0" /></label>
               </div>
-              <button class="secondary" onclick="calculatePlanningScenario()">Comparar escenario</button>
+              <button class="secondary" onclick="calculatePlanningScenario()">Comparar</button>
               <div id="plnScenarioResult" class="pln-scenario-result">Cargue PLN para comparar contra el periodo.</div>
             </div>
-          </div>
-          <div class="pln-controls">
-            <label>Periodo<input id="plnPeriod" value="${esc(period)}" placeholder="YYYY-MM" /></label>
-            <label>Meses<select id="plnMonths"><option>1</option><option>2</option><option>3</option><option selected>4</option><option>6</option><option>12</option></select></label>
-            <button onclick="loadFinancePlanning()">Buscar</button>
-            <button class="green" onclick="openPlanningProjectForm()">Agregar proyecto</button>
-            <button class="secondary" onclick="openPlanningBankAccountForm()">Nueva cuenta bancaria</button>
-            <button class="secondary" onclick="renderFinancePlanning($('planningWorkspace') || $('itpWorkspace'))">Limpiar</button>
-          </div>
+          </details>
         </div>
         <div id="planningMsg" class="status">Presione Buscar para consultar PLN.</div>
         <div id="planningResult" class="workspace"></div>`;
@@ -4451,36 +4468,50 @@ def som_web_home() -> HTMLResponse:
       const missing = coverage.reduce((sum,row) => sum + Number(row.shortfall || 0), 0);
       const okCount = coverage.filter(row => row.status === "CUBRE").length;
       const badCount = coverage.filter(row => row.status === "FALTANTE").length;
-      const cards = [
-        ["Disponible bancos", Object.entries(bankAvailable).map(([cur,val]) => `${cur} ${money(val)}`).join(" | ") || "0.00", "Saldo contable en cuentas bancarias reales.", missing > 0 ? "warn" : "good"],
-        ["Obligaciones abiertas", Object.entries(pending).map(([cur,val]) => `${cur} ${money(val)}`).join(" | ") || "0.00", "ITP y compromisos pendientes dentro del horizonte.", badCount ? "bad" : "good"],
-        ["Cobertura quincenal", `${okCount} cubre · ${badCount} faltante`, "Resultado secuencial por quincena y moneda.", badCount ? "bad" : "good"],
-        ["CxC abierta", Object.entries(collectionsOpen).map(([cur,val]) => `${cur} ${money(val)}`).join(" | ") || "0.00", "Dinero pendiente de cobrar. No suma al banco.", "warn"],
-        ["Proyectos", totals.projects || 0, "Proyectos especiales planificados, activos o pausados.", ""],
-        ["Utilidad proyectos", money(totals.project_expected_profit || 0), "Ingreso esperado menos costo esperado.", ""]
-      ];
+      const bankText = Object.entries(bankAvailable).map(([cur,val]) => `${cur} ${money(val)}`).join(" | ") || "0.00";
+      const pendingText = Object.entries(pending).map(([cur,val]) => `${cur} ${money(val)}`).join(" | ") || "0.00";
+      const cxcText = Object.entries(collectionsOpen).map(([cur,val]) => `${cur} ${money(val)}`).join(" | ") || "0.00";
+      const decisionTone = badCount ? "bad" : (missing > 0 ? "warn" : "good");
+      const decisionTitle = badCount ? `Hay ${badCount} quincena(s) con faltante` : "Caja suficiente en el horizonte";
+      const decisionCopy = coverage.length
+        ? `${okCount} quincena(s) cubiertas y ${badCount} con faltante. CxC se muestra como referencia, no como efectivo disponible.`
+        : "Sin obligaciones dentro del horizonte seleccionado.";
       const profitability = payload.profitability || {};
       const revenue = Number(profitability.revenue || 0);
       const expenses = Number(profitability.expenses || 0);
       const profit = Number(profitability.profit || 0);
       return `
         <div id="plnScenarioBase" data-revenue="${esc(revenue)}" data-expenses="${esc(expenses)}" data-profit="${esc(profit)}" data-savings="${esc(totals.monthly_savings || 0)}"></div>
-        <div class="pln-kpi-grid">${cards.map(([label,value,hint,tone]) => `<div class="pln-kpi ${esc(tone || "")}"><span>${esc(label)}</span><strong title="${esc(value)}">${esc(value)}</strong><small>${esc(hint)}</small></div>`).join("")}</div>
-        <div class="pln-liquidity-grid">
-          <div class="pln-panel">
-            <h3>Dinero disponible en bancos</h3>
-            ${renderPlanningBankCards(payload.bank_accounts || [])}
+        <div class="pln-board">
+          <div class="pln-exec">
+            <div class="pln-decision ${decisionTone}">
+              <span>Decisión de caja</span>
+              <strong>${esc(decisionTitle)}</strong>
+              <p>${esc(decisionCopy)}</p>
+            </div>
+            <div class="pln-mini-grid">
+              <div class="pln-mini"><span>Bancos</span><strong title="${esc(bankText)}">${esc(bankText)}</strong><small>Saldo contable disponible.</small></div>
+              <div class="pln-mini"><span>Obligaciones</span><strong title="${esc(pendingText)}">${esc(pendingText)}</strong><small>ITP y compromisos pendientes.</small></div>
+              <div class="pln-mini"><span>CxC abierta</span><strong title="${esc(cxcText)}">${esc(cxcText)}</strong><small>No suma a caja disponible.</small></div>
+              <div class="pln-mini"><span>Proyectos</span><strong>${esc(totals.projects || 0)}</strong><small>Utilidad esperada ${esc(money(totals.project_expected_profit || 0))}.</small></div>
+            </div>
           </div>
-          <div class="pln-panel">
-            <h3>Cobertura por quincena</h3>
-            ${renderPlanningCoverage(coverage)}
+          <div class="pln-liquidity-grid">
+            <div class="pln-panel">
+              <h3>Dinero disponible en bancos</h3>
+              ${renderPlanningBankCards(payload.bank_accounts || [])}
+            </div>
+            <div class="pln-panel">
+              <h3>Cobertura por quincena</h3>
+              ${renderPlanningCoverage(coverage)}
+            </div>
           </div>
         </div>
         <div class="pln-sections">
-        ${renderPlanningSection("Cobertura mensual", payload.cash_coverage_month || [], ["month","currency_code","bank_available","required_amount","remaining_if_paid","shortfall","coverage_pct","status"], "Presupuesto mensual: compara bancos actuales contra obligaciones del mes, sin sumar CxC.")}
+        ${renderPlanningSection("Cobertura mensual", payload.cash_coverage_month || [], ["month","currency_code","bank_available","required_amount","remaining_if_paid","shortfall","coverage_pct","status"], "Presupuesto mensual: compara bancos actuales contra obligaciones del mes, sin sumar CxC.", true)}
+        ${renderPlanningSection("Obligaciones para cobertura", payload.cash_requirements || [], ["source","id","concept","category","due_date","currency_code","amount","status","origin"], "Compromisos que alimentan el cálculo secuencial de cobertura quincenal.", true)}
         ${renderPlanningSection("CxC abierta", payload.collections_open || [], ["currency_code","count","amount"], "Pendiente de cobrar visible para decisión, pero separado del efectivo disponible.")}
         ${renderPlanningSection("Aging CxC", payload.collections_aging || [], ["currency_code","bucket","count","amount"], "Riesgo de cobranza por moneda y antigüedad.")}
-        ${renderPlanningSection("Obligaciones para cobertura", payload.cash_requirements || [], ["source","id","concept","category","due_date","currency_code","amount","status","origin"], "Compromisos que alimentan el cálculo secuencial de cobertura quincenal.")}
         ${renderPlanningSection("Rentabilidad empresa", [
           {metric:"Ingresos", value:money(profitability.revenue || 0)},
           {metric:"Gastos", value:money(profitability.expenses || 0)},
@@ -4537,10 +4568,12 @@ def som_web_home() -> HTMLResponse:
         </div>`;
       }).join("")}</div>`;
     }
-    function renderPlanningSection(title, rows, cols, note="") {
+    function renderPlanningSection(title, rows, cols, note="", open=false) {
       const bodyStart = `<div class="pln-section-body">${note ? `<p class="pln-section-note">${esc(note)}</p>` : ""}`;
-      if (!rows.length) return `<details class="pln-section" open><summary>${esc(title)}</summary>${bodyStart}<div class="status">Sin datos para esta consulta.</div></div></details>`;
-      return `<details class="pln-section" open><summary>${esc(title)} · ${rows.length}</summary>${bodyStart}<div class="table-wrap"><table><thead><tr><th class="pick-col"></th>${cols.map(c => `<th>${esc(c.replace(/_/g," "))}</th>`).join("")}<th>Acción</th></tr></thead><tbody>${rows.slice(0,120).map((row,idx) => `<tr><td class="pick-col"><input class="row-pick" type="checkbox" /></td>${cols.map(c => `<td>${esc(["amount","balance","total","target_amount","progress_amount","actual_amount","total_honorarios","total_gastos","precio","utilidad","expected_revenue","expected_cost","expected_profit","monthly_savings","planned_inflow","planned_outflow","planned_saving","bank_available","required_amount","remaining_if_paid","remaining_after","available_before","shortfall","coverage_pct"].includes(c) ? money(row[c]) : row[c])}</td>`).join("")}<td>${title === "Proyectos" ? `<button onclick='openPlanningProjectForm(${JSON.stringify(row).replace(/'/g, "&#39;")})'>Editar</button><button class="brown" onclick="deletePlanningProject(${Number(row.id || 0)})">Eliminar</button>` : ""}</td></tr>`).join("")}</tbody></table></div></div></details>`;
+      const opened = open ? " open" : "";
+      if (!rows.length) return `<details class="pln-section"${opened}><summary>${esc(title)}</summary>${bodyStart}<div class="status">Sin datos para esta consulta.</div></div></details>`;
+      const hasActions = title === "Proyectos";
+      return `<details class="pln-section"${opened}><summary>${esc(title)} · ${rows.length}</summary>${bodyStart}<div class="table-wrap"><table><thead><tr>${cols.map(c => `<th>${esc(c.replace(/_/g," "))}</th>`).join("")}${hasActions ? "<th>Acción</th>" : ""}</tr></thead><tbody>${rows.slice(0,120).map((row,idx) => `<tr>${cols.map(c => `<td>${esc(["amount","balance","total","target_amount","progress_amount","actual_amount","total_honorarios","total_gastos","precio","utilidad","expected_revenue","expected_cost","expected_profit","monthly_savings","planned_inflow","planned_outflow","planned_saving","bank_available","required_amount","remaining_if_paid","remaining_after","available_before","shortfall","coverage_pct"].includes(c) ? money(row[c]) : row[c])}</td>`).join("")}${hasActions ? `<td><button onclick='openPlanningProjectForm(${JSON.stringify(row).replace(/'/g, "&#39;")})'>Editar</button><button class="brown" onclick="deletePlanningProject(${Number(row.id || 0)})">Eliminar</button></td>` : ""}</tr>`).join("")}</tbody></table></div></div></details>`;
     }
     function calculatePlanningScenario() {
       const base = $("plnScenarioBase");
