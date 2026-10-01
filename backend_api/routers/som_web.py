@@ -20,7 +20,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20261001-pln-usd-cards-v1"
+_ASSET_VERSION = "20261001-pln-usd-cards-v2"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -1031,7 +1031,8 @@ def som_web_home() -> HTMLResponse:
     .pln-mini span { display:block; color:#64748b; font-size:11px; font-weight:800; text-transform:uppercase; }
     .pln-mini strong { display:block; margin-top:7px; font-size:19px; line-height:1.18; overflow-wrap:anywhere; }
     .pln-currency-line { display:block; white-space:normal; }
-    .pln-usd-line { display:block; margin-top:5px; color:#005da8; font-size:13px; font-weight:900; }
+    .pln-usd-line { display:block; color:#005da8; font-size:20px; font-weight:900; }
+    .pln-real-line { display:block; margin-top:4px; color:#607086; font-size:12px; font-weight:800; }
     .pln-mini small { display:block; margin-top:7px; color:#607086; line-height:1.3; }
     .pln-profit-strip { display:grid; grid-template-columns:repeat(4,minmax(160px,1fr)); gap:10px; align-items:stretch; }
     .pln-profit-card { border:1px solid #d7e1ec; border-radius:8px; background:#fff; padding:14px 13px 16px; min-width:0; min-height:126px; display:grid; align-content:start; gap:4px; text-align:left; cursor:pointer; color:#0f172a; overflow:visible; }
@@ -4529,10 +4530,10 @@ def som_web_home() -> HTMLResponse:
               <p>${esc(decisionCopy)}</p>
             </div>
             <div class="pln-mini-grid">
-              <button class="pln-mini" onclick="openPlanningDetail('Bancos disponibles', planningPayload?.bank_accounts || [], ['bank_name','currency_code','account_code','account_name','available_amount','last_movement_date'])"><span>Bancos</span><strong title="${esc(bankText)}">${plnCurrencyHtml(bankAvailable)}${plnUsdTotalHtml(bankAvailable)}</strong><small>Saldo contable disponible.</small></button>
-              <button class="pln-mini" onclick="openPlanningDetail('Obligaciones pendientes', planningPayload?.cash_requirements || [], ['source','id','concept','category','due_date','currency_code','amount','status','origin'])"><span>Obligaciones</span><strong title="${esc(pendingText)}">${plnCurrencyHtml(requirements)}${plnUsdTotalHtml(requirements)}</strong><small>ITP y compromisos pendientes.</small></button>
-              <button class="pln-mini" onclick="openPlanningDetail('Caja neta despues de pagar', planningNetRows(), ['currency_code','bank_available','required_amount','net_cash'])"><span>Caja neta</span><strong title="${esc(netText)}">${plnCurrencyHtml(netCash)}${plnUsdTotalHtml(netCash)}</strong><small>Bancos menos obligaciones.</small></button>
-              <button class="pln-mini" onclick="openPlanningDetail('CxC abierta', planningPayload?.collections_open || [], ['currency_code','count','amount'])"><span>CxC abierta</span><strong title="${esc(cxcText)}">${plnCurrencyHtml(collectionsOpen)}${plnUsdTotalHtml(collectionsOpen)}</strong><small>No suma a caja disponible.</small></button>
+              <button class="pln-mini" onclick="openPlanningDetail('Bancos disponibles', planningPayload?.bank_accounts || [], ['bank_name','currency_code','account_code','account_name','available_amount','last_movement_date'])"><span>Bancos</span><strong title="${esc(bankText)}">${plnUsdCardHtml(bankAvailable)}${plnRealCurrencyHtml(bankAvailable)}</strong><small>Saldo contable disponible.</small></button>
+              <button class="pln-mini" onclick="openPlanningDetail('Obligaciones pendientes', planningPayload?.cash_requirements || [], ['source','id','concept','category','due_date','currency_code','amount','status','origin'])"><span>Obligaciones</span><strong title="${esc(pendingText)}">${plnUsdCardHtml(requirements)}${plnRealCurrencyHtml(requirements)}</strong><small>ITP y compromisos pendientes.</small></button>
+              <button class="pln-mini" onclick="openPlanningDetail('Caja neta despues de pagar', planningNetRows(), ['currency_code','bank_available','required_amount','net_cash'])"><span>Caja neta</span><strong title="${esc(netText)}">${plnUsdCardHtml(netCash)}${plnRealCurrencyHtml(netCash)}</strong><small>Bancos menos obligaciones.</small></button>
+              <button class="pln-mini" onclick="openPlanningDetail('CxC abierta', planningPayload?.collections_open || [], ['currency_code','count','amount'])"><span>CxC abierta</span><strong title="${esc(cxcText)}">${plnUsdCardHtml(collectionsOpen)}${plnRealCurrencyHtml(collectionsOpen)}</strong><small>No suma a caja disponible.</small></button>
               <button class="pln-mini" onclick="openPlanningDetail('Proyectos', planningPayload?.projects || [], ['id','name','client_name','status','currency_code','expected_revenue','expected_cost','expected_profit','monthly_savings'])"><span>Proyectos</span><strong>${esc(totals.projects || 0)}</strong><small>Utilidad esperada ${esc(plnMoney(totals.project_expected_profit || 0, 'USD'))}.</small></button>
             </div>
           </div>
@@ -4608,6 +4609,14 @@ def som_web_home() -> HTMLResponse:
     function plnUsdTotalHtml(values) {
       const total = plnUsdTotal(values);
       return `<span class="pln-usd-line">Equiv. ${esc(plnMoney(total, "USD"))}</span>`;
+    }
+    function plnUsdCardHtml(values) {
+      return `<span class="pln-usd-line">${esc(plnMoney(plnUsdTotal(values), "USD"))}</span>`;
+    }
+    function plnRealCurrencyHtml(values) {
+      const entries = plnCurrencyEntries(values);
+      if (!entries.length) return "";
+      return `<span class="pln-real-line">Real: ${esc(entries.map(([cur,val]) => plnMoney(val, cur)).join(" | "))}</span>`;
     }
     function plnUsdEquivalent(value, currency) {
       const cur = String(currency || "").toUpperCase();
@@ -4771,6 +4780,7 @@ def som_web_home() -> HTMLResponse:
     function openPlanningDetail(title, rows=[], cols=[]) {
       rows = Array.isArray(rows) ? rows : [];
       cols = cols && cols.length ? cols : Array.from(new Set(rows.flatMap(row => Object.keys(row || {}))));
+      cols = planningDetailCols(cols);
       const totals = {};
       rows.forEach(row => {
         const cur = row.currency_code || row.currency || row.moneda;
@@ -4778,10 +4788,7 @@ def som_web_home() -> HTMLResponse:
         if (cur && Number.isFinite(amount)) totals[cur] = (totals[cur] || 0) + amount;
       });
       const totalText = Object.keys(totals).length
-        ? Object.entries(totals).map(([cur,val]) => {
-            const equiv = plnUsdEquivalent(val, cur);
-            return `${plnMoney(val, cur)}${equiv ? " (" + equiv + ")" : ""}`;
-          }).join(" | ")
+        ? `${plnCurrencyText(totals)} | Equiv. ${plnMoney(plnUsdTotal(totals), "USD")}`
         : `${rows.length} líneas`;
       document.body.insertAdjacentHTML("beforeend", `
         <div class="modal-backdrop" id="svcModal">
@@ -4802,6 +4809,7 @@ def som_web_home() -> HTMLResponse:
     function exportPlanningRows(title, rows=[], cols=[]) {
       rows = Array.isArray(rows) ? rows : [];
       cols = cols && cols.length ? cols : Array.from(new Set(rows.flatMap(row => Object.keys(row || {}))));
+      cols = planningDetailCols(cols);
       if (!rows.length) return alert("No hay líneas para exportar.");
       const exportRows = rows.map(row => Object.fromEntries(cols.map(c => [planningColumnLabel(c), planningCell(row, c)])));
       const exportCols = cols.map(planningColumnLabel);
@@ -4812,16 +4820,53 @@ def som_web_home() -> HTMLResponse:
         month:"Mes", currency_code:"Moneda", bank_available:"Disponible banco", required_amount:"Obligaciones",
         remaining_if_paid:"Queda si se paga", shortfall:"Faltante", coverage_pct:"Cobertura %", status:"Estado",
         source:"Origen", id:"ID", concept:"Concepto", category:"Rubro", due_date:"Fecha", amount:"Monto",
+        amount_original:"Monto original", amount_usd:"Equiv. USD", amount_crc:"Equiv. CRC",
         count:"Líneas", bucket:"Bloque", payee_name:"Beneficiario", obligation_type:"Tipo",
         origin:"Fuente", metric:"Métrica", value:"Valor", severity:"Severidad", code:"Código", message:"Mensaje"
       };
       return labels[key] || String(key || "").replace(/_/g, " ");
     }
+    function planningDetailCols(cols=[]) {
+      const moneySourceCols = new Set(["amount","balance","total","actual_amount","available_amount","target_amount","progress_amount","expected_revenue","expected_cost","expected_profit","monthly_savings","planned_inflow","planned_outflow","planned_saving"]);
+      const out = [];
+      (cols || []).forEach(col => {
+        if (moneySourceCols.has(col)) {
+          ["amount_original","amount_usd","amount_crc"].forEach(extra => { if (!out.includes(extra)) out.push(extra); });
+        } else if (!out.includes(col)) out.push(col);
+      });
+      return out;
+    }
+    function planningRawAmount(row, key) {
+      if (key === "amount_original" || key === "amount_usd" || key === "amount_crc") {
+        return Number(row.amount ?? row.balance ?? row.total ?? row.actual_amount ?? row.available_amount ?? row.target_amount ?? row.progress_amount ?? row.expected_revenue ?? row.expected_cost ?? row.expected_profit ?? row.monthly_savings ?? row.planned_inflow ?? row.planned_outflow ?? row.planned_saving ?? 0);
+      }
+      return Number(row[key] || 0);
+    }
+    function planningRowCurrency(row) {
+      return row.currency_code || row.currency || row.moneda || (String(row.account_name || "").toUpperCase().includes("USD") ? "USD" : "CRC");
+    }
+    function plnToUsd(value, currency) {
+      const cur = String(currency || "").toUpperCase();
+      const amount = Number(value || 0);
+      if (cur === "USD") return amount;
+      if (cur === "CRC") return amount / plnFxRate();
+      return amount;
+    }
+    function plnToCrc(value, currency) {
+      const cur = String(currency || "").toUpperCase();
+      const amount = Number(value || 0);
+      if (cur === "CRC") return amount;
+      if (cur === "USD") return amount * plnFxRate();
+      return amount;
+    }
     function planningCell(row, key) {
-      const moneyCols = new Set(["amount","balance","total","target_amount","progress_amount","actual_amount","total_honorarios","total_gastos","precio","utilidad","expected_revenue","expected_cost","expected_profit","monthly_savings","planned_inflow","planned_outflow","planned_saving","bank_available","required_amount","remaining_if_paid","remaining_after","available_before","collections_reference","available_with_collections_before","remaining_with_collections_after","shortfall","shortfall_with_collections","net_cash"]);
+      const moneyCols = new Set(["amount","balance","total","target_amount","progress_amount","actual_amount","available_amount","total_honorarios","total_gastos","precio","utilidad","expected_revenue","expected_cost","expected_profit","monthly_savings","planned_inflow","planned_outflow","planned_saving","bank_available","required_amount","remaining_if_paid","remaining_after","available_before","collections_reference","available_with_collections_before","remaining_with_collections_after","shortfall","shortfall_with_collections","net_cash"]);
       if (String(key || "").endsWith("_pct")) return `${Number(row[key] || 0).toFixed(2)}%`;
+      if (key === "amount_original") return plnMoney(planningRawAmount(row, key), planningRowCurrency(row));
+      if (key === "amount_usd") return plnMoney(plnToUsd(planningRawAmount(row, key), planningRowCurrency(row)), "USD");
+      if (key === "amount_crc") return plnMoney(plnToCrc(planningRawAmount(row, key), planningRowCurrency(row)), "CRC");
       if (moneyCols.has(key)) {
-        const cur = row.currency_code || row.currency || row.moneda || (String(row.account_name || "").toUpperCase().includes("USD") ? "USD" : "CRC");
+        const cur = planningRowCurrency(row);
         return plnMoney(row[key], cur);
       }
       return row[key] ?? "";
