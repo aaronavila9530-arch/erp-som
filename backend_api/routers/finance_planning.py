@@ -1013,6 +1013,75 @@ def finance_planning_summary(
             """, (today, company, company_scope, today, start, today, horizon_end))
             cash_requirement_rows.extend(_serialize(row) for row in cur.fetchall())
 
+        try:
+            from routers.invoice_to_pay import biweekly_obligations_preview
+
+            existing_keys = set()
+            for row in cash_requirement_rows:
+                if row.get("id") and row.get("source") == "ITP":
+                    existing_keys.add(("obligation", str(row.get("id"))))
+                else:
+                    existing_keys.add((
+                        "cash",
+                        str(row.get("source") or ""),
+                        str(row.get("id") or ""),
+                        str(row.get("concept") or "").strip().upper(),
+                        str(row.get("category") or "").strip().upper(),
+                        str(row.get("currency_code") or "").upper(),
+                        str(row.get("due_date") or ""),
+                        str(_money(row.get("amount"))),
+                    ))
+
+            current_month = start
+            while current_month < horizon_end:
+                preview_period = current_month.strftime("%Y-%m")
+                for fortnight in (1, 2):
+                    preview = biweekly_obligations_preview(
+                        period=preview_period,
+                        fortnight=fortnight,
+                        force=True,
+                        conn=conn,
+                        x_company_code=company,
+                    )
+                    for item in (preview or {}).get("rows") or []:
+                        amount = _money(item.get("amount"))
+                        if amount <= 0:
+                            continue
+                        obligation_id = item.get("obligation_id")
+                        due_date = item.get("due_date") or item.get("payment_date") or preview_period + ("-15" if fortnight == 1 else "-30")
+                        currency = str(item.get("currency") or "CRC").upper()
+                        if obligation_id:
+                            key = ("obligation", str(obligation_id))
+                        else:
+                            key = (
+                                "cash",
+                                "QUINCENAL_PREVIEW",
+                                "",
+                                str(item.get("name") or "").strip().upper(),
+                                str(item.get("category") or "").strip().upper(),
+                                currency,
+                                str(due_date),
+                                str(amount),
+                            )
+                        if key in existing_keys:
+                            continue
+                        existing_keys.add(key)
+                        cash_requirement_rows.append({
+                            "source": "QUINCENAL_PREVIEW",
+                            "id": item.get("id") or "",
+                            "concept": item.get("name") or item.get("beneficiary") or item.get("category") or "Obligación quincenal",
+                            "category": item.get("category") or "Quincenal",
+                            "due_date": due_date,
+                            "currency_code": currency,
+                            "amount": _float(amount),
+                            "status": "PROYECTADO",
+                            "origin": f"ITP_Q{fortnight}",
+                        })
+                current_month = _add_months(current_month, 1)
+        except Exception:
+            conn.rollback()
+            _ensure_planning_schema(conn)
+
     total_pending = {}
     for row in obligation_buckets:
         cur_code = row.get("currency") or "CRC"

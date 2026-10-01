@@ -1058,14 +1058,14 @@ def som_web_home() -> HTMLResponse:
     .pln-bank-msg.error { color:#b91c1c; }
     .pln-bank-msg.ok { color:#047857; }
     .pln-coverage-list { display:grid; gap:8px; }
-    .pln-coverage-row { display:grid; grid-template-columns:minmax(150px,1fr) minmax(105px,.55fr) minmax(105px,.55fr) minmax(105px,.55fr) minmax(110px,.55fr); gap:8px; align-items:center; border:1px solid #d7e1ec; border-radius:8px; background:#fff; padding:10px 12px; cursor:pointer; }
+    .pln-coverage-row { display:grid; grid-template-columns:minmax(0,1.25fr) repeat(3,minmax(76px,.65fr)) minmax(92px,.75fr); gap:7px; align-items:center; width:100%; max-width:100%; box-sizing:border-box; border:1px solid #d7e1ec; border-radius:8px; background:#fff; padding:10px 11px; cursor:pointer; }
     .pln-coverage-row:hover { border-color:#8bb8e8; box-shadow:0 1px 8px rgba(15,23,42,.08); }
-    .pln-coverage-row strong { color:#0f172a; }
+    .pln-coverage-row strong { color:#0f172a; overflow-wrap:anywhere; }
     .pln-coverage-row span { color:#607086; font-size:12px; }
-    .pln-pill { display:inline-flex; align-items:center; justify-content:center; min-height:28px; border-radius:999px; padding:4px 10px; font-weight:800; font-size:12px; }
+    .pln-pill { display:inline-flex; align-items:center; justify-content:center; min-height:28px; max-width:100%; border-radius:999px; padding:4px 9px; font-weight:800; font-size:12px; white-space:normal; text-align:center; overflow-wrap:anywhere; }
     .pln-pill.good { color:#087a52; background:#e8f7ee; border:1px solid #bde8ce; }
     .pln-pill.bad { color:#9a3412; background:#fff4e5; border:1px solid #fed7aa; }
-    .pln-panel { border:1px solid #d7e1ec; border-radius:8px; background:#f8fbfe; padding:13px; min-width:0; }
+    .pln-panel { border:1px solid #d7e1ec; border-radius:8px; background:#f8fbfe; padding:13px; min-width:0; overflow:hidden; }
     .pln-panel h3 { margin:0 0 10px; font-size:16px; }
     .pln-sections { display:grid; grid-template-columns:repeat(2,minmax(520px,1fr)); gap:12px; align-items:start; }
     .pln-section.wide { grid-column:1/-1; }
