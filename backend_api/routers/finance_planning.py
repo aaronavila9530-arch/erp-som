@@ -525,9 +525,11 @@ def finance_planning_summary(
     start, month_end = _period_bounds(period)
     horizon_end = _add_months(start, months)
     today = date.today()
+    planning_exchange_rate = Decimal("1.00")
 
     _ensure_planning_schema(conn)
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        planning_exchange_rate = _exchange_rate(cur, today)
         cur.execute("SELECT to_regclass('public.payment_obligations') AS table_name")
         has_itp = bool((cur.fetchone() or {}).get("table_name"))
         cur.execute("SELECT to_regclass('public.itp_biweekly_payment_lines') AS table_name")
@@ -1244,6 +1246,8 @@ def finance_planning_summary(
             "requirements_by_currency": {key: _float(value) for key, value in requirements_totals.items()},
             "net_cash_after_requirements_by_currency": net_cash_by_currency,
             "collections_open_by_currency": {key: _float(value) for key, value in collections_totals.items()},
+            "exchange_rate_crc_per_usd": _float(planning_exchange_rate),
+            "exchange_rate_date": today.isoformat(),
         },
         "profitability": profitability,
         "obligation_buckets": obligation_buckets,
