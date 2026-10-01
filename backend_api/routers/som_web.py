@@ -20,7 +20,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20261001-pln-currency-v2"
+_ASSET_VERSION = "20261001-pln-usd-cards-v1"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -1031,6 +1031,7 @@ def som_web_home() -> HTMLResponse:
     .pln-mini span { display:block; color:#64748b; font-size:11px; font-weight:800; text-transform:uppercase; }
     .pln-mini strong { display:block; margin-top:7px; font-size:19px; line-height:1.18; overflow-wrap:anywhere; }
     .pln-currency-line { display:block; white-space:normal; }
+    .pln-usd-line { display:block; margin-top:5px; color:#005da8; font-size:13px; font-weight:900; }
     .pln-mini small { display:block; margin-top:7px; color:#607086; line-height:1.3; }
     .pln-profit-strip { display:grid; grid-template-columns:repeat(4,minmax(160px,1fr)); gap:10px; align-items:stretch; }
     .pln-profit-card { border:1px solid #d7e1ec; border-radius:8px; background:#fff; padding:14px 13px 16px; min-width:0; min-height:126px; display:grid; align-content:start; gap:4px; text-align:left; cursor:pointer; color:#0f172a; overflow:visible; }
@@ -4528,10 +4529,10 @@ def som_web_home() -> HTMLResponse:
               <p>${esc(decisionCopy)}</p>
             </div>
             <div class="pln-mini-grid">
-              <button class="pln-mini" onclick="openPlanningDetail('Bancos disponibles', planningPayload?.bank_accounts || [], ['bank_name','currency_code','account_code','account_name','available_amount','last_movement_date'])"><span>Bancos</span><strong title="${esc(bankText)}">${plnCurrencyHtml(bankAvailable)}</strong><small>Saldo contable disponible.</small></button>
-              <button class="pln-mini" onclick="openPlanningDetail('Obligaciones pendientes', planningPayload?.cash_requirements || [], ['source','id','concept','category','due_date','currency_code','amount','status','origin'])"><span>Obligaciones</span><strong title="${esc(pendingText)}">${plnCurrencyHtml(requirements)}</strong><small>ITP y compromisos pendientes.</small></button>
-              <button class="pln-mini" onclick="openPlanningDetail('Caja neta despues de pagar', planningNetRows(), ['currency_code','bank_available','required_amount','net_cash'])"><span>Caja neta</span><strong title="${esc(netText)}">${plnCurrencyHtml(netCash)}</strong><small>Bancos menos obligaciones.</small></button>
-              <button class="pln-mini" onclick="openPlanningDetail('CxC abierta', planningPayload?.collections_open || [], ['currency_code','count','amount'])"><span>CxC abierta</span><strong title="${esc(cxcText)}">${plnCurrencyHtml(collectionsOpen)}</strong><small>No suma a caja disponible.</small></button>
+              <button class="pln-mini" onclick="openPlanningDetail('Bancos disponibles', planningPayload?.bank_accounts || [], ['bank_name','currency_code','account_code','account_name','available_amount','last_movement_date'])"><span>Bancos</span><strong title="${esc(bankText)}">${plnCurrencyHtml(bankAvailable)}${plnUsdTotalHtml(bankAvailable)}</strong><small>Saldo contable disponible.</small></button>
+              <button class="pln-mini" onclick="openPlanningDetail('Obligaciones pendientes', planningPayload?.cash_requirements || [], ['source','id','concept','category','due_date','currency_code','amount','status','origin'])"><span>Obligaciones</span><strong title="${esc(pendingText)}">${plnCurrencyHtml(requirements)}${plnUsdTotalHtml(requirements)}</strong><small>ITP y compromisos pendientes.</small></button>
+              <button class="pln-mini" onclick="openPlanningDetail('Caja neta despues de pagar', planningNetRows(), ['currency_code','bank_available','required_amount','net_cash'])"><span>Caja neta</span><strong title="${esc(netText)}">${plnCurrencyHtml(netCash)}${plnUsdTotalHtml(netCash)}</strong><small>Bancos menos obligaciones.</small></button>
+              <button class="pln-mini" onclick="openPlanningDetail('CxC abierta', planningPayload?.collections_open || [], ['currency_code','count','amount'])"><span>CxC abierta</span><strong title="${esc(cxcText)}">${plnCurrencyHtml(collectionsOpen)}${plnUsdTotalHtml(collectionsOpen)}</strong><small>No suma a caja disponible.</small></button>
               <button class="pln-mini" onclick="openPlanningDetail('Proyectos', planningPayload?.projects || [], ['id','name','client_name','status','currency_code','expected_revenue','expected_cost','expected_profit','monthly_savings'])"><span>Proyectos</span><strong>${esc(totals.projects || 0)}</strong><small>Utilidad esperada ${esc(plnMoney(totals.project_expected_profit || 0, 'USD'))}.</small></button>
             </div>
           </div>
@@ -4593,6 +4594,20 @@ def som_web_home() -> HTMLResponse:
       const entries = plnCurrencyEntries(values);
       if (!entries.length) return "0.00";
       return entries.map(([cur,val]) => `<span class="pln-currency-line">${esc(plnMoney(val, cur))}</span>`).join("");
+    }
+    function plnUsdTotal(values) {
+      const rate = plnFxRate();
+      return plnCurrencyEntries(values).reduce((sum, [cur,val]) => {
+        const code = String(cur || "").toUpperCase();
+        const amount = Number(val || 0);
+        if (code === "USD") return sum + amount;
+        if (code === "CRC" && rate > 1) return sum + amount / rate;
+        return sum;
+      }, 0);
+    }
+    function plnUsdTotalHtml(values) {
+      const total = plnUsdTotal(values);
+      return `<span class="pln-usd-line">Equiv. ${esc(plnMoney(total, "USD"))}</span>`;
     }
     function plnUsdEquivalent(value, currency) {
       const cur = String(currency || "").toUpperCase();
