@@ -610,6 +610,7 @@ def finance_planning_summary(
             obligations = [_serialize(row) for row in cur.fetchall()]
 
         applied_payments = []
+        biweekly_lines = []
         if has_biweekly:
             cur.execute("""
                 SELECT COALESCE(currency, 'CRC') AS currency,
@@ -624,6 +625,32 @@ def finance_planning_summary(
                 ORDER BY currency
             """, (company, start, horizon_end))
             applied_payments = [_serialize(row) for row in cur.fetchall()]
+            cur.execute("""
+                SELECT
+                    l.id,
+                    l.batch_id,
+                    b.period,
+                    b.fortnight,
+                    l.category,
+                    l.beneficiary,
+                    l.amount,
+                    l.currency,
+                    l.bank_voucher,
+                    l.payment_date,
+                    l.obligation_id,
+                    l.reference,
+                    CASE WHEN COALESCE(l.accounting_entry_id,0) > 0 THEN 'POSTED' ELSE 'PENDING' END AS status,
+                    l.accounting_entry_id,
+                    COALESCE(l.origin_company_code, l.company_code) AS origin_company_code,
+                    l.source
+                FROM itp_biweekly_payment_lines l
+                LEFT JOIN itp_biweekly_payment_batches b ON b.id=l.batch_id
+                WHERE l.company_code=%s
+                  AND COALESCE(l.payment_date, %s::date) < %s
+                ORDER BY COALESCE(l.payment_date, %s::date), l.category, l.beneficiary, l.id
+                LIMIT 240
+            """, (company, today, horizon_end, today))
+            biweekly_lines = [_serialize(row) for row in cur.fetchall()]
 
         cur.execute("""
             SELECT e.period, COALESCE(l.account_code, '') AS account_code,
@@ -641,6 +668,22 @@ def finance_planning_summary(
             LIMIT 80
         """, (company, start, horizon_end))
         expenses = [_serialize(row) for row in cur.fetchall()]
+        cur.execute("""
+            SELECT e.period, COALESCE(l.account_code, '') AS account_code,
+                   COALESCE(MAX(l.account_name), l.account_code) AS account_name,
+                   COALESCE(SUM(l.credit - l.debit), 0) AS actual_amount
+            FROM accounting_entries e
+            JOIN accounting_lines l ON l.entry_id=e.id
+            WHERE e.company_code=%s
+              AND e.workflow_status='POSTED'
+              AND e.entry_date >= %s
+              AND e.entry_date < %s
+              AND l.account_code LIKE '4%%'
+            GROUP BY e.period, l.account_code
+            ORDER BY actual_amount DESC
+            LIMIT 80
+        """, (company, start, horizon_end))
+        revenue_lines = [_serialize(row) for row in cur.fetchall()]
 
         profitability_sql = """
             SELECT
@@ -954,7 +997,8 @@ def finance_planning_summary(
         remaining = available_before - required
         running_by_currency[cur_code] = remaining
         status = "CUBRE" if remaining >= 0 else "FALTANTE"
-        coverage_pct = _float((available_before / required * Decimal("100")).quantize(MONEY)) if required else 100.0
+        coverage_base = max(available_before, Decimal("0.00"))
+        coverage_pct = _float((coverage_base / required * Decimal("100")).quantize(MONEY)) if required else 100.0
         cash_coverage_fortnight.append({
             **row,
             "available_before": _float(available_before),
@@ -976,11 +1020,19 @@ def finance_planning_summary(
             "required_amount": _float(required),
             "remaining_if_paid": _float(remaining),
             "shortfall": _float(abs(remaining) if remaining < 0 else 0),
-            "coverage_pct": _float((available / required * Decimal("100")).quantize(MONEY)) if required else 100.0,
+            "coverage_pct": _float((max(available, Decimal("0.00")) / required * Decimal("100")).quantize(MONEY)) if required else 100.0,
             "status": "CUBRE" if remaining >= 0 else "FALTANTE",
         })
 
     cash_requirements = sorted(cash_requirement_rows, key=lambda row: (str(row.get("due_date") or ""), str(row.get("currency_code") or ""), -float(row.get("amount") or 0)))
+    requirements_totals = {}
+    for row in cash_requirements:
+        cur_code = row.get("currency_code") or "CRC"
+        requirements_totals[cur_code] = _money(requirements_totals.get(cur_code)) + _money(row.get("amount"))
+    net_cash_by_currency = {
+        cur: _float(_money(bank_totals.get(cur)) - _money(requirements_totals.get(cur)))
+        for cur in sorted(set(bank_totals) | set(requirements_totals))
+    }
 
     total_project_profit = sum(_money(row.get("expected_profit")) for row in projects)
     total_weighted_profit = sum(_money(row.get("weighted_profit")) for row in projects)
@@ -1021,13 +1073,17 @@ def finance_planning_summary(
             "project_weighted_profit": _float(total_weighted_profit),
             "monthly_savings": _float(total_monthly_savings),
             "bank_available_by_currency": {key: _float(value) for key, value in bank_totals.items()},
+            "requirements_by_currency": {key: _float(value) for key, value in requirements_totals.items()},
+            "net_cash_after_requirements_by_currency": net_cash_by_currency,
             "collections_open_by_currency": {key: _float(value) for key, value in collections_totals.items()},
         },
         "profitability": profitability,
         "obligation_buckets": obligation_buckets,
         "obligations": obligations,
         "applied_payments": applied_payments,
+        "biweekly_lines": biweekly_lines,
         "expenses": expenses,
+        "revenue_lines": revenue_lines,
         "goals": goals,
         "projects": projects,
         "project_schedule": project_schedule,

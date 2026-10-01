@@ -1025,13 +1025,14 @@ def som_web_home() -> HTMLResponse:
     .pln-decision span { display:block; color:#64748b; font-size:11px; font-weight:800; text-transform:uppercase; }
     .pln-decision strong { display:block; margin-top:7px; font-size:30px; line-height:1.1; overflow-wrap:anywhere; }
     .pln-decision p { margin:9px 0 0; color:#607086; line-height:1.35; }
-    .pln-mini-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
-    .pln-mini { border:1px solid #d7e1ec; border-radius:8px; background:#fff; padding:14px; min-height:98px; }
+    .pln-mini-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; }
+    .pln-mini { border:1px solid #d7e1ec; border-radius:8px; background:#fff; padding:14px; min-height:98px; text-align:left; cursor:pointer; color:#0f172a; }
+    .pln-mini:hover,.pln-profit-card:hover { border-color:#8bb8e8; box-shadow:0 1px 8px rgba(15,23,42,.08); }
     .pln-mini span { display:block; color:#64748b; font-size:11px; font-weight:800; text-transform:uppercase; }
     .pln-mini strong { display:block; margin-top:8px; font-size:22px; line-height:1.15; overflow-wrap:anywhere; }
     .pln-mini small { display:block; margin-top:7px; color:#607086; line-height:1.3; }
     .pln-profit-strip { display:grid; grid-template-columns:repeat(4,minmax(140px,1fr)); gap:10px; }
-    .pln-profit-card { border:1px solid #d7e1ec; border-radius:8px; background:#fff; padding:13px; min-width:0; }
+    .pln-profit-card { border:1px solid #d7e1ec; border-radius:8px; background:#fff; padding:13px; min-width:0; text-align:left; cursor:pointer; color:#0f172a; }
     .pln-profit-card span { display:block; color:#64748b; font-size:11px; font-weight:800; text-transform:uppercase; }
     .pln-profit-card strong { display:block; margin-top:7px; font-size:22px; line-height:1.15; overflow-wrap:anywhere; }
     .pln-profit-card small { display:block; margin-top:6px; color:#607086; line-height:1.3; }
@@ -1057,7 +1058,8 @@ def som_web_home() -> HTMLResponse:
     .pln-bank-msg.error { color:#b91c1c; }
     .pln-bank-msg.ok { color:#047857; }
     .pln-coverage-list { display:grid; gap:8px; }
-    .pln-coverage-row { display:grid; grid-template-columns:minmax(150px,1fr) minmax(110px,.55fr) minmax(110px,.55fr) minmax(110px,.55fr); gap:8px; align-items:center; border:1px solid #d7e1ec; border-radius:8px; background:#fff; padding:10px 12px; }
+    .pln-coverage-row { display:grid; grid-template-columns:minmax(150px,1fr) minmax(105px,.55fr) minmax(105px,.55fr) minmax(105px,.55fr) minmax(110px,.55fr); gap:8px; align-items:center; border:1px solid #d7e1ec; border-radius:8px; background:#fff; padding:10px 12px; cursor:pointer; }
+    .pln-coverage-row:hover { border-color:#8bb8e8; box-shadow:0 1px 8px rgba(15,23,42,.08); }
     .pln-coverage-row strong { color:#0f172a; }
     .pln-coverage-row span { color:#607086; font-size:12px; }
     .pln-pill { display:inline-flex; align-items:center; justify-content:center; min-height:28px; border-radius:999px; padding:4px 10px; font-weight:800; font-size:12px; }
@@ -1069,6 +1071,9 @@ def som_web_home() -> HTMLResponse:
     .pln-section.wide { grid-column:1/-1; }
     .pln-section { border:1px solid #d7e1ec; border-radius:8px; background:#fff; padding:0; min-width:0; overflow:hidden; }
     .pln-section summary { cursor:pointer; font-weight:800; color:#122033; padding:12px 14px; background:#f8fbfe; border-bottom:1px solid #edf2f7; }
+    .pln-section summary { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+    .pln-section-actions { display:inline-flex; gap:6px; flex-wrap:wrap; }
+    .pln-section-actions button { height:28px; padding:0 10px; font-size:12px; }
     .pln-section-body { padding:12px; }
     .pln-section-note { margin:0 0 10px; color:#607086; line-height:1.4; }
     .pln-section .table-wrap { margin-top:8px; max-height:380px; overflow:auto; scrollbar-gutter:stable both-edges; }
@@ -1480,6 +1485,7 @@ def som_web_home() -> HTMLResponse:
     let selectedItpBiweeklyIndex = null;
     let itpBiweeklyChecked = new Set();
     let itpBiweeklySuppressed = new Set();
+    let planningPayload = null;
     let selectedPaidInvoiceIndexes = new Set();
     let disputeRows = [];
     let disputeHistoryRows = [];
@@ -4467,6 +4473,7 @@ def som_web_home() -> HTMLResponse:
       result.innerHTML = "";
       try {
         const payload = await getJSON(`/finance/planning/summary?period=${encodeURIComponent(period)}&months=${encodeURIComponent(months)}`);
+        planningPayload = payload;
         msg.className = "status hidden";
         result.innerHTML = renderPlanningSummary(payload);
       } catch (err) {
@@ -4488,13 +4495,16 @@ def som_web_home() -> HTMLResponse:
       const totals = payload.totals || {};
       const pending = totals.pending_by_currency || {};
       const bankAvailable = totals.bank_available_by_currency || {};
+      const requirements = totals.requirements_by_currency || pending;
+      const netCash = totals.net_cash_after_requirements_by_currency || {};
       const collectionsOpen = totals.collections_open_by_currency || {};
       const coverage = payload.cash_coverage_fortnight || [];
       const missing = coverage.reduce((sum,row) => sum + Number(row.shortfall || 0), 0);
       const okCount = coverage.filter(row => row.status === "CUBRE").length;
       const badCount = coverage.filter(row => row.status === "FALTANTE").length;
       const bankText = Object.entries(bankAvailable).map(([cur,val]) => `${cur} ${money(val)}`).join(" | ") || "0.00";
-      const pendingText = Object.entries(pending).map(([cur,val]) => `${cur} ${money(val)}`).join(" | ") || "0.00";
+      const pendingText = Object.entries(requirements).map(([cur,val]) => `${cur} ${money(val)}`).join(" | ") || "0.00";
+      const netText = Object.entries(netCash).map(([cur,val]) => `${cur} ${money(val)}`).join(" | ") || "0.00";
       const cxcText = Object.entries(collectionsOpen).map(([cur,val]) => `${cur} ${money(val)}`).join(" | ") || "0.00";
       const decisionTone = badCount ? "bad" : (missing > 0 ? "warn" : "good");
       const decisionTitle = badCount ? `Hay ${badCount} quincena(s) con faltante` : "Caja suficiente en el horizonte";
@@ -4516,17 +4526,18 @@ def som_web_home() -> HTMLResponse:
               <p>${esc(decisionCopy)}</p>
             </div>
             <div class="pln-mini-grid">
-              <div class="pln-mini"><span>Bancos</span><strong title="${esc(bankText)}">${esc(bankText)}</strong><small>Saldo contable disponible.</small></div>
-              <div class="pln-mini"><span>Obligaciones</span><strong title="${esc(pendingText)}">${esc(pendingText)}</strong><small>ITP y compromisos pendientes.</small></div>
-              <div class="pln-mini"><span>CxC abierta</span><strong title="${esc(cxcText)}">${esc(cxcText)}</strong><small>No suma a caja disponible.</small></div>
-              <div class="pln-mini"><span>Proyectos</span><strong>${esc(totals.projects || 0)}</strong><small>Utilidad esperada ${esc(money(totals.project_expected_profit || 0))}.</small></div>
+              <button class="pln-mini" onclick="openPlanningDetail('Bancos disponibles', planningPayload?.bank_accounts || [], ['bank_name','currency_code','account_code','account_name','available_amount','last_movement_date'])"><span>Bancos</span><strong title="${esc(bankText)}">${esc(bankText)}</strong><small>Saldo contable disponible.</small></button>
+              <button class="pln-mini" onclick="openPlanningDetail('Obligaciones pendientes', planningPayload?.cash_requirements || [], ['source','id','concept','category','due_date','currency_code','amount','status','origin'])"><span>Obligaciones</span><strong title="${esc(pendingText)}">${esc(pendingText)}</strong><small>ITP y compromisos pendientes.</small></button>
+              <button class="pln-mini" onclick="openPlanningDetail('Caja neta despues de pagar', planningNetRows(), ['currency_code','bank_available','required_amount','net_cash'])"><span>Caja neta</span><strong title="${esc(netText)}">${esc(netText)}</strong><small>Bancos menos obligaciones.</small></button>
+              <button class="pln-mini" onclick="openPlanningDetail('CxC abierta', planningPayload?.collections_open || [], ['currency_code','count','amount'])"><span>CxC abierta</span><strong title="${esc(cxcText)}">${esc(cxcText)}</strong><small>No suma a caja disponible.</small></button>
+              <button class="pln-mini" onclick="openPlanningDetail('Proyectos', planningPayload?.projects || [], ['id','name','client_name','status','currency_code','expected_revenue','expected_cost','expected_profit','monthly_savings'])"><span>Proyectos</span><strong>${esc(totals.projects || 0)}</strong><small>Utilidad esperada ${esc(money(totals.project_expected_profit || 0))}.</small></button>
             </div>
           </div>
           <div class="pln-profit-strip">
-            <div class="pln-profit-card"><span>Ingresos</span><strong>${money(revenue)}</strong><small>${esc(profitability.scope || "Periodo seleccionado")}</small></div>
-            <div class="pln-profit-card"><span>Gastos</span><strong>${money(expenses)}</strong><small>Accounting posteado</small></div>
-            <div class="pln-profit-card"><span>Utilidad</span><strong>${money(profit)}</strong><small>${profit >= 0 ? "Resultado positivo" : "Resultado negativo"}</small></div>
-            <div class="pln-profit-card"><span>Margen</span><strong>${marginPct.toFixed(2)}%</strong><small>Ingresos contra gastos</small></div>
+            <button class="pln-profit-card" onclick="openPlanningDetail('Ingresos Accounting', planningPayload?.revenue_lines || [], ['period','account_code','account_name','actual_amount'])"><span>Ingresos</span><strong>${money(revenue)}</strong><small>${esc(profitability.scope || "Periodo seleccionado")}</small></button>
+            <button class="pln-profit-card" onclick="openPlanningDetail('Gastos Accounting', planningPayload?.expenses || [], ['period','account_code','account_name','actual_amount'])"><span>Gastos</span><strong>${money(expenses)}</strong><small>Accounting posteado</small></button>
+            <button class="pln-profit-card" onclick="openPlanningDetail('Rentabilidad', planningProfitRows(), ['metric','value'])"><span>Utilidad</span><strong>${money(profit)}</strong><small>${profit >= 0 ? "Resultado positivo" : "Resultado negativo"}</small></button>
+            <button class="pln-profit-card" onclick="openPlanningDetail('Rentabilidad', planningProfitRows(), ['metric','value'])"><span>Margen</span><strong>${marginPct.toFixed(2)}%</strong><small>Ingresos contra gastos</small></button>
           </div>
           <div class="pln-liquidity-grid">
             <div class="pln-panel">
@@ -4547,6 +4558,8 @@ def som_web_home() -> HTMLResponse:
         ${renderPlanningSection("Alertas", payload.alerts || [], ["severity","code","message"], "Riesgos que requieren acción antes de comprometer nuevos pagos.")}
         ${renderPlanningSection("Calendario ITP", payload.obligation_buckets || [], ["currency","bucket","count","amount"], "Agrupación de obligaciones por moneda y vencimiento para priorizar caja.")}
         ${renderPlanningSection("Obligaciones", payload.obligations || [], ["id","payee_name","obligation_type","due_date","currency","balance","status","origin"], "Detalle de compromisos pendientes que caen dentro del horizonte de planificación.")}
+        ${renderPlanningSection("Obligaciones quincenales ITP", payload.biweekly_lines || [], ["period","fortnight","category","beneficiary","payment_date","currency","amount","bank_voucher","status","obligation_id","reference"], "Todas las líneas quincenales registradas en ITP dentro del horizonte, pagadas y pendientes.")}
+        ${renderPlanningSection("Ingresos Accounting", payload.revenue_lines || [], ["period","account_code","account_name","actual_amount"], "Ingresos contabilizados por cuenta para justificar la rentabilidad.")}
         ${renderPlanningSection("Gastos Accounting", payload.expenses || [], ["period","account_code","account_name","actual_amount"], "Gastos contabilizados por cuenta para comparar ejecución contra presupuesto y metas.")}
         ${renderPlanningSection("Pagos aplicados", payload.applied_payments || [], ["currency","count","amount"], "Pagos aplicados dentro del horizonte consultado.")}
         ${renderPlanningSection("Metas / ahorros", payload.goals || [], ["id","period","purpose","name","account_code","currency_code","target_amount","progress_amount","progress_pct","target_date","status"], "Metas, ahorros y presupuestos activos con progreso acumulado.")}
@@ -4599,10 +4612,12 @@ def som_web_home() -> HTMLResponse:
       if (!rows.length) return '<div class="status">Sin obligaciones en el horizonte seleccionado.</div>';
       return `<div class="pln-coverage-list">${rows.slice(0,8).map(row => {
         const good = row.status === "CUBRE";
-        return `<div class="pln-coverage-row">
+        const encoded = encodeURIComponent(JSON.stringify([row]));
+        return `<div class="pln-coverage-row" onclick="openPlanningDetail('${esc(row.label || row.bucket)}', JSON.parse(decodeURIComponent('${encoded}')), ['label','currency_code','available_before','required_amount','remaining_after','shortfall','coverage_pct','status'])">
           <div><strong>${esc(row.label || row.bucket)}</strong><br><span>${esc(row.currency_code)} · ${esc(row.count || 0)} líneas</span></div>
           <div><span>Disponible</span><br><strong>${money(row.available_before)}</strong></div>
           <div><span>Obligaciones</span><br><strong>${money(row.required_amount)}</strong></div>
+          <div><span>Queda</span><br><strong>${money(row.remaining_after)}</strong></div>
           <div><span class="pln-pill ${good ? "good" : "bad"}">${good ? "Cubre" : "Faltante " + money(row.shortfall)}</span></div>
         </div>`;
       }).join("")}</div>`;
@@ -4611,9 +4626,90 @@ def som_web_home() -> HTMLResponse:
       const bodyStart = `<div class="pln-section-body">${note ? `<p class="pln-section-note">${esc(note)}</p>` : ""}`;
       const opened = open ? " open" : "";
       const wide = ["Cobertura mensual","Obligaciones para cobertura","Obligaciones"].includes(title) ? " wide" : "";
-      if (!rows.length) return `<details class="pln-section${wide}"${opened}><summary>${esc(title)}</summary>${bodyStart}<div class="status">Sin datos para esta consulta.</div></div></details>`;
+      const summaryActions = rows.length
+        ? `<span class="pln-section-actions"><button class="secondary" type="button" onclick="event.stopPropagation(); openPlanningDetail('${esc(title)}', planningSectionRows('${esc(title)}'), ${JSON.stringify(cols).replace(/"/g, "&quot;")})">Detalle</button><button class="secondary" type="button" onclick="event.stopPropagation(); exportPlanningRows('${esc(title)}', planningSectionRows('${esc(title)}'), ${JSON.stringify(cols).replace(/"/g, "&quot;")})">Exportar</button></span>`
+        : "";
+      if (!rows.length) return `<details class="pln-section${wide}"${opened}><summary><span>${esc(title)} · 0 líneas</span></summary>${bodyStart}<div class="status">Sin datos para esta consulta.</div></div></details>`;
       const hasActions = title === "Proyectos";
-      return `<details class="pln-section${wide}"${opened}><summary>${esc(title)} · ${rows.length}</summary>${bodyStart}<div class="table-wrap"><table><thead><tr>${cols.map(c => `<th>${esc(planningColumnLabel(c))}</th>`).join("")}${hasActions ? "<th>Acción</th>" : ""}</tr></thead><tbody>${rows.slice(0,120).map((row,idx) => `<tr>${cols.map(c => `<td>${esc(planningCell(row, c))}</td>`).join("")}${hasActions ? `<td><button onclick='openPlanningProjectForm(${JSON.stringify(row).replace(/'/g, "&#39;")})'>Editar</button><button class="brown" onclick="deletePlanningProject(${Number(row.id || 0)})">Eliminar</button></td>` : ""}</tr>`).join("")}</tbody></table></div></div></details>`;
+      return `<details class="pln-section${wide}"${opened}><summary><span>${esc(title)} · ${rows.length} líneas</span>${summaryActions}</summary>${bodyStart}<div class="table-wrap"><table><thead><tr>${cols.map(c => `<th>${esc(planningColumnLabel(c))}</th>`).join("")}${hasActions ? "<th>Acción</th>" : ""}</tr></thead><tbody>${rows.slice(0,120).map((row,idx) => `<tr>${cols.map(c => `<td>${esc(planningCell(row, c))}</td>`).join("")}${hasActions ? `<td><button onclick='openPlanningProjectForm(${JSON.stringify(row).replace(/'/g, "&#39;")})'>Editar</button><button class="brown" onclick="deletePlanningProject(${Number(row.id || 0)})">Eliminar</button></td>` : ""}</tr>`).join("")}</tbody></table></div></div></details>`;
+    }
+    function planningSectionRows(title) {
+      const p = planningPayload || {};
+      const map = {
+        "Cobertura mensual": p.cash_coverage_month || [],
+        "Obligaciones para cobertura": p.cash_requirements || [],
+        "CxC abierta": p.collections_open || [],
+        "Aging CxC": p.collections_aging || [],
+        "Alertas": p.alerts || [],
+        "Calendario ITP": p.obligation_buckets || [],
+        "Obligaciones": p.obligations || [],
+        "Obligaciones quincenales ITP": p.biweekly_lines || [],
+        "Ingresos Accounting": p.revenue_lines || [],
+        "Gastos Accounting": p.expenses || [],
+        "Pagos aplicados": p.applied_payments || [],
+        "Metas / ahorros": p.goals || [],
+        "Proyectos": p.projects || [],
+        "Cronograma": p.project_schedule || [],
+        "Ahorro mensual": p.monthly_plan || []
+      };
+      return map[title] || [];
+    }
+    function planningNetRows() {
+      const totals = planningPayload?.totals || {};
+      const bank = totals.bank_available_by_currency || {};
+      const req = totals.requirements_by_currency || {};
+      const net = totals.net_cash_after_requirements_by_currency || {};
+      return Array.from(new Set([...Object.keys(bank), ...Object.keys(req), ...Object.keys(net)])).sort().map(currency_code => ({
+        currency_code,
+        bank_available:bank[currency_code] || 0,
+        required_amount:req[currency_code] || 0,
+        net_cash:net[currency_code] || 0
+      }));
+    }
+    function planningProfitRows() {
+      const p = planningPayload?.profitability || {};
+      return [
+        {metric:"Alcance", value:p.scope || "Periodo seleccionado"},
+        {metric:"Ingresos", value:money(p.revenue || 0)},
+        {metric:"Gastos", value:money(p.expenses || 0)},
+        {metric:"Utilidad", value:money(p.profit || 0)},
+        {metric:"Margen %", value:`${Number(p.margin_pct || 0).toFixed(2)}%`}
+      ];
+    }
+    function openPlanningDetail(title, rows=[], cols=[]) {
+      rows = Array.isArray(rows) ? rows : [];
+      cols = cols && cols.length ? cols : Array.from(new Set(rows.flatMap(row => Object.keys(row || {}))));
+      const totals = {};
+      rows.forEach(row => {
+        const cur = row.currency_code || row.currency || row.moneda;
+        const amount = Number(row.amount ?? row.balance ?? row.actual_amount ?? row.required_amount ?? 0);
+        if (cur && Number.isFinite(amount)) totals[cur] = (totals[cur] || 0) + amount;
+      });
+      const totalText = Object.keys(totals).length
+        ? Object.entries(totals).map(([cur,val]) => `${cur} ${money(val)}`).join(" | ")
+        : `${rows.length} líneas`;
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal wide">
+            <div class="modal-head"><h2>${esc(title)}</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+            <div class="status"><strong>Consolidado:</strong> ${esc(totalText)}</div>
+            <div class="md-actions"><button class="secondary" onclick='exportPlanningRows(${JSON.stringify(title)}, planningDetailRows, planningDetailCols)'>Exportar CSV</button></div>
+            <div class="table-wrap">${planningDetailTable(rows, cols)}</div>
+          </div>
+        </div>`);
+      window.planningDetailRows = rows;
+      window.planningDetailCols = cols;
+    }
+    function planningDetailTable(rows, cols) {
+      if (!rows.length) return '<div class="status">Sin líneas para justificar este monto.</div>';
+      return `<table><thead><tr>${cols.map(c => `<th>${esc(planningColumnLabel(c))}</th>`).join("")}</tr></thead><tbody>${rows.map(row => `<tr>${cols.map(c => `<td>${esc(planningCell(row, c))}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+    }
+    function exportPlanningRows(title, rows=[], cols=[]) {
+      rows = Array.isArray(rows) ? rows : [];
+      cols = cols && cols.length ? cols : Array.from(new Set(rows.flatMap(row => Object.keys(row || {}))));
+      if (!rows.length) return alert("No hay líneas para exportar.");
+      const csv = [cols.join(",")].concat(rows.map(row => cols.map(c => `"${String(planningCell(row, c)).replace(/"/g, '""')}"`).join(","))).join("\\n");
+      downloadText(`${String(title || "pln_detalle").replace(/[^a-z0-9_-]+/gi, "_")}.csv`, csv, "text/csv;charset=utf-8");
     }
     function planningColumnLabel(key) {
       const labels = {
