@@ -5432,6 +5432,17 @@ def post_bac_partner_transfer_api(payload: dict):
         )
         return any(name in normalized for name in known)
 
+    def is_intercompany_transfer(value, concept):
+        normalized = norm(" ".join([str(value or ""), str(concept or ""), str(payload.get("subject") or "")]))
+        if "INTERCOMPANY" not in normalized:
+            return False
+        return any(token in normalized for token in (
+            "MSL",
+            "MARINE SURVEYORS",
+            "MARINE SURVEYORS AND LOGISTICS",
+            "MARINE SURVEYORS LOGISTICS",
+        ))
+
     def overlap_score(left, right):
         left_tokens = {token for token in norm(left).split() if len(token) >= 3}
         right_tokens = {token for token in norm(right).split() if len(token) >= 3}
@@ -5501,8 +5512,12 @@ def post_bac_partner_transfer_api(payload: dict):
 
     expense_code = "5.4.04"
     expense_name = "Gastos por representacion socios"
+    intercompany_code = "1.1.02.99"
+    intercompany_name = "Transferencias intercompany por conciliar"
     bank_code = "1.1.02.02.02" if currency == "USD" else "1.1.02.02.01"
-    origin = "BAC_PARTNER_TRANSFER"
+    transfer_concept = str(payload.get("concept") or "").strip()
+    is_intercompany = is_intercompany_transfer(partner, transfer_concept)
+    origin = "BAC_INTERCOMPANY_TRANSFER" if is_intercompany else "BAC_PARTNER_TRANSFER"
     source_key = "|".join([reference, transfer_date.isoformat(), str(amount), currency, partner])
     origin_id = int(hashlib.sha256(source_key.encode("utf-8")).hexdigest()[:8], 16) % 2147483647
     period = transfer_date.strftime("%Y-%m")
@@ -5520,9 +5535,92 @@ def post_bac_partner_transfer_api(payload: dict):
                     raise ValueError(f"El periodo contable {period} esta cerrado")
 
             ensure_account(cur, expense_code, expense_name, "EXPENSE", "DEBIT", "5.4", 3)
+            ensure_account(cur, intercompany_code, intercompany_name, "ASSET", "DEBIT", "1.1.02", 4)
             bank_code, bank_name = account(cur, bank_code)
             rate = exchange_rate(cur, transfer_date) if currency == "USD" else Decimal("1.00")
             amount_crc = (amount * rate).quantize(money, rounding=ROUND_HALF_UP)
+            if is_intercompany:
+                intercompany_code_post, intercompany_name_post = account(cur, intercompany_code)
+                description = f"BAC transferencia intercompany recibida Ref {reference}"
+                metadata = Json({
+                    "source": "bac_intercompany_notifications",
+                    "mailbox": payload.get("mailbox"),
+                    "folder": payload.get("folder"),
+                    "message_id": payload.get("message_id"),
+                    "reference": reference,
+                    "original_amount": str(amount),
+                    "original_currency": currency,
+                    "beneficiary_name": partner,
+                    "concept": transfer_concept,
+                    "allow_closed_period": allow_closed_period,
+                    "source_key": source_key,
+                    "accounting_treatment": "Dr banco destino / Cr transferencias intercompany por conciliar",
+                })
+                cur.execute("""
+                    SELECT id FROM accounting_entries
+                    WHERE company_code=%s
+                      AND origin=%s
+                      AND origin_id=%s
+                      AND COALESCE(reversed, FALSE)=FALSE
+                    LIMIT 1
+                """, (company, origin, origin_id))
+                existing = cur.fetchone()
+                if existing:
+                    entry_id = existing["id"]
+                    cur.execute("""
+                        UPDATE accounting_entries
+                           SET entry_date=%s,
+                               period=%s,
+                               description=%s,
+                               currency_code=%s,
+                               exchange_rate=%s,
+                               workflow_status='POSTED',
+                               posting_rule_code=%s,
+                               posting_metadata=%s,
+                               updated_at=NOW()
+                         WHERE id=%s
+                    """, (transfer_date, period, description, currency, rate, origin, metadata, entry_id))
+                    cur.execute("DELETE FROM accounting_lines WHERE entry_id=%s", (entry_id,))
+                    status = "UPDATED_INTERCOMPANY"
+                else:
+                    cur.execute("""
+                        INSERT INTO accounting_entries (
+                            company_code, entry_date, period, description, origin, origin_id,
+                            created_by, workflow_status, currency_code, exchange_rate,
+                            posting_rule_code, posting_metadata, posted_by, posted_at
+                        )
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,'POSTED',%s,%s,%s,%s,%s,NOW())
+                        RETURNING id
+                    """, (
+                        company, transfer_date, period, description, origin, origin_id,
+                        "BAC_INTERCOMPANY", currency, rate, origin, metadata, "BAC_INTERCOMPANY",
+                    ))
+                    entry_id = cur.fetchone()["id"]
+                    status = "IMPORTED_INTERCOMPANY"
+                line_detail = (
+                    f"Intercompany Ref {reference} {currency} {amount:,.2f}"
+                    + (f" TC {rate:,.6f}" if currency == "USD" else "")
+                )
+                cur.execute("""
+                    INSERT INTO accounting_lines(entry_id, account_code, account_name, debit, credit, line_description)
+                    VALUES
+                        (%s,%s,%s,%s,0,%s),
+                        (%s,%s,%s,0,%s,%s)
+                """, (
+                    entry_id, bank_code, bank_name, amount_crc, line_detail,
+                    entry_id, intercompany_code_post, intercompany_name_post, amount_crc, line_detail,
+                ))
+                conn.commit()
+                return {
+                    "status": status,
+                    "entry_id": entry_id,
+                    "period": period,
+                    "amount_crc": float(amount_crc),
+                    "exchange_rate": float(rate),
+                    "reference": reference,
+                    "origin": origin,
+                }
+
             matched_obligation, candidates = find_obligation(cur, company, partner, reference, transfer_date, currency, amount)
             if matched_obligation:
                 origin = "BAC_SUPPLIER_TRANSFER"

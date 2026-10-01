@@ -612,7 +612,14 @@ def _scan_bac_partner_transfer_folder(folder,state,summary,account,folder_name,l
         key=hashlib.sha256(
             f"BAC_PARTNER|{account}|{parsed['reference']}|{parsed['partner_name']}|{parsed['amount']}|{parsed['currency']}".encode("utf-8")
         ).hexdigest()
-        if state.get(key,{}).get("status") in {"IMPORTED","UPDATED","DUPLICATE","SKIPPED_UNMATCHED_TRANSFER"}:
+        if state.get(key,{}).get("status") in {
+            "IMPORTED",
+            "UPDATED",
+            "IMPORTED_INTERCOMPANY",
+            "UPDATED_INTERCOMPANY",
+            "DUPLICATE",
+            "SKIPPED_UNMATCHED_TRANSFER",
+        }:
             continue
         imported_messages+=1
         summary["bac_partner_messages"]+=1
