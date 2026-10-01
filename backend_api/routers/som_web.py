@@ -4661,17 +4661,33 @@ def som_web_home() -> HTMLResponse:
       return map[title] || [];
     }
     function planningCoverageSourceRows(row={}) {
+      if (Array.isArray(row?.source_rows) && row.source_rows.length) return row.source_rows;
       const rows = planningPayload?.cash_requirements || [];
       const month = String(row.month || row.period || row.label || "").slice(0, 7);
       const currency = String(row.currency_code || row.currency || "").toUpperCase();
       if (!month && !currency) return rows;
-      return rows.filter(item => {
+      const matched = rows.filter(item => {
         const dueMonth = String(item.due_date || item.fecha || "").slice(0, 7);
         const itemCurrency = String(item.currency_code || item.currency || item.moneda || "").toUpperCase();
         const sameMonth = month ? dueMonth === month : true;
         const sameCurrency = currency ? itemCurrency === currency : true;
         return sameMonth && sameCurrency;
       });
+      if (matched.length) return matched;
+      if (row.required_amount || row.amount) {
+        return [{
+          source:"RESUMEN",
+          id:"",
+          concept:row.label || row.month || row.bucket || "Cobertura",
+          category:"Consolidado",
+          due_date:row.month || row.period || "",
+          currency_code:row.currency_code || row.currency || "",
+          amount:row.required_amount || row.amount || 0,
+          status:row.status || "",
+          origin:"PLN"
+        }];
+      }
+      return [];
     }
     function planningCoverageCols() {
       return ["source","id","concept","category","due_date","currency_code","amount","status","origin"];
