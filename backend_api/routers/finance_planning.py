@@ -3,8 +3,8 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal, InvalidOperation
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
-from psycopg2.extras import RealDictCursor
+from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query
+from psycopg2.extras import Json, RealDictCursor
 
 from database import get_db
 from routers.accounting_advanced import _ensure_schema as ensure_accounting_advanced_schema
@@ -69,6 +69,121 @@ def _serialize(row):
 
 def _company(x_company_code: str | None) -> str:
     return normalize_company_code(header_value=x_company_code)
+
+
+def _parse_date(value, fallback: date | None = None) -> date:
+    if isinstance(value, date):
+        return value
+    text = str(value or "").strip()
+    try:
+        return date.fromisoformat(text)
+    except Exception:
+        return fallback or date.today()
+
+
+def _account_currency(row: dict | None) -> str:
+    account = row or {}
+    currency = str(account.get("currency_code") or "").upper()
+    if currency in {"CRC", "USD"}:
+        return currency
+    name = str(account.get("account_name") or "").upper()
+    return "USD" if "USD" in name or "DOLAR" in name else "CRC"
+
+
+def _exchange_rate(cur, value_date: date) -> Decimal:
+    cur.execute("SELECT to_regclass('public.exchange_rate') AS table_name")
+    row = cur.fetchone()
+    table_name = (row or {}).get("table_name") if isinstance(row, dict) else (row[0] if row else None)
+    if not table_name:
+        return Decimal("1.00")
+    cur.execute(
+        """
+        SELECT rate
+        FROM exchange_rate
+        WHERE rate_date <= %s
+        ORDER BY rate_date DESC
+        LIMIT 1
+        """,
+        (value_date,),
+    )
+    rate_row = cur.fetchone()
+    raw = (rate_row or {}).get("rate") if isinstance(rate_row, dict) else (rate_row[0] if rate_row else None)
+    rate = _money(raw or 1)
+    return rate if rate > 0 else Decimal("1.00")
+
+
+def _assert_period_open(cur, company: str, period: str):
+    cur.execute("SELECT status FROM accounting_period_controls WHERE company_code=%s AND period=%s", (company, period))
+    row = cur.fetchone()
+    status = str(((row or {}).get("status") if isinstance(row, dict) else (row[0] if row else "OPEN")) or "OPEN").upper()
+    if status == "CLOSED":
+        raise HTTPException(409, f"Accounting period {period} is closed")
+
+
+def _ensure_bank_adjustment_account(cur, user: str) -> tuple[str, str]:
+    code = "1.1.02.98"
+    name = "Diferencias bancarias por conciliar"
+    cur.execute("SELECT account_code, account_name FROM accounting_accounts WHERE account_code=%s", (code,))
+    row = cur.fetchone()
+    if row:
+        return row["account_code"], row["account_name"]
+    cur.execute("""
+        INSERT INTO accounting_accounts(
+            account_code, account_name, account_type, normal_balance, account_level,
+            parent_account, accepts_posting, requires_third_party, requires_cost_center,
+            currency_code, financial_statement_line, tax_mapping, active, created_by, updated_by
+        )
+        VALUES(%s,%s,'ASSET','DEBIT',4,'1.1.02',TRUE,FALSE,FALSE,NULL,'Cash and banks','BANK_RECON',TRUE,%s,%s)
+        ON CONFLICT (account_code) DO UPDATE
+        SET account_name=EXCLUDED.account_name,
+            accepts_posting=TRUE,
+            active=TRUE,
+            updated_by=EXCLUDED.updated_by,
+            updated_at=NOW()
+        RETURNING account_code, account_name
+    """, (code, name, user, user))
+    created = cur.fetchone()
+    return created["account_code"], created["account_name"]
+
+
+def _bank_balance_at(cur, company: str, account_code: str, value_date: date) -> tuple[dict, Decimal]:
+    cur.execute("""
+        SELECT *
+        FROM accounting_accounts
+        WHERE account_code=%s
+          AND COALESCE(active, TRUE)=TRUE
+          AND COALESCE(accepts_posting, TRUE)=TRUE
+    """, (account_code,))
+    account = cur.fetchone()
+    if not account:
+        raise HTTPException(404, "Cuenta bancaria no encontrada o no posteable")
+    if not str(account["account_code"]).startswith("1.1.02."):
+        raise HTTPException(400, "Solo se pueden ajustar cuentas bancarias bajo 1.1.02")
+    currency = _account_currency(account)
+    cur.execute("""
+        SELECT COALESCE(SUM(
+            CASE
+                WHEN e.id IS NULL THEN 0
+                WHEN %s='USD'
+                THEN CASE
+                    WHEN e.currency_code='USD' AND COALESCE(NULLIF(e.exchange_rate,0),0) > 0
+                    THEN (COALESCE(l.debit,0)-COALESCE(l.credit,0)) / e.exchange_rate
+                    ELSE COALESCE(l.debit,0)-COALESCE(l.credit,0)
+                END
+                ELSE COALESCE(l.debit,0)-COALESCE(l.credit,0)
+            END
+        ), 0) AS current_amount
+        FROM accounting_lines l
+        JOIN accounting_entries e ON e.id=l.entry_id
+        WHERE l.account_code=%s
+          AND e.company_code=%s
+          AND e.workflow_status='POSTED'
+          AND COALESCE(e.reversed, FALSE)=FALSE
+          AND e.entry_date <= %s
+    """, (currency, account_code, company, value_date))
+    row = cur.fetchone() or {}
+    raw = row.get("current_amount") if isinstance(row, dict) else row[0]
+    return account, _money(raw)
 
 
 def _ensure_planning_schema(conn):
@@ -264,6 +379,100 @@ def delete_planning_project(
             raise HTTPException(404, "Project not found")
     conn.commit()
     return {"status": "ok", "deleted": project_id}
+
+
+@router.post("/bank-adjustment")
+def create_bank_balance_adjustment(
+    payload: dict = Body(...),
+    conn=Depends(get_db),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+    x_user: str | None = Header(None, alias="X-User"),
+):
+    _ensure_planning_schema(conn)
+    company = _company(x_company_code)
+    user = str(x_user or payload.get("created_by") or "WEB").strip() or "WEB"
+    account_code = str(payload.get("account_code") or "").strip()
+    if not account_code:
+        raise HTTPException(400, "account_code is required")
+    real_amount = _money(payload.get("real_amount"))
+    adjustment_date = _parse_date(payload.get("adjustment_date"), date.today())
+    period = adjustment_date.strftime("%Y-%m")
+    reason = str(payload.get("reason") or "").strip()
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        _assert_period_open(cur, company, period)
+        account, current_amount = _bank_balance_at(cur, company, account_code, adjustment_date)
+        currency = _account_currency(account)
+        difference = (real_amount - current_amount).quantize(MONEY)
+        if abs(difference) < MONEY:
+            return {
+                "status": "no_change",
+                "account_code": account_code,
+                "current_amount": _float(current_amount),
+                "real_amount": _float(real_amount),
+                "difference": 0.0,
+            }
+        clearing_code, clearing_name = _ensure_bank_adjustment_account(cur, user)
+        exchange_rate = _exchange_rate(cur, adjustment_date) if currency == "USD" else Decimal("1.00")
+        amount_crc = (abs(difference) * exchange_rate).quantize(MONEY)
+        description = f"Ajuste saldo real banco {account['account_name']}"
+        metadata = {
+            "source": "finance_planning",
+            "event_type": "bank_balance_adjustment",
+            "account_code": account_code,
+            "account_name": account["account_name"],
+            "account_currency": currency,
+            "current_amount": str(current_amount),
+            "real_amount": str(real_amount),
+            "difference": str(difference),
+            "reason": reason,
+        }
+        cur.execute("""
+            INSERT INTO accounting_entries(
+                entry_date, period, description, origin, origin_id, created_by,
+                workflow_status, company_code, currency_code, exchange_rate,
+                posting_rule_code, posting_metadata, posted_by, posted_at
+            )
+            VALUES(%s,%s,%s,'PLN_BANK_ADJUSTMENT',NULL,%s,'POSTED',%s,%s,%s,%s,%s,%s,NOW())
+            RETURNING id
+        """, (
+            adjustment_date, period, description, user, company, currency, exchange_rate,
+            "PLN_BANK_ADJUSTMENT", Json(metadata), user,
+        ))
+        entry = cur.fetchone()
+        bank_name = account["account_name"]
+        detail = (
+            f"Saldo real {currency} {real_amount:,.2f}; contable {current_amount:,.2f}; "
+            f"diferencia {difference:,.2f}. {reason}".strip()
+        )
+        if difference > 0:
+            lines = [
+                (account_code, bank_name, amount_crc, Decimal("0.00")),
+                (clearing_code, clearing_name, Decimal("0.00"), amount_crc),
+            ]
+        else:
+            lines = [
+                (clearing_code, clearing_name, amount_crc, Decimal("0.00")),
+                (account_code, bank_name, Decimal("0.00"), amount_crc),
+            ]
+        for line_code, line_name, debit, credit in lines:
+            cur.execute("""
+                INSERT INTO accounting_lines(
+                    entry_id, account_code, account_name, debit, credit, line_description
+                )
+                VALUES(%s,%s,%s,%s,%s,%s)
+            """, (entry["id"], line_code, line_name, debit, credit, detail))
+    conn.commit()
+    return {
+        "status": "ok",
+        "entry_id": entry["id"],
+        "account_code": account_code,
+        "currency_code": currency,
+        "current_amount": _float(current_amount),
+        "real_amount": _float(real_amount),
+        "difference": _float(difference),
+        "exchange_rate": _float(exchange_rate),
+        "amount_posted_crc": _float(amount_crc),
+    }
 
 
 def _replace_project_schedule(cur, project_id: int, company: str, project: dict, schedule: list):

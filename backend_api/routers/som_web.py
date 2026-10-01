@@ -1006,9 +1006,11 @@ def som_web_home() -> HTMLResponse:
     .pln-title { min-width:0; }
     .pln-title h2 { margin:0; font-size:24px; line-height:1.12; }
     .pln-title p { margin:6px 0 0; color:#607086; line-height:1.35; max-width:920px; }
-    .pln-controls { display:grid; grid-template-columns:minmax(120px,150px) minmax(92px,120px) repeat(4,max-content); gap:8px; align-items:end; justify-content:end; }
+    .pln-controls { display:grid; grid-template-columns:minmax(190px,240px) minmax(92px,120px) repeat(4,max-content); gap:8px; align-items:end; justify-content:end; }
     .pln-controls label { display:grid; gap:4px; color:#475569; font-size:11px; font-weight:800; text-transform:uppercase; }
     .pln-controls input,.pln-controls select { height:38px; }
+    .pln-period-nav { display:grid; grid-template-columns:38px minmax(110px,1fr) 38px; gap:5px; align-items:center; }
+    .pln-period-nav button { min-width:38px; width:38px; padding:0; font-size:18px; }
     .pln-scenario { border:1px solid #d7e1ec; border-radius:8px; background:#f8fbfe; overflow:hidden; }
     .pln-scenario summary { cursor:pointer; padding:10px 12px; font-weight:800; color:#122033; }
     .pln-scenario-body { display:grid; grid-template-columns:minmax(0,1fr) max-content minmax(260px,.6fr); gap:10px; align-items:end; padding:0 12px 12px; }
@@ -1038,10 +1040,11 @@ def som_web_home() -> HTMLResponse:
     .pln-kpi.bad { border-left:5px solid #c2410c; }
     .pln-liquidity-grid { display:grid; grid-template-columns:minmax(0,1.2fr) minmax(330px,.8fr); gap:12px; align-items:start; }
     .pln-bank-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:10px; }
-    .pln-bank-card { border:1px solid #d7e1ec; border-radius:8px; background:#fff; padding:13px; min-height:112px; }
+    .pln-bank-card { border:1px solid #d7e1ec; border-radius:8px; background:#fff; padding:13px; min-height:112px; display:grid; gap:7px; }
     .pln-bank-card span { display:block; color:#64748b; font-size:11px; font-weight:800; text-transform:uppercase; }
     .pln-bank-card strong { display:block; margin-top:8px; font-size:22px; color:#0f172a; overflow-wrap:anywhere; }
-    .pln-bank-card small { display:block; margin-top:7px; color:#607086; line-height:1.3; }
+    .pln-bank-card small { display:block; color:#607086; line-height:1.3; }
+    .pln-bank-card button { justify-self:start; height:32px; padding:0 12px; }
     .pln-coverage-list { display:grid; gap:8px; }
     .pln-coverage-row { display:grid; grid-template-columns:minmax(150px,1fr) minmax(110px,.55fr) minmax(110px,.55fr) minmax(110px,.55fr); gap:8px; align-items:center; border:1px solid #d7e1ec; border-radius:8px; background:#fff; padding:10px 12px; }
     .pln-coverage-row strong { color:#0f172a; }
@@ -4417,7 +4420,7 @@ def som_web_home() -> HTMLResponse:
               <p>Bancos reales contra obligaciones por quincena, CxC pendiente y proyectos especiales.</p>
             </div>
             <div class="pln-controls">
-              <label>Periodo<input id="plnPeriod" value="${esc(period)}" placeholder="YYYY-MM" /></label>
+              <label>Periodo<div class="pln-period-nav"><button class="secondary" type="button" onclick="shiftPlanningPeriod(-1)" title="Periodo anterior">‹</button><input id="plnPeriod" value="${esc(period)}" placeholder="YYYY-MM" /><button class="secondary" type="button" onclick="shiftPlanningPeriod(1)" title="Periodo siguiente">›</button></div></label>
               <label>Meses<select id="plnMonths"><option>1</option><option>2</option><option>3</option><option selected>4</option><option>6</option><option>12</option></select></label>
               <button onclick="loadFinancePlanning()">Buscar</button>
               <button class="green" onclick="openPlanningProjectForm()">Proyecto</button>
@@ -4458,6 +4461,16 @@ def som_web_home() -> HTMLResponse:
         msg.className = "status error";
         msg.textContent = err.message;
       }
+    }
+    function shiftPlanningPeriod(delta) {
+      const input = $("plnPeriod");
+      if (!input) return;
+      const raw = valueFrom("plnPeriod") || new Date().toISOString().slice(0,7);
+      const match = String(raw).match(/^(\\d{4})-(\\d{2})$/);
+      const base = match ? new Date(Number(match[1]), Number(match[2]) - 1, 1) : new Date();
+      base.setMonth(base.getMonth() + Number(delta || 0));
+      input.value = `${base.getFullYear()}-${String(base.getMonth() + 1).padStart(2, "0")}`;
+      loadFinancePlanning();
     }
     function renderPlanningSummary(payload) {
       const totals = payload.totals || {};
@@ -4548,11 +4561,16 @@ def som_web_home() -> HTMLResponse:
       return `<div class="pln-bank-grid">${cards.map(row => {
         const amount = Number(row.available_amount || 0);
         const tone = amount < 0 ? "bad" : "good";
+        const canAdjust = row.account_code && row.account_code !== "-";
+        const encoded = encodeURIComponent(JSON.stringify(row));
         return `<div class="pln-bank-card ${tone}">
           <span>${esc(row.bank_name || "Banco")} · ${esc(row.currency_code || "-")}</span>
           <strong>${money(amount)}</strong>
           <small title="${esc(row.account_name || "")}">${esc(row.account_code || "-")} · ${esc(row.account_name || "")}</small>
           <small>Último movimiento: ${esc(row.last_movement_date || "-")}</small>
+          ${canAdjust
+            ? `<button class="secondary" onclick="openPlanningBankAdjustment(decodeURIComponent('${encoded}'))">Ajustar saldo real</button>`
+            : `<button class="secondary" onclick="openPlanningBankAccountForm()">Crear cuenta</button>`}
         </div>`;
       }).join("")}</div>`;
     }
@@ -4573,7 +4591,23 @@ def som_web_home() -> HTMLResponse:
       const opened = open ? " open" : "";
       if (!rows.length) return `<details class="pln-section"${opened}><summary>${esc(title)}</summary>${bodyStart}<div class="status">Sin datos para esta consulta.</div></div></details>`;
       const hasActions = title === "Proyectos";
-      return `<details class="pln-section"${opened}><summary>${esc(title)} · ${rows.length}</summary>${bodyStart}<div class="table-wrap"><table><thead><tr>${cols.map(c => `<th>${esc(c.replace(/_/g," "))}</th>`).join("")}${hasActions ? "<th>Acción</th>" : ""}</tr></thead><tbody>${rows.slice(0,120).map((row,idx) => `<tr>${cols.map(c => `<td>${esc(["amount","balance","total","target_amount","progress_amount","actual_amount","total_honorarios","total_gastos","precio","utilidad","expected_revenue","expected_cost","expected_profit","monthly_savings","planned_inflow","planned_outflow","planned_saving","bank_available","required_amount","remaining_if_paid","remaining_after","available_before","shortfall","coverage_pct"].includes(c) ? money(row[c]) : row[c])}</td>`).join("")}${hasActions ? `<td><button onclick='openPlanningProjectForm(${JSON.stringify(row).replace(/'/g, "&#39;")})'>Editar</button><button class="brown" onclick="deletePlanningProject(${Number(row.id || 0)})">Eliminar</button></td>` : ""}</tr>`).join("")}</tbody></table></div></div></details>`;
+      return `<details class="pln-section"${opened}><summary>${esc(title)} · ${rows.length}</summary>${bodyStart}<div class="table-wrap"><table><thead><tr>${cols.map(c => `<th>${esc(planningColumnLabel(c))}</th>`).join("")}${hasActions ? "<th>Acción</th>" : ""}</tr></thead><tbody>${rows.slice(0,120).map((row,idx) => `<tr>${cols.map(c => `<td>${esc(planningCell(row, c))}</td>`).join("")}${hasActions ? `<td><button onclick='openPlanningProjectForm(${JSON.stringify(row).replace(/'/g, "&#39;")})'>Editar</button><button class="brown" onclick="deletePlanningProject(${Number(row.id || 0)})">Eliminar</button></td>` : ""}</tr>`).join("")}</tbody></table></div></div></details>`;
+    }
+    function planningColumnLabel(key) {
+      const labels = {
+        month:"Mes", currency_code:"Moneda", bank_available:"Disponible banco", required_amount:"Obligaciones",
+        remaining_if_paid:"Queda si se paga", shortfall:"Faltante", coverage_pct:"Cobertura %", status:"Estado",
+        source:"Origen", id:"ID", concept:"Concepto", category:"Rubro", due_date:"Fecha", amount:"Monto",
+        count:"Líneas", bucket:"Bloque", payee_name:"Beneficiario", obligation_type:"Tipo",
+        origin:"Fuente", metric:"Métrica", value:"Valor", severity:"Severidad", code:"Código", message:"Mensaje"
+      };
+      return labels[key] || String(key || "").replace(/_/g, " ");
+    }
+    function planningCell(row, key) {
+      const moneyCols = new Set(["amount","balance","total","target_amount","progress_amount","actual_amount","total_honorarios","total_gastos","precio","utilidad","expected_revenue","expected_cost","expected_profit","monthly_savings","planned_inflow","planned_outflow","planned_saving","bank_available","required_amount","remaining_if_paid","remaining_after","available_before","shortfall"]);
+      if (String(key || "").endsWith("_pct")) return `${Number(row[key] || 0).toFixed(2)}%`;
+      if (moneyCols.has(key)) return money(row[key]);
+      return row[key] ?? "";
     }
     function calculatePlanningScenario() {
       const base = $("plnScenarioBase");
@@ -4677,6 +4711,61 @@ def som_web_home() -> HTMLResponse:
             <div id="plnBankMsg" class="status hidden"></div>
           </div>
         </div>`);
+    }
+    function openPlanningBankAdjustment(rowInput={}) {
+      const row = typeof rowInput === "string" ? JSON.parse(rowInput) : (rowInput || {});
+      const account = row.account_code || "";
+      const current = Number(row.available_amount || 0);
+      const currency = row.currency_code || "CRC";
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal small">
+            <div class="modal-head"><h2>Ajustar saldo real de banco</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+            <div class="form-grid">
+              <label>Cuenta contable<input id="plnAdjAccount" value="${esc(account)}" readonly /></label>
+              <label>Moneda<input id="plnAdjCurrency" value="${esc(currency)}" readonly /></label>
+              <label>Saldo contable<input id="plnAdjCurrent" value="${esc(current)}" readonly /></label>
+              <label>Saldo real en banco<input id="plnAdjReal" type="number" step="0.01" value="${esc(current)}" /></label>
+              <label>Fecha del ajuste<input id="plnAdjDate" type="date" value="${new Date().toISOString().slice(0,10)}" /></label>
+              <label class="wide">Motivo<textarea id="plnAdjReason" placeholder="Ej. saldo real consultado en BAC/BCR al cierre del día"></textarea></label>
+            </div>
+            <div class="status">Se posteará en Accounting solo la diferencia entre el saldo contable y el saldo real, contra diferencias bancarias por conciliar.</div>
+            <div class="md-actions"><button class="green" onclick="savePlanningBankAdjustment()">Registrar ajuste</button><button class="secondary" onclick="closeModal()">Cancelar</button></div>
+            <div id="plnAdjMsg" class="status hidden"></div>
+          </div>
+        </div>`);
+      setTimeout(() => $("plnAdjReal")?.focus(), 0);
+    }
+    async function savePlanningBankAdjustment() {
+      const msg = $("plnAdjMsg");
+      const payload = {
+        account_code:valueFrom("plnAdjAccount"),
+        real_amount:Number(valueFrom("plnAdjReal") || 0),
+        adjustment_date:valueFrom("plnAdjDate"),
+        reason:valueFrom("plnAdjReason")
+      };
+      if (!payload.account_code || !payload.adjustment_date) {
+        msg.className = "status error";
+        msg.textContent = "Cuenta y fecha son obligatorias.";
+        return;
+      }
+      msg.className = "status";
+      msg.textContent = "Registrando ajuste contable...";
+      try {
+        const saved = await postJSON("/finance/planning/bank-adjustment", payload);
+        closeModal();
+        await loadFinancePlanning();
+        const out = $("planningMsg");
+        if (out) {
+          out.className = "status";
+          out.textContent = saved.status === "no_change"
+            ? "El saldo real coincide con Accounting; no se creó asiento."
+            : `Ajuste posteado en Accounting. Asiento #${saved.entry_id}.`;
+        }
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
     }
     async function savePlanningBankAccount() {
       const msg = $("plnBankMsg");
