@@ -1018,8 +1018,8 @@ def som_web_home() -> HTMLResponse:
     .pln-scenario-grid label { display:grid; gap:4px; font-size:12px; color:#475569; font-weight:700; }
     .pln-scenario-result { min-height:38px; border:1px solid #d7e1ec; border-radius:8px; background:white; padding:9px 11px; color:#122033; line-height:1.35; }
     .pln-board { display:grid; gap:12px; }
-    .pln-exec { display:grid; grid-template-columns:minmax(0,1.05fr) minmax(320px,.72fr); gap:12px; align-items:stretch; }
-    .pln-decision { border:1px solid #d7e1ec; border-left:6px solid #087a52; border-radius:8px; background:#fff; padding:18px; min-width:0; }
+    .pln-exec { display:grid; grid-template-columns:minmax(360px,1.05fr) minmax(360px,.85fr); gap:12px; align-items:stretch; }
+    .pln-decision { border:1px solid #d7e1ec; border-left:6px solid #087a52; border-radius:8px; background:linear-gradient(180deg,#fff,#f8fbfe); padding:18px; min-width:0; box-shadow:0 1px 0 rgba(15,23,42,.04); }
     .pln-decision.bad { border-left-color:#c2410c; }
     .pln-decision.warn { border-left-color:#b7791f; }
     .pln-decision span { display:block; color:#64748b; font-size:11px; font-weight:800; text-transform:uppercase; }
@@ -1030,6 +1030,11 @@ def som_web_home() -> HTMLResponse:
     .pln-mini span { display:block; color:#64748b; font-size:11px; font-weight:800; text-transform:uppercase; }
     .pln-mini strong { display:block; margin-top:8px; font-size:22px; line-height:1.15; overflow-wrap:anywhere; }
     .pln-mini small { display:block; margin-top:7px; color:#607086; line-height:1.3; }
+    .pln-profit-strip { display:grid; grid-template-columns:repeat(4,minmax(140px,1fr)); gap:10px; }
+    .pln-profit-card { border:1px solid #d7e1ec; border-radius:8px; background:#fff; padding:13px; min-width:0; }
+    .pln-profit-card span { display:block; color:#64748b; font-size:11px; font-weight:800; text-transform:uppercase; }
+    .pln-profit-card strong { display:block; margin-top:7px; font-size:22px; line-height:1.15; overflow-wrap:anywhere; }
+    .pln-profit-card small { display:block; margin-top:6px; color:#607086; line-height:1.3; }
     .pln-kpi-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:12px; }
     .pln-kpi { min-height:104px; border:1px solid #d7e1ec; border-radius:8px; background:#fff; padding:15px; min-width:0; }
     .pln-kpi span { display:block; color:#64748b; font-size:11px; font-weight:800; text-transform:uppercase; }
@@ -1060,7 +1065,8 @@ def som_web_home() -> HTMLResponse:
     .pln-pill.bad { color:#9a3412; background:#fff4e5; border:1px solid #fed7aa; }
     .pln-panel { border:1px solid #d7e1ec; border-radius:8px; background:#f8fbfe; padding:13px; min-width:0; }
     .pln-panel h3 { margin:0 0 10px; font-size:16px; }
-    .pln-sections { display:grid; grid-template-columns:1fr; gap:14px; align-items:start; }
+    .pln-sections { display:grid; grid-template-columns:repeat(auto-fit,minmax(430px,1fr)); gap:12px; align-items:start; }
+    .pln-section.wide { grid-column:1/-1; }
     .pln-section { border:1px solid #d7e1ec; border-radius:8px; background:#fff; padding:0; min-width:0; overflow:hidden; }
     .pln-section summary { cursor:pointer; font-weight:800; color:#122033; padding:12px 14px; background:#f8fbfe; border-bottom:1px solid #edf2f7; }
     .pln-section-body { padding:12px; }
@@ -1305,7 +1311,7 @@ def som_web_home() -> HTMLResponse:
       .itp-action-grid { grid-template-columns:1fr; }
       .itp-bi-header,.itp-bi-controls,.itp-bi-body,.itp-bi-summary { grid-template-columns:1fr; }
       .itp-bi-totals { grid-template-columns:1fr; }
-      .finance-filter-row,.finance-filter-row.compact,.hr-hours-filters,.hr-emp-filters,.hr-emp-tab-panel.active,.hr-salary-layout,.hr-salary-pane.active,.hr-salary-expense-grid,.hr-salary-kpis,.hr-medical-filters,.hr-medical-layout,.hr-policy-layout,.pln-command,.pln-controls,.pln-scenario-body,.pln-exec,.pln-mini-grid,.pln-liquidity-grid,.pln-coverage-row { grid-template-columns:1fr; }
+      .finance-filter-row,.finance-filter-row.compact,.hr-hours-filters,.hr-emp-filters,.hr-emp-tab-panel.active,.hr-salary-layout,.hr-salary-pane.active,.hr-salary-expense-grid,.hr-salary-kpis,.hr-medical-filters,.hr-medical-layout,.hr-policy-layout,.pln-command,.pln-controls,.pln-scenario-body,.pln-exec,.pln-mini-grid,.pln-profit-strip,.pln-liquidity-grid,.pln-coverage-row,.pln-sections { grid-template-columns:1fr; }
       .hr-policy-reader { position:static; }
       .news-item { grid-template-columns:1fr; }
       .news-item-actions { justify-content:flex-start; }
@@ -4499,6 +4505,7 @@ def som_web_home() -> HTMLResponse:
       const revenue = Number(profitability.revenue || 0);
       const expenses = Number(profitability.expenses || 0);
       const profit = Number(profitability.profit || 0);
+      const marginPct = Number(profitability.margin_pct || 0);
       return `
         <div id="plnScenarioBase" data-revenue="${esc(revenue)}" data-expenses="${esc(expenses)}" data-profit="${esc(profit)}" data-savings="${esc(totals.monthly_savings || 0)}"></div>
         <div class="pln-board">
@@ -4514,6 +4521,12 @@ def som_web_home() -> HTMLResponse:
               <div class="pln-mini"><span>CxC abierta</span><strong title="${esc(cxcText)}">${esc(cxcText)}</strong><small>No suma a caja disponible.</small></div>
               <div class="pln-mini"><span>Proyectos</span><strong>${esc(totals.projects || 0)}</strong><small>Utilidad esperada ${esc(money(totals.project_expected_profit || 0))}.</small></div>
             </div>
+          </div>
+          <div class="pln-profit-strip">
+            <div class="pln-profit-card"><span>Ingresos</span><strong>${money(revenue)}</strong><small>${esc(profitability.scope || "Periodo seleccionado")}</small></div>
+            <div class="pln-profit-card"><span>Gastos</span><strong>${money(expenses)}</strong><small>Accounting posteado</small></div>
+            <div class="pln-profit-card"><span>Utilidad</span><strong>${money(profit)}</strong><small>${profit >= 0 ? "Resultado positivo" : "Resultado negativo"}</small></div>
+            <div class="pln-profit-card"><span>Margen</span><strong>${marginPct.toFixed(2)}%</strong><small>Ingresos contra gastos</small></div>
           </div>
           <div class="pln-liquidity-grid">
             <div class="pln-panel">
@@ -4531,13 +4544,6 @@ def som_web_home() -> HTMLResponse:
         ${renderPlanningSection("Obligaciones para cobertura", payload.cash_requirements || [], ["source","id","concept","category","due_date","currency_code","amount","status","origin"], "Compromisos que alimentan el cálculo secuencial de cobertura quincenal.", true)}
         ${renderPlanningSection("CxC abierta", payload.collections_open || [], ["currency_code","count","amount"], "Pendiente de cobrar visible para decisión, pero separado del efectivo disponible.")}
         ${renderPlanningSection("Aging CxC", payload.collections_aging || [], ["currency_code","bucket","count","amount"], "Riesgo de cobranza por moneda y antigüedad.")}
-        ${renderPlanningSection("Rentabilidad empresa", [
-          {metric:"Alcance", value:profitability.scope || "Periodo"},
-          {metric:"Ingresos", value:money(profitability.revenue || 0)},
-          {metric:"Gastos", value:money(profitability.expenses || 0)},
-          {metric:"Utilidad", value:money(profitability.profit || 0)},
-          {metric:"Margen %", value:`${Number(profitability.margin_pct || 0).toFixed(2)}%`}
-        ], ["metric","value"], "Lectura rápida de ingresos, gastos, utilidad y margen del periodo seleccionado.")}
         ${renderPlanningSection("Alertas", payload.alerts || [], ["severity","code","message"], "Riesgos que requieren acción antes de comprometer nuevos pagos.")}
         ${renderPlanningSection("Calendario ITP", payload.obligation_buckets || [], ["currency","bucket","count","amount"], "Agrupación de obligaciones por moneda y vencimiento para priorizar caja.")}
         ${renderPlanningSection("Obligaciones", payload.obligations || [], ["id","payee_name","obligation_type","due_date","currency","balance","status","origin"], "Detalle de compromisos pendientes que caen dentro del horizonte de planificación.")}
@@ -4604,9 +4610,10 @@ def som_web_home() -> HTMLResponse:
     function renderPlanningSection(title, rows, cols, note="", open=false) {
       const bodyStart = `<div class="pln-section-body">${note ? `<p class="pln-section-note">${esc(note)}</p>` : ""}`;
       const opened = open ? " open" : "";
-      if (!rows.length) return `<details class="pln-section"${opened}><summary>${esc(title)}</summary>${bodyStart}<div class="status">Sin datos para esta consulta.</div></div></details>`;
+      const wide = ["Cobertura mensual","Obligaciones para cobertura","Obligaciones"].includes(title) ? " wide" : "";
+      if (!rows.length) return `<details class="pln-section${wide}"${opened}><summary>${esc(title)}</summary>${bodyStart}<div class="status">Sin datos para esta consulta.</div></div></details>`;
       const hasActions = title === "Proyectos";
-      return `<details class="pln-section"${opened}><summary>${esc(title)} · ${rows.length}</summary>${bodyStart}<div class="table-wrap"><table><thead><tr>${cols.map(c => `<th>${esc(planningColumnLabel(c))}</th>`).join("")}${hasActions ? "<th>Acción</th>" : ""}</tr></thead><tbody>${rows.slice(0,120).map((row,idx) => `<tr>${cols.map(c => `<td>${esc(planningCell(row, c))}</td>`).join("")}${hasActions ? `<td><button onclick='openPlanningProjectForm(${JSON.stringify(row).replace(/'/g, "&#39;")})'>Editar</button><button class="brown" onclick="deletePlanningProject(${Number(row.id || 0)})">Eliminar</button></td>` : ""}</tr>`).join("")}</tbody></table></div></div></details>`;
+      return `<details class="pln-section${wide}"${opened}><summary>${esc(title)} · ${rows.length}</summary>${bodyStart}<div class="table-wrap"><table><thead><tr>${cols.map(c => `<th>${esc(planningColumnLabel(c))}</th>`).join("")}${hasActions ? "<th>Acción</th>" : ""}</tr></thead><tbody>${rows.slice(0,120).map((row,idx) => `<tr>${cols.map(c => `<td>${esc(planningCell(row, c))}</td>`).join("")}${hasActions ? `<td><button onclick='openPlanningProjectForm(${JSON.stringify(row).replace(/'/g, "&#39;")})'>Editar</button><button class="brown" onclick="deletePlanningProject(${Number(row.id || 0)})">Eliminar</button></td>` : ""}</tr>`).join("")}</tbody></table></div></div></details>`;
     }
     function planningColumnLabel(key) {
       const labels = {

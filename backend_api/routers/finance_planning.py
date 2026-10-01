@@ -529,10 +529,46 @@ def finance_planning_summary(
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute("SELECT to_regclass('public.payment_obligations') AS table_name")
         has_itp = bool((cur.fetchone() or {}).get("table_name"))
+        cur.execute("SELECT to_regclass('public.itp_biweekly_payment_lines') AS table_name")
+        has_biweekly = bool((cur.fetchone() or {}).get("table_name"))
         obligation_buckets = []
         obligations = []
         if has_itp:
+            paid_cte = """
+                WITH paid AS (
+                    SELECT
+                        COALESCE(obligation_id, 0) AS obligation_id,
+                        NULLIF(BTRIM(COALESCE(reference, '')), '') AS reference,
+                        COALESCE(SUM(amount), 0) AS paid_amount
+                    FROM itp_biweekly_payment_lines
+                    WHERE COALESCE(accounting_entry_id, 0) > 0
+                      AND COALESCE(amount, 0) > 0
+                    GROUP BY COALESCE(obligation_id, 0), NULLIF(BTRIM(COALESCE(reference, '')), '')
+                ),
+                obligations_effective AS (
+                    SELECT po.*,
+                           LEAST(
+                               COALESCE(po.balance, 0),
+                               GREATEST(COALESCE(po.total, po.balance, 0) - COALESCE((
+                                   SELECT SUM(paid_amount)
+                                   FROM paid p
+                                   WHERE p.obligation_id = po.id
+                                      OR (
+                                          p.reference IS NOT NULL
+                                          AND p.reference = NULLIF(BTRIM(COALESCE(po.reference, '')), '')
+                                      )
+                               ), 0), 0)
+                           ) AS effective_balance
+                    FROM payment_obligations po
+                )
+            """ if has_biweekly else """
+                WITH obligations_effective AS (
+                    SELECT po.*, COALESCE(po.balance, 0) AS effective_balance
+                    FROM payment_obligations po
+                )
+            """
             cur.execute("""
+                {paid_cte}
                 SELECT
                     COALESCE(currency, 'CRC') AS currency,
                     CASE
@@ -543,35 +579,36 @@ def finance_planning_summary(
                         ELSE 'FUTURO'
                     END AS bucket,
                     COUNT(*) AS count,
-                    COALESCE(SUM(balance), 0) AS amount
-                FROM payment_obligations
+                    COALESCE(SUM(effective_balance), 0) AS amount
+                FROM obligations_effective
                 WHERE company_code=%s
                   AND COALESCE(active, TRUE)=TRUE
                   AND COALESCE(record_type, 'OBLIGATION')='OBLIGATION'
                   AND status IN ('PENDING','PARTIAL')
+                  AND COALESCE(effective_balance,0) > 0
                   AND (due_date IS NULL OR due_date < %s)
                 GROUP BY COALESCE(currency, 'CRC'), bucket
                 ORDER BY currency, bucket
-            """, (today, month_end, horizon_end, company, horizon_end))
+            """.format(paid_cte=paid_cte), (today, month_end, horizon_end, company, horizon_end))
             obligation_buckets = [_serialize(row) for row in cur.fetchall()]
 
             cur.execute("""
+                {paid_cte}
                 SELECT id, payee_name, obligation_type, reference, due_date, currency, total,
-                       balance, status, origin, payment_method, payment_bank_account_code,
+                       effective_balance AS balance, status, origin, payment_method, payment_bank_account_code,
                        vessel, country, operation
-                FROM payment_obligations
+                FROM obligations_effective
                 WHERE company_code=%s
                   AND COALESCE(active, TRUE)=TRUE
                   AND COALESCE(record_type, 'OBLIGATION')='OBLIGATION'
                   AND status IN ('PENDING','PARTIAL')
+                  AND COALESCE(effective_balance,0) > 0
                   AND (due_date IS NULL OR due_date < %s)
-                ORDER BY due_date NULLS LAST, balance DESC
+                ORDER BY due_date NULLS LAST, effective_balance DESC
                 LIMIT 120
-            """, (company, horizon_end))
+            """.format(paid_cte=paid_cte), (company, horizon_end))
             obligations = [_serialize(row) for row in cur.fetchall()]
 
-        cur.execute("SELECT to_regclass('public.itp_biweekly_payment_lines') AS table_name")
-        has_biweekly = bool((cur.fetchone() or {}).get("table_name"))
         applied_payments = []
         if has_biweekly:
             cur.execute("""
@@ -580,6 +617,7 @@ def finance_planning_summary(
                        COUNT(*) AS count
                 FROM itp_biweekly_payment_lines
                 WHERE company_code=%s
+                  AND COALESCE(accounting_entry_id, 0) > 0
                   AND payment_date >= %s
                   AND payment_date < %s
                 GROUP BY COALESCE(currency, 'CRC')
@@ -811,6 +849,7 @@ def finance_planning_summary(
         cash_requirement_rows = []
         if has_itp:
             cur.execute("""
+                {paid_cte}
                 SELECT
                     'ITP' AS source,
                     id,
@@ -818,18 +857,18 @@ def finance_planning_summary(
                     obligation_type AS category,
                     COALESCE(planned_payment_date, due_date, issue_date, %s::date) AS due_date,
                     COALESCE(currency, 'CRC') AS currency_code,
-                    COALESCE(balance, 0) AS amount,
+                    COALESCE(effective_balance, 0) AS amount,
                     status,
                     origin
-                FROM payment_obligations
+                FROM obligations_effective
                 WHERE company_code=%s
                   AND COALESCE(active, TRUE)=TRUE
                   AND COALESCE(record_type, 'OBLIGATION')='OBLIGATION'
                   AND status IN ('PENDING','PARTIAL')
-                  AND COALESCE(balance,0) > 0
+                  AND COALESCE(effective_balance,0) > 0
                   AND COALESCE(planned_payment_date, due_date, issue_date, %s::date) < %s
-                ORDER BY due_date NULLS LAST, amount DESC
-            """, (today, company, today, horizon_end))
+                ORDER BY due_date NULLS LAST, effective_balance DESC
+            """.format(paid_cte=paid_cte), (today, company, today, horizon_end))
             cash_requirement_rows.extend(_serialize(row) for row in cur.fetchall())
 
         if has_biweekly:
