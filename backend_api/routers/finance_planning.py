@@ -43,6 +43,18 @@ def _add_months(value: date, months: int) -> date:
     return date(month_index // 12, month_index % 12 + 1, 1)
 
 
+def _fortnight_bucket(value: date | None) -> tuple[str, str]:
+    day = value or date.today()
+    period = day.strftime("%Y-%m")
+    half = "Q1" if day.day <= 15 else "Q2"
+    label = f"{period} · Quincena 1" if half == "Q1" else f"{period} · Quincena 2"
+    return f"{period}-{half}", label
+
+
+def _month_key(value: date | None) -> str:
+    return (value or date.today()).strftime("%Y-%m")
+
+
 def _serialize(row):
     out = {}
     for key, value in dict(row or {}).items():
@@ -488,10 +500,231 @@ def finance_planning_summary(
         """, (company, start, horizon_end, company, start))
         monthly_plan = [_serialize(row) for row in cur.fetchall()]
 
+        cur.execute("""
+            SELECT
+                a.account_code,
+                a.account_name,
+                CASE
+                    WHEN UPPER(COALESCE(a.currency_code, '')) IN ('CRC','USD') THEN UPPER(a.currency_code)
+                    WHEN UPPER(a.account_name) LIKE '%%USD%%' OR UPPER(a.account_name) LIKE '%%DOLAR%%' THEN 'USD'
+                    ELSE 'CRC'
+                END AS currency_code,
+                CASE
+                    WHEN UPPER(a.account_name) LIKE '%%BAC%%' THEN 'BAC'
+                    WHEN UPPER(a.account_name) LIKE '%%BCR%%' OR UPPER(a.account_name) LIKE '%%COSTA RICA%%' THEN 'BCR'
+                    ELSE 'OTRO'
+                END AS bank_name,
+                COALESCE(SUM(
+                    CASE
+                        WHEN e.id IS NULL THEN 0
+                        WHEN (
+                            UPPER(COALESCE(a.currency_code, ''))='USD'
+                            OR UPPER(a.account_name) LIKE '%%USD%%'
+                            OR UPPER(a.account_name) LIKE '%%DOLAR%%'
+                        )
+                        THEN CASE
+                            WHEN e.currency_code='USD' AND COALESCE(NULLIF(e.exchange_rate,0),0) > 0
+                            THEN (COALESCE(l.debit,0)-COALESCE(l.credit,0)) / e.exchange_rate
+                            ELSE COALESCE(l.debit,0)-COALESCE(l.credit,0)
+                        END
+                        ELSE COALESCE(l.debit,0)-COALESCE(l.credit,0)
+                    END
+                ), 0) AS available_amount,
+                MAX(e.entry_date) AS last_movement_date
+            FROM accounting_accounts a
+            LEFT JOIN accounting_lines l ON l.account_code=a.account_code
+            LEFT JOIN accounting_entries e
+              ON e.id=l.entry_id
+             AND e.company_code=%s
+             AND e.workflow_status='POSTED'
+             AND COALESCE(e.reversed, FALSE)=FALSE
+             AND e.entry_date <= %s
+            WHERE COALESCE(a.active, TRUE)=TRUE
+              AND COALESCE(a.accepts_posting, TRUE)=TRUE
+              AND (
+                   a.account_code IN ('1.1.02.02.01','1.1.02.02.02','1.1.02.04','1.1.02.04.01')
+                   OR (
+                        a.account_code LIKE '1.1.02.%%'
+                        AND (
+                            UPPER(a.account_name) LIKE '%%BAC%%'
+                            OR UPPER(a.account_name) LIKE '%%BCR%%'
+                            OR UPPER(a.account_name) LIKE '%%BANCO DE COSTA RICA%%'
+                            OR UPPER(a.account_name) LIKE 'BANCO %%'
+                        )
+                   )
+              )
+              AND LOWER(a.account_name) NOT LIKE '%%tarjeta%%'
+              AND a.account_code <> '1.1.02.02'
+            GROUP BY a.account_code, a.account_name, a.currency_code
+            ORDER BY bank_name, currency_code, a.account_code
+        """, (company, today))
+        bank_accounts = [_serialize(row) for row in cur.fetchall()]
+
+        cur.execute("SELECT to_regclass('public.collections') AS table_name")
+        has_collections = bool((cur.fetchone() or {}).get("table_name"))
+        collections_open = []
+        collections_aging = []
+        if has_collections:
+            cur.execute("""
+                SELECT COALESCE(moneda, 'CRC') AS currency_code,
+                       COUNT(*) AS count,
+                       COALESCE(SUM(saldo_pendiente), 0) AS amount
+                FROM collections
+                WHERE company_code=%s
+                  AND COALESCE(saldo_pendiente,0) > 0
+                  AND UPPER(COALESCE(estado_factura,'PENDIENTE_PAGO')) NOT IN ('PAGADA','WRITE_OFF')
+                GROUP BY COALESCE(moneda, 'CRC')
+                ORDER BY currency_code
+            """, (company,))
+            collections_open = [_serialize(row) for row in cur.fetchall()]
+            cur.execute("""
+                SELECT COALESCE(moneda, 'CRC') AS currency_code,
+                       COALESCE(bucket_aging, 'SIN_BUCKET') AS bucket,
+                       COUNT(*) AS count,
+                       COALESCE(SUM(saldo_pendiente), 0) AS amount
+                FROM collections
+                WHERE company_code=%s
+                  AND COALESCE(saldo_pendiente,0) > 0
+                  AND UPPER(COALESCE(estado_factura,'PENDIENTE_PAGO')) NOT IN ('PAGADA','WRITE_OFF')
+                GROUP BY COALESCE(moneda, 'CRC'), COALESCE(bucket_aging, 'SIN_BUCKET')
+                ORDER BY currency_code, bucket
+            """, (company,))
+            collections_aging = [_serialize(row) for row in cur.fetchall()]
+
+        cash_requirement_rows = []
+        if has_itp:
+            cur.execute("""
+                SELECT
+                    'ITP' AS source,
+                    id,
+                    payee_name AS concept,
+                    obligation_type AS category,
+                    COALESCE(planned_payment_date, due_date, issue_date, %s::date) AS due_date,
+                    COALESCE(currency, 'CRC') AS currency_code,
+                    COALESCE(balance, 0) AS amount,
+                    status,
+                    origin
+                FROM payment_obligations
+                WHERE company_code=%s
+                  AND COALESCE(active, TRUE)=TRUE
+                  AND COALESCE(record_type, 'OBLIGATION')='OBLIGATION'
+                  AND status IN ('PENDING','PARTIAL')
+                  AND COALESCE(balance,0) > 0
+                  AND COALESCE(planned_payment_date, due_date, issue_date, %s::date) < %s
+                ORDER BY due_date NULLS LAST, amount DESC
+            """, (today, company, today, horizon_end))
+            cash_requirement_rows.extend(_serialize(row) for row in cur.fetchall())
+
+        if has_biweekly:
+            cur.execute("""
+                SELECT
+                    'QUINCENAL_DRAFT' AS source,
+                    id,
+                    beneficiary AS concept,
+                    category,
+                    COALESCE(payment_date, %s::date) AS due_date,
+                    COALESCE(currency, 'CRC') AS currency_code,
+                    COALESCE(amount, 0) AS amount,
+                    CASE WHEN accounting_entry_id IS NULL THEN 'PENDING' ELSE 'POSTED' END AS status,
+                    source AS origin
+                FROM itp_biweekly_payment_lines
+                WHERE company_code=%s
+                  AND accounting_entry_id IS NULL
+                  AND COALESCE(amount,0) > 0
+                  AND COALESCE(payment_date, %s::date) >= %s
+                  AND COALESCE(payment_date, %s::date) < %s
+                  AND obligation_id IS NULL
+                ORDER BY payment_date, amount DESC
+            """, (today, company, today, start, today, horizon_end))
+            cash_requirement_rows.extend(_serialize(row) for row in cur.fetchall())
+
     total_pending = {}
     for row in obligation_buckets:
         cur_code = row.get("currency") or "CRC"
         total_pending[cur_code] = _float(_money(total_pending.get(cur_code)) + _money(row.get("amount")))
+
+    bank_totals = {}
+    for row in bank_accounts:
+        cur_code = row.get("currency_code") or "CRC"
+        bank_totals[cur_code] = _money(bank_totals.get(cur_code)) + _money(row.get("available_amount"))
+
+    collections_totals = {}
+    for row in collections_open:
+        cur_code = row.get("currency_code") or "CRC"
+        collections_totals[cur_code] = _money(collections_totals.get(cur_code)) + _money(row.get("amount"))
+
+    requirement_by_fortnight = {}
+    requirement_by_month = {}
+    for row in cash_requirement_rows:
+        due_text = row.get("due_date")
+        try:
+            due = date.fromisoformat(str(due_text))
+        except Exception:
+            due = today
+        cur_code = row.get("currency_code") or "CRC"
+        amount = _money(row.get("amount"))
+        bucket_key, bucket_label = _fortnight_bucket(due)
+        item = requirement_by_fortnight.setdefault(
+            (bucket_key, cur_code),
+            {
+                "bucket": bucket_key,
+                "label": bucket_label,
+                "period": due.strftime("%Y-%m"),
+                "currency_code": cur_code,
+                "required_amount": Decimal("0.00"),
+                "count": 0,
+            },
+        )
+        item["required_amount"] += amount
+        item["count"] += 1
+        month_key = _month_key(due)
+        month_item = requirement_by_month.setdefault(
+            (month_key, cur_code),
+            {
+                "month": month_key,
+                "currency_code": cur_code,
+                "required_amount": Decimal("0.00"),
+                "count": 0,
+            },
+        )
+        month_item["required_amount"] += amount
+        month_item["count"] += 1
+
+    running_by_currency = {cur: _money(amount) for cur, amount in bank_totals.items()}
+    cash_coverage_fortnight = []
+    for (_bucket, cur_code), row in sorted(requirement_by_fortnight.items(), key=lambda item: (item[1]["bucket"], item[1]["currency_code"])):
+        available_before = _money(running_by_currency.get(cur_code))
+        required = _money(row["required_amount"])
+        remaining = available_before - required
+        running_by_currency[cur_code] = remaining
+        status = "CUBRE" if remaining >= 0 else "FALTANTE"
+        coverage_pct = _float((available_before / required * Decimal("100")).quantize(MONEY)) if required else 100.0
+        cash_coverage_fortnight.append({
+            **row,
+            "available_before": _float(available_before),
+            "required_amount": _float(required),
+            "remaining_after": _float(remaining),
+            "shortfall": _float(abs(remaining) if remaining < 0 else 0),
+            "coverage_pct": coverage_pct,
+            "status": status,
+        })
+
+    cash_coverage_month = []
+    for (_month, cur_code), row in sorted(requirement_by_month.items(), key=lambda item: (item[1]["month"], item[1]["currency_code"])):
+        required = _money(row["required_amount"])
+        available = _money(bank_totals.get(cur_code))
+        remaining = available - required
+        cash_coverage_month.append({
+            **row,
+            "bank_available": _float(available),
+            "required_amount": _float(required),
+            "remaining_if_paid": _float(remaining),
+            "shortfall": _float(abs(remaining) if remaining < 0 else 0),
+            "coverage_pct": _float((available / required * Decimal("100")).quantize(MONEY)) if required else 100.0,
+            "status": "CUBRE" if remaining >= 0 else "FALTANTE",
+        })
+
+    cash_requirements = sorted(cash_requirement_rows, key=lambda row: (str(row.get("due_date") or ""), str(row.get("currency_code") or ""), -float(row.get("amount") or 0)))
 
     total_project_profit = sum(_money(row.get("expected_profit")) for row in projects)
     total_weighted_profit = sum(_money(row.get("weighted_profit")) for row in projects)
@@ -503,6 +736,13 @@ def finance_planning_summary(
                 "severity": "HIGH",
                 "code": "OVERDUE_ITP",
                 "message": f"Obligaciones vencidas {row.get('currency')} {_float(row.get('amount')):,.2f}.",
+            })
+    for row in cash_coverage_fortnight:
+        if row.get("status") == "FALTANTE":
+            alerts.append({
+                "severity": "HIGH",
+                "code": "CASH_SHORTFALL",
+                "message": f"{row.get('label')} {row.get('currency_code')}: faltan {_float(row.get('shortfall')):,.2f} para cubrir obligaciones.",
             })
     if _money(profitability.get("profit")) < 0:
         alerts.append({"severity": "HIGH", "code": "NEGATIVE_MARGIN", "message": "La rentabilidad del periodo está negativa."})
@@ -524,6 +764,8 @@ def finance_planning_summary(
             "project_expected_profit": _float(total_project_profit),
             "project_weighted_profit": _float(total_weighted_profit),
             "monthly_savings": _float(total_monthly_savings),
+            "bank_available_by_currency": {key: _float(value) for key, value in bank_totals.items()},
+            "collections_open_by_currency": {key: _float(value) for key, value in collections_totals.items()},
         },
         "profitability": profitability,
         "obligation_buckets": obligation_buckets,
@@ -534,6 +776,12 @@ def finance_planning_summary(
         "projects": projects,
         "project_schedule": project_schedule,
         "monthly_plan": monthly_plan,
+        "bank_accounts": bank_accounts,
+        "collections_open": collections_open,
+        "collections_aging": collections_aging,
+        "cash_requirements": cash_requirements[:200],
+        "cash_coverage_fortnight": cash_coverage_fortnight,
+        "cash_coverage_month": cash_coverage_month,
         "alerts": alerts,
         "decision_notes": [
             "Priorice OVERDUE y vencimientos dentro del mes antes de comprometer nuevos pagos.",
