@@ -1044,7 +1044,13 @@ def som_web_home() -> HTMLResponse:
     .pln-bank-card span { display:block; color:#64748b; font-size:11px; font-weight:800; text-transform:uppercase; }
     .pln-bank-card strong { display:block; margin-top:8px; font-size:22px; color:#0f172a; overflow-wrap:anywhere; }
     .pln-bank-card small { display:block; color:#607086; line-height:1.3; }
+    .pln-bank-editor { display:grid; grid-template-columns:minmax(0,1fr) max-content; gap:6px; align-items:end; margin-top:4px; }
+    .pln-bank-editor label { display:grid; gap:3px; color:#475569; font-size:11px; font-weight:800; text-transform:uppercase; }
+    .pln-bank-editor input { height:32px; min-width:0; }
     .pln-bank-card button { justify-self:start; height:32px; padding:0 12px; }
+    .pln-bank-msg { min-height:18px; color:#607086; font-size:12px; line-height:1.25; }
+    .pln-bank-msg.error { color:#b91c1c; }
+    .pln-bank-msg.ok { color:#047857; }
     .pln-coverage-list { display:grid; gap:8px; }
     .pln-coverage-row { display:grid; grid-template-columns:minmax(150px,1fr) minmax(110px,.55fr) minmax(110px,.55fr) minmax(110px,.55fr); gap:8px; align-items:center; border:1px solid #d7e1ec; border-radius:8px; background:#fff; padding:10px 12px; }
     .pln-coverage-row strong { color:#0f172a; }
@@ -4526,10 +4532,11 @@ def som_web_home() -> HTMLResponse:
         ${renderPlanningSection("CxC abierta", payload.collections_open || [], ["currency_code","count","amount"], "Pendiente de cobrar visible para decisión, pero separado del efectivo disponible.")}
         ${renderPlanningSection("Aging CxC", payload.collections_aging || [], ["currency_code","bucket","count","amount"], "Riesgo de cobranza por moneda y antigüedad.")}
         ${renderPlanningSection("Rentabilidad empresa", [
+          {metric:"Alcance", value:profitability.scope || "Periodo"},
           {metric:"Ingresos", value:money(profitability.revenue || 0)},
           {metric:"Gastos", value:money(profitability.expenses || 0)},
           {metric:"Utilidad", value:money(profitability.profit || 0)},
-          {metric:"Margen %", value:profitability.margin_pct || 0}
+          {metric:"Margen %", value:`${Number(profitability.margin_pct || 0).toFixed(2)}%`}
         ], ["metric","value"], "Lectura rápida de ingresos, gastos, utilidad y margen del periodo seleccionado.")}
         ${renderPlanningSection("Alertas", payload.alerts || [], ["severity","code","message"], "Riesgos que requieren acción antes de comprometer nuevos pagos.")}
         ${renderPlanningSection("Calendario ITP", payload.obligation_buckets || [], ["currency","bucket","count","amount"], "Agrupación de obligaciones por moneda y vencimiento para priorizar caja.")}
@@ -4562,6 +4569,7 @@ def som_web_home() -> HTMLResponse:
         const amount = Number(row.available_amount || 0);
         const tone = amount < 0 ? "bad" : "good";
         const canAdjust = row.account_code && row.account_code !== "-";
+        const domId = planningBankDomId(row.account_code || `${row.bank_name}-${row.currency_code}`);
         const encoded = encodeURIComponent(JSON.stringify(row));
         return `<div class="pln-bank-card ${tone}">
           <span>${esc(row.bank_name || "Banco")} · ${esc(row.currency_code || "-")}</span>
@@ -4569,10 +4577,17 @@ def som_web_home() -> HTMLResponse:
           <small title="${esc(row.account_name || "")}">${esc(row.account_code || "-")} · ${esc(row.account_name || "")}</small>
           <small>Último movimiento: ${esc(row.last_movement_date || "-")}</small>
           ${canAdjust
-            ? `<button class="secondary" onclick="openPlanningBankAdjustment(decodeURIComponent('${encoded}'))">Ajustar saldo real</button>`
+            ? `<div class="pln-bank-editor">
+                <label>Saldo real<input id="plnReal_${domId}" type="number" step="0.01" value="${esc(amount)}" /></label>
+                <button class="green" type="button" onclick="savePlanningBankAdjustmentFromCard(decodeURIComponent('${encoded}'), '${domId}')">Actualizar</button>
+              </div>
+              <div id="plnBankMsg_${domId}" class="pln-bank-msg">Digite el saldo real según banco.</div>`
             : `<button class="secondary" onclick="openPlanningBankAccountForm()">Crear cuenta</button>`}
         </div>`;
       }).join("")}</div>`;
+    }
+    function planningBankDomId(value) {
+      return String(value || "bank").replace(/[^a-zA-Z0-9_-]/g, "_");
     }
     function renderPlanningCoverage(rows) {
       if (!rows.length) return '<div class="status">Sin obligaciones en el horizonte seleccionado.</div>';
@@ -4765,6 +4780,46 @@ def som_web_home() -> HTMLResponse:
       } catch (err) {
         msg.className = "status error";
         msg.textContent = err.message;
+      }
+    }
+    async function savePlanningBankAdjustmentFromCard(rowInput, domId) {
+      const row = typeof rowInput === "string" ? JSON.parse(rowInput) : (rowInput || {});
+      const msg = $(`plnBankMsg_${domId}`);
+      const input = $(`plnReal_${domId}`);
+      if (!row.account_code || !input) return;
+      const payload = {
+        account_code:row.account_code,
+        real_amount:Number(input.value || 0),
+        adjustment_date:new Date().toISOString().slice(0,10),
+        reason:`Ajuste PLN saldo real ${row.bank_name || "Banco"} ${row.currency_code || ""}`.trim()
+      };
+      if (msg) {
+        msg.className = "pln-bank-msg";
+        msg.textContent = "Registrando ajuste contable...";
+      }
+      try {
+        const saved = await postJSON("/finance/planning/bank-adjustment", payload);
+        if (msg) {
+          msg.className = saved.status === "no_change" ? "pln-bank-msg ok" : "pln-bank-msg ok";
+          msg.textContent = saved.status === "no_change"
+            ? "Sin diferencia contra Accounting."
+            : `Asiento #${saved.entry_id} creado por diferencia ${money(saved.difference)}.`;
+        }
+        await loadFinancePlanning();
+        const out = $("planningMsg");
+        if (out) {
+          out.className = "status";
+          out.textContent = saved.status === "no_change"
+            ? "El saldo real coincide con Accounting; no se creó asiento."
+            : `Saldo real actualizado. Asiento contable #${saved.entry_id} por diferencia ${money(saved.difference)}.`;
+        }
+      } catch (err) {
+        if (msg) {
+          msg.className = "pln-bank-msg error";
+          msg.textContent = err.message;
+        } else {
+          alert(err.message);
+        }
       }
     }
     async function savePlanningBankAccount() {

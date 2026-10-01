@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query
@@ -604,7 +604,7 @@ def finance_planning_summary(
         """, (company, start, horizon_end))
         expenses = [_serialize(row) for row in cur.fetchall()]
 
-        cur.execute("""
+        profitability_sql = """
             SELECT
                 COALESCE(SUM(CASE WHEN l.account_code LIKE '4%%' THEN l.credit - l.debit ELSE 0 END), 0) AS revenue,
                 COALESCE(SUM(CASE WHEN l.account_code LIKE '5%%' THEN l.debit - l.credit ELSE 0 END), 0) AS expenses,
@@ -617,8 +617,16 @@ def finance_planning_summary(
               AND e.entry_date >= %s
               AND e.entry_date < %s
               AND (l.account_code LIKE '4%%' OR l.account_code LIKE '5%%')
-        """, (company, start, month_end))
+        """
+        cur.execute(profitability_sql, (company, start, month_end))
         profitability = _serialize(cur.fetchone() or {})
+        profitability["scope"] = f"Periodo {period}"
+        if not _money(profitability.get("revenue")) and not _money(profitability.get("expenses")):
+            ytd_start = date(start.year, 1, 1)
+            ytd_end = min(horizon_end, today + timedelta(days=1))
+            cur.execute(profitability_sql, (company, ytd_start, ytd_end))
+            profitability = _serialize(cur.fetchone() or {})
+            profitability["scope"] = f"YTD {start.year} al {min(today, ytd_end - timedelta(days=1)).isoformat()}"
         revenue = _money(profitability.get("revenue"))
         profit = _money(profitability.get("profit"))
         profitability["margin_pct"] = _float((profit / revenue * Decimal("100")).quantize(MONEY)) if revenue else 0.0
