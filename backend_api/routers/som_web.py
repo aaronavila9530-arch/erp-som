@@ -1067,8 +1067,9 @@ def som_web_home() -> HTMLResponse:
     .pln-pill.bad { color:#9a3412; background:#fff4e5; border:1px solid #fed7aa; }
     .pln-panel { border:1px solid #d7e1ec; border-radius:8px; background:#f8fbfe; padding:13px; min-width:0; }
     .pln-panel h3 { margin:0 0 10px; font-size:16px; }
-    .pln-sections { display:grid; grid-template-columns:repeat(auto-fit,minmax(430px,1fr)); gap:12px; align-items:start; }
+    .pln-sections { display:grid; grid-template-columns:repeat(2,minmax(520px,1fr)); gap:12px; align-items:start; }
     .pln-section.wide { grid-column:1/-1; }
+    .pln-group-title { grid-column:1/-1; margin:4px 0 -4px; color:#334155; font-size:13px; font-weight:900; text-transform:uppercase; letter-spacing:.03em; }
     .pln-section { border:1px solid #d7e1ec; border-radius:8px; background:#fff; padding:0; min-width:0; overflow:hidden; }
     .pln-section summary { cursor:pointer; font-weight:800; color:#122033; padding:12px 14px; background:#f8fbfe; border-bottom:1px solid #edf2f7; }
     .pln-section summary { display:flex; align-items:center; justify-content:space-between; gap:10px; }
@@ -1076,9 +1077,9 @@ def som_web_home() -> HTMLResponse:
     .pln-section-actions button { height:28px; padding:0 10px; font-size:12px; }
     .pln-section-body { padding:12px; }
     .pln-section-note { margin:0 0 10px; color:#607086; line-height:1.4; }
-    .pln-section .table-wrap { margin-top:8px; max-height:380px; overflow:auto; scrollbar-gutter:stable both-edges; }
+    .pln-section .table-wrap { margin-top:8px; max-height:360px; overflow:auto; scrollbar-gutter:stable both-edges; }
     .pln-section table { width:max-content; min-width:100%; }
-    .pln-section th,.pln-section td { max-width:420px; white-space:normal; overflow-wrap:anywhere; vertical-align:top; }
+    .pln-section th,.pln-section td { max-width:360px; white-space:normal; overflow-wrap:anywhere; vertical-align:top; }
     .pln-section th:nth-child(2),.pln-section td:nth-child(2) { min-width:140px; }
     .pln-section th:nth-child(3),.pln-section td:nth-child(3) { min-width:220px; }
     .accounting-shell { display:grid; gap:10px; min-width:0; max-width:100%; overflow:visible; }
@@ -4551,14 +4552,18 @@ def som_web_home() -> HTMLResponse:
           </div>
         </div>
         <div class="pln-sections">
+        <div class="pln-group-title">Cobertura y caja</div>
         ${renderPlanningSection("Cobertura mensual", payload.cash_coverage_month || [], ["month","currency_code","bank_available","required_amount","remaining_if_paid","shortfall","coverage_pct","status"], "Presupuesto mensual: compara bancos actuales contra obligaciones del mes, sin sumar CxC.", true)}
         ${renderPlanningSection("Obligaciones para cobertura", payload.cash_requirements || [], ["source","id","concept","category","due_date","currency_code","amount","status","origin"], "Compromisos que alimentan el cálculo secuencial de cobertura quincenal.", true)}
+        ${renderPlanningSection("Obligaciones", payload.obligations || [], ["id","payee_name","obligation_type","due_date","currency","balance","status","origin"], "Detalle de compromisos pendientes que caen dentro del horizonte de planificación.")}
+        <div class="pln-group-title">Obligaciones ITP</div>
+        ${renderPlanningSection("Calendario ITP", payload.obligation_buckets || [], ["currency","bucket","count","amount"], "Agrupación de obligaciones por moneda y vencimiento para priorizar caja.")}
+        ${renderPlanningSection("Obligaciones quincenales ITP", payload.biweekly_lines || [], ["period","fortnight","category","beneficiary","payment_date","currency","amount","bank_voucher","status","obligation_id","reference"], "Todas las líneas quincenales registradas en ITP dentro del horizonte, pagadas y pendientes.")}
+        <div class="pln-group-title">Cobros y alertas</div>
         ${renderPlanningSection("CxC abierta", payload.collections_open || [], ["currency_code","count","amount"], "Pendiente de cobrar visible para decisión, pero separado del efectivo disponible.")}
         ${renderPlanningSection("Aging CxC", payload.collections_aging || [], ["currency_code","bucket","count","amount"], "Riesgo de cobranza por moneda y antigüedad.")}
         ${renderPlanningSection("Alertas", payload.alerts || [], ["severity","code","message"], "Riesgos que requieren acción antes de comprometer nuevos pagos.")}
-        ${renderPlanningSection("Calendario ITP", payload.obligation_buckets || [], ["currency","bucket","count","amount"], "Agrupación de obligaciones por moneda y vencimiento para priorizar caja.")}
-        ${renderPlanningSection("Obligaciones", payload.obligations || [], ["id","payee_name","obligation_type","due_date","currency","balance","status","origin"], "Detalle de compromisos pendientes que caen dentro del horizonte de planificación.")}
-        ${renderPlanningSection("Obligaciones quincenales ITP", payload.biweekly_lines || [], ["period","fortnight","category","beneficiary","payment_date","currency","amount","bank_voucher","status","obligation_id","reference"], "Todas las líneas quincenales registradas en ITP dentro del horizonte, pagadas y pendientes.")}
+        <div class="pln-group-title">Rentabilidad y planificación</div>
         ${renderPlanningSection("Ingresos Accounting", payload.revenue_lines || [], ["period","account_code","account_name","actual_amount"], "Ingresos contabilizados por cuenta para justificar la rentabilidad.")}
         ${renderPlanningSection("Gastos Accounting", payload.expenses || [], ["period","account_code","account_name","actual_amount"], "Gastos contabilizados por cuenta para comparar ejecución contra presupuesto y metas.")}
         ${renderPlanningSection("Pagos aplicados", payload.applied_payments || [], ["currency","count","amount"], "Pagos aplicados dentro del horizonte consultado.")}
@@ -4625,9 +4630,9 @@ def som_web_home() -> HTMLResponse:
     function renderPlanningSection(title, rows, cols, note="", open=false) {
       const bodyStart = `<div class="pln-section-body">${note ? `<p class="pln-section-note">${esc(note)}</p>` : ""}`;
       const opened = open ? " open" : "";
-      const wide = ["Cobertura mensual","Obligaciones para cobertura","Obligaciones"].includes(title) ? " wide" : "";
+      const wide = ["Cobertura mensual","Obligaciones para cobertura","Obligaciones","Obligaciones quincenales ITP"].includes(title) ? " wide" : "";
       const summaryActions = rows.length
-        ? `<span class="pln-section-actions"><button class="secondary" type="button" onclick="event.stopPropagation(); openPlanningDetail('${esc(title)}', planningSectionRows('${esc(title)}'), ${JSON.stringify(cols).replace(/"/g, "&quot;")})">Detalle</button><button class="secondary" type="button" onclick="event.stopPropagation(); exportPlanningRows('${esc(title)}', planningSectionRows('${esc(title)}'), ${JSON.stringify(cols).replace(/"/g, "&quot;")})">Exportar</button></span>`
+        ? `<span class="pln-section-actions"><button class="secondary" type="button" onclick="event.stopPropagation(); openPlanningDetail('${esc(title)}', planningSectionRows('${esc(title)}'), ${JSON.stringify(cols).replace(/"/g, "&quot;")})">Detalle</button><button class="secondary" type="button" onclick="event.stopPropagation(); exportPlanningRows('${esc(title)}', planningSectionRows('${esc(title)}'), ${JSON.stringify(cols).replace(/"/g, "&quot;")})">Excel</button></span>`
         : "";
       if (!rows.length) return `<details class="pln-section${wide}"${opened}><summary><span>${esc(title)} · 0 líneas</span></summary>${bodyStart}<div class="status">Sin datos para esta consulta.</div></div></details>`;
       const hasActions = title === "Proyectos";
@@ -4693,7 +4698,7 @@ def som_web_home() -> HTMLResponse:
           <div class="modal wide">
             <div class="modal-head"><h2>${esc(title)}</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
             <div class="status"><strong>Consolidado:</strong> ${esc(totalText)}</div>
-            <div class="md-actions"><button class="secondary" onclick='exportPlanningRows(${JSON.stringify(title)}, planningDetailRows, planningDetailCols)'>Exportar CSV</button></div>
+            <div class="md-actions"><button class="secondary" onclick='exportPlanningRows(${JSON.stringify(title)}, planningDetailRows, planningDetailCols)'>Exportar Excel</button></div>
             <div class="table-wrap">${planningDetailTable(rows, cols)}</div>
           </div>
         </div>`);
@@ -4708,8 +4713,9 @@ def som_web_home() -> HTMLResponse:
       rows = Array.isArray(rows) ? rows : [];
       cols = cols && cols.length ? cols : Array.from(new Set(rows.flatMap(row => Object.keys(row || {}))));
       if (!rows.length) return alert("No hay líneas para exportar.");
-      const csv = [cols.join(",")].concat(rows.map(row => cols.map(c => `"${String(planningCell(row, c)).replace(/"/g, '""')}"`).join(","))).join("\\n");
-      downloadText(`${String(title || "pln_detalle").replace(/[^a-z0-9_-]+/gi, "_")}.csv`, csv, "text/csv;charset=utf-8");
+      const exportRows = rows.map(row => Object.fromEntries(cols.map(c => [planningColumnLabel(c), planningCell(row, c)])));
+      const exportCols = cols.map(planningColumnLabel);
+      downloadExcelFile(`${String(title || "pln_detalle").replace(/[^a-z0-9_-]+/gi, "_")}.xls`, exportRows, exportCols, title || "PLN detalle");
     }
     function planningColumnLabel(key) {
       const labels = {
