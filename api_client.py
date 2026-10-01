@@ -5432,16 +5432,22 @@ def post_bac_partner_transfer_api(payload: dict):
         )
         return any(name in normalized for name in known)
 
-    def is_intercompany_transfer(value, concept):
-        normalized = norm(" ".join([str(value or ""), str(concept or ""), str(payload.get("subject") or "")]))
-        if "INTERCOMPANY" not in normalized:
-            return False
+    def is_msl_marine_beneficiary(value):
+        normalized = norm(value)
         return any(token in normalized for token in (
-            "MSL",
-            "MARINE SURVEYORS",
+            "MSL MARINE SURVEYORS",
             "MARINE SURVEYORS AND LOGISTICS",
             "MARINE SURVEYORS LOGISTICS",
+            "MARINE SURVEYOR AND LOGISTICS",
+            "MSL MARINE SURVEYORS AND LOGIS",
         ))
+
+    def is_intercompany_transfer(value, concept):
+        normalized_beneficiary = norm(value)
+        normalized_concept = norm(concept)
+        if is_msl_marine_beneficiary(normalized_beneficiary):
+            return True
+        return "INTERCOMPANY" in normalized_concept and is_msl_marine_beneficiary(normalized_beneficiary)
 
     def overlap_score(left, right):
         left_tokens = {token for token in norm(left).split() if len(token) >= 3}

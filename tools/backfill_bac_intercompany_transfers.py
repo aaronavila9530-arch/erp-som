@@ -37,11 +37,23 @@ DEFAULT_QUERY = (
 def _is_intercompany_payload(payload: dict | None) -> bool:
     if not payload:
         return False
-    text = " ".join(
-        str(payload.get(key) or "")
-        for key in ("partner_name", "concept", "subject")
-    ).upper()
-    return "INTERCOMPANY" in text and ("MSL" in text or "MARINE SURVEYORS" in text)
+    beneficiary = str(payload.get("partner_name") or "").upper()
+    if not any(token in beneficiary for token in (
+        "MSL MARINE SURVEYORS",
+        "MSL MARINE SURVEYORS AND LOGIS",
+        "MARINE SURVEYORS AND LOGISTICS",
+        "MARINE SURVEYORS LOGISTICS",
+    )):
+        return False
+    subject = str(payload.get("subject") or "").upper().replace("_", " ")
+    return any(token in subject for token in (
+        "MSL",
+        "MARINE SURVEYOR",
+        "MARITIME MASTERS",
+        "MARITIME CORPORATION",
+        "3-101-969147",
+        "3101969147",
+    ))
 
 
 def _message_date(headers: dict) -> datetime:
