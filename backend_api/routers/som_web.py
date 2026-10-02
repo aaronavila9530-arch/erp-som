@@ -20,7 +20,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20261002-service-edit-credit-v2"
+_ASSET_VERSION = "20261002-collections-calendar-v2"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -898,6 +898,14 @@ def som_web_home() -> HTMLResponse:
     .itp-calendar-more { border:0; background:transparent; color:#506582; padding:0; font:inherit; text-align:left; cursor:pointer; }
     .itp-calendar-more:hover { color:var(--blue); text-decoration:underline; }
     .itp-calendar-total { font-size:12px; color:#8a5a00; font-weight:800; }
+    .collections-calendar-day.has-items { background:#f4f9ff; border-color:#9fc5ef; }
+    .collections-calendar-day.has-items:hover { border-color:#005da8; }
+    .collections-calendar-total { color:#005da8; }
+    .collections-calendar-pill { background:#eaf4ff; }
+    .collections-calendar-pill.overdue { background:#fff7f6; color:#8a1f14; }
+    .collections-calendar-pill.today-due { background:#fffaf0; color:#8a5a00; }
+    .collections-calendar-summary { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:8px; margin:10px 0; }
+    .collections-calendar-summary .card { padding:10px 12px; }
     .modal.itp-schedule-modal { width:min(1180px,98vw); max-height:94vh; display:flex; flex-direction:column; overflow:hidden; }
     .itp-schedule-modal .itp-schedule-content { min-height:0; overflow:auto; }
     .itp-schedule-modal .table-wrap { max-height:68vh; }
@@ -1466,6 +1474,9 @@ def som_web_home() -> HTMLResponse:
     let collectionTotal = 0;
     let collectionClientesLoaded = false;
     let collectionClientes = [];
+    let collectionViewMode = "table";
+    let collectionCalendarMonth = null;
+    let collectionCalendarRows = [];
     let bankRowsWeb = [];
     let selectedBankIndex = null;
     let selectedBankIndexes = new Set();
@@ -5131,6 +5142,8 @@ def som_web_home() -> HTMLResponse:
           <button class="secondary" onclick="clearCollections()">Limpiar</button>
         </div>
         <div class="finance-toolbar">
+          <button class="secondary" onclick="showCollectionsTable()">Tabla</button>
+          <button class="secondary" onclick="showCollectionsCalendar()">Calendario vencimientos</button>
           <button class="secondary" onclick="syncCollectionsFromInvoicing()">Sincronizar facturas</button>
           <button onclick="viewSelectedCollectionInvoice()">Ver factura</button>
           <button class="brown" onclick="openCollectionDisputeForm()">Disputar</button>
@@ -5169,8 +5182,8 @@ def som_web_home() -> HTMLResponse:
         alert(`No se pudieron cargar clientes de Collections: ${err.message}`);
       }
     }
-    function collectionParams(page=1) {
-      const params = new URLSearchParams({ page:String(page), page_size:"50" });
+    function collectionParams(page=1, pageSize=50) {
+      const params = new URLSearchParams({ page:String(page), page_size:String(pageSize) });
       const map = {
         collectionsCliente:"cliente",
         collectionsBucket:"bucket_aging",
@@ -5184,6 +5197,7 @@ def som_web_home() -> HTMLResponse:
       return params.toString();
     }
     async function loadCollections(page=1) {
+      collectionViewMode = "table";
       collectionPage = page;
       selectedCollectionIndex = null;
       selectedCollectionIndexes = new Set();
@@ -5207,6 +5221,7 @@ def som_web_home() -> HTMLResponse:
     function clearCollections() {
       ["collectionsCliente","collectionsBucket","collectionsEstado","collectionsDisputada"].forEach(id => { if ($(id)) $(id).value = id === "collectionsCliente" ? "ALL" : ""; });
       collectionRows = [];
+      collectionCalendarRows = [];
       selectedCollectionIndex = null;
       selectedCollectionIndexes = new Set();
       collectionPage = 1;
@@ -5214,6 +5229,157 @@ def som_web_home() -> HTMLResponse:
       $("collectionsKpis")?.classList.add("hidden");
       $("collectionsMsg")?.classList.add("hidden");
       if ($("collectionsTable")) $("collectionsTable").innerHTML = '<div class="status">Use los filtros y presione Buscar para cargar Collections.</div>';
+    }
+    function collectionMonthKey(date=new Date()) {
+      return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+    }
+    function collectionMoney(row, key="saldo_pendiente") {
+      return `${row.moneda || ""} ${Number(row[key] || 0).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:2})}`.trim();
+    }
+    function collectionDateKey(value) {
+      return String(value || "").slice(0, 10);
+    }
+    function showCollectionsTable() {
+      collectionViewMode = "table";
+      if (collectionRows.length) renderCollectionsTable();
+      else if ($("collectionsTable")) $("collectionsTable").innerHTML = '<div class="status">Use los filtros y presione Buscar para cargar Collections.</div>';
+    }
+    async function showCollectionsCalendar() {
+      collectionViewMode = "calendar";
+      if (!collectionCalendarMonth) collectionCalendarMonth = collectionMonthKey();
+      await loadCollectionsCalendar();
+    }
+    async function shiftCollectionsCalendar(months) {
+      const [year, month] = String(collectionCalendarMonth || collectionMonthKey()).split("-").map(Number);
+      const base = new Date(year, month - 1 + Number(months || 0), 1);
+      collectionCalendarMonth = collectionMonthKey(base);
+      await loadCollectionsCalendar();
+    }
+    async function setCollectionsCalendarMonth(value) {
+      if (value) collectionCalendarMonth = value;
+      await loadCollectionsCalendar();
+    }
+    async function loadCollectionsCalendar() {
+      const msg = $("collectionsMsg");
+      const table = $("collectionsTable");
+      if (!table) return;
+      msg.className = "status";
+      msg.textContent = "Cargando calendario de vencimientos...";
+      try {
+        const rows = [];
+        let page = 1;
+        const pageSize = 200;
+        while (page <= 50) {
+          const payload = await getJSON(`/collections/search?${collectionParams(page, pageSize)}`);
+          const chunk = rowsList(payload);
+          rows.push(...chunk);
+          const total = Number(payload.total || rows.length || 0);
+          if (!chunk.length || page * pageSize >= total) break;
+          page += 1;
+        }
+        const month = collectionCalendarMonth || collectionMonthKey();
+        collectionCalendarRows = rows.filter(row => collectionDateKey(row.fecha_vencimiento).slice(0, 7) === month);
+        collectionCalendarRows.sort((a,b) => collectionDateKey(a.fecha_vencimiento).localeCompare(collectionDateKey(b.fecha_vencimiento)) || String(a.nombre_cliente || "").localeCompare(String(b.nombre_cliente || "")));
+        msg.classList.add("hidden");
+        renderCollectionsCalendar();
+      } catch (err) {
+        table.innerHTML = "";
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    function renderCollectionsCalendar() {
+      const table = $("collectionsTable");
+      if (!table) return;
+      const month = collectionCalendarMonth || collectionMonthKey();
+      const [year, monthNum] = month.split("-").map(Number);
+      const start = new Date(year, monthNum - 1, 1);
+      const end = new Date(year, monthNum, 0);
+      const todayKey = new Date().toISOString().slice(0, 10);
+      const byDay = new Map();
+      collectionCalendarRows.forEach(row => {
+        const key = collectionDateKey(row.fecha_vencimiento);
+        if (!key) return;
+        const item = byDay.get(key) || [];
+        item.push(row);
+        byDay.set(key, item);
+      });
+      const totals = collectionCalendarRows.reduce((acc,row) => {
+        const saldo = Number(row.saldo_pendiente || 0);
+        acc.count += 1;
+        acc.total += saldo;
+        if (collectionDateKey(row.fecha_vencimiento) < todayKey) acc.overdue += saldo;
+        return acc;
+      }, {count:0,total:0,overdue:0});
+      const firstCell = new Date(start);
+      firstCell.setDate(firstCell.getDate() - firstCell.getDay());
+      const cells = [];
+      for (let i = 0; i < 42; i += 1) {
+        const day = new Date(firstCell);
+        day.setDate(firstCell.getDate() + i);
+        const key = day.toISOString().slice(0, 10);
+        const items = byDay.get(key) || [];
+        const outside = day.getMonth() !== start.getMonth();
+        const hasItems = items.length > 0;
+        const amount = items.reduce((sum,row) => sum + Number(row.saldo_pendiente || 0), 0);
+        cells.push(`<div class="itp-calendar-day collections-calendar-day ${hasItems ? "has-items" : ""} ${outside ? "muted-day" : ""} ${key === todayKey ? "today" : ""}" ${hasItems ? `role="button" tabindex="0" onclick="showCollectionCalendarDay('${key}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();showCollectionCalendarDay('${key}');}"` : ""}>
+          <strong><span>${day.getDate()}</span>${hasItems ? `<span>${items.length}</span>` : ""}</strong>
+          ${hasItems ? `<span class="itp-calendar-total collections-calendar-total">${Number(amount).toLocaleString("en-US",{maximumFractionDigits:2})}</span>` : ""}
+          ${items.slice(0,3).map((row, idx) => {
+            const cls = key < todayKey ? "overdue" : (key === todayKey ? "today-due" : "");
+            return `<button class="itp-calendar-pill collections-calendar-pill ${cls}" onclick="event.stopPropagation(); showCollectionCalendarItem('${key}', ${idx})" title="${esc(row.nombre_cliente || row.numero_documento || "Factura")}">${esc(row.nombre_cliente || "-")} · ${esc(row.moneda || "")} ${Number(row.saldo_pendiente || 0).toLocaleString("en-US",{maximumFractionDigits:2})}</button>`;
+          }).join("")}
+          ${items.length > 3 ? `<button class="itp-calendar-more" onclick="event.stopPropagation(); showCollectionCalendarDay('${key}')">+${items.length - 3} más</button>` : ""}
+        </div>`);
+      }
+      const monthTitle = start.toLocaleDateString("es-CR", {month:"long", year:"numeric"});
+      table.innerHTML = `
+        <div class="itp-calendar-head">
+          <div>
+            <h2>Calendario de vencimientos</h2>
+            <span class="muted">${esc(monthTitle)} · ${intFmt.format(totals.count)} facturas</span>
+          </div>
+          <div class="itp-calendar-nav">
+            <button class="secondary" onclick="shiftCollectionsCalendar(-1)">‹</button>
+            <input type="month" value="${esc(month)}" onchange="setCollectionsCalendarMonth(this.value)" />
+            <button class="secondary" onclick="shiftCollectionsCalendar(1)">›</button>
+            <button onclick="loadCollectionsCalendar()">Actualizar</button>
+          </div>
+        </div>
+        <div class="collections-calendar-summary">
+          <div class="card"><span>Facturas</span><strong>${intFmt.format(totals.count)}</strong></div>
+          <div class="card"><span>Saldo del mes</span><strong>${Number(totals.total).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:2})}</strong></div>
+          <div class="card"><span>Vencido</span><strong>${Number(totals.overdue).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:2})}</strong></div>
+          <div class="card"><span>Cliente</span><strong>${esc(valueFrom("collectionsCliente") || "ALL")}</strong></div>
+        </div>
+        <div class="table-wrap">
+          <div class="itp-calendar-week"><span>Dom</span><span>Lun</span><span>Mar</span><span>Mié</span><span>Jue</span><span>Vie</span><span>Sáb</span></div>
+          <div class="itp-calendar">${cells.join("")}</div>
+        </div>`;
+    }
+    function collectionCalendarRowsForDay(key) {
+      return collectionCalendarRows.filter(row => collectionDateKey(row.fecha_vencimiento) === key);
+    }
+    function showCollectionCalendarDay(key) {
+      const rows = collectionCalendarRowsForDay(key);
+      if (!rows.length) return;
+      const cols = ["codigo_cliente","nombre_cliente","numero_documento","fecha_emision","fecha_vencimiento","aging_dias","moneda","total","saldo_pendiente","estado_factura","disputada","num_informe","buque_contenedor","operacion"];
+      const total = rows.reduce((sum,row) => sum + Number(row.saldo_pendiente || 0), 0);
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal wide">
+            <div class="modal-head"><h2>Vencimientos ${esc(key)}</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+            <div class="status"><strong>${rows.length} factura(s)</strong> · Saldo ${Number(total).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:2})}</div>
+            <div class="md-actions"><button class="secondary" onclick='downloadExcelFile("collections_vencimientos_${esc(key)}.xls", collectionCalendarDetailRows, ${JSON.stringify(cols)}, "Collections vencimientos ${esc(key)}")'>Exportar Excel</button></div>
+            <div class="table-wrap"><table><thead><tr>${cols.map(c => `<th>${esc(c.replace(/_/g," "))}</th>`).join("")}</tr></thead><tbody>${rows.map(row => `<tr>${cols.map(c => `<td>${esc(["total","saldo_pendiente"].includes(c) ? Number(row[c] || 0).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:2}) : row[c])}</td>`).join("")}</tr>`).join("")}</tbody></table></div>
+          </div>
+        </div>`);
+      window.collectionCalendarDetailRows = rows;
+    }
+    function showCollectionCalendarItem(key, idx) {
+      const row = collectionCalendarRowsForDay(key)[idx];
+      if (!row) return;
+      showCollectionCalendarDay(key);
     }
     function renderCollectionsKpis() {
       const totals = collectionRows.reduce((acc, row) => {
@@ -8060,10 +8226,7 @@ def som_web_home() -> HTMLResponse:
     }
     function serviceNeedsCreditCheck(consec, payload) {
       if (!consec) return true;
-      if (!serviceEditBaseline) return true;
-      const before = serviceCreditFingerprint(serviceEditBaseline);
-      const after = serviceCreditFingerprint(payload);
-      return before.cliente !== after.cliente || before.amount !== after.amount;
+      return true;
     }
     async function applyCreditReleaseIfNeeded(payload, requireAdvisoryAck=true) {
       const decision = await postJSON("/cliente-credito/order-to-cash/check", {
