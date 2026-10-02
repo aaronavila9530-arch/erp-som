@@ -1527,6 +1527,8 @@ def som_web_home() -> HTMLResponse:
     ];
     const SERVICE_HIDDEN_COLUMNS = new Set(["credit_status","credit_release_by","credit_release_at","credit_decision"]);
     const visibleServiceColumns = () => SERVICE_COLUMNS.filter(col => !SERVICE_HIDDEN_COLUMNS.has(col));
+    let serviceEditBaseline = null;
+    let serviceCreditApprovalCache = null;
 
     const MASTER_CONFIG = {
       clientes: {
@@ -7965,6 +7967,31 @@ def som_web_home() -> HTMLResponse:
       const values = rowsList(rows).map(r => catalogOptionText(r, keys)).filter(Boolean);
       return options(values, selected || "", placeholder);
     }
+    function serviceInputDate(value) {
+      const text = String(value || "").trim();
+      if (!text) return "";
+      const iso = text.match(/^(\d{4}-\d{2}-\d{2})/);
+      if (iso) return iso[1];
+      const mdy = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+      if (mdy) return `${mdy[3]}-${mdy[1].padStart(2, "0")}-${mdy[2].padStart(2, "0")}`;
+      const dmy = text.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/);
+      if (dmy) return `${dmy[3]}-${dmy[2].padStart(2, "0")}-${dmy[1].padStart(2, "0")}`;
+      return text.slice(0, 10);
+    }
+    function serviceInputTime(value) {
+      const text = String(value || "").trim();
+      if (!text) return "";
+      const compact = text.toUpperCase().replace(/\./g, "").replace(/\s+/g, "");
+      const match = compact.match(/^(\d{1,2})(?::(\d{1,2}))?(?::\d{1,2})?(AM|PM)?$/);
+      if (!match) return text.slice(0, 5);
+      let hour = Number(match[1] || 0);
+      const minute = Number(match[2] || 0);
+      const suffix = match[3];
+      if (suffix === "PM" && hour < 12) hour += 12;
+      if (suffix === "AM" && hour === 12) hour = 0;
+      if (hour > 23 || minute > 59) return "";
+      return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+    }
     async function loadFormLocation(row={}) {
       const cont = valueFrom("svcForm_continente") || row.continente || "";
       const pais = valueFrom("svcForm_pais") || row.pais || "";
@@ -8021,6 +8048,23 @@ def som_web_home() -> HTMLResponse:
     function estimatedServiceAmount(payload) {
       return Number(payload.valor_factura || 0)
         || (Number(payload.honorarios || 0) + Number(payload.costo_operativo || 0) + Number(payload.costo_tarjetas || 0));
+    }
+    function serviceCreditFingerprint(payload) {
+      return {
+        cliente:String(payload?.cliente || "").trim().toUpperCase(),
+        amount:Number(estimatedServiceAmount(payload) || 0).toFixed(2)
+      };
+    }
+    function serviceCreditCacheKey(payload) {
+      const fp = serviceCreditFingerprint(payload);
+      return `${fp.cliente}|${fp.amount}`;
+    }
+    function serviceNeedsCreditCheck(consec, payload) {
+      if (!consec) return true;
+      if (!serviceEditBaseline) return true;
+      const before = serviceCreditFingerprint(serviceEditBaseline);
+      const after = serviceCreditFingerprint(payload);
+      return before.cliente !== after.cliente || before.amount !== after.amount;
     }
     async function applyCreditReleaseIfNeeded(payload) {
       const decision = await postJSON("/cliente-credito/order-to-cash/check", {
@@ -8085,7 +8129,17 @@ def som_web_home() -> HTMLResponse:
     async function openServiceForm(row=null) {
       await ensureServiceCatalogs();
       const editing = !!row;
+      serviceEditBaseline = editing ? {
+        cliente:row?.cliente || "",
+        honorarios:row?.honorarios || 0,
+        costo_operativo:row?.costo_operativo || 0,
+        costo_tarjetas:row?.costo_tarjetas || 0,
+        valor_factura:row?.valor_factura || 0
+      } : null;
+      serviceCreditApprovalCache = null;
       const val = key => esc(row?.[key] ?? "");
+      const dateVal = key => esc(serviceInputDate(row?.[key]));
+      const timeVal = key => esc(serviceInputTime(row?.[key]));
       document.body.insertAdjacentHTML("beforeend", `
         <div class="modal-backdrop" id="svcModal">
           <div class="modal">
@@ -8102,15 +8156,15 @@ def som_web_home() -> HTMLResponse:
               <label>País<select id="svcForm_pais"></select></label>
               <label>Puerto<select id="svcForm_puerto"></select></label>
               <label>Operación<select id="svcForm_operacion">${serviceSelectOptions(serviceMeta.operacionesCatalog, row?.operacion, ["nombre","Nombre","operacion","Operacion","servicio","Servicio","label","descripcion","Descripcion"], "Seleccione operación")}</select></label>
-              <label>Fecha inicio<input id="svcForm_fecha_inicio" type="date" value="${val("fecha_inicio")}" required /></label>
-              <label>Hora inicio<input id="svcForm_hora_inicio" type="time" value="${val("hora_inicio")}" required /></label>
-              <label>Fecha fin<input id="svcForm_fecha_fin" type="date" value="${val("fecha_fin")}" /></label>
-              <label>Hora fin<input id="svcForm_hora_fin" type="time" value="${val("hora_fin")}" /></label>
+              <label>Fecha inicio<input id="svcForm_fecha_inicio" type="date" value="${dateVal("fecha_inicio")}" required /></label>
+              <label>Hora inicio<input id="svcForm_hora_inicio" type="time" value="${timeVal("hora_inicio")}" required /></label>
+              <label>Fecha fin<input id="svcForm_fecha_fin" type="date" value="${dateVal("fecha_fin")}" /></label>
+              <label>Hora fin<input id="svcForm_hora_fin" type="time" value="${timeVal("hora_fin")}" /></label>
               <label>Honorarios<input id="svcForm_honorarios" type="number" step="0.01" value="${val("honorarios")}" /></label>
               <label>Costo operativo<input id="svcForm_costo_operativo" type="number" step="0.01" value="${val("costo_operativo")}" /></label>
               <label>Costo tarjetas<input id="svcForm_costo_tarjetas" type="number" step="0.01" value="${val("costo_tarjetas")}" /></label>
-              <label>Fecha factura<input id="svcForm_fecha_factura" type="date" value="${val("fecha_factura")}" /></label>
-              <label>Fecha vencimiento<input id="svcForm_fecha_vencimiento" type="date" value="${val("fecha_vencimiento")}" /></label>
+              <label>Fecha factura<input id="svcForm_fecha_factura" type="date" value="${dateVal("fecha_factura")}" /></label>
+              <label>Fecha vencimiento<input id="svcForm_fecha_vencimiento" type="date" value="${dateVal("fecha_vencimiento")}" /></label>
               <label class="wide">Detalle<textarea id="svcForm_detalle">${val("detalle")}</textarea></label>
               <input id="svcForm_surveyor" type="hidden" value="${val("surveyor")}" />
               <div class="wide surveyors-box">
@@ -8141,6 +8195,8 @@ def som_web_home() -> HTMLResponse:
     }
     function closeModal() {
       $("svcModal")?.remove();
+      serviceEditBaseline = null;
+      serviceCreditApprovalCache = null;
     }
     async function saveService(consec=null) {
       const msg = $("svcFormMsg");
@@ -8151,7 +8207,22 @@ def som_web_home() -> HTMLResponse:
         const required = ["tipo","buque_contenedor","cliente","continente","pais","puerto","operacion","surveyor","fecha_inicio","hora_inicio"];
         const missing = required.filter(k => !payload[k]);
         if (missing.length) throw new Error("Faltan campos obligatorios: " + missing.join(", "));
-        const approvedPayload = await applyCreditReleaseIfNeeded(payload);
+        let approvedPayload = payload;
+        if (serviceNeedsCreditCheck(consec, payload)) {
+          const cacheKey = serviceCreditCacheKey(payload);
+          if (serviceCreditApprovalCache?.key === cacheKey) {
+            approvedPayload = { ...payload, ...(serviceCreditApprovalCache.extra || {}) };
+          } else {
+            approvedPayload = await applyCreditReleaseIfNeeded(payload);
+            serviceCreditApprovalCache = {
+              key: cacheKey,
+              extra: {
+                credit_release_approved: approvedPayload.credit_release_approved,
+                credit_release_reason: approvedPayload.credit_release_reason
+              }
+            };
+          }
+        }
         const data = consec
           ? await sendJSON("PUT", `/servicios/editar/${encodeURIComponent(consec)}`, approvedPayload)
           : await postJSON("/servicios/add", approvedPayload);

@@ -98,19 +98,20 @@ def _normalize_service_time(value):
         suffix = normalized[-2:]
         normalized = normalized[:-2]
 
-    match = re.match(r"^(\d{1,2})(?::(\d{1,2}))?$", normalized)
+    match = re.match(r"^(\d{1,2})(?::(\d{1,2}))?(?::(\d{1,2}))?$", normalized)
     if not match:
         raise ValueError("Hora inicio invalida")
 
     hour = int(match.group(1))
     minute = int(match.group(2) or 0)
+    second = int(match.group(3) or 0)
 
     if suffix == "PM" and hour < 12:
         hour += 12
     elif suffix == "AM" and hour == 12:
         hour = 0
 
-    if hour > 23 or minute > 59:
+    if hour > 23 or minute > 59 or second > 59:
         raise ValueError("Hora inicio invalida")
 
     return f"{hour:02d}:{minute:02d}"
@@ -997,11 +998,27 @@ def editar_servicio(
             params.get("valor_factura")
             or (float(params.get("honorarios") or 0) + float(params.get("costo_operativo") or 0) + float(params.get("costo_tarjetas") or 0))
         )
-        credit_decision = build_credit_decision(
-            company,
-            params.get("cliente"),
-            projected_amount=projected_amount,
-            projected_currency="USD",
+        current_projected_amount = (
+            current.get("valor_factura")
+            or (float(current.get("honorarios") or 0) + float(current.get("costo_operativo") or 0) + float(current.get("costo_tarjetas") or 0))
+        )
+        credit_exposure_changed = (
+            str(params.get("cliente") or "").strip().upper() != str(current.get("cliente") or "").strip().upper()
+            or round(float(projected_amount or 0), 2) != round(float(current_projected_amount or 0), 2)
+        )
+        credit_decision = (
+            build_credit_decision(
+                company,
+                params.get("cliente"),
+                projected_amount=projected_amount,
+                projected_currency="USD",
+            )
+            if credit_exposure_changed
+            else {
+                "requires_release": False,
+                "message": "Credito sin cambios en edicion de servicio.",
+                "reason_code": "UNCHANGED_EDIT",
+            }
         )
         if credit_decision.get("requires_release"):
             if not data.get("credit_release_approved"):
