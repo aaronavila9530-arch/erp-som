@@ -1143,17 +1143,19 @@ def _sync_servicios_to_itp(cur, company_code: str):
     deactivate_employee_itp_obligations(cur)
 
 
-def _sync_tax_purchases_to_itp(cur, company_code: str) -> int:
+def _sync_tax_purchases_to_itp(cur, company_code: str, since: date | None = None) -> int:
     cur.execute("SELECT to_regclass('public.tax_electronic_documents') AS table_name")
     table = cur.fetchone()
     if not table or not table.get("table_name"):
         return 0
     company = normalize_company_code(header_value=company_code)
+    since = since or (date.today() - timedelta(days=120))
     cur.execute("""
         SELECT d.*
         FROM tax_electronic_documents d
         WHERE d.company_code=%s
           AND d.direction='PURCHASE'
+          AND COALESCE(d.issue_datetime::date, CURRENT_DATE) >= %s
           AND COALESCE(d.total, 0) <> 0
           AND COALESCE(d.status, 'PENDING') <> 'REJECTED'
           AND NOT EXISTS (
@@ -1165,11 +1167,11 @@ def _sync_tax_purchases_to_itp(cur, company_code: str) -> int:
                     NULLIF(po.electronic_key, '') = NULLIF(d.electronic_key, '')
                     OR NULLIF(po.reference, '') = NULLIF(d.electronic_key, '')
                     OR NULLIF(po.reference, '') = NULLIF(d.document_number, '')
-                    OR NULLIF(po.reference, '') = NULLIF(%s, '')
                 )
           )
         ORDER BY d.issue_datetime NULLS LAST, d.id
-    """, (company, ""))
+        LIMIT 250
+    """, (company, since))
     rows = cur.fetchall() or []
     inserted = 0
     for doc in rows:
@@ -1925,6 +1927,7 @@ def biweekly_obligations_preview(
         }
 
     try:
+        due_start, due_end = _fortnight_window(period, fortnight)
         cur.execute(
             """
             SELECT
@@ -2051,6 +2054,11 @@ def biweekly_obligations_preview(
                           AND (
                               s.statement_period = %s
                               OR (
+                                  s.payment_due_date IS NOT NULL
+                                  AND s.payment_due_date <= %s
+                                  AND COALESCE(s.status,'IMPORTED') <> 'SETTLED'
+                              )
+                              OR (
                                   s.statement_period IS NULL
                                   AND s.cutoff_date >= %s
                                   AND s.cutoff_date < %s
@@ -2064,7 +2072,13 @@ def biweekly_obligations_preview(
                                    PARTITION BY company_code, COALESCE(NULLIF(TRIM(card_last4),''), source_filename, id::text)
                                    ORDER BY
                                        CASE WHEN COALESCE(status,'IMPORTED') = 'SETTLED' THEN 1 ELSE 0 END,
-                                       CASE WHEN statement_period = %s THEN 0 ELSE 1 END,
+                                       CASE
+                                           WHEN payment_due_date >= %s AND payment_due_date <= %s THEN 0
+                                           WHEN payment_due_date < %s THEN 1
+                                           WHEN statement_period = %s THEN 2
+                                           ELSE 3
+                                       END,
+                                       payment_due_date ASC NULLS LAST,
                                        cutoff_date DESC NULLS LAST,
                                        id DESC
                                ) AS rn
@@ -2076,7 +2090,17 @@ def biweekly_obligations_preview(
                     WHERE rn = 1
                     ORDER BY company_code, card_last4
                     """,
-                    (company_scope, prev_period, f"{year:04d}-{month:02d}-01", f"{next_year:04d}-{next_month:02d}-01", prev_period),
+                    (
+                        company_scope,
+                        prev_period,
+                        fortnight_payment_date,
+                        f"{year:04d}-{month:02d}-01",
+                        f"{next_year:04d}-{next_month:02d}-01",
+                        due_start,
+                        due_end,
+                        due_start,
+                        prev_period,
+                    ),
                 )
                 statements = cur.fetchall() or []
             if not statements:
@@ -2156,7 +2180,6 @@ def biweekly_obligations_preview(
             """,
             (["MSL-CR", "MCI-CR"],),
         )
-        due_start, due_end = _fortnight_window(period, fortnight)
         for ob in cur.fetchall() or []:
             schedule_date = _coerce_date(ob.get("schedule_date") or ob.get("planned_payment_date") or ob.get("due_date") or ob.get("issue_date"), due_start)
             if schedule_date < due_start or schedule_date > due_end:

@@ -11,7 +11,9 @@ from psycopg2.extras import Json, RealDictCursor
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 import os
+import sys
 import tempfile
+from pathlib import Path
 
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
@@ -74,10 +76,19 @@ def _compact_outlook_result(result: dict) -> dict:
     return payload
 
 
+def _ensure_local_tool_import_path() -> None:
+    root = Path(__file__).resolve().parents[2]
+    for path in (root, root / "Modulos"):
+        text = str(path)
+        if text not in sys.path:
+            sys.path.insert(0, text)
+
+
 @router.post("/outlook-local/scan")
 def scan_accounting_outlook_local(payload: dict | None = Body(default=None)):
     data = payload or {}
     try:
+        _ensure_local_tool_import_path()
         from Modulos.Finanzas.sections.Accounting.outlook_fiscal_importer import scan_and_import
 
         result = scan_and_import(
@@ -93,6 +104,7 @@ def scan_accounting_outlook_local(payload: dict | None = Body(default=None)):
 @router.post("/outlook-local/corporate-card-history")
 def scan_accounting_corporate_card_history():
     try:
+        _ensure_local_tool_import_path()
         from Modulos.Finanzas.sections.Accounting.outlook_fiscal_importer import scan_corporate_card_history
 
         return _compact_outlook_result(scan_corporate_card_history())
