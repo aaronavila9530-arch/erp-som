@@ -730,6 +730,40 @@ async def import_hacienda_response(
     conn.commit(); return {"id":doc["id"],"electronic_key":key,"hacienda_status":status}
 
 
+@router.delete("/documents/{document_id}")
+def delete_document(
+    document_id: int,
+    source_table: str | None = Query(None),
+    created_by: str | None = Query(None),
+    company_code: str | None = None,
+    conn=Depends(get_db),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+):
+    _ensure_schema(conn)
+    company = _company_code(company_code, x_company_code)
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(
+            """
+            SELECT id, company_code, source_table, created_by
+            FROM tax_electronic_documents
+            WHERE id=%s AND company_code=%s
+            FOR UPDATE
+            """,
+            (document_id, company),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "Documento fiscal no encontrado")
+        if source_table and row.get("source_table") != source_table:
+            raise HTTPException(409, "El origen del documento no coincide con el esperado")
+        if created_by and row.get("created_by") != created_by:
+            raise HTTPException(409, "El usuario creador no coincide con el esperado")
+        cur.execute("DELETE FROM tax_document_lines WHERE document_id=%s", (document_id,))
+        cur.execute("DELETE FROM tax_electronic_documents WHERE id=%s", (document_id,))
+    conn.commit()
+    return {"status": "ok", "id": document_id}
+
+
 def _period_bounds(period):
     if not re.fullmatch(r"\d{4}-\d{2}",period): raise HTTPException(400,"Periodo debe tener formato YYYY-MM")
     start=date.fromisoformat(period+"-01"); end=(start.replace(day=28)+timedelta(days=4)).replace(day=1)
