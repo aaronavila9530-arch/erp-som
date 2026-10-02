@@ -630,7 +630,9 @@ def _process_xml(cur, message_db_id, filename, content, gmail_attachment_id, com
         cur.execute("SELECT id FROM tax_electronic_documents WHERE company_code=%s AND direction='PURCHASE' AND (xml_hash=%s OR (electronic_key=%s AND %s IS NOT NULL)) ORDER BY id LIMIT 1",
                     (company_code,digest,key,key)); doc=cur.fetchone()
         if doc:
-            status="DUPLICATE"; tax_id=doc["id"]; error="XML ya registrado"
+            obligation_id = _ensure_purchase_obligation(cur,data,None,company_code=company_code)
+            status="DUPLICATE"; tax_id=doc["id"]
+            error="XML ya registrado; obligación ITP verificada" if obligation_id else "XML ya registrado"
         else:
             path=_store_path("xml",digest,filename,content)
             tax_id=_save_document(cur,"PURCHASE",data,xml_hash=digest,xml_path=path,xml_content=content,source_table="gmail_attachment",source_id=digest,user="GMAIL_AUTOMATION",company_code=company_code)

@@ -423,6 +423,28 @@ def _ensure_purchase_obligation(cur, data, xml_path, company_code="MSL-CR"):
     return obligation_id
 
 
+def _tax_document_to_purchase_data(row: dict) -> dict:
+    issue_datetime = row.get("issue_datetime")
+    return {
+        "document_type": row.get("document_type") or "FE",
+        "document_number": row.get("document_number"),
+        "electronic_key": row.get("electronic_key"),
+        "issuer_identification": row.get("issuer_identification"),
+        "issuer_name": row.get("issuer_name"),
+        "receiver_identification": row.get("receiver_identification"),
+        "receiver_name": row.get("receiver_name"),
+        "economic_activity": row.get("economic_activity"),
+        "issue_datetime": issue_datetime,
+        "currency_code": row.get("currency_code") or "CRC",
+        "exchange_rate": row.get("exchange_rate") or Decimal("1.00"),
+        "subtotal": row.get("subtotal") or Decimal("0.00"),
+        "discount_amount": row.get("discount_amount") or Decimal("0.00"),
+        "exempt_amount": row.get("exempt_amount") or Decimal("0.00"),
+        "tax_amount": row.get("tax_amount") or Decimal("0.00"),
+        "total": row.get("total") or Decimal("0.00"),
+    }
+
+
 @router.post("/sync")
 def sync_tax_documents(
     company_code: str | None = None,
@@ -580,6 +602,28 @@ def sync_tax_documents(
             """, (company, company))
             cur.execute("SELECT COUNT(*) count FROM payment_obligations WHERE active=TRUE AND record_type='OBLIGATION' AND company_code=%s", (company,))
             counts["purchases"] = cur.fetchone()["count"]
+            cur.execute("""
+                SELECT *
+                FROM tax_electronic_documents d
+                WHERE d.company_code=%s
+                  AND d.direction='PURCHASE'
+                  AND COALESCE(d.total, 0) <> 0
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM payment_obligations po
+                      WHERE po.company_code=d.company_code
+                        AND po.active=TRUE
+                        AND po.reference=COALESCE(NULLIF(d.electronic_key,''), NULLIF(d.document_number,''))
+                  )
+                ORDER BY d.issue_datetime NULLS LAST, d.id
+            """, (company,))
+            backfilled = 0
+            for doc in cur.fetchall() or []:
+                if _ensure_purchase_obligation(cur, _tax_document_to_purchase_data(doc), doc.get("xml_path"), company):
+                    backfilled += 1
+            if backfilled:
+                counts["purchase_obligations_backfilled"] = backfilled
+                counts["purchases"] += backfilled
         conn.commit()
     except Exception as exc:
         conn.rollback()
@@ -614,7 +658,18 @@ async def upload_tax_xml(
             cur.execute("SELECT id,source_table,source_id,xml_hash FROM tax_electronic_documents WHERE company_code=%s AND direction=%s AND (xml_hash=%s OR (electronic_key=%s AND %s IS NOT NULL))",(company,direction,digest,data.get("electronic_key"),data.get("electronic_key")))
             duplicate=cur.fetchone()
             if duplicate and duplicate.get("xml_hash"):
-                raise HTTPException(409,f"Documento duplicado; registro fiscal {duplicate['id']}")
+                obligation_id = None
+                if direction=="PURCHASE":
+                    obligation_id = _ensure_purchase_obligation(cur,data,str(path),company)
+                conn.commit()
+                path.unlink(missing_ok=True)
+                return {
+                    "id": duplicate["id"],
+                    "document": data,
+                    "status": "exists",
+                    "obligation_id": obligation_id,
+                    "warnings": ["Documento duplicado; se verificó la obligación pendiente en ITP."],
+                }
             if duplicate:
                 doc_id=_save_document(cur,direction,data,xml_hash=digest,xml_path=str(path),xml_content=content,
                                       source_table=duplicate["source_table"],source_id=duplicate["source_id"],user=user,company_code=company)

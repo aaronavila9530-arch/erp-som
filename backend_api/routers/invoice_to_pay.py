@@ -1910,46 +1910,76 @@ def biweekly_obligations_preview(
             _append_unique_biweekly_row(rows, seen_rows, row("Telefonia", "Manfred Bolanos Barrantes", 7000, "CRC", default_crc_bank, "AUTO_FIXED", "Apoyo celular primera quincena.", fortnight_payment_date))
             _append_unique_biweekly_row(rows, seen_rows, row("Telefonia", "Erasmo Gomez Gomez", 7000, "CRC", default_crc_bank, "AUTO_FIXED", "Apoyo celular primera quincena.", fortnight_payment_date))
 
-            cur.execute(
-                """
-                WITH ranked AS (
-                    SELECT
-                        card_last4, statement_period, payment_due_date, cash_payment_crc, cash_payment_usd,
-                        ROW_NUMBER() OVER (
-                            PARTITION BY COALESCE(card_last4,''), COALESCE(NULLIF(TRIM(card_last4),''), source_filename, id::text)
-                            ORDER BY
-                                CASE WHEN statement_period = %s THEN 0 ELSE 1 END,
-                                cutoff_date DESC NULLS LAST,
-                                id DESC
-                        ) AS rn
-                    FROM corporate_card_statements
-                    WHERE company_code=%s
-                      AND COALESCE(status,'IMPORTED') <> 'VOID'
-                      AND (
-                          statement_period = %s
-                          OR (
-                              statement_period IS NULL
-                              AND cutoff_date >= %s
-                              AND cutoff_date < %s
+            company_scope = list(dict.fromkeys([company, "MSL-CR", "MCI-CR"]))
+            cur.execute("SELECT to_regclass('public.corporate_card_statements') AS table_name")
+            card_table = cur.fetchone()
+            statements = []
+            if card_table and card_table.get("table_name"):
+                cur.execute(
+                    """
+                    WITH statement_totals AS (
+                        SELECT
+                            s.id,
+                            s.company_code,
+                            s.card_last4,
+                            s.statement_period,
+                            s.payment_due_date,
+                            s.cash_payment_crc,
+                            s.cash_payment_usd,
+                            s.cutoff_date,
+                            s.source_filename,
+                            s.status,
+                            COUNT(t.id) AS tx_count,
+                            COALESCE(SUM(CASE WHEN UPPER(COALESCE(t.currency,'CRC')) = 'CRC' THEN t.amount_original ELSE 0 END), 0) AS tx_crc,
+                            COALESCE(SUM(CASE WHEN UPPER(COALESCE(t.currency,'CRC')) = 'USD' THEN t.amount_original ELSE 0 END), 0) AS tx_usd
+                        FROM corporate_card_statements s
+                        LEFT JOIN corporate_card_transactions t ON t.statement_id=s.id
+                        WHERE s.company_code = ANY(%s)
+                          AND COALESCE(s.status,'IMPORTED') <> 'VOID'
+                          AND (
+                              s.statement_period = %s
+                              OR (
+                                  s.statement_period IS NULL
+                                  AND s.cutoff_date >= %s
+                                  AND s.cutoff_date < %s
+                              )
                           )
-                      )
+                        GROUP BY s.id
+                    ),
+                    ranked AS (
+                        SELECT *,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY company_code, COALESCE(NULLIF(TRIM(card_last4),''), source_filename, id::text)
+                                   ORDER BY
+                                       CASE WHEN COALESCE(status,'IMPORTED') = 'SETTLED' THEN 1 ELSE 0 END,
+                                       CASE WHEN statement_period = %s THEN 0 ELSE 1 END,
+                                       cutoff_date DESC NULLS LAST,
+                                       id DESC
+                               ) AS rn
+                        FROM statement_totals
+                    )
+                    SELECT company_code, card_last4, statement_period, payment_due_date,
+                           cash_payment_crc, cash_payment_usd, status, tx_count, tx_crc, tx_usd
+                    FROM ranked
+                    WHERE rn = 1
+                    ORDER BY company_code, card_last4
+                    """,
+                    (company_scope, prev_period, f"{year:04d}-{month:02d}-01", f"{next_year:04d}-{next_month:02d}-01", prev_period),
                 )
-                SELECT card_last4, statement_period, payment_due_date, cash_payment_crc, cash_payment_usd
-                FROM ranked
-                WHERE rn = 1
-                ORDER BY card_last4
-                """,
-                (prev_period, company, prev_period, f"{year:04d}-{month:02d}-01", f"{next_year:04d}-{next_month:02d}-01"),
-            )
-            statements = cur.fetchall() or []
+                statements = cur.fetchall() or []
             if not statements:
                 _append_unique_biweekly_row(rows, seen_rows, row("Tarjetas de credito", f"Faltan estados BAC {prev_period}", 0, "CRC", "BAC", "REVISION", "Importar estados BAC del mes anterior para calcular tarjetas.", fortnight_payment_date))
-            card_labels = {"3155": "Aaron", "1951": "Diana", "1936": "Diana", "1969": "Pabel", "1944": "Pabel", "3148": "ITP"}
+            card_labels = {"3155": "Aaron", "3156": "Diana", "3157": "Pabel", "1951": "Diana", "1936": "Diana", "1969": "Pabel", "1944": "Pabel", "3148": "ITP"}
             for st in statements:
+                if str(st.get("status") or "").upper() == "SETTLED":
+                    continue
                 last4 = str(st.get("card_last4") or "").strip()
                 label = card_labels.get(last4, f"Tarjeta {last4 or 'BAC'}")
                 crc = _money(st.get("cash_payment_crc"))
                 usd = _money(st.get("cash_payment_usd"))
+                if crc <= 0 and usd <= 0 and int(st.get("tx_count") or 0) > 0:
+                    crc = _money(st.get("tx_crc"))
+                    usd = _money(st.get("tx_usd"))
                 if crc > 0:
                     _append_unique_biweekly_row(rows, seen_rows, row("Tarjetas de credito", f"BAC {label} contado CRC {st.get('statement_period') or ''}", crc, "CRC", "BAC", "CORP_CARD", f"Tarjeta {last4}", fortnight_payment_date))
                 if usd > 0:
