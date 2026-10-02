@@ -15,8 +15,8 @@ La integración usa OAuth 2.0 y corre en el backend. No utiliza ni almacena la c
 ## Variables protegidas en Railway
 
 ```text
-GMAIL_ACCOUNT=contabilidad@mslogisticsgroup.com
-GMAIL_ACCOUNT_PROFILES=[{"account_email":"contabilidad@mslogisticsgroup.com","company_code":"MSL-CR","process_tax":true,"process_bac":true},{"account_email":"operations@xtravon.com","company_code":"MCI-CR","process_tax":true,"process_bac":true}]
+GMAIL_ACCOUNT=gastos@mslogisticsgroup.com
+GMAIL_ACCOUNT_PROFILES=[{"account_email":"gastos@mslogisticsgroup.com","company_code":"MSL-CR","process_tax":true,"process_bac":false},{"account_email":"contabilidad@mslogisticsgroup.com","company_code":"MSL-CR","process_tax":false,"process_bac":true},{"account_email":"facturacion.fe@xtravon.com","company_code":"MCI-CR","process_tax":true,"process_bac":false},{"account_email":"operations@xtravon.com","company_code":"MCI-CR","process_tax":true,"process_bac":false}]
 GOOGLE_CLIENT_ID=<cliente OAuth>
 GOOGLE_CLIENT_SECRET=<secreto OAuth>
 GOOGLE_REDIRECT_URI=https://api-som-fastapi-production-e66d.up.railway.app/accounting/tax/gmail/oauth/callback

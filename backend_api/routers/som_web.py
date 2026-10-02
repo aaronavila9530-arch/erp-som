@@ -20,7 +20,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20261002-collections-calendar-v2"
+_ASSET_VERSION = "20261002-gmail-fiscal-accounts-v1"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -3361,8 +3361,12 @@ def som_web_home() -> HTMLResponse:
       const summary = payload.summary || {};
       return `<div class="grid kpis"><div class="card kpi"><span>Estado</span><strong>${esc(payload?.period_control?.status || "-")}</strong></div><div class="card kpi"><span>Listo para cierre</span><strong>${payload.ready_to_close ? "Sí" : "No"}</strong></div><div class="card kpi"><span>Diferencia</span><strong>${fmtAccMoney(summary.difference)}</strong></div><div class="card kpi"><span>Alertas críticas</span><strong>${esc(summary.critical_alerts || 0)}</strong></div></div>${renderFinanceGenericTable(checklist)}`;
     }
+    function accountingGmailAccounts() {
+      if (selectedCompany() === "MCI-CR") return ["facturacion.fe@xtravon.com", "operations@xtravon.com"];
+      return ["gastos@mslogisticsgroup.com", "contabilidad@mslogisticsgroup.com"];
+    }
     function accountingGmailAccount() {
-      return selectedCompany() === "MCI-CR" ? "facturacion.fe@xtravon.com" : "contabilidad@mslogisticsgroup.com";
+      return accountingGmailAccounts()[0];
     }
     function accountingMailStatusTarget() {
       return $("accOutlookStatus") || $("accountingResult");
@@ -3386,37 +3390,53 @@ def som_web_home() -> HTMLResponse:
       return parts.join(" · ");
     }
     async function startGmailFiscalOAuth() {
-      const account = accountingGmailAccount();
-      setAccountingMailStatus("accounting-banner", `Preparando autorización Google para ${account}...`);
+      const accounts = accountingGmailAccounts();
+      setAccountingMailStatus("accounting-banner", `Preparando autorización Google para ${accounts.join(" y ")}...`);
       try {
-        const payload = await postJSON("/accounting/tax/gmail/oauth/start", { user:session?.usuario || "WEB_USER", account_email:account });
-        const url = payload.authorization_url;
-        if (url) window.open(url, "_blank", "noopener,noreferrer");
-        setAccountingMailStatus("accounting-banner", `Se abrió la autorización Google para ${account}. Después de autorizar, regrese aquí y active Gmail automático.`);
+        for (const account of accounts) {
+          const payload = await postJSON("/accounting/tax/gmail/oauth/start", { user:session?.usuario || "WEB_USER", account_email:account });
+          const url = payload.authorization_url;
+          if (url) window.open(url, "_blank", "noopener,noreferrer");
+        }
+        setAccountingMailStatus("accounting-banner", `Se abrió la autorización Google para ${accounts.join(" y ")}. Autorice cada buzón y luego active Gmail automático.`);
       } catch (err) { setAccountingMailStatus("accounting-banner error", err.message); }
     }
     async function enableGmailFiscalAutomation() {
-      const account = accountingGmailAccount();
-      setAccountingMailStatus("accounting-banner", `Activando revisión automática para ${account}...`);
+      const accounts = accountingGmailAccounts();
+      setAccountingMailStatus("accounting-banner", `Activando revisión automática para ${accounts.join(" y ")}...`);
       try {
-        const payload = await sendJSON("PUT", "/accounting/tax/gmail/automation", { enabled:true, interval_minutes:10, user:session?.usuario || "WEB_USER", account_email:account });
-        setAccountingMailStatus("accounting-banner", `Gmail automático activo para ${payload.account_email || account}. Próxima revisión: ${payload.next_sync_at || "en breve"}.`);
+        const results = [];
+        for (const account of accounts) {
+          const payload = await sendJSON("PUT", "/accounting/tax/gmail/automation", { enabled:true, interval_minutes:10, user:session?.usuario || "WEB_USER", account_email:account });
+          results.push(`${payload.account_email || account}: ${payload.next_sync_at || "en breve"}`);
+        }
+        setAccountingMailStatus("accounting-banner", `Gmail automático activo. Próximas revisiones: ${results.join(" · ")}.`);
       } catch (err) { setAccountingMailStatus("accounting-banner error", err.message); }
     }
     async function runGmailFiscalSync() {
       setAccountingMailStatus("accounting-banner", "Ejecutando sincronización Gmail fiscal en backend...");
       try {
-        const payload = await postJSON(`/accounting/tax/gmail/sync?max_messages=100&account_email=${encodeURIComponent(accountingGmailAccount())}`, {});
-        setAccountingMailStatus("accounting-banner", `Gmail backend: ${renderGmailFiscalSummary(payload)}.`);
+        const summaries = [];
+        for (const account of accountingGmailAccounts()) {
+          const payload = await postJSON(`/accounting/tax/gmail/sync?max_messages=100&account_email=${encodeURIComponent(account)}`, {});
+          summaries.push(`${account}: ${renderGmailFiscalSummary(payload)}`);
+        }
+        setAccountingMailStatus("accounting-banner", `Gmail backend: ${summaries.join(" · ")}.`);
       } catch (err) { setAccountingMailStatus("accounting-banner error", err.message); }
     }
     async function loadGmailFiscalStatus() {
       setAccountingMailStatus("accounting-banner", "Consultando estado Gmail backend...");
       try {
-        const payload = await getJSON(`/accounting/tax/gmail/status?account_email=${encodeURIComponent(accountingGmailAccount())}`);
-        const connection = payload.connection || {};
-        const counts = payload.message_counts?.[connection.account_email] || {};
-        setAccountingMailStatus("accounting-banner", `Gmail backend ${connection.account_email || accountingGmailAccount()}: ${connection.authorized ? "conectado" : "sin autorización"} · automatización ${connection.auto_enabled ? "activa" : "inactiva"} · última sync ${connection.last_sync_at || "-"} · próxima ${connection.next_sync_at || "-"} · mensajes ${Object.entries(counts).map(([k,v]) => `${k}:${v}`).join(", ") || "0"}${payload.oauth_configured ? "" : " · OAuth no configurado en servidor"}`);
+        const lines = [];
+        let oauthConfigured = true;
+        for (const account of accountingGmailAccounts()) {
+          const payload = await getJSON(`/accounting/tax/gmail/status?account_email=${encodeURIComponent(account)}`);
+          oauthConfigured = oauthConfigured && !!payload.oauth_configured;
+          const connection = payload.connection || {};
+          const counts = payload.message_counts?.[connection.account_email] || {};
+          lines.push(`${connection.account_email || account}: ${connection.authorized ? "conectado" : "sin autorización"} · auto ${connection.auto_enabled ? "activa" : "inactiva"} · sync ${connection.last_sync_at || "-"} · mensajes ${Object.entries(counts).map(([k,v]) => `${k}:${v}`).join(", ") || "0"}`);
+        }
+        setAccountingMailStatus("accounting-banner", `Gmail backend ${lines.join(" | ")}${oauthConfigured ? "" : " · OAuth no configurado en servidor"}`);
       } catch (err) { setAccountingMailStatus("accounting-banner error", err.message); }
     }
     function summarizeAccountingOutlook(result) {
