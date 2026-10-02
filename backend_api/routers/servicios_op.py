@@ -285,10 +285,7 @@ def add_servicio(
             raise HTTPException(status_code=400, detail="Fecha u hora de inicio invalida")
         _validate_required_service_payload(payload)
         _validate_location_combo(payload)
-        projected_amount = (
-            payload.get("valor_factura")
-            or (float(payload.get("honorarios") or 0) + float(payload.get("costo_operativo") or 0) + float(payload.get("costo_tarjetas") or 0))
-        )
+        projected_amount = float(payload.get("honorarios") or 0) + float(payload.get("costo_operativo") or 0) + float(payload.get("costo_tarjetas") or 0)
         credit_decision = build_credit_decision(
             payload["company_code"],
             payload.get("cliente"),
@@ -994,14 +991,8 @@ def editar_servicio(
         }
         _validate_required_service_payload(params)
         _validate_location_combo(params)
-        projected_amount = (
-            params.get("valor_factura")
-            or (float(params.get("honorarios") or 0) + float(params.get("costo_operativo") or 0) + float(params.get("costo_tarjetas") or 0))
-        )
-        current_projected_amount = (
-            current.get("valor_factura")
-            or (float(current.get("honorarios") or 0) + float(current.get("costo_operativo") or 0) + float(current.get("costo_tarjetas") or 0))
-        )
+        projected_amount = float(params.get("honorarios") or 0) + float(params.get("costo_operativo") or 0) + float(params.get("costo_tarjetas") or 0)
+        current_projected_amount = float(current.get("honorarios") or 0) + float(current.get("costo_operativo") or 0) + float(current.get("costo_tarjetas") or 0)
         credit_exposure_changed = (
             str(params.get("cliente") or "").strip().upper() != str(current.get("cliente") or "").strip().upper()
             or round(float(projected_amount or 0), 2) != round(float(current_projected_amount or 0), 2)

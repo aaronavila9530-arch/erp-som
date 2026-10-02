@@ -20,7 +20,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20261001-pln-usd-cards-v2"
+_ASSET_VERSION = "20261002-service-edit-credit-v1"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -8046,8 +8046,7 @@ def som_web_home() -> HTMLResponse:
       };
     }
     function estimatedServiceAmount(payload) {
-      return Number(payload.valor_factura || 0)
-        || (Number(payload.honorarios || 0) + Number(payload.costo_operativo || 0) + Number(payload.costo_tarjetas || 0));
+      return Number(payload.honorarios || 0) + Number(payload.costo_operativo || 0) + Number(payload.costo_tarjetas || 0);
     }
     function serviceCreditFingerprint(payload) {
       return {
@@ -8066,7 +8065,7 @@ def som_web_home() -> HTMLResponse:
       const after = serviceCreditFingerprint(payload);
       return before.cliente !== after.cliente || before.amount !== after.amount;
     }
-    async function applyCreditReleaseIfNeeded(payload) {
+    async function applyCreditReleaseIfNeeded(payload, requireAdvisoryAck=true) {
       const decision = await postJSON("/cliente-credito/order-to-cash/check", {
         cliente:payload.cliente,
         projected_amount:estimatedServiceAmount(payload),
@@ -8088,7 +8087,7 @@ def som_web_home() -> HTMLResponse:
         `Estado credito: ${decision.estado_credito || "-"} | Hold manual: ${decision.hold_manual ? "Si" : "No"}\n` +
         alertBlock;
       if (!decision.requires_release) {
-        if (decision.advisory_requires_ack) {
+        if (decision.advisory_requires_ack && requireAdvisoryAck) {
           const ok = confirm(`${riskText}\n¿Desea continuar con el servicio?`);
           if (!ok) throw new Error("Servicio detenido por alerta crediticia.");
         }
@@ -8133,8 +8132,7 @@ def som_web_home() -> HTMLResponse:
         cliente:row?.cliente || "",
         honorarios:row?.honorarios || 0,
         costo_operativo:row?.costo_operativo || 0,
-        costo_tarjetas:row?.costo_tarjetas || 0,
-        valor_factura:row?.valor_factura || 0
+        costo_tarjetas:row?.costo_tarjetas || 0
       } : null;
       serviceCreditApprovalCache = null;
       const val = key => esc(row?.[key] ?? "");
@@ -8213,7 +8211,7 @@ def som_web_home() -> HTMLResponse:
           if (serviceCreditApprovalCache?.key === cacheKey) {
             approvedPayload = { ...payload, ...(serviceCreditApprovalCache.extra || {}) };
           } else {
-            approvedPayload = await applyCreditReleaseIfNeeded(payload);
+            approvedPayload = await applyCreditReleaseIfNeeded(payload, !consec);
             serviceCreditApprovalCache = {
               key: cacheKey,
               extra: {
