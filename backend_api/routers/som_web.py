@@ -20,7 +20,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20261002-service-edit-credit-v1"
+_ASSET_VERSION = "20261002-service-edit-credit-v2"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -8091,7 +8091,7 @@ def som_web_home() -> HTMLResponse:
           const ok = confirm(`${riskText}\n¿Desea continuar con el servicio?`);
           if (!ok) throw new Error("Servicio detenido por alerta crediticia.");
         }
-        return payload;
+        return { ...payload, credit_advisory_acknowledged: !!decision.advisory_requires_ack };
       }
       const role = String(session?.rol || "").toLowerCase();
       if (!["admin", "master"].includes(role)) {
@@ -8211,10 +8211,11 @@ def som_web_home() -> HTMLResponse:
           if (serviceCreditApprovalCache?.key === cacheKey) {
             approvedPayload = { ...payload, ...(serviceCreditApprovalCache.extra || {}) };
           } else {
-            approvedPayload = await applyCreditReleaseIfNeeded(payload, !consec);
+            approvedPayload = await applyCreditReleaseIfNeeded(payload, true);
             serviceCreditApprovalCache = {
               key: cacheKey,
               extra: {
+                credit_advisory_acknowledged: approvedPayload.credit_advisory_acknowledged,
                 credit_release_approved: approvedPayload.credit_release_approved,
                 credit_release_reason: approvedPayload.credit_release_reason
               }
