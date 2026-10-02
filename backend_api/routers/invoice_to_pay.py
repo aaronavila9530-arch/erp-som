@@ -1142,6 +1142,122 @@ def _sync_servicios_to_itp(cur, company_code: str):
 
     deactivate_employee_itp_obligations(cur)
 
+
+def _sync_tax_purchases_to_itp(cur, company_code: str) -> int:
+    cur.execute("SELECT to_regclass('public.tax_electronic_documents') AS table_name")
+    table = cur.fetchone()
+    if not table or not table.get("table_name"):
+        return 0
+    company = normalize_company_code(header_value=company_code)
+    cur.execute("""
+        SELECT d.*
+        FROM tax_electronic_documents d
+        WHERE d.company_code=%s
+          AND d.direction='PURCHASE'
+          AND COALESCE(d.total, 0) <> 0
+          AND COALESCE(d.status, 'PENDING') <> 'REJECTED'
+          AND NOT EXISTS (
+              SELECT 1
+              FROM payment_obligations po
+              WHERE po.company_code=d.company_code
+                AND COALESCE(po.active, TRUE)=TRUE
+                AND (
+                    NULLIF(po.electronic_key, '') = NULLIF(d.electronic_key, '')
+                    OR NULLIF(po.reference, '') = NULLIF(d.electronic_key, '')
+                    OR NULLIF(po.reference, '') = NULLIF(d.document_number, '')
+                    OR NULLIF(po.reference, '') = NULLIF(%s, '')
+                )
+          )
+        ORDER BY d.issue_datetime NULLS LAST, d.id
+    """, (company, ""))
+    rows = cur.fetchall() or []
+    inserted = 0
+    for doc in rows:
+        electronic_key = str(doc.get("electronic_key") or "").strip()
+        document_number = str(doc.get("document_number") or "").strip()
+        reference = display_itp_invoice_reference(electronic_key or document_number)
+        cur.execute("""
+            SELECT id
+            FROM payment_obligations
+            WHERE company_code=%s
+              AND COALESCE(active, TRUE)=TRUE
+              AND (
+                  NULLIF(electronic_key, '') = NULLIF(%s, '')
+                  OR NULLIF(reference, '') = NULLIF(%s, '')
+                  OR NULLIF(reference, '') = NULLIF(%s, '')
+                  OR NULLIF(reference, '') = NULLIF(%s, '')
+              )
+            LIMIT 1
+        """, (company, electronic_key, electronic_key, document_number, reference))
+        if cur.fetchone():
+            continue
+        issuer = doc.get("issuer_name") or "Proveedor factura electronica"
+        if is_employee_payee(cur, issuer):
+            continue
+        issue_value = doc.get("issue_datetime") or date.today()
+        issue_date = issue_value.date() if hasattr(issue_value, "date") else _coerce_date(issue_value, date.today())
+        is_credit = "CREDIT" in str(doc.get("document_type") or "").upper() or str(doc.get("document_type") or "").upper() in {"NC", "NCE"}
+        total = _money(doc.get("total"))
+        if is_credit:
+            total = -abs(total)
+            balance = Decimal("0.00")
+            status = "PAID"
+            obligation_type = "SUPPLIER_CREDIT_NOTE"
+        else:
+            balance = total
+            status = "PENDING"
+            obligation_type = "SUPPLIER_INVOICE"
+        cur.execute("""
+            INSERT INTO payment_obligations (
+                company_code, record_type, payee_type, payee_name, obligation_type,
+                reference, electronic_key, issue_date, due_date, country, currency,
+                total, balance, status, origin, file_xml, file_pdf, active, notes,
+                created_at, updated_at
+            )
+            VALUES (
+                %s, 'OBLIGATION', 'SUPPLIER', %s, %s,
+                %s, %s, %s, %s, 'Costa Rica', %s,
+                %s, %s, %s, 'ACCOUNTING_XML', %s, %s, TRUE, %s,
+                NOW(), NOW()
+            )
+            RETURNING id
+        """, (
+            company,
+            issuer,
+            obligation_type,
+            reference,
+            electronic_key or None,
+            issue_date,
+            issue_date + timedelta(days=30),
+            doc.get("currency_code") or "CRC",
+            total,
+            balance,
+            status,
+            doc.get("xml_path"),
+            doc.get("pdf_path"),
+            f"Importado automaticamente desde Gastos/XML electronicos. Registro fiscal #{doc.get('id')}",
+        ))
+        obligation_id = cur.fetchone()["id"]
+        if not is_credit:
+            reconcile_surveyor_invoice_obligations(
+                cur,
+                company,
+                issuer,
+                issue_date,
+                reference=reference,
+                invoice_obligation_id=obligation_id,
+            )
+        inserted += 1
+    return inserted
+
+
+def _sync_itp_sources(cur, company_code: str) -> dict:
+    _ensure_company_column(cur)
+    _sync_servicios_to_itp(cur, company_code)
+    tax_inserted = _sync_tax_purchases_to_itp(cur, company_code)
+    deactivate_employee_itp_obligations(cur)
+    return {"tax_purchases": tax_inserted}
+
 @router.get("/search")
 def search_invoice_to_pay(
     obligation_type: Optional[str] = Query(None),
@@ -1158,11 +1274,7 @@ def search_invoice_to_pay(
 ):
     cur = conn.cursor(cursor_factory=RealDictCursor)
     company = normalize_company_code(header_value=x_company_code)
-    _ensure_company_column(cur)
-
-    # 🔁 Sync servicios → Invoice To Pay
-    _sync_servicios_to_itp(cur, company)
-    deactivate_employee_itp_obligations(cur)
+    _sync_itp_sources(cur, company)
     conn.commit()
 
     filters = ["COALESCE(active, TRUE) = TRUE", "company_code = %s"]
@@ -1407,8 +1519,7 @@ def invoice_to_pay_payment_schedule(
 ):
     cur = conn.cursor(cursor_factory=RealDictCursor)
     company = normalize_company_code(header_value=x_company_code)
-    _ensure_company_column(cur)
-    _sync_servicios_to_itp(cur, company)
+    _sync_itp_sources(cur, company)
     conn.commit()
     today = date.today()
     start = date_from or today.replace(day=1)
@@ -1751,7 +1862,8 @@ def biweekly_obligations_preview(
 ):
     company = normalize_company_code(header_value=x_company_code)
     cur = conn.cursor(cursor_factory=RealDictCursor)
-    _ensure_company_column(cur)
+    _sync_itp_sources(cur, company)
+    conn.commit()
     _ensure_biweekly_schema(cur)
     carryover_rows = _load_biweekly_carryover_drafts(cur, company, period, int(fortnight or 1))
     draft = _load_biweekly_draft(cur, company, period, fortnight)
@@ -1968,6 +2080,48 @@ def biweekly_obligations_preview(
                 )
                 statements = cur.fetchall() or []
             if not statements:
+                cur.execute("SELECT to_regclass('public.accounting_entries') AS entries_table, to_regclass('public.accounting_lines') AS lines_table")
+                accounting_tables = cur.fetchone() or {}
+                if accounting_tables.get("entries_table") and accounting_tables.get("lines_table"):
+                    cur.execute(
+                        """
+                        SELECT
+                            COALESCE(SUM(COALESCE(l.credit,0) - COALESCE(l.debit,0)), 0) AS amount_crc,
+                            COUNT(DISTINCT e.id) AS entry_count
+                        FROM accounting_entries e
+                        JOIN accounting_lines l ON l.entry_id=e.id
+                        WHERE e.company_code = ANY(%s)
+                          AND e.period = %s
+                          AND COALESCE(e.workflow_status,'POSTED') = 'POSTED'
+                          AND (
+                              e.origin IN ('CORP_CARD_PENDING','CORP_CARD_EXPENSE','CORP_CARD_ITP_PAYMENT','CORP_CARD_SETTLEMENT')
+                              OR UPPER(COALESCE(e.description,'')) LIKE '%%TARJETA CORPORATIVA BAC%%'
+                              OR UPPER(COALESCE(e.description,'')) LIKE '%%BAC%%'
+                          )
+                          AND (
+                              l.account_code = %s
+                              OR UPPER(COALESCE(l.account_name,'')) LIKE '%%TARJETA CORPORATIVA BAC%%'
+                          )
+                        """,
+                        (company_scope, prev_period, CARD_PAYABLE_CODE),
+                    )
+                    card_accounting = cur.fetchone() or {}
+                    amount_crc = _money(card_accounting.get("amount_crc"))
+                    if amount_crc > 0:
+                        statements = [{
+                            "company_code": company,
+                            "card_last4": "",
+                            "statement_period": prev_period,
+                            "payment_due_date": fortnight_payment_date,
+                            "cash_payment_crc": amount_crc,
+                            "cash_payment_usd": Decimal("0.00"),
+                            "status": "POSTED_PENDING_PAYMENT",
+                            "tx_count": int(card_accounting.get("entry_count") or 0),
+                            "tx_crc": amount_crc,
+                            "tx_usd": Decimal("0.00"),
+                            "accounting_fallback": True,
+                        }]
+            if not statements:
                 _append_unique_biweekly_row(rows, seen_rows, row("Tarjetas de credito", f"Faltan estados BAC {prev_period}", 0, "CRC", "BAC", "REVISION", "Importar estados BAC del mes anterior para calcular tarjetas.", fortnight_payment_date))
             card_labels = {"3155": "Aaron", "3156": "Diana", "3157": "Pabel", "1951": "Diana", "1936": "Diana", "1969": "Pabel", "1944": "Pabel", "3148": "ITP"}
             for st in statements:
@@ -1981,7 +2135,9 @@ def biweekly_obligations_preview(
                     crc = _money(st.get("tx_crc"))
                     usd = _money(st.get("tx_usd"))
                 if crc > 0:
-                    _append_unique_biweekly_row(rows, seen_rows, row("Tarjetas de credito", f"BAC {label} contado CRC {st.get('statement_period') or ''}", crc, "CRC", "BAC", "CORP_CARD", f"Tarjeta {last4}", fortnight_payment_date))
+                    source = "CORP_CARD_ACCOUNTING" if st.get("accounting_fallback") else "CORP_CARD"
+                    notes = "Saldo tarjeta BAC tomado del mayor contable." if st.get("accounting_fallback") else f"Tarjeta {last4}"
+                    _append_unique_biweekly_row(rows, seen_rows, row("Tarjetas de credito", f"BAC {label} contado CRC {st.get('statement_period') or ''}", crc, "CRC", "BAC", source, notes, fortnight_payment_date))
                 if usd > 0:
                     _append_unique_biweekly_row(rows, seen_rows, row("Tarjetas de credito", f"BAC {label} contado USD {st.get('statement_period') or ''}", usd, "USD", "BAC", "CORP_CARD", f"Tarjeta {last4}. Convertir/pagar segun banco.", fortnight_payment_date))
 
@@ -3143,6 +3299,33 @@ def upload_invoice_xml(
                 "total": total,
                 "currency": moneda,
                 "skipped": True,
+            }
+        cur.execute("""
+            SELECT id
+            FROM payment_obligations
+            WHERE company_code=%s
+              AND COALESCE(active, TRUE)=TRUE
+              AND (
+                  NULLIF(electronic_key, '') = NULLIF(%s, '')
+                  OR NULLIF(reference, '') = NULLIF(%s, '')
+                  OR NULLIF(reference, '') = NULLIF(%s, '')
+              )
+            ORDER BY id DESC
+            LIMIT 1
+        """, (company, clave, clave, invoice_reference))
+        existing = cur.fetchone()
+        if existing:
+            conn.commit()
+            return {
+                "message": "XML ya estaba registrado en ITP",
+                "id": existing["id"],
+                "type": obligation_type,
+                "reference": invoice_reference,
+                "electronic_key": clave,
+                "supplier": emisor,
+                "total": total,
+                "currency": moneda,
+                "status": "exists",
             }
 
         cur.execute("""
