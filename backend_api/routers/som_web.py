@@ -20,7 +20,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20261002-gmail-fiscal-accounts-v1"
+_ASSET_VERSION = "20261005-tally-control-v1"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -29,7 +29,7 @@ MODULES_WEB = [
     {"code": "finanzas", "title": "Finanzas", "subtitle": "Facturación, Collections, ITP, bancos, Accounting, fiscal y tarjetas."},
     {"code": "hhrre", "title": "HHRR", "subtitle": "Horas, solicitudes, vacaciones, payroll, colillas, red médica y calculadora."},
     {"code": "comercial", "title": "Comercial", "subtitle": "Cotizaciones, precios, analítica y exportables."},
-    {"code": "informes", "title": "Informes", "subtitle": "Draft Survey, bunker, condition, grain, truck y certificados."},
+    {"code": "informes", "title": "Informes", "subtitle": "Tally Control por proyecto y bodega."},
     {"code": "portia", "title": "PORTIA", "subtitle": "Asistente operativo, contable y documental."},
     {"code": "qa_som", "title": "Q&A SOM", "subtitle": "Base de conocimiento por módulo."},
     {"code": "admin_users", "title": "Admin", "subtitle": "Usuarios, permisos, roles y auditoría."},
@@ -1424,6 +1424,11 @@ def som_web_home() -> HTMLResponse:
     </main>
   </section>
 
+  <link rel="stylesheet" href="/som/tally-assets/tabulator.min.css?v=1">
+  <link rel="stylesheet" href="/som/tally-assets/tally.css?v=1">
+  <script src="/som/tally-assets/tabulator.min.js?v=1"></script>
+  <script src="/som/tally-assets/papaparse.min.js?v=1"></script>
+  <script src="/som/tally-assets/tally.js?v=1"></script>
   <script>
     const DEFAULT_COMPANIES = [
       { company_code:"MSL-CR", company_name:"MSL MARINE SURVEYORS AND LOGISTICS GROUP SRL" },
@@ -2291,6 +2296,8 @@ def som_web_home() -> HTMLResponse:
       $("brandLogo").src = selectedCompany().startsWith("MCI") ? "/som/logo/mci?v={asset_version}" : "/som/logo/msl?v={asset_version}";
     }
     function selectModule(code) {
+      if (currentModule === "informes" && window.SOMTally && !SOMTally.canLeave()) return;
+      if (currentModule === "informes" && window.SOMTally) SOMTally.destroy();
       currentModule = code;
       selectedMasterView = null;
       setBrand();
@@ -2304,8 +2311,20 @@ def som_web_home() -> HTMLResponse:
       else if (code === "master_data") renderMasterData();
       else if (code === "servicios" || code === "servicios_op" || (mod?.title || "").toLowerCase() === "servicios") renderServicios();
       else if (code === "finanzas") renderFinanzas();
+      else if (code === "informes") renderInformesTally();
       else if (code === "hhrre" || code === "hhrr") renderHHRR();
       else renderComingSoon(mod);
+    }
+    function renderInformesTally() {
+      const fixedHeaders = headers();
+      const tallyRequest = async (path, method="GET", body) => {
+        const response = await fetch(path, {method, headers:fixedHeaders, body:body === undefined ? undefined : JSON.stringify(body)});
+        const data = await response.json();
+        if (!response.ok) throw new Error(typeof data.detail === "string" ? data.detail : (Array.isArray(data.detail) ? data.detail.map(x => `${x.loc.slice(1).join(".")}: ${x.msg}`).join("; ") : "No se pudo completar la operacion"));
+        return data;
+      };
+      SOMTally.mount($("content"), {user:session.usuario, company:selectedCompany(), headers:()=>({...fixedHeaders}),
+        getJSON:path=>tallyRequest(path), postJSON:(path,body)=>tallyRequest(path,"POST",body), sendJSON:(method,path,body)=>tallyRequest(path,method,body)});
     }
     async function refreshSummary() {
       try {
@@ -10149,6 +10168,9 @@ def som_web_home() -> HTMLResponse:
     };
     function changeCompany(value) {
       if (!value) return;
+      if (currentModule === "informes" && !SOMTally.canLeave()) {
+        $("company").value = session.company; $("companyTop").value = session.company; return;
+      }
       if ($("company")) $("company").value = value;
       if ($("companyTop")) $("companyTop").value = value;
       bankAccessToken = "";
@@ -10172,8 +10194,8 @@ def som_web_home() -> HTMLResponse:
       if (currentModule === "finanzas") renderFinanzas();
       if (currentModule === "hhrre" || currentModule === "hhrr") renderHHRR();
     }
-    $("company").onchange = () => changeCompany($("company").value);
-    $("companyTop").onchange = () => changeCompany($("companyTop").value);
+    $("company").onchange = () => { const before=session?.company; changeCompany($("company").value); if (currentModule === "informes" && before!==session?.company) renderInformesTally(); };
+    $("companyTop").onchange = () => { const before=session?.company; changeCompany($("companyTop").value); if (currentModule === "informes" && before!==session?.company) renderInformesTally(); };
     $("year").onchange = () => {
       if (currentModule === "dashboard") refreshSummary();
       else resetKpisForManualLoad();
