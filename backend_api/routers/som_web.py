@@ -663,6 +663,11 @@ def som_web_credit_hold(
         database.release_conn(conn)
 
 
+@router.get("/google508500bb8b3daa58.html", response_class=HTMLResponse, include_in_schema=False)
+def som_google_site_verification():
+    return HTMLResponse("google-site-verification: google508500bb8b3daa58.html")
+
+
 @router.get("/som/privacy", response_class=HTMLResponse)
 def som_web_privacy():
     return FileResponse(_ASSETS / "gmail-privacy.html", media_type="text/html", headers={"Cache-Control": "no-cache"})
