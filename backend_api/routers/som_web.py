@@ -663,6 +663,11 @@ def som_web_credit_hold(
         database.release_conn(conn)
 
 
+@router.get("/som/privacy", response_class=HTMLResponse)
+def som_web_privacy():
+    return FileResponse(_ASSETS / "gmail-privacy.html", media_type="text/html", headers={"Cache-Control": "no-cache"})
+
+
 @router.get("/som", response_class=HTMLResponse)
 def som_web_home() -> HTMLResponse:
     year = datetime.now().year
@@ -1356,6 +1361,7 @@ def som_web_home() -> HTMLResponse:
         <button id="loginBtn">Ingresar</button>
         <button id="bioBtn" class="secondary" type="button">Entrar con Windows Hello / passkey</button>
         <div id="loginMsg" class="muted"></div>
+        <a href="/som/privacy" target="_blank" rel="noopener">Política de privacidad de Gmail</a>
       </div>
       <div id="totpForm" class="form hidden">
         <img id="qr" class="qr hidden" alt="QR Authenticator" />
