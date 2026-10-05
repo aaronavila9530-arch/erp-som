@@ -69,6 +69,45 @@
     }
     function driver(plate) {return boot.drivers.find(d=>d.plate===plateKey(plate))?.driver || '';}
     function enrich(row) {return {...row,hold,driver:row.driver || driver(row.plate)};}
+    let typingCell=false;
+    function temporalEditor(cell,onRendered,success,cancel) {
+      const field=cell.getField(),type=field==='date'?'date':'time';
+      const editor=document.createElement('input');
+      editor.type=typingCell?'text':type;editor.value=cell.getValue()||'';
+      let finished=false;
+      const commit=()=>{
+        if(finished)return;finished=true;
+        const value=pasteValue(field,editor.value),check=document.createElement('input');
+        check.type=type;check.value=value;
+        if(value&&check.value!==value){cancel();status(type==='date'?'Fecha invalida':'Hora invalida',true);return;}
+        success(value);
+      };
+      editor.addEventListener('blur',commit);
+      editor.addEventListener('keydown',event=>{
+        if(event.key==='Enter'){event.preventDefault();commit();}
+        if(event.key==='Escape'){finished=true;cancel();}
+      });
+      onRendered(()=>{editor.focus();if(editor.type==='text')editor.select();});
+      return editor;
+    }
+    function startTyping(event) {
+      if(!grid||!boot?.editable||conflict||switching||event.defaultPrevented||event.isComposing||event.ctrlKey||event.metaKey||event.altKey||event.key.length!==1)return;
+      if(event.target.closest('input,textarea,select,[contenteditable="true"]'))return;
+      const selected=$('.tabulator-cell.tabulator-range-only-cell-selected');
+      const field=selected?.getAttribute('tabulator-field');
+      if(!fields.includes(field))return;
+      const cell=grid.getRanges()[0]?.getRows().find(row=>row.getElement().contains(selected))?.getCell(field);
+      if(!cell)return;
+      typingCell=true;
+      try {cell.edit();} finally {typingCell=false;}
+      const editor=cell.getElement().querySelector('input,textarea');
+      if(!editor)return;
+      event.preventDefault();event.stopPropagation();
+      editor.value=event.key;
+      editor.dispatchEvent(new Event('input',{bubbles:true}));
+      editor.focus();editor.setSelectionRange?.(editor.value.length,editor.value.length);
+    }
+    $('.tally-grid').addEventListener('keydown',startTyping,true);
     async function renderGrid(rows) {
       if(grid)grid.destroy();
       const data=rows.map(enrich); for(let i=0;i<20;i++)data.push(enrich(blank()));
@@ -104,8 +143,8 @@
         rowHeader:{formatter:'rownum',width:45,frozen:true,headerSort:false,resizable:false},
         columnDefaults:{headerSort:false,resizable:true},
         columns:[input('No.','number',70),{title:'Bodega',field:'hold',width:82,cssClass:'tally-readonly',formatter:'plaintext'},
-          input('Fecha','date',120,{editor:boot.editable&&!conflict?'date':false}),
-          input('Entrada','entry',100,{editor:boot.editable&&!conflict?'time':false}),input('Salida','exit',100,{editor:boot.editable&&!conflict?'time':false}),
+          input('Fecha','date',120,{editor:boot.editable&&!conflict?temporalEditor:false}),
+          input('Entrada','entry',100,{editor:boot.editable&&!conflict?temporalEditor:false}),input('Salida','exit',100,{editor:boot.editable&&!conflict?temporalEditor:false}),
           input('SPC','spc',90),input('Empresa','company',155,{editor:boot.editable&&!conflict?'list':false,editorParams:{values:boot.companies,autocomplete:true,listOnEmpty:true}}),
           input('Ficha','ticket',95),input('Guia Surco','guide',115),input('Guia Sello','seal',105,{editor:boot.editable&&!conflict?'list':false,editorParams:{values:['','Si','No']}}),
           input('Placa','plate',120),{title:'Chofer',field:'driver',width:260,formatter:'plaintext',cssClass:'tally-readonly'},
@@ -184,7 +223,7 @@
     $('#tallyDraft').onclick=()=>download(new Blob([JSON.stringify({project:current,hold,revision,rows:payloadRows(grid.getData())},null,2)],{type:'application/json'}),`Tally-${current.id}-bodega-${hold}-borrador.json`);
     $('#tallyExcel').onclick=wrap(async()=>{if(!await flush())return;const resp=await fetch(`/tally/projects/${current.id}/excel`,{headers:api.headers()});if(!resp.ok)throw Error('No se pudo exportar');download(await resp.blob(),`Tally-${current.id}.xlsx`);});
     $('#tallyHistory').onclick=wrap(async()=>{const rows=await api.getJSON(`/tally/projects/${current.id}/history`);dialog('Historial',`<table><thead><tr><th>Fecha</th><th>Usuario</th><th>Bodega</th><th>Version</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${esc(new Date(r.created_at).toLocaleString())}</td><td>${esc(r.performed_by)}</td><td>${r.hold??'Proyecto'}</td><td>${r.revision??'-'}</td></tr>`).join('')}</tbody></table>`);});
-    active={destroy(){destroyed=true;clearTimeout(timer);window.removeEventListener('beforeunload',unload);if(grid)grid.destroy();},canLeave(){return !dirty()||confirm('Hay cambios pendientes. El borrador se conservara en esta pestana. Salir?');}};
+    active={destroy(){destroyed=true;clearTimeout(timer);window.removeEventListener('beforeunload',unload);$('.tally-grid').removeEventListener('keydown',startTyping,true);if(grid)grid.destroy();},canLeave(){return !dirty()||confirm('Hay cambios pendientes. El borrador se conservara en esta pestana. Salir?');}};
     try {await refreshBootstrap();if(destroyed)return;projectOptions();controls();if(boot.projects.length){$('#tallyProject').value=boot.projects[0].id;await chooseProject(boot.projects[0].id);}else{$('.tally-footer').textContent='Sin proyectos';}}
     catch(err){fail(err);}
   }
