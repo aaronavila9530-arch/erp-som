@@ -15,20 +15,15 @@ from psycopg2 import OperationalError
 
 # =====================================================
 # DATABASE URL
-# Prioridad:
-# 1️⃣ Variable de entorno
-# 2️⃣ Fallback seguro (para EXE desktop)
+# Configuracion obligatoria mediante variable de entorno.
 # =====================================================
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-if not DATABASE_URL:
-    DATABASE_URL = (
-        "postgresql://postgres:"
-        "LjjyuIUsTSCdiwPVHSSwtIYPOsRQytGX"
-        "@tramway.proxy.rlwy.net:15258/"
-        "railway?sslmode=require"
-    )
+def _database_url():
+    if not DATABASE_URL:
+        raise RuntimeError("DATABASE_URL debe configurarse en el entorno del servidor")
+    return DATABASE_URL
 
 # =====================================================
 # CONFIGURACIÓN
@@ -52,7 +47,7 @@ def _initialize_pool():
         _connection_pool = pool.SimpleConnectionPool(
             minconn=1,
             maxconn=10,
-            dsn=DATABASE_URL,
+            dsn=_database_url(),
             connect_timeout=CONNECT_TIMEOUT,
             sslmode="require"
         )
@@ -93,7 +88,7 @@ def connect():
     for attempt in range(MAX_RETRIES):
         try:
             return psycopg2.connect(
-                DATABASE_URL,
+                _database_url(),
                 connect_timeout=CONNECT_TIMEOUT,
                 sslmode="require"
             )

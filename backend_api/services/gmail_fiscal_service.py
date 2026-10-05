@@ -20,6 +20,7 @@ from urllib.parse import urlencode
 import requests
 from cryptography.fernet import Fernet, InvalidToken
 from psycopg2.extras import Json, RealDictCursor
+from security.gmail_access import validate_oauth_actor
 
 from database import get_conn, release_conn
 from routers.accounting_tax import _ensure_purchase_obligation, _ensure_schema as ensure_tax_schema, _local, _parse_xml, _save_document
@@ -149,12 +150,7 @@ def _account_profile(account_email: str | None = None) -> dict[str, object]:
         for profile in profiles:
             if profile["account_email"] == wanted:
                 return profile
-        return {
-            "account_email": wanted,
-            "company_code": _company_for_account_email(wanted),
-            "process_bac": True,
-            "process_tax": True,
-        }
+        raise ValueError("Buzon Gmail no configurado")
     return profiles[0]
 
 
@@ -243,6 +239,7 @@ def ensure_schema(conn):
             )
         """)
         cur.execute("ALTER TABLE gmail_fiscal_attachments ADD COLUMN IF NOT EXISTS content BYTEA")
+        cur.execute("ALTER TABLE gmail_fiscal_oauth_states ADD COLUMN IF NOT EXISTS encrypted_verifier TEXT")
         for profile in _configured_account_profiles():
             cur.execute("""INSERT INTO gmail_fiscal_connections(account_email) VALUES(%s)
               ON CONFLICT(account_email) DO NOTHING""", (profile["account_email"],))
@@ -292,26 +289,39 @@ def create_oauth_url(conn, requested_by: str, account_email: str | None = None):
     profile = _account_profile(account_email)
     target_account = str(profile["account_email"])
     state = secrets.token_urlsafe(40)
+    verifier = secrets.token_urlsafe(48)
+    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip("=")
+    state_hash = hashlib.sha256(state.encode()).hexdigest()
     with conn.cursor() as cur:
         cur.execute("DELETE FROM gmail_fiscal_oauth_states WHERE expires_at<NOW() OR consumed_at IS NOT NULL")
-        cur.execute("INSERT INTO gmail_fiscal_oauth_states(state,account_email,requested_by,expires_at) VALUES(%s,%s,%s,NOW()+INTERVAL '15 minutes')",
-                    (state, target_account, requested_by))
+        cur.execute("INSERT INTO gmail_fiscal_oauth_states(state,account_email,requested_by,expires_at,encrypted_verifier) VALUES(%s,%s,%s,NOW()+INTERVAL '15 minutes',%s)",
+                    (state_hash, target_account, requested_by, encrypt_token(verifier)))
     conn.commit()
     params = {"client_id":os.getenv("GOOGLE_CLIENT_ID"),"redirect_uri":os.getenv("GOOGLE_REDIRECT_URI"),
               "response_type":"code","scope":SCOPES,"access_type":"offline","prompt":"consent",
-              "include_granted_scopes":"true","login_hint":target_account,"state":state}
+              "include_granted_scopes":"false","login_hint":target_account,"state":state,
+              "code_challenge":challenge,"code_challenge_method":"S256"}
     return GOOGLE_AUTH + "?" + urlencode(params)
 
 
 def complete_oauth(conn, state: str, code: str):
     ensure_schema(conn)
+    if len(state) > 200 or len(code) > 4096:
+        raise ValueError("Autorizacion invalida")
+    state_hash = hashlib.sha256(state.encode()).hexdigest()
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        cur.execute("SELECT * FROM gmail_fiscal_oauth_states WHERE state=%s AND consumed_at IS NULL AND expires_at>NOW() FOR UPDATE", (state,))
+        cur.execute("""UPDATE gmail_fiscal_oauth_states SET consumed_at=NOW()
+            WHERE state=%s AND consumed_at IS NULL AND expires_at>NOW()
+            AND encrypted_verifier IS NOT NULL RETURNING *""", (state_hash,))
         record = cur.fetchone()
+        conn.commit()
         if not record:
             raise RuntimeError("La autorización expiró o ya fue utilizada")
+        _account_profile(record["account_email"])
+        validate_oauth_actor(conn, record.get("requested_by"))
         response = requests.post(GOOGLE_TOKEN, data={"code":code,"client_id":os.getenv("GOOGLE_CLIENT_ID"),
-          "client_secret":os.getenv("GOOGLE_CLIENT_SECRET"),"redirect_uri":os.getenv("GOOGLE_REDIRECT_URI"),"grant_type":"authorization_code"}, timeout=20)
+          "client_secret":os.getenv("GOOGLE_CLIENT_SECRET"),"redirect_uri":os.getenv("GOOGLE_REDIRECT_URI"),
+          "code_verifier":decrypt_token(record["encrypted_verifier"]),"grant_type":"authorization_code"}, timeout=20)
         response.raise_for_status(); token=response.json(); refresh=token.get("refresh_token")
         if not refresh:
             raise RuntimeError("Google no devolvió refresh_token; revoque el acceso anterior y vuelva a autorizar")
@@ -321,7 +331,6 @@ def complete_oauth(conn, state: str, code: str):
         cur.execute("""UPDATE gmail_fiscal_connections SET encrypted_refresh_token=%s,status='CONNECTED',scopes=%s,
           connected_by=%s,connected_at=NOW(),last_error=NULL,updated_at=NOW() WHERE account_email=%s""",
                     (encrypt_token(refresh),token.get("scope",SCOPES),record.get("requested_by"),record["account_email"]))
-        cur.execute("UPDATE gmail_fiscal_oauth_states SET consumed_at=NOW() WHERE state=%s",(state,))
         cur.execute("INSERT INTO gmail_fiscal_audit(account_email,action,performed_by) VALUES(%s,'OAUTH_CONNECTED',%s)",
                     (record["account_email"],record.get("requested_by")))
     conn.commit()
@@ -366,13 +375,21 @@ def _decode_b64(value):
 
 def _attachment_bytes(token, message_id, part):
     body=part.get("body") or {}
-    if body.get("data"):
-        return _decode_b64(body["data"])
-    attachment_id=body.get("attachmentId")
-    if not attachment_id:
-        return b""
-    data=_api(token,"GET",f"/messages/{message_id}/attachments/{attachment_id}")
-    return _decode_b64(data.get("data", ""))
+    if int(body.get("size") or 0) > MAX_ATTACHMENT_BYTES:
+        raise ValueError("Adjunto mayor a 20 MB")
+    encoded = body.get("data")
+    if not encoded:
+        attachment_id=body.get("attachmentId")
+        if not attachment_id:
+            return b""
+        data=_api(token,"GET",f"/messages/{message_id}/attachments/{attachment_id}")
+        encoded = data.get("data", "")
+    if len(encoded) > ((MAX_ATTACHMENT_BYTES + 2) // 3) * 4:
+        raise ValueError("Adjunto mayor a 20 MB")
+    content = _decode_b64(encoded)
+    if len(content) > MAX_ATTACHMENT_BYTES:
+        raise ValueError("Adjunto mayor a 20 MB")
+    return content
 
 
 def _message_body_text(payload):
@@ -581,6 +598,8 @@ def _xml_members(filename, content):
         members=[x for x in archive.infolist() if not x.is_dir()]
         if len(members)>MAX_ZIP_MEMBERS:
             raise ValueError("ZIP con más de 50 archivos")
+        if sum(member.file_size for member in members) > MAX_ATTACHMENT_BYTES:
+            raise ValueError("Contenido total descomprimido mayor a 20 MB")
         for member in members:
             normalized=Path(member.filename)
             if normalized.is_absolute() or ".." in normalized.parts:
@@ -885,7 +904,8 @@ def _scheduler_loop():
                 """)
                 due = cur.fetchall() or []
             for cfg in due:
-                sync_mailbox(conn, account_email=cfg["account_email"])
+                if cfg["account_email"] in {p["account_email"] for p in _configured_account_profiles()}:
+                    sync_mailbox(conn, account_email=cfg["account_email"])
             _run_monthly_card_history_if_due(conn)
         except Exception as exc:
             print(f"Gmail fiscal scheduler: {exc}")

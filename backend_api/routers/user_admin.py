@@ -5,14 +5,15 @@ from datetime import datetime
 from typing import Any
 
 import bcrypt
-from fastapi import APIRouter, HTTPException, Header
+from fastapi import APIRouter, Depends, HTTPException, Header
 from pydantic import BaseModel
 from psycopg2.extras import RealDictCursor, Json
 
 from database import connect
+from security.gmail_access import require_gmail_admin
 
 
-router = APIRouter(prefix="/admin/users", tags=["Admin - Usuarios"])
+router = APIRouter(prefix="/admin/users", tags=["Admin - Usuarios"], dependencies=[Depends(require_gmail_admin)])
 
 
 MODULES = [
@@ -438,6 +439,7 @@ def get_permissions(usuario: str):
 
 @router.post("")
 def create_user(payload: UserCreatePayload,
+                principal=Depends(require_gmail_admin),
                 x_user: str | None = Header(default=None, alias="X-User"),
                 x_role: str | None = Header(default=None, alias="X-User-Role")):
     _require_admin(x_user, x_role)
@@ -477,8 +479,8 @@ def create_user(payload: UserCreatePayload,
                 datetime.now().date(),
             ),
         )
-        _upsert_permissions(cur, usuario, payload.permissions, x_user)
-        _audit(cur, x_user, usuario, "CREATE_USER", payload.model_dump(exclude={"password"}))
+        _upsert_permissions(cur, usuario, payload.permissions, principal["user"])
+        _audit(cur, principal["user"], usuario, "CREATE_USER", payload.model_dump(exclude={"password"}))
         conn.commit()
         return {"status": "OK", "usuario": usuario}
     except HTTPException:
@@ -494,6 +496,7 @@ def create_user(payload: UserCreatePayload,
 
 @router.put("/{usuario}/permissions")
 def save_permissions(usuario: str, payload: PermissionPayload,
+                     principal=Depends(require_gmail_admin),
                      x_user: str | None = Header(default=None, alias="X-User"),
                      x_role: str | None = Header(default=None, alias="X-User-Role")):
     _require_admin(x_user, x_role)
@@ -504,8 +507,8 @@ def save_permissions(usuario: str, payload: PermissionPayload,
         cur.execute("SELECT 1 FROM usuarios WHERE lower(usuario)=lower(%s)", (usuario,))
         if not cur.fetchone():
             raise HTTPException(status_code=404, detail="Usuario no encontrado")
-        _upsert_permissions(cur, usuario, payload.permissions, x_user)
-        _audit(cur, x_user, usuario, "UPDATE_PERMISSIONS", {"permissions": payload.permissions})
+        _upsert_permissions(cur, usuario, payload.permissions, principal["user"])
+        _audit(cur, principal["user"], usuario, "UPDATE_PERMISSIONS", {"permissions": payload.permissions})
         conn.commit()
         return {"status": "OK", "usuario": usuario}
     except HTTPException:

@@ -1721,8 +1721,57 @@ def som_web_home() -> HTMLResponse:
       return $("companyTop")?.value || $("company")?.value || session?.company || "MSL-CR";
     }
 
+    let gmailAdminSession = null;
+    let gmailAdminPrompt = null;
+    async function authorizeGmailAdministration() {
+      const identity = `${session?.usuario || ""}:${selectedCompany()}`;
+      if (gmailAdminSession?.identity === identity && gmailAdminSession.until > Date.now()) return gmailAdminSession.token;
+      if (gmailAdminPrompt) return gmailAdminPrompt;
+      gmailAdminPrompt = new Promise((resolve, reject) => {
+        const dialog = document.createElement("dialog");
+        dialog.style.cssText = "width:440px;max-width:calc(100vw - 32px);border:1px solid #d6e0eb;border-radius:8px;padding:24px;color:#122033";
+        dialog.innerHTML = `<form><h2 style="font-size:20px;margin-top:0">Acceso administrativo</h2>
+          <p>${esc(session?.usuario)} · ${esc(selectedCompany())}</p>
+          <label>Contraseña SOM<input name="password" type="password" autocomplete="current-password" required maxlength="200"></label>
+          <label>Código Authenticator<input name="codigo" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required></label>
+          <p class="error" role="alert"></p><div style="display:flex;gap:8px"><button type="submit">Autorizar</button><button type="button" class="secondary">Cancelar</button></div></form>`;
+        const form = dialog.querySelector("form");
+        const finish = (token) => { form.reset(); dialog.close(); dialog.remove(); token ? resolve(token) : reject(new Error("Autorización Gmail cancelada")); };
+        dialog.addEventListener("cancel", event => { event.preventDefault(); finish(null); });
+        dialog.querySelector('button[type="button"]').onclick = () => finish(null);
+        form.onsubmit = async event => {
+          event.preventDefault();
+          const button = form.querySelector('button[type="submit"]');
+          button.disabled = true;
+          try {
+            const resp = await fetch("/accounting/tax/gmail/session", { method:"POST", headers:headers(), body:JSON.stringify({ usuario:session?.usuario, password:form.elements.password.value, codigo:form.elements.codigo.value }) });
+            const data = await resp.json();
+            form.reset();
+            if (!resp.ok) throw new Error(typeof data.detail === "string" ? data.detail : "No se pudo autorizar Gmail");
+            if (identity !== `${session?.usuario || ""}:${selectedCompany()}`) throw new Error("La sesión o empresa cambió. Vuelva a autorizar.");
+            gmailAdminSession = { identity, token:data.access_token, until:Date.now() + (data.expires_in - 15) * 1000 };
+            finish(data.access_token);
+          } catch (err) { form.querySelector('[role="alert"]').textContent = err.message; }
+          finally { button.disabled = false; }
+        };
+        document.body.appendChild(dialog);
+        dialog.showModal();
+      });
+      try { return await gmailAdminPrompt; }
+      finally { gmailAdminPrompt = null; }
+    }
+    async function secureFetch(path, options) {
+      const protectedPath = path.startsWith("/accounting/tax/gmail/") || path.startsWith("/admin/users");
+      if (protectedPath) {
+        const token = await authorizeGmailAdministration();
+        options.headers = { ...options.headers, Authorization:`Bearer ${token}` };
+      }
+      const response = await fetch(path, options);
+      if (protectedPath && response.status === 401) gmailAdminSession = null;
+      return response;
+    }
     async function getJSON(path, extraHeaders={}) {
-      const resp = await fetch(path, { headers:headers(extraHeaders) });
+      const resp = await secureFetch(path, { headers:headers(extraHeaders) });
       if (!resp.ok) {
         let msg = resp.statusText || `${resp.status}`;
         try { msg = (await resp.json()).detail || msg; } catch {}
@@ -1731,7 +1780,7 @@ def som_web_home() -> HTMLResponse:
       return resp.json();
     }
     async function postJSON(path, payload) {
-      const resp = await fetch(path, { method:"POST", headers:headers(), body:JSON.stringify(payload) });
+      const resp = await secureFetch(path, { method:"POST", headers:headers(), body:JSON.stringify(payload) });
       if (!resp.ok) {
         let msg = resp.statusText;
         try { msg = (await resp.json()).detail || msg; } catch {}
@@ -1832,7 +1881,7 @@ def som_web_home() -> HTMLResponse:
       await loadNotifications(false);
     }
     async function sendJSON(method, path, payload, extraHeaders={}) {
-      const resp = await fetch(path, { method, headers:headers(extraHeaders), body:payload ? JSON.stringify(payload) : undefined });
+      const resp = await secureFetch(path, { method, headers:headers(extraHeaders), body:payload ? JSON.stringify(payload) : undefined });
       if (!resp.ok) {
         let msg = resp.statusText;
         try { msg = (await resp.json()).detail || msg; } catch {}
@@ -2119,6 +2168,7 @@ def som_web_home() -> HTMLResponse:
       return false;
     }
     function showLogin() {
+      gmailAdminSession = null;
       $("loginView").classList.remove("hidden");
       $("appView").classList.add("hidden");
       $("loginForm").classList.remove("hidden");
