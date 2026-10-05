@@ -19,8 +19,8 @@ from services.tenanting import company_code
 
 router = APIRouter(tags=["Tally Control"])
 ASSETS = Path(__file__).resolve().parents[1] / "assets" / "tally"
-FIELDS = ["number", "hold", "date", "entry", "exit", "spc", "company", "ticket", "guide", "seal", "plate", "driver", "stowage", "notes"]
-HEADERS = ["No.", "Bodega", "Fecha", "Entrada", "Salida", "SPC", "Empresa", "Ficha", "Guia Surco", "Guia Sello", "Placa", "Chofer", "Consecutivo Estiba", "Observacion"]
+FIELDS = ["hold", "date", "entry", "exit", "spc", "company", "ticket", "guide", "seal", "plate", "driver", "stowage", "notes"]
+HEADERS = ["Bodega", "Fecha", "Entrada", "Salida", "SPC", "Empresa", "Ficha", "Guia Surco", "Guia Sello", "Placa", "Chofer", "Consecutivo Estiba", "Observacion"]
 
 
 def context(x_company_code: str = Header(default="MSL-CR"), user=Depends(get_current_user)):
@@ -345,12 +345,12 @@ def export_workbook(p, sheets):
                     cell.number_format = "hh:mm"
                 elif isinstance(cell.value, str):
                     cell.data_type = "s"  # Never execute user-entered Excel formulas.
-        ws.freeze_panes = "D2"
+        ws.freeze_panes = "C2"
         ws.auto_filter.ref = ws.dimensions
         for cell in ws[1]:
             cell.font = Font(bold=True, color="FFFFFF")
             cell.fill = PatternFill("solid", fgColor="165B72")
-            ws.column_dimensions[cell.column_letter].width = 20 if cell.column < 12 else 32
+            ws.column_dimensions[cell.column_letter].width = 20 if cell.column < 11 else 32
     out = BytesIO()
     wb.save(out)
     out.seek(0)

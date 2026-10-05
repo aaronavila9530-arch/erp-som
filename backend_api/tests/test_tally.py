@@ -76,10 +76,26 @@ class TallyTests(unittest.TestCase):
         self.assertEqual(wb.sheetnames,["Bodega 1","Bodega 3","Bodega 5"])
         ws=wb["Bodega 3"]
         self.assertEqual([c.value for c in ws[1]],tally.HEADERS)
-        self.assertEqual(ws["K2"].value,"001234")
-        self.assertEqual(ws["N2"].data_type,"s")
-        self.assertEqual(ws["C2"].number_format,"dd/mm/yyyy")
-        self.assertEqual(ws.freeze_panes,"D2")
+        self.assertNotIn("No.",[c.value for c in ws[1]])
+        self.assertEqual(ws["A1"].value,"Bodega")
+        self.assertEqual(ws["J2"].value,"001234")
+        self.assertEqual(ws["M2"].data_type,"s")
+        self.assertEqual(ws["B2"].number_format,"dd/mm/yyyy")
+        self.assertEqual(ws.freeze_panes,"C2")
+
+    def test_save_and_export_thousand_rows(self):
+        rows=[tally.TallyRow(id=uuid4(),ticket=str(i)) for i in range(1000)]
+        self.cur.fetchone.side_effect=[{"holds":[1]},{"revision":0}]
+        self.cur.fetchall.side_effect=[[],[]]
+        with patch.object(tally,"schema"):
+            result=tally.save_sheet(1,1,tally.SheetInput(revision=0,rows=rows),self.ctx,self.conn)
+        self.assertEqual(result["count"],1000)
+        update=[c for c in self.cur.execute.call_args_list if "UPDATE tally_sheets" in c.args[0]][0]
+        saved=update.args[1][0].adapted
+        self.assertEqual(saved[-1]["ticket"],"999")
+        wb=load_workbook(tally.export_workbook({"holds":[1]},{1:saved}))
+        self.assertEqual(wb.active.max_row,1001)
+        self.assertEqual(wb.active["G1001"].value,"999")
 
 
 if __name__ == "__main__":

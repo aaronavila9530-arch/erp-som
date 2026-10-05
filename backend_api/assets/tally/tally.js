@@ -110,7 +110,9 @@
     $('.tally-grid').addEventListener('keydown',startTyping,true);
     async function renderGrid(rows) {
       if(grid)grid.destroy();
-      const data=rows.map(enrich); for(let i=0;i<20;i++)data.push(enrich(blank()));
+      const data=rows.map(enrich);
+      const availableRows=Math.max(1000,rows.length+20);
+      while(data.length<availableRows)data.push(enrich(blank()));
       const input=(title,field,width=115,extra={})=>({title,field,width,editor:boot.editable&&!conflict?'input':false,formatter:'plaintext',...extra});
       grid=new Tabulator($('.tally-grid'),{
         data,index:'id',height:'min(62vh,640px)',layout:'fitData',rowHeight:34,
@@ -142,7 +144,7 @@
         }:function(){return [];},
         rowHeader:{formatter:'rownum',width:45,frozen:true,headerSort:false,resizable:false},
         columnDefaults:{headerSort:false,resizable:true},
-        columns:[input('No.','number',70),{title:'Bodega',field:'hold',width:82,cssClass:'tally-readonly',formatter:'plaintext'},
+        columns:[{title:'Bodega',field:'hold',width:82,cssClass:'tally-readonly',formatter:'plaintext'},
           input('Fecha','date',120,{editor:boot.editable&&!conflict?temporalEditor:false}),
           input('Entrada','entry',100,{editor:boot.editable&&!conflict?temporalEditor:false}),input('Salida','exit',100,{editor:boot.editable&&!conflict?temporalEditor:false}),
           input('SPC','spc',90),input('Empresa','company',155,{editor:boot.editable&&!conflict?'list':false,editorParams:{values:boot.companies,autocomplete:true,listOnEmpty:true}}),
