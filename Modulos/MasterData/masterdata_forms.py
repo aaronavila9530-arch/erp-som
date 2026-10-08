@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 import re
+import io
+import time
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
@@ -199,17 +201,20 @@ def import_masterdata_files(paths: list[str]) -> list[dict[str, Any]]:
     for raw_path in paths:
         path = Path(raw_path)
         suffix = path.suffix.lower()
-        if suffix == ".xlsx":
-            records.extend(_read_xlsx(path))
-        elif suffix == ".docx":
-            records.extend(_read_docx(path))
-        else:
-            records.append({
-                "file": str(path),
-                "entity": "",
-                "data": {},
-                "error": "Formato no soportado",
-            })
+        try:
+            if suffix == ".xlsx":
+                records.extend(_read_xlsx(path))
+            elif suffix == ".docx":
+                records.extend(_read_docx(path))
+            else:
+                raise ValueError("Formato no soportado")
+        except PermissionError:
+            records.append({"file": str(path), "entity": "", "data": {}, "error":
+                "Windows no permite leer este archivo. Cierre Excel o Word. Si esta en OneDrive, "
+                "seleccione 'Mantener siempre en este dispositivo' y espere la descarga. "
+                "Guarde una copia en Descargas y vuelva a cargarla. Si persiste, revise los permisos del archivo."})
+        except Exception as exc:
+            records.append({"file": str(path), "entity": "", "data": {}, "error": str(exc)})
     return records
 
 
@@ -272,12 +277,15 @@ def _field_from_header(value: Any, spec: MasterDataFormSpec | None = None) -> st
     text = normalize_import_key(value)
     if spec and text in spec.fields:
         return text
-    mapped = LABEL_TO_FIELD.get(text.lower())
-    if mapped and (not spec or mapped in spec.fields):
-        return mapped
-    for field, label in FIELD_LABELS.items():
-        if label.lower() == text.lower() and (not spec or field in spec.fields):
-            return field
+    candidates = spec.fields if spec else tuple(FIELD_LABELS)
+    exact = [field for field in candidates if FIELD_LABELS.get(field, field).casefold() == text.casefold()]
+    if len(exact) == 1:
+        return exact[0]
+    parts = {part.strip().casefold() for part in text.split("/") if part.strip()}
+    matches = [field for field in candidates if parts.intersection(
+        part.strip().casefold() for part in FIELD_LABELS.get(field, field).split("/"))]
+    if len(matches) == 1:
+        return matches[0]
     return text
 
 
@@ -396,10 +404,52 @@ def _export_docx(spec: MasterDataFormSpec, output_path: str) -> None:
     doc.save(output_path)
 
 
+def _read_shared_file(path: Path) -> bytes:
+    """Read a snapshot without blocking Office/OneDrive rename and sync handles."""
+    if os.name != "nt":
+        return path.read_bytes()
+    import ctypes
+    from ctypes import wintypes
+    import msvcrt
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    create = kernel.CreateFileW
+    create.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                       ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+    create.restype = wintypes.HANDLE
+    close = kernel.CloseHandle
+    close.argtypes = [wintypes.HANDLE]
+    close.restype = wintypes.BOOL
+    # Normal synchronous reads let the cloud provider retrieve online-only data.
+    # Do not use OPEN_NO_RECALL or OPEN_REPARSE_POINT on OneDrive placeholders.
+    handle = create(str(path.absolute()), 0x80000000, 0x1 | 0x2 | 0x4,
+                    None, 3, 0x08000000, None)
+    if handle == ctypes.c_void_p(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        fd = msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY)
+    except BaseException:
+        close(handle)
+        raise
+    with os.fdopen(fd, "rb") as source:
+        return source.read()
+
+
+def _form_snapshot(path: Path) -> io.BytesIO:
+    for attempt in range(3):
+        try:
+            return io.BytesIO(_read_shared_file(path))
+        except OSError as exc:
+            if getattr(exc, "winerror", None) not in (32, 33) or attempt == 2:
+                raise
+            time.sleep(0.3 * (attempt + 1))
+
+
 def _read_xlsx(path: Path) -> list[dict[str, Any]]:
     from openpyxl import load_workbook
 
-    wb = load_workbook(path, data_only=True)
+    with _form_snapshot(path) as source:
+        wb = load_workbook(source, data_only=True)
     records: list[dict[str, Any]] = []
     for ws in wb.worksheets:
         spec = _infer_spec(ws.title, [])
@@ -436,7 +486,8 @@ def _read_xlsx(path: Path) -> list[dict[str, Any]]:
 def _read_docx(path: Path) -> list[dict[str, Any]]:
     from docx import Document
 
-    doc = Document(str(path))
+    with _form_snapshot(path) as source:
+        doc = Document(source)
     title_text = "\n".join(p.text for p in doc.paragraphs[:8])
     table_fields: dict[str, Any] = {}
     for table in doc.tables:
@@ -446,7 +497,7 @@ def _read_docx(path: Path) -> list[dict[str, Any]]:
                 field = normalize_import_key(cells[2].text)
                 value = cells[1].text
             elif len(cells) >= 2:
-                field = _field_from_header(cells[0].text)
+                field = cells[0].text
                 value = cells[1].text
             else:
                 continue
@@ -456,6 +507,7 @@ def _read_docx(path: Path) -> list[dict[str, Any]]:
     spec = _infer_spec(title_text, list(table_fields))
     if not spec:
         return [{"file": str(path), "entity": "", "data": {}, "error": "No se pudo identificar el formulario"}]
+    table_fields = {_field_from_header(field, spec): value for field, value in table_fields.items()}
     return [{"file": str(path), "entity": spec.key, "data": clean_record(spec, table_fields), "error": ""}]
 
 

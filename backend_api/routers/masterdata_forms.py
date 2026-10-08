@@ -244,9 +244,16 @@ def _field_from_header(value: Any, spec: dict | None = None) -> str:
     fields = set(spec["fields"]) if spec else None
     if fields and text in fields:
         return text
-    mapped = LABEL_TO_FIELD.get(text.lower())
-    if mapped and (not fields or mapped in fields):
-        return mapped
+    candidates = fields or set(LABELS)
+    exact = [field for field in candidates if LABELS.get(field, field).casefold() == text.casefold()]
+    if len(exact) == 1:
+        return exact[0]
+    # A bilingual heading may have an edited half; accept only an unambiguous match.
+    parts = {part.strip().casefold() for part in text.split("/") if part.strip()}
+    matches = [field for field in candidates if parts.intersection(
+        part.strip().casefold() for part in LABELS.get(field, field).split("/"))]
+    if len(matches) == 1:
+        return matches[0]
     return text
 
 
@@ -337,7 +344,7 @@ def _read_docx_upload(path: Path) -> list[dict[str, Any]]:
                 field = _normalize_import_key(cells[2].text)
                 value = cells[1].text
             elif len(cells) >= 2:
-                field = _field_from_header(cells[0].text)
+                field = cells[0].text
                 value = cells[1].text
             else:
                 continue
@@ -346,6 +353,7 @@ def _read_docx_upload(path: Path) -> list[dict[str, Any]]:
     entity, spec = _infer_upload_spec(title_text, list(table_fields))
     if not entity or not spec:
         return [{"file": str(path), "entity": "", "data": {}, "error": "No se pudo identificar el formulario"}]
+    table_fields = {_field_from_header(field, spec): value for field, value in table_fields.items()}
     return [{"file": str(path), "entity": entity, "data": _clean_record(entity, table_fields), "error": ""}]
 
 
@@ -353,12 +361,17 @@ def _import_masterdata_files(paths: list[Path]) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     for path in paths:
         suffix = path.suffix.lower()
-        if suffix == ".xlsx":
-            records.extend(_read_xlsx_upload(path))
-        elif suffix == ".docx":
-            records.extend(_read_docx_upload(path))
-        else:
-            records.append({"file": str(path), "entity": "", "data": {}, "error": "Formato no soportado"})
+        try:
+            if suffix == ".xlsx":
+                records.extend(_read_xlsx_upload(path))
+            elif suffix == ".docx":
+                records.extend(_read_docx_upload(path))
+            else:
+                raise ValueError("Formato no soportado")
+        except Exception:
+            records.append({"file": str(path), "entity": "", "data": {}, "error":
+                "No se pudo leer el archivo. Compruebe que sea un Excel o Word valido, "
+                "sin contrasena y descargado completamente de OneDrive."})
     return records
 
 
@@ -501,6 +514,7 @@ async def upload_masterdata_forms(
     failed: list[dict] = []
     imported: list[dict] = []
     temp_paths: list[Path] = []
+    filenames: dict[str, str] = {}
     try:
         for upload in files:
             suffix = Path(upload.filename or "").suffix.lower()
@@ -510,9 +524,11 @@ async def upload_masterdata_forms(
             with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
                 tmp.write(await upload.read())
                 temp_paths.append(Path(tmp.name))
+                filenames[tmp.name] = upload.filename or "Formulario"
         if temp_paths:
             imported = _import_masterdata_files(temp_paths)
         for idx, record in enumerate(imported, start=1):
+            record["file"] = filenames.get(record.get("file"), "Formulario")
             if record.get("error"):
                 failed.append({"index": idx, "file": record.get("file"), "error": record.get("error")})
                 continue
