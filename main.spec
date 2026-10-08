@@ -7,6 +7,7 @@
 # ============================================================
 
 import os
+from pathlib import Path
 from PyInstaller.utils.hooks import collect_submodules
 
 # Ruta fija del proyecto.
@@ -93,6 +94,26 @@ datas = [
     ("version.py", "."),
     *tcl_datas,
 ]
+
+# Do not distribute local records, caches, or credentials with the desktop app.
+safe_datas = []
+for source, destination in datas:
+    root = Path(source)
+    if source in {"assets", "Modulos", "backend_api", "desktop_services"}:
+        for file in root.rglob("*"):
+            if not file.is_file():
+                continue
+            relative = file.relative_to(root)
+            if any(part in {"__pycache__", ".git", "storage", "tmp", "tests"} for part in relative.parts):
+                continue
+            if file.name.startswith(".env") or file.suffix.lower() in {".pyc", ".pyo", ".pem", ".key", ".log", ".db", ".sqlite"}:
+                continue
+            if source == "backend_api" and file.name in {"surveyors.xlsx", "git"}:
+                continue
+            safe_datas.append((str(file), str(Path(destination) / relative.parent)))
+    else:
+        safe_datas.append((source, destination))
+datas = safe_datas
 
 binaries = []
 for dll in ("tcl86t.dll", "tk86t.dll"):
