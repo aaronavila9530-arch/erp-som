@@ -50,7 +50,7 @@ DisableFinishedPage=no
 
 [Files]
 ; Copia todo el Ã¡rbol exactamente como sale de dist
-Source: "{#DistRoot}\ERP-SOM\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#DistRoot}\ERP-SOM\*"; DestDir: "{app}"; Excludes: "~$*,Varios Aaron.xlsx"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\ERP-SOM"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"

@@ -106,7 +106,7 @@ for source, destination in datas:
             relative = file.relative_to(root)
             if any(part in {"__pycache__", ".git", "storage", "tmp", "tests"} for part in relative.parts):
                 continue
-            if file.name.startswith(".env") or file.suffix.lower() in {".pyc", ".pyo", ".pem", ".key", ".log", ".db", ".sqlite"}:
+            if file.name.startswith((".env", "~$")) or file.name == "Varios Aaron.xlsx" or file.suffix.lower() in {".pyc", ".pyo", ".pem", ".key", ".log", ".db", ".sqlite"}:
                 continue
             if source == "backend_api" and file.name in {"surveyors.xlsx", "git"}:
                 continue
