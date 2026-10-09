@@ -21,7 +21,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20261009-home-pending-v2"
+_ASSET_VERSION = "20261009-home-pending-v3"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -1276,20 +1276,43 @@ def som_web_home() -> HTMLResponse:
     .view-card:hover { outline:2px solid rgba(0,93,168,.18); }
     .master-empty { margin-top:12px; }
     .workspace { margin-top:12px; min-width:0; max-width:100%; }
-    .home-queue-section { padding:16px 0; border-bottom:1px solid var(--line); margin-bottom:16px; min-width:0; }
-    .home-queue-grid { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
-    .home-queue-grid section { min-width:0; }
-    .home-queue-grid h2 { font-size:16px; margin:8px 0; }
-    .home-queue-grid table { width:100%; min-width:0; }
-    .home-queue-grid td { white-space:normal; }
-    .home-queue-count { text-align:right; width:90px; }
-    button.home-queue-link { border:0; background:transparent; color:#005f85; text-align:left; white-space:normal; padding:7px 0; box-shadow:none; height:auto; min-height:38px; }
-    button.home-queue-link:hover { text-decoration:underline; }
+    .home-queue-section { padding:8px 0 20px; margin-bottom:16px; min-width:0; border-bottom:1px solid var(--line); }
+    .home-queue-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:16px; }
+    .home-queue-heading h2 { font-size:18px; margin:0; }
+    .home-queue-scope { color:#627181; font-size:12px; }
+    .home-queue-grid { display:flex; gap:20px; }
+    .home-queue-group { flex:4; min-width:0; }
+    .home-queue-group.billing { flex:1; }
+    .home-queue-group h3 { margin:0; padding:0 0 9px; font-size:12px; font-weight:700; color:#536373; border-bottom:2px solid #168078; }
+    .home-queue-group.billing h3 { border-color:#bd8026; }
+    .home-queue-metrics { display:grid; grid-template-columns:repeat(auto-fit,minmax(0,1fr)); background:#fff; border-bottom:1px solid var(--line); }
+    button.home-queue-metric { display:grid; grid-template-columns:minmax(0,1fr) 20px; grid-template-rows:48px minmax(40px,auto); align-content:center; align-items:center; column-gap:8px; width:100%; min-width:0; min-height:126px; height:auto; padding:14px 18px; background:transparent; color:#172d3b; border:0; border-right:1px solid #e4e9ed; border-radius:0; box-shadow:none; text-align:left; white-space:normal; }
+    button.home-queue-metric:last-child { border-right:0; }
+    button.home-queue-metric:hover { background:#f0f7f6; }
+    button.home-queue-metric:focus-visible { outline:2px solid #087970; outline-offset:-3px; }
+    .home-queue-value { font-size:32px; line-height:1.2; font-weight:700; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+    .home-queue-label { grid-column:1 / -1; color:#445769; font-size:13px; line-height:1.4; align-self:start; }
+    .home-queue-arrow { color:#087970; font-size:20px; text-align:right; }
+    .home-queue-metric.is-clear .home-queue-value { color:#82909b; font-weight:500; }
+    .home-queue-metric.is-clear .home-queue-arrow { color:#9aa6ae; }
     .home-queue-modal { width:min(1400px,96vw); max-width:96vw; }
     .home-queue-modal .toolbar { flex-wrap:wrap; }
     .home-queue-modal label { min-width:0; max-width:100%; }
     .home-queue-modal input,.home-queue-modal select { max-width:100%; }
-    @media(max-width:800px) { .home-queue-grid { grid-template-columns:1fr; gap:8px; } }
+    @media(max-width:1000px) {
+      .home-queue-grid { flex-direction:column; gap:16px; }
+      .home-queue-group.billing button.home-queue-metric { grid-template-columns:80px minmax(0,1fr) 20px; grid-template-rows:auto; min-height:74px; }
+      .home-queue-group.billing .home-queue-label { grid-column:2; grid-row:1; align-self:center; }
+      .home-queue-group.billing .home-queue-arrow { grid-column:3; grid-row:1; }
+    }
+    @media(max-width:600px) {
+      .home-queue-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); }
+      .home-queue-group.billing .home-queue-metrics { grid-template-columns:1fr; }
+      button.home-queue-metric { padding:12px 14px; min-height:112px; grid-template-rows:40px minmax(36px,auto); }
+      button.home-queue-metric:nth-child(2n) { border-right:0; }
+      button.home-queue-metric:nth-child(n+3) { border-top:1px solid #e4e9ed; }
+      .home-queue-value { font-size:28px; }
+    }
     .table-wrap { overflow:auto; border:1px solid var(--line); border-radius:8px; max-height:520px; max-width:100%; }
     table { border-collapse:collapse; width:100%; min-width:850px; font-size:13px; }
     th,td { border-bottom:1px solid #e6edf4; padding:8px 10px; text-align:left; white-space:nowrap; }
@@ -2605,9 +2628,10 @@ def som_web_home() -> HTMLResponse:
       homePending = payload;
       if (payload?.error) { target.innerHTML = `<div class="status error">${esc(payload.error)}</div>`; return; }
       const queues = payload?.queues || {};
-      const row = key => `<tr><td><button class="home-queue-link" onclick="openHomePending('${key}')">${esc(homePendingTitles[key])}</button></td><td class="home-queue-count"><button class="home-queue-link" onclick="openHomePending('${key}')">${intFmt.format(queues[key].count)}</button></td></tr>`;
-      const section = (title, keys) => `<section><h2>${title}</h2><div class="table-wrap"><table><thead><tr><th>Estado</th><th>Cantidad</th></tr></thead><tbody>${keys.filter(key => queues[key]).map(row).join("")}</tbody></table></div></section>`;
-      target.innerHTML = `<div class="panel-head"><h2>Pendientes operativos</h2><span class="muted">${esc(payload.company)} · Todas las fechas</span></div><div class="home-queue-grid">${queues.billing ? section("Facturación", ["billing"]) : ""}${queues.missing ? section("Informes", ["missing","approval","rework","unlinked"]) : ""}</div>`;
+      const labels = {billing:"Servicios por facturar", missing:"Por elaborar", approval:"Por aprobar", rework:"Borradores / rechazados", unlinked:"Sin servicio vinculado"};
+      const metric = key => `<button class="home-queue-metric ${Number(queues[key].count) === 0 ? "is-clear" : ""}" aria-label="${esc(homePendingTitles[key])}" title="${esc(homePendingTitles[key])}" onclick="openHomePending('${key}')"><strong class="home-queue-value">${intFmt.format(queues[key].count)}</strong><span class="home-queue-arrow" aria-hidden="true">&rarr;</span><span class="home-queue-label">${esc(labels[key])}</span></button>`;
+      const section = (title, keys, kind="") => `<section class="home-queue-group ${kind}" aria-label="${title}"><h3>${title}</h3><div class="home-queue-metrics">${keys.filter(key => queues[key]).map(metric).join("")}</div></section>`;
+      target.innerHTML = `<div class="home-queue-heading"><h2>Pendientes operativos</h2><span class="home-queue-scope">${esc(payload.company)} · Todas las fechas</span></div><div class="home-queue-grid">${queues.billing ? section("Facturación", ["billing"], "billing") : ""}${queues.missing ? section("Informes", ["missing","approval","rework","unlinked"]) : ""}</div>`;
       if (!Object.keys(queues).length) target.innerHTML = "";
     }
     function openHomePending(key) {
