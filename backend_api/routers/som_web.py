@@ -21,7 +21,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20261009-home-pending-v3"
+_ASSET_VERSION = "20261009-home-pending-v4"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -1276,7 +1276,7 @@ def som_web_home() -> HTMLResponse:
     .view-card:hover { outline:2px solid rgba(0,93,168,.18); }
     .master-empty { margin-top:12px; }
     .workspace { margin-top:12px; min-width:0; max-width:100%; }
-    .home-queue-section { padding:8px 0 20px; margin-bottom:16px; min-width:0; border-bottom:1px solid var(--line); }
+    .home-queue-section { padding:8px 0 20px; margin-bottom:16px; min-width:0; border-bottom:1px solid var(--line); container:homequeues / inline-size; }
     .home-queue-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:16px; }
     .home-queue-heading h2 { font-size:18px; margin:0; }
     .home-queue-scope { color:#627181; font-size:12px; }
@@ -1306,6 +1306,20 @@ def som_web_home() -> HTMLResponse:
       .home-queue-group.billing .home-queue-arrow { grid-column:3; grid-row:1; }
     }
     @media(max-width:600px) {
+      .home-queue-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); }
+      .home-queue-group.billing .home-queue-metrics { grid-template-columns:1fr; }
+      button.home-queue-metric { padding:12px 14px; min-height:112px; grid-template-rows:40px minmax(36px,auto); }
+      button.home-queue-metric:nth-child(2n) { border-right:0; }
+      button.home-queue-metric:nth-child(n+3) { border-top:1px solid #e4e9ed; }
+      .home-queue-value { font-size:28px; }
+    }
+    @container homequeues (max-width:900px) {
+      .home-queue-grid { flex-direction:column; gap:16px; }
+      .home-queue-group.billing button.home-queue-metric { grid-template-columns:80px minmax(0,1fr) 20px; grid-template-rows:auto; min-height:74px; }
+      .home-queue-group.billing .home-queue-label { grid-column:2; grid-row:1; align-self:center; }
+      .home-queue-group.billing .home-queue-arrow { grid-column:3; grid-row:1; }
+    }
+    @container homequeues (max-width:600px) {
       .home-queue-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); }
       .home-queue-group.billing .home-queue-metrics { grid-template-columns:1fr; }
       button.home-queue-metric { padding:12px 14px; min-height:112px; grid-template-rows:40px minmax(36px,auto); }
