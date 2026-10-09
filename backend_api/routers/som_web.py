@@ -13,6 +13,7 @@ import database
 from routers.user_admin import MODULES
 from services.credit_control import build_credit_decision
 from services.tenanting import company_code
+from services.home_pending import load_pending
 
 
 router = APIRouter(tags=["SOM Web"])
@@ -20,7 +21,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20261008-masterdata-import-v1"
+_ASSET_VERSION = "20261009-home-pending-v1"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -432,44 +433,6 @@ def som_web_action_center(
         if can_show("hhrre", "hours_approve") or can_show("hhrr", "hours_approve") or can_show("hhrre", "ot_log_status") or can_show("hhrr", "ot_log_status"):
             actions.append(_action_item("hr_hours_pending", "hhrre", "Horas pendientes de aprobar", hours_pending, "warning", "Registros de horas en espera de aprobación.", "Revisar horas", "hours_approve"))
 
-        reports_to_generate = _safe_action_scalar(
-            cur,
-            """
-            SELECT COUNT(*)
-            FROM servicios
-            WHERE company_code=%s
-              AND LOWER(TRIM(COALESCE(estado,'')))='finalizado'
-              AND fecha_inicio >= %s
-              AND fecha_inicio < %s
-              AND (
-                    num_informe IS NULL
-                 OR TRIM(num_informe)=''
-                 OR LOWER(TRIM(num_informe))='none'
-              )
-            """,
-            (company, start, end),
-        )
-        if can_show("informes"):
-            actions.append(_action_item("reports_missing_number", "informes", "Informes pendientes por generar", reports_to_generate, "warning", "Servicios finalizados sin número de informe.", "Abrir informes"))
-
-        reports_to_review = _safe_action_scalar(
-            cur,
-            """
-            SELECT COUNT(*)
-            FROM servicios
-            WHERE company_code=%s
-              AND LOWER(TRIM(COALESCE(estado,'')))='finalizado'
-              AND fecha_inicio >= %s
-              AND fecha_inicio < %s
-              AND COALESCE(NULLIF(TRIM(status_informe),''),'Pending')='Pending'
-              AND COALESCE(NULLIF(TRIM(num_informe),''),'') <> ''
-              AND LOWER(TRIM(COALESCE(num_informe,''))) <> 'none'
-            """,
-            (company, start, end),
-        )
-        if can_show("informes"):
-            actions.append(_action_item("reports_review", "informes", "Informes pendientes de revisar", reports_to_review, "info", "Servicios con informe referenciado y revisión pendiente.", "Revisar informes"))
-
         services_active = _safe_action_scalar(
             cur,
             """
@@ -485,21 +448,18 @@ def som_web_action_center(
         if can_show("servicios"):
             actions.append(_action_item("services_active", "servicios", "Servicios activos por cerrar o actualizar", services_active, "info", "Operaciones abiertas con seguimiento pendiente.", "Abrir servicios"))
 
-        billable_services = _safe_action_scalar(
-            cur,
-            """
-            SELECT COUNT(*)
-            FROM servicios
-            WHERE company_code=%s
-              AND LOWER(TRIM(COALESCE(estado,'')))='finalizado'
-              AND fecha_inicio >= %s
-              AND fecha_inicio < %s
-              AND COALESCE(valor_factura,0)=0
-            """,
-            (company, start, end),
-        )
-        if can_show("finanzas"):
-            actions.append(_action_item("billing_pending", "finanzas", "Servicios finalizados pendientes de facturar", billable_services, "warning", "Billing debe revisar servicios sin valor de factura.", "Abrir facturación"))
+        operational = {"queues": {}, "sources": [], "company": company}
+        if can_show("finanzas") or can_show("informes"):
+            cur.execute("SAVEPOINT home_pending")
+            try:
+                operational = load_pending(cur, company, billing=can_show("finanzas"), reports=can_show("informes"))
+                cur.execute("RELEASE SAVEPOINT home_pending")
+            except Exception:
+                cur.execute("ROLLBACK TO SAVEPOINT home_pending")
+                cur.execute("RELEASE SAVEPOINT home_pending")
+                import logging
+                logging.getLogger(__name__).exception("Unable to load home operational queues")
+                operational["error"] = "No se pudieron consultar los pendientes. Actualice para reintentar."
 
         visible = [item for item in actions if item["count"] > 0]
         visible.sort(key=lambda item: ({"critical": 0, "warning": 1, "info": 2}.get(item["severity"], 3), -item["count"], item["title"]))
@@ -508,6 +468,7 @@ def som_web_action_center(
             "year": selected_year,
             "generated_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
             "actions": visible,
+            "operational": operational,
             "counts": {
                 "critical": sum(1 for item in visible if item["severity"] == "critical"),
                 "warning": sum(1 for item in visible if item["severity"] == "warning"),
@@ -1315,6 +1276,20 @@ def som_web_home() -> HTMLResponse:
     .view-card:hover { outline:2px solid rgba(0,93,168,.18); }
     .master-empty { margin-top:12px; }
     .workspace { margin-top:12px; min-width:0; max-width:100%; }
+    .home-queue-section { padding:16px 0; border-bottom:1px solid var(--line); margin-bottom:16px; min-width:0; }
+    .home-queue-grid { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
+    .home-queue-grid section { min-width:0; }
+    .home-queue-grid h2 { font-size:16px; margin:8px 0; }
+    .home-queue-grid table { width:100%; min-width:0; }
+    .home-queue-grid td { white-space:normal; }
+    .home-queue-count { text-align:right; width:90px; }
+    button.home-queue-link { border:0; background:transparent; color:#005f85; text-align:left; white-space:normal; padding:7px 0; box-shadow:none; height:auto; min-height:38px; }
+    button.home-queue-link:hover { text-decoration:underline; }
+    .home-queue-modal { width:min(1400px,96vw); max-width:96vw; }
+    .home-queue-modal .toolbar { flex-wrap:wrap; }
+    .home-queue-modal label { min-width:0; max-width:100%; }
+    .home-queue-modal input,.home-queue-modal select { max-width:100%; }
+    @media(max-width:800px) { .home-queue-grid { grid-template-columns:1fr; gap:8px; } }
     .table-wrap { overflow:auto; border:1px solid var(--line); border-radius:8px; max-height:520px; max-width:100%; }
     table { border-collapse:collapse; width:100%; min-width:850px; font-size:13px; }
     th,td { border-bottom:1px solid #e6edf4; padding:8px 10px; text-align:left; white-space:nowrap; }
@@ -2619,9 +2594,53 @@ def som_web_home() -> HTMLResponse:
       const aging = homeSummary?.executive?.aging || [];
       return `<div class="home-insight-metrics">${homeInsightMetric("CxC abierta", money(item.amount || homeSummary?.kpis?.ar || 0))}${homeInsightMetric("Servicios YTD", intFmt.format(totalServices))}${homeInsightMetric("Buckets", intFmt.format(aging.length))}</div><p class="home-insight-note">Vista financiera abierta según permisos. Prioriza cobros vencidos y revisa si hay facturas FE sin gestión reciente.</p><div class="home-insight-actions">${homeFinanceAction("collections", "Abrir CxC")}</div>`;
     }
+    let homePending = null;
+    let homePendingKey = "";
+    let homePendingPage = 0;
+    let homePendingRequest = 0;
+    const homePendingTitles = {billing:"Servicios pendientes de facturación", missing:"Informes pendientes de hacerse", approval:"Informes pendientes de aprobación", rework:"Informes en borrador o rechazados", unlinked:"Informes sin servicio vinculado"};
+    function renderHomePending(payload) {
+      const target = $("homePendingTables");
+      if (!target) return;
+      homePending = payload;
+      if (payload?.error) { target.innerHTML = `<div class="status error">${esc(payload.error)}</div>`; return; }
+      const queues = payload?.queues || {};
+      const row = key => `<tr><td><button class="home-queue-link" onclick="openHomePending('${key}')">${esc(homePendingTitles[key])}</button></td><td class="home-queue-count"><button class="home-queue-link" onclick="openHomePending('${key}')">${intFmt.format(queues[key].count)}</button></td></tr>`;
+      const section = (title, keys) => `<section><h2>${title}</h2><div class="table-wrap"><table><thead><tr><th>Estado</th><th>Cantidad</th></tr></thead><tbody>${keys.filter(key => queues[key]).map(row).join("")}</tbody></table></div></section>`;
+      target.innerHTML = `<div class="panel-head"><h2>Pendientes operativos</h2><span class="muted">${esc(payload.company)} · Todas las fechas</span></div><div class="home-queue-grid">${queues.billing ? section("Facturación", ["billing"]) : ""}${queues.missing ? section("Informes", ["missing","approval","rework","unlinked"]) : ""}</div>`;
+      if (!Object.keys(queues).length) target.innerHTML = "";
+    }
+    function openHomePending(key) {
+      if (!homePending?.queues?.[key] || homePending.company !== selectedCompany()) return;
+      closeModal(); homePendingKey = key; homePendingPage = 0;
+      const rows = homePending.queues[key].rows;
+      const types = [...new Set(rows.map(row => row.tipo_informe).filter(Boolean))].sort();
+      document.body.insertAdjacentHTML("beforeend", `<div class="modal-backdrop" id="svcModal" data-home-pending="true"><div class="modal home-queue-modal" role="dialog" aria-modal="true" aria-labelledby="homePendingTitle"><div class="modal-head"><h2 id="homePendingTitle">${esc(homePendingTitles[key])}</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div><div class="toolbar"><label>Buscar<input id="homePendingSearch" type="search" oninput="homePendingPage=0; renderHomePendingDetail()" /></label>${types.length ? `<label>Tipo de informe<select id="homePendingType" onchange="homePendingPage=0; renderHomePendingDetail()"><option value="">Todos</option>${types.map(type => `<option>${esc(type)}</option>`).join("")}</select></label>` : ""}<button class="secondary" onclick="exportHomePending()">Exportar Excel</button></div><div id="homePendingRows"></div><div class="toolbar"><button id="homePendingPrev" class="secondary" onclick="homePendingPage--; renderHomePendingDetail()" aria-label="Página anterior">&larr;</button><span id="homePendingPageLabel"></span><button id="homePendingNext" class="secondary" onclick="homePendingPage++; renderHomePendingDetail()" aria-label="Página siguiente">&rarr;</button></div></div></div>`);
+      renderHomePendingDetail(); $("homePendingSearch").focus();
+    }
+    function filteredHomePending() {
+      const search = String($("homePendingSearch")?.value || "").trim().toLocaleLowerCase();
+      const type = $("homePendingType")?.value || "";
+      return (homePending?.queues?.[homePendingKey]?.rows || []).filter(row => (!type || row.tipo_informe === type) && (!search || Object.values(row).some(value => String(value ?? "").toLocaleLowerCase().includes(search))));
+    }
+    function homePendingColumns() {
+      return [["consec","Servicio"],["servicios","Servicios vinculados"],["cliente","Cliente"],["buque_contenedor","Buque / contenedor"],["operacion","Operación"],["fecha_fin","Finalización"],["num_informe","N.º asignado"],...(homePendingKey === "billing" || homePendingKey === "missing" ? [] : [["tipo_informe","Tipo de informe"],["numero","N.º documento"],["informe_id","ID informe"],["estado_informe","Estado"],["titulo","Título"]])];
+    }
+    function renderHomePendingDetail() {
+      const rows = filteredHomePending(), columns = homePendingColumns(), pages = Math.max(1, Math.ceil(rows.length / 100));
+      homePendingPage = Math.min(Math.max(homePendingPage, 0), pages - 1);
+      $("homePendingRows").innerHTML = `<div class="status">${intFmt.format(rows.length)} registros · ${esc(homePending.company)} · Todas las fechas</div><div class="table-wrap"><table><thead><tr>${columns.map(([,label]) => `<th>${esc(label)}</th>`).join("")}</tr></thead><tbody>${rows.slice(homePendingPage * 100, (homePendingPage + 1) * 100).map(row => `<tr>${columns.map(([key]) => `<td>${esc(row[key] ?? "")}</td>`).join("")}</tr>`).join("") || `<tr><td colspan="${columns.length}">Sin pendientes</td></tr>`}</tbody></table></div>`;
+      $("homePendingPageLabel").textContent = `${homePendingPage + 1} / ${pages}`;
+      $("homePendingPrev").disabled = homePendingPage === 0;
+      $("homePendingNext").disabled = homePendingPage === pages - 1;
+    }
+    function exportHomePending() {
+      downloadExcelFile(`pendientes_${homePendingKey}.xls`, filteredHomePending(), homePendingColumns().map(([key]) => key), homePendingTitles[homePendingKey]);
+    }
     function renderHome() {
       const role = String(session?.rol || "").toLowerCase();
       $("content").innerHTML = `
+        <div id="homePendingTables" class="home-queue-section"><div class="status">Consultando pendientes operativos...</div></div>
         <div id="homeNewsBoard" class="home-news-mount"></div>
         <div class="home-action-layout">
           <div class="home-command">
@@ -2665,8 +2684,15 @@ def som_web_home() -> HTMLResponse:
     async function loadHomeActionCenter() {
       const list = $("homeActionList");
       if (!list) return;
+      const company = selectedCompany();
+      const request = ++homePendingRequest;
+      homePending = null;
+      if ($("svcModal")?.dataset.homePending) closeModal();
+      if ($("homePendingTables")) $("homePendingTables").innerHTML = '<div class="status">Consultando pendientes operativos...</div>';
       try {
         const payload = await getJSON(`/som/action-center?anio=${encodeURIComponent($("year").value)}`);
+        if (!list.isConnected || selectedCompany() !== company || request !== homePendingRequest) return;
+        renderHomePending(payload.operational || {error:"Pendientes operativos no disponibles."});
         const rows = (payload.actions || []).filter(item => canView(item.module));
         const counts = rows.reduce((acc,item) => {
           const amount = Number(item.count || 0);
@@ -2675,12 +2701,15 @@ def som_web_home() -> HTMLResponse:
           if (item.severity === "warning") acc.warning += amount;
           return acc;
         }, {critical:0, warning:0, total:0});
+        const operationalCount = Object.values(payload.operational?.queues || {}).reduce((total, queue) => total + Number(queue.count || 0), 0);
+        counts.total += operationalCount;
+        counts.warning += operationalCount;
         if ($("homeCriticalCount")) $("homeCriticalCount").textContent = counts.critical;
         if ($("homeWarningCount")) $("homeWarningCount").textContent = counts.warning;
         if ($("homeTotalCount")) $("homeTotalCount").textContent = counts.total;
         if ($("homeActionStamp")) $("homeActionStamp").textContent = payload.generated_at ? new Date(payload.generated_at).toLocaleString() : "Actualizado";
         if (!rows.length) {
-          list.innerHTML = '<div class="card home-action-empty"><strong>Sin pendientes visibles para tu rol.</strong><p class="muted">Cuando haya aprobaciones, pagos vencidos, informes por revisar o asientos por postear, aparecerán aquí.</p></div>';
+          list.innerHTML = '<div class="card home-action-empty"><strong>Sin otros pendientes visibles para tu rol.</strong></div>';
           return;
         }
         list.innerHTML = rows.map(item => `
@@ -2690,6 +2719,8 @@ def som_web_home() -> HTMLResponse:
             <button onclick="event.stopPropagation(); selectModule(${homeJs(item.module)})">${esc(item.cta || "Abrir")}</button>
           </div>`).join("");
       } catch (err) {
+        if (!list.isConnected || selectedCompany() !== company || request !== homePendingRequest) return;
+        renderHomePending({error:`No se pudieron consultar pendientes: ${err.message}`});
         list.innerHTML = `<div class="status error">No se pudieron cargar pendientes: ${esc(err.message)}</div>`;
       }
     }
@@ -10168,6 +10199,8 @@ def som_web_home() -> HTMLResponse:
     };
     function changeCompany(value) {
       if (!value) return;
+      if ($("svcModal")?.dataset.homePending) closeModal();
+      homePending = null;
       if (currentModule === "informes" && !SOMTally.canLeave()) {
         $("company").value = session.company; $("companyTop").value = session.company; return;
       }
