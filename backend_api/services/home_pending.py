@@ -7,6 +7,11 @@ from psycopg2 import sql
 from services.tenanting import DEFAULT_COMPANY_CODE
 
 
+# User-requested dashboard exclusions (2026-10-09), scoped to existing services.
+# Do not match vessel names: future operations must remain billable.
+BILLING_QUEUE_EXCLUSIONS = frozenset({("MSL-CR", "5"), ("MSL-CR", "321")})
+
+
 # Draft sections share a document number; header order establishes status precedence.
 REPORT_SOURCES = {
     "container_reports": ("Contenedores", ("report_no", "linked_report_number")),
@@ -39,7 +44,7 @@ def empty_reference(value):
     return normalized(value) in {"", "NONE", "NULL", "N/A"}
 
 
-def classify_queues(services, reports):
+def classify_queues(services, reports, *, company=None):
     queues = {key: [] for key in ("billing", "missing", "approval", "rework", "unlinked")}
     by_number, by_service = defaultdict(list), defaultdict(list)
     for service in services:
@@ -78,7 +83,7 @@ def classify_queues(services, reports):
     for service in services:
         if str(service.get("estado") or "").strip().lower() != "finalizado":
             continue
-        if empty_reference(service.get("factura")):
+        if empty_reference(service.get("factura")) and (company, str(service["consec"])) not in BILLING_QUEUE_EXCLUSIONS:
             queues["billing"].append(service)
         if service["consec"] not in linked_services:
             queues["missing"].append(service)
@@ -128,7 +133,7 @@ def load_pending(cur, company, *, billing=True, reports=True):
                     "titulo": row.get("title") or row.get("name") or "",
                     "estado_informe": row.get("status") or "Sin estado",
                     "has_approval": "status" in columns})
-    queues = classify_queues(services, documents)
+    queues = classify_queues(services, documents, company=company)
     allowed = (["billing"] if billing else []) + (["missing", "approval", "rework", "unlinked"] if reports else [])
     return {"queues": {key: {"count": len(queues[key]), "rows": queues[key]} for key in allowed},
             "sources": sorted(set(sources)), "company": company}

@@ -19,6 +19,20 @@ def report(n=1, **changes):
 
 
 class PendingTests(unittest.TestCase):
+    def test_msl_requested_billing_exclusions_leave_services_and_reports_unchanged(self):
+        rows = [service(5, buque_contenedor="MV ENISHI"), service(321, buque_contenedor="MV THORCO LIVA"),
+                service(999, buque_contenedor="MV ENISHI")]
+        result = classify_queues(rows, [], company="MSL-CR")
+        self.assertEqual([r["consec"] for r in result["billing"]], [999])
+        self.assertEqual(len(result["missing"]), 3)
+        self.assertTrue(all(r["factura"] is None and r["estado"] == "Finalizado" for r in rows))
+        other = classify_queues(rows, [], company="MCI-CR")
+        self.assertEqual(len(other["billing"]), 3)
+
+    def test_billing_exclusions_accept_database_or_api_identifiers(self):
+        result = classify_queues([service("5"), service("321")], [], company="MSL-CR")
+        self.assertEqual(result["billing"], [])
+
     def test_billing_uses_empty_invoice_not_value_or_year(self):
         rows = [service(1, valor_factura=500), service(2, factura="  "),
                 service(3, factura="2209", valor_factura=0), service(4, estado="Activo")]
