@@ -1,5 +1,6 @@
 import sys
 import unittest
+from unittest.mock import MagicMock, patch
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -102,6 +103,37 @@ class PendingTests(unittest.TestCase):
         result = load_pending(cur, "MSL-CR", reports=False)
         self.assertEqual(set(result["queues"]), {"billing"})
         self.assertEqual(len(cur.calls), 1)
+
+
+class EndpointTests(unittest.TestCase):
+    def call_endpoint(self, modules, result=None, error=None):
+        from routers import som_web
+        conn = MagicMock()
+        with patch.object(som_web.database, "get_conn", return_value=conn), \
+             patch.object(som_web.database, "release_conn"), \
+             patch.object(som_web, "_safe_action_scalar", return_value=0), \
+             patch.object(som_web, "load_pending", return_value=result, side_effect=error) as load:
+            payload = som_web.som_web_action_center(anio=2026, x_company_code="MCI-CR",
+                x_role="user", x_modules=modules, x_permissions="")
+        return payload, load, conn
+
+    def test_no_finance_or_reports_permission_does_not_read_queues(self):
+        payload, load, _ = self.call_endpoint("servicios")
+        load.assert_not_called()
+        self.assertEqual(payload["operational"]["queues"], {})
+
+    def test_report_permission_does_not_return_billing_queue(self):
+        expected = {"queues": {"missing": {"count": 1, "rows": [service()]}}, "company": "MCI-CR"}
+        payload, load, _ = self.call_endpoint("informes", result=expected)
+        self.assertEqual(load.call_args.kwargs, {"billing": False, "reports": True})
+        self.assertEqual(load.call_args.args[1], "MCI-CR")
+        self.assertEqual(payload["operational"], expected)
+
+    def test_database_failure_is_error_not_zero_pending(self):
+        with self.assertLogs("routers.som_web", level="ERROR"):
+            payload, _, conn = self.call_endpoint("informes", error=RuntimeError("unavailable"))
+        self.assertIn("error", payload["operational"])
+        conn.cursor.return_value.execute.assert_any_call("ROLLBACK TO SAVEPOINT home_pending")
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-"""Read-only operational queues, across every service-report header (not child tables)."""
+"""Read-only operational queues across service-report headers and legacy Draft sections."""
 from collections import defaultdict
 import re
 
@@ -7,13 +7,15 @@ from psycopg2 import sql
 from services.tenanting import DEFAULT_COMPANY_CODE
 
 
-# Draft has two persisted headers; they represent one document, not two reports.
+# Draft sections share a document number; header order establishes status precedence.
 REPORT_SOURCES = {
     "container_reports": ("Contenedores", ("report_no", "linked_report_number")),
     "vessel_grain_sampling_reports": ("Grain Sampling", ("cert_no",)),
     "vessel_truck_supervision_reports": ("Truck Supervision", ("cert_no",)),
     "general_draft_survey": ("Draft Survey", ("draft_report_number",)),
     "draft_survey": ("Draft Survey", ("draft_report_number",)),
+    "draft_survey_word_report": ("Draft Survey", ("draft_report_number",)),
+    "draft_survey_ballast": ("Draft Survey", ("draft_report_number",)),
     "vessel_bunker_reports": ("Bunker Survey", ("bunker_cert_no",)),
     "vessel_cargo_condition_surveys": ("Cargo Condition", ("report_number",)),
     "vessel_crane_inspection_reports": ("Crane Inspection", ("report_number",)),
