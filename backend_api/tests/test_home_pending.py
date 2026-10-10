@@ -120,6 +120,20 @@ class PendingTests(unittest.TestCase):
 
 
 class EndpointTests(unittest.TestCase):
+    def test_local_queue_icons_and_path_allowlist(self):
+        from routers import som_web
+        from fastapi import HTTPException
+        import xml.etree.ElementTree as ET
+        for name in ("receipt-text", "file-pen-line", "badge-check", "pencil-line", "unlink"):
+            response = som_web.som_web_queue_icon(name + ".svg")
+            self.assertEqual(response.media_type, "image/svg+xml")
+            root = ET.parse(response.path).getroot()
+            self.assertEqual(root.tag, "{http://www.w3.org/2000/svg}svg")
+            self.assertTrue(all(node.tag.split("}")[-1] in {"svg", "path", "line", "rect", "circle", "polyline"} for node in root.iter()))
+        with self.assertRaises(HTTPException) as error:
+            som_web.som_web_queue_icon("../som_web.py")
+        self.assertEqual(error.exception.status_code, 404)
+
     def call_endpoint(self, modules, result=None, error=None):
         from routers import som_web
         conn = MagicMock()

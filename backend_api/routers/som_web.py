@@ -21,7 +21,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20261009-home-pending-v5"
+_ASSET_VERSION = "20261009-home-pending-v6"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -1286,43 +1286,49 @@ def som_web_home() -> HTMLResponse:
     .home-queue-group h3 { margin:0; padding:0 0 9px; font-size:12px; font-weight:700; color:#536373; border-bottom:2px solid #168078; }
     .home-queue-group.billing h3 { border-color:#bd8026; }
     .home-queue-metrics { display:grid; grid-template-columns:repeat(auto-fit,minmax(0,1fr)); background:#fff; border-bottom:1px solid var(--line); }
-    button.home-queue-metric { display:grid; grid-template-columns:minmax(0,1fr) 20px; grid-template-rows:48px minmax(40px,auto); align-content:center; align-items:center; column-gap:8px; width:100%; min-width:0; min-height:126px; height:auto; padding:14px 18px; background:transparent; color:#172d3b; border:0; border-right:1px solid #e4e9ed; border-radius:0; box-shadow:none; text-align:left; white-space:normal; }
+    button.home-queue-metric { --queue-accent:#087d79; --queue-tint:#edf8f6; display:grid; grid-template-columns:40px minmax(0,max-content); grid-template-rows:48px 28px; justify-content:center; align-content:center; align-items:center; column-gap:12px; width:100%; min-width:0; min-height:132px; height:auto; padding:16px; background:transparent; color:#172d3b; border:0; border-right:1px solid #e4e9ed; border-radius:0; box-shadow:none; text-align:center; white-space:normal; transition:background-color .15s; }
+    .home-queue-metric[data-queue="billing"] { --queue-accent:#a8640d; --queue-tint:#fff6e8; }
+    .home-queue-metric[data-queue="approval"] { --queue-accent:#2566ad; --queue-tint:#eef5ff; }
+    .home-queue-metric[data-queue="rework"] { --queue-accent:#96620d; --queue-tint:#fff8e9; }
+    .home-queue-metric[data-queue="unlinked"] { --queue-accent:#a4435b; --queue-tint:#fff1f4; }
     button.home-queue-metric:last-child { border-right:0; }
-    button.home-queue-metric:hover { background:#f0f7f6; }
-    button.home-queue-metric:focus-visible { outline:2px solid #087970; outline-offset:-3px; }
-    .home-queue-value { font-size:32px; line-height:1.2; font-weight:700; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
-    .home-queue-label { grid-column:1 / -1; color:#445769; font-size:13px; line-height:1.4; align-self:start; }
-    .home-queue-arrow { color:#087970; font-size:20px; text-align:right; }
+    button.home-queue-metric:hover { background:var(--queue-tint); }
+    button.home-queue-metric:focus-visible { outline:2px solid var(--queue-accent); outline-offset:-3px; }
+    .home-queue-icon { width:40px; height:40px; background:var(--queue-accent); mask:var(--queue-icon) center / contain no-repeat; -webkit-mask:var(--queue-icon) center / contain no-repeat; }
+    .home-queue-value { font-size:32px; line-height:1.2; font-weight:700; font-variant-numeric:tabular-nums; white-space:nowrap; }
+    .home-queue-label { grid-column:1 / -1; color:#445769; font-size:14px; line-height:1.4; font-weight:600; }
+    .home-queue-metric.is-large .home-queue-value { font-size:22px; }
     .home-queue-metric.is-clear .home-queue-value { color:#82909b; font-weight:500; }
-    .home-queue-metric.is-clear .home-queue-arrow { color:#9aa6ae; }
+    .home-queue-metric.is-clear .home-queue-icon { background:#929ea8; }
+    .home-queue-metric.is-clear .home-queue-label { color:#73818d; }
     .home-queue-modal { width:min(1400px,96vw); max-width:96vw; }
     .home-queue-modal .toolbar { flex-wrap:wrap; }
     .home-queue-modal label { min-width:0; max-width:100%; }
     .home-queue-modal input,.home-queue-modal select { max-width:100%; }
     @media(max-width:1000px) {
       .home-queue-grid { flex-direction:column; gap:16px; }
-      .home-queue-group.billing button.home-queue-metric { grid-template-columns:80px minmax(0,1fr) 20px; grid-template-rows:auto; min-height:74px; }
-      .home-queue-group.billing .home-queue-label { grid-column:2; grid-row:1; align-self:center; }
-      .home-queue-group.billing .home-queue-arrow { grid-column:3; grid-row:1; }
+      .home-queue-group.billing button.home-queue-metric { grid-template-columns:40px max-content max-content; grid-template-rows:auto; min-height:82px; }
+      .home-queue-group.billing .home-queue-label { grid-column:3; grid-row:1; }
     }
     @media(max-width:600px) {
       .home-queue-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); }
       .home-queue-group.billing .home-queue-metrics { grid-template-columns:1fr; }
-      button.home-queue-metric { padding:12px 14px; min-height:112px; grid-template-rows:40px minmax(36px,auto); }
+      button.home-queue-metric { padding:12px; min-height:116px; grid-template-columns:32px minmax(0,max-content); grid-template-rows:42px 26px; column-gap:10px; }
+      .home-queue-icon { width:32px; height:32px; }
       button.home-queue-metric:nth-child(2n) { border-right:0; }
       button.home-queue-metric:nth-child(n+3) { border-top:1px solid #e4e9ed; }
       .home-queue-value { font-size:28px; }
     }
     @container homequeues (max-width:900px) {
       .home-queue-grid { flex-direction:column; gap:16px; }
-      .home-queue-group.billing button.home-queue-metric { grid-template-columns:80px minmax(0,1fr) 20px; grid-template-rows:auto; min-height:74px; }
-      .home-queue-group.billing .home-queue-label { grid-column:2; grid-row:1; align-self:center; }
-      .home-queue-group.billing .home-queue-arrow { grid-column:3; grid-row:1; }
+      .home-queue-group.billing button.home-queue-metric { grid-template-columns:40px max-content max-content; grid-template-rows:auto; min-height:82px; }
+      .home-queue-group.billing .home-queue-label { grid-column:3; grid-row:1; }
     }
     @container homequeues (max-width:600px) {
       .home-queue-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); }
       .home-queue-group.billing .home-queue-metrics { grid-template-columns:1fr; }
-      button.home-queue-metric { padding:12px 14px; min-height:112px; grid-template-rows:40px minmax(36px,auto); }
+      button.home-queue-metric { padding:12px; min-height:116px; grid-template-columns:32px minmax(0,max-content); grid-template-rows:42px 26px; column-gap:10px; }
+      .home-queue-icon { width:32px; height:32px; }
       button.home-queue-metric:nth-child(2n) { border-right:0; }
       button.home-queue-metric:nth-child(n+3) { border-top:1px solid #e4e9ed; }
       .home-queue-value { font-size:28px; }
@@ -2642,8 +2648,9 @@ def som_web_home() -> HTMLResponse:
       homePending = payload;
       if (payload?.error) { target.innerHTML = `<div class="status error">${esc(payload.error)}</div>`; return; }
       const queues = payload?.queues || {};
-      const labels = {billing:"Servicios por facturar", missing:"Por elaborar", approval:"Por aprobar", rework:"Borradores / rechazados", unlinked:"Sin servicio vinculado"};
-      const metric = key => `<button class="home-queue-metric ${Number(queues[key].count) === 0 ? "is-clear" : ""}" aria-label="${esc(homePendingTitles[key])}" title="${esc(homePendingTitles[key])}" onclick="openHomePending('${key}')"><strong class="home-queue-value">${intFmt.format(queues[key].count)}</strong><span class="home-queue-arrow" aria-hidden="true">&rarr;</span><span class="home-queue-label">${esc(labels[key])}</span></button>`;
+      const labels = {billing:"Facturar", missing:"Elaborar", approval:"Aprobar", rework:"Corregir", unlinked:"Vincular"};
+      const icons = {billing:"receipt-text", missing:"file-pen-line", approval:"badge-check", rework:"pencil-line", unlinked:"unlink"};
+      const metric = key => `<button data-queue="${key}" class="home-queue-metric ${Number(queues[key].count) === 0 ? "is-clear" : ""} ${Number(queues[key].count) > 9999 ? "is-large" : ""}" aria-label="${esc(homePendingTitles[key])}" aria-describedby="homeQueueCount-${key}" title="${esc(homePendingTitles[key])}" onclick="openHomePending('${key}')"><span class="home-queue-icon" style="--queue-icon:url('/som/queue-icon/${icons[key]}.svg')" aria-hidden="true"></span><strong id="homeQueueCount-${key}" class="home-queue-value">${intFmt.format(queues[key].count)}</strong><span class="home-queue-label">${esc(labels[key])}</span></button>`;
       const section = (title, keys, kind="") => `<section class="home-queue-group ${kind}" aria-label="${title}"><h3>${title}</h3><div class="home-queue-metrics">${keys.filter(key => queues[key]).map(metric).join("")}</div></section>`;
       target.innerHTML = `<div class="home-queue-heading"><h2>Pendientes operativos</h2><span class="home-queue-scope">${esc(payload.company)} · Todas las fechas</span></div><div class="home-queue-grid">${queues.billing ? section("Facturación", ["billing"], "billing") : ""}${queues.missing ? section("Informes", ["missing","approval","rework","unlinked"]) : ""}</div>`;
       if (!Object.keys(queues).length) target.innerHTML = "";
@@ -10295,6 +10302,14 @@ def som_web_home() -> HTMLResponse:
 @router.get("/som/web-version")
 def som_web_version():
     return {"asset_version": _ASSET_VERSION}
+
+
+@router.get("/som/queue-icon/{name}", include_in_schema=False)
+def som_web_queue_icon(name: str):
+    if name not in {"receipt-text.svg", "file-pen-line.svg", "badge-check.svg", "pencil-line.svg", "unlink.svg"}:
+        raise HTTPException(status_code=404, detail="Icono no encontrado")
+    return FileResponse(_ASSETS / "icons" / "lucide" / name, media_type="image/svg+xml",
+                        headers={"Cache-Control": "public, max-age=86400"})
 
 
 def _asset_path(*filenames: str) -> Path | None:
