@@ -14,11 +14,13 @@ from psycopg2.extras import RealDictCursor
 
 from database import get_db
 from rbac_service import has_permission
+from services.tenanting import company_code
+from services.commercial_access import require_commercial_detail
 
 
 router = APIRouter(
     prefix="/comercial",
-    tags=["Comercial"]
+    tags=["Comercial"], dependencies=[Depends(require_commercial_detail)]
 )
 
 # ============================================================
@@ -49,13 +51,18 @@ def comercial_ports_kpis(
     clientes: Optional[List[str]] = Query(None),
     continente: Optional[str] = Query(None),
     pais: Optional[str] = Query(None),
+    puerto: Optional[str] = Query(None),
+    x_company_code: Optional[str] = Header(None, alias="X-Company-Code"),
     conn=Depends(get_db)
 ):
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
-    filtros = ["s.fecha_inicio IS NOT NULL"]
-    params = {}
+    filtros = ["s.fecha_inicio IS NOT NULL", "COALESCE(NULLIF(TRIM(s.company_code), ''), 'MSL-CR') = %(company)s"]
+    params = {"company": company_code(x_company_code)}
+    if puerto:
+        filtros.append("s.puerto = %(puerto)s")
+        params["puerto"] = puerto
 
     if year_from:
         filtros.append("EXTRACT(YEAR FROM s.fecha_inicio) >= %(year_from)s")
@@ -158,13 +165,18 @@ def comercial_ports_analytics(
     clientes: Optional[List[str]] = Query(None),
     continente: Optional[str] = Query(None),
     pais: Optional[str] = Query(None),
+    puerto: Optional[str] = Query(None),
+    x_company_code: Optional[str] = Header(None, alias="X-Company-Code"),
     conn=Depends(get_db)
 ):
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
-    filtros = ["s.fecha_inicio IS NOT NULL"]
-    params = {}
+    filtros = ["s.fecha_inicio IS NOT NULL", "COALESCE(NULLIF(TRIM(s.company_code), ''), 'MSL-CR') = %(company)s"]
+    params = {"company": company_code(x_company_code)}
+    if puerto:
+        filtros.append("s.puerto = %(puerto)s")
+        params["puerto"] = puerto
 
     if year_from:
         filtros.append("EXTRACT(YEAR FROM s.fecha_inicio) >= %(year_from)s")
@@ -265,7 +277,7 @@ def comercial_ports_analytics(
                 2
             ) AS margen_neto,
 
-            (acumulado / total_global <= 0.8) AS is_pareto_80
+            COALESCE(acumulado / NULLIF(total_global, 0) <= 0.8, FALSE) AS is_pareto_80
 
         FROM ranked
         ORDER BY facturacion_neta DESC;
@@ -285,7 +297,7 @@ def comercial_ports_analytics(
     "/analytics/puertos/filtros",
     dependencies=[Depends(require_permission("comercial", "view"))]
 )
-def comercial_ports_filters(conn=Depends(get_db)):
+def comercial_ports_filters(x_company_code: Optional[str] = Header(None, alias="X-Company-Code"), conn=Depends(get_db)):
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     cur.execute("""
@@ -293,16 +305,18 @@ def comercial_ports_filters(conn=Depends(get_db)):
             EXTRACT(YEAR FROM fecha_inicio)::int AS year
         FROM servicios
         WHERE fecha_inicio IS NOT NULL
+          AND COALESCE(NULLIF(TRIM(company_code), ''), 'MSL-CR') = %s
         ORDER BY year DESC;
-    """)
+    """, (company_code(x_company_code),))
     years = [r["year"] for r in cur.fetchall()]
 
     cur.execute("""
         SELECT DISTINCT cliente
         FROM servicios
         WHERE cliente IS NOT NULL
+          AND COALESCE(NULLIF(TRIM(company_code), ''), 'MSL-CR') = %s
         ORDER BY cliente;
-    """)
+    """, (company_code(x_company_code),))
     clientes = [r["cliente"] for r in cur.fetchall()]
 
     cur.close()
@@ -316,12 +330,13 @@ def comercial_ports_filters(conn=Depends(get_db)):
 # ============================================================
 # PORTS COVERAGE
 # ============================================================
-@router.get("/ports-coverage")
+@router.get("/ports-coverage", dependencies=[Depends(require_permission("comercial", "view"))])
 def get_ports_coverage(
     year_from: Optional[int] = Query(None),
     year_to: Optional[int] = Query(None),
     cliente: Optional[str] = Query(None),
     min_ops: int = Query(3),
+    x_company_code: Optional[str] = Header(None, alias="X-Company-Code"),
     conn=Depends(get_db)
 ):
     """
@@ -339,8 +354,8 @@ def get_ports_coverage(
     # =====================================================
     # FILTROS DINÁMICOS SERVICIOS
     # =====================================================
-    filtros = []
-    params = {}
+    filtros = ["COALESCE(NULLIF(TRIM(s.company_code), ''), 'MSL-CR') = %(company)s"]
+    params = {"company": company_code(x_company_code)}
 
     if year_from:
         filtros.append("EXTRACT(YEAR FROM s.fecha_inicio) >= %(year_from)s")
@@ -404,6 +419,7 @@ def get_ports_coverage(
     # =====================================================
     # KPIs EJECUTIVOS
     # =====================================================
+    cur.close()
     total_puertos = len(rows)
     con_operacion = sum(1 for r in rows if r["total_operaciones"] > 0)
     sin_operacion = sum(1 for r in rows if r["total_operaciones"] == 0)

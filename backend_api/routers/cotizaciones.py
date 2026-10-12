@@ -18,6 +18,7 @@ from database import get_db
 from rbac_service import has_permission
 from routers.servicios_precios import _ensure_precios_company
 from services.tenanting import company_code
+from services.commercial_access import require_commercial_detail
 from services.cotizacion_export_service import export_cotizacion_pdf, export_cotizacion_word
 
 # ============================================================
@@ -35,7 +36,7 @@ def require_permission(module: str, action: str):
 
 router = APIRouter(
     prefix="/comercial/cotizaciones",
-    tags=["Comercial — Cotizaciones"]
+    tags=["Comercial — Cotizaciones"], dependencies=[Depends(require_commercial_detail)]
 )
 
 

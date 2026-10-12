@@ -11,6 +11,7 @@ from datetime import date
 
 from database import get_db
 from rbac_service import has_permission
+from services.tenanting import company_code
 
 
 router = APIRouter(
@@ -48,6 +49,7 @@ def comercial_board(
     surveyor: Optional[str] = Query(None),
     estados: Optional[List[str]] = Query(None),
     year: Optional[int] = Query(None),
+    x_company_code: Optional[str] = Header(None, alias="X-Company-Code"),
     conn=Depends(get_db)
 ):
     """
@@ -94,8 +96,8 @@ def comercial_board(
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
-    filtros = []
-    params = {}
+    filtros = ["COALESCE(NULLIF(TRIM(company_code), ''), 'MSL-CR') = %(company)s"]
+    params = {"company": company_code(x_company_code)}
 
     # ---------------------------------------------------------
     # FILTROS BÁSICOS
@@ -133,7 +135,7 @@ def comercial_board(
         # -----------------------------------------------------
         # REGLA: estados operativos → SOLO año actual
         # -----------------------------------------------------
-        if any(e in estados_confirmacion for e in estados):
+        if not year and any(e in estados_confirmacion for e in estados):
 
             current_year = date.today().year
 
@@ -141,7 +143,8 @@ def comercial_board(
             params["y_end"] = f"{current_year + 1}-01-01"
 
             filtros.append(
-                "fecha_inicio >= %(y_start)s AND fecha_inicio < %(y_end)s"
+                "(LOWER(estado) NOT IN ('confirmado', 'en operación') OR "
+                "(fecha_inicio >= %(y_start)s AND fecha_inicio < %(y_end)s))"
             )
 
     # ---------------------------------------------------------

@@ -11,11 +11,13 @@ from datetime import date
 
 from database import get_db
 from rbac_service import has_permission
+from services.tenanting import company_code
+from services.commercial_access import require_commercial_detail
 
 
 router = APIRouter(
     prefix="/comercial",
-    tags=["Comercial"]
+    tags=["Comercial"], dependencies=[Depends(require_commercial_detail)]
 )
 
 # ============================================================
@@ -47,6 +49,7 @@ def comercial_client_view(
     year_to: Optional[int] = Query(None),
     cliente: Optional[str] = Query(None),
     servicio: Optional[str] = Query(None),
+    x_company_code: Optional[str] = Header(None, alias="X-Company-Code"),
     conn=Depends(get_db)
 ):
 
@@ -71,11 +74,12 @@ def comercial_client_view(
     # --------------------------------------------------------
     # FILTROS OPCIONALES
     # --------------------------------------------------------
-    filtros = []
+    filtros = ["COALESCE(NULLIF(TRIM(s.company_code), ''), 'MSL-CR') = %(company)s"]
 
     params = {
         "y_start": y_start,
-        "y_end": y_end
+        "y_end": y_end,
+        "company": company_code(x_company_code)
     }
 
     if cliente:
@@ -124,9 +128,13 @@ def comercial_client_view(
 
             LEFT JOIN cliente cli
                 ON cli.nombrejuridico = s.cliente
+                AND COALESCE(NULLIF(TRIM(cli.company_code), ''), 'MSL-CR') = %(company)s
 
-            LEFT JOIN cash_app ca
-                ON ca.numero_documento = s.factura
+            LEFT JOIN LATERAL (
+                SELECT SUM(comision) AS comision FROM cash_app
+                WHERE numero_documento = s.factura
+                  AND COALESCE(NULLIF(TRIM(company_code), ''), 'MSL-CR') = %(company)s
+            ) ca ON TRUE
 
             WHERE
                 s.fecha_inicio >= %(y_start)s
@@ -255,8 +263,9 @@ def comercial_client_view(
         SELECT DISTINCT
             EXTRACT(YEAR FROM fecha_inicio)::int AS year
         FROM servicios
+        WHERE COALESCE(NULLIF(TRIM(company_code), ''), 'MSL-CR') = %(company)s
         ORDER BY year DESC
-    """)
+    """, params)
 
     years = [r["year"] for r in cur.fetchall()]
 
@@ -282,6 +291,7 @@ def get_comercial_clientes(
     id: Optional[int] = Query(None),
     codigo: Optional[str] = Query(None),
     nombre: Optional[str] = Query(None),
+    x_company_code: Optional[str] = Header(None, alias="X-Company-Code"),
     conn=Depends(get_db)
 ):
     """
@@ -324,10 +334,10 @@ def get_comercial_clientes(
             fecha_pago,
             comentarios
         FROM cliente
-        WHERE 1 = 1
+        WHERE COALESCE(NULLIF(TRIM(company_code), ''), 'MSL-CR') = %(company)s
     """
 
-    params = {}
+    params = {"company": company_code(x_company_code)}
 
     # --------------------------------------------------------
     # FILTROS DINÁMICOS

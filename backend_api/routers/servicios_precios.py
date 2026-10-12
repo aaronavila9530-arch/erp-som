@@ -12,6 +12,7 @@ from datetime import datetime
 from database import get_db
 from rbac_service import has_permission
 from services.tenanting import company_code
+from services.commercial_access import require_commercial_detail
 
 # ============================================================
 # RBAC — MISMA LÓGICA QUE ROUTERS FUNCIONALES
@@ -28,7 +29,7 @@ def require_permission(module: str, action: str):
 
 router = APIRouter(
     prefix="/comercial/precios",
-    tags=["Comercial — Precios"]
+    tags=["Comercial — Precios"], dependencies=[Depends(require_commercial_detail)]
 )
 
 # ============================================================

@@ -9,6 +9,30 @@ from typing import Optional
 from database import get_db
 from fastapi import Header, HTTPException
 from rbac_service import has_permission
+from services.tenanting import company_code
+from services.commercial_access import require_commercial_detail
+
+
+def _period_filters(filtros, params, company, quarter=None, quarter_from=None, quarter_to=None):
+    named = isinstance(params, dict)
+    values = [("company", company_code(company), "COALESCE(NULLIF(TRIM(s.company_code), ''), 'MSL-CR') = ")]
+    if quarter:
+        quarter_from = quarter_to = quarter
+    for key, value, op in (("quarter_from", quarter_from, ">="), ("quarter_to", quarter_to, "<=")):
+        if value:
+            try:
+                number = int(str(value).upper().replace("Q", ""))
+            except ValueError:
+                raise HTTPException(422, "Trimestre invalido")
+            if number not in range(1, 5):
+                raise HTTPException(422, "Trimestre invalido")
+            values.append((key, number, f"EXTRACT(QUARTER FROM s.fecha_inicio::date) {op} "))
+    for key, value, expression in values:
+        filtros.append(expression + (f"%({key})s" if named else "%s"))
+        if named:
+            params[key] = value
+        else:
+            params.append(value)
 
 def require_permission(module: str, action: str):
     def checker(
@@ -23,7 +47,7 @@ def require_permission(module: str, action: str):
 
 router = APIRouter(
     prefix="/comercial/analytics/servicios",
-    tags=["Comercial"]
+    tags=["Comercial"], dependencies=[Depends(require_commercial_detail)]
 )
 
 
@@ -40,6 +64,8 @@ def servicios_analytics_by_servicio(
     continente: Optional[str] = Query(None),
     pais: Optional[str] = Query(None),
     puerto: Optional[str] = Query(None),
+    quarter: Optional[str] = Query(None),
+    x_company_code: Optional[str] = Header(None, alias="X-Company-Code"),
     conn=Depends(get_db)
 ):
 
@@ -71,6 +97,7 @@ def servicios_analytics_by_servicio(
     ]
 
     params = [year_from, year_to]
+    _period_filters(filtros, params, x_company_code, quarter)
 
     if continente:
         filtros.append("UPPER(TRIM(s.continente)) = UPPER(%s)")
@@ -216,6 +243,9 @@ def servicios_no_ofrecidos(
     continente: Optional[str] = Query(None),
     pais: Optional[str] = Query(None),
     puerto: Optional[str] = Query(None),
+    quarter_from: Optional[str] = Query(None),
+    quarter_to: Optional[str] = Query(None),
+    x_company_code: Optional[str] = Header(None, alias="X-Company-Code"),
     conn=Depends(get_db)
 ):
     from datetime import datetime
@@ -245,6 +275,7 @@ def servicios_no_ofrecidos(
     ]
 
     params = [year_from, year_to]
+    _period_filters(filtros, params, x_company_code, quarter, quarter_from, quarter_to)
 
     # =====================================================
     # QUARTER (CRÍTICO)
@@ -658,6 +689,8 @@ def servicios_kpis_ejecutivos(
     pais: Optional[str] = Query(None),
     puerto: Optional[str] = Query(None),
     operacion: Optional[str] = Query(None),
+    quarter: Optional[str] = Query(None),
+    x_company_code: Optional[str] = Header(None, alias="X-Company-Code"),
     conn=Depends(get_db)
 ):
 
@@ -694,6 +727,7 @@ def servicios_kpis_ejecutivos(
         "year_from": year_from,
         "year_to": year_to
     }
+    _period_filters(filtros, params, x_company_code, quarter)
 
     if continente:
         filtros.append("UPPER(TRIM(s.continente)) = UPPER(TRIM(%(continente)s))")
@@ -899,6 +933,14 @@ from datetime import datetime
 def costos_surveyor_pareto(
     year: Optional[int] = Query(None),
     operacion: Optional[str] = Query(None),
+    year_from: Optional[int] = Query(None),
+    year_to: Optional[int] = Query(None),
+    quarter: Optional[str] = Query(None),
+    continente: Optional[str] = Query(None),
+    pais: Optional[str] = Query(None),
+    puerto: Optional[str] = Query(None),
+    surveyor: Optional[str] = Query(None),
+    x_company_code: Optional[str] = Header(None, alias="X-Company-Code"),
     conn=Depends(get_db)
 ):
     """
@@ -921,14 +963,17 @@ def costos_surveyor_pareto(
             EXTRACT(YEAR FROM fecha_inicio)::int AS year
         FROM servicios
         WHERE fecha_inicio IS NOT NULL
+          AND COALESCE(NULLIF(TRIM(company_code), ''), 'MSL-CR') = %s
         ORDER BY year;
-    """)
+    """, (company_code(x_company_code),))
 
     available_years = [r["year"] for r in cur.fetchall() if r["year"]]
 
     # Año por defecto = año actual
     current_year = datetime.now().year
     year = year or current_year
+    year_from = year_from or year_to or year
+    year_to = year_to or year_from
 
     # =========================================================
     # 2️⃣ QUARTERS DISPONIBLES (METADATA PARA UI)
@@ -940,8 +985,9 @@ def costos_surveyor_pareto(
         WHERE
             fecha_inicio IS NOT NULL
             AND EXTRACT(YEAR FROM fecha_inicio::date) = %s
+            AND COALESCE(NULLIF(TRIM(company_code), ''), 'MSL-CR') = %s
         ORDER BY quarter;
-    """, (year,))
+    """, (year, company_code(x_company_code)))
 
     available_quarters = [r["quarter"] for r in cur.fetchall()]
 
@@ -951,12 +997,17 @@ def costos_surveyor_pareto(
     filtros = [
         "UPPER(TRIM(s.estado)) = 'FINALIZADO'",
         "s.fecha_inicio IS NOT NULL",
-        "EXTRACT(YEAR FROM s.fecha_inicio::date) = %s",
+        "EXTRACT(YEAR FROM s.fecha_inicio::date) BETWEEN %s AND %s",
         "s.surveyor IS NOT NULL",
         "TRIM(s.surveyor) <> ''"
     ]
 
-    params = [year]
+    params = [year_from, year_to]
+    _period_filters(filtros, params, x_company_code, quarter)
+    for field, value in (("continente", continente), ("pais", pais), ("puerto", puerto), ("surveyor", surveyor)):
+        if value:
+            filtros.append(f"UPPER(TRIM(s.{field})) = UPPER(%s)")
+            params.append(value.strip())
 
     if operacion:
         filtros.append("UPPER(TRIM(s.operacion)) = UPPER(%s)")

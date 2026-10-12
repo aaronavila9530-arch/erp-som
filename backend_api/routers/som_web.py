@@ -21,7 +21,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20261009-home-pending-v6"
+_ASSET_VERSION = "20261012-commercial-v1"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -1447,6 +1447,8 @@ def som_web_home() -> HTMLResponse:
   <script src="/som/tally-assets/tabulator.min.js?v=1"></script>
   <script src="/som/tally-assets/papaparse.min.js?v=1"></script>
   <script src="/som/tally-assets/tally.js?v=1"></script>
+  <link rel="stylesheet" href="/comercial/web/assets/comercial.css?v={asset_version}">
+  <script src="/comercial/web/assets/comercial.js?v={asset_version}"></script>
   <script>
     const DEFAULT_COMPANIES = [
       { company_code:"MSL-CR", company_name:"MSL MARINE SURVEYORS AND LOGISTICS GROUP SRL" },
@@ -2314,6 +2316,8 @@ def som_web_home() -> HTMLResponse:
       $("brandLogo").src = selectedCompany().startsWith("MCI") ? "/som/logo/mci?v={asset_version}" : "/som/logo/msl?v={asset_version}";
     }
     function selectModule(code) {
+      if (currentModule === "comercial" && !SOMCommercial.canLeave()) return;
+      if (currentModule === "comercial") SOMCommercial.destroy();
       if (currentModule === "informes" && window.SOMTally && !SOMTally.canLeave()) return;
       if (currentModule === "informes" && window.SOMTally) SOMTally.destroy();
       currentModule = code;
@@ -2330,8 +2334,20 @@ def som_web_home() -> HTMLResponse:
       else if (code === "servicios" || code === "servicios_op" || (mod?.title || "").toLowerCase() === "servicios") renderServicios();
       else if (code === "finanzas") renderFinanzas();
       else if (code === "informes") renderInformesTally();
+      else if (code === "comercial") renderCommercial();
       else if (code === "hhrre" || code === "hhrr") renderHHRR();
       else renderComingSoon(mod);
+    }
+    function renderCommercial() {
+      SOMCommercial.mount($("content"), {
+        headers:headers(), company:selectedCompany(), year:Number($("year").value),
+        companyName:(($("companyTop")?.selectedOptions?.[0] || $("company")?.selectedOptions?.[0])?.textContent || "").split("|").slice(1).join("|").trim(),
+        openService:async () => {
+          if (!canView("servicios")) throw new Error("Cotización aprobada. No tiene acceso a registrar servicios.");
+          selectModule("servicios");
+          await openServiceForm();
+        }
+      });
     }
     function renderInformesTally() {
       const fixedHeaders = headers();
@@ -10236,6 +10252,7 @@ def som_web_home() -> HTMLResponse:
     $("notifyEnable").onclick = enableNotifications;
     $("notifyBell").onclick = async (event) => { event.stopPropagation(); $("notifyPanel").classList.toggle("hidden"); await loadNotifications(false); };
     if ($("refresh")) $("refresh").onclick = () => {
+      if (currentModule === "comercial") { if (SOMCommercial.canLeave()) renderCommercial(); return; }
       refreshSummary();
       if (currentModule === "master_data") renderMasterData();
       if (currentModule === "servicios") renderServicios();
@@ -10244,6 +10261,9 @@ def som_web_home() -> HTMLResponse:
     };
     function changeCompany(value) {
       if (!value) return;
+      if (currentModule === "comercial" && !SOMCommercial.canLeave()) {
+        $("company").value=session.company; $("companyTop").value=session.company; return;
+      }
       if ($("svcModal")?.dataset.homePending) closeModal();
       homePending = null;
       if (currentModule === "informes" && !SOMTally.canLeave()) {
@@ -10271,10 +10291,12 @@ def som_web_home() -> HTMLResponse:
       if (currentModule === "servicios") renderServicios();
       if (currentModule === "finanzas") renderFinanzas();
       if (currentModule === "hhrre" || currentModule === "hhrr") renderHHRR();
+      if (currentModule === "comercial") renderCommercial();
     }
     $("company").onchange = () => { const before=session?.company; changeCompany($("company").value); if (currentModule === "informes" && before!==session?.company) renderInformesTally(); };
     $("companyTop").onchange = () => { const before=session?.company; changeCompany($("companyTop").value); if (currentModule === "informes" && before!==session?.company) renderInformesTally(); };
     $("year").onchange = () => {
+      if (currentModule === "comercial") { if (SOMCommercial.canLeave()) renderCommercial(); return; }
       if (currentModule === "dashboard") refreshSummary();
       else resetKpisForManualLoad();
       if (currentModule === "servicios") renderServicios();
