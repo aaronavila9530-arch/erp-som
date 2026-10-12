@@ -26,8 +26,8 @@ RATE_SQL = """SELECT rate, rate_date FROM exchange_rate
 HONORARIOS_USD = f"""(CASE
     WHEN COALESCE(s.honorarios, 0) = 0 THEN 0
     WHEN COALESCE(s.honorarios_moneda, 'USD') = 'CRC'
-        THEN s.honorarios / (SELECT rate FROM ({RATE_SQL}) commercial_fx)
-    ELSE s.honorarios END)"""
+        THEN CAST(s.honorarios AS NUMERIC) / CAST((SELECT rate FROM ({RATE_SQL}) commercial_fx) AS NUMERIC)
+    ELSE CAST(s.honorarios AS NUMERIC) END)"""
 
 
 def ensure_currency_schema(conn):
