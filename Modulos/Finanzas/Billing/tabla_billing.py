@@ -225,6 +225,7 @@ class TablaBilling(tk.Frame):
             r = api_request(
                 "GET",
                 f"{BASE_URL}/billing/{numero_factura}",
+                params={"invoice_id": values[0]},
                 timeout=15
             )
             r.raise_for_status()
@@ -283,6 +284,7 @@ class TablaBilling(tk.Frame):
             r = api_request(
                 "GET",
                 f"{BASE_URL}/billing/pdf/{numero_factura}",
+                params={"invoice_id": values[0]},
                 timeout=30,
                 stream=True
             )

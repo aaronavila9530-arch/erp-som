@@ -7,7 +7,18 @@ COMPANY_TAX_ID = "3-102-920372"
 COMPANY_ADDRESS = "San Jose, Costa Rica, C.A"
 COMPANY_ADDRESS_2 = "Alajuela, Rio Segundo, Plaza Aeropuerto, Local G-14"
 COMPANY_PHONE = "506-8814-07-84"
-IBAN_CODE = "CR49015201308000025850"
+BANK_LINES = [
+    "Bank Name: Banco de Costa Rica",
+    "Beneficiary Account: MSL Marine",
+    "   Surveyors and Logistics Sociedad de",
+    "   Responsabilidad Limitada",
+    "Bank Account: CR90015202001393623379",
+    "Bank Address: Avenida Central y",
+    "   Segunda,calles 4 y 6 San José, Costa",
+    "   Rica",
+    "Swift Code: BCRICRSJ.",
+    "Universal ID: 019339.",
+]
 
 
 def _safe(value, default=""):
@@ -208,16 +219,7 @@ class PopupPreviewFactura(tk.Toplevel):
         text(right - 56, total_y + 12, total, size=14, bold=True, anchor="ne")
 
         bank_y = total_y + 74
-        bank_lines = [
-            ("Beneficiary Bank: BCR Banco de Costa Rica", "black"),
-            ("Direccion fisica: San Jose de Costa Rica", "black"),
-            ("SWIFT N° BCRICRSJ", "black"),
-            ("Account: 308258-5", "black"),
-            ("", "black"),
-            (f"IBAN ACCOUNT: {IBAN_CODE}", "red"),
-            (f"Beneficiary: {COMPANY_LEGAL_NAME}", "black"),
-            (f"Address: {COMPANY_ADDRESS_2}", "black"),
-            ("Account: 308258-5 BCRICRSJ", "black"),
+        bank_lines = [(line, "black") for line in BANK_LINES] + [
             ("", "black"),
             ("NOTE: PAYMENTS TO BE DRAWN ON C.R BANK FREE OF", "red"),
             ("ALL CHARGES / IN U.S DOLLARS", "red"),

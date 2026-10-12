@@ -19,13 +19,17 @@ COMPANY_ADDRESS_2 = "Alajuela, Rio Segundo, Plaza Aeropuerto, Local G-14"
 COMPANY_PHONE = "506-8814-07-84"
 
 BANK_LINES = [
-    ("Beneficiary Bank:", "BCR Banco de Costa Rica"),
-    ("Direccion fisica:", "San Jose de Costa Rica"),
-    ("SWIFT N°", "BCRICRSJ"),
-    ("Account:", "308258-5"),
+    ("Bank Name:", "Banco de Costa Rica"),
+    ("Beneficiary Account:", "MSL Marine"),
+    ("", "Surveyors and Logistics Sociedad de"),
+    ("", "Responsabilidad Limitada"),
+    ("Bank Account:", "CR90015202001393623379"),
+    ("Bank Address:", "Avenida Central y"),
+    ("", "Segunda,calles 4 y 6 San José, Costa"),
+    ("", "Rica"),
+    ("Swift Code:", "BCRICRSJ."),
+    ("Universal ID:", "019339."),
 ]
-IBAN_CODE = "CR49015201308000025850"
-BENEFICIARY = COMPANY_LEGAL_NAME
 
 
 def _safe(value, default=""):
@@ -129,6 +133,8 @@ def generar_factura_manual_pdf(data: dict) -> str:
     invoice = _invoice_payload(data)
     numero = invoice["numero_factura"]
     filename = f"Factura_{re.sub(r'[^A-Za-z0-9_-]+', '_', str(numero))}.pdf"
+    if data.get("storage_key"):
+        filename = re.sub(r'[^A-Za-z0-9_-]+', '_', str(data['storage_key'])) + '_' + filename
     path = os.path.join(BASE_DIR, filename)
     day, month, year = _date_parts(invoice["fecha_factura"])
 
@@ -239,18 +245,10 @@ def generar_factura_manual_pdf(data: dict) -> str:
     bank_y = bottom - 1.2 * cm
     c.setFont("Times-Roman", 10)
     for label, value in BANK_LINES:
-        c.drawString(bank_x, bank_y, f"{label} {value}")
+        text = f"{label} {value}".strip()
+        x = bank_x if label else bank_x + 3.0 * cm
+        c.drawString(x, bank_y, text)
         bank_y -= 0.43 * cm
-    bank_y -= 0.45 * cm
-    c.setFillColor(red)
-    c.drawString(bank_x, bank_y, f"IBAN ACCOUNT: {IBAN_CODE}")
-    c.setFillColor(black)
-    bank_y -= 0.43 * cm
-    c.drawString(bank_x, bank_y, f"Beneficiary: {BENEFICIARY}")
-    bank_y -= 0.43 * cm
-    c.drawString(bank_x, bank_y, f"Address: {COMPANY_ADDRESS_2}")
-    bank_y -= 0.43 * cm
-    c.drawString(bank_x, bank_y, "Account: 308258-5 BCRICRSJ")
 
     bank_y -= 0.85 * cm
     c.setFillColor(red)
@@ -273,6 +271,8 @@ def generar_factura_manual_word(data: dict) -> str:
     invoice = _invoice_payload(data)
     numero = invoice["numero_factura"]
     filename = f"Factura_{re.sub(r'[^A-Za-z0-9_-]+', '_', str(numero))}.docx"
+    if data.get("storage_key"):
+        filename = re.sub(r'[^A-Za-z0-9_-]+', '_', str(data['storage_key'])) + '_' + filename
     path = os.path.join(BASE_DIR, filename)
     day, month, year = _date_parts(invoice["fecha_factura"])
 
@@ -337,17 +337,8 @@ def generar_factura_manual_word(data: dict) -> str:
     doc.add_paragraph("")
     for label, value in BANK_LINES:
         p = doc.add_paragraph()
-        run(p, f"{label} {value}", False, None, 10)
-    p = doc.add_paragraph()
-    run(p, "IBAN ACCOUNT: ", False, (255, 0, 0), 10)
-    run(p, IBAN_CODE, False, None, 10)
-    for line in [
-        f"Beneficiary: {BENEFICIARY}",
-        f"Address: {COMPANY_ADDRESS_2}",
-        "Account: 308258-5 BCRICRSJ",
-    ]:
-        p = doc.add_paragraph()
-        run(p, line, False, None, 10)
+        text = f"{label} {value}".strip()
+        run(p, text, False, None, 10)
     p = doc.add_paragraph()
     run(p, "NOTE: ", True, None, 8)
     run(p, "PAYMENTS TO BE DRAWN ON C.R BANK FREE OF\nALL CHARGES / IN U.S DOLLARS", True, (255, 0, 0), 8)

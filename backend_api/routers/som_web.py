@@ -21,7 +21,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20261012-commercial-fx-v3"
+_ASSET_VERSION = "20261012-manual-invoice-id-v4"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -6989,14 +6989,14 @@ def som_web_home() -> HTMLResponse:
     async function viewSelectedInvoice() {
       const row = requireBillingRow();
       if (!row) return;
-      const full = await getJSON(`/billing/${encodeURIComponent(row.numero_documento)}`);
+      const full = await getJSON(`/billing/${encodeURIComponent(row.numero_documento)}?invoice_id=${encodeURIComponent(row.id)}`);
       document.body.insertAdjacentHTML("beforeend", `
         <div class="modal-backdrop" id="svcModal">
           <div class="modal">
             <div class="modal-head"><h2>Factura ${esc(full.numero_documento)}</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
             <div class="service-actions">
-              <a href="/billing/pdf/${encodeURIComponent(full.numero_documento)}" target="_blank"><button>Ver / descargar PDF</button></a>
-              <a href="/billing/word/${encodeURIComponent(full.numero_documento)}" target="_blank"><button class="secondary">Exportar Word</button></a>
+              <button onclick="downloadBinary('/billing/pdf/${encodeURIComponent(full.numero_documento)}?invoice_id=${encodeURIComponent(full.id)}', 'Factura_${encodeURIComponent(full.numero_documento)}.pdf')">Ver / descargar PDF</button>
+              <button class="secondary" onclick="downloadBinary('/billing/word/${encodeURIComponent(full.numero_documento)}?invoice_id=${encodeURIComponent(full.id)}', 'Factura_${encodeURIComponent(full.numero_documento)}.docx')">Exportar Word</button>
             </div>
             <div class="table-wrap"><table><tbody>${Object.keys(full).filter(k => !String(k).toLowerCase().includes("hash")).map(k => `<tr><th>${esc(k)}</th><td>${esc(full[k])}</td></tr>`).join("")}</tbody></table></div>
           </div>
@@ -7005,7 +7005,7 @@ def som_web_home() -> HTMLResponse:
     async function openBillingEditForm() {
       const row = requireBillingRow();
       if (!row) return;
-      const full = await getJSON(`/billing/${encodeURIComponent(row.numero_documento)}`);
+      const full = await getJSON(`/billing/${encodeURIComponent(row.numero_documento)}?invoice_id=${encodeURIComponent(row.id)}`);
       document.body.insertAdjacentHTML("beforeend", `
         <div class="modal-backdrop" id="svcModal">
           <div class="modal small">
@@ -7098,7 +7098,7 @@ def som_web_home() -> HTMLResponse:
               <datalist id="advSurveyList"></datalist>
               <label class="wide">Descripción<textarea id="adv_desc"></textarea></label>
             </div>
-            <div class="status">La cuenta bancaria se mantiene fija: BCR Banco de Costa Rica · IBAN ACCOUNT CR49015201308000025850 · SWIFT BCRICRSJ.</div>
+            <div class="status">La cuenta bancaria se mantiene fija: Banco de Costa Rica · Bank Account CR90015202001393623379 · Swift Code BCRICRSJ. · Universal ID 019339.</div>
             <div class="md-actions"><button class="green" onclick="saveAdvanceInvoice()">Facturar</button><button class="secondary" onclick="closeModal()">Cancelar</button></div>
             <div id="advMsg" class="status hidden"></div>
           </div>

@@ -455,25 +455,32 @@ def eliminar_billing(
 # GET /billing/{numero_documento}
 # Preview de factura (PopupPreviewFactura)
 # ============================================================
+def _invoice_row(cur, numero_documento, company, invoice_id=None):
+    cur.execute("""SELECT * FROM invoicing
+        WHERE numero_documento = %s AND company_code = %s
+          AND (%s IS NULL OR id = %s)""",
+        (numero_documento, company, invoice_id, invoice_id))
+    rows = cur.fetchall()
+    if not rows:
+        raise HTTPException(404, "Factura no encontrada")
+    if len(rows) != 1:
+        raise HTTPException(409, "Numero repetido: seleccione la factura por su ID")
+    return rows[0]
+
+
 @router.get("/{numero_documento}")
 def get_factura(
     numero_documento: str,
     x_company_code: str | None = Header(None, alias="X-Company-Code"),
     conn=Depends(get_db),
+    invoice_id: Optional[int] = Query(None, ge=1),
 ):
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
     company = company_code(header_value=x_company_code)
     ensure_company_column("invoicing")
 
-    cur.execute("""
-        SELECT *
-        FROM invoicing
-        WHERE numero_documento = %s
-          AND company_code = %s
-    """, (numero_documento, company))
-
-    factura = cur.fetchone()
+    factura = _invoice_row(cur, numero_documento, company, invoice_id)
     cur.close()
 
     if not factura:
@@ -489,24 +496,15 @@ def get_factura(
 def obtener_pdf_factura(
     numero_documento: str,
     x_company_code: str | None = Header(None, alias="X-Company-Code"),
-    conn=Depends(get_db)
+    conn=Depends(get_db),
+    invoice_id: Optional[int] = Query(None, ge=1),
 ):
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
     company = company_code(header_value=x_company_code)
     ensure_company_column("invoicing")
 
-    cur.execute(
-        """
-        SELECT *
-        FROM invoicing
-        WHERE numero_documento = %s
-          AND company_code = %s
-        """,
-        (numero_documento, company)
-    )
-
-    row = cur.fetchone()
+    row = _invoice_row(cur, numero_documento, company, invoice_id)
 
     if not row:
         cur.close()
@@ -518,6 +516,7 @@ def obtener_pdf_factura(
     from services.pdf.factura_manual_pdf import generar_factura_manual_pdf
 
     pdf_path = generar_factura_manual_pdf({
+        "storage_key": f"{company}_{row['id']}",
         "numero_documento": row.get("numero_documento"),
         "fecha_emision": row.get("fecha_emision"),
         "cliente": row.get("nombre_cliente"),
@@ -538,10 +537,14 @@ def obtener_pdf_factura(
         """
         UPDATE invoicing
         SET pdf_path = %s
-        WHERE id = %s
+        WHERE id = %s AND company_code = %s
         """,
-        (pdf_path, row.get("id")),
+        (pdf_path, row.get("id"), company),
     )
+    if row.get("factura_id") and row.get("tipo_factura") == "MANUAL":
+        cur.execute("""UPDATE factura SET pdf_path = %s
+            WHERE id = %s AND company_code = %s AND tipo_factura = 'MANUAL'""",
+            (pdf_path, row["factura_id"], company))
     conn.commit()
     cur.close()
 
@@ -557,21 +560,13 @@ def obtener_word_factura(
     numero_documento: str,
     x_company_code: str | None = Header(None, alias="X-Company-Code"),
     conn=Depends(get_db),
+    invoice_id: Optional[int] = Query(None, ge=1),
 ):
     cur = conn.cursor(cursor_factory=RealDictCursor)
     company = company_code(header_value=x_company_code)
     ensure_company_column("invoicing")
 
-    cur.execute(
-        """
-        SELECT *
-        FROM invoicing
-        WHERE numero_documento = %s
-          AND company_code = %s
-        """,
-        (numero_documento, company),
-    )
-    row = cur.fetchone()
+    row = _invoice_row(cur, numero_documento, company, invoice_id)
     cur.close()
 
     if not row:
@@ -580,6 +575,7 @@ def obtener_word_factura(
     from services.pdf.factura_manual_pdf import generar_factura_manual_word
 
     word_path = generar_factura_manual_word({
+        "storage_key": f"{company}_{row['id']}",
         "numero_documento": row.get("numero_documento"),
         "fecha_emision": row.get("fecha_emision"),
         "cliente": row.get("nombre_cliente"),
