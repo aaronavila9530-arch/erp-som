@@ -36,7 +36,7 @@ class InvoiceIdentityTests(unittest.TestCase):
             b = ' '.join(PdfReader(second).pages[0].extract_text().split())
             for text in (a, b):
                 for expected in ['Banco de Costa Rica', 'CR90015202001393623379', 'BCRICRSJ.',
-                                 '019339.', 'MSL MARINE SURVEYORS AND LOGISTICS GROUP SOCIEDAD DE RESPONSABILIDAD LIMITADA', 'Avenida Central y']:
+                                 '019339.', 'MSL MARINE SURVEYORS AND LOGISTICS SOCIEDAD DE RESPONSABILIDAD LIMITADA', 'Avenida Central y']:
                     self.assertIn(expected, text)
             self.assertIn('MAERSK A/S', a)
             self.assertIn('PANDI COSTA RICA', b)

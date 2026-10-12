@@ -20,7 +20,7 @@ COMPANY_PHONE = "506-8814-07-84"
 
 BANK_LINES = [
     ("Bank Name:", "Banco de Costa Rica"),
-    ("Beneficiary Account:", "MSL MARINE SURVEYORS AND LOGISTICS GROUP SOCIEDAD DE RESPONSABILIDAD LIMITADA"),
+    ("Beneficiary Account:", "MSL MARINE SURVEYORS AND LOGISTICS SOCIEDAD DE RESPONSABILIDAD LIMITADA"),
     ("Bank Account:", "CR90015202001393623379"),
     ("Bank Address:", "Avenida Central y Segunda, calles 4 y 6 San José, Costa Rica"),
     ("Swift Code:", "BCRICRSJ."),
