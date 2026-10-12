@@ -39,7 +39,7 @@
   class Workspace {
     constructor(root, config) {
       this.root=root; this.config=config; this.controller=new AbortController(); this.view='board'; this.rows=[]; this.filtered=[];
-      this.page=0; this.selected=null; this.sort=null; this.order=1; this.filters={}; this.permissions={}; this.options={}; this.sequence=0;
+      this.page=0; this.selected=null; this.sort='consec'; this.order=-1; this.filters={}; this.permissions={}; this.options={}; this.sequence=0;
       this.dirty=false; this.disposed=false; this.dialog=null;
     }
     async request(path, method='GET', body, binary=false) {
@@ -61,7 +61,7 @@
     message(text,error=false) { const node=this.root.querySelector('[data-message]'); if(node){node.textContent=text;node.classList.toggle('error',error);} }
     async go(view) {
       if(!this.canLeave() || !this.permissions[views[view].permission]) return;
-      this.closeDialog(true); this.view=view; this.filters={}; this.rows=[]; this.page=0; this.selected=null; this.sort=null; this.sequence++;
+      this.closeDialog(true); this.view=view; this.filters={}; this.rows=[]; this.page=0; this.selected=null; this.sort=view==='board'?'consec':null; this.order=-1; this.sequence++;
       this.render(); if(view!=='board') await this.search();
     }
     field(key, value='', options=null, required=false) {
@@ -154,6 +154,10 @@
         if(view==='services') kpis=(await this.request(this.url('/comercial/analytics/servicios/kpis',{...query,operacion:query.servicio}))).kpis;
         if(seq!==this.sequence || this.disposed) return;
         this.rows=rows; this.page=0;
+        if(view==='coverage') {
+          const active=rows.filter(r=>Number(r.total_operaciones)>0).length;
+          kpis={total_puertos:rows.length,con_operacion:active,sin_operacion:rows.length-active,operacion_minima:rows.filter(r=>r.estado_operativo==='OPERACION_MINIMA').length,operacion_activa:rows.filter(r=>r.estado_operativo==='OPERACION_ACTIVA').length,cobertura_pct:rows.length?active/rows.length*100:0};
+        }
         if(view==='quotes') kpis={clientes:new Set(rows.map(r=>r.cliente)).size,servicios:new Set(rows.map(r=>r.servicio)).size,paises:new Set(rows.map(r=>r.pais)).size,puertos:new Set(rows.map(r=>r.puerto)).size,pendientes:rows.filter(r=>r.status==='PENDIENTE').length,aprobadas:rows.filter(r=>r.status==='APROBADO').length,canceladas:rows.filter(r=>r.status==='CANCELADO').length};
         this.kpis(kpis||{}); this.table(); this.message(`${rows.length} registros`);
         for(const key of definition.filters) {
@@ -183,6 +187,7 @@
       const node=this.root.querySelector('[data-table]'); if(!node)return;
       const cols=views[this.view].columns.split(' '), query=(this.root.querySelector('[data-search]')?.value||'').toLocaleLowerCase();
       this.filtered=this.rows.filter(row=>!query || cols.some(key=>String(row[key]??'').toLocaleLowerCase().includes(query)));
+      if(!this.filtered.includes(this.selected))this.selected=null;
       if(this.sort)this.filtered.sort((a,b)=>{const x=a[this.sort],y=b[this.sort];return this.order*(typeof x==='number' && typeof y==='number'?x-y:String(x??'').localeCompare(String(y??''),'es',{numeric:true}));});
       const pages=Math.max(1,Math.ceil(this.filtered.length/50));this.page=Math.min(this.page,pages-1);
       const slice=this.filtered.slice(this.page*50,(this.page+1)*50);
@@ -190,7 +195,7 @@
         <div class="com-pager"><span>${this.filtered.length} registros \u00b7 P\u00e1gina ${this.page+1} de ${pages}</span><button data-prev aria-label="P\u00e1gina anterior" ${this.page===0?'disabled':''}>&larr;</button><button data-next aria-label="P\u00e1gina siguiente" ${this.page+1>=pages?'disabled':''}>&rarr;</button></div>`;
       node.querySelectorAll('[data-sort]').forEach(button=>button.onclick=()=>{this.order=this.sort===button.dataset.sort?-this.order:1;this.sort=button.dataset.sort;this.table();});
       node.querySelectorAll('[data-row]').forEach(input=>input.onchange=()=>{this.selected=slice[Number(input.dataset.row)];this.table();});
-      node.querySelector('[data-prev]').onclick=()=>{this.page--;this.table();};node.querySelector('[data-next]').onclick=()=>{this.page++;this.table();};
+      node.querySelector('[data-prev]').onclick=()=>{this.page--;this.selected=null;this.table();};node.querySelector('[data-next]').onclick=()=>{this.page++;this.selected=null;this.table();};
     }
     selectedRow() { if(!this.selected)throw new Error('Seleccione un registro.');return this.selected; }
     async download(path,name,method='GET',body) {
