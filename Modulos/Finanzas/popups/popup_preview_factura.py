@@ -1,5 +1,6 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
+from tkinter.font import Font
 from datetime import date, datetime
 
 COMPANY_LEGAL_NAME = "MSL SRL Marine Surveyors and Logistics Group"
@@ -9,13 +10,9 @@ COMPANY_ADDRESS_2 = "Alajuela, Rio Segundo, Plaza Aeropuerto, Local G-14"
 COMPANY_PHONE = "506-8814-07-84"
 BANK_LINES = [
     "Bank Name: Banco de Costa Rica",
-    "Beneficiary Account: MSL Marine",
-    "   Surveyors and Logistics Sociedad de",
-    "   Responsabilidad Limitada",
+    "Beneficiary Account: MSL MARINE SURVEYORS AND LOGISTICS GROUP SOCIEDAD DE RESPONSABILIDAD LIMITADA",
     "Bank Account: CR90015202001393623379",
-    "Bank Address: Avenida Central y",
-    "   Segunda,calles 4 y 6 San José, Costa",
-    "   Rica",
+    "Bank Address: Avenida Central y Segunda, calles 4 y 6 San José, Costa Rica",
     "Swift Code: BCRICRSJ.",
     "Universal ID: 019339.",
 ]
@@ -224,8 +221,13 @@ class PopupPreviewFactura(tk.Toplevel):
             ("NOTE: PAYMENTS TO BE DRAWN ON C.R BANK FREE OF", "red"),
             ("ALL CHARGES / IN U.S DOLLARS", "red"),
         ]
+        bank_size = 12
+        bank_font = Font(self, family="Times New Roman", size=bank_size)
+        while max(bank_font.measure(line) for line in BANK_LINES) > desc_w - 44 and bank_size > 7:
+            bank_size -= 1
+            bank_font.configure(size=bank_size)
         for index, (line, color) in enumerate(bank_lines):
-            text(desc_x + 22, bank_y + index * 22, line, size=12, bold=color == "red", fill=color)
+            text(desc_x + 22, bank_y + index * 22, line, size=bank_size, bold=color == "red", fill=color)
 
         self.canvas.configure(scrollregion=(0, 0, page_x + page_w + 36, page_y + page_h + 24))
 

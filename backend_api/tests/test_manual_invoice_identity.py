@@ -36,12 +36,27 @@ class InvoiceIdentityTests(unittest.TestCase):
             b = ' '.join(PdfReader(second).pages[0].extract_text().split())
             for text in (a, b):
                 for expected in ['Banco de Costa Rica', 'CR90015202001393623379', 'BCRICRSJ.',
-                                 '019339.', 'Responsabilidad Limitada', 'Avenida Central y']:
+                                 '019339.', 'MSL MARINE SURVEYORS AND LOGISTICS GROUP SOCIEDAD DE RESPONSABILIDAD LIMITADA', 'Avenida Central y']:
                     self.assertIn(expected, text)
             self.assertIn('MAERSK A/S', a)
             self.assertIn('PANDI COSTA RICA', b)
             self.assertIn('DUE UPON RECEIPT', a)
             self.assertIn('CREDIT 30 DAYS', b)
+
+    def test_bank_fields_are_single_lines_inside_margins(self):
+        from reportlab.pdfbase.pdfmetrics import stringWidth
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.units import cm
+        self.assertEqual(len(pdf.BANK_LINES), 6)
+        for label, value in pdf.BANK_LINES:
+            self.assertTrue(label)
+            self.assertNotIn('\n', value)
+            self.assertLessEqual(stringWidth(f'{label} {value}', 'Times-Roman', 9), A4[0] - 3.5 * cm)
+        with tempfile.TemporaryDirectory() as folder, patch.object(pdf, 'BASE_DIR', folder):
+            path = pdf.generar_factura_manual_pdf(dict(numero_documento='layout', total=1))
+            lines = PdfReader(path).pages[0].extract_text().splitlines()
+            for label, value in pdf.BANK_LINES:
+                self.assertIn(f'{label} {value}', lines)
 
 
 if __name__ == '__main__':

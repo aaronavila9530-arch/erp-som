@@ -20,13 +20,9 @@ COMPANY_PHONE = "506-8814-07-84"
 
 BANK_LINES = [
     ("Bank Name:", "Banco de Costa Rica"),
-    ("Beneficiary Account:", "MSL Marine"),
-    ("", "Surveyors and Logistics Sociedad de"),
-    ("", "Responsabilidad Limitada"),
+    ("Beneficiary Account:", "MSL MARINE SURVEYORS AND LOGISTICS GROUP SOCIEDAD DE RESPONSABILIDAD LIMITADA"),
     ("Bank Account:", "CR90015202001393623379"),
-    ("Bank Address:", "Avenida Central y"),
-    ("", "Segunda,calles 4 y 6 San José, Costa"),
-    ("", "Rica"),
+    ("Bank Address:", "Avenida Central y Segunda, calles 4 y 6 San José, Costa Rica"),
     ("Swift Code:", "BCRICRSJ."),
     ("Universal ID:", "019339."),
 ]
@@ -241,13 +237,12 @@ def generar_factura_manual_pdf(data: dict) -> str:
     c.drawCentredString(total_x + 3.9 * cm, total_y + 0.34 * cm, _money_text(invoice["total"], invoice["moneda"]))
 
     # Bank block outside main box
-    bank_x = left + 1.2 * cm
+    bank_x = left + 0.6 * cm
     bank_y = bottom - 1.2 * cm
-    c.setFont("Times-Roman", 10)
+    c.setFont("Times-Roman", 9)
     for label, value in BANK_LINES:
         text = f"{label} {value}".strip()
-        x = bank_x if label else bank_x + 3.0 * cm
-        c.drawString(x, bank_y, text)
+        c.drawString(bank_x, bank_y, text)
         bank_y -= 0.43 * cm
 
     bank_y -= 0.85 * cm
@@ -338,7 +333,8 @@ def generar_factura_manual_word(data: dict) -> str:
     for label, value in BANK_LINES:
         p = doc.add_paragraph()
         text = f"{label} {value}".strip()
-        run(p, text, False, None, 10)
+        p.paragraph_format.space_after = Pt(2)
+        run(p, text, False, None, 9)
     p = doc.add_paragraph()
     run(p, "NOTE: ", True, None, 8)
     run(p, "PAYMENTS TO BE DRAWN ON C.R BANK FREE OF\nALL CHARGES / IN U.S DOLLARS", True, (255, 0, 0), 8)
