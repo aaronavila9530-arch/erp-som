@@ -14,9 +14,15 @@ from rbac_service import has_permission
 from routers.comercial import require_permission
 from services.tenanting import company_code
 from services.commercial_access import BOARD_ONLY_USERS, require_commercial_detail
+from services.commercial_currency import require_commercial_currency
 
 router = APIRouter(prefix="/comercial/web", tags=["Comercial Web"])
 ASSETS = Path(__file__).resolve().parents[1] / "assets" / "comercial"
+
+
+@router.get("/currency", dependencies=[Depends(require_commercial_detail)])
+def analytics_currency(context=Depends(require_commercial_currency)):
+    return context
 
 
 @router.get("/assets/{name}")

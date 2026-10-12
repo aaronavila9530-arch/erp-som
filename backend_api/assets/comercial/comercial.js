@@ -145,6 +145,9 @@
         if(view==='ports' && query.cliente){query.clientes=query.cliente;delete query.cliente;}
         if(view==='surveyors' && query.servicio){query.operacion=query.servicio;delete query.servicio;}
         this.message('Cargando...'); this.selected=null;
+        const financial=['clients','ports','services','surveyors'].includes(view);
+        const fx=financial?await this.request('/comercial/web/currency'):null;
+        if(seq!==this.sequence || this.disposed) return;
         const data=await this.request(this.url(definition.path,query));
         if(seq!==this.sequence || this.disposed) return;
         let rows=Array.isArray(data)?data:(data.data||[]);
@@ -159,7 +162,8 @@
           kpis={total_puertos:rows.length,con_operacion:active,sin_operacion:rows.length-active,operacion_minima:rows.filter(r=>r.estado_operativo==='OPERACION_MINIMA').length,operacion_activa:rows.filter(r=>r.estado_operativo==='OPERACION_ACTIVA').length,cobertura_pct:rows.length?active/rows.length*100:0};
         }
         if(view==='quotes') kpis={clientes:new Set(rows.map(r=>r.cliente)).size,servicios:new Set(rows.map(r=>r.servicio)).size,paises:new Set(rows.map(r=>r.pais)).size,puertos:new Set(rows.map(r=>r.puerto)).size,pendientes:rows.filter(r=>r.status==='PENDIENTE').length,aprobadas:rows.filter(r=>r.status==='APROBADO').length,canceladas:rows.filter(r=>r.status==='CANCELADO').length};
-        this.kpis(kpis||{}); this.table(); this.message(`${rows.length} registros`);
+        this.fx=fx;
+        this.kpis(kpis||{}); this.table(); this.message(`${rows.length} registros${fx?` \u00b7 USD${fx.rate?` \u00b7 TC BCCR ${number(fx.rate)} CRC/USD (${fx.rate_date})`:''}`:''}`);
         for(const key of definition.filters) {
           const optionKey=key==='servicio'?'operacion':key;
           this.options[optionKey]=[...new Set([...(this.options[optionKey]||[]),...rows.map(r=>r[key]).filter(v=>v!=null)])].sort();
@@ -205,7 +209,8 @@
     async export(format) {
       try {if(!this.filtered.length)throw new Error('No hay registros para exportar.');
         const columns=views[this.view].columns.split(' ');
-        await this.download(`/comercial/web/export/${format}`,`${this.view}.${format}`,'POST',{title:views[this.view].title,columns,labels:columns.map(key=>labels[key]||key),rows:this.filtered});
+        const usd=['clients','ports','services','surveyors'].includes(this.view);
+        await this.download(`/comercial/web/export/${format}`,`${this.view}.${format}`,'POST',{title:views[this.view].title+(usd?' (USD)':''),columns,labels:columns.map(key=>(labels[key]||key)+(usd&&moneyKeys.has(key)?' (USD)':'')),rows:this.filtered});
       }catch(error){this.message(error.message,true);}
     }
     async action(action) {

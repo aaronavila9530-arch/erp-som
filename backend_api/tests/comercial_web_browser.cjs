@@ -20,7 +20,8 @@ async function run(){
    requests.push({path:pathname,query:url.search,method:req.method(),body:req.postDataJSON(),company:req.headers()['x-company-code']});
    if(pathname.startsWith('/som/queue-icon/')) {await route.fulfill({contentType:'image/svg+xml',body:fs.readFileSync(path.join(root,'backend_api/assets/icons/lucide',path.basename(pathname)))});return;}
    let data={data:[]};
-   if(pathname==='/comercial/web/meta')data={permissions:Object.fromEntries(['board','clients','ports','services','quotations','edit','delete','export'].map(k=>[k,role==='admin'||k==='board'])),options:{cliente:['NORDEN'],operacion:['Bunker Survey'],continente:['America'],pais:['Costa Rica'],puerto:['Caldera'],surveyor:['Test'],year:[2025,2026]}};
+   if(pathname==='/comercial/web/currency')data={currency:'USD',rate:500,rate_date:'2026-10-12'};
+   else if(pathname==='/comercial/web/meta')data={permissions:Object.fromEntries(['board','clients','ports','services','quotations','edit','delete','export'].map(k=>[k,role==='admin'||k==='board'])),options:{cliente:['NORDEN'],operacion:['Bunker Survey'],continente:['America'],pais:['Costa Rica'],puerto:['Caldera'],surveyor:['Test'],year:[2025,2026]}};
    else if(pathname==='/comercial/board')data=board;
    else if(pathname==='/comercial/client-view')data={data:[{cliente:'NORDEN',servicios:'Bunker Survey',valor_facturado:25000}],kpis:{clientes:1,facturado:25000}};
    else if(pathname==='/comercial/clientes')data={data:[{nombrejuridico:'NORDEN',correo:'test@example.com',comentarios:'<img src=x onerror=alert(1)>'}]};
@@ -58,7 +59,7 @@ async function run(){
   assert.equal(requests.findLast(r=>r.path==='/comercial/web/export/xlsx').body.rows.length,1);
   await page.locator('[data-search]').fill('');const allDownload=page.waitForEvent('download');await page.locator('[data-export]').selectOption('csv');await allDownload;
   assert.equal(requests.findLast(r=>r.path==='/comercial/web/export/csv').body.rows.length,1205);
-  await tab('Clientes');await page.locator('[data-row="0"]').check();await page.locator('[data-action=client-detail]').click();
+  await tab('Clientes');assert.match(await page.getByRole('status').innerText(), /USD.*TC BCCR.*500.*2026-10-12/);await page.locator('[data-row="0"]').check();await page.locator('[data-action=client-detail]').click();
   await page.locator('dialog').waitFor();assert.equal(await page.locator('dialog img').count(),0);await page.locator('[data-close]').click();
   await tab('Puertos');await page.locator('[data-action=coverage]').click();await page.getByRole('heading',{name:'Cobertura de puertos'}).waitFor();
   await tab('Servicios');await page.locator('select[name=quarter]').selectOption('Q2');await page.getByRole('button',{name:'Buscar',exact:true}).click();

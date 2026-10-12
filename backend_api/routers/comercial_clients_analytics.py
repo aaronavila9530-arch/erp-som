@@ -13,11 +13,12 @@ from database import get_db
 from rbac_service import has_permission
 from services.tenanting import company_code
 from services.commercial_access import require_commercial_detail
+from services.commercial_currency import HONORARIOS_USD, require_commercial_currency
 
 
 router = APIRouter(
     prefix="/comercial",
-    tags=["Comercial"], dependencies=[Depends(require_commercial_detail)]
+    tags=["Comercial"], dependencies=[Depends(require_commercial_detail), Depends(require_commercial_currency)]
 )
 
 # ============================================================
@@ -111,7 +112,7 @@ def comercial_client_view(
 
                 COALESCE(s.valor_factura, 0)      AS valor_factura,
                 COALESCE(s.costo_operativo, 0)    AS costo_operativo,
-                COALESCE(s.honorarios, 0)         AS honorarios,
+                COALESCE({HONORARIOS_USD}, 0)     AS honorarios,
                 COALESCE(s.costo_tarjetas, 0)     AS costo_tarjetas,
 
                 cli.pais,

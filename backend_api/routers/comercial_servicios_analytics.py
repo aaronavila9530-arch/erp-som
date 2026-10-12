@@ -11,6 +11,7 @@ from fastapi import Header, HTTPException
 from rbac_service import has_permission
 from services.tenanting import company_code
 from services.commercial_access import require_commercial_detail
+from services.commercial_currency import HONORARIOS_USD, require_commercial_currency
 
 
 def _period_filters(filtros, params, company, quarter=None, quarter_from=None, quarter_to=None):
@@ -47,7 +48,7 @@ def require_permission(module: str, action: str):
 
 router = APIRouter(
     prefix="/comercial/analytics/servicios",
-    tags=["Comercial"], dependencies=[Depends(require_commercial_detail)]
+    tags=["Comercial"], dependencies=[Depends(require_commercial_detail), Depends(require_commercial_currency)]
 )
 
 
@@ -136,7 +137,7 @@ def servicios_analytics_by_servicio(
             ) AS revenue_neto_total,
 
             SUM(
-                COALESCE(s.honorarios,0) +
+                COALESCE({HONORARIOS_USD},0) +
                 COALESCE(s.costo_operativo,0) +
                 COALESCE(s.costo_tarjetas,0)
             ) AS costo_total,
@@ -150,7 +151,7 @@ def servicios_analytics_by_servicio(
             )
             -
             SUM(
-                COALESCE(s.honorarios,0) +
+                COALESCE({HONORARIOS_USD},0) +
                 COALESCE(s.costo_operativo,0) +
                 COALESCE(s.costo_tarjetas,0)
             ) AS margen_neto,
@@ -176,7 +177,7 @@ def servicios_analytics_by_servicio(
                             )
                             -
                             SUM(
-                                COALESCE(s.honorarios,0) +
+                                COALESCE({HONORARIOS_USD},0) +
                                 COALESCE(s.costo_operativo,0) +
                                 COALESCE(s.costo_tarjetas,0)
                             )
@@ -437,14 +438,14 @@ def costos_por_surveyor(
 
             COUNT(*) AS total_servicios,
 
-            SUM(COALESCE(s.honorarios, 0)) AS honorarios_total,
+            SUM(COALESCE({HONORARIOS_USD}, 0)) AS honorarios_total,
 
             SUM(COALESCE(s.costo_operativo, 0)) AS costo_operativo_total,
 
             SUM(COALESCE(s.costo_tarjetas, 0)) AS costo_tarjetas_total,
 
             SUM(
-                COALESCE(s.honorarios, 0)
+                COALESCE({HONORARIOS_USD}, 0)
                 + COALESCE(s.costo_operativo, 0)
                 + COALESCE(s.costo_tarjetas, 0)
             ) AS costo_total,
@@ -611,12 +612,12 @@ def servicios_por_ubicacion(
             ) AS iva_total,
 
             -- COSTOS
-            SUM(COALESCE(s.honorarios,0))      AS honorarios_total,
+            SUM(COALESCE({HONORARIOS_USD},0))  AS honorarios_total,
             SUM(COALESCE(s.costo_operativo,0)) AS costo_operativo_total,
             SUM(COALESCE(s.costo_tarjetas,0))  AS costo_tarjetas_total,
 
             SUM(
-                COALESCE(s.honorarios,0)
+                COALESCE({HONORARIOS_USD},0)
                 + COALESCE(s.costo_operativo,0)
                 + COALESCE(s.costo_tarjetas,0)
             ) AS costo_total,
@@ -640,7 +641,7 @@ def servicios_por_ubicacion(
             )
             -
             SUM(
-                COALESCE(s.honorarios,0)
+                COALESCE({HONORARIOS_USD},0)
                 + COALESCE(s.costo_operativo,0)
                 + COALESCE(s.costo_tarjetas,0)
             ) AS margen_neto
@@ -791,7 +792,7 @@ def servicios_kpis_ejecutivos(
                     END
                 ) AS iva_total,
 
-                SUM(COALESCE(s.honorarios,0)) AS honorarios,
+                SUM(COALESCE({HONORARIOS_USD},0)) AS honorarios,
                 SUM(COALESCE(s.costo_operativo,0)) AS costos_operativos,
                 SUM(COALESCE(s.costo_tarjetas,0)) AS costo_tarjetas,
 
@@ -813,7 +814,7 @@ def servicios_kpis_ejecutivos(
                 )
                 -
                 SUM(
-                    COALESCE(s.honorarios,0)
+                    COALESCE({HONORARIOS_USD},0)
                     + COALESCE(s.costo_operativo,0)
                     + COALESCE(s.costo_tarjetas,0)
                 ) AS margen_neto
@@ -1026,7 +1027,7 @@ def costos_surveyor_pareto(
                 UPPER(TRIM(s.pais))       AS pais,
                 UPPER(TRIM(s.puerto))     AS puerto,
                 COUNT(*)                  AS total_servicios,
-                SUM(COALESCE(s.honorarios, 0)) AS honorarios_total
+                SUM(COALESCE({HONORARIOS_USD}, 0)) AS honorarios_total
             FROM servicios s
             WHERE {where_clause}
             GROUP BY
