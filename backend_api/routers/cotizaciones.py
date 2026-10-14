@@ -196,6 +196,27 @@ def _ensure_cotizaciones_schema(cur):
         ADD COLUMN IF NOT EXISTS company_code VARCHAR(30) NOT NULL DEFAULT 'MSL-CR',
         ADD COLUMN IF NOT EXISTS texto_cotizacion TEXT;
     """)
+    # Keep existing numbers, but enforce uniqueness within their owning company.
+    # Install the replacement before removing the legacy global constraint.
+    cur.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS cotizaciones_company_quotation_uidx
+        ON public.cotizaciones (
+            (COALESCE(NULLIF(TRIM(company_code::text), ''), 'MSL-CR')),
+            quotation_number
+        );
+        ALTER TABLE public.cotizaciones
+        DROP CONSTRAINT IF EXISTS cotizaciones_quotation_number_key;
+    """)
+
+
+def _next_quotation_number(cur, company):
+    cur.execute("""
+        SELECT COALESCE(MAX(SUBSTRING(TRIM(quotation_number)
+               FROM '^Quotation ([0-9]+)$')::bigint), 0) + 1
+        FROM public.cotizaciones
+        WHERE COALESCE(NULLIF(TRIM(company_code::text), ''), 'MSL-CR') = %s;
+    """, (company,))
+    return f"Quotation {cur.fetchone()[0]:05d}"
 
 
 def _long_date(value: date) -> str:
@@ -444,26 +465,7 @@ def get_next_quotation_number(
     try:
         _ensure_cotizaciones_schema(cur)
         selected_company = company_code(x_company_code)
-        cur.execute("""
-            SELECT quotation_number
-            FROM public.cotizaciones
-            WHERE COALESCE(NULLIF(TRIM(company_code::text), ''), 'MSL-CR') = %s
-            ORDER BY id DESC
-            LIMIT 1
-            FOR UPDATE;
-        """, (selected_company,))
-
-        row = cur.fetchone()
-
-        if row and row[0]:
-            last_num = int(str(row[0]).replace("Quotation", "").strip())
-            next_num = last_num + 1
-        else:
-            next_num = 1
-
-        return {
-            "quotation_number": f"Quotation {next_num:05d}"
-        }
+        return {"quotation_number": _next_quotation_number(cur, selected_company)}
 
     finally:
         cur.close()
@@ -666,18 +668,10 @@ def crear_cotizacion(
     try:
         _ensure_cotizaciones_schema(cur)
         selected_company = company_code(x_company_code)
-        cur.execute("""
-            SELECT quotation_number
-            FROM public.cotizaciones
-            WHERE COALESCE(NULLIF(TRIM(company_code::text), ''), 'MSL-CR') = %s
-            ORDER BY id DESC
-            LIMIT 1
-            FOR UPDATE;
-        """, (selected_company,))
-
-        row = cur.fetchone()
-        next_num = int(str(row[0]).replace("Quotation", "").strip()) + 1 if row and row[0] else 1
-        quotation_number = f"Quotation {next_num:05d}"
+        # Also covers the first quotation, when no row exists to lock yet.
+        cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))",
+                    (f"cotizaciones:{selected_company}",))
+        quotation_number = _next_quotation_number(cur, selected_company)
 
         sql = """
             INSERT INTO public.cotizaciones (
