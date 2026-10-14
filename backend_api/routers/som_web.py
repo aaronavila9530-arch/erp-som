@@ -21,7 +21,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20261014-invoicing-client-alias-v10"
+_ASSET_VERSION = "20261014-home-biweekly-lines-v11"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -453,9 +453,6 @@ def som_web_action_center(
             cur.execute("SAVEPOINT home_pending")
             try:
                 operational = load_pending(cur, company, billing=can_show("finanzas"), reports=can_show("informes"))
-                if can_show("finanzas"):
-                    from services.home_payables import load_payment_queues
-                    operational["queues"].update(load_payment_queues(cur, company))
                 cur.execute("RELEASE SAVEPOINT home_pending")
             except Exception:
                 cur.execute("ROLLBACK TO SAVEPOINT home_pending")
@@ -463,6 +460,18 @@ def som_web_action_center(
                 import logging
                 logging.getLogger(__name__).exception("Unable to load home operational queues")
                 operational["error"] = "No se pudieron consultar los pendientes. Actualice para reintentar."
+
+        if can_show("finanzas"):
+            # Release read locks before ITP maintains its schema in a separate transaction.
+            conn.commit()
+            try:
+                from services.home_payables import load_payment_queues
+                operational["queues"].update(load_payment_queues(cur, company))
+            except Exception:
+                conn.rollback()
+                import logging
+                logging.getLogger(__name__).exception("Unable to load home payment queues")
+                operational["payment_error"] = "No se pudieron consultar las obligaciones quincenales de ITP."
 
         visible = [item for item in actions if item["count"] > 0]
         visible.sort(key=lambda item: ({"critical": 0, "warning": 1, "info": 2}.get(item["severity"], 3), -item["count"], item["title"]))
@@ -2676,6 +2685,7 @@ def som_web_home() -> HTMLResponse:
       const section = (title, keys, kind="") => `<section class="home-queue-group ${kind}" aria-label="${title}"><h3>${title}</h3><div class="home-queue-metrics">${keys.filter(key => queues[key]).map(metric).join("")}</div></section>`;
       target.innerHTML = `<div class="home-queue-heading"><h2>Pendientes operativos</h2><span class="home-queue-scope">${esc(payload.company)} · Todas las fechas</span></div><div class="home-queue-grid">${queues.billing ? section("Facturación", ["billing"], "billing") : ""}${queues.missing ? section("Informes", ["missing","approval","rework","unlinked"]) : ""}</div>`;
       if (!Object.keys(queues).length) target.innerHTML = "";
+      if (payload.payment_error) target.innerHTML += `<div class="status error">${esc(payload.payment_error)}</div>`;
       if (queues.payable_invoices) target.innerHTML += `<div class="home-queue-grid">${section("Obligaciones ITP", ["payable_half","payable_month","payable_invoices"])}${section("Facturas Collections", ["receivable_invoices"], "billing")}</div>`;
     }
     function openHomePending(key) {
@@ -2698,7 +2708,7 @@ def som_web_home() -> HTMLResponse:
       return (homePending?.queues?.[homePendingKey]?.rows || []).filter(row => (!period || (homePendingKey === "payable_half" ? row.quincena : row.mes) === period) && (!type || row.tipo_informe === type) && (!search || Object.values(row).some(value => String(value ?? "").toLocaleLowerCase().includes(search))));
     }
     function homePendingColumns() {
-      if (homePendingKey.startsWith("payable_")) return [["id","ID"],["payee_name","Beneficiario"],["reference","Factura / referencia"],["issue_date","Fecha factura"],["due_date","Vencimiento"],["payment_date","Fecha planificada"],["quincena","Quincena"],["currency","Moneda"],["balance","Saldo"],["status","Estado"]];
+      if (homePendingKey.startsWith("payable_")) return [["id","ID"],["payee_name","Beneficiario"],["obligation_type","Rubro"],["reference","Factura / referencia"],["issue_date","Fecha factura"],["due_date","Vencimiento"],["payment_date","Fecha planificada"],["quincena","Quincena"],["currency","Moneda"],["balance","Saldo"],["status","Estado"],["source","Fuente"],["notes","Notas"]];
       if (homePendingKey === "receivable_invoices") return [["codigo_cliente","Código"],["nombre_cliente","Cliente"],["numero_documento","Factura"],["fecha_emision","Emisión"],["fecha_vencimiento","Vencimiento"],["moneda","Moneda"],["total","Total"],["saldo_pendiente","Saldo"],["estado_factura","Estado"]];
       return [["consec","Servicio"],["servicios","Servicios vinculados"],["cliente","Cliente"],["buque_contenedor","Buque / contenedor"],["operacion","Operación"],["fecha_fin","Finalización"],["num_informe","N.º asignado"],...(homePendingKey === "billing" || homePendingKey === "missing" ? [] : [["tipo_informe","Tipo de informe"],["numero","N.º documento"],["informe_id","ID informe"],["estado_informe","Estado"],["titulo","Título"]])];
     }

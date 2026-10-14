@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 from types import ModuleType
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from services.home_payables import payment_queues, load_payment_queues
+from services.home_payables import payment_queues, load_payment_queues, merge_biweekly_rows
 
 
 class HomePayablesTests(unittest.TestCase):
@@ -65,11 +65,22 @@ class HomePayablesTests(unittest.TestCase):
 
     def test_queries_are_scoped_and_open_only(self):
         cur=MagicMock();cur.fetchall.return_value=[]
-        load_payment_queues(cur,'MCI-CR')
+        with patch('services.home_payables.load_biweekly_home_rows', return_value=[]):
+            load_payment_queues(cur,'MCI-CR')
         for call in cur.execute.call_args_list:
             self.assertIn('company_code=%s',call.args[0])
             self.assertEqual(call.args[1],('MCI-CR',))
         self.assertIn("status IN ('PENDING','PARTIAL')",cur.execute.call_args_list[0].args[0])
+
+    def test_biweekly_lines_include_zero_amount_and_deduplicate_carryover(self):
+        real = [dict(id=1)]
+        lines = [dict(obligation_id=1, amount=20),
+                 dict(name='Planilla', amount=100, due_date='2026-10-15', currency='CRC'),
+                 dict(name='CCSS', amount=0, due_date='2026-10-15', currency='CRC')]
+        merged = merge_biweekly_rows(real, [('2026-10',1,lines),('2026-10',2,lines)])
+        self.assertEqual(len(merged),3)
+        self.assertEqual(merged[2]['status'],'PENDIENTE_MONTO')
+        self.assertEqual(merged[1]['balance'],Decimal(100))
 
     def test_close_is_one_time_and_issue_date_not_due_date(self):
         source=(Path(__file__).parents[1]/'services/itp_september_close.py').read_text()
