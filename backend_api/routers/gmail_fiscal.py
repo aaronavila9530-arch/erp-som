@@ -60,15 +60,18 @@ class SpacemailConnect(BaseModel):
 
 @router.post("/imap/connect")
 def connect_spacemail(payload: SpacemailConnect, principal=Depends(require_gmail_admin), conn=Depends(get_db)):
-    from services.spacemail_fiscal import ACCOUNT, configure
+    from services.spacemail_fiscal import ACCOUNT, ConnectionFailure, configure
     if principal["company"] != "MCI-CR":
         raise HTTPException(403, "Spacemail solo esta configurado para MCI")
     _account(ACCOUNT, principal)
     try:
         return configure(conn, payload.password.get_secret_value(), principal["user"])
+    except ConnectionFailure as exc:
+        conn.rollback()
+        raise HTTPException(409, str(exc)) from None
     except Exception:
         conn.rollback()
-        raise HTTPException(409, "No se pudo conectar Spacemail. Revise la clave del buzon, acceso IMAP y carpeta FE recibidas.") from None
+        raise HTTPException(409, "IMAP_CONFIG: SOM no pudo guardar o preparar la conexion. Requiere revision del servidor; no indica que su clave sea incorrecta.") from None
 
 
 class AutomationUpdate(BaseModel):

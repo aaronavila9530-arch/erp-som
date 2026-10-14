@@ -13,10 +13,21 @@ HOST = "mail.spacemail.com"
 MAX_BYTES = 20 * 1024 * 1024
 
 
+class ConnectionFailure(ValueError):
+    """Only fixed, credential-free messages may cross the API boundary."""
+
+
+def logout_safely(mail):
+    try:
+        mail.logout()
+    except Exception:
+        pass
+
+
 def select_received(mail):
     status, folders = mail.list()
     if status != "OK":
-        raise ValueError("No se pudieron consultar las carpetas IMAP")
+        raise ConnectionFailure("IMAP_FOLDER_LIST: Se conecto al buzon, pero no se pudieron consultar sus carpetas.")
     matches = []
     for line in folders or []:
         if not isinstance(line, bytes):
@@ -24,42 +35,60 @@ def select_received(mail):
         match = re.match(rb'\([^)]*\) (?:"([^"]*)"|NIL) (.+)$', line)
         if not match:
             continue
-        delimiter = (match[1] or b"/").decode("ascii")
-        name = match[2].decode("ascii").strip('"')
+        delimiter = (match[1] or b"/").decode("ascii", errors="replace")
+        name = match[2].decode("ascii", errors="replace").strip('"')
         if name.lower() in {"fe recibidas", "inbox" + delimiter + "fe recibidas"}:
             matches.append(name)
     if len(matches) != 1:
-        raise ValueError("No se encontro una carpeta unica Inbox / FE recibidas")
+        raise ConnectionFailure("IMAP_FOLDER: La clave fue aceptada, pero no se encontro una carpeta unica Inbox / FE recibidas en el servidor.")
     folder = matches[0]
     status, _ = mail.select('"' + folder + '"', readonly=True)
     if status != "OK":
-        raise ValueError("No se pudo abrir FE recibidas en modo lectura")
+        raise ConnectionFailure("IMAP_FOLDER_ACCESS: La clave fue aceptada, pero el servidor no permite leer FE recibidas.")
     _, values = mail.response("UIDVALIDITY")
     if not values or not values[0] or not values[0].isdigit():
-        raise ValueError("El servidor no devolvio UIDVALIDITY")
+        raise ConnectionFailure("IMAP_UID: El servidor no devolvio el identificador de la carpeta. No se importo ningun mensaje.")
     return folder, values[0].decode("ascii")
 
 
 def connect(password):
-    mail = imaplib.IMAP4_SSL(HOST, 993, ssl_context=ssl.create_default_context(), timeout=30)
     try:
-        mail.login(ACCOUNT, password)
-        folder, validity = select_received(mail)
-        return mail, folder, validity
-    except Exception:
+        mail = imaplib.IMAP4_SSL(HOST, 993, ssl_context=ssl.create_default_context(), timeout=20)
+    except ssl.SSLError:
+        raise ConnectionFailure("IMAP_TLS: No se pudo verificar la conexion cifrada con Spacemail.") from None
+    except (OSError, imaplib.IMAP4.error):
+        raise ConnectionFailure("IMAP_NETWORK: Railway no pudo conectar con mail.spacemail.com:993. No se llego a validar la contrasena.") from None
+    try:
         try:
-            mail.logout()
-        except Exception:
-            pass
+            mail.login(ACCOUNT, password)
+        except imaplib.IMAP4.abort:
+            raise ConnectionFailure("IMAP_DISCONNECTED: Spacemail interrumpio la conexion durante la autenticacion.") from None
+        except imaplib.IMAP4.error:
+            raise ConnectionFailure("IMAP_AUTH: Spacemail rechazo el acceso de operations@xtravon.com. Use la clave de ese buzon, no la de SOM, y compruebe que IMAP este habilitado.") from None
+        except UnicodeError:
+            raise ConnectionFailure("IMAP_ENCODING: El inicio de sesion IMAP no pudo codificar la clave. Requiere revisar el metodo de autenticacion.") from None
+        try:
+            folder, validity = select_received(mail)
+        except imaplib.IMAP4.error:
+            raise ConnectionFailure("IMAP_FOLDER_ACCESS: La clave fue aceptada, pero fallo la consulta de FE recibidas.") from None
+        return mail, folder, validity
+    except OSError:
+        logout_safely(mail)
+        raise ConnectionFailure("IMAP_TIMEOUT: Spacemail dejo de responder durante la conexion. Vuelva a intentar.") from None
+    except Exception:
+        logout_safely(mail)
         raise
 
 
 def configure(conn, password, user):
     from services.gmail_fiscal_service import ensure_schema, encrypt_token
     ensure_schema(conn)
-    encrypted = encrypt_token(password)
+    try:
+        encrypted = encrypt_token(password)
+    except Exception:
+        raise ConnectionFailure("IMAP_ENCRYPTION: Falta configurar correctamente el cifrado de credenciales en SOM. No es un error de su clave.") from None
     mail, folder, _ = connect(password)
-    mail.logout()
+    logout_safely(mail)
     with conn.cursor() as cur:
         cur.execute("""UPDATE gmail_fiscal_connections SET encrypted_imap_password=%s,
             encrypted_refresh_token=NULL, status='CONNECTED', auto_enabled=TRUE,

@@ -88,6 +88,29 @@ class SpacemailTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             gmail.create_oauth_url(MagicMock(), "admin", imap.ACCOUNT)
 
+    def test_network_failure_is_not_reported_as_bad_password(self):
+        with patch.object(imap.imaplib, "IMAP4_SSL", side_effect=TimeoutError):
+            with self.assertRaisesRegex(imap.ConnectionFailure, "IMAP_NETWORK"):
+                imap.connect("secret")
+
+    def test_auth_error_does_not_expose_server_reply(self):
+        mail = self.mailbox()
+        mail.login.side_effect = imap.imaplib.IMAP4.error("private server response")
+        with patch.object(imap.imaplib, "IMAP4_SSL", return_value=mail):
+            with self.assertRaisesRegex(imap.ConnectionFailure, "IMAP_AUTH") as ctx:
+                imap.connect("secret")
+        self.assertNotIn("private server response", str(ctx.exception))
+
+    def test_logout_failure_does_not_reject_valid_connection(self):
+        conn, mail = MagicMock(), MagicMock()
+        mail.logout.side_effect = OSError("disconnected")
+        with patch.object(gmail, "ensure_schema"), patch.object(gmail, "encrypt_token", return_value="encrypted"), patch.object(imap, "connect", return_value=(mail, "INBOX/FE recibidas", "123")):
+            self.assertTrue(imap.configure(conn, "secret", "admin")["auto_enabled"])
+
+    def test_non_ascii_unrelated_folder_does_not_block_selection(self):
+        mail = self.mailbox([b'() "/" "INBOX/caf\xc3\xa9"', b'() "/" "INBOX/FE recibidas"'])
+        self.assertEqual(imap.select_received(mail)[0], "INBOX/FE recibidas")
+
     def test_sync_skips_existing_uid_and_uses_new_validity(self):
         conn = MagicMock()
         cur = conn.cursor.return_value.__enter__.return_value
