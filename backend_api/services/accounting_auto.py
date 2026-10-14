@@ -1405,6 +1405,7 @@ def sync_itp_to_accounting(conn, company_code_filter: str | None = None):
         # ============================================================
         # 1️⃣ Traer obligaciones activas
         # ============================================================
+        cur.execute('ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS historical_closed BOOLEAN NOT NULL DEFAULT FALSE')
         obligation_where = ["p.active = TRUE"]
         obligation_params = []
         if company_filter:
@@ -1427,6 +1428,7 @@ def sync_itp_to_accounting(conn, company_code_filter: str | None = None):
                 p.total,
                 p.balance,
                 p.status,
+                p.historical_closed,
                 p.active,
                 p.origin,
                 p.notes,
@@ -1794,7 +1796,7 @@ def sync_itp_to_accounting(conn, company_code_filter: str | None = None):
             # B) ASIENTO DE PAGO (origin='ITP_PAYMENT')
             # NO aplica para CREDIT NOTES
             # ============================================================
-            if status == "PAID" and balance_crc == 0 and not is_credit_note:
+            if status == "PAID" and balance_crc == 0 and not is_credit_note and not ob.get("historical_closed"):
 
                 payment_date = _to_date(ob.get("last_payment_date")) or issue_date
                 if payment_date > today:

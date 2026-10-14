@@ -21,7 +21,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20261014-quotation-company-number-v8"
+_ASSET_VERSION = "20261014-home-payables-v9"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -453,6 +453,9 @@ def som_web_action_center(
             cur.execute("SAVEPOINT home_pending")
             try:
                 operational = load_pending(cur, company, billing=can_show("finanzas"), reports=can_show("informes"))
+                if can_show("finanzas"):
+                    from services.home_payables import load_payment_queues
+                    operational["queues"].update(load_payment_queues(cur, company))
                 cur.execute("RELEASE SAVEPOINT home_pending")
             except Exception:
                 cur.execute("ROLLBACK TO SAVEPOINT home_pending")
@@ -2658,6 +2661,7 @@ def som_web_home() -> HTMLResponse:
     let homePendingPage = 0;
     let homePendingRequest = 0;
     const homePendingTitles = {billing:"Servicios pendientes de facturación", missing:"Informes pendientes de hacerse", approval:"Informes pendientes de aprobación", rework:"Informes en borrador o rechazados", unlinked:"Informes sin servicio vinculado"};
+    Object.assign(homePendingTitles, {payable_month:"Obligaciones por mes", payable_half:"Obligaciones por quincena", payable_invoices:"ITP pendiente de pago", receivable_invoices:"Collections: por cobrar / aplicar pago"});
     function renderHomePending(payload) {
       const target = $("homePendingTables");
       if (!target) return;
@@ -2666,10 +2670,13 @@ def som_web_home() -> HTMLResponse:
       const queues = payload?.queues || {};
       const labels = {billing:"Facturar", missing:"Elaborar", approval:"Aprobar", rework:"Corregir", unlinked:"Vincular"};
       const icons = {billing:"receipt-text", missing:"file-pen-line", approval:"badge-check", rework:"pencil-line", unlinked:"unlink"};
+      Object.assign(labels, {payable_month:"Meses pendientes", payable_half:"Quincenas pendientes", payable_invoices:"Por pagar", receivable_invoices:"Cobrar / aplicar"});
+      Object.assign(icons, {payable_month:"receipt-text", payable_half:"receipt-text", payable_invoices:"receipt-text", receivable_invoices:"badge-check"});
       const metric = key => `<button data-queue="${key}" class="home-queue-metric ${Number(queues[key].count) === 0 ? "is-clear" : ""} ${Number(queues[key].count) > 9999 ? "is-large" : ""}" aria-label="${esc(homePendingTitles[key])}" aria-describedby="homeQueueCount-${key}" title="${esc(homePendingTitles[key])}" onclick="openHomePending('${key}')"><span class="home-queue-icon" style="--queue-icon:url('/som/queue-icon/${icons[key]}.svg')" aria-hidden="true"></span><strong id="homeQueueCount-${key}" class="home-queue-value">${intFmt.format(queues[key].count)}</strong><span class="home-queue-label">${esc(labels[key])}</span></button>`;
       const section = (title, keys, kind="") => `<section class="home-queue-group ${kind}" aria-label="${title}"><h3>${title}</h3><div class="home-queue-metrics">${keys.filter(key => queues[key]).map(metric).join("")}</div></section>`;
       target.innerHTML = `<div class="home-queue-heading"><h2>Pendientes operativos</h2><span class="home-queue-scope">${esc(payload.company)} · Todas las fechas</span></div><div class="home-queue-grid">${queues.billing ? section("Facturación", ["billing"], "billing") : ""}${queues.missing ? section("Informes", ["missing","approval","rework","unlinked"]) : ""}</div>`;
       if (!Object.keys(queues).length) target.innerHTML = "";
+      if (queues.payable_invoices) target.innerHTML += `<div class="home-queue-grid">${section("Obligaciones ITP", ["payable_half","payable_month","payable_invoices"])}${section("Facturas Collections", ["receivable_invoices"], "billing")}</div>`;
     }
     function openHomePending(key) {
       if (!homePending?.queues?.[key] || homePending.company !== selectedCompany()) return;
@@ -2678,13 +2685,21 @@ def som_web_home() -> HTMLResponse:
       const types = [...new Set(rows.map(row => row.tipo_informe).filter(Boolean))].sort();
       document.body.insertAdjacentHTML("beforeend", `<div class="modal-backdrop" id="svcModal" data-home-pending="true"><div class="modal home-queue-modal" role="dialog" aria-modal="true" aria-labelledby="homePendingTitle"><div class="modal-head"><h2 id="homePendingTitle">${esc(homePendingTitles[key])}</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div><div class="toolbar"><label>Buscar<input id="homePendingSearch" type="search" oninput="homePendingPage=0; renderHomePendingDetail()" /></label>${types.length ? `<label>Tipo de informe<select id="homePendingType" onchange="homePendingPage=0; renderHomePendingDetail()"><option value="">Todos</option>${types.map(type => `<option>${esc(type)}</option>`).join("")}</select></label>` : ""}<button class="secondary" onclick="exportHomePending()">Exportar Excel</button></div><div id="homePendingRows"></div><div class="toolbar"><button id="homePendingPrev" class="secondary" onclick="homePendingPage--; renderHomePendingDetail()" aria-label="Página anterior">&larr;</button><span id="homePendingPageLabel"></span><button id="homePendingNext" class="secondary" onclick="homePendingPage++; renderHomePendingDetail()" aria-label="Página siguiente">&rarr;</button></div></div></div>`);
       renderHomePendingDetail(); $("homePendingSearch").focus();
+      if (homePending.queues[key].summary) {
+        const periods = [...new Set(rows.map(r => key === "payable_half" ? r.quincena : r.mes))].sort();
+        $("homePendingSearch").parentElement.insertAdjacentHTML("afterend", `<label>Periodo<select id="homePaymentPeriod" onchange="homePendingPage=0; renderHomePendingDetail()"><option value="">Todos</option>${periods.map(p=>`<option>${esc(p)}</option>`).join("")}</select></label>`);
+        renderHomePendingDetail();
+      }
     }
     function filteredHomePending() {
       const search = String($("homePendingSearch")?.value || "").trim().toLocaleLowerCase();
       const type = $("homePendingType")?.value || "";
-      return (homePending?.queues?.[homePendingKey]?.rows || []).filter(row => (!type || row.tipo_informe === type) && (!search || Object.values(row).some(value => String(value ?? "").toLocaleLowerCase().includes(search))));
+      const period = $("homePaymentPeriod")?.value || "";
+      return (homePending?.queues?.[homePendingKey]?.rows || []).filter(row => (!period || (homePendingKey === "payable_half" ? row.quincena : row.mes) === period) && (!type || row.tipo_informe === type) && (!search || Object.values(row).some(value => String(value ?? "").toLocaleLowerCase().includes(search))));
     }
     function homePendingColumns() {
+      if (homePendingKey.startsWith("payable_")) return [["id","ID"],["payee_name","Beneficiario"],["reference","Factura / referencia"],["issue_date","Fecha factura"],["due_date","Vencimiento"],["payment_date","Fecha planificada"],["quincena","Quincena"],["currency","Moneda"],["balance","Saldo"],["status","Estado"]];
+      if (homePendingKey === "receivable_invoices") return [["codigo_cliente","Código"],["nombre_cliente","Cliente"],["numero_documento","Factura"],["fecha_emision","Emisión"],["fecha_vencimiento","Vencimiento"],["moneda","Moneda"],["total","Total"],["saldo_pendiente","Saldo"],["estado_factura","Estado"]];
       return [["consec","Servicio"],["servicios","Servicios vinculados"],["cliente","Cliente"],["buque_contenedor","Buque / contenedor"],["operacion","Operación"],["fecha_fin","Finalización"],["num_informe","N.º asignado"],...(homePendingKey === "billing" || homePendingKey === "missing" ? [] : [["tipo_informe","Tipo de informe"],["numero","N.º documento"],["informe_id","ID informe"],["estado_informe","Estado"],["titulo","Título"]])];
     }
     function renderHomePendingDetail() {
@@ -2694,6 +2709,11 @@ def som_web_home() -> HTMLResponse:
       $("homePendingPageLabel").textContent = `${homePendingPage + 1} / ${pages}`;
       $("homePendingPrev").disabled = homePendingPage === 0;
       $("homePendingNext").disabled = homePendingPage === pages - 1;
+      if (homePendingKey.startsWith("payable_") || homePendingKey === "receivable_invoices") {
+        const totals = {};
+        for (const r of rows) { const c = r.currency || r.moneda; totals[c] = (totals[c] || 0) + Number(r.balance ?? r.saldo_pendiente ?? 0); }
+        $("homePendingRows").insertAdjacentHTML("afterbegin", `<div class="status">${Object.entries(totals).map(([c,n])=>`${esc(c)} ${Number(n).toLocaleString("es-CR",{minimumFractionDigits:2,maximumFractionDigits:2})}`).join(" · ") || "Sin saldo pendiente"}</div>`);
+      }
     }
     function exportHomePending() {
       downloadExcelFile(`pendientes_${homePendingKey}.xls`, filteredHomePending(), homePendingColumns().map(([key]) => key), homePendingTitles[homePendingKey]);

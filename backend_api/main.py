@@ -154,6 +154,12 @@ app.add_middleware(
 # ============================================================
 @app.on_event("startup")
 def _debug_routes_all():
+    from services.itp_september_close import close_historical_itp
+    try:
+        close_historical_itp()
+    except Exception:
+        import logging
+        logging.getLogger(__name__).exception('ITP historical closure failed; transaction rolled back')
     start_gmail_fiscal_scheduler()
     start_notification_scheduler()
     print("\n=== TODAS LAS RUTAS REGISTRADAS ===")
