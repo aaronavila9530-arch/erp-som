@@ -96,13 +96,18 @@ def get_servicios_facturables(
                 s.factura
             FROM servicios s
             WHERE
-                s.cliente = %s
+                (s.cliente = %s OR EXISTS (
+                    SELECT 1 FROM cliente c
+                    WHERE c.company_code = s.company_code
+                      AND %s IN (c.codigo, c.nombrecomercial, c.nombrejuridico)
+                      AND s.cliente IN (c.codigo, c.nombrecomercial, c.nombrejuridico)
+                ))
                 AND s.company_code = %s
                 AND s.estado = 'Finalizado'
                 AND s.num_informe IS NOT NULL
                 AND s.factura IS NULL
             ORDER BY s.fecha_inicio
-        """, (cliente, company))
+        """, (cliente, cliente, company))
 
         data = cur.fetchall()
 

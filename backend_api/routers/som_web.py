@@ -21,7 +21,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20261014-home-payables-v9"
+_ASSET_VERSION = "20261014-invoicing-client-alias-v10"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -6666,6 +6666,11 @@ def som_web_home() -> HTMLResponse:
     function financeClientId(row) {
       return row?.codigo || row?.Codigo || row?.codigo_cliente || "";
     }
+    function financeClientLabel(row) {
+      const name = financeClientName(row);
+      const legal = row.nombrejuridico || row.NombreJuridico || "";
+      return `${financeClientId(row)} | ${name}${legal && legal !== name ? ` | ${legal}` : ""}`;
+    }
     function financeClientCode(name) {
       const row = financeClienteRows.find(c => [c.nombrecomercial, c.NombreComercial, c.nombrejuridico, c.NombreJuridico, c.codigo, c.Codigo].filter(Boolean).includes(name));
       return row?.codigo || row?.Codigo || "";
@@ -6677,7 +6682,7 @@ def som_web_home() -> HTMLResponse:
         if (el && el.tagName === "SELECT" && el.options.length <= 1) {
           el.innerHTML = '<option value="">Todos</option>' + financeClienteRows.map(row => {
             const name = financeClientName(row);
-            return `<option value="${esc(name)}">${esc(financeClientId(row))} | ${esc(name)}</option>`;
+            return `<option value="${esc(name)}">${esc(financeClientLabel(row))}</option>`;
           }).join("");
           if (!financeClienteRows.length) el.innerHTML = '<option value="">Sin clientes disponibles</option>';
         }
