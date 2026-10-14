@@ -21,7 +21,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20261012-manual-bank-layout-v6"
+_ASSET_VERSION = "20261014-finance-client-catalog-v7"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -5320,6 +5320,7 @@ def som_web_home() -> HTMLResponse:
       else if (tab === "disputes") renderDisputesWeb(orderCashWorkspace());
     }
     function renderCollectionsWeb(target=orderCashWorkspace()) {
+      collectionClientesLoaded = false;
       target.innerHTML = `
         <div class="panel-head">
           <h2>Collections — Accounts Receivable</h2>
@@ -5351,13 +5352,16 @@ def som_web_home() -> HTMLResponse:
       if (collectionClientesLoaded) return;
       const select = $("collectionsCliente");
       if (!select) return;
+      if (select.dataset.loading) return;
+      select.dataset.loading = "true";
+      const company = selectedCompany();
       select.innerHTML = '<option value="ALL">Cargando...</option>';
       try {
-        const names = new Set();
+        const names = new Set(await ensureFinanceClientes());
         let page = 1;
         const pageSize = 200;
-        while (page <= 20) {
-          const payload = await getJSON(`/collections/search?page=${page}&page_size=${pageSize}`);
+        while (true) {
+          const payload = await getJSON(`/collections/search?page=${page}&page_size=${pageSize}`, {"X-Company-Code":company});
           rowsList(payload).forEach(row => {
             const name = row.nombre_cliente || row.codigo_cliente;
             if (name) names.add(String(name));
@@ -5366,12 +5370,16 @@ def som_web_home() -> HTMLResponse:
           if (!rowsList(payload).length || page * pageSize >= total) break;
           page += 1;
         }
+        if (company !== selectedCompany() || select !== $("collectionsCliente")) return;
         collectionClientes = ["ALL", ...Array.from(names).sort((a,b) => a.localeCompare(b))];
         select.innerHTML = collectionClientes.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join("");
         collectionClientesLoaded = true;
       } catch (err) {
+        if (company !== selectedCompany() || select !== $("collectionsCliente")) return;
         select.innerHTML = '<option value="ALL">ALL</option>';
         alert(`No se pudieron cargar clientes de Collections: ${err.message}`);
+      } finally {
+        delete select.dataset.loading;
       }
     }
     function collectionParams(page=1, pageSize=50) {
@@ -6619,9 +6627,16 @@ def som_web_home() -> HTMLResponse:
       downloadExcelFile(`disputes_${new Date().toISOString().slice(0,10)}.xls`, disputeRows, cols, "Disputes - detalle");
     }
     async function ensureFinanceClientes() {
-      if (financeClientes.length) return financeClientes;
-      const payload = await getJSON("/clientes?page=1&page_size=500").catch(() => ({ data:[] }));
-      financeClienteRows = rowsList(payload);
+      const company = selectedCompany();
+      const rows = [];
+      for (let page = 1; ; page++) {
+        const payload = await getJSON(`/clientes?page=${page}&page_size=500`, {"X-Company-Code":company});
+        const batch = rowsList(payload);
+        rows.push(...batch);
+        if (!batch.length || rows.length >= Number(payload.total ?? rows.length)) break;
+      }
+      if (company !== selectedCompany()) throw new Error("La empresa cambió. Vuelva a abrir la consulta.");
+      financeClienteRows = rows;
       financeClientes = financeClienteRows.map(c => c.nombrecomercial || c.NombreComercial || c.nombrejuridico || c.NombreJuridico || c.codigo || c.Codigo).filter(Boolean);
       return financeClientes;
     }
@@ -10273,6 +10288,10 @@ def som_web_home() -> HTMLResponse:
       if ($("companyTop")) $("companyTop").value = value;
       bankAccessToken = "";
       bankRows = [];
+      financeClientes = [];
+      financeClienteRows = [];
+      collectionClientes = [];
+      collectionClientesLoaded = false;
       if (session) {
         session.company = value;
         localStorage.setItem(SESSION_KEY, JSON.stringify(session));
