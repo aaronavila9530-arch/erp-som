@@ -3,7 +3,7 @@ from fastapi.routing import APIRoute
 from fastapi.responses import HTMLResponse
 from html import escape
 from psycopg2.extras import RealDictCursor
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SecretStr
 
 from database import get_db
 from security.gmail_access import issue_session, require_gmail_admin
@@ -54,6 +54,23 @@ class OAuthStart(BaseModel):
     account_email:str|None=None
 
 
+class SpacemailConnect(BaseModel):
+    password: SecretStr = Field(min_length=1, max_length=200)
+
+
+@router.post("/imap/connect")
+def connect_spacemail(payload: SpacemailConnect, principal=Depends(require_gmail_admin), conn=Depends(get_db)):
+    from services.spacemail_fiscal import ACCOUNT, configure
+    if principal["company"] != "MCI-CR":
+        raise HTTPException(403, "Spacemail solo esta configurado para MCI")
+    _account(ACCOUNT, principal)
+    try:
+        return configure(conn, payload.password.get_secret_value(), principal["user"])
+    except Exception:
+        conn.rollback()
+        raise HTTPException(409, "No se pudo conectar Spacemail. Revise la clave del buzon, acceso IMAP y carpeta FE recibidas.") from None
+
+
 class AutomationUpdate(BaseModel):
     enabled:bool
     interval_minutes:int=Field(default=10,ge=5,le=1440)
@@ -82,12 +99,12 @@ def connection_status(account_email:str|None=None,principal=Depends(require_gmai
         if account_email:
             cur.execute("""SELECT account_email,status,scopes,auto_enabled,interval_minutes,search_query,last_sync_at,
           next_sync_at,last_error,connected_by,connected_at,updated_at,
-          encrypted_refresh_token IS NOT NULL authorized FROM gmail_fiscal_connections WHERE account_email=%s""",(_account(account_email,principal),))
+          (encrypted_refresh_token IS NOT NULL OR encrypted_imap_password IS NOT NULL) authorized FROM gmail_fiscal_connections WHERE account_email=%s""",(_account(account_email,principal),))
             rows=[cur.fetchone()]
         else:
             cur.execute("""SELECT account_email,status,scopes,auto_enabled,interval_minutes,search_query,last_sync_at,
           next_sync_at,last_error,connected_by,connected_at,updated_at,
-          encrypted_refresh_token IS NOT NULL authorized FROM gmail_fiscal_connections
+          (encrypted_refresh_token IS NOT NULL OR encrypted_imap_password IS NOT NULL) authorized FROM gmail_fiscal_connections
           WHERE account_email=ANY(%s) ORDER BY account_email""", (_accounts(principal),))
             rows=cur.fetchall()
         accounts=[row for row in rows if row]
@@ -123,9 +140,9 @@ def update_automation(payload:AutomationUpdate,principal=Depends(require_gmail_a
     ensure_schema(conn)
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         if payload.enabled:
-            cur.execute("SELECT encrypted_refresh_token FROM gmail_fiscal_connections WHERE account_email=%s",(account,))
+            cur.execute("SELECT encrypted_refresh_token,encrypted_imap_password FROM gmail_fiscal_connections WHERE account_email=%s",(account,))
             current=cur.fetchone()
-            if not current or not current.get("encrypted_refresh_token"):
+            if not current or not (current.get("encrypted_refresh_token") or current.get("encrypted_imap_password")):
                 raise HTTPException(409,"Autorice la cuenta Gmail antes de activar la revisión automática")
         cur.execute("""UPDATE gmail_fiscal_connections SET auto_enabled=%s,interval_minutes=%s,
           search_query=COALESCE(%s,search_query),next_sync_at=CASE WHEN %s THEN NOW() ELSE NULL END,updated_at=NOW()
@@ -170,7 +187,7 @@ def disconnect(account_email:str|None=None,principal=Depends(require_gmail_admin
     account = _account(account_email,principal)
     ensure_schema(conn)
     with conn.cursor() as cur:
-        cur.execute("""UPDATE gmail_fiscal_connections SET encrypted_refresh_token=NULL,status='PENDING_AUTH',auto_enabled=FALSE,
+        cur.execute("""UPDATE gmail_fiscal_connections SET encrypted_refresh_token=NULL,encrypted_imap_password=NULL,status='PENDING_AUTH',auto_enabled=FALSE,
           next_sync_at=NULL,last_error=NULL,updated_at=NOW() WHERE account_email=%s""",(account,))
         cur.execute("UPDATE gmail_fiscal_oauth_states SET consumed_at=NOW() WHERE account_email=%s AND consumed_at IS NULL", (account,))
         cur.execute("INSERT INTO gmail_fiscal_audit(account_email,action,performed_by) VALUES(%s,'DISCONNECTED',%s)",(account,principal["user"]))

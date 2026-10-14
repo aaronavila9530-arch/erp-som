@@ -21,7 +21,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20261014-home-biweekly-lines-v11"
+_ASSET_VERSION = "20261014-spacemail-imap-v12"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -3040,7 +3040,7 @@ def som_web_home() -> HTMLResponse:
               <button class="primary" onclick="selectAccountingReport('ANALITICO_CUENTA')">Analítico</button>
               ${accountingMenu("Acciones", [["Nuevo asiento","openAccountingManualEntry()"],["Ajustar asiento seleccionado","openAccountingEntryEditor()"],["Enviar a revisión","transitionAccountingEntry('submit')"],["Aprobar","transitionAccountingEntry('approve')"],["Contabilizar","transitionAccountingEntry('post')"],["Reversar asiento seleccionado","reverseAccountingEntry()"],["Cierre mensual guiado","openAccountingGuidedClose()"]])}
               ${accountingMenu("Reportes", [["Asientos","selectAccountingReport('ASIENTOS')"],["Analítico de cuenta","selectAccountingReport('ANALITICO_CUENTA')"],["Detalle por tipo de cuenta","selectAccountingReport('DETALLE_TIPO')"],["Libro Mayor","selectAccountingReport('MAYOR')"],["Balance de Comprobación","selectAccountingReport('BC')"],["Estado de Situación Financiera","selectAccountingReport('ESF')"],["Estado de Resultados","selectAccountingReport('ER')"],["Flujo de Caja","selectAccountingReport('FC')"],["Estados financieros completos","loadAccountingCompleteStatements()"],["Reporte financiero ejecutivo","loadAccountingExecutive()"]])}
-              ${accountingMenu("Herramientas", [["Mi espacio contable","loadAccountingWorkspace()"],["Auxiliares contables","loadAccountingAuxiliaries()"],["Catálogo maestro de cuentas","loadAccountingAccounts()"],["Activos fijos","loadAccountingFixedAssets()"],["Tarjetas corporativas","loadAccountingCards()"],["Inventarios","loadAccountingInventory()"],["Sincronizar asientos ERP","runAccountingSyncAll()"],["Autorizar Gmail backend","startGmailFiscalOAuth()"],["Activar Gmail automático","enableGmailFiscalAutomation()"],["Estado Gmail backend","loadGmailFiscalStatus()"],["Sincronizar Gmail ahora","runGmailFiscalSync()"],["Revisar Outlook local","runAccountingOutlookSync(false)"],["Historial BAC tarjetas","runAccountingOutlookSync(true)"],["Motor de contabilización","loadAccountingPostingRules()"]])}
+              ${accountingMenu("Herramientas", [["Mi espacio contable","loadAccountingWorkspace()"],["Auxiliares contables","loadAccountingAuxiliaries()"],["Catálogo maestro de cuentas","loadAccountingAccounts()"],["Activos fijos","loadAccountingFixedAssets()"],["Tarjetas corporativas","loadAccountingCards()"],["Inventarios","loadAccountingInventory()"],["Sincronizar asientos ERP","runAccountingSyncAll()"],[selectedCompany() === "MCI-CR" ? "Conectar Spacemail" : "Autorizar Gmail backend","startGmailFiscalOAuth()"],["Activar correo automático","enableGmailFiscalAutomation()"],["Estado del correo backend","loadGmailFiscalStatus()"],["Sincronizar correo ahora","runGmailFiscalSync()"],["Revisar Outlook local","runAccountingOutlookSync(false)"],["Historial BAC tarjetas","runAccountingOutlookSync(true)"],["Motor de contabilización","loadAccountingPostingRules()"]])}
               ${accountingMenu("Avanzado", [["Alertas y validaciones","loadAccountingAlerts()"],["Auditoría por usuario","loadAccountingAudit()"],["Accounting avanzado","loadAccountingAdvancedDashboard()"],["PORTIA contable","runPortiaAccounting()"],["Simulador fiscal multiempresa","loadTaxScenarioPlanner()"],["Centro fiscal Costa Rica","loadAccountingTaxCenter()"],["Biblioteca legal Costa Rica","loadAccountingLegalLibrary()"],["TRIBU-CR 150 IVA","openTaxDeclaration('IVA')"],["102 Impuesto sobre utilidades","openTaxDeclaration('ISU')"]])}
               <button onclick="exportAccountingReport('xlsx')">Exportar Excel</button>
               <button onclick="exportAccountingReport('pdf')">Exportar PDF</button>
@@ -3564,7 +3564,7 @@ def som_web_home() -> HTMLResponse:
       return `<div class="grid kpis"><div class="card kpi"><span>Estado</span><strong>${esc(payload?.period_control?.status || "-")}</strong></div><div class="card kpi"><span>Listo para cierre</span><strong>${payload.ready_to_close ? "Sí" : "No"}</strong></div><div class="card kpi"><span>Diferencia</span><strong>${fmtAccMoney(summary.difference)}</strong></div><div class="card kpi"><span>Alertas críticas</span><strong>${esc(summary.critical_alerts || 0)}</strong></div></div>${renderFinanceGenericTable(checklist)}`;
     }
     function accountingGmailAccounts() {
-      if (selectedCompany() === "MCI-CR") return ["facturacion.fe@xtravon.com", "operations@xtravon.com"];
+      if (selectedCompany() === "MCI-CR") return ["operations@xtravon.com"];
       return ["gastos@mslogisticsgroup.com", "contabilidad@mslogisticsgroup.com"];
     }
     function accountingGmailAccount() {
@@ -3592,6 +3592,7 @@ def som_web_home() -> HTMLResponse:
       return parts.join(" · ");
     }
     async function startGmailFiscalOAuth() {
+      if (selectedCompany() === "MCI-CR") return connectSpacemail();
       const accounts = accountingGmailAccounts();
       setAccountingMailStatus("accounting-banner", `Preparando autorización Google para ${accounts.join(" y ")}...`);
       try {
@@ -3612,34 +3613,65 @@ def som_web_home() -> HTMLResponse:
           const payload = await sendJSON("PUT", "/accounting/tax/gmail/automation", { enabled:true, interval_minutes:10, user:session?.usuario || "WEB_USER", account_email:account });
           results.push(`${payload.account_email || account}: ${payload.next_sync_at || "en breve"}`);
         }
-        setAccountingMailStatus("accounting-banner", `Gmail automático activo. Próximas revisiones: ${results.join(" · ")}.`);
+        setAccountingMailStatus("accounting-banner", `Correo automático activo. Próximas revisiones: ${results.join(" · ")}.`);
       } catch (err) { setAccountingMailStatus("accounting-banner error", err.message); }
     }
     async function runGmailFiscalSync() {
-      setAccountingMailStatus("accounting-banner", "Ejecutando sincronización Gmail fiscal en backend...");
+      setAccountingMailStatus("accounting-banner", "Ejecutando sincronización de correo fiscal en backend...");
       try {
         const summaries = [];
         for (const account of accountingGmailAccounts()) {
           const payload = await postJSON(`/accounting/tax/gmail/sync?max_messages=100&account_email=${encodeURIComponent(account)}`, {});
           summaries.push(`${account}: ${renderGmailFiscalSummary(payload)}`);
         }
-        setAccountingMailStatus("accounting-banner", `Gmail backend: ${summaries.join(" · ")}.`);
+        setAccountingMailStatus("accounting-banner", `Correo backend: ${summaries.join(" · ")}.`);
       } catch (err) { setAccountingMailStatus("accounting-banner error", err.message); }
     }
     async function loadGmailFiscalStatus() {
-      setAccountingMailStatus("accounting-banner", "Consultando estado Gmail backend...");
+      setAccountingMailStatus("accounting-banner", "Consultando estado del correo backend...");
       try {
         const lines = [];
         let oauthConfigured = true;
         for (const account of accountingGmailAccounts()) {
           const payload = await getJSON(`/accounting/tax/gmail/status?account_email=${encodeURIComponent(account)}`);
-          oauthConfigured = oauthConfigured && !!payload.oauth_configured;
+          oauthConfigured = oauthConfigured && (selectedCompany() === "MCI-CR" || !!payload.oauth_configured);
           const connection = payload.connection || {};
           const counts = payload.message_counts?.[connection.account_email] || {};
-          lines.push(`${connection.account_email || account}: ${connection.authorized ? "conectado" : "sin autorización"} · auto ${connection.auto_enabled ? "activa" : "inactiva"} · sync ${connection.last_sync_at || "-"} · mensajes ${Object.entries(counts).map(([k,v]) => `${k}:${v}`).join(", ") || "0"}`);
+          lines.push(`${connection.account_email || account}: ${connection.authorized ? "conectado" : "sin autorización"} · auto ${connection.auto_enabled ? "activa" : "inactiva"} · sync ${connection.last_sync_at || "-"} · mensajes ${Object.entries(counts).map(([k,v]) => `${k}:${v}`).join(", ") || "0"}${connection.last_error ? " · " + connection.last_error : ""}`);
         }
-        setAccountingMailStatus("accounting-banner", `Gmail backend ${lines.join(" | ")}${oauthConfigured ? "" : " · OAuth no configurado en servidor"}`);
+        setAccountingMailStatus("accounting-banner", `Correo backend ${lines.join(" | ")}${oauthConfigured ? "" : " · OAuth no configurado en servidor"}`);
       } catch (err) { setAccountingMailStatus("accounting-banner error", err.message); }
+    }
+    async function connectSpacemail() {
+      try { await authorizeGmailAdministration(); }
+      catch (err) { setAccountingMailStatus("accounting-banner error", err.message); return; }
+      const identity = `${session?.usuario}:${selectedCompany()}`;
+      const dialog = document.createElement("dialog");
+      dialog.style.cssText = "width:440px;max-width:calc(100vw - 32px);border:1px solid #d6e0eb;border-radius:8px;padding:24px";
+      dialog.innerHTML = `<form><h2 style="font-size:20px">Conectar Spacemail</h2>
+        <p>operations@xtravon.com</p><p>MCI · Inbox / FE recibidas</p>
+        <label>Contraseña del buzón<input type="password" name="password" autocomplete="off" required maxlength="200"></label>
+        <p class="error" role="alert"></p><div style="display:flex;gap:8px;flex-wrap:wrap"><button type="submit">Conectar y activar</button><button type="button" class="secondary">Cancelar</button></div></form>`;
+      const form = dialog.querySelector("form");
+      const close = () => { form.reset(); dialog.close(); dialog.remove(); };
+      dialog.addEventListener("cancel", event => { event.preventDefault(); close(); });
+      form.querySelector('button[type="button"]').onclick = close;
+      form.onsubmit = async event => {
+        event.preventDefault();
+        const button = form.querySelector('button[type="submit"]');
+        button.disabled = true;
+        try {
+          if (identity !== `${session?.usuario}:${selectedCompany()}`) throw new Error("La empresa cambió. Vuelva a abrir la conexión.");
+          const request = postJSON("/accounting/tax/gmail/imap/connect", { password:form.elements.password.value });
+          form.reset();
+          await request;
+          close();
+          setAccountingMailStatus("accounting-banner", "Spacemail conectado. Revisión automática cada 10 minutos; primera revisión en breve.");
+        } catch (err) { form.querySelector('[role="alert"]').textContent = err.message; }
+        finally { button.disabled = false; }
+      };
+      document.body.appendChild(dialog);
+      dialog.showModal();
     }
     function summarizeAccountingOutlook(result) {
       const history = result.card_history || {};

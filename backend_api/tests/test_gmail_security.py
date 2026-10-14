@@ -58,7 +58,7 @@ class GmailSecurityTests(unittest.TestCase):
 
     def test_all_mailbox_routes_reject_anonymous_and_forged_headers(self):
         paths = [("GET", "/status"), ("GET", "/messages"), ("GET", "/messages/1/attachments"),
-                 ("POST", "/sync"), ("POST", "/oauth/start"), ("PUT", "/automation"), ("DELETE", "/connection")]
+                 ("POST", "/sync"), ("POST", "/oauth/start"), ("POST", "/imap/connect"), ("PUT", "/automation"), ("DELETE", "/connection")]
         for method, path in paths:
             with self.subTest(path=path):
                 response = self.client.request(method, "/accounting/tax/gmail" + path,

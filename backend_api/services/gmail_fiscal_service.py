@@ -239,6 +239,7 @@ def ensure_schema(conn):
             )
         """)
         cur.execute("ALTER TABLE gmail_fiscal_attachments ADD COLUMN IF NOT EXISTS content BYTEA")
+        cur.execute("ALTER TABLE gmail_fiscal_connections ADD COLUMN IF NOT EXISTS encrypted_imap_password TEXT")
         cur.execute("ALTER TABLE gmail_fiscal_oauth_states ADD COLUMN IF NOT EXISTS encrypted_verifier TEXT")
         for profile in _configured_account_profiles():
             cur.execute("""INSERT INTO gmail_fiscal_connections(account_email) VALUES(%s)
@@ -283,6 +284,8 @@ def oauth_configured():
 
 
 def create_oauth_url(conn, requested_by: str, account_email: str | None = None):
+    if str(account_email or "").lower().endswith("@xtravon.com"):
+        raise ValueError("Xtravon utiliza Spacemail IMAP, no Google OAuth")
     ensure_schema(conn)
     if not oauth_configured():
         raise RuntimeError("Faltan GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI o CREDENTIAL_ENCRYPTION_KEY")
@@ -710,6 +713,9 @@ def _labels(token):
 
 
 def sync_mailbox(conn, triggered_by="SCHEDULER", max_messages=50, account_email: str | None = None):
+    if account_email == "operations@xtravon.com":
+        from services.spacemail_fiscal import sync
+        return sync(conn, triggered_by=triggered_by, max_messages=max_messages)
     ensure_schema(conn)
     profile = _account_profile(account_email)
     target_account = str(profile["account_email"])
@@ -905,7 +911,11 @@ def _scheduler_loop():
                 due = cur.fetchall() or []
             for cfg in due:
                 if cfg["account_email"] in {p["account_email"] for p in _configured_account_profiles()}:
-                    sync_mailbox(conn, account_email=cfg["account_email"])
+                    try:
+                        sync_mailbox(conn, account_email=cfg["account_email"])
+                    except Exception:
+                        conn.rollback()
+                        print("Fiscal mailbox sync failed; see connection status")
             _run_monthly_card_history_if_due(conn)
         except Exception as exc:
             print(f"Gmail fiscal scheduler: {exc}")
