@@ -51,6 +51,19 @@ async function run(){
   async function mount(company='MSL-CR'){await page.evaluate(async company=>{await SOMCommercial.mount(document.getElementById('content'),{company,year:2026,headers:{'Content-Type':'application/json','X-Company-Code':company,'X-User':'test','X-User-Role':'admin'},openService:async()=>{window.serviceOpened=true;}});},company);}
   async function tab(name){await page.getByRole('tab',{name,exact:true}).click();await page.waitForFunction(()=>!document.querySelector('[data-message]').textContent.includes('Cargando'));}
   await mount();assert.equal(await page.getByRole('tab').count(),6);
+  await page.getByText('1205 registros',{exact:true}).waitFor();
+  assert.equal(await page.locator('[data-kpis] .com-kpi').count(),4);
+  fs.mkdirSync(path.join(root,'tmp/comercial-qa'),{recursive:true});
+  for(const width of [1440,390,320]){
+    await page.setViewportSize({width,height:1000});
+    assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),`Board overflow ${width}`);
+    await page.screenshot({path:path.join(root,`tmp/comercial-qa/board-${width}.png`),fullPage:true});
+  }
+  await page.setViewportSize({width:1440,height:1000});
+  await page.locator('[data-columns]').selectOption('all');
+  assert.equal(await page.locator('thead th').count(),19);
+  await page.locator('[data-columns]').selectOption('summary');
+  assert.equal(await page.locator('thead th').count(),9);
   await page.getByRole('button',{name:'Buscar',exact:true}).click();await page.getByText('1205 registros',{exact:true}).waitFor();
   assert.equal(await page.locator('tbody tr').count(),50);
   await page.getByRole('button',{name:'Pagina siguiente'.replace('Pagina','Página')}).click();

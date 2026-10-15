@@ -52,7 +52,7 @@
     }
     async start() {
       this.root.innerHTML='<section class="commercial"><p role="status">Cargando Comercial...</p></section>';
-      try { const meta=await this.request('/comercial/web/meta'); if(this.disposed)return; this.permissions=meta.permissions; this.options=meta.options; this.render(); }
+      try { const meta=await this.request('/comercial/web/meta'); if(this.disposed)return; this.permissions=meta.permissions; this.options=meta.options; this.render(); await this.search(); }
       catch(error) { if(!this.disposed) this.root.innerHTML=`<section class="commercial"><p role="alert">${esc(error.message)}</p><button data-retry>Reintentar</button></section>`;
         this.root.querySelector('[data-retry]')?.addEventListener('click',()=>this.start()); }
     }
@@ -62,7 +62,7 @@
     async go(view) {
       if(!this.canLeave() || !this.permissions[views[view].permission]) return;
       this.closeDialog(true); this.view=view; this.filters={}; this.rows=[]; this.page=0; this.selected=null; this.sort=view==='board'?'consec':null; this.order=-1; this.sequence++;
-      this.render(); if(view!=='board') await this.search();
+      this.render(); await this.search();
     }
     field(key, value='', options=null, required=false) {
       const title=labels[key]||key;
@@ -101,18 +101,20 @@
         if(this.permissions.edit) actions+=this.button('delete','Eliminar precio');
       }
       if(this.permissions.export) actions+=`<label>Exportar<select data-export><option value="">Formato...</option><option value="xlsx">Excel</option><option value="csv">CSV</option><option value="pdf">PDF</option></select></label>`;
-      this.root.innerHTML=`<section class="commercial"><div class="com-top"><h2>${esc(v.title)}</h2><span class="com-company">${esc(this.config.company)}</span></div>
+      this.root.innerHTML=`<section class="commercial"><div class="com-top"><div><span class="com-eyebrow">COMERCIAL / ${esc(this.config.company)}</span><h2>${esc(v.title)}</h2></div><span class="com-company" data-period></span></div>
         <nav class="com-tabs" role="tablist" aria-label="Comercial">${Object.entries(views).filter(([,x])=>!x.parent && this.permissions[x.permission]).map(([key,x])=>`<button role="tab" aria-selected="${key===(v.parent||this.view)}" data-view="${key}">${esc(x.tab)}</button>`).join('')}</nav>
         ${v.parent?`<div class="com-actions">${this.button('back','&larr; '+views[v.parent].tab)}</div>`:''}
+        <div data-kpis class="com-kpis" hidden></div><div data-distribution></div>
         <form data-filters><div class="com-filters">${ranged?`<label>Per\u00edodo<select name="year_mode"><option value="exact">A\u00f1o exacto</option><option value="range">Rango de a\u00f1os</option></select></label>`:''}${v.filters.map(key=>this.field(key,this.filters[key]??'')).join('')}</div>
         ${this.view==='board'?`<div class="com-checks">${['Confirmado','En operaci\u00f3n','FINALIZADO','Cancelado'].map((value,i)=>`<label><input type="checkbox" name="estados" value="${value}" ${i<2?'checked':''}>${esc(value)}</label>`).join('')}</div>`:''}
         <div class="com-actions"><button type="submit">Buscar</button>${this.button('clear','Limpiar')}</div></form>
-        <div data-message class="com-message" role="status" aria-live="polite">${this.view==='board'?'Seleccione los filtros y busque.':''}</div><div data-kpis class="com-kpis" hidden></div>
-        <div class="com-actions">${actions}<label>Buscar en resultados<input type="search" data-search></label></div><div data-table></div></section>`;
+        <div data-message class="com-message" role="status" aria-live="polite"></div>
+        <div class="com-actions com-toolbar">${actions}<label class="com-result-search">Buscar en resultados<input type="search" data-search placeholder="Buscar..." aria-label="Buscar en resultados"></label>${this.view==='board'?'<label>Columnas<select data-columns><option value="summary">Resumen</option><option value="all">Detalle completo</option></select></label>':''}</div><div data-table></div></section>`;
       this.root.querySelectorAll('[data-view]').forEach(button=>button.onclick=()=>this.go(button.dataset.view));
       this.root.querySelector('[data-filters]').onsubmit=event=>{event.preventDefault();this.search();};
       this.root.querySelectorAll('[data-action]').forEach(button=>button.onclick=()=>this.action(button.dataset.action));
       this.root.querySelector('[data-search]').oninput=()=>{this.page=0;this.table();};
+      const columns=this.root.querySelector('[data-columns]'); if(columns)columns.onchange=()=>this.table();
       const exports=this.root.querySelector('[data-export]'); if(exports) exports.onchange=()=>{const fmt=exports.value;exports.value='';if(fmt)this.export(fmt);};
       if(ranged) {
         const form=this.root.querySelector('[data-filters]');
@@ -142,6 +144,7 @@
       const seq=++this.sequence, view=this.view, definition=views[view];
       try {
         this.filters=this.readFilters(); const query={...this.filters};
+        this.root.querySelector('[data-period]').textContent=query.year || (query.year_from?`${query.year_from}${query.year_to!==query.year_from?' - '+query.year_to:''}`:'Todas las fechas');
         if(view==='ports' && query.cliente){query.clientes=query.cliente;delete query.cliente;}
         if(view==='surveyors' && query.servicio){query.operacion=query.servicio;delete query.servicio;}
         this.message('Cargando...'); this.selected=null;
@@ -157,6 +160,8 @@
         if(view==='services') kpis=(await this.request(this.url('/comercial/analytics/servicios/kpis',{...query,operacion:query.servicio}))).kpis;
         if(seq!==this.sequence || this.disposed) return;
         this.rows=rows; this.page=0;
+        if(view==='board') kpis={servicios:rows.length,clientes:new Set(rows.map(r=>r.cliente).filter(Boolean)).size,puertos:new Set(rows.map(r=>r.puerto).filter(Boolean)).size,surveyor:new Set(rows.map(r=>r.surveyor).filter(Boolean)).size};
+        if(view==='prices') kpis={servicios:new Set(rows.map(r=>r.servicio).filter(Boolean)).size,clientes:new Set(rows.map(r=>r.cliente).filter(Boolean)).size,puertos:new Set(rows.map(r=>r.puerto).filter(Boolean)).size};
         if(view==='coverage') {
           const active=rows.filter(r=>Number(r.total_operaciones)>0).length;
           kpis={total_puertos:rows.length,con_operacion:active,sin_operacion:rows.length-active,operacion_minima:rows.filter(r=>r.estado_operativo==='OPERACION_MINIMA').length,operacion_activa:rows.filter(r=>r.estado_operativo==='OPERACION_ACTIVA').length,cobertura_pct:rows.length?active/rows.length*100:0};
@@ -176,7 +181,13 @@
       const node=this.root.querySelector('[data-kpis]');
       const entries=Object.entries(values).filter(([,value])=>value!==null && Number.isFinite(Number(value)));
       node.hidden=!entries.length;
-      node.innerHTML=entries.map(([key,value])=>`<div class="com-kpi"><small>${esc(labels[key]||key.replaceAll('_',' '))}</small><strong>${number(value)}${key.endsWith('_pct')?'%':''}</strong></div>`).join('');
+      node.innerHTML=entries.map(([key,value],index)=>`<div class="com-kpi"><span class="com-metric-icon com-icon" aria-hidden="true" style="--com-icon:url('/som/queue-icon/${['receipt-text','badge-check','file-pen-line','pencil-line'][index%4]}.svg')"></span><small>${esc(labels[key]||key.replaceAll('_',' '))}</small><strong>${number(value)}${key.endsWith('_pct')?'%':''}</strong></div>`).join('');
+      const distribution=this.root.querySelector('[data-distribution]');
+      if(distribution){
+        const key=this.view==='board'?'estado':this.view==='quotes'?'status':null;
+        const counts={};if(key && entries.length)this.rows.forEach(row=>{const name=String(row[key]||'Sin estado');counts[name]=(counts[name]||0)+1;});
+        distribution.innerHTML=Object.keys(counts).length?`<div class="com-distribution">${Object.entries(counts).map(([name,count],index)=>`<div class="com-distribution-item"><div><span>${esc(name)}</span><strong>${number(count)}</strong></div><progress class="tone-${index%4}" value="${count}" max="${this.rows.length}" aria-label="${esc(name)}"></progress></div>`).join('')}</div>`:'';
+      }
     }
     cell(key,value) {
       if(value==null)return '';
@@ -189,8 +200,9 @@
     }
     table() {
       const node=this.root.querySelector('[data-table]'); if(!node)return;
-      const cols=views[this.view].columns.split(' '), query=(this.root.querySelector('[data-search]')?.value||'').toLocaleLowerCase();
-      this.filtered=this.rows.filter(row=>!query || cols.some(key=>String(row[key]??'').toLocaleLowerCase().includes(query)));
+      const allCols=views[this.view].columns.split(' '), query=(this.root.querySelector('[data-search]')?.value||'').toLocaleLowerCase();
+      const cols=this.view==='board' && this.root.querySelector('[data-columns]')?.value!=='all'?'consec estado buque_contenedor cliente operacion puerto fecha_inicio num_informe'.split(' '):allCols;
+      this.filtered=this.rows.filter(row=>!query || allCols.some(key=>String(row[key]??'').toLocaleLowerCase().includes(query)));
       if(!this.filtered.includes(this.selected))this.selected=null;
       if(this.sort)this.filtered.sort((a,b)=>{const x=a[this.sort],y=b[this.sort];return this.order*(typeof x==='number' && typeof y==='number'?x-y:String(x??'').localeCompare(String(y??''),'es',{numeric:true}));});
       const pages=Math.max(1,Math.ceil(this.filtered.length/50));this.page=Math.min(this.page,pages-1);

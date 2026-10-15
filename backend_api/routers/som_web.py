@@ -21,7 +21,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20261014-spacemail-imap-v12"
+_ASSET_VERSION = "20261015-commercial-workspace-v13"
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -2333,6 +2333,7 @@ def som_web_home() -> HTMLResponse:
       if (currentModule === "informes" && window.SOMTally && !SOMTally.canLeave()) return;
       if (currentModule === "informes" && window.SOMTally) SOMTally.destroy();
       currentModule = code;
+      $("kpiLabel1").closest("section").style.display = code === "comercial" ? "none" : "";
       selectedMasterView = null;
       setBrand();
       const mod = catalog.modules.find(m => m.code === code) || catalog.modules[0];
