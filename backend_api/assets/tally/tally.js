@@ -159,7 +159,10 @@
         rowHeader:{formatter:'rownum',width:45,frozen:true,headerSort:false,resizable:false},
         columnDefaults:{headerSort:false,resizable:true},
         columns:[{title:'Bodega',field:'hold',width:82,cssClass:'tally-readonly',formatter:'plaintext'},
-          input('Fecha','date',120,{editor:boot.editable&&!conflict?temporalEditor:false}),
+          input('Fecha','date',120,{editor:boot.editable&&!conflict?temporalEditor:false,formatter:cell=>{
+            const value=String(cell.getValue()||''),match=value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+            return match?`${match[3]}/${match[2]}/${match[1]}`:esc(value);
+          }}),
           input('Entrada','entry',100,{editor:boot.editable&&!conflict?temporalEditor:false}),input('Salida','exit',100,{editor:boot.editable&&!conflict?temporalEditor:false}),
           input('SPC','spc',90),input('Empresa','company',155,{editor:boot.editable&&!conflict?'list':false,editorParams:{values:boot.companies,autocomplete:true,listOnEmpty:true}}),
           input('Ficha','ticket',95),input('Guia Surco','guide',115),input('Guia Sello','seal',105,{editor:boot.editable&&!conflict?'list':false,editorParams:{values:['','Si','No']}}),
