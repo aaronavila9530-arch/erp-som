@@ -87,13 +87,16 @@
     function temporalEditor(cell,onRendered,success,cancel) {
       const field=cell.getField(),type=field==='date'?'date':'time';
       const editor=document.createElement('input');
-      editor.type=typingCell?'text':type;editor.value=cell.getValue()||'';
+      editor.type=typingCell||type==='time'?'text':type;
+      editor.value=type==='time'?pasteValue(field,cell.getValue()||''):(cell.getValue()||'');
+      if(type==='time'){editor.placeholder='HH:MM';editor.maxLength=8;editor.setAttribute('aria-label','Hora HH:MM');}
       let finished=false;
       const commit=()=>{
         if(finished)return;finished=true;
         const value=pasteValue(field,editor.value),check=document.createElement('input');
         check.type=type;check.value=value;
-        if(value&&check.value!==value){cancel();status(type==='date'?'Fecha invalida':'Hora invalida',true);return;}
+        const valid=type==='time'?/^([01]\d|2[0-3]):[0-5]\d$/.test(value):check.value===value;
+        if(value&&!valid){cancel();status(type==='date'?'Fecha invalida':'Hora invalida. Use HH:MM (ejemplo 09:01).',true);return;}
         success(value);
       };
       editor.addEventListener('blur',commit);
@@ -163,7 +166,7 @@
             const value=String(cell.getValue()||''),match=value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
             return match?`${match[3]}/${match[2]}/${match[1]}`:esc(value);
           }}),
-          input('Entrada','entry',100,{editor:boot.editable&&!conflict?temporalEditor:false}),input('Salida','exit',100,{editor:boot.editable&&!conflict?temporalEditor:false}),
+          input('Entrada','entry',100,{editor:boot.editable&&!conflict?temporalEditor:false,formatter:cell=>esc(pasteValue('entry',cell.getValue()))}),input('Salida','exit',100,{editor:boot.editable&&!conflict?temporalEditor:false,formatter:cell=>esc(pasteValue('exit',cell.getValue()))}),
           input('SPC','spc',90),input('Empresa','company',155,{editor:boot.editable&&!conflict?'list':false,editorParams:{values:boot.companies,autocomplete:true,listOnEmpty:true}}),
           input('Ficha','ticket',95),input('Guia Surco','guide',115),input('Guia Sello','seal',105,{editor:boot.editable&&!conflict?'list':false,editorParams:{values:['','Si','No']}}),
           input('Placa','plate',120),{title:'Chofer',field:'driver',width:260,formatter:'plaintext',cssClass:'tally-readonly'},

@@ -17,13 +17,20 @@ async function run(){
    const projects=[{id:1,name:'MV LAURA',holds:[1],revision:0},{id:2,name:'OTHER OPERATION',holds:[1],revision:0}];
    await SOMTally.mount(document.querySelector('#app'),{user:'test',company:'TEST',headers:()=>({}),
     getJSON:async p=>p==='/tally/bootstrap'?{projects,drivers:[],companies:[],services:[],editable:true}:{revision:0,drivers:[{plate:'123',driver:p.includes('/1/sheets')?'LAURA DRIVER':'OTHER DRIVER'}],rows:[80,79,78,81,77].map(n=>({id:crypto.randomUUID(),stowage:String(n),plate:'123',date:'2026-10-16'}))},
-    sendJSON:async()=>({revision:1}),postJSON:async()=>({})});
+    sendJSON:async(method,path,body)=>{window.savedRows=body.rows;return {revision:1};},postJSON:async()=>({})});
   });
   assert.deepEqual(await page.evaluate(()=>SOMTally.metrics([80,79,78,81,77].map(n=>({id:String(n),stowage:String(n)})))),{count:5,max:81,missing:76,duplicates:0,invalid:0});
   assert.deepEqual(await page.evaluate(()=>SOMTally.metrics([{stowage:'1'},{stowage:'1'},{stowage:'3'},{plate:'123'},{}])),{count:4,max:3,missing:1,duplicates:1,invalid:1});
   assert.equal(await page.evaluate(()=>SOMTally.metrics([{stowage:'con secutivo #12'}]).max),12);
   await page.getByText('LAURA DRIVER',{exact:true}).first().waitFor();
   await page.getByText('16/10/2026',{exact:true}).first().waitFor();
+  const entry=page.locator('.tabulator-row .tabulator-cell[tabulator-field="entry"]').first();
+  await entry.dblclick();await entry.locator('input').fill('09:01');await entry.locator('input').press('Enter');
+  await page.waitForFunction(()=>window.savedRows?.[0]?.entry==='09:01');
+  assert.equal(await entry.innerText(),'09:01');
+  await entry.dblclick();await entry.locator('input').fill('25:90');await entry.locator('input').press('Enter');
+  assert.equal(await entry.innerText(),'09:01');
+  assert.equal(await page.evaluate(()=>SOMTally.pasteValue('entry','09:01:00')),'09:01');
   assert.equal(await page.evaluate(()=>SOMTally.pasteValue('date','16/10/2026')),'2026-10-16');
   assert.equal(await page.evaluate(()=>SOMTally.payloadRows([{id:'test',date:'2026-10-16'}])[0].date),'2026-10-16');
   await page.locator('#tallyProject').selectOption('2');
