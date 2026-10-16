@@ -53,6 +53,10 @@ async function run(){
   await mount();assert.equal(await page.getByRole('tab').count(),6);
   await page.getByText('1205 registros',{exact:true}).waitFor();
   assert.equal(await page.locator('[data-kpis] .com-kpi').count(),4);
+  assert.equal(await page.locator('[data-overview] section').count(),2);
+  await page.locator('[data-rank="NORDEN"]').click();
+  assert.equal(await page.locator('[data-search]').inputValue(),'NORDEN');
+  await page.locator('[data-search]').fill('');
   fs.mkdirSync(path.join(root,'tmp/comercial-qa'),{recursive:true});
   for(const width of [1440,390,320]){
     await page.setViewportSize({width,height:1000});

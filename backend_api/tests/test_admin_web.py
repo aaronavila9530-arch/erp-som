@@ -12,6 +12,13 @@ from routers import user_admin as admin
 
 
 class AdminWebTests(unittest.TestCase):
+    def test_people_only_collapses_equivalent_entries(self):
+        person = dict(source_type='empleado', source_id='1', label='Ana Test', nombre='Ana', apellido='Test', email='', usuario='ana')
+        copy = dict(person, source_id='2')
+        other = dict(person, source_id='3', email='other@example.test')
+        provider = dict(person, source_type='proveedor')
+        self.assertEqual(admin._unique_people([person, copy, other, provider]), [person, other, provider])
+
     def test_routes_require_verified_authorization(self):
         app = FastAPI()
         app.include_router(admin.router)

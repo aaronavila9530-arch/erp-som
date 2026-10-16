@@ -365,6 +365,19 @@ def _audit(cur, actor: str | None, target: str | None, action: str, detail: dict
     )
 
 
+def _unique_people(rows):
+    # Company copies can describe the same person. Only collapse equivalent entries.
+    seen = set()
+    result = []
+    for row in rows:
+        key = tuple(" ".join(str(row.get(field) or "").split()).casefold()
+                    for field in ("source_type", "label", "nombre", "apellido", "email", "usuario"))
+        if key not in seen:
+            seen.add(key)
+            result.append(row)
+    return result
+
+
 @router.get("/meta")
 def meta(x_user: str | None = Header(default=None, alias="X-User"),
          x_role: str | None = Header(default=None, alias="X-User-Role")):
@@ -423,7 +436,7 @@ def people(x_user: str | None = Header(default=None, alias="X-User"),
                 "email": r.get("correo") or "",
                 "usuario": "",
             })
-        return {"people": rows}
+        return {"people": _unique_people(rows)}
     finally:
         cur.close()
         conn.close()

@@ -102,9 +102,9 @@
       }
       if(this.permissions.export) actions+=`<label>Exportar<select data-export><option value="">Formato...</option><option value="xlsx">Excel</option><option value="csv">CSV</option><option value="pdf">PDF</option></select></label>`;
       this.root.innerHTML=`<section class="commercial"><div class="com-top"><div><span class="com-eyebrow">COMERCIAL / ${esc(this.config.company)}</span><h2>${esc(v.title)}</h2></div><span class="com-company" data-period></span></div>
-        <nav class="com-tabs" role="tablist" aria-label="Comercial">${Object.entries(views).filter(([,x])=>!x.parent && this.permissions[x.permission]).map(([key,x])=>`<button role="tab" aria-selected="${key===(v.parent||this.view)}" data-view="${key}">${esc(x.tab)}</button>`).join('')}</nav>
+        <nav class="com-tabs" role="tablist" aria-label="Comercial">${Object.entries(views).filter(([,x])=>!x.parent && this.permissions[x.permission]).map(([key,x],index)=>`<button role="tab" aria-selected="${key===(v.parent||this.view)}" data-view="${key}"><span class="com-icon" aria-hidden="true" style="--com-icon:url('/som/queue-icon/${['receipt-text','badge-check','badge-check','pencil-line','file-pen-line','receipt-text'][index%6]}.svg')"></span>${esc(x.tab)}</button>`).join('')}</nav>
         ${v.parent?`<div class="com-actions">${this.button('back','&larr; '+views[v.parent].tab)}</div>`:''}
-        <div data-kpis class="com-kpis" hidden></div><div data-distribution></div>
+        <div data-kpis class="com-kpis" hidden></div><div data-distribution></div><div data-overview></div>
         <form data-filters><div class="com-filters">${ranged?`<label>Per\u00edodo<select name="year_mode"><option value="exact">A\u00f1o exacto</option><option value="range">Rango de a\u00f1os</option></select></label>`:''}${v.filters.map(key=>this.field(key,this.filters[key]??'')).join('')}</div>
         ${this.view==='board'?`<div class="com-checks">${['Confirmado','En operaci\u00f3n','FINALIZADO','Cancelado'].map((value,i)=>`<label><input type="checkbox" name="estados" value="${value}" ${i<2?'checked':''}>${esc(value)}</label>`).join('')}</div>`:''}
         <div class="com-actions"><button type="submit">Buscar</button>${this.button('clear','Limpiar')}</div></form>
@@ -188,6 +188,13 @@
         const counts={};if(key && entries.length)this.rows.forEach(row=>{const name=String(row[key]||'Sin estado');counts[name]=(counts[name]||0)+1;});
         distribution.innerHTML=Object.keys(counts).length?`<div class="com-distribution">${Object.entries(counts).map(([name,count],index)=>`<div class="com-distribution-item"><div><span>${esc(name)}</span><strong>${number(count)}</strong></div><progress class="tone-${index%4}" value="${count}" max="${this.rows.length}" aria-label="${esc(name)}"></progress></div>`).join('')}</div>`:'';
       }
+      const overview=this.root.querySelector('[data-overview]');
+      overview.innerHTML=this.view==='board' && this.rows.length ? `<div class="com-overview">${[['cliente','Actividad por cliente'],['operacion','Operaciones']].map(([field,title])=>{
+        const counts=new Map();this.rows.forEach(row=>{const name=String(row[field]||'Sin asignar');counts.set(name,(counts.get(name)||0)+1);});
+        const ranked=[...counts].sort((a,b)=>b[1]-a[1]).slice(0,4),max=ranked[0]?.[1]||1;
+        return `<section><h3>${title}<small>Servicios &middot; Top 4</small></h3>${ranked.map(([name,count])=>`<button class="com-rank" data-rank="${esc(name)}" title="${esc(name)}"><span>${esc(name)}</span><strong>${count}</strong><progress max="${max}" value="${count}" aria-label="${esc(name)}: ${count}"></progress></button>`).join('')}</section>`;
+      }).join('')}</div>`:'';
+      overview.querySelectorAll('[data-rank]').forEach(button=>button.onclick=()=>{this.root.querySelector('[data-search]').value=button.dataset.rank==='Sin asignar'?'':button.dataset.rank;this.page=0;this.table();});
     }
     cell(key,value) {
       if(value==null)return '';
