@@ -14,7 +14,7 @@ async function run(){
   });
   await page.goto('https://tally.test/');
   await page.evaluate(async()=>{
-   const projects=[{id:1,name:'MV LAURA',holds:[1],revision:0},{id:2,name:'OTHER OPERATION',holds:[1],revision:0}];
+   const projects=[{id:1,name:'MV LAURA',holds:[1,4],revision:0},{id:2,name:'OTHER OPERATION',holds:[1],revision:0}];
    await SOMTally.mount(document.querySelector('#app'),{user:'test',company:'TEST',headers:()=>({}),
     getJSON:async p=>p==='/tally/bootstrap'?{projects,drivers:[],companies:['AEGRA','MANEJOS'],services:[],editable:true}:{revision:0,drivers:[{plate:'123',driver:p.includes('/1/sheets')?'LAURA DRIVER':'OTHER DRIVER'}],rows:[80,79,78,81,77].map(n=>({id:crypto.randomUUID(),stowage:String(n),plate:'123',date:'2026-10-16'}))},
     sendJSON:async(method,path,body)=>{window.savedRows=body.rows;return {revision:1};},postJSON:async()=>({})});
@@ -53,6 +53,22 @@ async function run(){
   assert.equal(await dates.nth(4).innerText(),'17/10/2026');
   assert.equal(await page.evaluate(()=>SOMTally.pasteValue('date','16/10/2026')),'2026-10-16');
   assert.equal(await page.evaluate(()=>SOMTally.payloadRows([{id:'test',date:'2026-10-16'}])[0].date),'2026-10-16');
+  const holder=page.locator('.tabulator-tableholder');
+  await holder.evaluate(el=>{el.scrollTop=6400;el.scrollLeft=240;});
+  await page.waitForTimeout(150);
+  const scrollA=await holder.evaluate(el=>({top:el.scrollTop,left:el.scrollLeft}));
+  await page.getByRole('tab',{name:'Bodega 4',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelector('[data-hold="4"][aria-selected="true"]')&&!document.querySelector('#tallySave').disabled);
+  assert.equal(await holder.evaluate(el=>el.scrollTop),0);
+  await holder.evaluate(el=>{el.scrollTop=3200;el.scrollLeft=120;});
+  await page.waitForTimeout(150);
+  const scrollB=await holder.evaluate(el=>({top:el.scrollTop,left:el.scrollLeft}));
+  await page.getByRole('tab',{name:'Bodega 1',exact:true}).click();
+  await page.waitForFunction(()=>!document.querySelector('#tallySave').disabled&&document.querySelector('.tabulator-tableholder').scrollTop===6400);
+  assert.deepEqual(await holder.evaluate(el=>({top:el.scrollTop,left:el.scrollLeft})),scrollA);
+  await page.getByRole('tab',{name:'Bodega 4',exact:true}).click();
+  await page.waitForFunction(()=>!document.querySelector('#tallySave').disabled&&document.querySelector('.tabulator-tableholder').scrollTop===3200);
+  assert.deepEqual(await holder.evaluate(el=>({top:el.scrollTop,left:el.scrollLeft})),scrollB);
   await page.locator('#tallyProject').selectOption('2');
   await page.getByText('OTHER DRIVER',{exact:true}).first().waitFor();
   assert.equal(await page.getByText('LAURA DRIVER',{exact:true}).count(),0);

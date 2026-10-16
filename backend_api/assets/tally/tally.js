@@ -84,6 +84,21 @@
     function driver(plate) {return boot.drivers.find(d=>d.plate===plateKey(plate))?.driver || '';}
     function enrich(row) {return {...row,hold,driver:driver(row.plate)};}
     let typingCell=false;
+    const sheetPositions=new Map();
+    const positionKey=()=>`${current.id}:${hold}`;
+    function rememberPosition() {
+      const holder=$('.tabulator-tableholder');
+      if(current&&holder)sheetPositions.set(positionKey(),{top:holder.scrollTop,left:holder.scrollLeft});
+    }
+    async function restorePosition() {
+      const position=sheetPositions.get(positionKey());
+      if(!position)return;
+      const row=grid.getRows()[Math.min(Math.floor(position.top/34),grid.getRows().length-1)];
+      if(row)await grid.scrollToRow(row,'top',false);
+      const holder=$('.tabulator-tableholder');
+      holder.scrollTop=position.top;
+      holder.scrollLeft=position.left;
+    }
     function choiceEditor(cell,onRendered,success,cancel) {
       const field=cell.getField(),values=field==='company'?boot.companies:['Si','No'];
       const box=document.createElement('div'),editor=document.createElement('input'),list=document.createElement('datalist');
@@ -235,6 +250,7 @@
       switching=true;controls();
       try {
       if(!await flush())return;
+      rememberPosition();
       const result=await api.getJSON(`/tally/projects/${nextProject.id}/sheets/${next}`);
       if(destroyed)return;
       boot.drivers=result.drivers||[];
@@ -244,7 +260,7 @@
       try {const draft=JSON.parse(sessionStorage.getItem(draftKey())||'null');if(draft){rows=draft.rows;generation=1;conflict=draft.revision!==revision;}} catch{}
       $('.tally-tabs').innerHTML=current.holds.map(n=>`<button role="tab" aria-selected="${n===hold}" data-hold="${n}">Bodega ${n}</button>`).join('');
       $('.tally-tabs').querySelectorAll('button').forEach(btn=>btn.onclick=wrap(()=>openSheet(Number(btn.dataset.hold))));
-      await renderGrid(rows); controls(); status(conflict?'Borrador recuperado con conflicto. Descarguelo antes de recargar.':dirty()?'Borrador recuperado; pendiente de guardar':'Guardado',conflict);
+      await renderGrid(rows); await restorePosition(); controls(); status(conflict?'Borrador recuperado con conflicto. Descarguelo antes de recargar.':dirty()?'Borrador recuperado; pendiente de guardar':'Guardado',conflict);
       if(dirty()&&!conflict)await flush();
       } finally {switching=false;controls();if(current)$('#tallyProject').value=current.id;}
     }
