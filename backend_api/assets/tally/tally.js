@@ -47,6 +47,7 @@
       for (const id of ['tallyAdd','tallyDelete']) $('#'+id).disabled=!current || !boot.editable || conflict||switching;
       $('#tallyNew').disabled=!boot.editable||switching; $('#tallySettings').disabled=!current || !boot.editable||switching;
       $('#tallyProject').disabled=switching;$('#tallyCatalog').disabled=switching;
+      for(const id of ['tallyNew','tallySettings','tallyCatalog','tallyHistory'])$('#'+id).hidden=!!boot.restricted;
       $('.tally-grid').inert=switching;
     };
     function remember() {
@@ -140,6 +141,20 @@
     }
     const fillDownHandler=event=>fillDown(event).catch(fail);
     $('.tally-grid').addEventListener('keydown',fillDownHandler,true);
+    async function deleteRows(rows) {
+      if(!boot.editable||conflict||switching||!rows.length)return;
+      if(!confirm(`Eliminar ${rows.length} filas?`))return;
+      await grid.deleteRow(rows.map(row=>row.getIndex()));changed();
+    }
+    const deleteKey=event=>{
+      if(!['Delete','Backspace'].includes(event.key)||event.target.closest('input,textarea,select')||!grid)return;
+      const range=grid.getRanges()[0];
+      if(!range)return;
+      const selectedFields=new Set(range.getColumns().map(column=>column.getField()));
+      if(!grid.getColumns().filter(column=>column.getField()).every(column=>selectedFields.has(column.getField())))return;
+      event.preventDefault();event.stopImmediatePropagation();deleteRows(range.getRows()).catch(fail);
+    };
+    $('.tally-grid').addEventListener('keydown',deleteKey,true);
     function temporalEditor(cell,onRendered,success,cancel) {
       const field=cell.getField(),type=field==='date'?'date':'time';
       const editor=document.createElement('input');
@@ -190,6 +205,10 @@
       grid=new Tabulator($('.tally-grid'),{
         data,index:'id',height:'min(62vh,640px)',layout:'fitData',rowHeight:34,
         selectableRange:1,selectableRangeColumns:true,selectableRangeRows:true,
+        rowContextMenu:boot.editable&&!conflict?[{label:'Eliminar fila(s)',action:(event,row)=>{
+          const selected=grid.getRanges()[0]?.getRows()||[];
+          deleteRows(selected.includes(row)?selected:[row]).catch(fail);
+        }}]:false,
         editTriggerEvent:'dblclick',history:true,clipboard:true,
         clipboardCopyRowRange:'range',clipboardCopyConfig:{columnHeaders:false,rowHeaders:false},
         clipboardPasteParser:function(text){
@@ -318,10 +337,30 @@
     $('#tallyProject').onchange=wrap(e=>chooseProject(e.target.value));
     $('#tallyNew').onclick=wrap(()=>projectDialog());$('#tallySettings').onclick=wrap(()=>projectDialog(true));$('#tallyCatalog').onclick=wrap(catalogDialog);
     $('#tallyAdd').onclick=wrap(async()=>{await grid.addData(Array.from({length:20},()=>enrich(blank())),false);grid.scrollToRow(grid.getRows().at(-1),'bottom',false);});
-    $('#tallyDelete').onclick=wrap(async()=>{const rows=[...new Set(grid.getRanges().flatMap(r=>r.getRows()))];if(rows.length&&confirm(`Eliminar ${rows.length} filas?`)){await grid.deleteRow(rows.map(r=>r.getIndex()));changed();}});
+    $('#tallyDelete').onclick=wrap(()=>deleteRows([...new Set(grid.getRanges().flatMap(r=>r.getRows()))]));
     $('#tallyReload').onclick=wrap(async()=>{if(dirty()&&!confirm('Descartar el borrador local y cargar lo guardado?'))return;sessionStorage.removeItem(draftKey());generation=saved=0;conflict=false;await openSheet(hold);});
     $('#tallyDraft').onclick=()=>download(new Blob([JSON.stringify({project:current,hold,revision,rows:payloadRows(grid.getData())},null,2)],{type:'application/json'}),`Tally-${current.id}-bodega-${hold}-borrador.json`);
-    $('#tallyExcel').onclick=wrap(async()=>{if(!await flush())return;const resp=await fetch(`/tally/projects/${current.id}/excel`,{headers:api.headers()});if(!resp.ok)throw Error('No se pudo exportar');const disposition=resp.headers.get('Content-Disposition')||'';const encoded=disposition.match(/filename\*=UTF-8''([^;]+)/i),plain=disposition.match(/filename="([^"]+)"/i);download(await resp.blob(),encoded?decodeURIComponent(encoded[1]):plain?plain[1]:`Tally Control ${current.name}.xlsx`);});
+    $('#tallyExcel').onclick=wrap(async()=>{if(!await flush())return;const path=`/tally/projects/${current.id}/excel`;const resp=await fetch(api.url?api.url(path):path,{headers:api.headers()});if(!resp.ok)throw Error('No se pudo exportar');const disposition=resp.headers.get('Content-Disposition')||'';const encoded=disposition.match(/filename\*=UTF-8''([^;]+)/i),plain=disposition.match(/filename="([^"]+)"/i);download(await resp.blob(),encoded?decodeURIComponent(encoded[1]):plain?plain[1]:`Tally Control ${current.name}.xlsx`);});
+    if(api.manageAccess){
+      const button=document.createElement('button');button.textContent='Acceso Patricia';$('.tally-toolbar .tally-actions:last-child').append(button);
+      button.onclick=wrap(async()=>{
+        const links=await api.getJSON('/tally/access-links');
+        const d=dialog('Acceso Tally MCI - Patricia', '<button id="issueLink">Crear enlace (90 dias)</button><p id="newLink"></p><div id="accessLinks"></div>');
+        d.querySelector('#issueLink').onclick=wrap(async()=>{
+          const issue=d.querySelector('#issueLink');issue.disabled=true;
+          try{
+            const created=await api.postJSON('/tally/access-links',{});
+            const a=document.createElement('a');a.href=location.origin+created.path;a.textContent=a.href;a.style.overflowWrap='anywhere';
+            d.querySelector('#newLink').replaceChildren(a);
+          }catch(err){issue.disabled=false;d.querySelector('[role=alert]').textContent=err.message;}
+        });
+        for(const link of links){
+          const p=document.createElement('p');p.textContent=`Enlace ${link.id} - vence ${new Date(link.expires_at).toLocaleDateString()} `;
+          if(!link.revoked_at){const revoke=document.createElement('button');revoke.textContent='Revocar';revoke.onclick=wrap(async()=>{await api.sendJSON('DELETE',`/tally/access-links/${link.id}`);revoke.disabled=true;revoke.textContent='Revocado';});p.append(revoke);}
+          d.querySelector('#accessLinks').append(p);
+        }
+      });
+    }
     $('#tallyHistory').onclick=wrap(async()=>{const rows=await api.getJSON(`/tally/projects/${current.id}/history`);dialog('Historial',`<table><thead><tr><th>Fecha</th><th>Usuario</th><th>Bodega</th><th>Version</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${esc(new Date(r.created_at).toLocaleString())}</td><td>${esc(r.performed_by)}</td><td>${r.hold??'Proyecto'}</td><td>${r.revision??'-'}</td></tr>`).join('')}</tbody></table>`);});
     active={destroy(){destroyed=true;clearTimeout(timer);window.removeEventListener('beforeunload',unload);$('.tally-grid').removeEventListener('keydown',startTyping,true);if(grid)grid.destroy();},canLeave(){return !dirty()||confirm('Hay cambios pendientes. El borrador se conservara en esta pestana. Salir?');}};
     try {await refreshBootstrap();if(destroyed)return;projectOptions();controls();if(boot.projects.length){$('#tallyProject').value=boot.projects[0].id;await chooseProject(boot.projects[0].id);}else{$('.tally-footer').textContent='Sin proyectos';}}

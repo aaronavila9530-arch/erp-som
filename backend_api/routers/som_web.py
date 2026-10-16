@@ -21,7 +21,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20261016-tally-autosave-v23"
+_ASSET_VERSION = "20261016-tally-access-v24"
 
 
 @router.get("/som/admin-assets/{name}")
@@ -1807,7 +1807,7 @@ def som_web_home() -> HTMLResponse:
       finally { gmailAdminPrompt = null; }
     }
     async function secureFetch(path, options) {
-      const protectedPath = path.startsWith("/accounting/tax/gmail/") || path.startsWith("/admin/users");
+      const protectedPath = path.startsWith("/accounting/tax/gmail/") || path.startsWith("/admin/users") || path.startsWith("/tally/access-links");
       if (protectedPath) {
         const token = await authorizeGmailAdministration();
         options.headers = { ...options.headers, Authorization:`Bearer ${token}` };
@@ -2380,12 +2380,12 @@ def som_web_home() -> HTMLResponse:
     function renderInformesTally() {
       const fixedHeaders = headers();
       const tallyRequest = async (path, method="GET", body) => {
-        const response = await fetch(path, {method, headers:fixedHeaders, body:body === undefined ? undefined : JSON.stringify(body)});
+        const response = await secureFetch(path, {method, headers:fixedHeaders, body:body === undefined ? undefined : JSON.stringify(body)});
         const data = await response.json();
         if (!response.ok) throw new Error(typeof data.detail === "string" ? data.detail : (Array.isArray(data.detail) ? data.detail.map(x => `${x.loc.slice(1).join(".")}: ${x.msg}`).join("; ") : "No se pudo completar la operacion"));
         return data;
       };
-      SOMTally.mount($("content"), {user:session.usuario, company:selectedCompany(), headers:()=>({...fixedHeaders}),
+      SOMTally.mount($("content"), {user:session.usuario, company:selectedCompany(), manageAccess:selectedCompany()==='MCI-CR'&&['admin','master'].includes(session.rol), headers:()=>({...fixedHeaders}),
         getJSON:path=>tallyRequest(path), postJSON:(path,body)=>tallyRequest(path,"POST",body), sendJSON:(method,path,body)=>tallyRequest(path,method,body)});
     }
     async function refreshSummary() {

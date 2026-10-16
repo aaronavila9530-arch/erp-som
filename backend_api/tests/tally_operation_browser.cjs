@@ -80,6 +80,14 @@ async function run(){
   await page.locator('#tallyProject').selectOption('2');
   await page.getByText('OTHER DRIVER',{exact:true}).first().waitFor();
   assert.equal(await page.getByText('LAURA DRIVER',{exact:true}).count(),0);
+  page.on('dialog',dialog=>dialog.accept());
+  const row=page.locator('.tabulator-row').first();
+  await row.locator('[tabulator-field="date"]').click({button:'right'});
+  await page.getByText('Eliminar fila(s)',{exact:true}).click();
+  await page.waitForFunction(()=>window.savedRows?.length===4);
+  await page.locator('.tabulator-row').first().locator('.tabulator-row-header').click();
+  await page.keyboard.press('Delete');
+  await page.waitForFunction(()=>window.savedRows?.length===3);
   fs.mkdirSync(path.join(root,'tmp/tally-qa'),{recursive:true});
   for(const width of [1440,390]){
    await page.setViewportSize({width,height:1000});

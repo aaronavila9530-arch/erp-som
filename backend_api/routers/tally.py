@@ -176,7 +176,7 @@ def plate_key(value):
 
 @router.get("/som/tally-assets/{name}", include_in_schema=False)
 def asset(name: str):
-    if name not in {"tally.js", "tally.css", "tabulator.min.js", "tabulator.min.css", "papaparse.min.js"}:
+    if name not in {"tally.js", "tally.css", "access.js", "tabulator.min.js", "tabulator.min.css", "papaparse.min.js"}:
         raise HTTPException(404)
     return FileResponse(ASSETS / name, headers={"Cache-Control": "no-store" if name in {"tally.js", "tally.css"} else "public,max-age=86400"})
 
