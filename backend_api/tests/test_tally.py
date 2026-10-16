@@ -15,6 +15,12 @@ from io import BytesIO
 
 
 class TallyTests(unittest.TestCase):
+    def test_export_filename_costa_rica_noon_boundary(self):
+        from datetime import datetime, timezone
+        self.assertEqual(tally.export_filename('MV LAURA', datetime(2026,10,16,17,59,tzinfo=timezone.utc)), 'Tally Control MV LAURA 16 10 AM.xlsx')
+        self.assertEqual(tally.export_filename('MV LAURA', datetime(2026,10,16,18,0,tzinfo=timezone.utc)), 'Tally Control MV LAURA 16 10 PM.xlsx')
+        self.assertEqual(tally.export_filename('MV LAURA', datetime(2026,10,17,2,0,tzinfo=timezone.utc)), 'Tally Control MV LAURA 16 10 PM.xlsx')
+
     def test_driver_headers_any_order_and_sheet_name(self):
         wb=Workbook();ws=wb.active;ws.title='Lista cualquiera'
         ws.append(['Titulo']);ws.append(['CHOFERES','PLACA2','EMPRESA','Placa'])

@@ -4,6 +4,9 @@ from io import BytesIO
 from pathlib import Path
 import re
 from uuid import UUID
+from datetime import datetime
+from zoneinfo import ZoneInfo
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
@@ -375,5 +378,18 @@ def excel(pid: int, ctx=Depends(context), conn=Depends(get_db)):
         p = project(cur, pid, ctx)
         cur.execute("SELECT hold,rows FROM tally_sheets WHERE project_id=%s", (pid,))
         sheets = {r["hold"]: r["rows"] for r in cur.fetchall()}
+        vessel = p['name']
+        if p.get('service_id'):
+            cur.execute('SELECT buque_contenedor FROM servicios WHERE consec=%s AND company_code=%s', (p['service_id'],ctx['company']))
+            service = cur.fetchone()
+            if service and service.get('buque_contenedor'):vessel = service['buque_contenedor']
     return StreamingResponse(export_workbook(p, sheets), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                             headers={"Content-Disposition": f'attachment; filename="Tally-{pid}.xlsx"'})
+                             headers={"Content-Disposition": "attachment; filename*=UTF-8''" + quote(export_filename(vessel))})
+
+
+def export_filename(vessel, now=None):
+    now = now or datetime.now(ZoneInfo('America/Costa_Rica'))
+    if now.tzinfo is not None:now = now.astimezone(ZoneInfo('America/Costa_Rica'))
+    name = re.sub(r'[\\/:*?"<>|\x00-\x1f]', ' ', str(vessel)).strip()
+    name = ' '.join(name.split())[:150] or 'Proyecto'
+    return f'Tally Control {name} {now:%d %m} {"PM" if now.hour >= 12 else "AM"}.xlsx'

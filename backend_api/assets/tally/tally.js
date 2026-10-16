@@ -84,6 +84,44 @@
     function driver(plate) {return boot.drivers.find(d=>d.plate===plateKey(plate))?.driver || '';}
     function enrich(row) {return {...row,hold,driver:driver(row.plate)};}
     let typingCell=false;
+    function choiceEditor(cell,onRendered,success,cancel) {
+      const field=cell.getField(),values=field==='company'?boot.companies:['Si','No'];
+      const box=document.createElement('div'),editor=document.createElement('input'),list=document.createElement('datalist');
+      list.id='tally-options-'+crypto.randomUUID();editor.setAttribute('list',list.id);editor.value=cell.getValue()||'';
+      values.forEach(value=>{const option=document.createElement('option');option.value=value;list.append(option);});
+      box.append(editor,list);let finished=false;
+      const commit=()=>{
+        if(finished)return;finished=true;
+        const value=editor.value.trim(),key=value.toLocaleLowerCase();
+        const exact=values.find(v=>v.toLocaleLowerCase()===key),matches=values.filter(v=>v.toLocaleLowerCase().startsWith(key));
+        if(!value)success('');
+        else if(exact||matches.length===1)success(exact||matches[0]);
+        else {cancel();status(matches.length?'Hay varias coincidencias. Seleccione una opcion.':'Seleccione una opcion del catalogo.',true);}
+      };
+      editor.addEventListener('blur',commit);
+      editor.addEventListener('keydown',event=>{
+        if(event.key==='Enter'){event.preventDefault();event.stopPropagation();commit();}
+        if(event.key==='Escape'){finished=true;cancel();}
+      });
+      onRendered(()=>{editor.focus();editor.select();});return box;
+    }
+    async function fillDown(event) {
+      if(!(event.ctrlKey||event.metaKey)||event.key.toLowerCase()!=='d'||!grid)return;
+      if(event.target.closest('input,textarea,select'))return;
+      event.preventDefault();event.stopPropagation();
+      if(!boot.editable||conflict||switching)return;
+      const range=grid.getRanges()[0];if(!range)return;
+      const rows=range.getRows().slice().sort((a,b)=>a.getPosition()-b.getPosition());
+      const columns=range.getColumns().map(c=>c.getField()).filter(f=>fields.includes(f));
+      if(rows.length<2||!columns.length)return;
+      const source=rows[0].getData(),values=Object.fromEntries(columns.map(f=>[f,source[f]??'']));
+      if(columns.includes('plate')){values.plate=plateKey(values.plate);values.driver=driver(values.plate);}
+      clearTimeout(timer);
+      for(const row of rows.slice(1))await row.update({...values});
+      changed();
+    }
+    const fillDownHandler=event=>fillDown(event).catch(fail);
+    $('.tally-grid').addEventListener('keydown',fillDownHandler,true);
     function temporalEditor(cell,onRendered,success,cancel) {
       const field=cell.getField(),type=field==='date'?'date':'time';
       const editor=document.createElement('input');
@@ -167,8 +205,8 @@
             return match?`${match[3]}/${match[2]}/${match[1]}`:esc(value);
           }}),
           input('Entrada','entry',100,{editor:boot.editable&&!conflict?temporalEditor:false,formatter:cell=>esc(pasteValue('entry',cell.getValue()))}),input('Salida','exit',100,{editor:boot.editable&&!conflict?temporalEditor:false,formatter:cell=>esc(pasteValue('exit',cell.getValue()))}),
-          input('SPC','spc',90),input('Empresa','company',155,{editor:boot.editable&&!conflict?'list':false,editorParams:{values:boot.companies,autocomplete:true,listOnEmpty:true}}),
-          input('Ficha','ticket',95),input('Guia Surco','guide',115),input('Guia Sello','seal',105,{editor:boot.editable&&!conflict?'list':false,editorParams:{values:['','Si','No']}}),
+          input('SPC','spc',90),input('Empresa','company',155,{editor:boot.editable&&!conflict?choiceEditor:false}),
+          input('Ficha','ticket',95),input('Guia Surco','guide',115),input('Guia Sello','seal',105,{editor:boot.editable&&!conflict?choiceEditor:false}),
           input('Placa','plate',120),{title:'Chofer',field:'driver',width:260,formatter:'plaintext',cssClass:'tally-readonly'},
           input('Consecutivo Estiba','stowage',170),input('Observacion','notes',280)]
       });
@@ -251,7 +289,7 @@
     $('#tallySave').onclick=wrap(flush);
     $('#tallyReload').onclick=wrap(async()=>{if(dirty()&&!confirm('Descartar el borrador local y cargar lo guardado?'))return;sessionStorage.removeItem(draftKey());generation=saved=0;conflict=false;await openSheet(hold);});
     $('#tallyDraft').onclick=()=>download(new Blob([JSON.stringify({project:current,hold,revision,rows:payloadRows(grid.getData())},null,2)],{type:'application/json'}),`Tally-${current.id}-bodega-${hold}-borrador.json`);
-    $('#tallyExcel').onclick=wrap(async()=>{if(!await flush())return;const resp=await fetch(`/tally/projects/${current.id}/excel`,{headers:api.headers()});if(!resp.ok)throw Error('No se pudo exportar');download(await resp.blob(),`Tally-${current.id}.xlsx`);});
+    $('#tallyExcel').onclick=wrap(async()=>{if(!await flush())return;const resp=await fetch(`/tally/projects/${current.id}/excel`,{headers:api.headers()});if(!resp.ok)throw Error('No se pudo exportar');const disposition=resp.headers.get('Content-Disposition')||'';const encoded=disposition.match(/filename\*=UTF-8''([^;]+)/i),plain=disposition.match(/filename="([^"]+)"/i);download(await resp.blob(),encoded?decodeURIComponent(encoded[1]):plain?plain[1]:`Tally Control ${current.name}.xlsx`);});
     $('#tallyHistory').onclick=wrap(async()=>{const rows=await api.getJSON(`/tally/projects/${current.id}/history`);dialog('Historial',`<table><thead><tr><th>Fecha</th><th>Usuario</th><th>Bodega</th><th>Version</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${esc(new Date(r.created_at).toLocaleString())}</td><td>${esc(r.performed_by)}</td><td>${r.hold??'Proyecto'}</td><td>${r.revision??'-'}</td></tr>`).join('')}</tbody></table>`);});
     active={destroy(){destroyed=true;clearTimeout(timer);window.removeEventListener('beforeunload',unload);$('.tally-grid').removeEventListener('keydown',startTyping,true);if(grid)grid.destroy();},canLeave(){return !dirty()||confirm('Hay cambios pendientes. El borrador se conservara en esta pestana. Salir?');}};
     try {await refreshBootstrap();if(destroyed)return;projectOptions();controls();if(boot.projects.length){$('#tallyProject').value=boot.projects[0].id;await chooseProject(boot.projects[0].id);}else{$('.tally-footer').textContent='Sin proyectos';}}
