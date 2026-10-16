@@ -393,7 +393,8 @@ def meta(x_user: str | None = Header(default=None, alias="X-User"),
 
 @router.get("/people")
 def people(x_user: str | None = Header(default=None, alias="X-User"),
-           x_role: str | None = Header(default=None, alias="X-User-Role")):
+           x_role: str | None = Header(default=None, alias="X-User-Role"),
+           principal=Depends(require_gmail_admin)):
     _require_admin(x_user, x_role)
     conn = connect()
     cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -403,8 +404,10 @@ def people(x_user: str | None = Header(default=None, alias="X-User"),
             """
             SELECT id, codigo, nombre, apellidos, usuario
             FROM empleados
+            WHERE company_code = %s AND activo IS TRUE
+              AND lower(trim(COALESCE(estado, ''))) NOT IN ('inactivo', 'suspendido', 'inhabilitado')
             ORDER BY nombre, apellidos
-            """
+            """, (principal["company"],)
         )
         for r in cur.fetchall():
             full_name = " ".join([str(r.get("nombre") or "").strip(), str(r.get("apellidos") or "").strip()]).strip()
@@ -421,8 +424,9 @@ def people(x_user: str | None = Header(default=None, alias="X-User"),
             """
             SELECT id, codigo, nombre, apellidos, nombrecomercial, correo
             FROM proveedor
+            WHERE company_code = %s AND activo IS TRUE
             ORDER BY nombrecomercial NULLS LAST, nombre, apellidos
-            """
+            """, (principal["company"],)
         )
         for r in cur.fetchall():
             full_name = " ".join([str(r.get("nombre") or "").strip(), str(r.get("apellidos") or "").strip()]).strip()
@@ -436,6 +440,17 @@ def people(x_user: str | None = Header(default=None, alias="X-User"),
                 "email": r.get("correo") or "",
                 "usuario": "",
             })
+        cur.execute(
+            """SELECT codigo, nombre, apellidos, email FROM surveyor
+               WHERE company_code = %s AND activo IS TRUE
+               ORDER BY nombre, apellidos""", (principal["company"],)
+        )
+        for r in cur.fetchall():
+            full_name = " ".join(str(r.get(k) or "").strip() for k in ("nombre", "apellidos")).strip()
+            rows.append({"source_type": "surveyor", "source_id": str(r.get("codigo") or ""),
+                         "label": full_name or str(r.get("codigo") or ""),
+                         "nombre": r.get("nombre") or "", "apellido": r.get("apellidos") or "",
+                         "email": r.get("email") or "", "usuario": ""})
         return {"people": _unique_people(rows)}
     finally:
         cur.close()

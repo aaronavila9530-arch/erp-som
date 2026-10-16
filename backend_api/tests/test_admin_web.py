@@ -12,6 +12,20 @@ from routers import user_admin as admin
 
 
 class AdminWebTests(unittest.TestCase):
+    def test_people_queries_active_records_in_authorized_company(self):
+        conn = MagicMock()
+        cur = conn.cursor.return_value
+        cur.fetchall.side_effect = [[], [], [{'codigo': 'S1', 'nombre': 'Ana', 'apellidos': 'Test', 'email': 'ana@example.test'}]]
+        with patch.object(admin, 'connect', return_value=conn):
+            data = admin.people('admin', 'master', {'company': 'MSL-CR'})
+        self.assertEqual(data['people'][0]['source_type'], 'surveyor')
+        self.assertEqual(data['people'][0]['source_id'], 'S1')
+        for call in cur.execute.call_args_list:
+            query, params = call.args
+            self.assertIn('activo IS TRUE', query)
+            self.assertEqual(params, ('MSL-CR',))
+        self.assertIn("'inactivo'", cur.execute.call_args_list[0].args[0])
+
     def test_people_only_collapses_equivalent_entries(self):
         person = dict(source_type='empleado', source_id='1', label='Ana Test', nombre='Ana', apellido='Test', email='', usuario='ana')
         copy = dict(person, source_id='2')
