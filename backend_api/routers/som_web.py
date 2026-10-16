@@ -21,7 +21,14 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20261015-commercial-workspace-v13"
+_ASSET_VERSION = "20261015-admin-parity-v14"
+
+
+@router.get("/som/admin-assets/{name}")
+def admin_asset(name: str):
+    if name not in {"admin.js", "admin.css"}:
+        raise HTTPException(404, "Asset no encontrado")
+    return FileResponse(_ASSETS / "admin" / name, media_type="text/javascript" if name.endswith(".js") else "text/css")
 
 MODULES_WEB = [
     {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
@@ -1461,6 +1468,8 @@ def som_web_home() -> HTMLResponse:
   <script src="/som/tally-assets/tally.js?v=1"></script>
   <link rel="stylesheet" href="/comercial/web/assets/comercial.css?v={asset_version}">
   <script src="/comercial/web/assets/comercial.js?v={asset_version}"></script>
+  <link rel="stylesheet" href="/som/admin-assets/admin.css?v={asset_version}">
+  <script src="/som/admin-assets/admin.js?v={asset_version}"></script>
   <script>
     const DEFAULT_COMPANIES = [
       { company_code:"MSL-CR", company_name:"MSL MARINE SURVEYORS AND LOGISTICS GROUP SRL" },
@@ -2328,12 +2337,14 @@ def som_web_home() -> HTMLResponse:
       $("brandLogo").src = selectedCompany().startsWith("MCI") ? "/som/logo/mci?v={asset_version}" : "/som/logo/msl?v={asset_version}";
     }
     function selectModule(code) {
+      if (currentModule === "admin_users" && !SOMAdmin.canLeave()) return;
+      if (currentModule === "admin_users") SOMAdmin.destroy();
       if (currentModule === "comercial" && !SOMCommercial.canLeave()) return;
       if (currentModule === "comercial") SOMCommercial.destroy();
       if (currentModule === "informes" && window.SOMTally && !SOMTally.canLeave()) return;
       if (currentModule === "informes" && window.SOMTally) SOMTally.destroy();
       currentModule = code;
-      $("kpiLabel1").closest("section").style.display = code === "comercial" ? "none" : "";
+      $("kpiLabel1").closest("section").style.display = ["comercial", "admin_users"].includes(code) ? "none" : "";
       selectedMasterView = null;
       setBrand();
       const mod = catalog.modules.find(m => m.code === code) || catalog.modules[0];
@@ -2348,8 +2359,12 @@ def som_web_home() -> HTMLResponse:
       else if (code === "finanzas") renderFinanzas();
       else if (code === "informes") renderInformesTally();
       else if (code === "comercial") renderCommercial();
+      else if (code === "admin_users") renderAdmin();
       else if (code === "hhrre" || code === "hhrr") renderHHRR();
       else renderComingSoon(mod);
+    }
+    function renderAdmin() {
+      SOMAdmin.mount($("content"), { request:(path,method="GET",payload) => method === "GET" ? getJSON(path) : sendJSON(method,path,payload) });
     }
     function renderCommercial() {
       SOMCommercial.mount($("content"), {
@@ -10331,10 +10346,11 @@ def som_web_home() -> HTMLResponse:
     $("bioBtn").onclick = unlockWithPasskey;
     $("backLogin").onclick = showLogin;
     $("setupPasskey").onclick = registerDevicePasskey;
-    $("logout").onclick = () => { if (notificationPollTimer) clearInterval(notificationPollTimer); localStorage.removeItem(SESSION_KEY); session=null; showLogin(); };
+    $("logout").onclick = () => { if (currentModule === "admin_users") { if (!SOMAdmin.canLeave()) return; SOMAdmin.destroy(); } if (notificationPollTimer) clearInterval(notificationPollTimer); localStorage.removeItem(SESSION_KEY); session=null; showLogin(); };
     $("notifyEnable").onclick = enableNotifications;
     $("notifyBell").onclick = async (event) => { event.stopPropagation(); $("notifyPanel").classList.toggle("hidden"); await loadNotifications(false); };
     if ($("refresh")) $("refresh").onclick = () => {
+      if (currentModule === "admin_users") { if (SOMAdmin.canLeave()) renderAdmin(); return; }
       if (currentModule === "comercial") { if (SOMCommercial.canLeave()) renderCommercial(); return; }
       refreshSummary();
       if (currentModule === "master_data") renderMasterData();
@@ -10344,6 +10360,9 @@ def som_web_home() -> HTMLResponse:
     };
     function changeCompany(value) {
       if (!value) return;
+      if (currentModule === "admin_users" && !SOMAdmin.canLeave()) {
+        $("company").value=session.company; $("companyTop").value=session.company; return;
+      }
       if (currentModule === "comercial" && !SOMCommercial.canLeave()) {
         $("company").value=session.company; $("companyTop").value=session.company; return;
       }
@@ -10379,10 +10398,12 @@ def som_web_home() -> HTMLResponse:
       if (currentModule === "finanzas") renderFinanzas();
       if (currentModule === "hhrre" || currentModule === "hhrr") renderHHRR();
       if (currentModule === "comercial") renderCommercial();
+      if (currentModule === "admin_users") renderAdmin();
     }
     $("company").onchange = () => { const before=session?.company; changeCompany($("company").value); if (currentModule === "informes" && before!==session?.company) renderInformesTally(); };
     $("companyTop").onchange = () => { const before=session?.company; changeCompany($("companyTop").value); if (currentModule === "informes" && before!==session?.company) renderInformesTally(); };
     $("year").onchange = () => {
+      if (currentModule === "admin_users") return;
       if (currentModule === "comercial") { if (SOMCommercial.canLeave()) renderCommercial(); return; }
       if (currentModule === "dashboard") refreshSummary();
       else resetKpisForManualLoad();

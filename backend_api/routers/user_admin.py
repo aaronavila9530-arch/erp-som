@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 import bcrypt
-from fastapi import APIRouter, Depends, HTTPException, Header
+from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from pydantic import BaseModel
 from psycopg2.extras import RealDictCursor, Json
 
@@ -204,7 +204,7 @@ PASSWORD_RULES = [
 class UserCreatePayload(BaseModel):
     usuario: str
     password: str
-    rol: str = "user"
+    rol: Literal["user", "hr", "finance", "accounting", "admin", "master"] = "user"
     source_type: str | None = None
     source_id: str | None = None
     nombre: str | None = None
@@ -261,6 +261,8 @@ def _ensure_tables(cur) -> None:
 
 def _validate_password(password: str) -> list[str]:
     errors: list[str] = []
+    if len((password or "").encode("utf-8")) > 72:
+        errors.append("Maximo 72 bytes UTF-8")
     if len(password or "") < 12:
         errors.append(PASSWORD_RULES[0])
     if not re.search(r"[A-Z]", password or ""):
@@ -302,6 +304,37 @@ def _upsert_permissions(cur, usuario: str, permissions: dict[str, list[str]] | N
             """,
             (usuario, module_code, action_code, actor),
         )
+
+
+def _inherited_permissions(usuario, role):
+    """Desktop fallback, displayed separately from explicit database grants."""
+    name = (usuario or "").strip().lower()
+    role = (role or "").strip().lower()
+    if role in {"admin", "master"} or name in {"admin", "aaron01", "gerencia1", "captain"}:
+        return {m["code"]: [a["code"] for a in MODULE_ACTIONS_BY_MODULE.get(m["code"], MODULE_ACTIONS)] for m in MODULES}
+    if name in {"surveyor01", "surveyor02", "surveyor03"}:
+        return {"comercial": ["view"], "informes": ["view"], "qa_som": ["view"],
+                "hhrre": ["view", "payslips_view", "payslips_download", "requests_view", "requests_create",
+                          "hours_view", "hours_register", "medical_network", "policies_view"]}
+    modules = {"accounting": ["finanzas", "qa_som"], "finance": ["dashboard", "finanzas", "qa_som"],
+               "hr": ["dashboard", "hhrre", "qa_som"], "user": ["dashboard", "servicios", "informes", "qa_som"]}
+    return {module: ["view"] for module in modules.get(role, [])}
+
+
+@router.get("/audit")
+def audit_history(limit: int = Query(100, ge=1, le=200), offset: int = Query(0, ge=0)):
+    conn = connect()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        _ensure_tables(cur)
+        cur.execute("""SELECT id,actor_usuario,target_usuario,action,created_at
+            FROM user_admin_audit ORDER BY id DESC LIMIT %s OFFSET %s""", (limit + 1, offset))
+        rows = cur.fetchall()
+        conn.commit()
+        return {"data": rows[:limit], "has_more": len(rows) > limit}
+    finally:
+        cur.close()
+        conn.close()
 
 
 def _permissions_for(cur, usuario: str) -> dict[str, list[str]]:
@@ -429,9 +462,15 @@ def get_permissions(usuario: str):
     cur = conn.cursor(cursor_factory=RealDictCursor)
     try:
         _ensure_tables(cur)
+        cur.execute("SELECT usuario,rol FROM usuarios WHERE lower(usuario)=lower(%s)", (usuario,))
+        target = cur.fetchone()
+        if not target:
+            raise HTTPException(404, "Usuario no encontrado")
         permissions = _permissions_for(cur, usuario)
         conn.commit()
-        return {"usuario": usuario, "permissions": permissions}
+        return {"usuario": target["usuario"], "permissions": permissions,
+                "inherited_permissions": _inherited_permissions(target["usuario"], target["rol"]),
+                "source": "explicit" if permissions else "inherited"}
     finally:
         cur.close()
         conn.close()
@@ -488,7 +527,7 @@ def create_user(payload: UserCreatePayload,
         raise
     except Exception as exc:
         conn.rollback()
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail="No se pudo crear el usuario. No se guardaron cambios.") from exc
     finally:
         cur.close()
         conn.close()
@@ -500,6 +539,8 @@ def save_permissions(usuario: str, payload: PermissionPayload,
                      x_user: str | None = Header(default=None, alias="X-User"),
                      x_role: str | None = Header(default=None, alias="X-User-Role")):
     _require_admin(x_user, x_role)
+    if not _normalize_permissions(payload.permissions):
+        raise HTTPException(400, "No se puede guardar una matriz vacia: reactivaria permisos heredados. No se realizaron cambios.")
     conn = connect()
     cur = conn.cursor(cursor_factory=RealDictCursor)
     try:
@@ -516,7 +557,7 @@ def save_permissions(usuario: str, payload: PermissionPayload,
         raise
     except Exception as exc:
         conn.rollback()
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail="No se pudieron guardar los permisos. No se guardaron cambios.") from exc
     finally:
         cur.close()
         conn.close()
