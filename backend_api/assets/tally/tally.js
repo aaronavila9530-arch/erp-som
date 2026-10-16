@@ -13,11 +13,24 @@
   const payloadRows = data => data.filter(row => fields.some(f => row[f] !== '' && row[f] != null))
     .map(row => ({id:row.id, ...Object.fromEntries(fields.map(f => [f, row[f] ?? '']))}));
   let active = null;
+  function metrics(data) {
+    const rows=payloadRows(data), nums=rows.map(r=>{
+      const match=String(r.stowage||'').trim().match(/^(?:con\s*secutivo\s*#?\s*)?(\d+)$/i);
+      return match && Number.isSafeInteger(Number(match[1])) && Number(match[1])>0 ? Number(match[1]):null;
+    });
+    const valid=nums.filter(n=>n!==null), unique=new Set(valid), max=valid.length?Math.max(...valid):0;
+    return {count:rows.length,max,missing:max-unique.size,duplicates:valid.length-unique.size,invalid:nums.length-valid.length};
+  }
 
   async function mount(root, api) {
     if (active) active.destroy();
     root.innerHTML = '<section class="tally-workspace"><h2>Tally Control</h2><div class="tally-toolbar"><div class="tally-actions"><select aria-label="Proyecto" id="tallyProject"><option value="">Seleccionar proyecto</option></select><button id="tallyNew" class="primary">Nuevo proyecto</button><button id="tallySettings">Bodegas</button></div><div class="tally-actions"><button id="tallyCatalog">Catalogos</button><button id="tallyHistory">Historial</button><button id="tallyExcel">Exportar Excel</button></div></div><div class="tally-actions"><button id="tallyAdd">Agregar 20 filas</button><button id="tallyDelete">Eliminar filas seleccionadas</button><button id="tallySave">Guardar</button><button id="tallyReload">Recargar</button><button id="tallyDraft" hidden>Descargar borrador</button><span id="tallyStatus" class="tally-status" role="status"></span></div><div class="tally-tabs" role="tablist" aria-label="Bodegas"></div><div class="tally-grid"></div><div class="tally-footer"></div></section>';
     const $ = selector => root.querySelector(selector);
+    $('.tally-tabs').insertAdjacentHTML('beforebegin','<div class="tally-metrics" aria-live="polite"></div>');
+    function updateMetrics(data) {
+      const m=metrics(data);
+      $('.tally-metrics').innerHTML=`<div><span>Estiba mayor</span><strong>${m.max}</strong></div><div><span>Lineas ingresadas</span><strong>${m.count}</strong></div><div><span>Consecutivos faltantes</span><strong>${m.missing}</strong></div><div><span>Repetidos</span><strong>${m.duplicates}</strong></div><div><span>Sin consecutivo valido</span><strong>${m.invalid}</strong></div>`;
+    }
     let boot, current, hold, grid, revision=0, generation=0, saved=0, timer, saving=null, destroyed=false, conflict=false, switching=false;
     const drafts = key => `som:tally:${api.user}:${api.company}:${key}`;
     const draftKey = () => drafts(`${current.id}:${hold}`);
@@ -42,6 +55,7 @@
     function changed() {
       if (!boot.editable || destroyed) return;
       generation++; remember(); status(conflict ? 'Conflicto: descargue su borrador antes de recargar.' : 'Cambios pendientes',conflict);
+      updateMetrics(grid.getData());
       clearTimeout(timer); if(!conflict) timer=setTimeout(()=>flush().catch(fail),900);
       $('.tally-footer').textContent=`${payloadRows(grid.getData()).length} registros · Bodega ${hold}`;
     }
@@ -68,7 +82,7 @@
       return saving;
     }
     function driver(plate) {return boot.drivers.find(d=>d.plate===plateKey(plate))?.driver || '';}
-    function enrich(row) {return {...row,hold,driver:row.driver || driver(row.plate)};}
+    function enrich(row) {return {...row,hold,driver:driver(row.plate)};}
     let typingCell=false;
     function temporalEditor(cell,onRendered,success,cancel) {
       const field=cell.getField(),type=field==='date'?'date':'time';
@@ -155,6 +169,7 @@
       grid.on('cellEdited',cell=>{if(cell.getField()==='plate'){const key=plateKey(cell.getValue());cell.getRow().update({plate:key,driver:driver(key)});} changed();});
       grid.on('historyUndo',()=>changed()); grid.on('historyRedo',()=>changed());
       await new Promise(resolve=>grid.on('tableBuilt',resolve));
+      updateMetrics(rows);
       $('.tally-footer').textContent=`${rows.length} registros · Bodega ${hold}`;
     }
     async function openSheet(next, nextProject=current) {
@@ -164,6 +179,7 @@
       if(!await flush())return;
       const result=await api.getJSON(`/tally/projects/${nextProject.id}/sheets/${next}`);
       if(destroyed)return;
+      boot.drivers=result.drivers||[];
       current=nextProject;$('#tallyProject').value=current.id;
       hold=next; revision=result.revision; generation=saved=0; conflict=false;
       let rows=result.rows;
@@ -202,16 +218,22 @@
       }catch(err){d.querySelector('[role=alert]').textContent=err.message;}finally{btn.disabled=false;}};
     }
     async function catalogDialog() {
+      if(!current)throw Error('Seleccione un proyecto para sus choferes.');
       if(!await flush())return;
       const d=dialog('Catalogos',`<form id="driverForm"><label>Placa<input name="plate" maxlength="30" required list="tallyPlates"></label><datalist id="tallyPlates">${boot.drivers.map(x=>`<option value="${esc(x.plate)}">${esc(x.driver)}</option>`).join('')}</datalist><label>Chofer<input name="driver" maxlength="150" required></label><button type="submit">Guardar chofer</button></form><hr><form id="companyForm"><label>Empresa<input name="name" maxlength="100" required></label><button type="submit">Agregar empresa</button></form><p>${boot.companies.map(esc).join(', ')||'Sin empresas'}</p><hr><label>Importar catalogo desde Excel<input id="catalogFile" type="file" accept=".xlsx"></label><button id="catalogImport">Importar hoja Choferes</button><p>${boot.drivers.length} placas registradas</p>`);
+      d.querySelector('h2').textContent=`Choferes de ${current.name}`;
+      d.querySelector('#catalogFile').accept='.xlsx,.xls';
+      d.querySelector('#catalogImport').textContent='Importar placas y choferes';
+      d.querySelector('#catalogFile').parentElement.insertAdjacentHTML('afterend','<label>Hoja (opcional)<input id="catalogSheet" placeholder="Todas las hojas"></label>');
       const df=d.querySelector('#driverForm');df.elements.plate.oninput=()=>{df.elements.driver.value=driver(df.elements.plate.value);};
       const action=fn=>async e=>{e.preventDefault();try{await fn();await refreshBootstrap();d.close();if(current)await openSheet(hold);}catch(err){d.querySelector('[role=alert]').textContent=err.message;}};
-      df.onsubmit=action(()=>api.sendJSON('PUT','/tally/drivers',{plate:df.elements.plate.value,driver:df.elements.driver.value}));
+      df.onsubmit=action(()=>api.sendJSON('PUT',`/tally/projects/${current.id}/drivers`,{plate:df.elements.plate.value,driver:df.elements.driver.value}));
       const cf=d.querySelector('#companyForm');cf.onsubmit=action(()=>api.postJSON('/tally/companies',{name:cf.elements.name.value}));
       d.querySelector('#catalogImport').onclick=action(async()=>{
         const file=d.querySelector('#catalogFile').files[0];if(!file)throw Error('Seleccione el archivo Excel.');
         const form=new FormData();form.append('file',file);const h=api.headers();delete h['Content-Type'];
-        const resp=await fetch('/tally/catalog/import',{method:'POST',headers:h,body:form});const data=await resp.json();if(!resp.ok)throw Error(typeof data.detail==='string'?data.detail:'No se pudo importar');
+        const query=new URLSearchParams();if(d.querySelector('#catalogSheet').value.trim())query.set('sheet_name',d.querySelector('#catalogSheet').value.trim());
+        const resp=await fetch(`/tally/projects/${current.id}/catalog/import?${query}`,{method:'POST',headers:h,body:form});const data=await resp.json();if(!resp.ok)throw Error(typeof data.detail==='string'?data.detail:'No se pudo importar');
       });
       if(!boot.editable)d.querySelectorAll('input,button[type=submit],#catalogImport').forEach(x=>x.disabled=true);
     }
@@ -229,5 +251,5 @@
     try {await refreshBootstrap();if(destroyed)return;projectOptions();controls();if(boot.projects.length){$('#tallyProject').value=boot.projects[0].id;await chooseProject(boot.projects[0].id);}else{$('.tally-footer').textContent='Sin proyectos';}}
     catch(err){fail(err);}
   }
-  window.SOMTally={mount,canLeave:()=>!active||active.canLeave(),destroy:()=>{active?.destroy();active=null;},plateKey,payloadRows,pasteValue};
+  window.SOMTally={mount,canLeave:()=>!active||active.canLeave(),destroy:()=>{active?.destroy();active=null;},plateKey,payloadRows,pasteValue,metrics};
 })();

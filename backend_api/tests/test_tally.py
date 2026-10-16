@@ -9,9 +9,35 @@ from openpyxl import load_workbook
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from routers import tally
+from services.tally_import import driver_records
+from openpyxl import Workbook
+from io import BytesIO
 
 
 class TallyTests(unittest.TestCase):
+    def test_driver_headers_any_order_and_sheet_name(self):
+        wb=Workbook();ws=wb.active;ws.title='Lista cualquiera'
+        ws.append(['Titulo']);ws.append(['CHOFERES','PLACA2','EMPRESA','Placa'])
+        ws.append(['Test Driver','WRONG','Ignored',123456])
+        out=BytesIO();wb.save(out)
+        self.assertEqual(driver_records(out.getvalue()),{'123456':'Test Driver'})
+
+    def test_conflicting_drivers_rejected_or_explicit_sheet_selected(self):
+        wb=Workbook();a=wb.active;a.title='Oficial';a.append(['Placa','Choferes']);a.append(['001','One'])
+        b=wb.create_sheet('Otro');b.append(['Placa','Choferes']);b.append(['001','Two'])
+        out=BytesIO();wb.save(out)
+        with self.assertRaises(ValueError):driver_records(out.getvalue())
+        self.assertEqual(driver_records(out.getvalue(),'Oficial'),{'001':'One'})
+
+    def test_driver_mutation_is_scoped_and_tenant_checked(self):
+        self.cur.fetchone.return_value={'id':5}
+        with patch.object(tally,'schema'):
+            tally.put_driver(5,tally.DriverInput(plate='AB-123',driver='Example'),self.ctx,self.conn)
+        queries=self.cur.execute.call_args_list
+        self.assertEqual(queries[0].args[1],(5,'MSL-CR'))
+        self.assertIn('tally_project_drivers',queries[1].args[0])
+        self.assertEqual(queries[1].args[1],(5,'AB123','Example'))
+
     def setUp(self):
         self.conn = MagicMock()
         self.cur = self.conn.cursor.return_value.__enter__.return_value
@@ -68,6 +94,9 @@ class TallyTests(unittest.TestCase):
         self.assertEqual(result["revision"],1)
         update=[c for c in self.cur.execute.call_args_list if "UPDATE tally_sheets" in c.args[0]][0]
         self.assertEqual(update.args[1][0].adapted[0]["driver"],"Test Driver")
+        lookup=[c for c in self.cur.execute.call_args_list if 'SELECT plate,driver' in c.args[0]][0]
+        self.assertIn('tally_project_drivers',lookup.args[0])
+        self.assertEqual(lookup.args[1],(1,))
         self.assertTrue(any("INSERT INTO tally_audit" in c.args[0] for c in self.cur.execute.call_args_list))
 
     def test_excel_columns_dates_and_formula_safety(self):

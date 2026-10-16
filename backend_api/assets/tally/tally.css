@@ -15,3 +15,8 @@
 .tally-dialog::backdrop{background:#152f4270}.tally-dialog h2{font-size:20px;margin:0 0 18px}.tally-dialog label{display:block;margin:12px 0}.tally-dialog input,.tally-dialog select,.tally-workspace select{box-sizing:border-box;font:14px Arial,sans-serif;padding:9px;border:1px solid #afc4ce;border-radius:4px;background:white;color:#19343d}
 .tally-dialog input,.tally-dialog select{width:100%;margin-top:5px}.tally-dialog .error{color:#b02c32;overflow-wrap:anywhere}.tally-dialog table{width:100%;border-collapse:collapse}.tally-dialog td,.tally-dialog th{padding:8px;border-bottom:1px solid #d3dfe3;text-align:left}
 @media(max-width:600px){.tally-toolbar{align-items:stretch}.tally-actions{width:100%}.tally-actions select{width:100%}.tally-toolbar button{flex:1}.tally-dialog{padding:16px}.tally-workspace h2{font-size:18px}}
+.tally-metrics { display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;margin:14px 0;border-block:1px solid #cbdde4;padding:12px 0; }
+.tally-metrics span { display:block;font-size:12px;color:#4c6571; }
+.tally-metrics strong { display:block;font-size:24px;color:#007b80; }
+.tally-metrics>div:nth-child(n+3) strong { color:#a56913; }
+@media(max-width:650px) { .tally-metrics {grid-template-columns:repeat(2,minmax(0,1fr));} }

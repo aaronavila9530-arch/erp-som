@@ -16,6 +16,7 @@ from database import get_db
 from security.auth import get_current_user
 from routers.mobile_auth import _has_visual_permission
 from services.tenanting import company_code
+from services.tally_import import driver_records
 
 router = APIRouter(tags=["Tally Control"])
 ASSETS = Path(__file__).resolve().parents[1] / "assets" / "tally"
@@ -51,6 +52,14 @@ def schema(conn):
             PRIMARY KEY(company_code,plate))""")
         cur.execute("""CREATE TABLE IF NOT EXISTS tally_companies (
             company_code TEXT NOT NULL, name TEXT NOT NULL, PRIMARY KEY(company_code,name))""")
+        cur.execute("""CREATE TABLE IF NOT EXISTS tally_project_drivers (
+            project_id BIGINT NOT NULL REFERENCES tally_projects(id), plate TEXT NOT NULL,
+            driver TEXT NOT NULL, PRIMARY KEY(project_id,plate))""")
+        cur.execute("ALTER TABLE tally_projects ADD COLUMN IF NOT EXISTS driver_scope_ready BOOLEAN NOT NULL DEFAULT FALSE")
+        cur.execute("""INSERT INTO tally_project_drivers(project_id,plate,driver)
+            SELECT p.id,d.plate,d.driver FROM tally_projects p JOIN tally_drivers d ON d.company_code=p.company_code
+            WHERE NOT p.driver_scope_ready ON CONFLICT DO NOTHING""")
+        cur.execute("UPDATE tally_projects SET driver_scope_ready=TRUE WHERE NOT driver_scope_ready")
         cur.execute("""CREATE TABLE IF NOT EXISTS tally_audit (
             id BIGSERIAL PRIMARY KEY, project_id BIGINT NOT NULL REFERENCES tally_projects(id),
             hold INTEGER, action TEXT NOT NULL, revision INTEGER, performed_by TEXT NOT NULL,
@@ -143,6 +152,21 @@ class CompanyInput(BaseModel):
     name: str = Field(min_length=1, max_length=100)
 
 
+def refresh_project_driver_rows(cur, pid, records, ctx):
+    cur.execute("SELECT hold,rows,revision FROM tally_sheets WHERE project_id=%s FOR UPDATE", (pid,))
+    for sheet in cur.fetchall():
+        changed = False
+        for row in sheet['rows']:
+            key = plate_key(row.get('plate'))
+            if key in records and row.get('driver') != records[key]:
+                row['driver'] = records[key]
+                changed = True
+        if changed:
+            cur.execute("UPDATE tally_sheets SET rows=%s,revision=revision+1,updated_by=%s,updated_at=NOW() WHERE project_id=%s AND hold=%s",
+                        (Json(sheet['rows']), ctx['user'], pid, sheet['hold']))
+            audit(cur, pid, ctx, 'SHEET_DRIVERS_UPDATED', {'rows': sheet['rows']}, sheet['hold'], sheet['revision']+1)
+
+
 def plate_key(value):
     return re.sub(r"[\s-]+", "", str(value or "")).upper()
 
@@ -183,8 +207,8 @@ def create_project(body: ProjectInput, ctx=Depends(writer), conn=Depends(get_db)
     schema(conn)
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         validate_service(cur, body.service_id, ctx)
-        cur.execute("""INSERT INTO tally_projects(company_code,name,service_id,holds,created_by)
-            VALUES(%s,%s,%s,%s,%s) RETURNING *""", (ctx["company"], body.name, body.service_id, Json(body.holds), ctx["user"]))
+        cur.execute("""INSERT INTO tally_projects(company_code,name,service_id,holds,created_by,driver_scope_ready)
+            VALUES(%s,%s,%s,%s,%s,TRUE) RETURNING *""", (ctx["company"], body.name, body.service_id, Json(body.holds), ctx["user"]))
         row = cur.fetchone()
         audit(cur, row["id"], ctx, "PROJECT_CREATED", body.model_dump())
     conn.commit()
@@ -219,7 +243,10 @@ def get_sheet(pid: int, hold: int, ctx=Depends(context), conn=Depends(get_db)):
         if hold not in p["holds"]:
             raise HTTPException(404, "Bodega no configurada")
         cur.execute("SELECT * FROM tally_sheets WHERE project_id=%s AND hold=%s", (pid, hold))
-        return cur.fetchone() or dict(rows=[], revision=0, hold=hold)
+        result = cur.fetchone() or dict(rows=[], revision=0, hold=hold)
+        cur.execute("SELECT plate,driver FROM tally_project_drivers WHERE project_id=%s ORDER BY plate", (pid,))
+        result['drivers'] = cur.fetchall()
+        return result
 
 
 @router.put("/tally/projects/{pid}/sheets/{hold}")
@@ -233,7 +260,7 @@ def save_sheet(pid: int, hold: int, body: SheetInput, ctx=Depends(writer), conn=
         cur.execute("SELECT revision FROM tally_sheets WHERE project_id=%s AND hold=%s FOR UPDATE", (pid, hold))
         if cur.fetchone()["revision"] != body.revision:
             raise HTTPException(409, "Otra persona modifico esta bodega. Sus cambios no se sobrescribieron. Exporte su borrador y recargue.")
-        cur.execute("SELECT plate,driver FROM tally_drivers WHERE company_code=%s", (ctx["company"],))
+        cur.execute("SELECT plate,driver FROM tally_project_drivers WHERE project_id=%s", (pid,))
         drivers = {r["plate"]: r["driver"] for r in cur.fetchall()}
         cur.execute("SELECT name FROM tally_companies WHERE company_code=%s", (ctx["company"],))
         companies = {r["name"] for r in cur.fetchall()}
@@ -252,14 +279,17 @@ def save_sheet(pid: int, hold: int, body: SheetInput, ctx=Depends(writer), conn=
     return {"revision": revision, "count": len(rows)}
 
 
-@router.put("/tally/drivers")
-def put_driver(body: DriverInput, ctx=Depends(writer), conn=Depends(get_db)):
+@router.put("/tally/projects/{pid}/drivers")
+def put_driver(pid: int, body: DriverInput, ctx=Depends(writer), conn=Depends(get_db)):
     schema(conn)
     key = plate_key(body.plate)
     if not key or not body.driver.strip():
         raise HTTPException(422, "Placa y chofer requeridos")
-    with conn.cursor() as cur:
-        cur.execute("INSERT INTO tally_drivers VALUES(%s,%s,%s) ON CONFLICT(company_code,plate) DO UPDATE SET driver=EXCLUDED.driver", (ctx["company"], key, body.driver.strip()))
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        project(cur, pid, ctx, True)
+        cur.execute("INSERT INTO tally_project_drivers VALUES(%s,%s,%s) ON CONFLICT(project_id,plate) DO UPDATE SET driver=EXCLUDED.driver", (pid, key, body.driver.strip()))
+        refresh_project_driver_rows(cur, pid, {key: body.driver.strip()}, ctx)
+        audit(cur, pid, ctx, 'DRIVER_UPDATED', {'plate': key, 'driver': body.driver.strip()})
     conn.commit()
     return {"plate": key, "driver": body.driver.strip()}
 
@@ -275,45 +305,26 @@ def put_company(body: CompanyInput, ctx=Depends(writer), conn=Depends(get_db)):
     return {"name": body.name.strip()}
 
 
-@router.post("/tally/catalog/import")
-def import_catalog(file: UploadFile = File(...), ctx=Depends(writer), conn=Depends(get_db)):
+@router.post("/tally/projects/{pid}/catalog/import")
+def import_catalog(pid: int, file: UploadFile = File(...), sheet_name: str | None = Query(default=None, max_length=100), ctx=Depends(writer), conn=Depends(get_db)):
     content = file.file.read(5 * 1024 * 1024 + 1)
     if len(content) > 5 * 1024 * 1024:
         raise HTTPException(413, "Archivo mayor a 5 MB")
-    import zipfile
     try:
-        with zipfile.ZipFile(BytesIO(content)) as archive:
-            if sum(x.file_size for x in archive.infolist()) > 30 * 1024 * 1024:
-                raise ValueError()
-        wb = load_workbook(BytesIO(content), read_only=True, data_only=True)
-        if "Choferes" not in wb.sheetnames:
-            raise ValueError()
-        records, companies = {}, set()
-        for values in wb["Choferes"].iter_rows(min_row=2, max_row=10001, max_col=3, values_only=True):
-            plate, driver, company = values
-            if plate is not None and driver:
-                key = plate_key(plate)
-                name = str(driver).strip()
-                if len(key) > 30 or len(name) > 150:
-                    raise ValueError()
-                if key in records and records[key] != name:
-                    raise ValueError()
-                records[key] = name
-            if company and str(company).strip():
-                companies.add(str(company).strip()[:100])
-        wb.close()
-        if not records:
-            raise ValueError()
-    except Exception:
-        raise HTTPException(422, "Excel invalido. Se requiere hoja Choferes: PLACA, CHOFER, EMPRESA; sin placas ambiguas.")
+        records = driver_records(content, sheet_name)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(422, "Excel invalido. Use .xls o .xlsx con columnas Placa y Choferes.") from exc
     schema(conn)
-    with conn.cursor() as cur:
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        project(cur, pid, ctx, True)
         for plate, driver in records.items():
-            cur.execute("INSERT INTO tally_drivers VALUES(%s,%s,%s) ON CONFLICT DO NOTHING", (ctx["company"], plate, driver))
-        for name in companies:
-            cur.execute("INSERT INTO tally_companies VALUES(%s,%s) ON CONFLICT DO NOTHING", (ctx["company"], name))
+            cur.execute("INSERT INTO tally_project_drivers VALUES(%s,%s,%s) ON CONFLICT(project_id,plate) DO UPDATE SET driver=EXCLUDED.driver", (pid, plate, driver))
+        refresh_project_driver_rows(cur, pid, records, ctx)
+        audit(cur, pid, ctx, 'DRIVERS_IMPORTED', {'count': len(records), 'filename': file.filename})
     conn.commit()
-    return {"processed": len(records), "companies": len(companies)}
+    return {"processed": len(records), "project_id": pid}
 
 
 @router.get("/tally/projects/{pid}/history")
