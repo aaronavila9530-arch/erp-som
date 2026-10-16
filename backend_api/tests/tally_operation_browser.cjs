@@ -45,7 +45,12 @@ async function run(){
    assert.equal(await cell.innerText(),expected);
   }
   const dates=page.locator('.tabulator-row .tabulator-cell[tabulator-field="date"]');
-  await dates.first().dblclick();await dates.first().locator('input').fill('2026-10-17');await dates.first().locator('input').press('Enter');
+  await dates.first().dblclick();
+  assert.equal(await dates.first().locator('input').getAttribute('type'),'text');
+  assert.equal(await dates.first().locator('input').inputValue(),'16/10/2026');
+  await dates.first().locator('input').fill('17/10/2026');await dates.first().locator('input').press('Enter');
+  await dates.first().dblclick();await dates.first().locator('input').fill('31/02/2026');await dates.first().locator('input').press('Enter');
+  assert.equal(await dates.first().innerText(),'17/10/2026');
   const first=await dates.first().boundingBox(),third=await dates.nth(2).boundingBox();
   await page.mouse.move(first.x+20,first.y+15);await page.mouse.down();await page.mouse.move(third.x+20,third.y+15,{steps:8});await page.mouse.up();
   await page.keyboard.press('Control+d');

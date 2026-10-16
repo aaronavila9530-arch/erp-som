@@ -158,8 +158,12 @@
     function temporalEditor(cell,onRendered,success,cancel) {
       const field=cell.getField(),type=field==='date'?'date':'time';
       const editor=document.createElement('input');
-      editor.type=typingCell||type==='time'?'text':type;
+      editor.type='text';
       editor.value=type==='time'?pasteValue(field,cell.getValue()||''):(cell.getValue()||'');
+      if(type==='date'){
+        editor.value=String(editor.value).replace(/^(\d{4})-(\d{2})-(\d{2})$/,'$3/$2/$1');
+        editor.placeholder='DD/MM/YYYY';editor.maxLength=10;editor.setAttribute('aria-label','Fecha DD/MM/YYYY');
+      }
       if(type==='time'){editor.placeholder='HH:MM';editor.maxLength=8;editor.setAttribute('aria-label','Hora HH:MM');}
       let finished=false;
       const commit=()=>{
@@ -167,7 +171,7 @@
         const value=pasteValue(field,editor.value),check=document.createElement('input');
         check.type=type;check.value=value;
         const valid=type==='time'?/^([01]\d|2[0-3]):[0-5]\d$/.test(value):check.value===value;
-        if(value&&!valid){cancel();status(type==='date'?'Fecha invalida':'Hora invalida. Use HH:MM (ejemplo 09:01).',true);return;}
+        if(value&&!valid){cancel();status(type==='date'?'Fecha invalida. Use DD/MM/YYYY.':'Hora invalida. Use HH:MM (ejemplo 09:01).',true);return;}
         success(value);
       };
       editor.addEventListener('blur',commit);
