@@ -21,7 +21,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20261016-tally-excel-entry-v20"
+_ASSET_VERSION = "20261016-tally-copy-range-v21"
 
 
 @router.get("/som/admin-assets/{name}")

@@ -43,6 +43,14 @@ async function run(){
   await page.keyboard.press('Control+d');
   await page.waitForFunction(()=>window.savedRows?.slice(0,3).every(r=>r.date==='2026-10-17'));
   assert.equal(await dates.nth(2).innerText(),'17/10/2026');
+  await page.context().grantPermissions(['clipboard-read','clipboard-write']);
+  await dates.first().click();await page.keyboard.press('Control+c');
+  assert((await page.evaluate(()=>navigator.clipboard.readText())).includes('2026'));
+  const fourth=await dates.nth(3).boundingBox(),fifth=await dates.nth(4).boundingBox();
+  await page.mouse.move(fourth.x+20,fourth.y+15);await page.mouse.down();await page.mouse.move(fifth.x+20,fifth.y+15,{steps:8});await page.mouse.up();
+  await page.keyboard.press('Control+v');
+  await page.waitForFunction(()=>window.savedRows?.slice(0,5).every(r=>r.date==='2026-10-17'));
+  assert.equal(await dates.nth(4).innerText(),'17/10/2026');
   assert.equal(await page.evaluate(()=>SOMTally.pasteValue('date','16/10/2026')),'2026-10-16');
   assert.equal(await page.evaluate(()=>SOMTally.payloadRows([{id:'test',date:'2026-10-16'}])[0].date),'2026-10-16');
   await page.locator('#tallyProject').selectOption('2');

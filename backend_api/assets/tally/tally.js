@@ -175,17 +175,31 @@
         editTriggerEvent:'dblclick',history:true,clipboard:true,
         clipboardCopyRowRange:'range',clipboardCopyConfig:{columnHeaders:false,rowHeaders:false},
         clipboardPasteParser:function(text){
-          if(!boot.editable||conflict)return false;
+          if(!boot.editable||conflict||switching)return false;
           const range=grid.getRanges()[0];if(!range)return false;
           const cols=grid.getColumns().map(c=>c.getField()).filter(Boolean);
           const left=cols.indexOf(range.getColumns()[0].getField());
           const parsed=Papa.parse(text,{delimiter:'\t',skipEmptyLines:'greedy'});
           if(parsed.errors.length||parsed.data.length>5000){status('Pegado invalido o mayor a 5000 filas',true);return false;}
-          return parsed.data.map(values=>Object.fromEntries(values.map((v,i)=>[cols[left+i],pasteValue(cols[left+i],v)]).filter(([f])=>fields.includes(f))));
+          const height=parsed.data.length,width=Math.max(...parsed.data.map(row=>row.length));
+          if(!height||!width)return false;
+          const selectedRows=range.getRows().length,selectedCols=range.getColumns().length;
+          const repeat=selectedRows>=height&&selectedCols>=width;
+          if(repeat&&(selectedRows%height||selectedCols%width)){
+            status('El destino debe ser un multiplo del rango copiado.',true);return false;
+          }
+          const targetHeight=repeat?selectedRows:height,targetWidth=repeat?selectedCols:width;
+          if(targetHeight>5000){status('Pegado mayor a 5000 filas',true);return false;}
+          return Array.from({length:targetHeight},(_,r)=>Object.fromEntries(
+            Array.from({length:targetWidth},(_,c)=>{
+              const field=cols[left+c];return [field,pasteValue(field,parsed.data[r%height][c%width]??'')];
+            }).filter(([field])=>fields.includes(field))));
         },clipboardPasteAction:boot.editable&&!conflict?function(rows){
+          if(!boot.editable||conflict||switching)return [];
           const ranges=grid.getRanges(); if(!ranges.length)return;
           const start=ranges[0].getRows()[0].getPosition()-1;
           const table=grid;
+          clearTimeout(timer);
           (async()=>{
             const needed=start+rows.length-table.getRows().length;
             if(needed>0)await table.addData(Array.from({length:needed},()=>enrich(blank())),false);
