@@ -26,6 +26,7 @@
     if (active) active.destroy();
     root.innerHTML = '<section class="tally-workspace"><h2>Tally Control</h2><div class="tally-toolbar"><div class="tally-actions"><select aria-label="Proyecto" id="tallyProject"><option value="">Seleccionar proyecto</option></select><button id="tallyNew" class="primary">Nuevo proyecto</button><button id="tallySettings">Bodegas</button></div><div class="tally-actions"><button id="tallyCatalog">Catalogos</button><button id="tallyHistory">Historial</button><button id="tallyExcel">Exportar Excel</button></div></div><div class="tally-actions"><button id="tallyAdd">Agregar 20 filas</button><button id="tallyDelete">Eliminar filas seleccionadas</button><button id="tallySave">Guardar</button><button id="tallyReload">Recargar</button><button id="tallyDraft" hidden>Descargar borrador</button><span id="tallyStatus" class="tally-status" role="status"></span></div><div class="tally-tabs" role="tablist" aria-label="Bodegas"></div><div class="tally-grid"></div><div class="tally-footer"></div></section>';
     const $ = selector => root.querySelector(selector);
+    $('#tallySave').remove();
     $('.tally-tabs').insertAdjacentHTML('beforebegin','<div class="tally-metrics" aria-live="polite"></div>');
     function updateMetrics(data) {
       const m=metrics(data);
@@ -34,7 +35,7 @@
     let boot, current, hold, grid, revision=0, generation=0, saved=0, timer, saving=null, destroyed=false, conflict=false, switching=false;
     const drafts = key => `som:tally:${api.user}:${api.company}:${key}`;
     const draftKey = () => drafts(`${current.id}:${hold}`);
-    const status = (message, error=false) => { if(destroyed)return; $('#tallyStatus').textContent=message; $('#tallyStatus').classList.toggle('error',error); $('#tallyDraft').hidden=!error; };
+    const status = (message, error=false) => { if(destroyed)return; $('#tallyStatus').textContent=error?message:''; $('#tallyStatus').classList.toggle('error',error); $('#tallyDraft').hidden=!error; };
     const fail = err => status(err.message || String(err),true);
     const wrap = fn => async (...args) => {try {await fn(...args);} catch(err){fail(err);}};
     const dirty = () => generation !== saved;
@@ -43,7 +44,7 @@
     const controls = () => {
       if(!boot||destroyed)return;
       for (const id of ['tallySettings','tallyHistory','tallyExcel','tallyReload']) $('#'+id).disabled=!current||switching;
-      for (const id of ['tallyAdd','tallyDelete','tallySave']) $('#'+id).disabled=!current || !boot.editable || conflict||switching;
+      for (const id of ['tallyAdd','tallyDelete']) $('#'+id).disabled=!current || !boot.editable || conflict||switching;
       $('#tallyNew').disabled=!boot.editable||switching; $('#tallySettings').disabled=!current || !boot.editable||switching;
       $('#tallyProject').disabled=switching;$('#tallyCatalog').disabled=switching;
       $('.tally-grid').inert=switching;
@@ -56,7 +57,7 @@
       if (!boot.editable || destroyed) return;
       generation++; remember(); status(conflict ? 'Conflicto: descargue su borrador antes de recargar.' : 'Cambios pendientes',conflict);
       updateMetrics(grid.getData());
-      clearTimeout(timer); if(!conflict) timer=setTimeout(()=>flush().catch(fail),900);
+      clearTimeout(timer); if(!conflict) timer=setTimeout(()=>flush().catch(fail),250);
       $('.tally-footer').textContent=`${payloadRows(grid.getData()).length} registros · Bodega ${hold}`;
     }
     async function flush() {
@@ -76,7 +77,9 @@
           status('Guardado'); return true;
         } catch(err) {
           if(/modifico|modificó|sobrescrib|cambio|cambió/i.test(err.message)) conflict=true;
-          controls(); fail(err); return false;
+          controls(); fail(err);
+          if(!conflict&&!destroyed)timer=setTimeout(()=>flush().catch(fail),5000);
+          return false;
         } finally {saving=null;}
       })();
       return saving;
@@ -316,7 +319,6 @@
     $('#tallyNew').onclick=wrap(()=>projectDialog());$('#tallySettings').onclick=wrap(()=>projectDialog(true));$('#tallyCatalog').onclick=wrap(catalogDialog);
     $('#tallyAdd').onclick=wrap(async()=>{await grid.addData(Array.from({length:20},()=>enrich(blank())),false);grid.scrollToRow(grid.getRows().at(-1),'bottom',false);});
     $('#tallyDelete').onclick=wrap(async()=>{const rows=[...new Set(grid.getRanges().flatMap(r=>r.getRows()))];if(rows.length&&confirm(`Eliminar ${rows.length} filas?`)){await grid.deleteRow(rows.map(r=>r.getIndex()));changed();}});
-    $('#tallySave').onclick=wrap(flush);
     $('#tallyReload').onclick=wrap(async()=>{if(dirty()&&!confirm('Descartar el borrador local y cargar lo guardado?'))return;sessionStorage.removeItem(draftKey());generation=saved=0;conflict=false;await openSheet(hold);});
     $('#tallyDraft').onclick=()=>download(new Blob([JSON.stringify({project:current,hold,revision,rows:payloadRows(grid.getData())},null,2)],{type:'application/json'}),`Tally-${current.id}-bodega-${hold}-borrador.json`);
     $('#tallyExcel').onclick=wrap(async()=>{if(!await flush())return;const resp=await fetch(`/tally/projects/${current.id}/excel`,{headers:api.headers()});if(!resp.ok)throw Error('No se pudo exportar');const disposition=resp.headers.get('Content-Disposition')||'';const encoded=disposition.match(/filename\*=UTF-8''([^;]+)/i),plain=disposition.match(/filename="([^"]+)"/i);download(await resp.blob(),encoded?decodeURIComponent(encoded[1]):plain?plain[1]:`Tally Control ${current.name}.xlsx`);});

@@ -17,7 +17,7 @@ async function run(){
    const projects=[{id:1,name:'MV LAURA',holds:[1,4],revision:0},{id:2,name:'OTHER OPERATION',holds:[1],revision:0}];
    await SOMTally.mount(document.querySelector('#app'),{user:'test',company:'TEST',headers:()=>({}),
     getJSON:async p=>p==='/tally/bootstrap'?{projects,drivers:[],companies:['AEGRA','MANEJOS'],services:[],editable:true}:{revision:0,drivers:[{plate:'123',driver:p.includes('/1/sheets')?'LAURA DRIVER':'OTHER DRIVER'}],rows:[80,79,78,81,77].map(n=>({id:crypto.randomUUID(),stowage:String(n),plate:'123',date:'2026-10-16'}))},
-    sendJSON:async(method,path,body)=>{window.savedRows=body.rows;return {revision:1};},postJSON:async()=>({})});
+    sendJSON:async(method,path,body)=>{window.saveAttempts=(window.saveAttempts||0)+1;if(window.failNextSave){window.failNextSave=false;throw Error('Sin conexion');}window.savedRows=body.rows;return {revision:1};},postJSON:async()=>({})});
   });
   assert.deepEqual(await page.evaluate(()=>SOMTally.metrics([80,79,78,81,77].map(n=>({id:String(n),stowage:String(n)})))),{count:5,max:81,missing:76,duplicates:0,invalid:0});
   assert.deepEqual(await page.evaluate(()=>SOMTally.metrics([{stowage:'1'},{stowage:'1'},{stowage:'3'},{plate:'123'},{}])),{count:4,max:3,missing:1,duplicates:1,invalid:1});
@@ -28,6 +28,14 @@ async function run(){
   await entry.dblclick();await entry.locator('input').fill('09:01');await entry.locator('input').press('Enter');
   await page.waitForFunction(()=>window.savedRows?.[0]?.entry==='09:01');
   assert.equal(await entry.innerText(),'09:01');
+  assert.equal(await page.locator('#tallySave').count(),0);
+  assert.equal(await page.locator('#tallyStatus').innerText(),'');
+  await page.evaluate(()=>{window.failNextSave=true;});
+  await entry.dblclick();await entry.locator('input').fill('09:02');await entry.locator('input').press('Enter');
+  await page.getByText('Sin conexion',{exact:true}).waitFor();
+  await page.waitForFunction(()=>window.savedRows?.[0]?.entry==='09:02');
+  assert.equal(await page.locator('#tallyStatus').innerText(),'');
+  await entry.dblclick();await entry.locator('input').fill('09:01');await entry.locator('input').press('Enter');
   await entry.dblclick();await entry.locator('input').fill('25:90');await entry.locator('input').press('Enter');
   assert.equal(await entry.innerText(),'09:01');
   assert.equal(await page.evaluate(()=>SOMTally.pasteValue('entry','09:01:00')),'09:01');
@@ -58,16 +66,16 @@ async function run(){
   await page.waitForTimeout(150);
   const scrollA=await holder.evaluate(el=>({top:el.scrollTop,left:el.scrollLeft}));
   await page.getByRole('tab',{name:'Bodega 4',exact:true}).click();
-  await page.waitForFunction(()=>document.querySelector('[data-hold="4"][aria-selected="true"]')&&!document.querySelector('#tallySave').disabled);
+  await page.waitForFunction(()=>document.querySelector('[data-hold="4"][aria-selected="true"]')&&!document.querySelector('#tallyReload').disabled);
   assert.equal(await holder.evaluate(el=>el.scrollTop),0);
   await holder.evaluate(el=>{el.scrollTop=3200;el.scrollLeft=120;});
   await page.waitForTimeout(150);
   const scrollB=await holder.evaluate(el=>({top:el.scrollTop,left:el.scrollLeft}));
   await page.getByRole('tab',{name:'Bodega 1',exact:true}).click();
-  await page.waitForFunction(()=>!document.querySelector('#tallySave').disabled&&document.querySelector('.tabulator-tableholder').scrollTop===6400);
+  await page.waitForFunction(()=>!document.querySelector('#tallyReload').disabled&&document.querySelector('.tabulator-tableholder').scrollTop===6400);
   assert.deepEqual(await holder.evaluate(el=>({top:el.scrollTop,left:el.scrollLeft})),scrollA);
   await page.getByRole('tab',{name:'Bodega 4',exact:true}).click();
-  await page.waitForFunction(()=>!document.querySelector('#tallySave').disabled&&document.querySelector('.tabulator-tableholder').scrollTop===3200);
+  await page.waitForFunction(()=>!document.querySelector('#tallyReload').disabled&&document.querySelector('.tabulator-tableholder').scrollTop===3200);
   assert.deepEqual(await holder.evaluate(el=>({top:el.scrollTop,left:el.scrollLeft})),scrollB);
   await page.locator('#tallyProject').selectOption('2');
   await page.getByText('OTHER DRIVER',{exact:true}).first().waitFor();
