@@ -130,6 +130,14 @@ async function run(){
    assert.equal(await cell.locator('input').evaluate(el=>getComputedStyle(el).fontSize),'16px');
    await page.evaluate(()=>window.dispatchEvent(new Event('beforeunload',{cancelable:true})));
    await page.waitForFunction(()=>window.savedRows?.some(row=>row.plate==='987654'));
+   await holder.evaluate(el=>{el.scrollTop=3400;el.scrollLeft=0;});
+   await page.waitForTimeout(150);
+   const target=await page.locator('.tabulator-row [tabulator-field="date"]').evaluateAll(cells=>{const bounds=document.querySelector('.tabulator-tableholder').getBoundingClientRect();return cells.findIndex(el=>{const r=el.getBoundingClientRect();return r.top>bounds.top+60&&r.bottom<bounds.bottom-30;});});
+   const dateCell=page.locator('.tabulator-row [tabulator-field="date"]').nth(target);
+   const positionBefore=await holder.evaluate(el=>({top:el.scrollTop,left:el.scrollLeft}));
+   await dateCell.tap();await dateCell.tap();await dateCell.locator('input').waitFor();
+   assert.deepEqual(await holder.evaluate(el=>({top:el.scrollTop,left:el.scrollLeft})),positionBefore,'Double tap must keep the selected row in place');
+   await dateCell.locator('input').press('Escape');
   }
   for(const width of [1440,390]){
    await page.setViewportSize({width,height:1000});

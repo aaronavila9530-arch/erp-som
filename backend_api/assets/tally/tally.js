@@ -125,7 +125,7 @@
         if(event.key==='Enter'){event.preventDefault();event.stopPropagation();commit();}
         if(event.key==='Escape'){finished=true;cancel();}
       });
-      onRendered(()=>{editor.focus();editor.select();});return box;
+      onRendered(()=>{editor.focus({preventScroll:true});editor.select();});return box;
     }
     async function fillDown(event) {
       if(!(event.ctrlKey||event.metaKey)||event.key.toLowerCase()!=='d'||!grid)return;
@@ -182,7 +182,7 @@
         if(event.key==='Enter'){event.preventDefault();commit();}
         if(event.key==='Escape'){finished=true;cancel();}
       });
-      onRendered(()=>{editor.focus();if(editor.type==='text')editor.select();});
+      onRendered(()=>{editor.focus({preventScroll:true});if(editor.type==='text')editor.select();});
       return editor;
     }
     function startTyping(event) {
@@ -200,7 +200,7 @@
       event.preventDefault();event.stopPropagation();
       editor.value=event.key;
       editor.dispatchEvent(new Event('input',{bubbles:true}));
-      editor.focus();editor.setSelectionRange?.(editor.value.length,editor.value.length);
+      editor.focus({preventScroll:true});editor.setSelectionRange?.(editor.value.length,editor.value.length);
     }
     $('.tally-grid').addEventListener('keydown',startTyping,true);
     $('.tally-grid').addEventListener('input',event=>{
@@ -278,7 +278,7 @@
       });
       grid.on('cellEdited',cell=>{if(cell.getField()==='plate'){const key=plateKey(cell.getValue());cell.getRow().update({plate:key,driver:driver(key)});} changed();sessionStorage.removeItem(draftKey()+':editing');});
       grid.on('historyUndo',()=>changed()); grid.on('historyRedo',()=>changed());
-      grid.on('cellDblTap',(event,cell)=>{if(boot.editable&&!conflict&&!switching&&fields.includes(cell.getField())){event.preventDefault();cell.edit();}});
+      grid.on('cellDblTap',(event,cell)=>{if(boot.editable&&!conflict&&!switching&&fields.includes(cell.getField())){event.preventDefault();if(!cell.getElement().classList.contains('tabulator-editing'))cell.edit();}});
       grid.on('cellEditCancelled',()=>sessionStorage.removeItem(draftKey()+':editing'));
       await new Promise(resolve=>grid.on('tableBuilt',resolve));
       updateMetrics(rows);
