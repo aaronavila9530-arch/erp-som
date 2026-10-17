@@ -43,7 +43,8 @@ class PortiaTests(TestCase):
             self.assertIn('MCI-CR',args)
             self.assertTrue(sql.lstrip().startswith(('SELECT','WITH')))
         self.assertEqual(data['warnings'],[])
-        self.assertIn('biweekly',data['sections'])
+        self.assertIn('biweekly_pending',data['sections'])
+        self.assertIn('biweekly_paid',data['sections'])
 
     def test_unavailable_not_zero(self):
         conn=MagicMock();cur=conn.cursor.return_value.__enter__.return_value
@@ -64,7 +65,7 @@ class PortiaTests(TestCase):
 
     def test_multi_question_local_fallback(self):
         base=analysis.section('test','test',[dict(date='2026-10-01',label='A',currency='USD',amount=10)],date(2026,10,1),date(2026,10,2),'label','test')
-        evidence={'sections':{k:{**base,'name':k} for k in ['ledger','expenses','biweekly','scheduled','sales','sales_places']}}
+        evidence={'sections':{k:{**base,'name':k} for k in ['ledger','expenses','biweekly_pending','biweekly_paid','scheduled','sales','sales_places']}}
         with patch.dict('os.environ',{'OPENAI_API_KEY':''}):
             result=analysis.answer('Por que gastos altos, por que mi quincena subio y donde he vendido mas?',evidence,[],'erp',[])
         for section in evidence['sections']:self.assertIn(section+':',result['answer'])
