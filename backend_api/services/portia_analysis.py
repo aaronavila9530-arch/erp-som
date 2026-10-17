@@ -189,6 +189,8 @@ En modo ERP utiliza solo evidencia actual autorizada. Respeta empresa, fechas, p
 No sumes CRC y USD ni conviertas sin tipo de cambio. No sumes ITP y quincenas: pueden solaparse. Ventas por cliente y por ubicacion son dos vistas de las mismas facturas, no sumarlas.
 Distingue facturacion, cobros, saldo pendiente, obligaciones y gasto devengado. Actividad por puerto NO es ventas por puerto.
 Separa siempre quincenas pendientes (DRAFT) de quincenas aplicadas (APPLIED). No llames pagado a un borrador.
+El resumen_autoritativo contiene los totales calculados de CADA fuente. Antes de afirmar que falta una fuente, revisalo.
+Al responder sobre quincenas informa AMBAS fuentes biweekly_pending y biweekly_paid y TODAS sus monedas, incluso si la pregunta es general.
 No llames ventas netas sin impuestos a total facturado: puede incluir impuestos. En cada comparacion menciona todas las monedas presentes.
 Si falta un dato, una fuente o un permiso, dilo; nunca reemplaces por cero ni inventes causas.
 Explica cambios mediante importes y contribuciones verificables; separa hechos de hipotesis y menciona fuente y periodo.
@@ -197,7 +199,8 @@ No afirmes que el mayor elemento actual explica el mayor aumento sin comparar va
 Si la pregunta pide otro periodo, pide cambiar las fechas: no atribuyas el periodo seleccionado al solicitado.
 En modo general no uses datos ERP ni afirmes navegar internet. En modo qa usa el manual proporcionado.
 No des recomendaciones legales/fiscales definitivas. Sugiere validacion profesional cuando corresponda.'''
-    payload=dict(question=question,scope=scope,history=history,
+    summary={key:dict(name=value['name'],totals=value['totals']) for key,value in evidence.get('sections',{}).items()} if scope=='erp' else {}
+    payload=dict(question=question,scope=scope,history=history,resumen_autoritativo=summary,
                  evidence=evidence if scope=='erp' else {},manual=qa if scope=='qa' else [])
     try:
         client=_get_openai_client().with_options(timeout=45,max_retries=1)
