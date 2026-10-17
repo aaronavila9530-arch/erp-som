@@ -6,17 +6,20 @@
   active?.destroy();let dead=false,busy=false,evidence=null,conversation=[],revision=0;
   const today=new Intl.DateTimeFormat('en-CA',{timeZone:'America/Costa_Rica',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
   root.innerHTML=`<section class="portia-workspace"><div class="portia-top"><div><img src="/som/queue-icon/file-pen-line.svg" alt=""><strong>PORTIA</strong><span>${esc(api.company)}</span></div><button id="pNew">Nueva consulta</button></div>
-   <div class="portia-filters"><fieldset id="pScopes"><legend>Alcance</legend><label><input type="radio" name="pScope" value="erp" checked> Datos SOM</label><label><input type="radio" name="pScope" value="qa"> Manual SOM</label><label><input type="radio" name="pScope" value="general_chat"> General</label></fieldset>
-   <label>Desde<input id="pStart" type="date" value="${today.slice(0,8)}01"></label><label>Hasta<input id="pEnd" type="date" value="${today}"></label><button id="pRefresh">Actualizar datos</button></div>
+   <div class="portia-filters"><label>Tipo de consulta<select id="pScope"><option value="erp">Datos de mi empresa</option><option value="qa">Ayuda sobre SOM</option><option value="general_chat">Pregunta general (sin datos de empresa)</option></select></label>
+   <label>Desde<input id="pStart" type="date" value="${today.slice(0,8)}01"></label><label>Hasta<input id="pEnd" type="date" value="${today}"></label></div>
    <div id="pNotice" role="status"></div><div class="portia-layout"><div class="portia-conversation"><div id="pMessages" role="log" aria-live="polite"><div class="portia-empty"><h2>Consulta ejecutiva</h2><div class="portia-prompts"><button data-prompt="Explica mis obligaciones y gastos del periodo. ¿Qué beneficiarios concentran el importe y qué cambió respecto al periodo anterior?">Gastos y variaciones</button><button data-half="1" data-prompt="¿Por qué es alta esta quincena? Desglosa las categorías, beneficiarios y pendientes; separa pagos aplicados de borradores.">Primera quincena</button><button data-half="2" data-prompt="¿Por qué es alta esta quincena? Desglosa las categorías, beneficiarios y pendientes; separa pagos aplicados de borradores.">Segunda quincena</button><button data-prompt="¿A qué clientes he facturado más y dónde tengo más actividad? Compara con el periodo anterior y distingue ventas de cantidad de servicios.">Ventas y actividad</button></div></div></div>
    <form id="pForm"><label for="pQuestion">Pregunta a PORTIA</label><textarea id="pQuestion" rows="3" maxlength="4000" placeholder="¿Por qué subieron los gastos? ¿Qué compone la quincena? ¿A qué cliente vendimos más?" required></textarea><div class="portia-compose-actions"><span id="pMode">Solo consulta</span><button type="submit" id="pSend">Consultar</button></div></form></div>
-   <aside class="portia-evidence"><div class="portia-evidence-title"><h2>Evidencia</h2><button id="pExport" disabled>Descargar CSV</button></div><div id="pEvidence"></div></aside></div></section>`;
-  const $=s=>root.querySelector(s),scope=()=>$('input[name=pScope]:checked').value;
+   <aside class="portia-evidence" hidden><div class="portia-evidence-title"><h2>Datos de la respuesta</h2><button id="pExport" disabled>Descargar Excel</button></div><div id="pEvidence"></div></aside></div></section>`;
+  const $=s=>root.querySelector(s),scope=()=>$('#pScope').value;
+  $('.portia-conversation').prepend($('#pForm'));
   function notice(text,error=false){if(dead)return;$('#pNotice').textContent=text;$('#pNotice').className=error?'portia-error':'portia-notice';}
   function renderEvidence(){
    if(dead)return;
    $('#pExport').disabled=!evidence||!Object.keys(evidence.sections||{}).length;
-   if(!evidence){$('#pEvidence').textContent=scope()==='erp'?'Sin datos cargados.':'Sin datos ERP en este alcance.';return;}
+   $('.portia-evidence').hidden=!evidence;
+   $('.portia-layout').classList.toggle('has-evidence',!!evidence);
+   if(!evidence){$('#pEvidence').replaceChildren();return;}
    $('#pEvidence').innerHTML=`<p class="portia-period">${esc(evidence.start)} al ${esc(evidence.end)}<br>Comparación: ${esc(evidence.previous_start)} al ${esc(evidence.previous_end)}</p>`+
     (evidence.warnings||[]).map(w=>`<p class="portia-warning">${esc(w)}</p>`).join('')+
     Object.values(evidence.sections||{}).map(s=>`<details class="portia-source" open><summary>${esc(s.name)} <span>${s.count} registros</span></summary><p>${esc(s.basis)}</p>
@@ -26,13 +29,7 @@
   }
   function reset(){revision++;conversation=[];$('#pMessages').replaceChildren();evidence=null;renderEvidence();notice('');}
   function message(role,text){$('.portia-empty')?.remove();const article=document.createElement('article');article.className='portia-message '+role;const label=document.createElement('strong');label.textContent=role==='user'?'Tú':'PORTIA';const body=document.createElement('div');body.className='portia-answer';body.textContent=text;article.append(label,body);$('#pMessages').append(article);article.scrollIntoView({block:'nearest'});return article;}
-  function lock(value){busy=value;$('#pSend').disabled=value;$('#pSend').textContent=value?'Consultando…':'Consultar';for(const element of root.querySelectorAll('.portia-filters input,.portia-filters button,#pNew,.portia-prompts button'))element.disabled=value;}
-  async function refresh(){
-   if(scope()!=='erp'){evidence=null;renderEvidence();return;}
-   const ticket=revision;notice('Consultando fuentes…');
-   try{const data=await api.get(`/portia/context?start=${$('#pStart').value}&end=${$('#pEnd').value}`);if(dead||ticket!==revision)return;evidence=data.data;renderEvidence();notice('');}
-   catch(e){if(!dead&&ticket===revision)notice(e.message,true);}
-  }
+  function lock(value){busy=value;$('#pSend').disabled=value;$('#pSend').textContent=value?'Consultando…':'Consultar';for(const element of root.querySelectorAll('.portia-filters input,.portia-filters select,#pNew,.portia-prompts button'))element.disabled=value;}
   $('#pForm').onsubmit=async event=>{
    event.preventDefault();if(busy)return;const question=$('#pQuestion').value.trim();if(!question)return;
    const ticket=revision;lock(true);notice('');message('user',question);
@@ -44,23 +41,28 @@
     evidence=scope()==='erp'?result.context:null;renderEvidence();$('#pQuestion').value='';
     $('#pMode').textContent=result.mode==='openai'?'IA · fuentes del alcance seleccionado':'Análisis local · sin IA generativa';
     if(result.warning)notice(result.warning,true);
-   }catch(e){if(!dead&&ticket===revision){message('assistant','No se pudo completar la consulta. Puedes reenviarla; el texto permanece abajo.');notice(e.message,true);}}
+   }catch(e){if(!dead&&ticket===revision){message('assistant','No se pudo completar la consulta. Puedes reenviarla; conservamos tu pregunta.');notice(e.message,true);}}
    finally{if(!dead){lock(false);$('#pQuestion').focus();}}
   };
-  $('#pNew').onclick=()=>{reset();refresh();};$('#pRefresh').onclick=()=>{reset();refresh();};
-  for(const input of root.querySelectorAll('.portia-filters input'))input.onchange=()=>{reset();refresh();};
+  $('#pNew').onclick=()=>{reset();$('#pQuestion').value='';$('#pQuestion').focus();};
+  for(const input of root.querySelectorAll('.portia-filters input,.portia-filters select'))input.onchange=()=>{reset();for(const date of root.querySelectorAll('.portia-filters input[type=date]'))date.parentElement.hidden=scope()!=='erp';};
   for(const button of root.querySelectorAll('[data-prompt]'))button.onclick=()=>{
-   if(button.dataset.half){const half=Number(button.dataset.half),month=$('#pStart').value.slice(0,7),[y,m]=month.split('-').map(Number);$('#pStart').value=month+(half===1?'-01':'-16');$('#pEnd').value=month+'-'+(half===1?'15':String(new Date(y,m,0).getDate()));reset();refresh();}
+   if(button.dataset.half){const half=Number(button.dataset.half),month=$('#pStart').value.slice(0,7),[y,m]=month.split('-').map(Number);$('#pStart').value=month+(half===1?'-01':'-16');$('#pEnd').value=month+'-'+(half===1?'15':String(new Date(y,m,0).getDate()));reset();}
    $('#pQuestion').value=button.dataset.prompt;$('#pQuestion').focus();
   };
   $('#pExport').onclick=()=>{
-   const safe=value=>'"'+String(value??'').replace(/^[=+@-]/,"'$&").replace(/"/g,'""')+'"';
    const rows=[['Fuente','ID','Fecha','Nombre','Referencia','Moneda','Importe']];
    for(const section of Object.values(evidence.sections))for(const r of section.details)rows.push([section.source,r.id,r.date,r.label,r.reference,r.currency,r.amount]);
-   const url=URL.createObjectURL(new Blob(['\uFEFF'+rows.map(r=>r.map(safe).join(',')).join('\r\n')],{type:'text/csv;charset=utf-8'}));
-   const a=document.createElement('a');a.href=url;a.download=`PORTIA-${api.company}-${evidence.start}-${evidence.end}-detalle-visible.csv`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+   const ns='urn:schemas-microsoft-com:office:spreadsheet';
+   const doc=document.implementation.createDocument(ns,'Workbook');
+   const sheet=doc.createElementNS(ns,'Worksheet');sheet.setAttributeNS(ns,'ss:Name','Detalle visible');doc.documentElement.append(sheet);
+   const table=doc.createElementNS(ns,'Table');sheet.append(table);
+   for(const values of rows){const row=doc.createElementNS(ns,'Row');table.append(row);for(const value of values){const cell=doc.createElementNS(ns,'Cell'),data=doc.createElementNS(ns,'Data');data.setAttributeNS(ns,'ss:Type',typeof value==='number'&&Number.isFinite(value)?'Number':'String');data.textContent=String(value??'').replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g,'');cell.append(data);row.append(cell);}}
+   const xml='<?xml version="1.0" encoding="UTF-8"?><?mso-application progid="Excel.Sheet"?>'+new XMLSerializer().serializeToString(doc);
+   const url=URL.createObjectURL(new Blob([xml],{type:'application/xml;charset=utf-8'}));
+   const a=document.createElement('a');a.href=url;a.download=`PORTIA-${api.company}-${evidence.start}-${evidence.end}-detalle-visible.xml`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
   };
-  active={destroy(){dead=true;revision++;}};refresh();
+  active={destroy(){dead=true;revision++;}};renderEvidence();
  }
  window.SOMPortia={mount,destroy(){active?.destroy();active=null;}};
 })();
