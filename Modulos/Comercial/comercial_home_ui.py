@@ -3,6 +3,7 @@ from tkinter import ttk, messagebox
 import math
 
 from api_client import get_comercial_board_api
+from session_context import get_company_code
 from Modulos.Comercial.comercial_client_analytics_ui import ComercialClientAnalyticsUI
 from Modulos.Comercial.comercial_ports_analytics_ui import ComercialPortsAnalyticsUI
 from Modulos.Comercial.comercial_servicios_analytics_ui import ComercialServiciosAnalyticsUI
@@ -34,6 +35,11 @@ class ComercialHomeUI(ttk.Frame):
         self.pack(fill="both", expand=True)
         self._setup_style()
         self._build_ui()
+        self.after_idle(self._initial_search)
+
+    def _initial_search(self):
+        if self.winfo_exists():
+            self._search()
 
     # =========================================================
     # STYLE
@@ -143,6 +149,8 @@ class ComercialHomeUI(ttk.Frame):
 
         ttk.Button(filtros, text="Buscar", command=self._search).grid(row=1, column=8, padx=6)
         ttk.Button(filtros, text="Limpiar", command=self._clear).grid(row=1, column=9, padx=6)
+        self.result_status = ttk.Label(self, text=f"Empresa: {get_company_code()}", wraplength=850)
+        self.result_status.pack(fill="x", padx=20, pady=(0, 8))
 
         # =====================================================
         # TABLA (ALTURA REAL + SCROLL VISIBLE)
@@ -286,6 +294,7 @@ class ComercialHomeUI(ttk.Frame):
         try:
             self._data_all = get_comercial_board_api(**filtros) or []
         except Exception as e:
+            self.result_status.config(text=f"No se pudo consultar {get_company_code()}. Los resultados anteriores no se actualizaron.")
             messagebox.showerror("Comercial", str(e))
             return
 
@@ -303,6 +312,11 @@ class ComercialHomeUI(ttk.Frame):
         self._refresh_comboboxes()
         self._page = 1
         self._render_page()
+        self.result_status.config(text=(
+            f"{get_company_code()} | {len(self._data_all)} servicios"
+            if self._data_all else
+            f"{get_company_code()} | Sin servicios para estos filtros. Revise la empresa seleccionada y los estados, incluido Finalizado."
+        ))
 
     def _refresh_comboboxes(self):
 
@@ -366,6 +380,8 @@ class ComercialHomeUI(ttk.Frame):
             self.tabla.delete(i)
 
         self.lbl_page.config(text="Página 0 de 0")
+
+        self.result_status.config(text=f"{get_company_code()} | Filtros restablecidos. Pulse Buscar para consultar.")
 
 
     def _ensure_internal_callbacks(self):

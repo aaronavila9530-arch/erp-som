@@ -6220,7 +6220,7 @@ def crear_evento_hr(
         timeout=15
     )
 
-    resp.raise_for_status()
+    raise_for_status_with_detail(resp)
     return resp.json()
 
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import logging
 from typing import Any
 
 from psycopg2.extras import Json, RealDictCursor
@@ -16,9 +17,20 @@ except Exception:  # pragma: no cover - optional until dependency is installed
 
 try:
     from pywebpush import WebPushException, webpush
+    from py_vapid import Vapid
 except Exception:  # pragma: no cover - optional dependency until Railway installs it
     WebPushException = Exception
     webpush = None
+    Vapid = None
+
+logger = logging.getLogger(__name__)
+
+
+def _push_private_key(value: str):
+    # Stored keys are PEM contents, not PEM file paths or base64 DER strings.
+    if value.lstrip().startswith("-----BEGIN"):
+        return Vapid.from_pem(value.strip().encode("ascii"))
+    return value
 
 
 def ensure_notifications_table(cur) -> None:
@@ -261,8 +273,9 @@ def dispatch_push_notification(cur, recipient_user: str, title: str, message: st
             webpush(
                 subscription_info=subscription_info,
                 data=_push_payload(title, message, metadata),
-                vapid_private_key=private_key,
-                vapid_claims=vapid_claims,
+                vapid_private_key=_push_private_key(private_key),
+                vapid_claims=dict(vapid_claims),
+                timeout=10,
             )
             sent += 1
         except WebPushException as exc:
@@ -348,7 +361,15 @@ def create_notification(
     row = cur.fetchone()
     notification_id = row.get("id") if isinstance(row, dict) else (row[0] if row else None)
     if notification_id and send_push:
-        dispatch_push_notification(cur, recipient, title, message, metadata)
+        # A failed push must not roll back the persisted notification or its event.
+        cur.execute("SAVEPOINT notification_push")
+        try:
+            dispatch_push_notification(cur, recipient, title, message, metadata)
+        except Exception as exc:
+            cur.execute("ROLLBACK TO SAVEPOINT notification_push")
+            logger.warning("Push failed for notification %s (%s)", notification_id, type(exc).__name__)
+        finally:
+            cur.execute("RELEASE SAVEPOINT notification_push")
     return notification_id
 
 
