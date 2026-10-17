@@ -39,7 +39,10 @@
     const fail = err => status(err.message || String(err),true);
     const wrap = fn => async (...args) => {try {await fn(...args);} catch(err){fail(err);}};
     const dirty = () => generation !== saved;
-    const unload = e => {if(dirty()){e.preventDefault();e.returnValue='';}};
+    const settleEditor=()=>{const editor=$('.tabulator-editing input');if(editor)editor.blur();};
+    const unload = e => {settleEditor();if(dirty()){remember();e.preventDefault();e.returnValue='';}};
+    const background=()=>{if(document.visibilityState==='hidden'){settleEditor();if(dirty()){remember();flush().catch(fail);}}};
+    document.addEventListener('visibilitychange',background);
     window.addEventListener('beforeunload',unload);
     const controls = () => {
       if(!boot||destroyed)return;
@@ -200,6 +203,13 @@
       editor.focus();editor.setSelectionRange?.(editor.value.length,editor.value.length);
     }
     $('.tally-grid').addEventListener('keydown',startTyping,true);
+    $('.tally-grid').addEventListener('input',event=>{
+      const element=event.target.closest('.tabulator-cell');
+      if(!element||!current||!event.target.matches('input,textarea'))return;
+      const row=grid.getRows().find(row=>row.getElement()===element.parentElement);
+      const cell=row?.getCell(element.getAttribute('tabulator-field'));
+      if(cell)try{sessionStorage.setItem(draftKey()+':editing',JSON.stringify({id:cell.getRow().getIndex(),field:cell.getField(),value:event.target.value}));}catch{}
+    });
     async function renderGrid(rows) {
       if(grid)grid.destroy();
       const data=rows.map(enrich);
@@ -207,7 +217,7 @@
       while(data.length<availableRows)data.push(enrich(blank()));
       const input=(title,field,width=115,extra={})=>({title,field,width,editor:boot.editable&&!conflict?'input':false,formatter:'plaintext',...extra});
       grid=new Tabulator($('.tally-grid'),{
-        data,index:'id',height:'min(62vh,640px)',layout:'fitData',rowHeight:34,
+        data,index:'id',height:matchMedia('(pointer:coarse)').matches?Math.max(300,Math.min(640,window.innerHeight*.62)):'min(62vh,640px)',layout:'fitData',rowHeight:34,
         selectableRange:1,selectableRangeColumns:true,selectableRangeRows:true,
         rowContextMenu:boot.editable&&!conflict?[{label:'Eliminar fila(s)',action:(event,row)=>{
           const selected=grid.getRanges()[0]?.getRows()||[];
@@ -265,8 +275,10 @@
           input('Placa','plate',120),{title:'Chofer',field:'driver',width:260,formatter:'plaintext',cssClass:'tally-readonly'},
           input('Consecutivo Estiba','stowage',170),input('Observacion','notes',280)]
       });
-      grid.on('cellEdited',cell=>{if(cell.getField()==='plate'){const key=plateKey(cell.getValue());cell.getRow().update({plate:key,driver:driver(key)});} changed();});
+      grid.on('cellEdited',cell=>{if(cell.getField()==='plate'){const key=plateKey(cell.getValue());cell.getRow().update({plate:key,driver:driver(key)});} changed();sessionStorage.removeItem(draftKey()+':editing');});
       grid.on('historyUndo',()=>changed()); grid.on('historyRedo',()=>changed());
+      grid.on('cellDblTap',(event,cell)=>{if(boot.editable&&!conflict&&!switching&&fields.includes(cell.getField())){event.preventDefault();cell.edit();}});
+      grid.on('cellEditCancelled',()=>sessionStorage.removeItem(draftKey()+':editing'));
       await new Promise(resolve=>grid.on('tableBuilt',resolve));
       updateMetrics(rows);
       $('.tally-footer').textContent=`${rows.length} registros · Bodega ${hold}`;
@@ -287,6 +299,12 @@
       $('.tally-tabs').innerHTML=current.holds.map(n=>`<button role="tab" aria-selected="${n===hold}" data-hold="${n}">Bodega ${n}</button>`).join('');
       $('.tally-tabs').querySelectorAll('button').forEach(btn=>btn.onclick=wrap(()=>openSheet(Number(btn.dataset.hold))));
       await renderGrid(rows); await restorePosition(); controls(); status(conflict?'Borrador recuperado con conflicto. Descarguelo antes de recargar.':dirty()?'Borrador recuperado; pendiente de guardar':'Guardado',conflict);
+      const pending=JSON.parse(sessionStorage.getItem(draftKey()+':editing')||'null');
+      if(pending&&boot.editable&&!conflict){
+        let row=grid.getRow(pending.id);
+        if(!row){await grid.addData([{...enrich(blank()),id:pending.id}],true);row=grid.getRow(pending.id);}
+        if(fields.includes(pending.field)){await grid.scrollToRow(row,'center',false);const cell=row.getCell(pending.field);cell.edit();const input=cell.getElement().querySelector('input');if(input){input.value=pending.value;status('Texto recuperado. Confirme la celda para guardarlo.',true);}}
+      }
       if(dirty()&&!conflict)await flush();
       } finally {switching=false;controls();if(current)$('#tallyProject').value=current.id;}
     }
@@ -366,7 +384,7 @@
       });
     }
     $('#tallyHistory').onclick=wrap(async()=>{const rows=await api.getJSON(`/tally/projects/${current.id}/history`);dialog('Historial',`<table><thead><tr><th>Fecha</th><th>Usuario</th><th>Bodega</th><th>Version</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${esc(new Date(r.created_at).toLocaleString())}</td><td>${esc(r.performed_by)}</td><td>${r.hold??'Proyecto'}</td><td>${r.revision??'-'}</td></tr>`).join('')}</tbody></table>`);});
-    active={destroy(){destroyed=true;clearTimeout(timer);window.removeEventListener('beforeunload',unload);$('.tally-grid').removeEventListener('keydown',startTyping,true);if(grid)grid.destroy();},canLeave(){return !dirty()||confirm('Hay cambios pendientes. El borrador se conservara en esta pestana. Salir?');}};
+    active={destroy(){settleEditor();destroyed=true;clearTimeout(timer);document.removeEventListener('visibilitychange',background);window.removeEventListener('beforeunload',unload);$('.tally-grid').removeEventListener('keydown',startTyping,true);if(grid)grid.destroy();},canLeave(){settleEditor();return !dirty()||confirm('Hay cambios pendientes. El borrador se conservara en esta pestana. Salir?');}};
     try {await refreshBootstrap();if(destroyed)return;projectOptions();controls();if(boot.projects.length){$('#tallyProject').value=boot.projects[0].id;await chooseProject(boot.projects[0].id);}else{$('.tally-footer').textContent='Sin proyectos';}}
     catch(err){fail(err);}
   }

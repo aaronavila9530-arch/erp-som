@@ -4,7 +4,7 @@ const root=path.resolve(__dirname,'../..'),assets=path.join(root,'backend_api/as
 async function run(){
  const browser=await chromium.launch({executablePath:'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',headless:true});
  try{
-  const page=await browser.newPage({viewport:{width:1440,height:1000}}),errors=[];
+  const page=await browser.newPage({viewport:{width:1440,height:1000},hasTouch:process.env.TALLY_TOUCH==='1',isMobile:process.env.TALLY_TOUCH==='1'}),errors=[];
   page.setDefaultTimeout(15000);
   page.on('pageerror',e=>errors.push(e.message));
   await page.route('https://tally.test/**',async route=>{
@@ -102,6 +102,19 @@ async function run(){
   await page.keyboard.press('Delete');
   await page.waitForFunction(()=>window.savedRows?.length===3);
   fs.mkdirSync(path.join(root,'tmp/tally-qa'),{recursive:true});
+  if(process.env.TALLY_TOUCH==='1'){
+   await page.setViewportSize({width:1024,height:900});
+   const height=(await page.locator('.tally-grid').boundingBox()).height;
+   const cell=page.locator('.tabulator-row [tabulator-field="plate"]').first();
+   await cell.tap();await cell.tap();
+   await cell.locator('input').fill('987654');
+   assert(await page.evaluate(()=>Object.keys(sessionStorage).some(key=>key.endsWith(':editing')&&sessionStorage.getItem(key).includes('987654'))));
+   await page.setViewportSize({width:1024,height:500});
+   assert.equal((await page.locator('.tally-grid').boundingBox()).height,height,'Keyboard viewport must not collapse grid');
+   assert.equal(await cell.locator('input').evaluate(el=>getComputedStyle(el).fontSize),'16px');
+   await page.evaluate(()=>window.dispatchEvent(new Event('beforeunload',{cancelable:true})));
+   await page.waitForFunction(()=>window.savedRows?.some(row=>row.plate==='987654'));
+  }
   for(const width of [1440,390]){
    await page.setViewportSize({width,height:1000});
    assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),`overflow ${width}`);
