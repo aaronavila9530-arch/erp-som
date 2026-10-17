@@ -219,7 +219,7 @@
       grid=new Tabulator($('.tally-grid'),{
         data,index:'id',height:matchMedia('(pointer:coarse)').matches?Math.max(300,Math.min(640,window.innerHeight*.62)):'min(62vh,640px)',layout:'fitData',rowHeight:34,
         selectableRange:1,selectableRangeColumns:true,selectableRangeRows:true,
-        rowContextMenu:boot.editable&&!conflict?[{label:'Eliminar fila(s)',action:(event,row)=>{
+        rowContextMenu:boot.editable&&!conflict&&!matchMedia('(any-pointer:coarse)').matches?[{label:'Eliminar fila(s)',action:(event,row)=>{
           const selected=grid.getRanges()[0]?.getRows()||[];
           deleteRows(selected.includes(row)?selected:[row]).catch(fail);
         }}]:false,

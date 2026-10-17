@@ -96,7 +96,11 @@ async function run(){
   page.on('dialog',dialog=>dialog.accept());
   const row=page.locator('.tabulator-row').first();
   await row.locator('[tabulator-field="date"]').click({button:'right'});
-  await page.getByText('Eliminar fila(s)',{exact:true}).click();
+  if(process.env.TALLY_TOUCH==='1'){
+   assert.equal(await page.getByText('Eliminar fila(s)',{exact:true}).count(),0,'No floating delete menu on tablet');
+   await row.locator('.tabulator-row-header').click();
+   await page.locator('#tallyDelete').click();
+  }else await page.getByText('Eliminar fila(s)',{exact:true}).click();
   await page.waitForFunction(()=>window.savedRows?.length===4);
   await page.locator('.tabulator-row').first().locator('.tabulator-row-header').click();
   await page.keyboard.press('Delete');
