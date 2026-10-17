@@ -22,6 +22,12 @@ tcl_root = os.path.join(python_base, "tcl")
 
 hidden_imports = []
 
+# One-off server maintenance scripts are not desktop runtime dependencies.
+maintenance_scripts = {
+    "hr", "rbac_hhrre", "rbac_informes", "rbac_comercial", "inject_port",
+    "inyectar_surveyors", "crear_usuario_surveyor01_directo", "create_surveyor01_user",
+}
+
 # --------------------------
 # FRONTEND CORE
 # --------------------------
@@ -52,7 +58,8 @@ hidden_imports += collect_submodules("Modulos")
 hidden_imports += collect_submodules(
     "backend_api",
     filter=lambda name: not (
-        name == "backend_api.reports.container_reports_router"
+        name in {f"backend_api.{script}" for script in maintenance_scripts}
+        or name == "backend_api.reports.container_reports_router"
         or name == "backend_api.routers.vessel_grain_sampling"
     ),
 )
@@ -109,6 +116,8 @@ for source, destination in datas:
             if file.name.startswith((".env", "~$")) or file.name == "Varios Aaron.xlsx" or file.suffix.lower() in {".pyc", ".pyo", ".pem", ".key", ".log", ".db", ".sqlite"}:
                 continue
             if source == "backend_api" and file.name in {"surveyors.xlsx", "git"}:
+                continue
+            if source == "backend_api" and relative.parent == Path(".") and file.stem in maintenance_scripts:
                 continue
             safe_datas.append((str(file), str(Path(destination) / relative.parent)))
     else:
