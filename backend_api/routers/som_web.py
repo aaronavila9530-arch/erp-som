@@ -21,7 +21,7 @@ router = APIRouter(tags=["SOM Web"])
 _ROOT = Path(__file__).resolve().parents[1]
 _ASSETS = _ROOT / "assets"
 _REPO_ASSETS = _ROOT.parent / "assets"
-_ASSET_VERSION = "20261016-tally-date-text-v25"
+_ASSET_VERSION = "20261016-portia-analysis-v26"
 
 
 @router.get("/som/admin-assets/{name}")
@@ -1470,6 +1470,8 @@ def som_web_home() -> HTMLResponse:
   <script src="/comercial/web/assets/comercial.js?v={asset_version}"></script>
   <link rel="stylesheet" href="/som/admin-assets/admin.css?v={asset_version}">
   <script src="/som/admin-assets/admin.js?v={asset_version}"></script>
+  <link rel="stylesheet" href="/portia/assets/portia.css?v={asset_version}">
+  <script src="/portia/assets/portia.js?v={asset_version}"></script>
   <script>
     const DEFAULT_COMPANIES = [
       { company_code:"MSL-CR", company_name:"MSL MARINE SURVEYORS AND LOGISTICS GROUP SRL" },
@@ -2343,8 +2345,9 @@ def som_web_home() -> HTMLResponse:
       if (currentModule === "comercial") SOMCommercial.destroy();
       if (currentModule === "informes" && window.SOMTally && !SOMTally.canLeave()) return;
       if (currentModule === "informes" && window.SOMTally) SOMTally.destroy();
+      if (currentModule === "portia") SOMPortia.destroy();
       currentModule = code;
-      $("kpiLabel1").closest("section").style.display = ["comercial", "admin_users"].includes(code) ? "none" : "";
+      $("kpiLabel1").closest("section").style.display = ["comercial", "admin_users", "portia"].includes(code) ? "none" : "";
       selectedMasterView = null;
       setBrand();
       const mod = catalog.modules.find(m => m.code === code) || catalog.modules[0];
@@ -2359,12 +2362,23 @@ def som_web_home() -> HTMLResponse:
       else if (code === "finanzas") renderFinanzas();
       else if (code === "informes") renderInformesTally();
       else if (code === "comercial") renderCommercial();
+      else if (code === "portia") renderPortia();
       else if (code === "admin_users") renderAdmin();
       else if (code === "hhrre" || code === "hhrr") renderHHRR();
       else renderComingSoon(mod);
     }
     function renderAdmin() {
       SOMAdmin.mount($("content"), { request:(path,method="GET",payload) => method === "GET" ? getJSON(path) : sendJSON(method,path,payload) });
+    }
+    function renderPortia() {
+      const fixedHeaders=headers();
+      async function request(path,method='GET',body){
+        const response=await fetch(path,{method,headers:fixedHeaders,body:body===undefined?undefined:JSON.stringify(body)});
+        const data=await response.json();
+        if(!response.ok)throw Error(typeof data.detail==='string'?data.detail:'Revise las fechas y los datos de la consulta.');
+        return data;
+      }
+      SOMPortia.mount($("content"),{company:selectedCompany(),get:path=>request(path),post:(path,body)=>request(path,'POST',body)});
     }
     function renderCommercial() {
       SOMCommercial.mount($("content"), {
@@ -10398,6 +10412,7 @@ def som_web_home() -> HTMLResponse:
       if (currentModule === "finanzas") renderFinanzas();
       if (currentModule === "hhrre" || currentModule === "hhrr") renderHHRR();
       if (currentModule === "comercial") renderCommercial();
+      if (currentModule === "portia") renderPortia();
       if (currentModule === "admin_users") renderAdmin();
     }
     $("company").onchange = () => { const before=session?.company; changeCompany($("company").value); if (currentModule === "informes" && before!==session?.company) renderInformesTally(); };
