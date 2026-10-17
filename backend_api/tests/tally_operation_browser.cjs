@@ -24,6 +24,14 @@ async function run(){
   assert.equal(await page.evaluate(()=>SOMTally.metrics([{stowage:'con secutivo #12'}]).max),12);
   await page.getByText('LAURA DRIVER',{exact:true}).first().waitFor();
   await page.getByText('16/10/2026',{exact:true}).first().waitFor();
+  const dateHeader=page.locator('.tabulator-col[tabulator-field="date"]');
+  const originalWidth=(await dateHeader.boundingBox()).width;
+  const edge=await dateHeader.boundingBox();
+  await page.mouse.move(edge.x+edge.width-2,edge.y+edge.height/2);
+  await page.mouse.down();await page.mouse.move(edge.x+25,edge.y+edge.height/2,{steps:12});await page.mouse.up();
+  assert.equal((await dateHeader.boundingBox()).width,originalWidth,'Accidental header drag must not shrink a column');
+  await page.mouse.dblclick(edge.x+edge.width-2,edge.y+edge.height/2);
+  assert.equal((await dateHeader.boundingBox()).width,originalWidth,'Header double-click must not resize a column');
   const entry=page.locator('.tabulator-row .tabulator-cell[tabulator-field="entry"]').first();
   await entry.dblclick();await entry.locator('input').fill('09:01');await entry.locator('input').press('Enter');
   await page.waitForFunction(()=>window.savedRows?.[0]?.entry==='09:01');

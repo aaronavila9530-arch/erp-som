@@ -253,7 +253,7 @@
           })().catch(fail);return [];
         }:function(){return [];},
         rowHeader:{formatter:'rownum',width:45,frozen:true,headerSort:false,resizable:false},
-        columnDefaults:{headerSort:false,resizable:true},
+        columnDefaults:{headerSort:false,resizable:false},
         columns:[{title:'Bodega',field:'hold',width:82,cssClass:'tally-readonly',formatter:'plaintext'},
           input('Fecha','date',120,{editor:boot.editable&&!conflict?temporalEditor:false,formatter:cell=>{
             const value=String(cell.getValue()||''),match=value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
