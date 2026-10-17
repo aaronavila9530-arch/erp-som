@@ -137,6 +137,13 @@ async function run(){
    const positionBefore=await holder.evaluate(el=>({top:el.scrollTop,left:el.scrollLeft}));
    await dateCell.tap();await dateCell.tap();await dateCell.locator('input').waitFor();
    assert.deepEqual(await holder.evaluate(el=>({top:el.scrollTop,left:el.scrollLeft})),positionBefore,'Double tap must keep the selected row in place');
+   for(const offset of [1,0,2,0]){
+    const next=page.locator('.tabulator-row [tabulator-field="date"]').nth(target+offset);
+    await next.tap();await next.tap();
+    await next.locator('input').waitFor();
+    assert(await next.evaluate(el=>el.contains(document.activeElement)),'Focus must stay in exactly the tapped cell');
+    assert.equal(await page.locator('.tabulator-cell.tabulator-editing').count(),1);
+   }
    await dateCell.locator('input').press('Escape');
   }
   for(const width of [1440,390]){

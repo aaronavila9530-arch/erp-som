@@ -203,6 +203,37 @@
       editor.focus({preventScroll:true});editor.setSelectionRange?.(editor.value.length,editor.value.length);
     }
     $('.tally-grid').addEventListener('keydown',startTyping,true);
+    // Resolve the touched cell before focus/keyboard changes can move the viewport.
+    let touchStart=null,lastTap=null;
+    $('.tally-grid').addEventListener('touchstart',event=>{
+      touchStart=null;
+      if(event.touches.length!==1||event.target.closest('input,textarea,select')){lastTap=null;return;}
+      const element=event.target.closest('.tabulator-cell');
+      if(!element||!grid)return;
+      const row=grid.getRows().find(row=>row.getElement()===element.parentElement);
+      const cell=row?.getCell(element.getAttribute('tabulator-field'));
+      if(!cell)return;
+      const touch=event.touches[0];
+      touchStart={cell,x:touch.clientX,y:touch.clientY,time:performance.now()};
+      event.stopPropagation();
+    },{capture:true,passive:true});
+    $('.tally-grid').addEventListener('touchmove',event=>{
+      if(touchStart&&(event.touches.length!==1||Math.hypot(event.touches[0].clientX-touchStart.x,event.touches[0].clientY-touchStart.y)>10)){touchStart=null;lastTap=null;}
+    },{capture:true,passive:true});
+    $('.tally-grid').addEventListener('touchcancel',()=>{touchStart=null;lastTap=null;},{passive:true});
+    $('.tally-grid').addEventListener('touchend',event=>{
+      const start=touchStart;touchStart=null;if(!start)return;
+      event.stopPropagation();
+      event.preventDefault(); // Suppress the synthetic mouse click on a shifted row.
+      if(switching||performance.now()-start.time>500){lastTap=null;return;}
+      const cell=start.cell,key=`${cell.getRow().getIndex()}:${cell.getField()}`,now=performance.now();
+      const twice=lastTap?.key===key&&now-lastTap.time<450;
+      lastTap=twice?null:{key,time:now};
+      if(cell.getElement().classList.contains('tabulator-editing'))return;
+      settleEditor();
+      grid.addRange(cell,cell);
+      if(twice&&boot.editable&&!conflict&&fields.includes(cell.getField()))cell.edit();
+    },{capture:true,passive:false});
     $('.tally-grid').addEventListener('input',event=>{
       const element=event.target.closest('.tabulator-cell');
       if(!element||!current||!event.target.matches('input,textarea'))return;
@@ -278,7 +309,6 @@
       });
       grid.on('cellEdited',cell=>{if(cell.getField()==='plate'){const key=plateKey(cell.getValue());cell.getRow().update({plate:key,driver:driver(key)});} changed();sessionStorage.removeItem(draftKey()+':editing');});
       grid.on('historyUndo',()=>changed()); grid.on('historyRedo',()=>changed());
-      grid.on('cellDblTap',(event,cell)=>{if(boot.editable&&!conflict&&!switching&&fields.includes(cell.getField())){event.preventDefault();if(!cell.getElement().classList.contains('tabulator-editing'))cell.edit();}});
       grid.on('cellEditCancelled',()=>sessionStorage.removeItem(draftKey()+':editing'));
       await new Promise(resolve=>grid.on('tableBuilt',resolve));
       updateMetrics(rows);
