@@ -263,7 +263,7 @@
           })().catch(fail);return [];
         }:function(){return [];},
         rowHeader:{formatter:'rownum',width:45,frozen:true,headerSort:false,resizable:false},
-        columnDefaults:{headerSort:false,resizable:false},
+        columnDefaults:{headerSort:false,resizable:false,variableHeight:false},
         columns:[{title:'Bodega',field:'hold',width:82,cssClass:'tally-readonly',formatter:'plaintext'},
           input('Fecha','date',120,{editor:boot.editable&&!conflict?temporalEditor:false,formatter:cell=>{
             const value=String(cell.getValue()||''),match=value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
@@ -273,7 +273,8 @@
           input('SPC','spc',90),input('Empresa','company',155,{editor:boot.editable&&!conflict?choiceEditor:false}),
           input('Ficha','ticket',95),input('Guia Surco','guide',115),input('Guia Sello','seal',105,{editor:boot.editable&&!conflict?choiceEditor:false}),
           input('Placa','plate',120),{title:'Chofer',field:'driver',width:260,formatter:'plaintext',cssClass:'tally-readonly'},
-          input('Consecutivo Estiba','stowage',170),input('Observacion','notes',280)]
+          input('Consecutivo Estiba','stowage',170),input('Observacion','notes',280)
+        ].map(column=>({...column,minWidth:column.width,maxWidth:column.width,widthGrow:0,widthShrink:0}))
       });
       grid.on('cellEdited',cell=>{if(cell.getField()==='plate'){const key=plateKey(cell.getValue());cell.getRow().update({plate:key,driver:driver(key)});} changed();sessionStorage.removeItem(draftKey()+':editing');});
       grid.on('historyUndo',()=>changed()); grid.on('historyRedo',()=>changed());

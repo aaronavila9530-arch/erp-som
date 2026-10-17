@@ -106,11 +106,15 @@ async function run(){
    await page.setViewportSize({width:1024,height:900});
    const height=(await page.locator('.tally-grid').boundingBox()).height;
    const cell=page.locator('.tabulator-row [tabulator-field="plate"]').first();
+   const dimensions=async()=>page.locator('.tabulator-row').first().locator('.tabulator-cell').evaluateAll(cells=>cells.map(cell=>({width:cell.offsetWidth,height:cell.offsetHeight})));
+   const fixedDimensions=await dimensions();
    await cell.tap();await cell.tap();
    await cell.locator('input').fill('987654');
+   assert.deepEqual(await dimensions(),fixedDimensions,'Editing must not change cell dimensions');
    assert(await page.evaluate(()=>Object.keys(sessionStorage).some(key=>key.endsWith(':editing')&&sessionStorage.getItem(key).includes('987654'))));
    await page.setViewportSize({width:1024,height:500});
    assert.equal((await page.locator('.tally-grid').boundingBox()).height,height,'Keyboard viewport must not collapse grid');
+   assert.deepEqual(await dimensions(),fixedDimensions,'Keyboard must not resize cells');
    assert.equal(await cell.locator('input').evaluate(el=>getComputedStyle(el).fontSize),'16px');
    await page.evaluate(()=>window.dispatchEvent(new Event('beforeunload',{cancelable:true})));
    await page.waitForFunction(()=>window.savedRows?.some(row=>row.plate==='987654'));

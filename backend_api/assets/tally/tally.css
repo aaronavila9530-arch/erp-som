@@ -22,3 +22,5 @@
 @media(max-width:650px) { .tally-metrics {grid-template-columns:repeat(2,minmax(0,1fr));} }
 .tally-grid{touch-action:manipulation}.tally-grid .tabulator-cell{box-sizing:border-box}
 @media(pointer:coarse){.tally-grid input{font-size:16px!important}.tally-workspace button{min-height:44px}.tally-grid .tabulator-tableholder{overscroll-behavior:contain}}
+.tally-grid .tabulator-row,.tally-grid .tabulator-cell{height:34px!important;min-height:34px!important;max-height:34px!important;white-space:nowrap!important}
+.tally-grid .tabulator-cell{overflow:hidden!important}.tally-grid .tabulator-cell input{box-sizing:border-box!important;max-width:100%!important}
