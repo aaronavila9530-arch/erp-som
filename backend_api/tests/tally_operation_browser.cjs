@@ -115,6 +115,14 @@ async function run(){
    await page.setViewportSize({width:1024,height:500});
    assert.equal((await page.locator('.tally-grid').boundingBox()).height,height,'Keyboard viewport must not collapse grid');
    assert.deepEqual(await dimensions(),fixedDimensions,'Keyboard must not resize cells');
+   await cell.locator('input').press('Enter');
+   await page.setViewportSize({width:600,height:960});
+   const spc=page.locator('.tabulator-row [tabulator-field="spc"]').first();
+   await spc.tap();await spc.tap();await spc.locator('input').fill('12345678');await spc.locator('input').press('Enter');
+   assert.equal(await spc.innerText(),'12345678');
+   assert.equal((await spc.boundingBox()).width,120);
+   assert(await spc.evaluate(el=>el.scrollWidth<=el.clientWidth),'SPC must show full number in portrait');
+   await cell.tap();await cell.tap();
    assert.equal(await cell.locator('input').evaluate(el=>getComputedStyle(el).fontSize),'16px');
    await page.evaluate(()=>window.dispatchEvent(new Event('beforeunload',{cancelable:true})));
    await page.waitForFunction(()=>window.savedRows?.some(row=>row.plate==='987654'));

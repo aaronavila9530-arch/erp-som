@@ -270,7 +270,7 @@
             return match?`${match[3]}/${match[2]}/${match[1]}`:esc(value);
           }}),
           input('Entrada','entry',100,{editor:boot.editable&&!conflict?temporalEditor:false,formatter:cell=>esc(pasteValue('entry',cell.getValue()))}),input('Salida','exit',100,{editor:boot.editable&&!conflict?temporalEditor:false,formatter:cell=>esc(pasteValue('exit',cell.getValue()))}),
-          input('SPC','spc',90),input('Empresa','company',155,{editor:boot.editable&&!conflict?choiceEditor:false}),
+          input('SPC','spc',120),input('Empresa','company',155,{editor:boot.editable&&!conflict?choiceEditor:false}),
           input('Ficha','ticket',95),input('Guia Surco','guide',115),input('Guia Sello','seal',105,{editor:boot.editable&&!conflict?choiceEditor:false}),
           input('Placa','plate',120),{title:'Chofer',field:'driver',width:260,formatter:'plaintext',cssClass:'tally-readonly'},
           input('Consecutivo Estiba','stowage',170),input('Observacion','notes',280)
