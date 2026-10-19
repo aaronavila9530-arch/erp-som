@@ -56,6 +56,14 @@ def restore_template_layout(source):
     if link:
         sheet['A42'].hyperlink = link.target
     sheet['A42'].alignment = Alignment(wrap_text=True, vertical='top')
+    # Scope text belongs in the answer box, not the one-column checkmark cell.
+    sheet['AF53'] = sheet['AB53'].value
+    sheet['AB53'] = None
+    for region in ('AF53:AH53', 'D9:H9'):
+        sheet.unmerge_cells(region)
+    sheet.merge_cells('AF53:AJ53')
+    sheet.merge_cells('D9:R9')
+    _fit_web_values(sheet, original)
     sheet.print_area = 'A1:AJ60'
     sheet.sheet_properties.pageSetUpPr.fitToPage = True
     sheet.page_setup.fitToWidth = 1
@@ -63,6 +71,38 @@ def restore_template_layout(source):
     book.save(source)
     book.close()
     template.close()
+
+
+def _fit_web_values(sheet, original):
+    from openpyxl.styles import Alignment
+    from reportlab.pdfbase.pdfmetrics import stringWidth
+    from reportlab.lib.utils import simpleSplit
+    from openpyxl.utils import get_column_letter
+    for row in sheet:
+        for cell in row:
+            if cell.__class__.__name__ == 'MergedCell' or cell.value in (None, '', '\u2714'):
+                continue
+            if cell.value == original[cell.coordinate].value:
+                continue
+            region = next((r for r in sheet.merged_cells.ranges if cell.coordinate in r), None)
+            c1, c2 = (region.min_col, region.max_col) if region else (cell.column, cell.column)
+            r1, r2 = (region.min_row, region.max_row) if region else (cell.row, cell.row)
+            width = 0
+            for col in range(c1, c2 + 1):
+                dim = sheet.column_dimensions.get(get_column_letter(col))
+                width += ((dim.width if dim else sheet.sheet_format.defaultColWidth or 4) * 7 + 5) * .75
+            width = max(12, width - 8)
+            size = float(cell.font.sz or 10)
+            font = 'Helvetica-Bold' if cell.font.bold else 'Helvetica'
+            value = cell.value.strftime('%d-%m-%Y %H:%M') if isinstance(cell.value, datetime) else str(cell.value)
+            lines = simpleSplit(value, font, size, width)
+            # Account for URLs and other tokens without word boundaries.
+            count = sum(max(1, int(stringWidth(line, font, size) / width + .999)) for line in lines)
+            needed = max(1, count) * size * 1.3 + 6
+            available = sum(sheet.row_dimensions[r].height or sheet.sheet_format.defaultRowHeight for r in range(r1, r2 + 1))
+            if needed > available:
+                sheet.row_dimensions[r2].height = (sheet.row_dimensions[r2].height or sheet.sheet_format.defaultRowHeight) + needed - available
+            cell.alignment = Alignment(horizontal='left', vertical='top', wrap_text=True)
 
 
 def presentation(report, customer, folder):
@@ -77,7 +117,7 @@ def presentation(report, customer, folder):
     try:
         date = (raw if isinstance(raw, datetime) else datetime.fromisoformat(str(raw))).strftime("%d-%m-%Y")
     except (ValueError, TypeError):
-        date = str(raw or "").split(" ")[0]
+        date = str(raw or "")
     styles = getSampleStyleSheet()
     styles.add(ParagraphStyle('CoverTitle', fontName='Helvetica-Bold', fontSize=25, leading=31, textColor=colors.HexColor('#173f50'), spaceAfter=18))
     styles.add(ParagraphStyle('CoverValue', fontName='Helvetica', fontSize=12, leading=18))
@@ -93,7 +133,7 @@ def presentation(report, customer, folder):
     story.extend([Paragraph('CONTAINER INSPECTION<br/>REPORT', styles['CoverTitle']),
                   paragraph(report.get('company_code')), Spacer(1,30)])
     rows = [[paragraph(label), paragraph(value)] for label,value in (
-        ('Report No.',report.get('linked_report_number')),('Container No.',report.get('report_no')),
+        ('Report No.',report.get('linked_report_number')),('Reference',report.get('report_no')),
         ('Vessel',report.get('vessel')),('To',customer),('On behalf of',report.get('on_behalf_of')),
         ('Inspection place',report.get('inspection_place')),('Inspection date',date),('Status',report.get('status')))]
     table = Table(rows,colWidths=[125,350],hAlign='LEFT')

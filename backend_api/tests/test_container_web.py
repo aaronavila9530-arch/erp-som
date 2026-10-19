@@ -207,6 +207,24 @@ class ContainersTests(unittest.TestCase):
         self.conn.commit.assert_not_called()
         self.assertFalse(any('UPDATE ' in call.args[0] for call in self.cur.execute.call_args_list))
 
+    def test_web_export_preserves_long_text_and_legacy_date(self):
+        from io import BytesIO
+        from openpyxl import load_workbook
+        from pypdf import PdfReader
+        from services.container_web_export import build
+        long_text = 'Full inspection observations with details. ' * 35
+        row = {**self.row, 'goods_condition': long_text, 'scope_items': long_text,
+               'init_inspection_datetime': 'February 03, 2026'}
+        book = load_workbook(BytesIO(build(row, 'QA Client', 'excel')))
+        self.assertEqual(book.active['A25'].value, long_text)
+        self.assertTrue(book.active['A25'].alignment.wrap_text)
+        self.assertGreater(book.active.row_dimensions[25].height, 40)
+        self.assertEqual(book.active['AF53'].value, long_text)
+        self.assertIsNone(book.active['AB53'].value)
+        book.close()
+        pdf = PdfReader(BytesIO(build(row, 'QA Client', 'presentation')))
+        self.assertIn('February 03, 2026', pdf.pages[0].extract_text())
+
 
 if __name__ == "__main__":
     unittest.main()
