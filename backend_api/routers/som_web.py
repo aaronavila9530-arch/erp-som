@@ -1466,6 +1466,8 @@ def som_web_home() -> HTMLResponse:
   <script src="/som/tally-assets/tabulator.min.js?v=1"></script>
   <script src="/som/tally-assets/papaparse.min.js?v=1"></script>
   <script src="/som/tally-assets/tally.js?v=1"></script>
+  <link rel="stylesheet" href="/informes/containers/assets/containers.css?v=20261019-1">
+  <script src="/informes/containers/assets/containers.js?v=20261019-1"></script>
   <link rel="stylesheet" href="/comercial/web/assets/comercial.css?v={asset_version}">
   <script src="/comercial/web/assets/comercial.js?v={asset_version}"></script>
   <link rel="stylesheet" href="/som/admin-assets/admin.css?v={asset_version}">
@@ -2344,7 +2346,9 @@ def som_web_home() -> HTMLResponse:
       if (currentModule === "comercial" && !SOMCommercial.canLeave()) return;
       if (currentModule === "comercial") SOMCommercial.destroy();
       if (currentModule === "informes" && window.SOMTally && !SOMTally.canLeave()) return;
+      if (currentModule === "informes" && window.SOMContainers && !SOMContainers.canLeave()) return;
       if (currentModule === "informes" && window.SOMTally) SOMTally.destroy();
+      if (currentModule === "informes" && window.SOMContainers) SOMContainers.destroy();
       if (currentModule === "portia") SOMPortia.destroy();
       currentModule = code;
       $("kpiLabel1").closest("section").style.display = ["comercial", "admin_users", "portia"].includes(code) ? "none" : "";
@@ -2391,15 +2395,31 @@ def som_web_home() -> HTMLResponse:
         }
       });
     }
+    let informesView = "tally";
     function renderInformesTally() {
+      SOMTally.destroy();
+      SOMContainers.destroy();
+      $("content").innerHTML = '<nav class="som-report-tabs" aria-label="Tipos de informe"><button type="button" data-report-view="tally">Tally</button><button type="button" data-report-view="containers">Containers</button></nav><div id="somReportWorkspace"></div>';
+      document.querySelectorAll('[data-report-view]').forEach(button => {
+        button.setAttribute('aria-selected', String(button.dataset.reportView === informesView));
+        button.onclick = () => {
+          if (button.dataset.reportView === informesView || !SOMTally.canLeave() || !SOMContainers.canLeave()) return;
+          informesView = button.dataset.reportView;
+          renderInformesTally();
+        };
+      });
       const fixedHeaders = headers();
+      if (informesView === "containers") {
+        SOMContainers.mount($("somReportWorkspace"), {company:selectedCompany(),headers:()=>({...fixedHeaders})});
+        return;
+      }
       const tallyRequest = async (path, method="GET", body) => {
         const response = await secureFetch(path, {method, headers:fixedHeaders, body:body === undefined ? undefined : JSON.stringify(body)});
         const data = await response.json();
         if (!response.ok) throw new Error(typeof data.detail === "string" ? data.detail : (Array.isArray(data.detail) ? data.detail.map(x => `${x.loc.slice(1).join(".")}: ${x.msg}`).join("; ") : "No se pudo completar la operacion"));
         return data;
       };
-      SOMTally.mount($("content"), {user:session.usuario, company:selectedCompany(), manageAccess:selectedCompany()==='MCI-CR'&&['admin','master'].includes(session.rol), headers:()=>({...fixedHeaders}),
+      SOMTally.mount($("somReportWorkspace"), {user:session.usuario, company:selectedCompany(), manageAccess:selectedCompany()==='MCI-CR'&&['admin','master'].includes(session.rol), headers:()=>({...fixedHeaders}),
         getJSON:path=>tallyRequest(path), postJSON:(path,body)=>tallyRequest(path,"POST",body), sendJSON:(method,path,body)=>tallyRequest(path,method,body)});
     }
     async function refreshSummary() {
@@ -10382,7 +10402,7 @@ def som_web_home() -> HTMLResponse:
       }
       if ($("svcModal")?.dataset.homePending) closeModal();
       homePending = null;
-      if (currentModule === "informes" && !SOMTally.canLeave()) {
+      if (currentModule === "informes" && (!SOMTally.canLeave() || !SOMContainers.canLeave())) {
         $("company").value = session.company; $("companyTop").value = session.company; return;
       }
       if ($("company")) $("company").value = value;
