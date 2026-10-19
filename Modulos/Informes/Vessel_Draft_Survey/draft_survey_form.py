@@ -3424,7 +3424,7 @@ class DraftSurveyForm(ttk.Frame):
         draft = self._coerce_draft_number(data.get("word_draft_figures"))
         bl = self._coerce_draft_number(data.get("word_bl_figures"))
         if draft is not None and bl is not None:
-            diff = bl - draft
+            diff = draft - bl
             pct = (diff / bl * 100) if bl else 0
             data["word_difference"] = self._fmt_calc_number(diff)
             data["word_percentage"] = self._fmt_calc_percent(pct)

@@ -100,7 +100,7 @@ def _apply_word_report_calculations(payload: dict) -> dict:
     draft = _coerce_number(data.get("word_draft_figures"))
     bl = _coerce_number(data.get("word_bl_figures"))
     if draft is not None and bl is not None:
-        diff = bl - draft
+        diff = draft - bl
         data["word_difference"] = _fmt_word_number(diff)
         data["word_percentage"] = _fmt_word_percent((diff / bl * 100) if bl else 0)
 
