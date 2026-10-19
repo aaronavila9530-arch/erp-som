@@ -1,5 +1,6 @@
 """Web exports reuse desktop templates, with isolated conversion and cleanup."""
 from datetime import datetime
+from copy import copy
 from io import BytesIO
 from pathlib import Path
 import shutil
@@ -22,32 +23,87 @@ def convert(source, folder):
     return result
 
 
+def restore_template_layout(source):
+    from openpyxl import load_workbook
+    from openpyxl.styles import Alignment
+    from services.container_report_excel_service import TEMPLATE_PATH
+    book, template = load_workbook(source), load_workbook(TEMPLATE_PATH)
+    sheet, original = book.active, template.active
+    # The shared autofitter materializes missing column widths as 13 even though
+    # this fixed-format template defaults to 4. Restore only this web copy.
+    sheet.column_dimensions.clear()
+    for key, dimension in original.column_dimensions.items():
+        sheet.column_dimensions[key] = copy(dimension)
+    for row in original:
+        for cell in row:
+            target = sheet[cell.coordinate]
+            if target.__class__.__name__ != 'MergedCell':
+                target.alignment = copy(cell.alignment)
+                target.font = copy(cell.font)
+    for key, dimension in original.row_dimensions.items():
+        sheet.row_dimensions[key].height = dimension.height
+    # The desktop mapping writes appointment immediately before its merged box.
+    sheet['D8'] = sheet['C8'].value
+    sheet['C8'] = None
+    sheet['D8'].alignment = Alignment(wrap_text=True, vertical='top')
+    sheet.merge_cells('AD3:AJ3')
+    sheet['AD3'].alignment = Alignment(horizontal='center')
+    link = sheet['B42'].hyperlink
+    value = sheet['B42'].value
+    sheet['B42'] = None
+    sheet.merge_cells('A42:AJ42')
+    sheet['A42'] = value
+    if link:
+        sheet['A42'].hyperlink = link.target
+    sheet['A42'].alignment = Alignment(wrap_text=True, vertical='top')
+    sheet.print_area = 'A1:AJ60'
+    sheet.sheet_properties.pageSetUpPr.fitToPage = True
+    sheet.page_setup.fitToWidth = 1
+    sheet.page_setup.fitToHeight = 0
+    book.save(source)
+    book.close()
+    template.close()
+
+
 def presentation(report, customer, folder):
-    from docx import Document
-    from services.presentation_doc_service import TEMPLATE_PATH, _replace_in_paragraphs, _replace_in_tables
-    from services.template_autofit import apply_docx_autofit
-    from services.document_branding import apply_mci_docx_branding
+    from xml.sax.saxutils import escape
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
+    from reportlab.lib.utils import ImageReader
+    from branding import logo_asset
     raw = report.get("init_inspection_datetime")
     try:
         date = (raw if isinstance(raw, datetime) else datetime.fromisoformat(str(raw))).strftime("%d-%m-%Y")
     except (ValueError, TypeError):
         date = str(raw or "").split(" ")[0]
-    data = {"cert_no": report.get("linked_report_number"), "container": report.get("report_no"),
-            "to": customer, "place": report.get("inspection_place"), "date": date,
-            "company_code": report.get("company_code")}
-    placeholders = {"{{" + key.upper() + "}}": str(value or "") for key, value in data.items()}
-    doc = Document(TEMPLATE_PATH)
-    _replace_in_paragraphs(doc.paragraphs, placeholders)
-    _replace_in_tables(doc.tables, placeholders)
-    for section in doc.sections:
-        for part in (section.header, section.footer):
-            _replace_in_paragraphs(part.paragraphs, placeholders)
-            _replace_in_tables(part.tables, placeholders)
-    apply_mci_docx_branding(doc, data)
-    apply_docx_autofit(doc)
-    source = folder / "presentation.docx"
-    doc.save(source)
-    return convert(source, folder)
+    styles = getSampleStyleSheet()
+    styles.add(ParagraphStyle('CoverTitle', fontName='Helvetica-Bold', fontSize=25, leading=31, textColor=colors.HexColor('#173f50'), spaceAfter=18))
+    styles.add(ParagraphStyle('CoverValue', fontName='Helvetica', fontSize=12, leading=18))
+    def paragraph(value):
+        return Paragraph(escape(str(value or '-')).replace('\n','<br/>'), styles['CoverValue'])
+    story = []
+    logo = logo_asset(report)
+    if logo:
+        width, height = ImageReader(logo).getSize()
+        image = Image(str(logo), width=130, height=130*height/width)
+        image.hAlign = 'LEFT'
+        story.extend([image, Spacer(1,36)])
+    story.extend([Paragraph('CONTAINER INSPECTION<br/>REPORT', styles['CoverTitle']),
+                  paragraph(report.get('company_code')), Spacer(1,30)])
+    rows = [[paragraph(label), paragraph(value)] for label,value in (
+        ('Report No.',report.get('linked_report_number')),('Container No.',report.get('report_no')),
+        ('Vessel',report.get('vessel')),('To',customer),('On behalf of',report.get('on_behalf_of')),
+        ('Inspection place',report.get('inspection_place')),('Inspection date',date),('Status',report.get('status')))]
+    table = Table(rows,colWidths=[125,350],hAlign='LEFT')
+    table.setStyle(TableStyle([('VALIGN',(0,0),(-1,-1),'TOP'),('LEFTPADDING',(0,0),(-1,-1),0),
+        ('TOPPADDING',(0,0),(-1,-1),12),('BOTTOMPADDING',(0,0),(-1,-1),12),
+        ('LINEBELOW',(0,0),(-1,-1),.4,colors.HexColor('#d5e0e4'))]))
+    story.append(table)
+    result = folder / 'presentation.pdf'
+    SimpleDocTemplate(str(result),pagesize=A4,leftMargin=60,rightMargin=60,topMargin=50,bottomMargin=45).build(story)
+    return result
 
 
 def build(report, customer, kind):
@@ -65,6 +121,7 @@ def build(report, customer, kind):
                 shutil.copyfile(generated, source)
             finally:
                 generated.unlink(missing_ok=True)
+            restore_template_layout(source)
             if kind == "excel":
                 return source.read_bytes()
             report_pdf = convert(source, folder)

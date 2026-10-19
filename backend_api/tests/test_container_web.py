@@ -182,8 +182,21 @@ class ContainersTests(unittest.TestCase):
                 pdf = PdfReader(BytesIO(data))
                 self.assertEqual(len(pdf.pages), 2 if kind == 'unified' else 1)
                 if kind == 'unified':
-                    self.assertEqual([int(p.mediabox.width) for p in pdf.pages], [100,200])
+                    self.assertIn('CONTAINER INSPECTION', pdf.pages[0].extract_text())
+                    self.assertEqual(int(pdf.pages[1].mediabox.width), 200)
         self.assertTrue(all(not folder.exists() for folder in directories))
+
+    def test_web_workbook_restores_template_widths_and_static_labels(self):
+        from io import BytesIO
+        from openpyxl import load_workbook
+        from services.container_web_export import build
+        book = load_workbook(BytesIO(build({**self.row, 'appointment':'Appointment detail'}, 'QA Client', 'excel')))
+        sheet = book.active
+        self.assertNotIn('Q',sheet.column_dimensions)
+        self.assertFalse(sheet['A26'].alignment.wrap_text)
+        self.assertEqual(sheet['D8'].value,'Appointment detail')
+        self.assertIsNone(sheet['C8'].value)
+        book.close()
 
     def test_export_failure_does_not_change_report(self):
         self.cur.fetchone.side_effect = [self.row, {'customer':'QA Client'}]
