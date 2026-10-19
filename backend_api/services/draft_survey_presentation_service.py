@@ -8,9 +8,11 @@ from docx import Document
 try:
     from services.template_autofit import apply_docx_autofit
     from services.document_branding import apply_mci_docx_branding
+    from services.draft_survey_report_formatting import report_place_line
 except ModuleNotFoundError:
     from backend_api.services.template_autofit import apply_docx_autofit
     from backend_api.services.document_branding import apply_mci_docx_branding
+    from backend_api.services.draft_survey_report_formatting import report_place_line
 
 
 # =====================================================
@@ -222,6 +224,11 @@ def generate_draft_survey_presentation_pdf(data: dict) -> str:
     }
 
     doc = Document(TEMPLATE_PATH)
+
+    for paragraph in doc.paragraphs:
+        if '{word_commenced}' in paragraph.text and '{word_port}' in paragraph.text:
+            for index, run in enumerate(paragraph.runs):
+                run.text = report_place_line(data) if index == 0 else ''
 
     _replace_in_paragraphs(doc.paragraphs, placeholders)
     _replace_in_tables(doc.tables, placeholders)

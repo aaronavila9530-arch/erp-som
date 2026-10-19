@@ -10,9 +10,11 @@ from docx.shared import Inches, Pt
 try:
     from services.template_autofit import apply_docx_autofit
     from services.document_branding import apply_mci_docx_branding
+    from services.draft_survey_report_formatting import report_place_line, replace_placeholders, refresh_draft_difference
 except ModuleNotFoundError:
     from backend_api.services.template_autofit import apply_docx_autofit
     from backend_api.services.document_branding import apply_mci_docx_branding
+    from backend_api.services.draft_survey_report_formatting import report_place_line, replace_placeholders, refresh_draft_difference
 
 
 # ============================================================
@@ -20,7 +22,7 @@ except ModuleNotFoundError:
 # ============================================================
 
 def generate_draft_survey_word_pdf(data: dict) -> str:
-    data = dict(data or {})
+    data = refresh_draft_difference(data)
 
     def _format_report_date(value):
         if value in (None, ""):
@@ -272,33 +274,7 @@ def generate_draft_survey_word_pdf(data: dict) -> str:
             if not full_text:
                 return
 
-            updated_text = full_text
-
-            for placeholder, value in placeholder_map.items():
-                if placeholder in updated_text:
-                    updated_text = updated_text.replace(
-                        placeholder,
-                        value
-                    )
-
-            updated_text = re.sub(r"\{[^{}]+\}", "", updated_text)
-
-            if updated_text == full_text:
-                return
-
-            index = 0
-
-            for run in paragraph.runs:
-                original_length = len(run.text)
-
-                if original_length == 0:
-                    continue
-
-                run.text = updated_text[index:index + original_length]
-                index += original_length
-
-            if index < len(updated_text):
-                paragraph.runs[-1].text += updated_text[index:]
+            replace_placeholders(paragraph, placeholder_map)
 
         except Exception:
             # Nunca permitir que el reemplazo rompa el proceso
@@ -309,6 +285,8 @@ def generate_draft_survey_word_pdf(data: dict) -> str:
     # ========================================================
 
     for paragraph in doc.paragraphs:
+        if paragraph.text.strip() == 'Puerto Caldera - Costa Rica, January 14, 2026.':
+            set_paragraph_text(paragraph, report_place_line(data))
         replace_in_paragraph(paragraph)
 
     # ========================================================
