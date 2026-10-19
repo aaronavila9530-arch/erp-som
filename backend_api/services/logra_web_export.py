@@ -86,13 +86,14 @@ def build(payload, kind, executive=None):
         return output.getvalue()
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib.pagesizes import A4
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+    from reportlab.platypus import SimpleDocTemplate, Paragraph
     styles = getSampleStyleSheet()
+    styles['Normal'].spaceAfter = 6
     styles.add(ParagraphStyle('Question',parent=styles['Normal'],fontName='Helvetica-Bold',spaceBefore=10,spaceAfter=5,keepWithNext=True))
     mapping = {'title':'Title','heading':'Heading1','subheading':'Heading2','question':'Question','text':'Normal'}
     story = []
     for style, value in sections(payload, executive):
-        story.extend([Paragraph(escape(str(value)).replace('\n','<br/>'), styles[mapping[style]]), Spacer(1,6)])
+        story.append(Paragraph(escape(str(value)).replace('\n','<br/>'), styles[mapping[style]]))
     def footer(canvas, doc):
         canvas.saveState()
         canvas.setFont('Helvetica',8)
