@@ -1467,7 +1467,7 @@ def som_web_home() -> HTMLResponse:
   <script src="/som/tally-assets/papaparse.min.js?v=1"></script>
   <script src="/som/tally-assets/tally.js?v=1"></script>
   <link rel="stylesheet" href="/informes/containers/assets/containers.css?v=20261019-1">
-  <script src="/informes/containers/assets/containers.js?v=20261019-1"></script>
+  <script src="/informes/containers/assets/containers.js?v=20261019-2"></script>
   <link rel="stylesheet" href="/comercial/web/assets/comercial.css?v={asset_version}">
   <script src="/comercial/web/assets/comercial.js?v={asset_version}"></script>
   <link rel="stylesheet" href="/som/admin-assets/admin.css?v={asset_version}">

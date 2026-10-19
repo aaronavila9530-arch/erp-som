@@ -11,7 +11,7 @@ async function run() {
   try {
     const page = await browser.newPage({viewport:{width:1440,height:1000}}), errors=[], writes=[];
     let permissions = {view:true,create:true,edit:true,approve:true}, conflict=false;
-    let report = {id:1,linked_report_number:'QA-001',report_no:'MSLU1234567',vessel:'QA VESSEL',user:'surveyor',status:'Pending for review',customer:'QA Client',created_at:'2026-10-19',remarks:'Original narrative'};
+    let report = {id:1,linked_report_number:'QA-001',report_no:'MSLU1234567',vessel:'QA VESSEL',user:'surveyor',status:'Pending for review',customer:'QA Client',created_at:'2026-10-19',remarks:'Original narrative',contact_datetime:'October 19, 2026 at 09:01',init_to:'2026-10-19 09:01:00'};
     page.on('pageerror', e=>errors.push(e.message)); page.on('dialog',d=>d.accept());
     await page.route('http://containers.test/**',async route=>{
       const req=route.request(), url=new URL(req.url()), p=url.pathname, method=req.method();
@@ -48,6 +48,9 @@ async function run() {
       await page.screenshot({path:path.join(root,`tmp/containers-qa/editor-${width}.png`),fullPage:true});
     }
     await page.setViewportSize({width:1440,height:1000});
+    await page.locator('[data-section="1"]').click();
+    assert.equal(await page.locator('[data-field=contact_datetime]').inputValue(),'October 19, 2026 at 09:01');
+    await page.locator('[data-section="0"]').click();
     await page.locator('[data-field=report_no]').fill('MSLU7654321');
     await page.locator('[data-section="4"]').click();
     await page.locator('[data-field=remarks]').fill('Draft from web');
@@ -62,6 +65,8 @@ async function run() {
     assert.equal(await page.locator('[data-field=remarks]').inputValue(),'Improved narrative for review');
     assert.equal(writes.at(-1).body.fields.report_no,'MSLU7654321');
     assert(!('vessel' in writes.at(-1).body.fields));
+    assert(!('contact_datetime' in writes.at(-1).body.fields));
+    assert(!('init_to' in writes.at(-1).body.fields));
     conflict=false;
     await page.locator('[data-action=save]').click(); await page.getByText('Informe guardado.',{exact:true}).waitFor();
     await page.locator('[data-action=approve]').click();

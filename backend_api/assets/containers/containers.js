@@ -59,7 +59,11 @@
     }
     function formValue(field, value) {
       if (field.type === 'checkbox') return Boolean(value);
-      if (field.type === 'datetime-local') return String(value || '').replace(' ', 'T').slice(0, 19);
+      if (field.type === 'datetime-local') {
+        const raw = String(value || ''), probe = document.createElement('input');
+        probe.type = 'datetime-local'; probe.value = raw.replace(' ', 'T');
+        return probe.value || raw;
+      }
       return value == null ? '' : String(value);
     }
     function changedFields() {
