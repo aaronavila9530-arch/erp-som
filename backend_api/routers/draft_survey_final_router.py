@@ -89,13 +89,7 @@ def generate_unified_final_pdf(
         # -------------------------------------------------
         cur.execute("""
             SELECT
-                draft_report_number,
-                word_vessel,
-                word_grt,
-                word_nrt,
-                word_survey_requested_by,
-                word_port,
-                word_country,
+                *,
                 COALESCE(
                     NULLIF(TRIM(word_commenced), ''),
                     NULLIF(TRIM(CONCAT_WS(' ', word_commenced_date, word_commenced_time)), '')
