@@ -1468,6 +1468,8 @@ def som_web_home() -> HTMLResponse:
   <script src="/som/tally-assets/tally.js?v=1"></script>
   <link rel="stylesheet" href="/informes/containers/assets/containers.css?v=20261019-1">
   <script src="/informes/containers/assets/containers.js?v=20261019-2"></script>
+  <link rel="stylesheet" href="/informes/logra/assets/logra.css?v=20261019-1">
+  <script src="/informes/logra/assets/logra.js?v=20261019-1"></script>
   <link rel="stylesheet" href="/comercial/web/assets/comercial.css?v={asset_version}">
   <script src="/comercial/web/assets/comercial.js?v={asset_version}"></script>
   <link rel="stylesheet" href="/som/admin-assets/admin.css?v={asset_version}">
@@ -2347,8 +2349,10 @@ def som_web_home() -> HTMLResponse:
       if (currentModule === "comercial") SOMCommercial.destroy();
       if (currentModule === "informes" && window.SOMTally && !SOMTally.canLeave()) return;
       if (currentModule === "informes" && window.SOMContainers && !SOMContainers.canLeave()) return;
+      if (currentModule === "informes" && window.SOMLogra && !SOMLogra.canLeave()) return;
       if (currentModule === "informes" && window.SOMTally) SOMTally.destroy();
       if (currentModule === "informes" && window.SOMContainers) SOMContainers.destroy();
+      if (currentModule === "informes" && window.SOMLogra) SOMLogra.destroy();
       if (currentModule === "portia") SOMPortia.destroy();
       currentModule = code;
       $("kpiLabel1").closest("section").style.display = ["comercial", "admin_users", "portia"].includes(code) ? "none" : "";
@@ -2399,16 +2403,21 @@ def som_web_home() -> HTMLResponse:
     function renderInformesTally() {
       SOMTally.destroy();
       SOMContainers.destroy();
-      $("content").innerHTML = '<nav class="som-report-tabs" aria-label="Tipos de informe"><button type="button" data-report-view="tally">Tally</button><button type="button" data-report-view="containers">Containers</button></nav><div id="somReportWorkspace"></div>';
+      SOMLogra.destroy();
+      $("content").innerHTML = '<nav class="som-report-tabs" aria-label="Tipos de informe"><button type="button" data-report-view="tally">Tally</button><button type="button" data-report-view="containers">Containers</button><button type="button" data-report-view="logra">LOGRA</button></nav><div id="somReportWorkspace"></div>';
       document.querySelectorAll('[data-report-view]').forEach(button => {
         button.setAttribute('aria-selected', String(button.dataset.reportView === informesView));
         button.onclick = () => {
-          if (button.dataset.reportView === informesView || !SOMTally.canLeave() || !SOMContainers.canLeave()) return;
+          if (button.dataset.reportView === informesView || !SOMTally.canLeave() || !SOMContainers.canLeave() || !SOMLogra.canLeave()) return;
           informesView = button.dataset.reportView;
           renderInformesTally();
         };
       });
       const fixedHeaders = headers();
+      if (informesView === "logra") {
+        SOMLogra.mount($("somReportWorkspace"), {user:session.usuario,headers:()=>({...fixedHeaders})});
+        return;
+      }
       if (informesView === "containers") {
         SOMContainers.mount($("somReportWorkspace"), {company:selectedCompany(),headers:()=>({...fixedHeaders})});
         return;
@@ -10380,7 +10389,7 @@ def som_web_home() -> HTMLResponse:
     $("bioBtn").onclick = unlockWithPasskey;
     $("backLogin").onclick = showLogin;
     $("setupPasskey").onclick = registerDevicePasskey;
-    $("logout").onclick = () => { if (currentModule === "admin_users") { if (!SOMAdmin.canLeave()) return; SOMAdmin.destroy(); } if (notificationPollTimer) clearInterval(notificationPollTimer); localStorage.removeItem(SESSION_KEY); session=null; showLogin(); };
+    $("logout").onclick = () => { if (currentModule === "informes" && window.SOMLogra) { if (!SOMLogra.canLeave()) return; SOMLogra.destroy(); } if (currentModule === "admin_users") { if (!SOMAdmin.canLeave()) return; SOMAdmin.destroy(); } if (notificationPollTimer) clearInterval(notificationPollTimer); localStorage.removeItem(SESSION_KEY); session=null; showLogin(); };
     $("notifyEnable").onclick = enableNotifications;
     $("notifyBell").onclick = async (event) => { event.stopPropagation(); $("notifyPanel").classList.toggle("hidden"); await loadNotifications(false); };
     if ($("refresh")) $("refresh").onclick = () => {
@@ -10402,7 +10411,7 @@ def som_web_home() -> HTMLResponse:
       }
       if ($("svcModal")?.dataset.homePending) closeModal();
       homePending = null;
-      if (currentModule === "informes" && (!SOMTally.canLeave() || !SOMContainers.canLeave())) {
+      if (currentModule === "informes" && (!SOMTally.canLeave() || !SOMContainers.canLeave() || !SOMLogra.canLeave())) {
         $("company").value = session.company; $("companyTop").value = session.company; return;
       }
       if ($("company")) $("company").value = value;

@@ -85,6 +85,7 @@ async function run() {
       window.$=id=>document.getElementById(id); window.headers=()=>({'Content-Type':'application/json'});
       window.selectedCompany=()=> 'MCI-CR'; window.session={usuario:'qa',rol:'admin'};
       window.SOMTally={destroy(){},canLeave(){return true;},mount(root){root.innerHTML='<p>Tally fixture</p>';}};
+      window.SOMLogra={destroy(){},canLeave(){return true;},mount(){}};
     });
     await page.addScriptTag({content:integration+'\nrenderInformesTally();'});
     await page.getByText('Tally fixture',{exact:true}).waitFor();

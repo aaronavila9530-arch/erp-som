@@ -112,6 +112,7 @@ from routers.sampling_certificates_router import router as sampling_certificates
 from routers.sealing_certificates_router import router as sealing_certificates_router
 from routers.lashing_certificates_router import router as lashing_certificates_router
 from routers.logra_reports_router import router as logra_reports_router
+from routers.logra_web import router as logra_web_router
 
 # Comercial
 from routers.comercial import router as comercial_router
@@ -320,6 +321,7 @@ app.include_router(sampling_certificates_router)
 app.include_router(sealing_certificates_router)
 app.include_router(lashing_certificates_router)
 app.include_router(logra_reports_router)
+app.include_router(logra_web_router)
 
 app.include_router(comercial_router)
 app.include_router(comercial_web_router)
