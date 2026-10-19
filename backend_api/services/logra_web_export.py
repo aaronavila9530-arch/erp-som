@@ -89,6 +89,8 @@ def build(payload, kind, executive=None):
     from reportlab.platypus import SimpleDocTemplate, Paragraph
     styles = getSampleStyleSheet()
     styles['Normal'].spaceAfter = 6
+    for name in ('Title', 'Heading1', 'Heading2'):
+        styles[name].keepWithNext = True
     styles.add(ParagraphStyle('Question',parent=styles['Normal'],fontName='Helvetica-Bold',spaceBefore=10,spaceAfter=5,keepWithNext=True))
     mapping = {'title':'Title','heading':'Heading1','subheading':'Heading2','question':'Question','text':'Normal'}
     story = []
