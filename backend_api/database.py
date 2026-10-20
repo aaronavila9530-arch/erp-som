@@ -9,6 +9,7 @@
 
 import os
 import time
+import threading
 import psycopg2
 from psycopg2 import pool
 from psycopg2 import OperationalError
@@ -34,6 +35,8 @@ RETRY_DELAY = 3
 CONNECT_TIMEOUT = 10
 
 _connection_pool = None
+_pool_init_lock = threading.Lock()
+POOL_WAIT_TIMEOUT = 5.0
 
 
 # =====================================================
@@ -43,14 +46,15 @@ _connection_pool = None
 def _initialize_pool():
     global _connection_pool
 
-    if _connection_pool is None:
-        _connection_pool = pool.SimpleConnectionPool(
-            minconn=1,
-            maxconn=10,
-            dsn=_database_url(),
-            connect_timeout=CONNECT_TIMEOUT,
-            sslmode="require"
-        )
+    with _pool_init_lock:
+        if _connection_pool is None:
+            _connection_pool = pool.ThreadedConnectionPool(
+                minconn=1,
+                maxconn=10,
+                dsn=_database_url(),
+                connect_timeout=CONNECT_TIMEOUT,
+                sslmode="require"
+            )
 
 
 # =====================================================
@@ -61,11 +65,17 @@ def get_conn():
     _initialize_pool()
 
     last_error = None
+    deadline = time.monotonic() + POOL_WAIT_TIMEOUT
 
     for attempt in range(MAX_RETRIES):
         try:
-            conn = _connection_pool.getconn()
-            return conn
+            while True:
+                try:
+                    return _connection_pool.getconn()
+                except pool.PoolError as exc:
+                    if str(exc) != "connection pool exhausted" or time.monotonic() >= deadline:
+                        raise
+                    time.sleep(0.05)
 
         except OperationalError as e:
             last_error = e
@@ -77,7 +87,13 @@ def get_conn():
 
 def release_conn(conn):
     if _connection_pool and conn:
-        _connection_pool.putconn(conn)
+        discard = bool(conn.closed)
+        if not discard:
+            try:
+                conn.rollback()
+            except psycopg2.Error:
+                discard = True
+        _connection_pool.putconn(conn, close=discard)
 
 
 # =====================================================

@@ -1,6 +1,8 @@
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
 import re
+import queue
+import threading
 from Modulos.Servicios.widgets.date_picker import DatePicker
 from Modulos.Servicios.widgets.time_picker import TimePicker
 from Modulos.Servicios.date_utils import LONG_DATE_FORMAT, to_db_date
@@ -26,6 +28,8 @@ class PopupServicio(tk.Toplevel):
         self.configure(bg="white")
         self.resizable(False, False)
         self.on_success = on_success
+        self._saving = False
+        self.protocol("WM_DELETE_WINDOW", self._request_close)
         self._valid_continentes = set()
         self._valid_paises = set()
         self._valid_puertos = set()
@@ -143,7 +147,8 @@ class PopupServicio(tk.Toplevel):
         ).grid(row=13, column=2, padx=pad)
 
         # Botones
-        ttk.Button(self, text="Guardar", command=self.save).grid(
+        self.save_button = ttk.Button(self, text="Guardar", command=self.save)
+        self.save_button.grid(
             row=15, column=0, padx=pad, pady=pad
         )
         ttk.Button(self, text="Cancelar", command=self.destroy).grid(
@@ -202,7 +207,7 @@ class PopupServicio(tk.Toplevel):
                 self.cmb_cliente.config(values=[])
 
         except Exception as e:
-            print("❌ Error cargando clientes:", e)
+            print("Error cargando clientes:", e)
 
         # -----------------------------
         # CONTINENTES
@@ -212,7 +217,7 @@ class PopupServicio(tk.Toplevel):
             self._valid_continentes = {str(item).strip() for item in continentes or [] if str(item).strip()}
             self.cmb_continente.config(values=continentes)
         except Exception as e:
-            print("❌ Error cargando continentes:", e)
+            print("Error cargando continentes:", e)
 
         # -----------------------------
         # OPERACIONES (ServiciosMD)
@@ -221,7 +226,7 @@ class PopupServicio(tk.Toplevel):
             operaciones = get_serviciosmd_api()
             self.cmb_operacion.config(values=operaciones)
         except Exception as e:
-            print("❌ Error cargando operaciones:", e)
+            print("Error cargando operaciones:", e)
 
         # -----------------------------
         # SURVEYORS (1 POR PERSONA + VLOOKUP POR OPERACIÓN)
@@ -257,7 +262,7 @@ class PopupServicio(tk.Toplevel):
             self.cmb_surveyor.config(values=sorted(display_set))
 
         except Exception as e:
-            print("❌ Error cargando surveyores:", e)
+            print("Error cargando surveyores:", e)
 
 
 
@@ -304,7 +309,7 @@ class PopupServicio(tk.Toplevel):
             self.cmb_puerto.set("")
 
         except Exception as e:
-            print("❌ Error cargando países:", e)
+            print("Error cargando países:", e)
 
     # ============================================================
     # CARGAR PUERTOS SEGÚN PAÍS
@@ -346,7 +351,7 @@ class PopupServicio(tk.Toplevel):
             self.cmb_puerto.set("")
 
         except Exception as e:
-            print("❌ Error cargando puertos:", e)
+            print("Error cargando puertos:", e)
 
     # ============================================================
     # AUTOLLENAR HONORARIOS (VLOOKUP: surveyor_key + operacion)
@@ -478,6 +483,76 @@ class PopupServicio(tk.Toplevel):
     # Guardar → API
     # =======================================================
     def save(self):
+        if self._saving:
+            return
+        self._saving = True
+        self._save_widget_states = []
+        def freeze(widget):
+            for child in widget.winfo_children():
+                if isinstance(child, (ttk.Entry, ttk.Combobox, ttk.Button, tk.Entry)):
+                    self._save_widget_states.append((child, child.cget("state")))
+                    child.configure(state="disabled")
+                freeze(child)
+        freeze(self)
+        self.save_button.configure(state="disabled", text="Procesando...")
+        self.grab_set()
+        self._save_flow = self._save_steps()
+        self._advance_save()
+
+    def _request_close(self):
+        if self._saving:
+            messagebox.showinfo(
+                "Solicitud en curso",
+                "SOM sigue esperando la respuesta. No vuelva a guardar.\n"
+                "La ventana se podra cerrar cuando termine la solicitud.",
+                parent=self,
+            )
+            return
+        self.destroy()
+
+    def _advance_save(self, value=None, error=None):
+        # Only the yielded network calls run off-thread; all Tk work stays here.
+        try:
+            operation = self._save_flow.throw(error) if error else self._save_flow.send(value)
+        except StopIteration:
+            self._saving = False
+            if self.winfo_exists():
+                for widget, state in self._save_widget_states:
+                    widget.configure(state=state)
+                self.save_button.configure(state="normal", text="Guardar")
+                self.grab_release()
+            return
+        except Exception as exc:
+            self._saving = False
+            if self.winfo_exists():
+                for widget, state in self._save_widget_states:
+                    widget.configure(state=state)
+                self.save_button.configure(state="normal", text="Guardar")
+                self.grab_release()
+                messagebox.showerror("Error", str(exc), parent=self)
+            return
+        results = queue.Queue(maxsize=1)
+
+        def worker():
+            try:
+                results.put((operation(), None))
+            except Exception as exc:
+                results.put((None, exc))
+
+        def poll():
+            if not self.winfo_exists():
+                return
+            try:
+                result, failure = results.get_nowait()
+            except queue.Empty:
+                self.after(50, poll)
+                return
+            self._advance_save(result, failure)
+
+        threading.Thread(target=worker, daemon=True).start()
+        self.after(50, poll)
+
+    def _save_steps(self):
         fecha_db, hora = self._validate_required_fields()
         if not fecha_db:
             return
@@ -513,7 +588,7 @@ class PopupServicio(tk.Toplevel):
 
         try:
             projected_amount = honorarios_val + costo_op_val
-            decision = check_order_to_cash_credit_api(
+            decision = yield lambda: check_order_to_cash_credit_api(
                 data["cliente"],
                 projected_amount=projected_amount,
                 currency="USD",
@@ -562,7 +637,7 @@ class PopupServicio(tk.Toplevel):
                 )
                 if not messagebox.askyesno("Alerta crediticia", msg, parent=self):
                     return
-            resp = post_servicio(data)
+            resp = yield lambda: post_servicio(data)
             if resp.get("status") == "OK":
                 messagebox.showinfo(
                     "Éxito",
@@ -574,7 +649,12 @@ class PopupServicio(tk.Toplevel):
             else:
                 messagebox.showerror("Error API", str(resp), parent=self)
         except Exception as exc:
-            messagebox.showerror("Error API", f"No se pudo guardar el servicio:\n{exc}", parent=self)
+            messagebox.showerror(
+                "Error API",
+                f"No se pudo confirmar el guardado:\n{exc}\n\n"
+                "Antes de intentar otra vez, revise si el servicio ya aparece en la lista.",
+                parent=self,
+            )
 
 
 

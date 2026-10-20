@@ -66,8 +66,7 @@ def load_biweekly_home_rows(company):
                 previews.append((period, fortnight, lines))
         return previews
     finally:
-        conn.rollback()
-        conn.close()
+        database.release_conn(conn)
 
 
 def payment_queues(rows, receivables):

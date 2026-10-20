@@ -4,6 +4,8 @@ import csv
 import xml.etree.ElementTree as ET
 from reportlab.pdfgen import canvas  # para exportar PDF
 import io
+import queue
+import threading
 from datetime import datetime, date, timedelta
 from Modulos.Servicios.date_utils import to_long_english_date
 from openpyxl import Workbook
@@ -300,13 +302,35 @@ class VistaServicios(tk.Frame):
         params = {"page": self.page, "page_size": self.page_size}
         params.update(self.filtros)
 
-        resp = api_request(
-            "GET",
-            f"{BASE_URL}/servicios",
-            params=params,
-            timeout=15
-        ).json()
+        token = object()
+        self._load_token = token
+        results = queue.Queue(maxsize=1)
 
+        def worker():
+            try:
+                response = api_request("GET", f"{BASE_URL}/servicios", params=params, timeout=15)
+                response.raise_for_status()
+                results.put((response.json(), None))
+            except Exception as exc:
+                results.put((None, exc))
+
+        def poll():
+            if not self.winfo_exists() or self._load_token is not token:
+                return
+            try:
+                resp, error = results.get_nowait()
+            except queue.Empty:
+                self.after(50, poll)
+                return
+            if error:
+                messagebox.showerror("Servicios", f"No se pudieron consultar los servicios.\n{error}", parent=self)
+                return
+            self._render_data(resp)
+
+        threading.Thread(target=worker, daemon=True).start()
+        self.after(50, poll)
+
+    def _render_data(self, resp):
         self.total_items = resp.get("total", 0)
         data = resp.get("data", [])
 
