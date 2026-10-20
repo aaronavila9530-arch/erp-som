@@ -76,6 +76,8 @@ def fit_container_sheet(sheet):
                 continue
             if isinstance(cell.value, (int, float)) and cell.coordinate != 'A15':
                 cell.number_format = 'General'
+            elif isinstance(cell.value, str) and cell.data_type != 'f':
+                cell.number_format = '@'
             region = next((r for r in sheet.merged_cells.ranges if cell.coordinate in r), None)
             c1, c2 = (region.min_col, region.max_col) if region else (cell.column, cell.column)
             r1, r2 = (region.min_row, region.max_row) if region else (cell.row, cell.row)

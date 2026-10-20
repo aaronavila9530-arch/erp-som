@@ -54,6 +54,13 @@ class ContainerPrintTests(unittest.TestCase):
         self.check(book.active)
         book.close()
 
+    def test_numeric_looking_text_is_not_rounded_by_template(self):
+        report = {**self.report(), 'scope_items': '24.067'}
+        book = load_workbook(BytesIO(build(report, 'Customer', 'excel')))
+        self.assertEqual(book.active['AF53'].value, '24.067')
+        self.assertEqual(book.active['AF53'].number_format, '@')
+        book.close()
+
 
 if __name__ == '__main__':
     unittest.main()
