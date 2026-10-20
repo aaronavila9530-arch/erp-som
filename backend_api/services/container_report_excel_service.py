@@ -1,10 +1,6 @@
 import os
 import tempfile
 from openpyxl import load_workbook
-try:
-    from services.template_autofit import apply_workbook_autofit
-except ModuleNotFoundError:
-    from backend_api.services.template_autofit import apply_workbook_autofit
 from openpyxl.worksheet.worksheet import Worksheet
 from datetime import datetime
 from openpyxl.styles import Alignment
@@ -269,7 +265,10 @@ def generate_container_report_excel(report: dict) -> str:
     )
     os.close(fd)
 
-    apply_workbook_autofit(wb)
     wb.save(output_path)
+    wb.close()
+    # Use the same fixed-width print layout for desktop and web exports.
+    from services.container_print_layout import restore_template_layout
+    restore_template_layout(output_path)
     return output_path
 

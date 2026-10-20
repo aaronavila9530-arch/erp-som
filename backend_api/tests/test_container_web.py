@@ -193,7 +193,12 @@ class ContainersTests(unittest.TestCase):
         book = load_workbook(BytesIO(build({**self.row, 'appointment':'Appointment detail'}, 'QA Client', 'excel')))
         sheet = book.active
         self.assertNotIn('Q',sheet.column_dimensions)
-        self.assertFalse(sheet['A26'].alignment.wrap_text)
+        self.assertTrue(sheet['A26'].alignment.wrap_text)
+        self.assertIn('A26:AJ26', sheet.merged_cells)
+        self.assertEqual(sheet.page_setup.orientation, 'landscape')
+        self.assertIsNone(sheet.page_setup.scale)
+        self.assertEqual(sheet.page_setup.fitToWidth, 1)
+        self.assertEqual(sheet.page_setup.fitToHeight, 0)
         self.assertEqual(sheet['D8'].value,'Appointment detail')
         self.assertIsNone(sheet['C8'].value)
         book.close()
