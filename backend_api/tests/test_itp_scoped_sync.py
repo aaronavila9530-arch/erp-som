@@ -39,4 +39,27 @@ class ScopedSyncTests(unittest.TestCase):
         conn.commit.assert_not_called()
         conn.cursor.return_value.execute.assert_not_called()
 
+    def test_default_sync_retains_existing_full_sync_behavior(self):
+        conn=MagicMock();cur=conn.cursor.return_value
+        cur.fetchone.return_value={"rate":500,"rate_date":date(2026,10,20),"source":"test"}
+        cur.fetchall.return_value=[]
+        with patch.object(accounting,"employee_obligation_ids",return_value=[]), \
+             patch.object(accounting,"load_employee_name_keys",return_value=set()), \
+             patch.object(accounting,"backfill_missing_bank_accounts") as backfill, \
+             patch.object(accounting,"_apply_current_fiscal_classification") as fiscal:
+            accounting.sync_itp_to_accounting(conn)
+        backfill.assert_called_once_with(cur)
+        fiscal.assert_called_once_with(conn)
+        query=next(c for c in cur.execute.call_args_list if "p.active = TRUE" in c.args[0])
+        self.assertNotIn("p.id = ANY",query.args[0])
+
+    def test_hazel_account_cannot_be_disguised_as_bank(self):
+        conn=MagicMock()
+        with self.assertRaises(HTTPException) as err:
+            itp.apply_payment(1,10,date(2026,10,20),bank_account_code="3.1.99",bank_account_name="",
+                bank_name="",payment_reference="test",payment_method="BANK",
+                payment_card_last4="",conn=conn,x_user="test",x_role="admin",x_user_role="admin")
+        self.assertEqual(err.exception.status_code,422)
+        conn.cursor.return_value.execute.assert_not_called()
+
 if __name__=="__main__":unittest.main()
