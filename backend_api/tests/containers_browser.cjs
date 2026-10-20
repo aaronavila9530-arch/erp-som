@@ -86,6 +86,7 @@ async function run() {
       window.selectedCompany=()=> 'MCI-CR'; window.session={usuario:'qa',rol:'admin'};
       window.SOMTally={destroy(){},canLeave(){return true;},mount(root){root.innerHTML='<p>Tally fixture</p>';}};
       window.SOMLogra={destroy(){},canLeave(){return true;},mount(){}};
+      window.SOMCertificates={destroy(){},canLeave(){return true;},mount(){}};
     });
     await page.addScriptTag({content:integration+'\nrenderInformesTally();'});
     await page.getByText('Tally fixture',{exact:true}).waitFor();
