@@ -37,6 +37,9 @@ async function main(){
       await page.locator(`[data-kind=${kind}]`).click();
       await page.locator('[data-open]').click();
       await page.locator('#cert-form').waitFor();
+      await page.locator('#cert-format').selectOption('pdf');
+      assert.equal(await page.evaluate(()=>SOMCertificates.canLeave()),true);
+      assert.equal(await page.locator('#cert-save-state').textContent(),'');
       const fieldCount=types[kind].sections.flatMap(x=>x.fields).length;
       assert.equal(await page.locator('#cert-form [name]').count(),fieldCount);
       assert.equal(await page.locator('[name=date]').inputValue(),'20/10/2026');

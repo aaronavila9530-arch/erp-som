@@ -103,7 +103,10 @@
         ${row.id?`<select id="cert-format" aria-label="Formato de exportacion"><option value="${spec.document}">${spec.document==="word"?"Word":"Excel"}</option><option value="pdf">PDF</option></select><button type="button" id="cert-export">Descargar</button>`:""}
         <span id="cert-save-state" class="cert-meta" role="status"></span></footer></form>`);
       $("#cert-back").onclick=()=>{if(canLeave()){s.dirty=false;run(list);}};
-      $("#cert-form").oninput=()=>{s.dirty=true;$("#cert-save-state").textContent="Cambios sin guardar";};
+      $("#cert-form").oninput=e=>{
+        if(!e.target.matches("input[name], textarea[name]"))return;
+        s.dirty=true;$("#cert-save-state").textContent="Cambios sin guardar";
+      };
       async function save(submit) {
         // Snapshot before disabling controls; disabled fields are omitted by FormData.
         const fields={};
