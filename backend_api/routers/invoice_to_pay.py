@@ -2296,6 +2296,8 @@ def biweekly_obligations_apply(
                 payment_method = _normalize_payment_method(item.get("payment_method"))
                 is_card_payment = payment_method == CARD_3155_METHOD
                 is_hazel_payment = payment_method == HAZEL_PAYMENT_METHOD
+                if is_hazel_payment or str(item.get("bank_accounting_code") or "").strip() == HAZEL_CONTRIBUTION_CODE:
+                    raise HTTPException(422, "Hazel Barrantes no es un metodo de pago de SOM.")
                 payment_card_last4 = CARD_3155_LAST4 if is_card_payment else str(item.get("payment_card_last4") or "").strip()
                 if is_hazel_payment:
                     bank_code = HAZEL_CONTRIBUTION_CODE
@@ -2704,6 +2706,8 @@ def apply_payment(
         payment_method = _normalize_payment_method(payment_method)
         is_card_payment = payment_method == CARD_3155_METHOD
         is_hazel_payment = payment_method == HAZEL_PAYMENT_METHOD
+        if is_hazel_payment or bank_account_code == HAZEL_CONTRIBUTION_CODE:
+            raise HTTPException(422, "Hazel Barrantes no es un metodo de pago de SOM.")
         payment_card_last4 = CARD_3155_LAST4 if is_card_payment else str(payment_card_last4 or "").strip()
         performed_by, performed_role = actor_from_headers(x_user, x_role, x_user_role)
 

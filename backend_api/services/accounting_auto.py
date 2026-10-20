@@ -1142,7 +1142,7 @@ def sync_cash_app_to_accounting(conn, company_code_filter: str | None = None):
 
 
 
-def sync_itp_to_accounting(conn, company_code_filter: str | None = None):
+def sync_itp_to_accounting(conn, company_code_filter: str | None = None, obligation_ids=None):
     """
     Sincroniza payment_obligations → accounting
     (ERP-SOM BLINDADO - COA JERÁRQUICO)
@@ -1156,6 +1156,7 @@ def sync_itp_to_accounting(conn, company_code_filter: str | None = None):
 
     cur = conn.cursor(cursor_factory=RealDictCursor)
     company_filter = normalize_company_code(company_code_filter) if company_code_filter else None
+    scoped_ids = sorted({int(value) for value in obligation_ids}) if obligation_ids is not None else None
 
     try:
 
@@ -1280,6 +1281,9 @@ def sync_itp_to_accounting(conn, company_code_filter: str | None = None):
                 "COALESCE(created_by, 'SYSTEM') = 'SYSTEM'",
             ]
             params = []
+            if scoped_ids is not None:
+                clauses.append("origin_id = ANY(%s)")
+                params.append(scoped_ids)
             if company:
                 clauses.append("company_code = %s")
                 params.append(company)
@@ -1304,6 +1308,9 @@ def sync_itp_to_accounting(conn, company_code_filter: str | None = None):
                 "COALESCE(created_by, 'SYSTEM') = 'SYSTEM'",
             ]
             params = []
+            if scoped_ids is not None:
+                clauses.append("origin_id = ANY(%s)")
+                params.append(scoped_ids)
             if company:
                 clauses.append("company_code = %s")
                 params.append(company)
@@ -1366,8 +1373,11 @@ def sync_itp_to_accounting(conn, company_code_filter: str | None = None):
             ALTER TABLE payment_obligations
             ADD COLUMN IF NOT EXISTS payment_card_last4 TEXT
         """)
-        backfill_missing_bank_accounts(cur)
+        if scoped_ids is None:
+            backfill_missing_bank_accounts(cur)
         employee_itp_ids = employee_obligation_ids(cur)
+        if scoped_ids is not None:
+            employee_itp_ids = [value for value in employee_itp_ids if value in scoped_ids]
         if employee_itp_ids:
             cur.execute("""
                 DELETE FROM accounting_lines
@@ -1408,6 +1418,9 @@ def sync_itp_to_accounting(conn, company_code_filter: str | None = None):
         cur.execute('ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS historical_closed BOOLEAN NOT NULL DEFAULT FALSE')
         obligation_where = ["p.active = TRUE"]
         obligation_params = []
+        if scoped_ids is not None:
+            obligation_where.append("p.id = ANY(%s)")
+            obligation_params.append(scoped_ids)
         if company_filter:
             obligation_where.append("p.company_code = %s")
             obligation_params.append(company_filter)
@@ -1667,7 +1680,8 @@ def sync_itp_to_accounting(conn, company_code_filter: str | None = None):
             _ensure_account(WITHHOLDING_CODE, WITHHOLDING_NAME, "LIABILITY", "CREDIT", "2.1.02")
             _ensure_account(SURVEYOR_DEDUCTION_CODE, SURVEYOR_DEDUCTION_NAME, "LIABILITY", "CREDIT", "2.1.02")
             _ensure_account(CARD_PAYABLE_CODE, CARD_PAYABLE_NAME, "LIABILITY", "CREDIT", "2.1.02")
-            _ensure_account(HAZEL_CONTRIBUTION_CODE, HAZEL_CONTRIBUTION_NAME, "EQUITY", "CREDIT", "3.1")
+            if paid_by_hazel:
+                _ensure_account(HAZEL_CONTRIBUTION_CODE, HAZEL_CONTRIBUTION_NAME, "EQUITY", "CREDIT", "3.1")
 
             def _first_existing(candidates):
                 for code, name in candidates:
@@ -1890,7 +1904,8 @@ def sync_itp_to_accounting(conn, company_code_filter: str | None = None):
                 )
 
 
-        _apply_current_fiscal_classification(conn)
+        if scoped_ids is None:
+            _apply_current_fiscal_classification(conn)
         conn.commit()
 
     except Exception as e:

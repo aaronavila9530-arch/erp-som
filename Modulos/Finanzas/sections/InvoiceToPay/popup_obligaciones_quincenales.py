@@ -36,7 +36,6 @@ BANK_ACCOUNT_OPTIONS = [
 PAYMENT_METHOD_LABELS = {
     "BANK": "Banco",
     "CARD_BAC_3155": "Tarjeta empresarial BAC 3155",
-    "THIRD_PARTY_HAZEL": "Pagado por Hazel Barrantes",
 }
 PAYMENT_METHOD_CODES = {label: code for code, label in PAYMENT_METHOD_LABELS.items()}
 CARD_3155_CODE = "2.1.02.10"
@@ -394,6 +393,9 @@ class PopupObligacionesQuincenales(tk.Toplevel):
         sync_payment_method()
 
         def ok():
+            if vars_["payment_method"].get() not in PAYMENT_METHOD_CODES:
+                messagebox.showwarning("Metodo de pago", "Seleccione Banco o Tarjeta BAC.", parent=win)
+                return
             try:
                 amount = self._money(vars_["amount"].get())
             except Exception:

@@ -4283,7 +4283,7 @@ def som_web_home() -> HTMLResponse:
               <label>Monto<input id="itpPayAmount" type="number" step="0.01" value="${esc(row.balance || "")}" /></label>
               <label>Fecha pago<input id="itpPayDate" type="date" value="${new Date().toISOString().slice(0,10)}" /></label>
               <label>Cuenta pago<select id="itpPayBank"><option value="">Cargando...</option></select></label>
-              <label>Método<select id="itpPayMethod"><option value="BANK">Banco</option><option value="CARD_3155">Tarjeta 3155</option><option value="HAZEL_CONTRIBUTION">Aporte Hazel</option></select></label>
+              <label>Método<select id="itpPayMethod"><option value="BANK">Banco</option><option value="CARD_3155">Tarjeta 3155</option></select></label>
               <label>Comprobante<input id="itpPayReference" /></label>
               <label>Últimos 4 tarjeta<input id="itpPayCardLast4" maxlength="4" /></label>
             </div>
@@ -4443,13 +4443,11 @@ def som_web_home() -> HTMLResponse:
       ["1.1.02.02.01","Banco BAC San Jose CRC"],
       ["1.1.02.02.02","Banco BAC San Jose USD"],
       ["1.1.02.04.01","Banco de Costa Rica USD"],
-      ["2.1.02.10","Tarjeta corporativa BAC por pagar"],
-      ["3.1.99","Aportes de terceros - Hazel Barrantes"]
+      ["2.1.02.10","Tarjeta corporativa BAC por pagar"]
     ];
     const ITP_BI_PAYMENT_METHODS = [
       ["BANK","Banco"],
-      ["CARD_BAC_3155","Tarjeta empresarial BAC 3155"],
-      ["THIRD_PARTY_HAZEL","Pagado por Hazel Barrantes"]
+      ["CARD_BAC_3155","Tarjeta empresarial BAC 3155"]
     ];
     function itpBiPaymentLabel(row) {
       const method = String(row.payment_method || "").toUpperCase();

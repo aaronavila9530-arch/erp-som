@@ -11,7 +11,6 @@ from session_context import get_rol, get_user
 PAYMENT_METHODS = {
     "Banco": "BANK",
     "Tarjeta empresarial BAC 3155": "CARD_BAC_3155",
-    "Pagado por Hazel Barrantes": "THIRD_PARTY_HAZEL",
 }
 EXTERNAL_PAYMENT_ACCOUNTS = {
     "CARD_BAC_3155": ("2.1.02.10", "Tarjeta corporativa BAC por pagar", "Tarjeta empresarial BAC 3155"),
