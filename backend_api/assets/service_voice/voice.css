@@ -1,0 +1,14 @@
+.service-voice{border-block:1px solid #d2dce4;padding:12px 0;margin-bottom:14px;color:#183647}
+.voice-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.voice-actions button{display:flex;align-items:center;gap:6px;min-height:44px}
+.voice-actions svg{width:18px;height:18px}
+.voice-actions input{max-width:260px}
+.service-voice p{font-size:12px;color:#526271;margin:8px 0}
+.service-voice textarea{width:100%;box-sizing:border-box;font-size:16px}
+.voice-row{display:grid!important;grid-template-columns:24px minmax(0,1fr) minmax(120px,1fr);gap:8px;align-items:center;margin:8px 0}
+.voice-row input[type=checkbox]{width:18px!important;height:18px}
+.voice-row span{overflow-wrap:anywhere}
+.voice-row select,.voice-row input{min-width:0;width:100%;box-sizing:border-box}
+.service-voice [data-status]{margin-top:8px;font-size:13px}
+.service-voice [hidden]{display:none!important}
+@media(max-width:600px){.voice-row{grid-template-columns:24px minmax(0,1fr)}.voice-row select,.voice-row input:not([type=checkbox]){grid-column:2}.voice-actions input{max-width:210px}}

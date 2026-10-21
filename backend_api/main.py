@@ -130,6 +130,7 @@ from routers.dashboard_finanzas_router import router as dashboard_finanzas_route
 from routers.dashboard_comercial_router import router as dashboard_comercial_router
 from routers.dashboard_informes_router import router as dashboard_informes_router
 from routers.portia import router as portia_router
+from routers.service_voice import router as service_voice_router
 
 
 # ============================================================
@@ -338,6 +339,7 @@ app.include_router(dashboard_finanzas_router)
 app.include_router(dashboard_comercial_router)
 app.include_router(dashboard_informes_router)
 app.include_router(portia_router)
+app.include_router(service_voice_router)
 
 
 # ============================================================

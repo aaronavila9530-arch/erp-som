@@ -1478,6 +1478,8 @@ def som_web_home() -> HTMLResponse:
   <script src="/som/admin-assets/admin.js?v={asset_version}"></script>
   <link rel="stylesheet" href="/portia/assets/portia.css?v={asset_version}">
   <script src="/portia/assets/portia.js?v={asset_version}"></script>
+  <link rel="stylesheet" href="/servicios/voice/assets/voice.css?v=1" />
+  <script src="/servicios/voice/assets/voice.js?v=1"></script>
   <script>
     const DEFAULT_COMPANIES = [
       { company_code:"MSL-CR", company_name:"MSL MARINE SURVEYORS AND LOGISTICS GROUP SRL" },
@@ -8628,6 +8630,7 @@ def som_web_home() -> HTMLResponse:
       $("svcSurveyorLines").insertAdjacentHTML("beforeend", surveyorLineHtml(name, amount));
       document.querySelectorAll(".svcSurveyorAmount").forEach(el => el.oninput = updateSurveyorTotals);
     }
+    let disposeServiceVoice = null;
     async function openServiceForm(row=null) {
       await ensureServiceCatalogs();
       const editing = !!row;
@@ -8648,6 +8651,7 @@ def som_web_home() -> HTMLResponse:
               <h2>${editing ? "Editar servicio " + esc(row.consec) : "Agregar servicio"}</h2>
               <button class="secondary" onclick="closeModal()">Cerrar</button>
             </div>
+            <div id="svcVoiceHost"></div>
             <div class="form-grid">
               <label>Tipo<select id="svcForm_tipo"><option>Buque</option><option>Contenedor</option></select></label>
               <label>Buque / contenedor<input id="svcForm_buque_contenedor" value="${val("buque_contenedor")}" required /></label>
@@ -8693,8 +8697,38 @@ def som_web_home() -> HTMLResponse:
         addSurveyorLine(row?.surveyor || "", row?.honorarios || "");
       }
       document.querySelectorAll(".svcSurveyorName").forEach(el => el.onchange = updateSurveyorTotals);
+      if (!editing && window.ServiceVoice) {
+        const voiceRequest = async (path, opts={}) => {
+          const abort = new AbortController(), cancel=()=>abort.abort();
+          opts.signal?.addEventListener('abort',cancel,{once:true});
+          const timeout=setTimeout(cancel,90000);
+          try {
+          const resp = await fetch('/servicios/voice/'+path, {...opts,signal:abort.signal, headers:headers(opts.headers || {})});
+          let data; try { data=await resp.json(); } catch { throw new Error('Respuesta del servidor no valida. No se cambio el servicio.'); }
+          if (!resp.ok) throw new Error(typeof data.detail==='string' ? data.detail : 'No se pudo procesar el dictado.');
+          return data;
+          } finally { clearTimeout(timeout); opts.signal?.removeEventListener('abort',cancel); }
+        };
+        disposeServiceVoice = ServiceVoice.mount($('svcVoiceHost'), {
+          audio:(blob,signal) => voiceRequest('transcribe',{method:'POST',body:blob,signal,headers:{'Content-Type':blob.type || 'application/octet-stream'}}),
+          parse:(text,signal) => voiceRequest('draft',{method:'POST',body:JSON.stringify({text}),signal,headers:{'Content-Type':'application/json'}}),
+          locations:(pais,puerto,signal) => voiceRequest(`locations?pais=${encodeURIComponent(pais)}&puerto=${encodeURIComponent(puerto)}`,{signal}),
+          snapshot:() => JSON.stringify(servicePayload()),
+          surveyors:() => serviceSurveyorCatalog.map(r=>r.full_name),
+          location:async row => { $('svcForm_continente').value=''; $('svcForm_pais').value=''; await loadFormLocation(row); },
+          applySurveyors:people => {
+            for (const person of people) {
+              const existing=[...document.querySelectorAll('.surveyor-line')].find(line=>line.querySelector('.svcSurveyorName').value===person.name);
+              if (existing) { if(person.amount!=null) existing.querySelector('.svcSurveyorAmount').value=person.amount; }
+              else addSurveyorLine(person.name,person.amount ?? '');
+            }
+            if(people.some(p=>p.amount!=null)) updateSurveyorTotals();
+          }
+        });
+      }
     }
     function closeModal() {
+      disposeServiceVoice?.(); disposeServiceVoice=null;
       $("svcModal")?.remove();
       serviceEditBaseline = null;
       serviceCreditApprovalCache = null;
