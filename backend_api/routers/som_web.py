@@ -1401,7 +1401,7 @@ def som_web_home() -> HTMLResponse:
         </select>
         <label class="remember"><input id="rememberDevice" type="checkbox" /> Guardar credenciales en este dispositivo</label>
         <button id="loginBtn">Ingresar</button>
-        <button id="bioBtn" class="secondary" type="button">Entrar con Windows Hello / passkey</button>
+        <button id="bioBtn" class="secondary" type="button">Entrar con passkey / biometria</button>
         <div id="loginMsg" class="muted"></div>
         <a href="/som/privacy" target="_blank" rel="noopener">Política de privacidad de Gmail</a>
       </div>
@@ -1425,7 +1425,7 @@ def som_web_home() -> HTMLResponse:
       <div class="nav" id="moduleNav"></div>
       <div class="side-foot">
         <select id="company"></select>
-        <button id="setupPasskey" class="secondary">Configurar Windows Hello / passkey</button>
+        <button id="setupPasskey" class="secondary">Configurar passkey en este navegador</button>
         <button id="logout" class="secondary">Cerrar sesión</button>
       </div>
     </aside>
@@ -1499,7 +1499,7 @@ def som_web_home() -> HTMLResponse:
       try {
         return JSON.parse(localStorage.getItem(key) || "null");
       } catch {
-        localStorage.removeItem(key);
+        try { localStorage.removeItem(key); } catch {}
         return null;
       }
     }
@@ -2175,7 +2175,7 @@ def som_web_home() -> HTMLResponse:
         $("rememberDevice").checked = true;
       }
       localStorage.removeItem(SESSION_KEY);
-      $("bioBtn").disabled = !window.PublicKeyCredential || !localStorage.getItem(PASSKEY_KEY);
+      $("bioBtn").disabled = false;
     }
     async function loadCatalog() {
       catalog = await getJSON("/som/catalog").catch(() => ({ modules:[], master_data_actions:[], master_data_views:[] }));
@@ -2272,7 +2272,7 @@ def som_web_home() -> HTMLResponse:
         } else {
           localStorage.removeItem(SAVED_LOGIN_KEY);
         }
-        $("bioBtn").disabled = !window.PublicKeyCredential || !localStorage.getItem(PASSKEY_KEY);
+        $("bioBtn").disabled = false;
         await loadCatalog();
         showApp();
       } catch (err) {
@@ -2286,8 +2286,23 @@ def som_web_home() -> HTMLResponse:
     function base64url(bytes) {
       return btoa(String.fromCharCode(...new Uint8Array(bytes))).replace(/\\+/g, "-").replace(/\\//g, "_").replace(/=+$/g, "");
     }
+    function passkeySupportError() {
+      if (!window.isSecureContext) return "La biometria requiere abrir SOM mediante HTTPS.";
+      if (!window.PublicKeyCredential || !navigator.credentials?.get || !navigator.credentials?.create) return "Este navegador no ofrece passkeys. Actualice iOS y Chrome, o use usuario y contrasena.";
+      return "";
+    }
+    function passkeyErrorMessage(err) {
+      if (err?.name === "NotAllowedError") return "La solicitud fue cancelada, expiro o no hay una passkey disponible. Puede ingresar con usuario y contrasena.";
+      if (err?.name === "SecurityError") return "La passkey no corresponde a esta direccion de SOM. Ingrese con contrasena y configure este navegador.";
+      if (err?.name === "InvalidStateError") return "Ya existe una credencial para este dispositivo. Revise su gestor de contrasenas.";
+      return "No se pudo validar la passkey. Puede ingresar con usuario y contrasena y volver a configurarla.";
+    }
+    let passkeyBusy = false;
     async function registerDevicePasskey() {
-      if (!window.PublicKeyCredential || !session) return;
+      if (passkeyBusy) return;
+      const unsupported = passkeySupportError();
+      if (unsupported || !session) { alert(unsupported || "Primero inicie sesion con usuario, contrasena y Authenticator."); return; }
+      passkeyBusy = true;
       const challenge = crypto.getRandomValues(new Uint8Array(32));
       const userId = crypto.getRandomValues(new Uint8Array(16));
       try {
@@ -2301,19 +2316,28 @@ def som_web_home() -> HTMLResponse:
             timeout:60000
           }
         });
-        localStorage.setItem(PASSKEY_KEY, JSON.stringify({ id:base64url(cred.rawId), session, usuario:session.usuario, company:session.company }));
-        alert("Windows Hello / passkey quedó configurado para este dispositivo.");
+        if (!cred?.rawId) throw new Error("No credential returned");
+        localStorage.setItem(PASSKEY_KEY, JSON.stringify({ id:base64url(cred.rawId), usuario:session.usuario, company:session.company }));
+        alert("Passkey configurada en este navegador. SOM seguira solicitando Authenticator al ingresar.");
         $("bioBtn").disabled = false;
-      } catch {
-        alert("No se pudo configurar Windows Hello / passkey.");
-      }
+      } catch (err) {
+        alert(err?.name === "QuotaExceededError" || err?.name === "SecurityError" ? "No se pudo completar la configuracion. Permita guardar datos del sitio y use una ventana normal, no privada." : passkeyErrorMessage(err));
+      } finally { passkeyBusy = false; }
     }
     async function unlockWithPasskey() {
+      if (passkeyBusy) return;
+      const unsupported = passkeySupportError();
+      if (unsupported) { $("loginMsg").textContent = unsupported; return; }
       const saved = readLocalJson(PASSKEY_KEY);
-      if (!saved || !window.PublicKeyCredential) return;
+      if (!saved?.id || !(saved.usuario || saved.session?.usuario)) {
+        $("loginMsg").textContent = "Este navegador no tiene configurado el acceso biometrico de SOM. Ingrese una vez con usuario, contrasena y Authenticator; luego pulse Configurar passkey en este navegador. La configuracion de la computadora no se copia aqui automaticamente.";
+        return;
+      }
+      passkeyBusy = true;
+      $("bioBtn").disabled = true;
       $("loginMsg").textContent = "Validando dispositivo...";
       try {
-        await navigator.credentials.get({
+        const credential = await navigator.credentials.get({
           publicKey: {
             challenge:crypto.getRandomValues(new Uint8Array(32)),
             allowCredentials:[{ type:"public-key", id:bytesFromBase64url(saved.id) }],
@@ -2321,6 +2345,7 @@ def som_web_home() -> HTMLResponse:
             timeout:60000
           }
         });
+        if (!credential?.rawId || base64url(credential.rawId) !== saved.id) throw new Error("Credential mismatch");
         pendingUser = saved.usuario || saved.session?.usuario || $("user").value;
         pendingAction = "VERIFY_TOTP";
         $("loginCompany").value = saved.company || saved.session?.company || $("loginCompany").value || "MSL-CR";
@@ -2328,10 +2353,10 @@ def som_web_home() -> HTMLResponse:
         $("totpForm").classList.remove("hidden");
         $("qr").classList.add("hidden");
         $("code").value = "";
-        $("totpMsg").textContent = "Windows Hello validado. Ingresa tu código Authenticator para completar el ingreso.";
+        $("totpMsg").textContent = "Dispositivo validado. Ingresa tu codigo Authenticator para completar el ingreso.";
       } catch (err) {
-        $("loginMsg").innerHTML = '<span class="error">No se pudo validar este dispositivo.</span>';
-      }
+        $("loginMsg").textContent = passkeyErrorMessage(err);
+      } finally { passkeyBusy = false; $("bioBtn").disabled = false; }
     }
     function renderNav() {
       $("moduleNav").innerHTML = "";
